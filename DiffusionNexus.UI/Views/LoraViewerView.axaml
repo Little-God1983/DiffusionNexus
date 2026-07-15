@@ -5,6 +5,8 @@
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
              xmlns:browser="using:DiffusionNexus.UI.Views.CivitaiBrowser"
              xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
+             xmlns:air="using:Avalonia.Controls"
+             xmlns:al="using:Avalonia.Layout"
              mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
              x:Class="DiffusionNexus.UI.Views.LoraViewerView"
              x:DataType="vm:LoraViewerViewModel">
@@ -211,37 +213,36 @@
 
           <Grid>
 
-            <!-- Tile grid. FilteredTiles is a *window* into the full filtered set
-                 (~200 items at a time). The view's code-behind subscribes to the
-                 ScrollViewer below and asks the VM to slide the window when the user
-                 nears the top or bottom — items leaving the window get their
-                 containers detached, which calls Deactivate() on the bound VM and
-                 releases its decoded thumbnail bitmap. The complete filtered set
-                 still lives on the VM (`AllFilteredTiles`) so the count / search
-                 index are unaffected. -->
-            <ScrollViewer Name="TileScrollViewer"
-                          Padding="16"
+            <!-- Tile grid. FilteredTiles holds the FULL filtered set; the ItemsRepeater
+                 with a UniformGridLayout virtualizes it, so only the tiles inside the
+                 scroll viewport are realized (a 2K+ LoRA library opens instantly and
+                 scrolls smoothly). As a container recycles out of view its ModelTileControl
+                 detaches, calling Deactivate() on the bound VM to release the decoded
+                 thumbnail; scrolling a tile in calls Activate() to load it on demand.
+                 Item footprint = 250 wide + 6 margin all round; MinItemHeight leaves a
+                 small row gap above the tile's natural height so nothing clips. -->
+            <ScrollViewer Padding="16"
                           HorizontalScrollBarVisibility="Disabled"
                           VerticalScrollBarVisibility="Auto">
 
-              <StackPanel>
-                <ItemsControl ItemsSource="{Binding FilteredTiles}">
-                  <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate>
-                      <WrapPanel Orientation="Horizontal"/>
-                    </ItemsPanelTemplate>
-                  </ItemsControl.ItemsPanel>
-                  <ItemsControl.ItemTemplate>
-                    <DataTemplate x:DataType="vm:ModelTileViewModel">
-                      <Border Margin="6" Width="250">
-                        <controls:ModelTileControl/>
-                      </Border>
-                    </DataTemplate>
-                  </ItemsControl.ItemTemplate>
-                </ItemsControl>
-
-                <Border Height="40"/>
-              </StackPanel>
+              <air:ItemsRepeater ItemsSource="{Binding FilteredTiles}"
+                                 Margin="0,0,0,40">
+                <air:ItemsRepeater.Layout>
+                  <al:UniformGridLayout Orientation="Horizontal"
+                                        MinItemWidth="262"
+                                        MinItemHeight="276"
+                                        MinColumnSpacing="0"
+                                        MinRowSpacing="0"
+                                        ItemsStretch="None"/>
+                </air:ItemsRepeater.Layout>
+                <air:ItemsRepeater.ItemTemplate>
+                  <DataTemplate x:DataType="vm:ModelTileViewModel">
+                    <Border Margin="6" Width="250">
+                      <controls:ModelTileControl/>
+                    </Border>
+                  </DataTemplate>
+                </air:ItemsRepeater.ItemTemplate>
+              </air:ItemsRepeater>
 
             </ScrollViewer>
 

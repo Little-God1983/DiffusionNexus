@@ -973,13 +973,12 @@ public partial class SettingsViewModel : BusyViewModelBase
 
         try
         {
+            // Progress<T> captures the UI SynchronizationContext at construction
+            // (this runs on the UI thread), so the callback is already marshaled.
             var progress = new Progress<BackupProgress>(p =>
             {
-                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-                {
-                    BusyMessage = $"Backup: {p.Phase} ({p.ProgressPercent}%)";
-                    _activityLogService?.ReportBackupProgress(p.ProgressPercent, p.Phase);
-                });
+                BusyMessage = $"Backup: {p.Phase} ({p.ProgressPercent}%)";
+                _activityLogService?.ReportBackupProgress(p.ProgressPercent, p.Phase);
             });
 
             // Run backup on a background thread with its own DI scope to avoid
@@ -1122,15 +1121,15 @@ public partial class SettingsViewModel : BusyViewModelBase
                 // Perform the restore
                 BusyMessage = "Restoring backup...";
 
+                // Progress<T> captures the UI SynchronizationContext at construction
+                // (this runs on the UI thread inside RunBusyAsync, which does not
+                // offload), so the callback is already marshaled.
                 var progress = new Progress<BackupProgress>(p =>
                 {
-                    Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-                    {
-                        var fileInfo = p.TotalFiles > 0
-                            ? $" — {p.FilesProcessed}/{p.TotalFiles}"
-                            : string.Empty;
-                        BusyMessage = $"Restore: {p.Phase} ({p.ProgressPercent}%){fileInfo}";
-                    });
+                    var fileInfo = p.TotalFiles > 0
+                        ? $" — {p.FilesProcessed}/{p.TotalFiles}"
+                        : string.Empty;
+                    BusyMessage = $"Restore: {p.Phase} ({p.ProgressPercent}%){fileInfo}";
                 });
 
                 // Run the restore on a background thread with its own DI scope.

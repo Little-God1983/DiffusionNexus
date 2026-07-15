@@ -977,7 +977,14 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         _isBackupInProgress = true;
         BackupNowCommand.NotifyCanExecuteChanged();
 
-        var isDue = await _backupService.IsBackupDueAsync();
+        // SQLite "async" queries execute synchronously on the calling thread —
+        // run the due-check on a pool thread with its own scope, like the backup.
+        var isDue = await Task.Run(async () =>
+        {
+            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            var scopedBackupService = scope.ServiceProvider.GetRequiredService<IDatasetBackupService>();
+            return await scopedBackupService.IsBackupDueAsync();
+        });
         if (!isDue)
         {
             _isBackupInProgress = false;
@@ -992,13 +999,12 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
         try
         {
+            // Progress<T> captures the UI SynchronizationContext at construction
+            // (this runs on the UI thread), so the callback is already marshaled.
             var progress = new Progress<BackupProgress>(p =>
             {
-                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-                {
-                    BackupStatusText = $"Backup: {p.ProgressPercent}%";
-                    _activityLog?.ReportBackupProgress(p.ProgressPercent, p.Phase);
-                });
+                BackupStatusText = $"Backup: {p.ProgressPercent}%";
+                _activityLog?.ReportBackupProgress(p.ProgressPercent, p.Phase);
             });
 
             // Run backup on a background thread with its own DI scope to avoid
@@ -1019,7 +1025,12 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 // The backup ran on a separate DI scope, so the main DbContext still has
                 // the old LastBackupAt cached. Force the fresh timestamp to prevent
                 // UpdateBackupStatus from seeing a stale value and immediately re-triggering.
-                var settings = await _settingsService.GetSettingsAsync();
+                var settings = await Task.Run(async () =>
+                {
+                    using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+                    var scopedSettings = scope.ServiceProvider.GetRequiredService<IAppSettingsService>();
+                    return await scopedSettings.GetSettingsAsync();
+                });
                 settings.LastBackupAt = DateTimeOffset.UtcNow;
                 UpdateBackupStatus(settings);
             }
@@ -1062,13 +1073,12 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
         try
         {
+            // Progress<T> captures the UI SynchronizationContext at construction
+            // (this runs on the UI thread), so the callback is already marshaled.
             var progress = new Progress<BackupProgress>(p =>
             {
-                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-                {
-                    BackupStatusText = $"Backup: {p.ProgressPercent}%";
-                    _activityLog?.ReportBackupProgress(p.ProgressPercent, p.Phase);
-                });
+                BackupStatusText = $"Backup: {p.ProgressPercent}%";
+                _activityLog?.ReportBackupProgress(p.ProgressPercent, p.Phase);
             });
 
             // Run backup on a background thread with its own DI scope to avoid
@@ -1089,7 +1099,12 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 // The backup ran on a separate DI scope, so the main DbContext still has
                 // the old LastBackupAt cached. Force the fresh timestamp to prevent
                 // UpdateBackupStatus from seeing a stale value and immediately re-triggering.
-                var settings = await _settingsService.GetSettingsAsync();
+                var settings = await Task.Run(async () =>
+                {
+                    using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+                    var scopedSettings = scope.ServiceProvider.GetRequiredService<IAppSettingsService>();
+                    return await scopedSettings.GetSettingsAsync();
+                });
                 settings.LastBackupAt = DateTimeOffset.UtcNow;
                 UpdateBackupStatus(settings);
             }

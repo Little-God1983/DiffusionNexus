@@ -12,18 +12,45 @@ public sealed class AutoCompleteService : IAutoCompleteService
     private readonly object _lock = new();
 
     /// <summary>
-    /// Creates an AutoCompleteService and seeds it from the Hunspell dictionary.
+    /// Creates an AutoCompleteService and seeds it from the Hunspell dictionary
+    /// immediately on a background task. Used by tests and non-startup callers.
     /// </summary>
     public AutoCompleteService(string? dictionaryDirectory = null)
+        : this(Task.CompletedTask, dictionaryDirectory)
+    {
+    }
+
+    /// <summary>
+    /// Defers the dictionary load until <paramref name="startSignal"/> completes,
+    /// then runs it on a dedicated BelowNormal-priority thread. The load costs
+    /// ~20s of CPU (Hunspell suffix expansion); at startup it must neither run
+    /// on the UI thread nor compete with startup work for cores — the app signals
+    /// StartupProgressService.UiReady after the overlay's drain sentinel, and the
+    /// load begins only then. The build takes <c>_lock</c> per word (not for the
+    /// whole build), so GetSuggestions/RecordWord never block on the build itself —
+    /// callers see a partial trie mid-load and wait only microseconds per call, even
+    /// while a caption editor is open and the user is actively typing.
+    /// </summary>
+    public AutoCompleteService(Task startSignal, string? dictionaryDirectory = null)
     {
         var dir = dictionaryDirectory ?? Path.Combine(AppContext.BaseDirectory, "Dictionaries");
+        LoadCompleted = LoadAfterSignalAsync(startSignal, dir);
+    }
 
-        // Background-load so the UI thread doesn't block on Hunspell's ~6s parse plus
-        // inflected-form generation. GetSuggestions/RecordWord called during the load
-        // window will briefly contend on _lock — acceptable because caption editors
-        // aren't visible during the first seconds of cold start.
-        // Tests (and any caller that needs to wait) can await LoadCompleted.
-        LoadCompleted = Task.Run(() => LoadFromDictionary(dir));
+    private async Task LoadAfterSignalAsync(Task startSignal, string dir)
+    {
+        try { await startSignal.ConfigureAwait(false); }
+        catch { /* a faulted signal must not kill autocomplete; load anyway */ }
+
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread = new Thread(() => { LoadFromDictionary(dir); tcs.TrySetResult(); })
+        {
+            IsBackground = true,
+            Priority = ThreadPriority.BelowNormal,
+            Name = "AutoCompleteTrieLoad",
+        };
+        thread.Start();
+        await tcs.Task.ConfigureAwait(false);
     }
 
     /// <summary>
@@ -84,14 +111,19 @@ public sealed class AutoCompleteService : IAutoCompleteService
             // RootWords only contains stems (e.g. "disappoint") but not
             // derived forms ("disappointed", "disappointing"). We expand each
             // root with common English suffixes and validate via Check().
-            lock (_lock)
+            // The lock is taken per root word (not around the whole loop) so a
+            // UI-thread caller (GetSuggestions/RecordWord) never waits on the
+            // full ~20s build — only on the microseconds it takes to insert one
+            // word's worth of entries.
+            foreach (var entry in wordList.RootWords)
             {
-                foreach (var entry in wordList.RootWords)
-                {
-                    if (entry.Length < 2 || !entry.All(c => char.IsLetter(c) || c == '\''))
-                        continue;
+                if (entry.Length < 2 || !entry.All(c => char.IsLetter(c) || c == '\''))
+                    continue;
 
-                    var lower = entry.ToLowerInvariant();
+                var lower = entry.ToLowerInvariant();
+
+                lock (_lock)
+                {
                     Insert(lower, 1, increment: false);
 
                     // Generate common inflected forms and keep any that the dictionary accepts
@@ -122,22 +154,25 @@ public sealed class AutoCompleteService : IAutoCompleteService
             var path = Path.Combine(directory, "supplementary_words.txt");
             if (!File.Exists(path)) return;
 
+            // Locked per line (not around the whole file loop) for the same reason as
+            // LoadFromDictionary: keep UI-thread callers from ever waiting on more than
+            // one word's worth of work.
             int count = 0;
-            lock (_lock)
+            foreach (var line in File.ReadLines(path))
             {
-                foreach (var line in File.ReadLines(path))
+                var trimmed = line.Trim();
+                if (trimmed.Length < 2 || trimmed.StartsWith('#'))
+                    continue;
+
+                // Only index words that consist of letters, hyphens, or apostrophes
+                if (!trimmed.All(c => char.IsLetter(c) || c is '\'' or '-'))
+                    continue;
+
+                lock (_lock)
                 {
-                    var trimmed = line.Trim();
-                    if (trimmed.Length < 2 || trimmed.StartsWith('#'))
-                        continue;
-
-                    // Only index words that consist of letters, hyphens, or apostrophes
-                    if (!trimmed.All(c => char.IsLetter(c) || c is '\'' or '-'))
-                        continue;
-
                     Insert(trimmed.ToLowerInvariant(), 1, increment: false);
-                    count++;
                 }
+                count++;
             }
 
             Serilog.Log.Information(

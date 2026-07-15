@@ -117,6 +117,8 @@ public class DatasetBackupService : IDatasetBackupService
                 var memBeforeMb = GC.GetTotalMemory(forceFullCollection: false) / 1024.0 / 1024.0;
                 Log.Information("Backup memory before: {MemBefore:F1} MB ({TotalFiles} files)", memBeforeMb, totalFiles);
 
+                var progressGate = new BackupProgressGate();
+
                 // Create ZIP archive with streaming FileStream to reduce memory pressure
                 using (var fileStream = new FileStream(backupPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, bufferSize: 1 << 20))
                 using (var archive = new ZipArchive(fileStream, ZipArchiveMode.Create, leaveOpen: false))
@@ -136,9 +138,9 @@ public class DatasetBackupService : IDatasetBackupService
                             archive.CreateEntryFromFile(filePath, relativePath, compressionLevel);
                             processedFiles++;
 
-                            if (processedFiles % 10 == 0 || processedFiles == totalFiles)
+                            var percent = 5 + (int)(90.0 * processedFiles / totalFiles);
+                            if (progressGate.ShouldReport(percent, "Creating backup"))
                             {
-                                var percent = 5 + (int)(90.0 * processedFiles / totalFiles);
                                 progress?.Report(new BackupProgress
                                 {
                                     Phase = "Creating backup",
@@ -317,12 +319,20 @@ public class DatasetBackupService : IDatasetBackupService
     public Task<BackupAnalysisResult> AnalyzeBackupAsync(
         string backupZipPath,
         CancellationToken cancellationToken = default)
+        => Task.Run(() => AnalyzeBackupCore(backupZipPath, cancellationToken), cancellationToken);
+
+    /// <summary>
+    /// Synchronous body of <see cref="AnalyzeBackupAsync"/>. Dispatched onto a pool thread via
+    /// <c>Task.Run</c> so the ZIP scan never blocks the caller's thread (e.g. the UI thread in
+    /// the restore flow).
+    /// </summary>
+    private BackupAnalysisResult AnalyzeBackupCore(string backupZipPath, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(backupZipPath);
 
         if (!File.Exists(backupZipPath))
         {
-            return Task.FromResult(BackupAnalysisResult.Failed($"Backup file not found: {backupZipPath}"));
+            return BackupAnalysisResult.Failed($"Backup file not found: {backupZipPath}");
         }
 
         try
@@ -335,7 +345,7 @@ public class DatasetBackupService : IDatasetBackupService
             long totalSize = 0;
 
             using var archive = ZipFile.OpenRead(backupZipPath);
-            
+
             foreach (var entry in archive.Entries)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -354,7 +364,7 @@ public class DatasetBackupService : IDatasetBackupService
 
                 // Categorize by extension
                 var ext = Path.GetExtension(entry.Name);
-                
+
                 if (SupportedMediaTypes.ImageExtensionSet.Contains(ext))
                 {
                     imageCount++;
@@ -369,24 +379,32 @@ public class DatasetBackupService : IDatasetBackupService
                 }
             }
 
-            return Task.FromResult(BackupAnalysisResult.Succeeded(
+            return BackupAnalysisResult.Succeeded(
                 backupZipPath,
                 backupDate,
                 datasets.Count,
                 imageCount,
                 videoCount,
                 captionCount,
-                totalSize));
+                totalSize);
         }
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to analyze backup: {BackupPath}", backupZipPath);
-            return Task.FromResult(BackupAnalysisResult.Failed($"Failed to analyze backup: {ex.Message}"));
+            return BackupAnalysisResult.Failed($"Failed to analyze backup: {ex.Message}");
         }
     }
 
     /// <inheritdoc />
-    public async Task<CurrentStorageStats> GetCurrentStorageStatsAsync(CancellationToken cancellationToken = default)
+    public Task<CurrentStorageStats> GetCurrentStorageStatsAsync(CancellationToken cancellationToken = default)
+        => Task.Run(() => GetCurrentStorageStatsCoreAsync(cancellationToken), cancellationToken);
+
+    /// <summary>
+    /// Async body of <see cref="GetCurrentStorageStatsAsync"/>. Dispatched onto a pool thread via
+    /// <c>Task.Run</c> so the filesystem scan never blocks the caller's thread (e.g. the UI thread
+    /// in the restore flow).
+    /// </summary>
+    private async Task<CurrentStorageStats> GetCurrentStorageStatsCoreAsync(CancellationToken cancellationToken)
     {
         var settings = await _settingsService.GetSettingsAsync(cancellationToken);
 
@@ -402,7 +420,7 @@ public class DatasetBackupService : IDatasetBackupService
         long totalSize = 0;
 
         var allFiles = Directory.EnumerateFiles(settings.DatasetStoragePath, "*", SearchOption.AllDirectories);
-        
+
         foreach (var file in allFiles)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -411,7 +429,7 @@ public class DatasetBackupService : IDatasetBackupService
             totalSize += fileInfo.Length;
 
             var ext = Path.GetExtension(file);
-            
+
             if (SupportedMediaTypes.ImageExtensionSet.Contains(ext))
             {
                 imageCount++;

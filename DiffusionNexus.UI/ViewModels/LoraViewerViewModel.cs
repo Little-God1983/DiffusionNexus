@@ -15,6 +15,7 @@ using DiffusionNexus.Infrastructure;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.CivitaiBrowser;
+using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.UI.ViewModels.CivitaiBrowser;
 using Microsoft.Extensions.DependencyInjection;
 using SkiaSharp;
@@ -160,9 +161,15 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     public ObservableCollection<ModelTileViewModel> AllTiles { get; } = [];
 
     /// <summary>
-    /// Filtered model tiles for display.
+    /// The filtered, sorted tile set bound to the view. The view renders it through a
+    /// virtualizing <c>ItemsRepeater</c> (<c>UniformGridLayout</c>), so only the tiles
+    /// inside the scroll viewport are realized — the full set can hold thousands of
+    /// tiles without the UI thread paying to materialize (or load thumbnails for) them
+    /// all. Each realized <see cref="ModelTileViewModel"/> loads its thumbnail on
+    /// <see cref="ModelTileViewModel.Activate"/> and releases it on
+    /// <see cref="ModelTileViewModel.Deactivate"/> as its container recycles.
     /// </summary>
-    public ObservableCollection<ModelTileViewModel> FilteredTiles { get; } = [];
+    public BatchObservableCollection<ModelTileViewModel> FilteredTiles { get; } = [];
 
     /// <summary>
     /// Distinct base model names available for filtering, built from all tiles.
@@ -177,33 +184,14 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     private IReadOnlyList<string>? _catalogBaseModels;
 
     /// <summary>
-    /// Full filtered set of tiles. <see cref="FilteredTiles"/> is a window into this
-    /// list (max <see cref="WindowSize"/> items) — the count / status bar / search
-    /// index all work against this full list, only rendering is windowed.
+    /// Upper bound on how many tiles the passive "new version available" check looks
+    /// at per filter pass. With the virtualizing grid the view no longer tracks a
+    /// scroll window, so this simply caps the opportunistic background check at the
+    /// same magnitude as the old visible window — preventing a request storm (and
+    /// Civitai rate-limiting) for libraries with thousands of LoRAs. The explicit
+    /// "Download Metadata" flow remains the way to sync the entire library.
     /// </summary>
-    private readonly List<ModelTileViewModel> _allFiltered = [];
-
-    /// <summary>First index of the current window into <see cref="_allFiltered"/>.</summary>
-    private int _windowStart;
-
-    private const int WindowSize = 200;
-    private const int SlideStep = 50;
-
-    /// <summary>True when the window can be slid forward (more items off the end).</summary>
-    public bool HasMoreForward => _windowStart + FilteredTiles.Count < _allFiltered.Count;
-
-    /// <summary>True when the window can be slid backward (more items before the start).</summary>
-    public bool HasMoreBackward => _windowStart > 0;
-
-    /// <summary>
-    /// The size of the most recent forward slide. The view reads this after
-    /// <see cref="SlideForward"/> so it can compensate the scroll offset and keep
-    /// the same tiles visible. Reset to 0 between slides.
-    /// </summary>
-    public int LastSlideForwardCount { get; private set; }
-
-    /// <summary>Same purpose as <see cref="LastSlideForwardCount"/> but for backward slides.</summary>
-    public int LastSlideBackwardCount { get; private set; }
+    private const int PassiveUpdateCheckLimit = 200;
 
     #endregion
 
@@ -280,8 +268,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     #region Commands
 
     /// <summary>
-    /// Refresh the model list.
-    /// Uses database-first approach: load cached data immediately, then discover new files.
+    /// Refresh the model list, database-first: show the cached tiles from the catalog DB
+    /// immediately (a lightweight projection query + in-memory grouping — no filesystem
+    /// walk), so the grid paints in well under a second even for thousands of LoRAs. The
+    /// slow work — scanning the source folders for new files and verifying that existing
+    /// files still exist on disk — then runs in the background via
+    /// <see cref="ReconcileLibraryInBackgroundAsync"/>, which rebuilds the grid only if it
+    /// finds a change (a new file appears, a deleted file drops out, a moved file relocates).
     /// </summary>
     [RelayCommand]
     private async Task RefreshAsync()
@@ -293,51 +286,36 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             return;
         }
 
+        var showedCachedTiles = false;
         try
         {
             IsBusy = true;
             BusyMessage = "Loading models...";
-            SyncStatus = "Starting refresh...";
+            SyncStatus = "Loading models from database...";
 
-            // Offload all heavy I/O (file discovery + DB reads + grouping) to a
-            // single background task so the UI thread stays responsive.
-            // DiscoverNewFilesAsync already marshals progress to the UI via Dispatcher.Post.
-            var (uniqueModelCount, tiles) = await Task.Run(async () =>
+            // 1. Show whatever is already cached — instantly.
+            var (uniqueModelCount, tiles) = await Task.Run(LoadCachedTilesAsync);
+
+            if (tiles.Count > 0)
             {
-                await DiscoverNewFilesAsync();
-                await BackfillCivitaiModelPageIdAsync();
-
-                Dispatcher.UIThread.Post(() => SyncStatus = "Loading models from database...");
-
-                // Use a fresh DI scope so the DbContext sees the latest committed data
-                // (DiscoverNewFilesAsync and other operations write via their own scopes).
-                using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
-                var freshSyncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
-
-                // Issue #380: one tile per (Model, LoRA-source-location). A LoRA with files
-                // in two configured locations produces two tiles; each tile keeps its
-                // version switcher and exposes only the versions present in that location.
-                var files = await freshSyncService.LoadCachedFilesAsync();
-                var distinctModels = files.Select(f => f.Model.Id).Distinct().Count();
-                var perLocationTiles = BuildPerLocationTiles(files);
-                return (distinctModels, perLocationTiles);
-            });
-
-            // Back on UI thread after await — update observable collections
-            AllTiles.Clear();
-            foreach (var tile in tiles)
-            {
-                tile.Deleted += OnTileDeleted;
-                tile.DetailRequested += OnTileDetailRequested;
-                AllTiles.Add(tile);
+                ReplaceTiles(tiles);
+                SyncStatus = $"Loaded {uniqueModelCount} models ({AllTiles.Count} tiles)";
+                showedCachedTiles = true;
             }
-            TotalModelCount = AllTiles.Sum(t => t.ModelCount);
-            RebuildAvailableBaseModels();
-            ApplyFilters();
-            SyncStatus = $"Loaded {uniqueModelCount} models ({AllTiles.Count} tiles)";
-
-            // Phase 3: Verify existing files in background (low priority)
-            _ = VerifyFilesInBackgroundAsync();
+            else
+            {
+                // Empty cache (first run / never scanned): discover inline so the grid fills
+                // in one pass instead of flashing the "No Models" empty state.
+                SyncStatus = "Discovering models...";
+                await Task.Run(async () =>
+                {
+                    await DiscoverNewFilesAsync();
+                    await BackfillCivitaiModelPageIdAsync();
+                });
+                var (freshCount, freshTiles) = await Task.Run(LoadCachedTilesAsync);
+                ReplaceTiles(freshTiles);
+                SyncStatus = $"Loaded {freshCount} models ({AllTiles.Count} tiles)";
+            }
         }
         catch (Exception ex)
         {
@@ -348,14 +326,107 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             IsBusy = false;
             BusyMessage = null;
         }
+
+        // 2. Reconcile against disk in the background (adds + deletions + moves). When the
+        //    cache was empty we already discovered inline above, so only verification remains.
+        if (showedCachedTiles)
+            _ = ReconcileLibraryInBackgroundAsync();
+        else
+            _ = VerifyFilesInBackgroundAsync();
     }
 
     /// <summary>
-    /// Discover new files and add them to the database.
+    /// Loads the installed-file rows from the catalog DB (a lightweight projection — no
+    /// thumbnail BLOBs, no filesystem access) and groups them into per-location tiles
+    /// (issue #380: one tile per (Model, LoRA-source root)). Runs on the thread pool.
+    /// </summary>
+    private async Task<(int UniqueModelCount, List<ModelTileViewModel> Tiles)> LoadCachedTilesAsync()
+    {
+        using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+        var freshSyncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
+        var files = await freshSyncService.LoadCachedFilesAsync();
+        var distinctModels = files.Select(f => f.Model.Id).Distinct().Count();
+        var tiles = BuildPerLocationTiles(files);
+        return (distinctModels, tiles);
+    }
+
+    /// <summary>
+    /// Swaps the tile set on the UI thread: unsubscribes the outgoing tiles, replaces
+    /// <see cref="AllTiles"/> with <paramref name="tiles"/>, and refreshes the counts,
+    /// base-model filter, and filtered view.
+    /// </summary>
+    private void ReplaceTiles(List<ModelTileViewModel> tiles)
+    {
+        foreach (var oldTile in AllTiles)
+        {
+            oldTile.Deleted -= OnTileDeleted;
+            oldTile.DetailRequested -= OnTileDetailRequested;
+        }
+
+        AllTiles.Clear();
+        foreach (var tile in tiles)
+        {
+            tile.Deleted += OnTileDeleted;
+            tile.DetailRequested += OnTileDetailRequested;
+            AllTiles.Add(tile);
+        }
+
+        TotalModelCount = AllTiles.Sum(t => t.ModelCount);
+        RebuildAvailableBaseModels();
+        ApplyFilters();
+    }
+
+    /// <summary>
+    /// Background reconciliation against the filesystem: discovers newly added files and
+    /// verifies existing ones (marking on-disk-deleted files invalid so they drop out of
+    /// the grid, and relocating moved files). Rebuilds the grid from the DB only when
+    /// something actually changed, so the common "nothing changed since last launch" case
+    /// leaves the visible tiles (and the scroll position) untouched.
+    /// </summary>
+    private async Task ReconcileLibraryInBackgroundAsync()
+    {
+        try
+        {
+            _logger?.Info(LogCategory.General, "LoraReconcile", "Background reconcile started (discover + verify)");
+
+            var (added, missing, moved) = await Task.Run(async () =>
+            {
+                var newCount = await DiscoverNewFilesAsync();
+                await BackfillCivitaiModelPageIdAsync();
+
+                using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+                var syncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
+                var progress = new Progress<SyncProgress>(p =>
+                    Dispatcher.UIThread.Post(() =>
+                        SyncStatus = p.Phase == "Verification complete" ? null : p.Phase));
+
+                // MissingCount = files gone from disk (now filtered out of LoadCachedFilesAsync);
+                // MovedCount = files whose path changed. Either, or a new file, changes the grid.
+                var result = await syncService.VerifyAndSyncFilesAsync(progress);
+                return (newCount, result.MissingCount, result.MovedCount);
+            });
+
+            var changed = added > 0 || missing > 0 || moved > 0;
+            _logger?.Info(LogCategory.General, "LoraReconcile",
+                $"Reconcile done: {added} new, {missing} missing (deleted from disk), {moved} moved → rebuild={changed}");
+
+            if (changed)
+                await RebuildTilesFromDatabaseAsync();
+        }
+        catch (Exception ex)
+        {
+            // Background work — a discovery/verify failure must not disrupt the visible grid.
+            _logger?.Warn(LogCategory.General, "LoraReconcile", $"Reconcile failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Discover new files and add them to the database. Returns the number of new models
+    /// discovered so callers can decide whether the grid needs rebuilding.
     /// Uses a fresh DI scope so the DbContext sees the latest committed data
     /// (avoids duplicates when files were already persisted by other operations).
     /// </summary>
-    private async Task DiscoverNewFilesAsync()
+    private async Task<int> DiscoverNewFilesAsync()
     {
         try
         {
@@ -379,6 +450,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             {
                 SyncStatus = $"Discovered {newModels.Count} new files";
             });
+
+            return newModels.Count;
         }
         catch (Exception ex)
         {
@@ -386,6 +459,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             {
                 SyncStatus = $"Discovery error: {ex.Message}";
             });
+
+            return 0;
         }
     }
 
@@ -398,21 +473,26 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     {
         try
         {
-            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
-            var syncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
-
+            // Progress<T> captures the UI SynchronizationContext here (UI thread),
+            // so the callback is already marshaled — no nested Post needed.
             var progress = new Progress<SyncProgress>(p =>
             {
-                Dispatcher.UIThread.Post(() =>
+                if (p.Phase == "Verification complete")
                 {
-                    if (p.Phase == "Verification complete")
-                    {
-                        SyncStatus = null; // Clear status when done
-                    }
-                });
+                    SyncStatus = null; // Clear status when done
+                }
             });
 
-            await syncService.VerifyAndSyncFilesAsync(progress);
+            // The verify walks the library and SHA-hashes candidate files; its
+            // "async" service continuations otherwise resume on the UI thread
+            // (10s dispatcher hog on a cold cache — see 2026-07-15 startup trace).
+            // Run the whole thing on the pool with its own scope.
+            await Task.Run(async () =>
+            {
+                using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+                var syncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
+                await syncService.VerifyAndSyncFilesAsync(progress);
+            });
         }
         catch
         {
@@ -2426,20 +2506,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         Dispatcher.UIThread.Post(() =>
         {
             AllTiles.Remove(tile);
-            // Keep the windowing backing store in sync. The tile may or may not be
-            // in the visible FilteredTiles window depending on scroll position.
-            _allFiltered.Remove(tile);
+            // Removing from the bound collection detaches the tile's container (if it
+            // was realized); the virtualizing grid reflows the rest automatically.
             FilteredTiles.Remove(tile);
-            // _windowStart may now point past the end if the user was at the bottom
-            // and the removed tile happened to be at the end of the window.
-            if (_windowStart > _allFiltered.Count)
-            {
-                _windowStart = Math.Max(0, _allFiltered.Count - WindowSize);
-            }
             TotalModelCount = AllTiles.Count;
-            FilteredModelCount = _allFiltered.Sum(t => t.ModelCount);
-            OnPropertyChanged(nameof(HasMoreForward));
-            OnPropertyChanged(nameof(HasMoreBackward));
+            FilteredModelCount = FilteredTiles.Sum(t => t.ModelCount);
             RebuildAvailableBaseModels();
         });
     }
@@ -2669,105 +2740,25 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         var filtered = SortTiles(query.ToList());
 
         // Unchanged result set AND order (e.g. the extra keystroke matched the same
-        // tiles): keep the current window and scroll position, skip the expensive
-        // rebuild. A sort change reorders the list, so SequenceEqual is false and the
-        // rebuild runs. Refresh paths always create new tile instances, so they never hit this.
-        if (filtered.SequenceEqual(_allFiltered))
+        // tiles): keep the current tiles and scroll position, skip the rebuild. A sort
+        // change reorders the list, so SequenceEqual is false and the rebuild runs.
+        // Refresh paths always create new tile instances, so they never hit this.
+        if (filtered.SequenceEqual(FilteredTiles))
         {
             return;
         }
 
-        _allFiltered.Clear();
-        _allFiltered.AddRange(filtered);
+        // Swap the whole set in one shot: BatchObservableCollection.ReplaceAll fires a
+        // single CollectionChanged.Reset, so the ItemsRepeater does ONE realization pass
+        // (of the ~visible tiles) instead of processing N per-item Add notifications — the
+        // difference between a smooth filter and a multi-tens-of-ms UI-thread stall per
+        // keystroke at thousands of tiles.
+        FilteredTiles.ReplaceAll(filtered);
 
-        // 2. Reset the window to the head and rebuild FilteredTiles.
-        _windowStart = 0;
-        RebuildFilteredTilesWindow();
-
-        // 3. Status / count reflects the FULL filtered set, not just the window.
-        FilteredModelCount = _allFiltered.Sum(t => t.ModelCount);
-        OnPropertyChanged(nameof(HasMoreForward));
-        OnPropertyChanged(nameof(HasMoreBackward));
+        // Status / count reflects the full filtered set.
+        FilteredModelCount = FilteredTiles.Sum(t => t.ModelCount);
 
         TriggerVisibleUpdateCheck();
-    }
-
-    /// <summary>
-    /// Recreates the items in <see cref="FilteredTiles"/> from the current window
-    /// position. Used after a filter change.
-    /// </summary>
-    private void RebuildFilteredTilesWindow()
-    {
-        FilteredTiles.Clear();
-        var end = Math.Min(_windowStart + WindowSize, _allFiltered.Count);
-        for (var i = _windowStart; i < end; i++)
-        {
-            FilteredTiles.Add(_allFiltered[i]);
-        }
-    }
-
-    /// <summary>
-    /// Slides the visible window forward by <see cref="SlideStep"/> items: removes
-    /// the first N from <see cref="FilteredTiles"/> and appends the next N from
-    /// <see cref="_allFiltered"/>. The removed tiles' containers detach from the
-    /// visual tree, which calls <see cref="ModelTileViewModel.Deactivate"/> and
-    /// releases their decoded thumbnail bitmaps.
-    /// </summary>
-    public void SlideForward()
-    {
-        LastSlideForwardCount = 0;
-        if (!HasMoreForward) return;
-
-        // How many items can we actually add to the end?
-        var available = _allFiltered.Count - (_windowStart + FilteredTiles.Count);
-        var step = Math.Min(SlideStep, available);
-        if (step <= 0) return;
-
-        // Add to the END first, *then* remove from the start. The reverse order
-        // briefly shrinks the ItemsControl below the user's current scroll offset
-        // and the ScrollViewer clamps it — the subsequent offset compensation
-        // fights that clamp and the user gets "stuck" partway through the window.
-        var addStart = _windowStart + FilteredTiles.Count;
-        var addEnd = Math.Min(addStart + step, _allFiltered.Count);
-        for (var i = addStart; i < addEnd; i++)
-        {
-            FilteredTiles.Add(_allFiltered[i]);
-        }
-        for (var i = 0; i < step && FilteredTiles.Count > 0; i++)
-        {
-            FilteredTiles.RemoveAt(0);
-        }
-        _windowStart += step;
-
-        LastSlideForwardCount = step;
-        OnPropertyChanged(nameof(HasMoreForward));
-        OnPropertyChanged(nameof(HasMoreBackward));
-    }
-
-    /// <summary>Mirror of <see cref="SlideForward"/> but in the opposite direction.</summary>
-    public void SlideBackward()
-    {
-        LastSlideBackwardCount = 0;
-        if (!HasMoreBackward) return;
-
-        var step = Math.Min(SlideStep, _windowStart);
-        if (step <= 0) return;
-
-        // Same anti-clamp reasoning as SlideForward: prepend first, then drop the
-        // bottom. Total item count never dips below WindowSize during the slide.
-        for (var i = step - 1; i >= 0; i--)
-        {
-            FilteredTiles.Insert(0, _allFiltered[_windowStart - step + i]);
-        }
-        _windowStart -= step;
-        for (var i = 0; i < step && FilteredTiles.Count > 0; i++)
-        {
-            FilteredTiles.RemoveAt(FilteredTiles.Count - 1);
-        }
-
-        LastSlideBackwardCount = step;
-        OnPropertyChanged(nameof(HasMoreForward));
-        OnPropertyChanged(nameof(HasMoreBackward));
     }
 
     /// <summary>
@@ -2797,9 +2788,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             return;
         }
 
-        // Snapshot the tiles so concurrent collection edits don't surface as
-        // InvalidOperationException inside the checker.
-        var snapshot = FilteredTiles.ToArray();
+        // Snapshot the tiles (Take also snapshots) so concurrent collection edits don't
+        // surface as InvalidOperationException inside the checker. Capped at
+        // PassiveUpdateCheckLimit — see the field's remarks — so a multi-thousand-LoRA
+        // library doesn't fire one Civitai request per tile on every filter pass.
+        var snapshot = FilteredTiles.Take(PassiveUpdateCheckLimit).ToArray();
 
         _ = Task.Run(async () =>
         {

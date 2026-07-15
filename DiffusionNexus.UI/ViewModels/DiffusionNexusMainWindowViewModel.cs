@@ -64,14 +64,38 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     [ObservableProperty]
     private object? _currentModuleView;
 
+    /// <summary>
+    /// False until deferred startup (database init + module registration) has
+    /// finished. The main window shows a lightweight loading overlay while false.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowDisclaimer))]
+    private bool _isStartupComplete;
+
+    /// <summary>Ready-check list shown by the startup overlay (null only in design mode).</summary>
+    [ObservableProperty]
+    private StartupOverlayViewModel? _startupOverlay;
+
     [ObservableProperty]
     private ModuleItem? _selectedModule;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowDisclaimer))]
     private bool _isDisclaimerAccepted;
 
     [ObservableProperty]
     private bool _disclaimerCheckboxChecked;
+
+    /// <summary>
+    /// Gates the disclaimer overlay so it can only appear after deferred startup
+    /// has finished. <see cref="CheckDisclaimerStatusAsync"/> reads the database
+    /// and now runs at the tail of deferred startup (Task 6), so showing the
+    /// disclaimer any earlier would cover the "Starting DiffusionNexus…" overlay
+    /// on every launch — even for users who accepted long ago — and would let the
+    /// Continue button issue a DB write concurrent with the pool-thread DB
+    /// migration on fresh installs.
+    /// </summary>
+    public bool ShowDisclaimer => IsStartupComplete && !IsDisclaimerAccepted;
 
     [ObservableProperty]
     private StatusBarViewModel? _statusBar;
@@ -224,13 +248,28 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
             _activityLogService.DownloadProgressChanged += OnDownloadProgressChanged;
             IsDownloadInProgress = _activityLogService.IsDownloadInProgress;
             ActiveDownloadName = _activityLogService.DownloadOperationName;
+        }
+    }
 
-            // Wire instance management (Start/Stop/Restart) into the Unified Console
-            var processManager = App.Services?.GetService<Services.PackageProcessManager>();
-            if (processManager is not null && App.Services is not null)
-            {
-                StatusBar.InitializeInstanceManagement(processManager, App.Services);
-            }
+    /// <summary>
+    /// Wires instance management (Start/Stop/Restart) into the Unified Console.
+    /// Kept separate from <see cref="InitializeStatusBar"/> because it triggers
+    /// DB-backed instance loading — <c>UnifiedConsoleViewModel.LoadInstancesAsync</c>
+    /// reads the core database's <c>InstallerPackages</c> table — so it must run
+    /// only after the databases have been initialized. Invoked from
+    /// <c>App.CompleteStartupAsync</c> once DB init has completed.
+    /// </summary>
+    public void InitializeInstanceManagement()
+    {
+        if (StatusBar is null)
+        {
+            return;
+        }
+
+        var processManager = App.Services?.GetService<Services.PackageProcessManager>();
+        if (processManager is not null && App.Services is not null)
+        {
+            StatusBar.InitializeInstanceManagement(processManager, App.Services);
         }
     }
 

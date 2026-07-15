@@ -53,13 +53,26 @@ class Program
     }
 
     public static AppBuilder BuildAvaloniaApp()
-        => AppBuilder.Configure<App>()
+    {
+        var builder = AppBuilder.Configure<App>()
             .UsePlatformDetect()
-            // Force software rendering to diagnose GPU issues
-            .With(new Win32PlatformOptions
-            {
-                RenderingMode = [Win32RenderingMode.Software]
-            })
             .WithInterFont()
             .LogToTrace();
+
+        // Hardware rendering by default (ANGLE, with Avalonia's built-in software
+        // fallback). DIFFUSIONNEXUS_SOFTWARE_RENDERING=1 forces the software
+        // compositor on machines with broken GPU drivers.
+        // TODO: Linux Implementation — the override below is Win32-specific.
+        if (Startup.RenderingConfig.UseSoftwareRendering(Environment.GetEnvironmentVariable))
+        {
+            Log.Information("Rendering: software compositor forced via {EnvVar}",
+                Startup.RenderingConfig.SoftwareRenderingEnvVar);
+            builder = builder.With(new Win32PlatformOptions
+            {
+                RenderingMode = [Win32RenderingMode.Software]
+            });
+        }
+
+        return builder;
+    }
 }
