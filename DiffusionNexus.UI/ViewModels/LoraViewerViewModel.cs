@@ -15,6 +15,7 @@ using DiffusionNexus.Infrastructure;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.CivitaiBrowser;
+using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.UI.ViewModels.CivitaiBrowser;
 using Microsoft.Extensions.DependencyInjection;
 using SkiaSharp;
@@ -168,7 +169,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// <see cref="ModelTileViewModel.Activate"/> and releases it on
     /// <see cref="ModelTileViewModel.Deactivate"/> as its container recycles.
     /// </summary>
-    public ObservableCollection<ModelTileViewModel> FilteredTiles { get; } = [];
+    public BatchObservableCollection<ModelTileViewModel> FilteredTiles { get; } = [];
 
     /// <summary>
     /// Distinct base model names available for filtering, built from all tiles.
@@ -2747,15 +2748,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             return;
         }
 
-        // Populate the bound collection in place (one Reset from Clear, then Adds) so the
-        // stable ObservableCollection instance keeps its bindings. The view's ItemsRepeater
-        // virtualizes, so assigning the full filtered set here never realizes off-screen
-        // tiles — no manual scroll window is needed.
-        FilteredTiles.Clear();
-        foreach (var tile in filtered)
-        {
-            FilteredTiles.Add(tile);
-        }
+        // Swap the whole set in one shot: BatchObservableCollection.ReplaceAll fires a
+        // single CollectionChanged.Reset, so the ItemsRepeater does ONE realization pass
+        // (of the ~visible tiles) instead of processing N per-item Add notifications — the
+        // difference between a smooth filter and a multi-tens-of-ms UI-thread stall per
+        // keystroke at thousands of tiles.
+        FilteredTiles.ReplaceAll(filtered);
 
         // Status / count reflects the full filtered set.
         FilteredModelCount = FilteredTiles.Sum(t => t.ModelCount);
