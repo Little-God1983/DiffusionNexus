@@ -244,8 +244,14 @@ x:Name="MainWin">
                                                                              IsVisible="{Binding IsRunning}"
                                                                              Width="16" Height="16"/>
                                                                 <TextBlock Text="✓" Foreground="#4CAF50" FontWeight="Bold"
-                                                                           IsVisible="{Binding IsDone}"
+                                                                           Opacity="0"
+                                                                           Classes.done="{Binding IsDone}"
                                                                            HorizontalAlignment="Center">
+                                                                    <TextBlock.Styles>
+                                                                        <Style Selector="TextBlock.done">
+                                                                            <Setter Property="Opacity" Value="1"/>
+                                                                        </Style>
+                                                                    </TextBlock.Styles>
                                                                     <TextBlock.Transitions>
                                                                         <Transitions>
                                                                             <DoubleTransition Property="Opacity" Duration="0:0:0.25"/>
