@@ -256,9 +256,21 @@ public sealed class CivitaiClient : ICivitaiClient, IDisposable
                 // above); when that breaks deserialization of a field this client isn't tolerant
                 // of yet, keep the offending payload so the failure is diagnosable from logs alone.
                 const int maxBodyLength = 4000;
-                var snippet = responseBody.Length > maxBodyLength
-                    ? responseBody[..maxBodyLength] + "... (truncated)"
-                    : responseBody;
+                string snippet;
+                if (responseBody.Length > maxBodyLength)
+                {
+                    // Back off one char when the cut would land between a surrogate pair —
+                    // model names/descriptions carry emoji, and slicing a pair in half leaves
+                    // a lone surrogate (an ill-formed string) in the diagnostic message.
+                    var cut = char.IsHighSurrogate(responseBody[maxBodyLength - 1])
+                        ? maxBodyLength - 1
+                        : maxBodyLength;
+                    snippet = responseBody[..cut] + "... (truncated)";
+                }
+                else
+                {
+                    snippet = responseBody;
+                }
                 throw new JsonException(
                     $"Failed to deserialize Civitai response for {endpoint} as {typeof(T).Name}: {ex.Message} Raw response: {snippet}",
                     ex);

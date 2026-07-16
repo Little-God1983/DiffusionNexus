@@ -249,6 +249,50 @@ public class CivitaiClientTests
     }
 
     [Fact]
+    public async Task GetAsync_OnJsonException_DoesNotSplitSurrogatePair_WhenTruncatingBody()
+    {
+        // The raw-body snippet is cut at 4000 chars. Civitai payloads carry user-authored
+        // names/descriptions that can contain emoji, so the cut point can land mid-surrogate
+        // pair; slicing there would leave a lone surrogate (an ill-formed string) in the message.
+        // Position an emoji so its high surrogate sits exactly at index 3999.
+        const string prefix = "{\"items\":[{\"id\":\"";   // 17 chars -> indices 0..16
+        var filler = new string('x', 3999 - prefix.Length);
+        var badJson = prefix + filler + "\U0001F600" + "\"}]}";
+        badJson[3999].Should().Match<char>(c => char.IsHighSurrogate(c), "test fixture must straddle the cut point");
+
+        var (client, _) = CreateClient(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(badJson, Encoding.UTF8, "application/json")
+        });
+
+        using (client)
+        {
+            var act = async () => await client.GetModelsAsync();
+
+            var ex = await act.Should().ThrowAsync<JsonException>();
+            HasLoneSurrogate(ex.Which.Message).Should().BeFalse();
+        }
+    }
+
+    /// <summary>Returns true if the string contains an unpaired UTF-16 surrogate.</summary>
+    private static bool HasLoneSurrogate(string value)
+    {
+        for (var i = 0; i < value.Length; i++)
+        {
+            if (char.IsHighSurrogate(value[i]))
+            {
+                if (i + 1 >= value.Length || !char.IsLowSurrogate(value[i + 1])) return true;
+                i++; // consume the pair
+            }
+            else if (char.IsLowSurrogate(value[i]))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    [Fact]
     public async Task GetModelVersionByHashAsync_NullOrWhitespace_Throws()
     {
         var (client, _) = CreateClient(_ => Json(HttpStatusCode.OK, new { }));
