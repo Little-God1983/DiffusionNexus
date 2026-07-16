@@ -62,6 +62,18 @@ x:Name="MainWin">
                                     </StackPanel>
                                 </Button>
                                 <Button Width="196" Height="48" Margin="2,2"
+                                        Command="{Binding OpenFeedbackCommand}"
+                                        HorizontalContentAlignment="Left">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Border Width="32" Height="32" Background="#3C3C3C" CornerRadius="4">
+                                            <TextBlock Text="💬" FontSize="18"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <TextBlock Text="Feedback" VerticalAlignment="Center"
+                                                   IsVisible="{Binding IsMenuOpen}"/>
+                                    </StackPanel>
+                                </Button>
+                                <Button Width="196" Height="48" Margin="2,2"
                                         Command="{Binding OpenPatreonCommand}"
                                         HorizontalContentAlignment="Left">
                                     <StackPanel Orientation="Horizontal" Spacing="8">
@@ -139,13 +151,136 @@ x:Name="MainWin">
                 <!-- Main Content Area -->
                 <SplitView.Content>
                     <Border Background="#252526">
-                        <ContentControl Content="{Binding CurrentModuleView}">
-                            <ContentControl.ContentTemplate>
-                                <DataTemplate>
-                                    <ContentPresenter Content="{Binding}"/>
-                                </DataTemplate>
-                            </ContentControl.ContentTemplate>
-                        </ContentControl>
+                        <Grid RowDefinitions="Auto,*">
+                            <!-- Server Message Banner (operator announcements; hidden when none) -->
+                            <ItemsControl Grid.Row="0"
+                                          Margin="16,12,16,0"
+                                          IsVisible="{Binding HasServerMessages}"
+                                          ItemsSource="{Binding ServerMessages}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:ServerMessageItemViewModel">
+                                        <Border Margin="0,0,0,8"
+                                                CornerRadius="8"
+                                                Padding="14,10"
+                                                Background="{Binding BackgroundBrush}"
+                                                BorderBrush="{Binding AccentBrush}"
+                                                BorderThickness="1">
+                                            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                                                <TextBlock Grid.Column="0"
+                                                           Text="{Binding Icon}"
+                                                           Foreground="{Binding AccentBrush}"
+                                                           FontSize="18"
+                                                           VerticalAlignment="Center"
+                                                           Margin="0,0,12,0"/>
+                                                <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Title}"
+                                                               IsVisible="{Binding HasTitle}"
+                                                               FontWeight="Bold"
+                                                               Foreground="White"
+                                                               FontSize="14"/>
+                                                    <TextBlock Text="{Binding Message}"
+                                                               Foreground="#DDDDDD"
+                                                               TextWrapping="Wrap"
+                                                               FontSize="13"/>
+                                                </StackPanel>
+                                                <Button Grid.Column="2"
+                                                        Content="{Binding ActionLabel}"
+                                                        IsVisible="{Binding HasAction}"
+                                                        Command="{Binding OpenActionCommand}"
+                                                        Margin="12,0,0,0"
+                                                        Padding="12,6"
+                                                        CornerRadius="6"
+                                                        Cursor="Hand"
+                                                        Foreground="White"
+                                                        Background="{Binding AccentBrush}"
+                                                        VerticalAlignment="Center"/>
+                                                <Button Grid.Column="3"
+                                                        Content="✕"
+                                                        IsVisible="{Binding IsDismissible}"
+                                                        Command="{Binding DismissCommand}"
+                                                        ToolTip.Tip="Dismiss"
+                                                        Margin="8,0,0,0"
+                                                        Padding="8,4"
+                                                        CornerRadius="6"
+                                                        Cursor="Hand"
+                                                        Background="Transparent"
+                                                        Foreground="#AAAAAA"
+                                                        BorderThickness="0"
+                                                        VerticalAlignment="Center"/>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <Panel Grid.Row="1">
+                                <ContentControl Content="{Binding CurrentModuleView}"/>
+
+                                <!-- Startup overlay: shown until deferred startup (DB init + module
+                                     registration) completes. Reuses the app's busy-overlay idiom
+                                     (dimming Border + centered indeterminate ProgressBar). -->
+                                <Border IsVisible="{Binding !IsStartupComplete}"
+                                        Background="#B0000000">
+                                    <Border Background="#F01E1E1E"
+                                            CornerRadius="14"
+                                            Padding="56,44"
+                                            MinWidth="520"
+                                            BorderBrush="#3A3A3A"
+                                            BorderThickness="1"
+                                            BoxShadow="0 18 56 0 #B0000000"
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center">
+                                        <StackPanel Spacing="16">
+                                            <TextBlock Text="Starting DiffusionNexus…"
+                                                       FontSize="28" FontWeight="SemiBold"
+                                                       HorizontalAlignment="Center"
+                                                       Margin="0,0,0,16"/>
+                                            <ItemsControl ItemsSource="{Binding StartupOverlay.Rows}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate x:DataType="vm:StartupCheckRowViewModel">
+                                                        <Grid ColumnDefinitions="32,*" Margin="0,4">
+                                                            <Panel Grid.Column="0" Width="24" Height="24">
+                                                                <TextBlock Text="•" Opacity="0.35" FontSize="20"
+                                                                           IsVisible="{Binding IsPending}"
+                                                                           HorizontalAlignment="Center"/>
+                                                                <ProgressBar IsIndeterminate="True"
+                                                                             IsVisible="{Binding IsRunning}"
+                                                                             Width="20" Height="20"/>
+                                                                <TextBlock Text="✓" Foreground="#4CAF50" FontWeight="Bold" FontSize="16"
+                                                                           Classes.done="{Binding IsDone}"
+                                                                           IsHitTestVisible="False"
+                                                                           HorizontalAlignment="Center">
+                                                                    <TextBlock.Styles>
+                                                                        <Style Selector="TextBlock">
+                                                                            <Setter Property="Opacity" Value="0"/>
+                                                                        </Style>
+                                                                        <Style Selector="TextBlock.done">
+                                                                            <Setter Property="Opacity" Value="1"/>
+                                                                        </Style>
+                                                                    </TextBlock.Styles>
+                                                                    <TextBlock.Transitions>
+                                                                        <Transitions>
+                                                                            <DoubleTransition Property="Opacity" Duration="0:0:0.25"/>
+                                                                        </Transitions>
+                                                                    </TextBlock.Transitions>
+                                                                </TextBlock>
+                                                                <TextBlock Text="✗" Foreground="#F44336" FontWeight="Bold" FontSize="16"
+                                                                           IsVisible="{Binding IsFailed}"
+                                                                           ToolTip.Tip="{Binding Error}"
+                                                                           HorizontalAlignment="Center"/>
+                                                            </Panel>
+                                                            <TextBlock Grid.Column="1" Text="{Binding DisplayName}"
+                                                                       FontSize="16"
+                                                                       VerticalAlignment="Center" Margin="10,0,0,0"/>
+                                                        </Grid>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </Border>
+                                </Border>
+                            </Panel>
+                        </Grid>
                     </Border>
                 </SplitView.Content>
             </SplitView>
@@ -157,7 +292,7 @@ x:Name="MainWin">
 
         <!-- Disclaimer Overlay - blocks interaction when not accepted -->
         <Border Background="#E0000000"
-                IsVisible="{Binding !IsDisclaimerAccepted}"
+                IsVisible="{Binding ShowDisclaimer}"
                 IsHitTestVisible="True"
                 ZIndex="1000">
             <Border Background="#2D2D30"

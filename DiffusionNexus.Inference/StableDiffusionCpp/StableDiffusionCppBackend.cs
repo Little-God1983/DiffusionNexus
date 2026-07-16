@@ -1,5 +1,7 @@
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Inference.Abstractions;
 using DiffusionNexus.Inference.Models;
 using HPPH;
@@ -19,18 +21,30 @@ namespace DiffusionNexus.Inference.StableDiffusionCpp;
 /// </summary>
 public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
 {
+    private const string NativeSource = "stable-diffusion.cpp";
+
+    private static readonly Serilog.ILogger Logger = Serilog.Log.ForContext<StableDiffusionCppBackend>();
+    private static readonly Serilog.ILogger NativeLog = Serilog.Log.ForContext("SourceContext", NativeSource);
+
     private readonly DiffusionContextHost _host = new();
     private readonly ComfyUiModelCatalog _catalog;
     private static int _eventsInitialized;
+
+    /// <summary>
+    /// Static so the (static) native <c>StableDiffusionCpp.Log</c> handler can route native engine
+    /// output to the Unified Console. Set from the ctor; the backend is a singleton in practice.
+    /// </summary>
+    private static IUnifiedLogger? _unifiedLogger;
 
     public StableDiffusionCppBackend(string modelsRoot)
         : this(new[] { modelsRoot })
     {
     }
 
-    public StableDiffusionCppBackend(IEnumerable<string> modelsRoots)
+    public StableDiffusionCppBackend(IEnumerable<string> modelsRoots, IUnifiedLogger? unifiedLogger = null)
     {
         _catalog = new ComfyUiModelCatalog(modelsRoots);
+        _unifiedLogger = unifiedLogger;
         EnsureNativeEventsInitialized();
     }
 
@@ -39,6 +53,12 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
 
     /// <summary>The catalog of models discovered under the configured ComfyUI root.</summary>
     public IModelCatalog Catalog => _catalog;
+
+    /// <summary>Keys of the models currently resident in VRAM (empty when nothing is loaded).</summary>
+    public IReadOnlyList<string> LoadedModelKeys => _host.LoadedModelKeys;
+
+    /// <summary>Unloads all resident models, freeing the VRAM they hold.</summary>
+    public Task UnloadAllAsync(CancellationToken cancellationToken = default) => _host.UnloadAllAsync(cancellationToken);
 
     /// <inheritdoc />
     public IReadOnlyList<string> MissingRequirements { get; private set; } = [];
@@ -136,6 +156,12 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
             }
             catch (Exception ex)
             {
+                // Log the full exception to Serilog + the Unified Console (the in-frame message is
+                // necessarily short). Native engine detail, if any, was already routed via OnNativeLog.
+                Logger.Error(ex, "Diffusion generation failed for model {ModelKey}", descriptor.Key);
+                _unifiedLogger?.Error(LogCategory.General, "DiffusionNexus.Core",
+                    $"Generation failed for '{descriptor.DisplayName}': {ex.GetType().Name}: {ex.Message}", ex);
+
                 // Surface the failure as a final progress message; the consumer sees the error message.
                 TryWrite(channel, new DiffusionProgress
                 {
@@ -164,7 +190,21 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
     {
         var seed = req.Seed ?? Random.Shared.NextInt64();
 
-        var genParams = SDNet.ImageGenerationParameter.TextToImage(req.Prompt)
+        // Image-to-image when an init image is supplied (e.g. anime → real), otherwise text-to-image.
+        // The init image's Strength is the denoise strength (0 = keep input, 1 = ignore input).
+        SDNet.ImageGenerationParameter genParams;
+        if (req.InitImage is { } init && !string.IsNullOrWhiteSpace(init.FilePath))
+        {
+            var initImage = HPPH.SkiaSharp.ImageHelper.LoadImage(init.FilePath);
+            genParams = SDNet.ImageGenerationParameter.ImageToImage(req.Prompt, initImage)
+                .WithStrength(init.Strength);
+        }
+        else
+        {
+            genParams = SDNet.ImageGenerationParameter.TextToImage(req.Prompt);
+        }
+
+        genParams = genParams
             .WithSize(req.Width, req.Height)
             .WithSteps(req.Steps ?? d.DefaultSteps)
             .WithCfg(req.Cfg ?? d.DefaultCfg)
@@ -172,10 +212,48 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
             .WithScheduler(MapScheduler(req.Scheduler ?? d.DefaultScheduler))
             .WithSeed(seed);
 
+        // Flow-matching timestep shift for flow models (e.g. Qwen-Image uses 3.1). Models that don't
+        // set DefaultFlowShift keep the engine default, so this is a no-op for Z-Image / FLUX.2-klein.
+        if (d.DefaultFlowShift is { } flowShift)
+            genParams = genParams.WithFlowShift(flowShift);
+
+        // Tile the VAE at generation time for models with a heavy VAE (Qwen-Image's Wan VAE allocates
+        // ~7-8 GB at 1 MP). Without this the VAE encode/decode spike can exceed VRAM on top of the
+        // resident model and spill to system RAM (the generation then crawls / appears frozen).
+        if (d.TileVae)
+            genParams = genParams.WithVaeTiling(true);
+
+        // FLUX.2 reference-image conditioning (kontext / edit). The reference image(s) are VAE-encoded
+        // and injected into the conditioning while the latent stays empty — this is the "anime → real"
+        // path. AutoResize fixes the size mismatch that otherwise crashes the native generator.
+        if (req.ReferenceImages.Count > 0)
+        {
+            genParams = genParams.WithRefImageAutoResize(req.AutoResizeReferenceImages);
+            genParams.RefImages = req.ReferenceImages
+                .Where(r => !string.IsNullOrWhiteSpace(r.FilePath))
+                .Select(r => HPPH.SkiaSharp.ImageHelper.LoadImage(r.FilePath))
+                .ToArray();
+
+            // With more than one reference, increment each reference's position index so the model
+            // treats them as distinct images (image1/image2/image3) instead of collapsing them onto the
+            // same slot. No effect for a single reference (e.g. the Anime-To-Real path).
+            if (genParams.RefImages.Length > 1)
+                genParams = genParams.WithRefIndexIncrease(true);
+        }
+
+        // LoRAs are applied per-generation (stable-diffusion.cpp loads them at runtime for this
+        // call only), so the cached base context is shared across requests with different LoRAs.
+        // The descriptor's DefaultLoras (e.g. Qwen-Image-2512's mandatory 4-step Lightning LoRA) are
+        // applied first, then any per-request LoRAs stack on top.
+        foreach (var lora in d.DefaultLoras.Concat(req.Loras))
+        {
+            if (string.IsNullOrWhiteSpace(lora.FilePath))
+                continue;
+            genParams.Loras.Add(new SDNet.Lora(lora.FilePath) { Multiplier = lora.Strength });
+        }
+
         // TODO(v2-negative-prompt): apply req.NegativePrompt via .WithNegativePrompt(...) once enabled.
-        // TODO(v2-loras):           apply req.Loras via DiffusionModelParameter.WithLora at load time.
         // TODO(v2-controlnet):      apply req.ControlNets via .WithControlNet(image, strength).
-        // TODO(v2-img2img):         switch to ImageGenerationParameter.ImageToImage(...) when req.InitImage != null.
         // TODO(v2-inpaint):         apply req.MaskImage via .WithMaskImage(...) for inpaint flows.
 
         var image = model.GenerateImage(genParams)
@@ -228,7 +306,43 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
     private static void EnsureNativeEventsInitialized()
     {
         if (Interlocked.Exchange(ref _eventsInitialized, 1) == 0)
+        {
             SDNet.StableDiffusionCpp.InitializeEvents();
+            // Route the native engine's own log (the ONLY place that explains *why* a model fails to
+            // load, e.g. unsupported architecture / missing tensor / bad quant) to Serilog + the
+            // Unified Console. Without this, failures surface only as the generic wrapper exception
+            // "Failed to initialize diffusion-model." with no detail.
+            SDNet.StableDiffusionCpp.Log += OnNativeLog;
+        }
+    }
+
+    /// <summary>
+    /// Forwards stable-diffusion.cpp's native log lines. Warn/Error go to the Unified Console so the
+    /// user can see them; the full firehose (incl. Info/Debug) always goes to the Serilog file.
+    /// </summary>
+    private static void OnNativeLog(object? sender, SDNet.StableDiffusionLogEventArgs e)
+    {
+        var text = e.Text?.TrimEnd();
+        if (string.IsNullOrEmpty(text))
+            return;
+
+        switch (e.Level)
+        {
+            case SDNet.LogLevel.Error:
+                NativeLog.Error("{NativeText}", text);
+                _unifiedLogger?.Error(LogCategory.General, NativeSource, text);
+                break;
+            case SDNet.LogLevel.Warn:
+                NativeLog.Warning("{NativeText}", text);
+                _unifiedLogger?.Warn(LogCategory.General, NativeSource, text);
+                break;
+            case SDNet.LogLevel.Info:
+                NativeLog.Information("{NativeText}", text);
+                break;
+            default:
+                NativeLog.Debug("{NativeText}", text);
+                break;
+        }
     }
 
     public void Dispose() => _host.Dispose();

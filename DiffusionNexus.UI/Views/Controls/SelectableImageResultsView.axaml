@@ -1,0 +1,58 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:DiffusionNexus.UI.Views.Controls"
+             xmlns:vmc="using:DiffusionNexus.UI.ViewModels.Controls"
+             xmlns:converters="using:DiffusionNexus.UI.Converters"
+             x:Class="DiffusionNexus.UI.Views.Controls.SelectableImageResultsView"
+             x:DataType="vmc:SelectableImageResultsViewModel">
+
+  <!-- Multi-selectable result strip (Ctrl-click toggles, Shift-click ranges; Ctrl+C copies the
+       selected images to the clipboard; tiles can be dragged out to Explorer) plus the reusable
+       "Add Selected To… / Send Selected To…" toolbar. DataContext = SelectableImageResultsViewModel. -->
+  <Grid RowDefinitions="Auto,*">
+
+    <!-- Selection action bar — only while something is selected. -->
+    <Border Grid.Row="0" Background="#222" CornerRadius="6" Padding="8,6" Margin="0,0,0,8"
+            IsVisible="{Binding HasSelection}">
+      <WrapPanel Orientation="Horizontal">
+        <Border Background="#4CAF50" CornerRadius="4" Padding="8,4" Margin="0,4,8,4" VerticalAlignment="Center">
+          <TextBlock Text="{Binding SelectionText}" FontWeight="SemiBold" Foreground="White"/>
+        </Border>
+        <Button Content="Select All" Command="{Binding SelectAllCommand}" Padding="8,4" Margin="0,4,4,4"/>
+        <Button Content="Clear" Command="{Binding ClearSelectionCommand}" Padding="8,4" Margin="0,4,12,4"/>
+        <local:ImageActionsBar DataContext="{Binding Actions}" Margin="0,4"/>
+      </WrapPanel>
+    </Border>
+
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+      <ItemsControl ItemsSource="{Binding Items}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <WrapPanel Orientation="Horizontal"/>
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="vmc:ImageStatusItemViewModel">
+            <Border Background="#333" CornerRadius="4" Padding="4" Margin="2"
+                    Width="84" Height="84" BorderThickness="2"
+                    BorderBrush="{Binding Status, Converter={x:Static converters:ImageProcessingStatusToBrushConverter.Instance}}"
+                    ToolTip.Tip="{Binding FileName}"
+                    PointerPressed="OnTilePointerPressed"
+                    Cursor="Hand">
+              <Grid>
+                <Grid RowDefinitions="*,Auto">
+                  <Image Grid.Row="0" Source="{Binding Thumbnail}" Stretch="Uniform"/>
+                  <TextBlock Grid.Row="1" Text="{Binding FileName}" FontSize="9"
+                             TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" Opacity="0.7"/>
+                </Grid>
+                <!-- Selection overlay -->
+                <Border CornerRadius="4" BorderBrush="#2196F3" BorderThickness="3" Margin="-2"
+                        IsVisible="{Binding IsSelected}" IsHitTestVisible="False" ZIndex="10"/>
+              </Grid>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </ScrollViewer>
+  </Grid>
+</UserControl>

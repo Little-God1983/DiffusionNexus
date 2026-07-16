@@ -385,6 +385,12 @@ public interface IDialogService
     /// </summary>
     /// <param name="viewModel">Pre-built fixer view model.</param>
     Task ShowImageQualityFixerAsync(DiffusionNexus.UI.ViewModels.Dialogs.ImageQualityFixerViewModel viewModel);
+
+    /// <summary>
+    /// Shows the in-app feedback dialog. The last 500 lines of the unified log are
+    /// attached when the user submits a bug report (not for feedback/feature requests).
+    /// </summary>
+    Task ShowFeedbackDialogAsync();
 }
 
 /// <summary>

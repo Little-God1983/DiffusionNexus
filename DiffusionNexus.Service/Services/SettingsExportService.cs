@@ -51,6 +51,7 @@ public sealed class SettingsExportService : ISettingsExportService
             ExportedAt = DateTimeOffset.UtcNow,
 
             EncryptedCivitaiApiKey = settings.EncryptedCivitaiApiKey,
+            EncryptedHuggingfaceApiKey = settings.EncryptedHuggingfaceApiKey,
 
             ShowNsfw = settings.ShowNsfw,
             GenerateVideoThumbnails = settings.GenerateVideoThumbnails,
@@ -64,7 +65,8 @@ public sealed class SettingsExportService : ISettingsExportService
             DeleteEmptySourceFolders = settings.DeleteEmptySourceFolders,
 
             DatasetStoragePath = settings.DatasetStoragePath,
-            AutoBackupEnabled = settings.AutoBackupEnabled,
+            BackupDatasetImagesEnabled = settings.BackupDatasetImagesEnabled,
+            BackupDatabaseEnabled = settings.BackupDatabaseEnabled,
             AutoBackupIntervalDays = settings.AutoBackupIntervalDays,
             AutoBackupIntervalHours = settings.AutoBackupIntervalHours,
             AutoBackupLocation = settings.AutoBackupLocation,
@@ -138,6 +140,7 @@ public sealed class SettingsExportService : ISettingsExportService
         {
             Id = 1,
             EncryptedCivitaiApiKey = export.EncryptedCivitaiApiKey,
+            EncryptedHuggingfaceApiKey = export.EncryptedHuggingfaceApiKey,
 
             ShowNsfw = export.ShowNsfw,
             GenerateVideoThumbnails = export.GenerateVideoThumbnails,
@@ -151,7 +154,9 @@ public sealed class SettingsExportService : ISettingsExportService
             DeleteEmptySourceFolders = export.DeleteEmptySourceFolders,
 
             DatasetStoragePath = export.DatasetStoragePath,
-            AutoBackupEnabled = export.AutoBackupEnabled,
+            // v1 files carry the flag as "autoBackupEnabled"; honor it when the v2 field is absent.
+            BackupDatasetImagesEnabled = export.BackupDatasetImagesEnabled || (export.LegacyAutoBackupEnabled ?? false),
+            BackupDatabaseEnabled = export.BackupDatabaseEnabled,
             AutoBackupIntervalDays = export.AutoBackupIntervalDays,
             AutoBackupIntervalHours = export.AutoBackupIntervalHours,
             AutoBackupLocation = export.AutoBackupLocation,

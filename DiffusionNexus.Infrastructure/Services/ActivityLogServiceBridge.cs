@@ -25,6 +25,7 @@ public sealed class ActivityLogServiceBridge : IActivityLogService
     private bool _isBackupInProgress;
     private int? _backupProgressPercent;
     private string? _backupOperationName;
+    private bool _backupIsIndeterminate;
 
     // Download progress tracking
     private readonly object _downloadLock = new();
@@ -237,6 +238,12 @@ public sealed class ActivityLogServiceBridge : IActivityLogService
     }
 
     /// <inheritdoc />
+    public bool BackupProgressIsIndeterminate
+    {
+        get { lock (_backupLock) return _backupIsIndeterminate; }
+    }
+
+    /// <inheritdoc />
     public void StartBackupProgress(string operationName)
     {
         lock (_backupLock)
@@ -244,6 +251,7 @@ public sealed class ActivityLogServiceBridge : IActivityLogService
             _isBackupInProgress = true;
             _backupProgressPercent = 0;
             _backupOperationName = operationName;
+            _backupIsIndeterminate = false;
         }
         _logger.Info(LogCategory.Backup, "Backup", $"Starting: {operationName}");
         BackupProgressChanged?.Invoke(this, EventArgs.Empty);
@@ -255,9 +263,24 @@ public sealed class ActivityLogServiceBridge : IActivityLogService
         lock (_backupLock)
         {
             _backupProgressPercent = Math.Clamp(percent, 0, 100);
+            _backupIsIndeterminate = false;
+            // Update the visible backup indicator label (not the general status, which is hidden
+            // while the backup progress bar is shown) so the user sees the live step + counts.
+            if (!string.IsNullOrEmpty(statusMessage))
+                _backupOperationName = statusMessage;
         }
-        if (!string.IsNullOrEmpty(statusMessage))
-            SetStatus(statusMessage);
+        BackupProgressChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <inheritdoc />
+    public void ReportBackupIndeterminate(string statusMessage)
+    {
+        lock (_backupLock)
+        {
+            _backupIsIndeterminate = true;
+            if (!string.IsNullOrEmpty(statusMessage))
+                _backupOperationName = statusMessage;
+        }
         BackupProgressChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -269,6 +292,7 @@ public sealed class ActivityLogServiceBridge : IActivityLogService
             _isBackupInProgress = false;
             _backupProgressPercent = null;
             _backupOperationName = null;
+            _backupIsIndeterminate = false;
         }
         if (success)
             _logger.Info(LogCategory.Backup, "Backup", message);

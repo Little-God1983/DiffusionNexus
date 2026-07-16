@@ -32,6 +32,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     private bool _isLoading;
     private bool _initialized;
     private HashSet<int> _installedVersionIds = [];
+    private HashSet<string> _installedFileHashes = new(StringComparer.OrdinalIgnoreCase);
     private CivitaiResultViewModel? _lastClickedItem;
 
     public CivitaiBrowserViewModel()
@@ -436,9 +437,9 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                         if (model.ModelVersions.Count == 0) continue;
                         if (model.Mode is not null) continue; // skip archived/taken-down
                         if (!existingIds.Add(model.Id)) continue;
-                        var vm = new CivitaiResultViewModel(model)
+                        var vm = new CivitaiResultViewModel(model, ShowNsfwContent)
                         {
-                            IsInstalled = model.ModelVersions.Any(v => _installedVersionIds.Contains(v.Id)),
+                            IsInstalled = IsModelInstalled(model),
                             EnqueueAllVersionsHandler = EnqueueAllVersionsForCard
                         };
                         vm.SelectionChanged += OnResultSelectionChanged;
@@ -466,8 +467,9 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             _nextCursor = cursor;
             OnPropertyChanged(nameof(HasMore));
 
-            // Tag-fallback: REST query= is a name-only substring match; civitai.com's web
-            // index also matches tags/descriptions. When a fresh name-search yielded thin
+            // Tag-fallback: REST query= is Meilisearch full-text these days (names, tags,
+            // and more), but an explicit tag= query can still surface models the text
+            // ranking pushed out of the fetched pages. When a fresh search yielded thin
             // results, fire a tag= query with the same text and merge unique ids in.
             if (isFirstBatch
                 && !string.IsNullOrWhiteSpace(SearchText)
@@ -475,6 +477,16 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                 && lastQuery is not null)
             {
                 await RunTagFallbackAsync(lastQuery, apiKey, existingIds, ct);
+            }
+
+            // The REST API silently ignores sort= whenever query= is present — pages come
+            // back in Meilisearch relevance order — and the tag-fallback appends its items
+            // at the end. Re-sort the collected results locally so the selected sort still
+            // holds during a text search. Without a search term the API order is already
+            // correct, so don't touch it.
+            if (!string.IsNullOrWhiteSpace(SearchText))
+            {
+                await ResortResultsAsync();
             }
 
             var addedThisBatch = Results.Count - preBatchCount;
@@ -504,6 +516,20 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         {
             IsBusy = false;
         }
+    }
+
+    /// <summary>
+    /// Re-sorts the result list on the UI thread by the currently selected sort option.
+    /// Move-based so bound cards keep their instances (selection, loaded previews).
+    /// </summary>
+    private async Task ResortResultsAsync()
+    {
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            if (Results.Count < 2) return;
+            var desired = CivitaiSearchResultSorter.Sort(Results, r => r.Model, SelectedSort);
+            CivitaiSearchResultSorter.ApplyOrder(Results, desired);
+        });
     }
 
     /// <summary>
@@ -548,9 +574,9 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                 {
                     if (model.ModelVersions.Count == 0) continue;
                     if (!existingIds.Add(model.Id)) continue;
-                    var vm = new CivitaiResultViewModel(model)
+                    var vm = new CivitaiResultViewModel(model, ShowNsfwContent)
                     {
-                        IsInstalled = model.ModelVersions.Any(v => _installedVersionIds.Contains(v.Id)),
+                        IsInstalled = IsModelInstalled(model),
                         EnqueueAllVersionsHandler = EnqueueAllVersionsForCard
                     };
                     vm.SelectionChanged += OnResultSelectionChanged;
@@ -676,6 +702,10 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     {
         foreach (var result in Results)
         {
+            // Keep each card's thumbnail in line with the toggle: hiding NSFW swaps
+            // adult previews for the model's safest image (no-op when unchanged).
+            result.ApplyNsfwPreference(ShowNsfwContent);
+
             var hide = (HideEarlyAccessModels && result.IsEarlyAccess)
                        || (HideInstalledModels && result.IsInstalled)
                        || (!ShowNsfwContent && result.IsNsfw);
@@ -820,14 +850,20 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             }
 
             var set = await uow.Models.GetInstalledCivitaiVersionIdsAsync(enabledRoots);
+            // Hash fallback: covers orphan DB rows where ModelVersion.CivitaiId is
+            // missing (legacy indexing bugs created duplicate Models without a
+            // CivitaiId — see "Cyberpunk Edgerunners" report) but the file's
+            // SHA256 still matches the Civitai API response.
+            var hashes = await uow.Models.GetInstalledFileHashesAsync(enabledRoots);
             _installedVersionIds = set;
+            _installedFileHashes = hashes;
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 foreach (var r in Results)
                 {
                     if (r.Model is null) continue;
-                    r.IsInstalled = r.Model.ModelVersions.Any(v => set.Contains(v.Id));
+                    r.IsInstalled = IsModelInstalled(r.Model);
                 }
                 ApplyClientSideFilters();
             });
@@ -836,6 +872,20 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         {
             _logger?.Debug(LogCategory.Network, "CivitaiBrowser", $"Installed-set refresh failed: {ex.Message}");
         }
+    }
+
+    private bool IsModelInstalled(CivitaiModel model)
+    {
+        foreach (var version in model.ModelVersions)
+        {
+            if (_installedVersionIds.Contains(version.Id)) return true;
+            foreach (var file in version.Files)
+            {
+                var sha = file.Hashes?.SHA256;
+                if (!string.IsNullOrEmpty(sha) && _installedFileHashes.Contains(sha)) return true;
+            }
+        }
+        return false;
     }
 
     private async Task<string?> GetApiKeyAsync()

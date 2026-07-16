@@ -84,6 +84,13 @@ public partial class GenerationGalleryView : UserControl
                 if (window is not null)
                 {
                     vm.DialogService = new DialogService(window);
+                    // Give the reusable Add/Send toolbars the same window-bound dialog service so their
+                    // destinations (dataset/training-run pickers, "select 2 images" notice, …) can show
+                    // dialogs.
+                    if (vm.AddActions is not null)
+                        vm.AddActions.DialogService = vm.DialogService;
+                    if (vm.SendActions is not null)
+                        vm.SendActions.DialogService = vm.DialogService;
                 }
             }
 

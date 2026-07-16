@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Linq;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -10,6 +11,9 @@ using DiffusionNexus.UI.Services.Diffusion;
 using Serilog;
 
 namespace DiffusionNexus.UI.ViewModels.DiffusionCanvas;
+
+/// <summary>A selectable local model in the canvas toolbar (e.g. "Local (FLUX.2-klein)").</summary>
+public sealed record CanvasModelOption(string Key, string DisplayName);
 
 /// <summary>
 /// ViewModel for the Diffusion Canvas module. Owns the collection of generation frames
@@ -70,12 +74,13 @@ public partial class DiffusionCanvasViewModel : ObservableObject
     // TODO(v2-loras): observable list bound to the LoRA picker (each item carries path + strength).
     public ObservableCollection<object> Loras { get; } = [];
 
-    // TODO(v2-backend-dropdown): values "Local (Z-Image-Turbo)" / "ComfyUI (coming soon)".
-    [ObservableProperty]
-    private string _selectedBackend = "Local (Z-Image-Turbo)";
+    /// <summary>Local models discovered under the configured model roots (Diffusion Nexus core).</summary>
+    public ObservableCollection<CanvasModelOption> AvailableModels { get; } = [];
 
-    public IReadOnlyList<string> AvailableBackends { get; } =
-        ["Local (Z-Image-Turbo)", "ComfyUI (coming soon)"];
+    /// <summary>The model the Generate command will load and run.</summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(GenerateCommand))]
+    private CanvasModelOption? _selectedModel;
 
     #endregion
 
@@ -135,10 +140,106 @@ public partial class DiffusionCanvasViewModel : ObservableObject
         });
     }
 
-    public DiffusionCanvasViewModel(LocalDiffusionBackendProvider backendProvider)
+    /// <summary>GPU/RAM monitor widget shown in the canvas toolbar (null at design time).</summary>
+    public ResourceMonitorViewModel? ResourceMonitor { get; }
+
+    public DiffusionCanvasViewModel(LocalDiffusionBackendProvider backendProvider, ResourceMonitorViewModel? resourceMonitor = null)
     {
         _backendProvider = backendProvider ?? throw new ArgumentNullException(nameof(backendProvider));
+        ResourceMonitor = resourceMonitor;
         DeleteFrameCommand = new RelayCommand<GenerationFrameViewModel?>(DeleteFrame);
+
+        // Populate the model dropdown in the background. Uses a lightweight catalog built directly
+        // from the resolved model roots, so it does NOT load the native CUDA library at startup —
+        // that happens only on the first Generate.
+        _ = LoadModelsAsync();
+    }
+
+    /// <summary>
+    /// Unloads the resident diffusion model, freeing its VRAM. The next Generate reloads on demand.
+    /// (Switching models already auto-unloads the previous one; this is a manual "free VRAM" action.)
+    /// </summary>
+    [RelayCommand]
+    private async Task UnloadModelAsync()
+    {
+        if (_backendProvider is null)
+            return;
+
+        try
+        {
+            StatusText = "Unloading model…";
+            await _backendProvider.UnloadAllAsync().ConfigureAwait(true);
+            StatusText = "Model unloaded — VRAM freed.";
+            ResourceMonitor?.RefreshCommand.Execute(null);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "Failed to unload diffusion model.");
+            StatusText = $"Unload failed: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Discovers the local models available under the Diffusion Nexus core model roots and fills
+    /// <see cref="AvailableModels"/>. Prefers FLUX.2-klein as the default selection when present.
+    /// </summary>
+    public async Task LoadModelsAsync()
+    {
+        if (_backendProvider is null)
+            return;
+
+        try
+        {
+            var roots = await _backendProvider.GetComfyUiModelsRootsAsync().ConfigureAwait(false);
+            if (roots.Count == 0)
+            {
+                PostToUi(() =>
+                {
+                    AvailableModels.Clear();
+                    SelectedModel = null;
+                    BackendUnavailableMessage =
+                        "No model roots found. The local backend reuses a ComfyUI-layout models folder " +
+                        "(register a ComfyUI installation, or point its extra_model_paths.yaml at your models).";
+                });
+                return;
+            }
+
+            // ComfyUiModelCatalog only scans disk — no native init needed just to list models.
+            var models = new ComfyUiModelCatalog(roots).ListAvailable();
+
+            PostToUi(() =>
+            {
+                AvailableModels.Clear();
+                foreach (var descriptor in models)
+                    AvailableModels.Add(new CanvasModelOption(descriptor.Key, $"Local ({descriptor.DisplayName})"));
+
+                SelectedModel = AvailableModels.FirstOrDefault(m => m.Key == ModelKeys.Flux2Klein)
+                    ?? AvailableModels.FirstOrDefault();
+
+                if (AvailableModels.Count == 0)
+                {
+                    BackendUnavailableMessage =
+                        "No runnable models were found under the model roots. Install a pipeline's models from " +
+                        "Installer Manager → Diffusion Nexus Core → Workloads.";
+                }
+                else
+                {
+                    BackendUnavailableMessage = null;
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "Failed to load canvas model list.");
+        }
+    }
+
+    private static void PostToUi(Action action)
+    {
+        if (Dispatcher.UIThread.CheckAccess())
+            action();
+        else
+            Dispatcher.UIThread.Post(action);
     }
 
     /// <summary>Right-click → Delete frame. Wired in v1 (the only enabled context-menu entry).</summary>
@@ -186,16 +287,22 @@ public partial class DiffusionCanvasViewModel : ObservableObject
                 return;
             }
 
-            var descriptor = backend.Catalog.TryGet(ModelKeys.ZImageTurbo);
+            var modelKey = SelectedModel?.Key;
+            if (string.IsNullOrEmpty(modelKey))
+            {
+                StatusText = "Select a model before generating.";
+                return;
+            }
+
+            var descriptor = backend.Catalog.TryGet(modelKey);
             if (descriptor is null)
             {
                 var roots = _backendProvider.ResolvedModelsRoots;
                 var rootsText = roots.Count == 0 ? "(unknown)" : string.Join(" | ", roots);
                 var searched = (backend.Catalog as ComfyUiModelCatalog)?.SearchedLocationCount ?? 0;
                 BackendUnavailableMessage =
-                    "Z-Image-Turbo files were not found. Required filenames: " +
-                    "z_image_turbo_bf16.safetensors, qwen_3_4b.safetensors, ae.safetensors. " +
-                    $"Searched {searched} location(s) recursively across {roots.Count} ComfyUI installation(s): {rootsText}";
+                    $"'{SelectedModel?.DisplayName}' files were not found under the configured model roots. " +
+                    $"Searched {searched} location(s) recursively across {roots.Count} root(s): {rootsText}";
                 StatusText = "Model unavailable";
                 return;
             }
@@ -229,7 +336,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject
         }
     }
 
-    private bool CanGenerate() => !IsGenerating && _backendProvider is not null;
+    private bool CanGenerate() => !IsGenerating && _backendProvider is not null && SelectedModel is not null;
 
     /// <summary>
     /// Drives the backend stream → frame UI updates. Marshals back to the UI thread because
@@ -246,7 +353,10 @@ public partial class DiffusionCanvasViewModel : ObservableObject
             Prompt = frame.Prompt,
             Width = frame.Width,
             Height = frame.Height,
-            // v1 leaves Steps/Cfg/Sampler/Scheduler null so backend uses model defaults (Z-Image-Turbo: 9 / 1.0 / euler / simple).
+            // v1 leaves Steps/Cfg/Sampler/Scheduler null so the backend uses the selected model's defaults
+            // (Z-Image-Turbo: 9 / 1.0 / euler / simple; FLUX.2-klein: 20 / 1.0 / euler / simple + Flux2Flow;
+            // Qwen-Image-2512: 4 / 1.0 / euler / simple + Flow, with its mandatory 4-step Lightning LoRA
+            // applied by the backend from the descriptor's DefaultLoras).
             // TODO(v2-advanced): pass through Steps / Cfg / SelectedSampler when advanced UI is enabled.
             // TODO(v2-seed):     pass UseRandomSeed ? null : Seed.
             // TODO(v2-negative-prompt): pass NegativePromptText.

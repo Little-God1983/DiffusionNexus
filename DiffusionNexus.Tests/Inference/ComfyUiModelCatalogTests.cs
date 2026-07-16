@@ -92,6 +92,191 @@ public class ComfyUiModelCatalogTests : IDisposable
         d.DefaultHeight.Should().Be(1024);
     }
 
+    [Theory]
+    [InlineData("flux-2-klein-9b-Q4_K_M.gguf")]
+    [InlineData("flux-2-klein-9b-Q5_K_S.gguf")]
+    [InlineData("flux-2-klein-9b-Q6_K.gguf")]
+    [InlineData("flux-2-klein-9b-Q8_0.gguf")]
+    [InlineData("flux-2-klein-9b-BF16.gguf")]
+    public void ListAvailable_AnyFlux2KleinGgufVariant_ReturnsDescriptor(string ggufFileName)
+    {
+        var unet = CreateFile(Path.Combine("diffusion_models", ggufFileName));
+        var llm = CreateFile(Path.Combine("text_encoders", "Qwen3-8B-Q4_K_M.gguf"));
+        var vae = CreateFile(Path.Combine("vae", "flux2-vae.safetensors"));
+
+        var sut = new ComfyUiModelCatalog(_root);
+
+        var d = sut.TryGet(ModelKeys.Flux2Klein);
+        d.Should().NotBeNull();
+        d!.Kind.Should().Be(ModelKind.Flux2Klein);
+        d.DiffusionModelPath.Should().Be(unet);
+        d.VaePath.Should().Be(vae);
+        d.TextEncoders[TextEncoderSlot.Llm].Should().Be(llm);
+        d.DimensionAlignment.Should().Be(16);
+    }
+
+    [Fact]
+    public void ListAvailable_Flux2Klein_MissingEncoder_NotIncluded()
+    {
+        CreateFile(Path.Combine("diffusion_models", "flux-2-klein-9b-Q4_K_M.gguf"));
+        CreateFile(Path.Combine("vae", "flux2-vae.safetensors"));
+        // missing qwen_3_8b_fp8mixed.safetensors
+
+        var sut = new ComfyUiModelCatalog(_root);
+
+        sut.TryGet(ModelKeys.Flux2Klein).Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("qwen-image-2512-Q5_1.gguf")]
+    [InlineData("qwen-image-2512-Q4_K_S.gguf")]
+    [InlineData("qwen-image-2512-Q8_0.gguf")]
+    public void ListAvailable_AllQwenImage2512FilesPresent_ReturnsDescriptor(string ggufFileName)
+    {
+        var unet = CreateFile(Path.Combine("diffusion_models", ggufFileName));
+        var llm = CreateFile(Path.Combine("text_encoders", "Qwen2.5-VL-7B-Instruct-Q8_0.gguf"));
+        var vae = CreateFile(Path.Combine("vae", "qwen_image_vae.safetensors"));
+        var lora = CreateFile(Path.Combine("loras", "Qwen-Image-Lightning-4steps-V1.0.safetensors"));
+
+        var sut = new ComfyUiModelCatalog(_root);
+
+        var d = sut.TryGet(ModelKeys.QwenImage2512);
+        d.Should().NotBeNull();
+        d!.Kind.Should().Be(ModelKind.QwenImage2512);
+        d.DiffusionModelPath.Should().Be(unet);
+        d.VaePath.Should().Be(vae);
+        d.TextEncoders[TextEncoderSlot.Llm].Should().Be(llm);
+        d.DefaultSteps.Should().Be(4);
+        d.DefaultCfg.Should().Be(1.0f);
+        d.DefaultFlowShift.Should().Be(3.1f);
+        d.DimensionAlignment.Should().Be(16);
+        d.DefaultLoras.Should().ContainSingle();
+        d.DefaultLoras[0].FilePath.Should().Be(lora);
+        d.DefaultLoras[0].Strength.Should().Be(1.0f);
+    }
+
+    [Fact]
+    public void ListAvailable_QwenImage2512_MissingLightningLora_NotIncluded()
+    {
+        // Everything except the mandatory 4-step Lightning LoRA — the model must NOT be offered.
+        CreateFile(Path.Combine("diffusion_models", "qwen-image-2512-Q8_0.gguf"));
+        CreateFile(Path.Combine("text_encoders", "Qwen2.5-VL-7B-Instruct-Q8_0.gguf"));
+        CreateFile(Path.Combine("vae", "qwen_image_vae.safetensors"));
+
+        var sut = new ComfyUiModelCatalog(_root);
+
+        sut.TryGet(ModelKeys.QwenImage2512).Should().BeNull();
+    }
+
+    [Fact]
+    public void ListAvailable_QwenImage2512_OnlyFp8Encoder_NotIncluded()
+    {
+        // The fp8-scaled safetensors encoder renders a black image in stable-diffusion.cpp, so the
+        // catalog requires a GGUF encoder. With only the fp8 file present, the model is not offered.
+        CreateFile(Path.Combine("diffusion_models", "qwen-image-2512-Q8_0.gguf"));
+        CreateFile(Path.Combine("text_encoders", "qwen_2.5_vl_7b_fp8_scaled.safetensors"));
+        CreateFile(Path.Combine("vae", "qwen_image_vae.safetensors"));
+        CreateFile(Path.Combine("loras", "Qwen-Image-Lightning-4steps-V1.0.safetensors"));
+
+        var sut = new ComfyUiModelCatalog(_root);
+
+        sut.TryGet(ModelKeys.QwenImage2512).Should().BeNull();
+    }
+
+    [Fact]
+    public void ListAvailable_QwenImage2512_Only8StepLightningLora_NotIncluded()
+    {
+        // The 8-step Lightning variant must not satisfy the 4-step requirement.
+        CreateFile(Path.Combine("diffusion_models", "qwen-image-2512-Q8_0.gguf"));
+        CreateFile(Path.Combine("text_encoders", "Qwen2.5-VL-7B-Instruct-Q8_0.gguf"));
+        CreateFile(Path.Combine("vae", "qwen_image_vae.safetensors"));
+        CreateFile(Path.Combine("loras", "Qwen-Image-Lightning-8steps-V1.0.safetensors"));
+
+        var sut = new ComfyUiModelCatalog(_root);
+
+        sut.TryGet(ModelKeys.QwenImage2512).Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("qwen-image-edit-2511-Q5_1.gguf")]
+    [InlineData("qwen-image-edit-2511-Q8_0.gguf")]
+    public void ListAvailable_QwenImageEdit2511_AllFilesPresent_ReturnsDescriptor(string ggufFileName)
+    {
+        var unet = CreateFile(Path.Combine("diffusion_models", ggufFileName));
+        var llm = CreateFile(Path.Combine("text_encoders", "Qwen2.5-VL-7B-Instruct-Q8_0.gguf"));
+        var mmproj = CreateFile(Path.Combine("text_encoders", "mmproj-F16.gguf"));
+        var vae = CreateFile(Path.Combine("vae", "qwen_image_vae.safetensors"));
+
+        var sut = new ComfyUiModelCatalog(_root);
+
+        var d = sut.TryGet(ModelKeys.QwenImageEdit2511);
+        d.Should().NotBeNull();
+        d!.Kind.Should().Be(ModelKind.QwenImageEdit2511);
+        d.DiffusionModelPath.Should().Be(unet);
+        d.VaePath.Should().Be(vae);
+        d.TextEncoders[TextEncoderSlot.Llm].Should().Be(llm);
+        d.TextEncoders[TextEncoderSlot.LlmVision].Should().Be(mmproj);
+        d.DefaultSteps.Should().Be(4);
+        d.DefaultFlowShift.Should().Be(3.0f);
+        d.DimensionAlignment.Should().Be(16);
+    }
+
+    [Fact]
+    public void ListAvailable_QwenImageEdit2511_MmprojOptional_StillDiscoveredWithoutVision()
+    {
+        // The vision projector (mmproj) is optional — the model is still offered without it, just with
+        // no LlmVision slot.
+        CreateFile(Path.Combine("diffusion_models", "qwen-image-edit-2511-Q8_0.gguf"));
+        CreateFile(Path.Combine("text_encoders", "Qwen2.5-VL-7B-Instruct-Q8_0.gguf"));
+        CreateFile(Path.Combine("vae", "qwen_image_vae.safetensors"));
+
+        var sut = new ComfyUiModelCatalog(_root);
+
+        var d = sut.TryGet(ModelKeys.QwenImageEdit2511);
+        d.Should().NotBeNull();
+        d!.TextEncoders.ContainsKey(TextEncoderSlot.LlmVision).Should().BeFalse();
+    }
+
+    [Fact]
+    public void ListAvailable_QwenImageEdit2511_MissingEncoder_NotIncluded()
+    {
+        CreateFile(Path.Combine("diffusion_models", "qwen-image-edit-2511-Q8_0.gguf"));
+        CreateFile(Path.Combine("vae", "qwen_image_vae.safetensors"));
+        // missing the Qwen2.5-VL GGUF encoder
+
+        var sut = new ComfyUiModelCatalog(_root);
+
+        sut.TryGet(ModelKeys.QwenImageEdit2511).Should().BeNull();
+    }
+
+    [Fact]
+    public void ListAvailable_QwenImageEdit2511_OnlyBlackUnsafeQuant_NotOffered()
+    {
+        // Q2_K (and other k-quants) render fully black for Qwen-Image in sd.cpp (#1385). A black-only
+        // DiT must NOT be offered — "unavailable" is better than a silently-black render.
+        CreateFile(Path.Combine("diffusion_models", "qwen-image-edit-2511-Q2_K.gguf"));
+        CreateFile(Path.Combine("text_encoders", "Qwen2.5-VL-7B-Instruct-Q8_0.gguf"));
+        CreateFile(Path.Combine("vae", "qwen_image_vae.safetensors"));
+
+        var sut = new ComfyUiModelCatalog(_root);
+
+        sut.TryGet(ModelKeys.QwenImageEdit2511).Should().BeNull();
+    }
+
+    [Fact]
+    public void ListAvailable_QwenImageEdit2511_PrefersSafeQuantOverBlackOne()
+    {
+        // With both a black-unsafe (Q2_K) and a safe (Q5_1) DiT present, the safe one is selected.
+        CreateFile(Path.Combine("diffusion_models", "qwen-image-edit-2511-Q2_K.gguf"));
+        var safe = CreateFile(Path.Combine("diffusion_models", "qwen-image-edit-2511-Q5_1.gguf"));
+        CreateFile(Path.Combine("text_encoders", "Qwen2.5-VL-7B-Instruct-Q8_0.gguf"));
+        CreateFile(Path.Combine("vae", "qwen_image_vae.safetensors"));
+
+        var sut = new ComfyUiModelCatalog(_root);
+
+        sut.TryGet(ModelKeys.QwenImageEdit2511)!.DiffusionModelPath.Should().Be(safe);
+    }
+
     [Fact]
     public void ListAvailable_IsCachedAcrossCalls()
     {

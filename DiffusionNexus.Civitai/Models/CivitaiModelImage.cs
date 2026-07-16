@@ -19,17 +19,27 @@ public sealed record CivitaiModelImage
     [JsonPropertyName("nsfw")]
     public bool Nsfw { get; init; }
 
-    /// <summary>The NSFW level of the image.</summary>
+    /// <summary>
+    /// Browsing-level bitmask of this image: 1=PG, 2=PG13, 4=R, 8=X, 16=XXX.
+    /// The API used to send the legacy string levels (None/Soft/Mature/X) but has
+    /// returned this numeric scheme for a long time — the old
+    /// <c>CivitaiNsfwLevel</c> enum typing silently swallowed every value.
+    /// Null when the API omitted the field.
+    /// </summary>
     [JsonPropertyName("nsfwLevel")]
-    public CivitaiNsfwLevel? NsfwLevel { get; init; }
+    public int? NsfwLevel { get; init; }
 
-    /// <summary>Image width in pixels.</summary>
+    /// <summary>
+    /// Image width in pixels. Nullable because Civitai sends <c>null</c> for some
+    /// preview media (e.g. videos whose dimensions haven't been probed yet) rather
+    /// than omitting the field or defaulting to 0.
+    /// </summary>
     [JsonPropertyName("width")]
-    public int Width { get; init; }
+    public int? Width { get; init; }
 
-    /// <summary>Image height in pixels.</summary>
+    /// <summary>Image height in pixels. See <see cref="Width"/> for why this is nullable.</summary>
     [JsonPropertyName("height")]
-    public int Height { get; init; }
+    public int? Height { get; init; }
 
     /// <summary>BlurHash of the image for placeholders.</summary>
     [JsonPropertyName("hash")]

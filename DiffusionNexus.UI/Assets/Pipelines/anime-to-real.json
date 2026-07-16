@@ -1,0 +1,52 @@
+{
+  "id": "anime-to-real",
+  "title": "Anime-To-Real",
+  "description": "Convert anime-style images into photorealistic renders using FLUX.2-klein, rendered locally by the DiffusionNexus core.",
+  "icon": "Icons/anime-to-real.jpg",
+  "assets": [
+    {
+      "name": "FLUX.2-klein-9B GGUF",
+      "kind": "DiffusionModel",
+      "targetSubfolder": "diffusion_models",
+      "huggingFaceLinks": [
+        { "vramGb": 8,  "url": "https://huggingface.co/unsloth/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-Q4_K_M.gguf?download=true" },
+        { "vramGb": 12, "url": "https://huggingface.co/unsloth/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-Q5_K_S.gguf?download=true" },
+        { "vramGb": 16, "url": "https://huggingface.co/unsloth/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-Q6_K.gguf?download=true" },
+        { "vramGb": 24, "url": "https://huggingface.co/unsloth/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-Q8_0.gguf?download=true" },
+        { "vramGb": 32, "url": "https://huggingface.co/unsloth/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-BF16.gguf?download=true" }
+      ]
+    },
+    {
+      "name": "Qwen3-8B text encoder (GGUF)",
+      "kind": "TextEncoder",
+      "targetSubfolder": "text_encoders",
+      "expectedFileName": "Qwen3-8B-Q4_K_M.gguf",
+      "huggingFaceLinks": [
+        { "url": "https://huggingface.co/unsloth/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf?download=true" }
+      ]
+    },
+    {
+      "name": "FLUX.2 VAE",
+      "kind": "Vae",
+      "targetSubfolder": "vae",
+      "expectedFileName": "flux2-vae.safetensors",
+      "huggingFaceLinks": [
+        { "url": "https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/vae/flux2-vae.safetensors?download=true" }
+      ]
+    },
+    {
+      "name": "FLUX.2-klein Anything-to-Real Characters (LoRA)",
+      "kind": "Lora",
+      "targetSubfolder": "loras",
+      "expectedFileName": "anything-to-real",
+      "civitaiModelId": 2343188
+    },
+    {
+      "name": "Anime2Real (LoRA)",
+      "kind": "Lora",
+      "targetSubfolder": "loras",
+      "expectedFileName": "anime2real",
+      "civitaiModelId": 1934100
+    }
+  ]
+}

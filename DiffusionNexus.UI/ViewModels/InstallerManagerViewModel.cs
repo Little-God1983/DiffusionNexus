@@ -11,6 +11,7 @@ using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.ConfigurationChecker;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using Microsoft.Extensions.DependencyInjection;
 
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -620,10 +621,20 @@ public partial class InstallerManagerViewModel : ViewModelBase
                     optionsDialog.SelectedDestination);
             };
 
-            var vm = new CaptioningModelsDialogViewModel(manager, service, _downloadCoordinator, optionsPicker);
-            var dialog = new Views.Dialogs.CaptioningModelsDialog
+            var captioningVm = new CaptioningModelsDialogViewModel(manager, service, _downloadCoordinator, optionsPicker);
+
+            // Host both the guided pipelines (e.g. Anime-To-Real) and the captioning models under
+            // the static Diffusion Nexus Core instance, in a tabbed dialog. The pipeline tab is
+            // backed by the app-side pipeline asset installer (HF token + Civitai modelId aware).
+            var coreVm = new CoreWorkloadsViewModel(
+                captioningVm,
+                App.Services?.GetService<Services.Pipelines.IPipelineManifestProvider>(),
+                App.Services?.GetService<Services.Pipelines.IPipelineAssetInstaller>());
+            await coreVm.LoadCommand.ExecuteAsync(null);
+
+            var dialog = new Views.Dialogs.CoreWorkloadsDialog
             {
-                DataContext = vm
+                DataContext = coreVm
             };
 
             if (parentWindow is not null)

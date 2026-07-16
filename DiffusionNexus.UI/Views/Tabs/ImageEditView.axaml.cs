@@ -216,6 +216,9 @@ public partial class ImageEditView : UserControl
         
         // Wire the shared EditorServices into the control's core
         _imageEditorCanvas.SetEditorServices(imageEditor.Services);
+
+        // Route editor-core diagnostics (image/TIFF load + save) to the unified log console.
+        _imageEditorCanvas.EditorCore.Logger = imageEditor.Logger;
         
         FileLogger.Log($"[Instance #{_instanceId}] Wiring events for CurrentImagePath={imageEditor.CurrentImagePath ?? "(null)"}");
 
@@ -764,6 +767,24 @@ public partial class ImageEditView : UserControl
             imageEditor.TextTools.HasPlacedText = _imageEditorCanvas!.HasPlacedText;
         _imageEditorCanvas!.PlacedTextStateChanged += onPlacedTextState;
         _eventCleanup.Add(() => _imageEditorCanvas!.PlacedTextStateChanged -= onPlacedTextState);
+
+        // Corner-drag resize scales the font; sync the slider so it follows and later
+        // edits keep the resized size.
+        EventHandler<float> onTextFontSizeChanged = (_, newSize) =>
+        {
+            imageEditor.TextTools.FontSize = newSize;
+            // If the value was already at the slider's min/max, the setter does not raise a
+            // change event, so force the placed text back to the clamped slider value to keep
+            // them consistent (otherwise the next edit would resize the text).
+            var textTool = _imageEditorCanvas!.EditorCore.TextTool;
+            if (Math.Abs(textTool.FontSize - imageEditor.TextTools.FontSize) > 0.01f)
+            {
+                textTool.FontSize = imageEditor.TextTools.FontSize;
+                textTool.UpdatePlacedTextProperties();
+            }
+        };
+        _imageEditorCanvas!.TextFontSizeChanged += onTextFontSizeChanged;
+        _eventCleanup.Add(() => _imageEditorCanvas!.TextFontSizeChanged -= onTextFontSizeChanged);
     }
 
     private void WireInpaintingEvents(ImageEditorViewModel imageEditor)
@@ -1241,19 +1262,24 @@ public partial class ImageEditView : UserControl
         var files = e.DataTransfer.TryGetFiles();
         if (files is null) return;
 
-        // Find the first valid image file
-        foreach (var item in files)
+        // Collect every dropped image and hand them to the ViewModel as a single
+        // "Drag and Drop Selection" so they all appear in the left thumbnail list —
+        // mirroring how a Gallery selection is sent to the editor. Works for one
+        // image or many.
+        var imagePaths = files
+            .OfType<IStorageFile>()
+            .Select(f => f.Path.LocalPath)
+            .Where(IsImageFile)
+            .ToList();
+
+        if (imagePaths.Count > 0 && DataContext is ImageEditTabViewModel vm)
         {
-            if (item is IStorageFile file)
-            {
-                var filePath = file.Path.LocalPath;
-                if (IsImageFile(filePath))
-                {
-                    LoadDroppedImage(filePath);
-                    return;
-                }
-            }
+            vm.LoadDirectDropSelection(imagePaths);
         }
+
+        // OnImageDrop is attached to both the drop zone Border and its parent editor Grid, and
+        // DropEvent bubbles. Mark handled so one drop dispatches the selection exactly once.
+        e.Handled = true;
     }
 
     private bool AnalyzeImageFilesInDrag(DragEventArgs e)
@@ -1282,60 +1308,6 @@ public partial class ImageEditView : UserControl
         return ImageExtensions.Contains(extension);
     }
 
-    private static bool IsTiffFile(string filePath)
-    {
-        var extension = Path.GetExtension(filePath).ToLowerInvariant();
-        return extension is ".tiff" or ".tif";
-    }
-
-    private void LoadDroppedImage(string filePath)
-    {
-        if (_imageEditorCanvas is null || DataContext is not ImageEditTabViewModel vm)
-            return;
-
-        try
-        {
-            FileLogger.Log($"Loading dropped image: {filePath}");
-            
-            bool loaded;
-            
-            // TIFF files are loaded as layers to preserve multi-page structure
-            if (IsTiffFile(filePath))
-            {
-                FileLogger.Log($"Detected TIFF file, loading as layers: {filePath}");
-                loaded = _imageEditorCanvas.LoadLayeredTiff(filePath);
-            }
-            else
-            {
-                loaded = _imageEditorCanvas.LoadImage(filePath);
-            }
-
-            if (loaded)
-            {
-                vm.ImageEditor.CurrentImagePath = filePath;
-                
-                // Sync layer state with ViewModel
-                vm.ImageEditor.LayerPanel.IsLayerMode = _imageEditorCanvas.EditorCore.IsLayerMode;
-                vm.ImageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
-                
-                vm.ImageEditor.StatusMessage = IsTiffFile(filePath)
-                    ? $"Loaded: {Path.GetFileName(filePath)} ({_imageEditorCanvas.EditorCore.Layers?.Count ?? 1} layers)"
-                    : $"Loaded: {Path.GetFileName(filePath)}";
-                FileLogger.Log($"Successfully loaded dropped image: {filePath}");
-            }
-            else
-            {
-                vm.ImageEditor.StatusMessage = "Failed to load image.";
-                FileLogger.LogError($"Failed to load dropped image: {filePath}");
-            }
-        }
-        catch (Exception ex)
-        {
-            vm.ImageEditor.StatusMessage = $"Error loading image: {ex.Message}";
-            FileLogger.LogError($"Exception loading dropped image: {filePath}", ex);
-        }
-    }
-
     private async void OnOpenImageButtonClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (DataContext is not ImageEditTabViewModel vm)
@@ -1346,8 +1318,8 @@ public partial class ImageEditView : UserControl
 
         var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
-            Title = "Open Image",
-            AllowMultiple = false,
+            Title = "Open Image(s)",
+            AllowMultiple = true,
             FileTypeFilter =
             [
                 new FilePickerFileType("Image Files")
@@ -1361,10 +1333,16 @@ public partial class ImageEditView : UserControl
             ]
         });
 
-        if (files.Count > 0)
+        // Route opened files through the same "Drag and Drop Selection" flow as drag-drop
+        // so every chosen image shows up in the left thumbnail list.
+        var imagePaths = files
+            .Select(f => f.Path.LocalPath)
+            .Where(IsImageFile)
+            .ToList();
+
+        if (imagePaths.Count > 0)
         {
-            var filePath = files[0].Path.LocalPath;
-            LoadDroppedImage(filePath);
+            vm.LoadDirectDropSelection(imagePaths);
         }
     }
 

@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace DiffusionNexus.Domain.Models;
 
 /// <summary>
@@ -31,6 +33,11 @@ public sealed record SettingsExportData
     /// </summary>
     public string? EncryptedCivitaiApiKey { get; init; }
 
+    /// <summary>
+    /// Encrypted HuggingFace access token. Machine-specific; may need re-entry after import.
+    /// </summary>
+    public string? EncryptedHuggingfaceApiKey { get; init; }
+
     // ?? LoRA Helper ??????????????????????????????????????????
 
     public List<LoraSourceExport> LoraSources { get; init; } = [];
@@ -52,7 +59,21 @@ public sealed record SettingsExportData
 
     public string? DatasetStoragePath { get; init; }
     public List<DatasetCategoryExport> DatasetCategories { get; init; } = [];
-    public bool AutoBackupEnabled { get; init; }
+
+    /// <summary>Whether automatic backup of the dataset-image folders is enabled.</summary>
+    public bool BackupDatasetImagesEnabled { get; init; }
+
+    /// <summary>Whether automatic backup of the core user database is enabled. Defaults to true.</summary>
+    public bool BackupDatabaseEnabled { get; init; } = true;
+
+    /// <summary>
+    /// Legacy (schema v1) field name for <see cref="BackupDatasetImagesEnabled"/>. Populated only when
+    /// importing a v1 export so the user's original choice is preserved. Never written on export
+    /// (null is omitted), so newer files carry only the new field.
+    /// </summary>
+    [JsonPropertyName("autoBackupEnabled")]
+    public bool? LegacyAutoBackupEnabled { get; init; }
+
     public int AutoBackupIntervalDays { get; init; } = 1;
     public int AutoBackupIntervalHours { get; init; }
     public string? AutoBackupLocation { get; init; }
@@ -103,8 +124,9 @@ public static class SettingsExportSchema
 {
     /// <summary>
     /// Current schema version. Bump when adding new fields.
+    /// v2: split AutoBackupEnabled into BackupDatasetImagesEnabled + BackupDatabaseEnabled.
     /// </summary>
-    public const int CurrentVersion = 1;
+    public const int CurrentVersion = 2;
 
     /// <summary>
     /// Minimum schema version that can still be imported.

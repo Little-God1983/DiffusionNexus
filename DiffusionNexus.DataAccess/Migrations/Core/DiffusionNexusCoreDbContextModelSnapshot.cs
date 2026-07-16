@@ -15,15 +15,12 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.8");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.10");
 
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.AppSettings", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<bool>("AutoBackupEnabled")
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("AutoBackupIntervalDays")
@@ -35,6 +32,12 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                     b.Property<string>("AutoBackupLocation")
                         .HasMaxLength(1000)
                         .HasColumnType("TEXT");
+
+                    b.Property<bool>("BackupDatabaseEnabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("BackupDatasetImagesEnabled")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("ComfyUiServerUrl")
                         .IsRequired()
@@ -50,11 +53,21 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                     b.Property<bool>("DeleteEmptySourceFolders")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("DistillerRuleSetsJson")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("EncryptedCivitaiApiKey")
                         .HasMaxLength(2000)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("EncryptedHuggingfaceApiKey")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("FavoriteLoraSourcePath")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FeedbackReporterEmail")
                         .HasColumnType("TEXT");
 
                     b.Property<bool>("GenerateVideoThumbnails")

@@ -9,6 +9,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Installer.SDK.Shared.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Views;
 using Microsoft.Extensions.DependencyInjection;
@@ -63,14 +64,38 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     [ObservableProperty]
     private object? _currentModuleView;
 
+    /// <summary>
+    /// False until deferred startup (database init + module registration) has
+    /// finished. The main window shows a lightweight loading overlay while false.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowDisclaimer))]
+    private bool _isStartupComplete;
+
+    /// <summary>Ready-check list shown by the startup overlay (null only in design mode).</summary>
+    [ObservableProperty]
+    private StartupOverlayViewModel? _startupOverlay;
+
     [ObservableProperty]
     private ModuleItem? _selectedModule;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowDisclaimer))]
     private bool _isDisclaimerAccepted;
 
     [ObservableProperty]
     private bool _disclaimerCheckboxChecked;
+
+    /// <summary>
+    /// Gates the disclaimer overlay so it can only appear after deferred startup
+    /// has finished. <see cref="CheckDisclaimerStatusAsync"/> reads the database
+    /// and now runs at the tail of deferred startup (Task 6), so showing the
+    /// disclaimer any earlier would cover the "Starting DiffusionNexus…" overlay
+    /// on every launch — even for users who accepted long ago — and would let the
+    /// Continue button issue a DB write concurrent with the pool-thread DB
+    /// migration on fresh installs.
+    /// </summary>
+    public bool ShowDisclaimer => IsStartupComplete && !IsDisclaimerAccepted;
 
     [ObservableProperty]
     private StatusBarViewModel? _statusBar;
@@ -130,9 +155,75 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
 
     public ObservableCollection<ModuleItem> Modules { get; } = new();
 
+    /// <summary>
+    /// Operator-authored announcements shown in the banner above the main content.
+    /// </summary>
+    public ObservableCollection<ServerMessageItemViewModel> ServerMessages { get; } = new();
+
+    /// <summary>
+    /// Whether any server message is currently visible (drives the banner's visibility).
+    /// </summary>
+    public bool HasServerMessages => ServerMessages.Count > 0;
+
     public DiffusionNexusMainWindowViewModel()
     {
         // Disclaimer check is called externally after services are initialized
+    }
+
+    /// <summary>
+    /// Fetches applicable server messages (Gist-backed) and populates <see cref="ServerMessages"/>.
+    /// Resolves the service from <see cref="App.Services"/>; failures are logged and never disrupt startup.
+    /// </summary>
+    public async Task LoadServerMessagesAsync()
+    {
+        var service = App.Services?.GetService<IServerMessageService>();
+        if (service is null)
+        {
+            return;
+        }
+
+        var store = App.Services?.GetService<DismissedMessageStore>();
+
+        try
+        {
+            var dismissed = store?.Load();
+            var result = await service.GetMessagesAsync("app", dismissed);
+
+            if (!string.IsNullOrEmpty(result.ErrorMessage))
+            {
+                Serilog.Log.Information("Server message check failed: {Error}", result.ErrorMessage);
+                return;
+            }
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                ServerMessages.Clear();
+                foreach (var msg in result.Messages)
+                {
+                    ServerMessages.Add(new ServerMessageItemViewModel(msg, DismissServerMessage, OpenUrl));
+                }
+                OnPropertyChanged(nameof(HasServerMessages));
+            });
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Information(ex, "Server message check error");
+        }
+    }
+
+    private void DismissServerMessage(ServerMessageItemViewModel item)
+    {
+        ServerMessages.Remove(item);
+        OnPropertyChanged(nameof(HasServerMessages));
+
+        try
+        {
+            App.Services?.GetService<DismissedMessageStore>()?.Add(item.Id);
+        }
+        catch
+        {
+            // Best-effort: failing to persist a dismissal just means it may reappear next launch.
+        }
     }
 
     /// <summary>
@@ -157,13 +248,28 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
             _activityLogService.DownloadProgressChanged += OnDownloadProgressChanged;
             IsDownloadInProgress = _activityLogService.IsDownloadInProgress;
             ActiveDownloadName = _activityLogService.DownloadOperationName;
+        }
+    }
 
-            // Wire instance management (Start/Stop/Restart) into the Unified Console
-            var processManager = App.Services?.GetService<Services.PackageProcessManager>();
-            if (processManager is not null && App.Services is not null)
-            {
-                StatusBar.InitializeInstanceManagement(processManager, App.Services);
-            }
+    /// <summary>
+    /// Wires instance management (Start/Stop/Restart) into the Unified Console.
+    /// Kept separate from <see cref="InitializeStatusBar"/> because it triggers
+    /// DB-backed instance loading — <c>UnifiedConsoleViewModel.LoadInstancesAsync</c>
+    /// reads the core database's <c>InstallerPackages</c> table — so it must run
+    /// only after the databases have been initialized. Invoked from
+    /// <c>App.CompleteStartupAsync</c> once DB init has completed.
+    /// </summary>
+    public void InitializeInstanceManagement()
+    {
+        if (StatusBar is null)
+        {
+            return;
+        }
+
+        var processManager = App.Services?.GetService<Services.PackageProcessManager>();
+        if (processManager is not null && App.Services is not null)
+        {
+            StatusBar.InitializeInstanceManagement(processManager, App.Services);
         }
     }
 
@@ -268,7 +374,7 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     [RelayCommand]
     private void OpenYoutube()
     {
-        OpenUrl("https://youtube.com/@AIKnowledge2Go");
+        OpenUrl("https://www.youtube.com/@IntoTheLatent");
     }
 
     [RelayCommand]
@@ -287,6 +393,15 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     private void OpenSettings()
     {
         CurrentModuleView = new SettingsView();
+    }
+
+    [RelayCommand]
+    private async Task OpenFeedbackAsync()
+    {
+        var dialogService = App.Services?.GetService<IDialogService>();
+        if (dialogService is null) return;
+
+        await dialogService.ShowFeedbackDialogAsync();
     }
 
     [RelayCommand]

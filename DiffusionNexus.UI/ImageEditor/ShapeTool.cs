@@ -7,7 +7,7 @@ namespace DiffusionNexus.UI.ImageEditor;
 /// </summary>
 public enum ShapeToolPhase
 {
-    /// <summary>No shape is active — ready to draw a new one.</summary>
+    /// <summary>No shape is active ï¿½ ready to draw a new one.</summary>
     Idle,
     /// <summary>User is dragging to create a new shape.</summary>
     Drawing,
@@ -26,9 +26,9 @@ public enum ShapeToolPhase
 /// </summary>
 public enum ShapeManipulationHandle
 {
-    /// <summary>No handle — click is outside the shape.</summary>
+    /// <summary>No handle ï¿½ click is outside the shape.</summary>
     None,
-    /// <summary>Click is inside the shape body — drag to move.</summary>
+    /// <summary>Click is inside the shape body ï¿½ drag to move.</summary>
     Body,
     /// <summary>Top-left corner resize handle.</summary>
     TopLeft,
@@ -41,7 +41,11 @@ public enum ShapeManipulationHandle
     /// <summary>Rotation handle above the shape.</summary>
     Rotate,
     /// <summary>Delete/trash handle next to the rotation handle.</summary>
-    Delete
+    Delete,
+    /// <summary>The start/tail endpoint of a linear shape (arrow/line).</summary>
+    Start,
+    /// <summary>The end/head endpoint of a linear shape (arrow/line).</summary>
+    End
 }
 
 /// <summary>
@@ -142,7 +146,7 @@ public class ShapeTool
     public SKColor FillColor { get; set; } = SKColors.White;
 
     /// <summary>
-    /// Gets or sets the stroke width in pixels.
+    /// Gets or sets the stroke width in image pixels (zoom-independent).
     /// </summary>
     public float StrokeWidth { get; set; } = 3f;
 
@@ -150,6 +154,18 @@ public class ShapeTool
     /// Gets or sets the arrow head size as a multiplier of stroke width.
     /// </summary>
     public float ArrowHeadSize { get; set; } = 4f;
+
+    /// <summary>
+    /// Gets or sets the image width in pixels. Used to size the stroke in image pixels
+    /// independently of the current zoom level. Set by the editor core each render pass.
+    /// </summary>
+    public int ImagePixelWidth { get; set; }
+
+    /// <summary>
+    /// Gets the on-screen scale (display pixels per image pixel) at the current zoom level.
+    /// </summary>
+    public float DisplayScale =>
+        ImagePixelWidth > 0 && _imageRect.Width > 0 ? _imageRect.Width / ImagePixelWidth : 1f;
 
     /// <summary>
     /// Gets or sets whether to constrain proportions (Ctrl held).
@@ -334,6 +350,10 @@ public class ShapeTool
     {
         if (_placedShape is null || !HasPlacedShape) return ShapeManipulationHandle.None;
 
+        // Linear shapes (arrow/line) are manipulated by their two endpoints, not a box.
+        if (IsLinearShape(_placedShape.ShapeType))
+            return HitTestLinearHandle(screenPoint);
+
         var start = NormalizedToScreen(_placedShape.NormalizedStart);
         var end = NormalizedToScreen(_placedShape.NormalizedEnd);
         var center = new SKPoint((start.X + end.X) / 2f, (start.Y + end.Y) / 2f);
@@ -397,7 +417,7 @@ public class ShapeTool
             FillMode = FillMode,
             StrokeColor = StrokeColor,
             FillColor = FillColor,
-            StrokeWidth = StrokeWidth / GetCurrentScale(),
+            StrokeWidth = StrokeWidth / GetImagePixelWidth(),
             ArrowHeadSize = ArrowHeadSize,
             NormalizedStart = normalizedStart,
             NormalizedEnd = normalizedEnd,
@@ -416,7 +436,7 @@ public class ShapeTool
 
         if (handle == ShapeManipulationHandle.None)
         {
-            // Click outside — commit current shape and start a new one if inside image
+            // Click outside ï¿½ commit current shape and start a new one if inside image
             CommitPlacedShape();
             if (_imageRect.Contains(screenPoint))
             {
@@ -483,6 +503,22 @@ public class ShapeTool
     private void HandleResizing(SKPoint screenPoint)
     {
         if (_placedShape is null) return;
+
+        // Linear shapes: drag the grabbed endpoint directly so the arrow/line direction is
+        // preserved (no min/max canonicalization that would flip the head and tail).
+        if (IsLinearShape(_placedShape.ShapeType))
+        {
+            var dx = screenPoint.X - _manipulationAnchor.X;
+            var dy = screenPoint.Y - _manipulationAnchor.Y;
+
+            if (_activeHandle == ShapeManipulationHandle.Start)
+                _placedShape.NormalizedStart = ScreenToNormalized(new SKPoint(_placedScreenStart.X + dx, _placedScreenStart.Y + dy));
+            else if (_activeHandle == ShapeManipulationHandle.End)
+                _placedShape.NormalizedEnd = ScreenToNormalized(new SKPoint(_placedScreenEnd.X + dx, _placedScreenEnd.Y + dy));
+
+            ShapeChanged?.Invoke(this, EventArgs.Empty);
+            return;
+        }
 
         var center = new SKPoint(
             (_placedScreenStart.X + _placedScreenEnd.X) / 2f,
@@ -587,7 +623,9 @@ public class ShapeTool
                 ? GetConstrainedEndPoint(_startPoint, _currentPoint, ShapeType)
                 : _currentPoint;
 
-            RenderShape(canvas, _startPoint, endPoint, ShapeType, FillMode, StrokeColor, FillColor, StrokeWidth, ArrowHeadSize);
+            // The shape is painted at StrokeWidth image pixels, so the live drag preview
+            // (drawn in screen space) must scale the stroke width by the current zoom.
+            RenderShape(canvas, _startPoint, endPoint, ShapeType, FillMode, StrokeColor, FillColor, StrokeWidth * DisplayScale, ArrowHeadSize);
         }
 
         // Render placed shape with handles
@@ -595,18 +633,31 @@ public class ShapeTool
         {
             var start = NormalizedToScreen(_placedShape.NormalizedStart);
             var end = NormalizedToScreen(_placedShape.NormalizedEnd);
-            var center = new SKPoint((start.X + end.X) / 2f, (start.Y + end.Y) / 2f);
-            var screenStrokeWidth = _placedShape.StrokeWidth * GetCurrentScale();
+            // StrokeWidth is normalized to image width; * display width gives screen pixels.
+            var screenStrokeWidth = _placedShape.StrokeWidth * GetDisplayWidth();
 
-            canvas.Save();
-            canvas.RotateDegrees(_placedShape.RotationDegrees, center.X, center.Y);
+            if (IsLinearShape(_placedShape.ShapeType))
+            {
+                // Linear shapes use two endpoint handles instead of a rotated bounding box.
+                RenderShape(canvas, start, end, _placedShape.ShapeType, _placedShape.FillMode,
+                    _placedShape.StrokeColor, _placedShape.FillColor, screenStrokeWidth, _placedShape.ArrowHeadSize);
 
-            RenderShape(canvas, start, end, _placedShape.ShapeType, _placedShape.FillMode,
-                _placedShape.StrokeColor, _placedShape.FillColor, screenStrokeWidth, _placedShape.ArrowHeadSize);
+                RenderLinearHandles(canvas, start, end);
+            }
+            else
+            {
+                var center = new SKPoint((start.X + end.X) / 2f, (start.Y + end.Y) / 2f);
 
-            canvas.Restore();
+                canvas.Save();
+                canvas.RotateDegrees(_placedShape.RotationDegrees, center.X, center.Y);
 
-            RenderManipulationHandles(canvas, start, end, _placedShape.RotationDegrees);
+                RenderShape(canvas, start, end, _placedShape.ShapeType, _placedShape.FillMode,
+                    _placedShape.StrokeColor, _placedShape.FillColor, screenStrokeWidth, _placedShape.ArrowHeadSize);
+
+                canvas.Restore();
+
+                RenderManipulationHandles(canvas, start, end, _placedShape.RotationDegrees);
+            }
         }
     }
 
@@ -886,8 +937,19 @@ public class ShapeTool
         return new SKPoint(x, y);
     }
 
-    private float GetCurrentScale()
+    // The displayed image width in screen pixels. Used to convert a normalized stroke
+    // width back to screen pixels for previewing a placed shape.
+    private float GetDisplayWidth()
     {
+        return _imageRect.Width > 0 ? _imageRect.Width : 1f;
+    }
+
+    // The basis for normalizing the stroke width: the image's pixel width, so the stroke
+    // is measured in image pixels regardless of zoom. Falls back to the displayed width
+    // (legacy behavior) if the pixel width has not been set yet (e.g. before first render).
+    private float GetImagePixelWidth()
+    {
+        if (ImagePixelWidth > 0) return ImagePixelWidth;
         return _imageRect.Width > 0 ? _imageRect.Width : 1f;
     }
 
@@ -918,6 +980,115 @@ public class ShapeTool
         var dx = a.X - b.X;
         var dy = a.Y - b.Y;
         return dx * dx + dy * dy;
+    }
+
+    /// <summary>
+    /// Returns true for shapes manipulated by two endpoints (arrow, line) rather than a box.
+    /// </summary>
+    private static bool IsLinearShape(ShapeType type) => type is ShapeType.Arrow or ShapeType.Line;
+
+    /// <summary>
+    /// Hit-tests the endpoint, delete, and body handles of a placed linear shape.
+    /// </summary>
+    private ShapeManipulationHandle HitTestLinearHandle(SKPoint screenPoint)
+    {
+        if (_placedShape is null) return ShapeManipulationHandle.None;
+
+        var start = NormalizedToScreen(_placedShape.NormalizedStart);
+        var end = NormalizedToScreen(_placedShape.NormalizedEnd);
+
+        // Endpoint handles take priority over the body.
+        if (DistanceSq(screenPoint, start) < HandleHitRadius * HandleHitRadius)
+            return ShapeManipulationHandle.Start;
+        if (DistanceSq(screenPoint, end) < HandleHitRadius * HandleHitRadius)
+            return ShapeManipulationHandle.End;
+
+        var deletePos = GetLinearDeletePos(start, end);
+        if (DistanceSq(screenPoint, deletePos) < (HandleHitRadius + 6f) * (HandleHitRadius + 6f))
+            return ShapeManipulationHandle.Delete;
+
+        // Body: anywhere along the segment â€” drag to move the whole shape.
+        if (DistanceToSegment(screenPoint, start, end) < HandleHitRadius)
+            return ShapeManipulationHandle.Body;
+
+        return ShapeManipulationHandle.None;
+    }
+
+    /// <summary>
+    /// Computes the screen position of the delete handle for a linear shape: floated off the
+    /// midpoint, perpendicular to the segment so it never sits on the line itself.
+    /// </summary>
+    private static SKPoint GetLinearDeletePos(SKPoint start, SKPoint end)
+    {
+        var mid = new SKPoint((start.X + end.X) / 2f, (start.Y + end.Y) / 2f);
+        var dx = end.X - start.X;
+        var dy = end.Y - start.Y;
+        var length = MathF.Sqrt(dx * dx + dy * dy);
+
+        // Perpendicular unit vector; default to straight up for a degenerate (zero-length) shape.
+        var px = length > 0.001f ? -dy / length : 0f;
+        var py = length > 0.001f ? dx / length : -1f;
+
+        return new SKPoint(mid.X + px * DeleteHandleOffset, mid.Y + py * DeleteHandleOffset);
+    }
+
+    /// <summary>
+    /// Renders the two endpoint handles and a delete handle for a placed linear shape.
+    /// </summary>
+    private static void RenderLinearHandles(SKCanvas canvas, SKPoint start, SKPoint end)
+    {
+        using var handleFill = new SKPaint { Color = SKColors.White, Style = SKPaintStyle.Fill, IsAntialias = true };
+        using var handleStroke = new SKPaint { Color = new SKColor(0, 0, 0, 180), Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f, IsAntialias = true };
+
+        // Endpoint handles (tail and head).
+        canvas.DrawCircle(start, HandleRadius, handleFill);
+        canvas.DrawCircle(start, HandleRadius, handleStroke);
+        canvas.DrawCircle(end, HandleRadius, handleFill);
+        canvas.DrawCircle(end, HandleRadius, handleStroke);
+
+        // Delete handle floated off the midpoint, with a connecting stem.
+        var mid = new SKPoint((start.X + end.X) / 2f, (start.Y + end.Y) / 2f);
+        var deleteCenter = GetLinearDeletePos(start, end);
+
+        using var stemPaint = new SKPaint { Color = new SKColor(255, 255, 255, 140), Style = SKPaintStyle.Stroke, StrokeWidth = 1f, IsAntialias = true };
+        canvas.DrawLine(mid, deleteCenter, stemPaint);
+
+        using var deleteBg = new SKPaint { Color = new SKColor(140, 30, 30, 220), Style = SKPaintStyle.Fill, IsAntialias = true };
+        canvas.DrawCircle(deleteCenter, 12f, deleteBg);
+        canvas.DrawCircle(deleteCenter, 12f, handleStroke);
+
+        using var xPaint = new SKPaint
+        {
+            Color = SKColors.White,
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = 2f,
+            IsAntialias = true,
+            StrokeCap = SKStrokeCap.Round
+        };
+        const float xSize = 4.5f;
+        canvas.DrawLine(deleteCenter.X - xSize, deleteCenter.Y - xSize, deleteCenter.X + xSize, deleteCenter.Y + xSize, xPaint);
+        canvas.DrawLine(deleteCenter.X + xSize, deleteCenter.Y - xSize, deleteCenter.X - xSize, deleteCenter.Y + xSize, xPaint);
+    }
+
+    /// <summary>
+    /// Returns the shortest distance from point <paramref name="p"/> to the segment a-b.
+    /// </summary>
+    private static float DistanceToSegment(SKPoint p, SKPoint a, SKPoint b)
+    {
+        var abx = b.X - a.X;
+        var aby = b.Y - a.Y;
+        var lengthSq = abx * abx + aby * aby;
+
+        var t = lengthSq > 0.0001f
+            ? ((p.X - a.X) * abx + (p.Y - a.Y) * aby) / lengthSq
+            : 0f;
+        t = Math.Clamp(t, 0f, 1f);
+
+        var cx = a.X + t * abx;
+        var cy = a.Y + t * aby;
+        var dx = p.X - cx;
+        var dy = p.Y - cy;
+        return MathF.Sqrt(dx * dx + dy * dy);
     }
 
     /// <summary>

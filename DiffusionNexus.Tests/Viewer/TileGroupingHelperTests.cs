@@ -252,5 +252,111 @@ public class TileGroupingHelperTests
             "the model with CivitaiId should be picked as primary");
     }
 
+    [Fact]
+    public void WhenRefreshAddsDownloadedVersionToScopedTileThenVersionAppears()
+    {
+        // Per-location tile (issue #380) showing one version in C:\Loras
+        var model = CreateModel(id: 10, name: "MyLora", pageId: 42,
+            fileName: "mylora_v1.safetensors", baseModel: "SDXL 1.0");
+        var v1 = model.Versions.First();
+        var f1 = v1.Files.First();
+        f1.LocalPath = @"C:\Loras\mylora_v1.safetensors";
+
+        var tile = ModelTileViewModel.FromModelInLocation(
+            new List<Model> { model }, @"C:\Loras", [(v1, f1)]);
+        tile.Versions.Should().HaveCount(1);
+
+        // The refreshed DB row carries a just-downloaded second version whose
+        // file landed in the same location
+        var refreshed = CreateModel(id: 10, name: "MyLora", pageId: 42,
+            fileName: "mylora_v1.safetensors", baseModel: "SDXL 1.0");
+        refreshed.Versions.First().Files.First().LocalPath = @"C:\Loras\mylora_v1.safetensors";
+        AddVersion(refreshed, versionId: 2000, fileName: "mylora_v2.safetensors",
+            localPath: @"C:\Loras\mylora_v2.safetensors");
+
+        tile.RefreshModelData(refreshed);
+
+        tile.Versions.Should().HaveCount(2,
+            "a version downloaded into this tile's location must appear after refresh");
+    }
+
+    [Fact]
+    public void WhenRefreshedVersionFileIsOutsideScopedRootThenItStaysHidden()
+    {
+        var model = CreateModel(id: 10, name: "MyLora", pageId: 42,
+            fileName: "mylora_v1.safetensors", baseModel: "SDXL 1.0");
+        var v1 = model.Versions.First();
+        var f1 = v1.Files.First();
+        f1.LocalPath = @"C:\Loras\mylora_v1.safetensors";
+
+        var tile = ModelTileViewModel.FromModelInLocation(
+            new List<Model> { model }, @"C:\Loras", [(v1, f1)]);
+
+        // New version's file lives in a different LoRA source — not this tile's
+        var refreshed = CreateModel(id: 10, name: "MyLora", pageId: 42,
+            fileName: "mylora_v1.safetensors", baseModel: "SDXL 1.0");
+        refreshed.Versions.First().Files.First().LocalPath = @"C:\Loras\mylora_v1.safetensors";
+        AddVersion(refreshed, versionId: 2000, fileName: "mylora_v2.safetensors",
+            localPath: @"D:\OtherLoras\mylora_v2.safetensors");
+
+        tile.RefreshModelData(refreshed);
+
+        tile.Versions.Should().HaveCount(1,
+            "per-location tiles must only show versions with a file in their own root");
+    }
+
+    [Fact]
+    public void WhenPrimaryModelReferenceIsUnchangedThenVersionsStillRebuild()
+    {
+        // Grouped scoped tile where modelA stays primary (has CivitaiId) so
+        // refreshing modelB leaves the ModelEntity reference unchanged
+        var modelA = CreateModel(id: 10, name: "MyLora", pageId: 42,
+            fileName: "mylora_a.safetensors", baseModel: "SDXL 1.0", hasCivitaiId: true);
+        var modelB = CreateModel(id: 11, name: "MyLora", pageId: 42,
+            fileName: "mylora_b.safetensors", baseModel: "Flux.1 D");
+        var vA = modelA.Versions.First();
+        var fA = vA.Files.First();
+        fA.LocalPath = @"C:\Loras\mylora_a.safetensors";
+        var vB = modelB.Versions.First();
+        var fB = vB.Files.First();
+        fB.LocalPath = @"C:\Loras\mylora_b.safetensors";
+
+        var tile = ModelTileViewModel.FromModelInLocation(
+            new List<Model> { modelA, modelB }, @"C:\Loras", [(vA, fA), (vB, fB)]);
+        tile.Versions.Should().HaveCount(2);
+
+        var refreshedB = CreateModel(id: 11, name: "MyLora", pageId: 42,
+            fileName: "mylora_b.safetensors", baseModel: "Flux.1 D");
+        refreshedB.Versions.First().Files.First().LocalPath = @"C:\Loras\mylora_b.safetensors";
+        AddVersion(refreshedB, versionId: 3000, fileName: "mylora_b2.safetensors",
+            localPath: @"C:\Loras\mylora_b2.safetensors");
+
+        tile.RefreshModelData(refreshedB);
+
+        tile.ModelEntity.Should().BeSameAs(modelA, "modelA is still the richest model");
+        tile.Versions.Should().HaveCount(3,
+            "the version list must rebuild even when the primary model reference did not change");
+    }
+
+    private static void AddVersion(Model model, int versionId, string fileName, string localPath)
+    {
+        var version = new ModelVersion
+        {
+            Id = versionId,
+            Name = $"{model.Name} - extra",
+            BaseModelRaw = "SDXL 1.0",
+            Model = model,
+        };
+        version.Files.Add(new ModelFile
+        {
+            Id = versionId + 1,
+            FileName = fileName,
+            LocalPath = localPath,
+            IsPrimary = true,
+            ModelVersion = version,
+        });
+        model.Versions.Add(version);
+    }
+
     #endregion
 }

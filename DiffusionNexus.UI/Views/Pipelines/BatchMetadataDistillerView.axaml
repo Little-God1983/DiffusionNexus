@@ -1,0 +1,233 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
+             xmlns:ctrl="using:DiffusionNexus.UI.Controls"
+             xmlns:vmp="using:DiffusionNexus.UI.ViewModels.Pipelines"
+             x:Class="DiffusionNexus.UI.Views.Pipelines.BatchMetadataDistillerView"
+             x:DataType="vmp:BatchMetadataDistillerViewModel">
+
+  <Grid RowDefinitions="Auto,*" Margin="16">
+
+    <!-- Top bar -->
+    <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,12">
+      <Button Grid.Column="0" Content="← Back" Command="{Binding BackCommand}" Padding="12,6"/>
+      <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center">
+        <TextBlock Text="Batch Metadata Distiller" FontSize="18" FontWeight="Bold" Foreground="White"/>
+        <TextBlock Text="Recover ComfyUI generation data → clean, CivitAI-readable images"
+                   FontSize="12" Foreground="#909090"/>
+      </StackPanel>
+      <Border Grid.Column="2" Background="#2C2F34" CornerRadius="999" Padding="12,6" VerticalAlignment="Center"
+              BorderBrush="#3A3D43" BorderThickness="1">
+        <TextBlock Text="{Binding DetectionSummary}" FontSize="12.5" Foreground="#B6BAC1"/>
+      </Border>
+    </Grid>
+
+    <Grid Grid.Row="1" ColumnDefinitions="300,*,340">
+
+      <!-- LEFT: input + detection -->
+      <Grid Grid.Column="0" RowDefinitions="Auto,Auto,*">
+        <TextBlock Grid.Row="0" Text="INPUT IMAGES" FontSize="11" FontWeight="Bold" Foreground="#868B93" Margin="0,0,0,8"/>
+        <controls:ImageListInputControl Grid.Row="1"
+            ImagePaths="{Binding ImagePaths}"
+            SelectedImagePath="{Binding SelectedImagePath, Mode=TwoWay}"/>
+        <ScrollViewer Grid.Row="2" Margin="0,10,0,0">
+          <ItemsControl ItemsSource="{Binding Items}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vmp:DistillerItemViewModel">
+                <Border Background="#26282D" CornerRadius="6" Padding="8" Margin="0,0,0,6" BorderBrush="#3A3D43" BorderThickness="1">
+                  <Grid ColumnDefinitions="Auto,*,Auto">
+                    <Panel Grid.Column="0" Width="9" Height="9" VerticalAlignment="Center">
+                      <Ellipse Fill="#57C06A" IsVisible="{Binding HasMetadata}"/>
+                      <Ellipse Fill="#5A5F66" IsVisible="{Binding !HasMetadata}"/>
+                    </Panel>
+                    <TextBlock Grid.Column="1" Text="{Binding FileName}" Margin="8,0" VerticalAlignment="Center"
+                               FontSize="12" Foreground="#D8DADF" TextTrimming="CharacterEllipsis"/>
+                    <CheckBox Grid.Column="2" IsChecked="{Binding IncludeInRun}" ToolTip.Tip="Include in run"/>
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+      </Grid>
+
+      <!-- MIDDLE: per-image editor -->
+      <ScrollViewer Grid.Column="1" Margin="16,0"
+                    IsVisible="{Binding SelectedItem, Converter={x:Static ObjectConverters.IsNotNull}}">
+        <StackPanel DataContext="{Binding SelectedItem}">
+          <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,4">
+            <TextBlock Text="POSITIVE PROMPT" FontSize="11" FontWeight="Bold" Foreground="#868B93" VerticalAlignment="Center"/>
+            <Button Grid.Column="1" Content="↩ Undo edits" FontSize="10" Padding="6,2"
+                    Command="{Binding UndoPositiveCommand}"
+                    IsVisible="{Binding IsPositiveModified}"
+                    ToolTip.Tip="Restore the original prompt read from the image's metadata"/>
+          </Grid>
+          <ctrl:SpellCheckTextBox Text="{Binding Positive}" Highlights="{Binding PositiveHighlights}"
+                                  AcceptsReturn="True" TextWrapping="Wrap" MinHeight="70"/>
+          <Grid ColumnDefinitions="*,Auto" Margin="0,10,0,4">
+            <TextBlock Text="NEGATIVE PROMPT" FontSize="11" FontWeight="Bold" Foreground="#868B93" VerticalAlignment="Center"/>
+            <Button Grid.Column="1" Content="↩ Undo edits" FontSize="10" Padding="6,2"
+                    Command="{Binding UndoNegativeCommand}"
+                    IsVisible="{Binding IsNegativeModified}"
+                    ToolTip.Tip="Restore the original prompt read from the image's metadata"/>
+          </Grid>
+          <ctrl:SpellCheckTextBox Text="{Binding Negative}" Highlights="{Binding NegativeHighlights}"
+                                  AcceptsReturn="True" TextWrapping="Wrap" MinHeight="48"/>
+
+          <Grid ColumnDefinitions="*,*,*,*" Margin="0,12,0,0">
+            <StackPanel Grid.Column="0" Margin="0,0,6,0">
+              <TextBlock Text="STEPS" FontSize="10" Foreground="#868B93"/>
+              <TextBox Text="{Binding StepsText}"/>
+            </StackPanel>
+            <StackPanel Grid.Column="1" Margin="0,0,6,0">
+              <TextBlock Text="CFG" FontSize="10" Foreground="#868B93"/>
+              <TextBox Text="{Binding CfgText}"/>
+            </StackPanel>
+            <StackPanel Grid.Column="2" Margin="0,0,6,0">
+              <TextBlock Text="SAMPLER" FontSize="10" Foreground="#868B93"/>
+              <TextBox Text="{Binding SamplerName}"/>
+            </StackPanel>
+            <StackPanel Grid.Column="3">
+              <TextBlock Text="SCHEDULER" FontSize="10" Foreground="#868B93"/>
+              <TextBox Text="{Binding Scheduler}"/>
+            </StackPanel>
+          </Grid>
+          <Grid ColumnDefinitions="*,3*" Margin="0,8,0,0">
+            <StackPanel Grid.Column="0" Margin="0,0,6,0">
+              <TextBlock Text="SEED" FontSize="10" Foreground="#868B93"/>
+              <TextBox Text="{Binding SeedText}"/>
+            </StackPanel>
+            <StackPanel Grid.Column="1">
+              <TextBlock Text="MODEL" FontSize="10" Foreground="#868B93"/>
+              <TextBox Text="{Binding Model}"/>
+            </StackPanel>
+          </Grid>
+
+          <TextBlock Text="DETECTED LORAS · LOAD ORDER" FontSize="11" FontWeight="Bold" Foreground="#868B93" Margin="0,14,0,4"/>
+          <ItemsControl ItemsSource="{Binding Loras}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vmp:DistillerLoraViewModel">
+                <Border Background="#2C2F34" CornerRadius="6" Padding="8" Margin="0,0,0,6" BorderBrush="#3A3D43" BorderThickness="1">
+                  <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                    <CheckBox Grid.Column="0" IsChecked="{Binding Include}"/>
+                    <TextBlock Grid.Column="1" Text="{Binding Name}" Margin="8,0" VerticalAlignment="Center" Foreground="#E8E9EC"/>
+                    <TextBox Grid.Column="2" Text="{Binding Strength}" Width="64" Margin="0,0,8,0"/>
+                    <TextBlock Grid.Column="3" Text="{Binding SourceLabel}" VerticalAlignment="Center" FontSize="10" Foreground="#868B93"/>
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </ScrollViewer>
+
+      <!-- RIGHT: automation + output -->
+      <ScrollViewer Grid.Column="2">
+        <StackPanel Spacing="12">
+
+          <Border Background="#26282D" CornerRadius="8" Padding="11" BorderBrush="#3A3D43" BorderThickness="1">
+            <StackPanel Spacing="8">
+              <Grid ColumnDefinitions="*,Auto,Auto,Auto">
+                <TextBlock Grid.Column="0" Text="Rule sets" FontWeight="SemiBold" Foreground="White" VerticalAlignment="Center"/>
+                <Button Grid.Column="1" Content="+ Delete" Command="{Binding AddDeleteSetCommand}" Margin="0,0,6,0" FontSize="11" Padding="8,3"/>
+                <Button Grid.Column="2" Content="+ Replace" Command="{Binding AddReplaceSetCommand}" Margin="0,0,6,0" FontSize="11" Padding="8,3"/>
+                <Button Grid.Column="3" Content="Test" Command="{Binding TestRulesCommand}" FontSize="11" Padding="8,3"
+                        ToolTip.Tip="Dry-run the enabled rule sets on the selected image: shows how often each rule matches and highlights the matches in the prompt boxes (red = delete, amber = replace)"/>
+              </Grid>
+              <ItemsControl ItemsSource="{Binding RuleSets}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vmp:PromptRuleSetViewModel">
+                    <Border Background="#2C2F34" CornerRadius="6" Padding="8" Margin="0,0,0,6" BorderBrush="#3A3D43" BorderThickness="1">
+                      <StackPanel Spacing="6">
+                        <Grid ColumnDefinitions="Auto,*,Auto">
+                          <CheckBox Grid.Column="0" IsChecked="{Binding Enabled}"/>
+                          <TextBox Grid.Column="1" Text="{Binding Name}" Margin="6,0" Watermark="Set name"/>
+                          <Button Grid.Column="2" Content="✕" FontSize="11" Padding="6,2"
+                                  Command="{Binding $parent[ItemsControl].DataContext.RemoveRuleSetCommand}"
+                                  CommandParameter="{Binding}"/>
+                        </Grid>
+                        <!-- Delete sets: comma-separated word list -->
+                        <TextBox Text="{Binding WordsText}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="48"
+                                 IsVisible="{Binding !IsReplace}"
+                                 Watermark="Words to delete: word, word, …"/>
+                        <!-- Replace sets: one row of two fields per substitution -->
+                        <StackPanel IsVisible="{Binding IsReplace}" Spacing="4">
+                          <ItemsControl ItemsSource="{Binding Pairs}">
+                            <ItemsControl.ItemTemplate>
+                              <DataTemplate x:DataType="vmp:ReplacePairViewModel">
+                                <Grid ColumnDefinitions="*,Auto,*,Auto" Margin="0,0,0,4">
+                                  <TextBox Grid.Column="0" Text="{Binding From}" Watermark="Search term" FontSize="12"/>
+                                  <TextBlock Grid.Column="1" Text="→" Margin="6,0" VerticalAlignment="Center" Foreground="#868B93"/>
+                                  <TextBox Grid.Column="2" Text="{Binding To}" Watermark="Replacement" FontSize="12"/>
+                                  <Button Grid.Column="3" Content="✕" FontSize="10" Padding="5,2" Margin="4,0,0,0"
+                                          Command="{Binding $parent[ItemsControl].((vmp:PromptRuleSetViewModel)DataContext).RemovePairCommand}"
+                                          CommandParameter="{Binding}"
+                                          ToolTip.Tip="Remove this pair"/>
+                                </Grid>
+                              </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                          </ItemsControl>
+                          <Button Content="+ Add pair" FontSize="11" Padding="8,3" HorizontalAlignment="Left"
+                                  Command="{Binding AddPairCommand}"/>
+                        </StackPanel>
+                      </StackPanel>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+
+              <!-- Rules dry-run results (per-rule occurrence counts on the selected image) -->
+              <ItemsControl ItemsSource="{Binding TestResults}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="x:String">
+                    <TextBlock Text="{Binding}" FontSize="11" Foreground="#B6BAC1" TextWrapping="Wrap" Margin="2,0,0,2"/>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </Border>
+
+          <!-- Optional output resize / recompression -->
+          <Border Background="#26282D" CornerRadius="8" Padding="11" BorderBrush="#3A3D43" BorderThickness="1">
+            <StackPanel Spacing="8">
+              <TextBlock Text="Image size (optional)" FontWeight="SemiBold" Foreground="White"/>
+              <TextBlock Text="RESIZE (LONGEST SIDE)" FontSize="10" Foreground="#868B93"/>
+              <ComboBox ItemsSource="{Binding ResizeChoices}" SelectedItem="{Binding SelectedResize}"
+                        HorizontalAlignment="Stretch" FontSize="12"/>
+              <TextBlock Text="PNG COMPRESSION" FontSize="10" Foreground="#868B93"/>
+              <ComboBox ItemsSource="{Binding CompressionChoices}" SelectedItem="{Binding SelectedCompression}"
+                        HorizontalAlignment="Stretch" FontSize="12"/>
+              <TextBlock Text="{Binding SizeEstimateText}" FontSize="11" Foreground="#8FD3C7" TextWrapping="Wrap"
+                         IsVisible="{Binding SizeEstimateText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+            </StackPanel>
+          </Border>
+
+          <Border Background="#26282D" CornerRadius="8" Padding="11" BorderBrush="#3A3D43" BorderThickness="1">
+            <StackPanel Spacing="8">
+              <TextBlock Text="Output" FontWeight="SemiBold" Foreground="White"/>
+              <CheckBox Content="Strip ComfyUI workflow" IsChecked="{Binding StripWorkflow}"/>
+              <CheckBox Content="Compute resource hashes (slower)" IsChecked="{Binding ComputeHashes}"
+                        ToolTip.Tip="Embeds AutoV2 hashes for the checkpoint and LoRAs found in your local library. CivitAI uses these hashes to detect the exact resources used — more accurate than matching by name, but hashing large model files takes time."/>
+              <TextBlock Text="OUTPUT FOLDER" FontSize="10" Foreground="#868B93" Margin="0,4,0,0"/>
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBox Grid.Column="0" Text="{Binding OutputFolder}" IsReadOnly="True" Watermark="Choose a folder…"/>
+                <Button Grid.Column="1" Content="Browse…" Margin="6,0,0,0" Click="OnBrowseOutputFolder"/>
+              </Grid>
+            </StackPanel>
+          </Border>
+
+          <Button Content="Distill" Command="{Binding DistillCommand}"
+                  Background="#35C2B0" Foreground="#0C1413" FontWeight="Bold" Padding="0,11"
+                  HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"/>
+          <TextBlock Text="⚠ Select an output folder to enable Distill"
+                     Foreground="#FFB74D" FontSize="12" TextWrapping="Wrap"
+                     IsVisible="{Binding OutputFolder, Converter={x:Static StringConverters.IsNullOrEmpty}}"/>
+          <ProgressBar Value="{Binding Progress}" Maximum="100" IsVisible="{Binding IsRunning}"/>
+          <Button Content="Cancel" Command="{Binding CancelCommand}" IsVisible="{Binding IsRunning}" HorizontalAlignment="Center"/>
+          <TextBlock Text="{Binding StatusText}" Foreground="#B6BAC1" FontSize="12" TextWrapping="Wrap"/>
+        </StackPanel>
+      </ScrollViewer>
+
+    </Grid>
+  </Grid>
+</UserControl>

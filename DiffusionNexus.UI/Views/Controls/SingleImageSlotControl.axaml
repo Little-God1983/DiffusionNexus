@@ -1,0 +1,44 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:DiffusionNexus.UI.Views.Controls"
+             xmlns:converters="using:DiffusionNexus.UI.Converters"
+             x:Class="DiffusionNexus.UI.Views.Controls.SingleImageSlotControl"
+             x:DataType="local:SingleImageSlotControl"
+             DragDrop.AllowDrop="True">
+
+  <Border x:Name="SlotBorder"
+          Background="#1A1A1A" BorderBrush="#444" BorderThickness="2"
+          CornerRadius="8" Height="150" ClipToBounds="True"
+          DragDrop.AllowDrop="True">
+    <Panel>
+
+      <!-- Empty state: placeholder label + add button -->
+      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6"
+                  IsVisible="{Binding ImagePath, RelativeSource={RelativeSource AncestorType=local:SingleImageSlotControl}, Converter={x:Static StringConverters.IsNullOrEmpty}}">
+        <TextBlock Text="{Binding Placeholder, RelativeSource={RelativeSource AncestorType=local:SingleImageSlotControl}}"
+                   FontSize="12" Opacity="0.55" HorizontalAlignment="Center"
+                   TextWrapping="Wrap" TextAlignment="Center"/>
+        <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+          <Button Content="+ Add" Click="OnAddClick"
+                  Background="#4CAF50" Foreground="White" Padding="10,5"/>
+          <Button Content="Paste" Click="OnPasteClick" Padding="10,5"
+                  ToolTip.Tip="Paste an image from the clipboard (e.g. a screenshot)"/>
+        </StackPanel>
+      </StackPanel>
+
+      <!-- Filled state: image preview -->
+      <Image Stretch="Uniform"
+             IsVisible="{Binding ImagePath, RelativeSource={RelativeSource AncestorType=local:SingleImageSlotControl}, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+             Source="{Binding ImagePath, RelativeSource={RelativeSource AncestorType=local:SingleImageSlotControl}, Converter={x:Static converters:PathToBitmapConverter.Instance}, ConverterParameter=full}"/>
+
+      <!-- Clear button (filled state) -->
+      <Button Content="&#x2715;"
+              Command="{Binding ClearCommand, RelativeSource={RelativeSource AncestorType=local:SingleImageSlotControl}}"
+              IsVisible="{Binding ImagePath, RelativeSource={RelativeSource AncestorType=local:SingleImageSlotControl}, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+              HorizontalAlignment="Right" VerticalAlignment="Top"
+              Width="20" Height="20" Padding="0" Margin="4"
+              FontSize="11" FontWeight="Bold" Background="#CC000000" Foreground="#FF6B6B"
+              ToolTip.Tip="Remove this reference image"/>
+    </Panel>
+  </Border>
+</UserControl>

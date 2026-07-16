@@ -61,8 +61,9 @@ internal static class EfficientImageDecoder
                 using var codec = SKCodec.Create(probeStream);
                 if (codec is null)
                 {
-                    // Codec creation failed — fall back to Avalonia decode
-                    return FallbackDecode(imagePath, targetWidth);
+                    // Skia has no TIFF codec — decode TIFFs flat (first page) via LibTiff so
+                    // thumbnails/previews still render. Otherwise fall back to Avalonia decode.
+                    return DecodeTiffFlat(imagePath, targetWidth) ?? FallbackDecode(imagePath, targetWidth);
                 }
 
                 var info = codec.Info;
@@ -128,6 +129,11 @@ internal static class EfficientImageDecoder
                 using var codec = SKCodec.Create(probeStream);
                 if (codec is null)
                 {
+                    // Skia has no TIFF codec — decode TIFFs flat (first page) via LibTiff.
+                    var tiffFlat = DecodeTiffFlat(imagePath, maxDimension);
+                    if (tiffFlat is not null)
+                        return tiffFlat;
+
                     // Fallback: load full resolution via Avalonia with a fresh stream
                     return new Bitmap(imagePath);
                 }
@@ -319,5 +325,40 @@ internal static class EfficientImageDecoder
             Log.Warning(ex, "[EfficientImageDecoder] FallbackDecode failed for {Path} (targetWidth={Width})", imagePath, targetWidth);
             return null;
         }
+    }
+
+    /// <summary>
+    /// Decodes a TIFF's first page to a flat Avalonia bitmap via LibTiff, since Skia/Avalonia
+    /// have no TIFF codec. Resizes down to <paramref name="targetWidth"/> when larger. Returns
+    /// null for non-TIFF files or on failure.
+    /// </summary>
+    private static Bitmap? DecodeTiffFlat(string imagePath, int targetWidth)
+    {
+        if (!IsTiffPath(imagePath))
+            return null;
+
+        using var sk = ImageEditor.TiffExporter.DecodeFlatImage(imagePath);
+        if (sk is null)
+            return null;
+
+        if (targetWidth > 0 && sk.Width > targetWidth * 1.25)
+        {
+            float scale = (float)targetWidth / sk.Width;
+            int height = Math.Max(1, (int)(sk.Height * scale));
+#pragma warning disable CS0618 // SKFilterQuality is obsolete but matches the rest of this file
+            using var resized = sk.Resize(new SKImageInfo(targetWidth, height), SKFilterQuality.Medium);
+#pragma warning restore CS0618
+            if (resized is not null)
+                return ToAvaloniaBitmap(resized);
+        }
+
+        return ToAvaloniaBitmap(sk);
+    }
+
+    private static bool IsTiffPath(string imagePath)
+    {
+        var ext = System.IO.Path.GetExtension(imagePath);
+        return string.Equals(ext, ".tif", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(ext, ".tiff", StringComparison.OrdinalIgnoreCase);
     }
 }

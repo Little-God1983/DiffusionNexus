@@ -369,6 +369,12 @@ public class ImageEditorControl : Control
     public event EventHandler<float>? DrawingBrushSizeChanged;
 
     /// <summary>
+    /// Event raised when the text tool changes its own font size (e.g. corner-drag resize),
+    /// so the font-size control can be kept in sync. Carries the new size in pixels.
+    /// </summary>
+    public event EventHandler<float>? TextFontSizeChanged;
+
+    /// <summary>
     /// Event raised when the eyedropper picks a color from the image.
     /// </summary>
     public event EventHandler<SKColor>? EyedropperColorPicked;
@@ -414,7 +420,7 @@ public class ImageEditorControl : Control
                     return;
                 }
 
-                _editorCore.LoadImage(newPath);
+                LoadCoreDetectingTiff(newPath);
             }
             else if (!_isDetachedFromTree)
             {
@@ -987,6 +993,7 @@ public class ImageEditorControl : Control
                     ImageEditor.ShapeManipulationHandle.Body => new Cursor(StandardCursorType.SizeAll),
                     ImageEditor.ShapeManipulationHandle.TopLeft or ImageEditor.ShapeManipulationHandle.BottomRight => new Cursor(StandardCursorType.SizeAll),
                     ImageEditor.ShapeManipulationHandle.TopRight or ImageEditor.ShapeManipulationHandle.BottomLeft => new Cursor(StandardCursorType.SizeAll),
+                    ImageEditor.ShapeManipulationHandle.Start or ImageEditor.ShapeManipulationHandle.End => new Cursor(StandardCursorType.SizeAll),
                     ImageEditor.ShapeManipulationHandle.Rotate => new Cursor(StandardCursorType.Hand),
                     ImageEditor.ShapeManipulationHandle.Delete => new Cursor(StandardCursorType.Hand),
                     _ => new Cursor(StandardCursorType.Cross)
@@ -1051,15 +1058,17 @@ public class ImageEditorControl : Control
                 _isInpaintPainting ? [.. _inpaintStrokePoints] : null)
             : null;
 
+        // Brush/stroke sizes are in image pixels; scale by the current zoom so the
+        // on-screen cursor footprint matches what will actually be painted.
         var drawingOverlay = _hasDrawingCursorPosition && (_editorCore.DrawingTool.IsActive || _editorCore.ShapeTool.IsActive)
             ? new DrawingOverlayState(
                 _drawingCursorPosition,
                 _editorCore.DrawingTool.IsActive,
-                _editorCore.DrawingTool.BrushSize,
+                _editorCore.DrawingTool.BrushSize * _editorCore.DrawingTool.DisplayScale,
                 _editorCore.DrawingTool.BrushShape,
                 _editorCore.DrawingTool.BrushColor,
                 _editorCore.ShapeTool.IsActive,
-                _editorCore.ShapeTool.StrokeWidth,
+                _editorCore.ShapeTool.StrokeWidth * _editorCore.ShapeTool.DisplayScale,
                 _editorCore.ShapeTool.StrokeColor,
                 _editorCore.ShapeTool.HasPlacedShape)
             : null;
@@ -1077,7 +1086,7 @@ public class ImageEditorControl : Control
     /// </summary>
     public bool LoadImage(string filePath)
     {
-        var result = _editorCore.LoadImage(filePath);
+        var result = LoadCoreDetectingTiff(filePath);
         if (result)
         {
             _suppressImagePathLoad = true;
@@ -1115,6 +1124,46 @@ public class ImageEditorControl : Control
             _suppressImagePathLoad = false;
         }
         return result;
+    }
+
+    /// <summary>
+    /// Loads <paramref name="filePath"/> into the editor core, decoding multi-page/layered
+    /// TIFFs as layers and falling back to the flat decoder for single-frame or otherwise
+    /// non-LibTiff-readable TIFFs (and all non-TIFF images). Shared by the ImagePath binding
+    /// handler and the public <see cref="LoadImage(string)"/> entry point so every editor path
+    /// — drag-drop, gallery send, and dataset thumbnail selection — treats TIFFs consistently.
+    /// </summary>
+    private bool LoadCoreDetectingTiff(string filePath)
+    {
+        var logger = _editorCore.Logger;
+
+        if (IsTiffPath(filePath))
+        {
+            logger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditorControl",
+                "Loading TIFF as layers.", filePath);
+            if (_editorCore.LoadLayeredTiff(filePath))
+                return true;
+
+            logger?.Warn(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditorControl",
+                "Layered TIFF load failed; trying flat decode (note: Skia has no TIFF codec, so this usually also fails).", filePath);
+        }
+
+        var loaded = _editorCore.LoadImage(filePath);
+        if (!loaded)
+        {
+            logger?.Error(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditorControl",
+                $"Failed to load image into the editor: {filePath}");
+        }
+        return loaded;
+    }
+
+    private static bool IsTiffPath(string? filePath)
+    {
+        if (string.IsNullOrEmpty(filePath))
+            return false;
+        var ext = System.IO.Path.GetExtension(filePath);
+        return string.Equals(ext, ".tif", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(ext, ".tiff", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -1314,6 +1363,11 @@ public class ImageEditorControl : Control
         InvalidateVisual();
     }
 
+    private void OnTextFontSizeChanged(object? sender, float newSize)
+    {
+        TextFontSizeChanged?.Invoke(this, newSize);
+    }
+
     private void OnEditorCoreZoomChanged(object? sender, EventArgs e)
     {
         SetCurrentValue(ZoomLevelProperty, _editorCore.ZoomLevel);
@@ -1363,6 +1417,7 @@ public class ImageEditorControl : Control
         _editorCore.TextTool.TextChanged += OnTextChanged;
         _editorCore.TextTool.TextCompleted += OnTextCompleted;
         _editorCore.TextTool.PlacedTextStateChanged += OnPlacedTextStateChanged;
+        _editorCore.TextTool.FontSizeChanged += OnTextFontSizeChanged;
         _editorCore.ZoomChanged += OnEditorCoreZoomChanged;
         _editorCore.OutpaintTool.RegionChanged += OnOutpaintRegionChanged;
         InvalidateVisual();
@@ -1382,6 +1437,7 @@ public class ImageEditorControl : Control
         _editorCore.TextTool.TextChanged -= OnTextChanged;
         _editorCore.TextTool.TextCompleted -= OnTextCompleted;
         _editorCore.TextTool.PlacedTextStateChanged -= OnPlacedTextStateChanged;
+        _editorCore.TextTool.FontSizeChanged -= OnTextFontSizeChanged;
         _editorCore.ZoomChanged -= OnEditorCoreZoomChanged;
         _editorCore.OutpaintTool.RegionChanged -= OnOutpaintRegionChanged;
     }

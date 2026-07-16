@@ -88,6 +88,8 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
 
         public Task ShowMessageAsync(string title, string message) => Task.CompletedTask;
 
+        public Task ShowFeedbackDialogAsync() => Task.CompletedTask;
+
         public Task<bool> ShowConfirmAsync(string title, string message) => Task.FromResult(false);
 
         public Task<string?> ShowInputAsync(string title, string message, string? defaultValue = null) =>

@@ -337,6 +337,20 @@ public sealed class NavigateToImageComparerEventArgs : DatasetEventArgs
 }
 
 /// <summary>
+/// Event raised when a set of images is sent to a guided Workflow (pipeline) — e.g. from the
+/// Generation Gallery's "Send to → Workflows" submenu. The host switches to the Workflows module
+/// and opens the identified pipeline's run screen pre-loaded with <see cref="ImagePaths"/>.
+/// </summary>
+public sealed class NavigateToWorkflowEventArgs : DatasetEventArgs
+{
+    /// <summary>The target pipeline's manifest id (e.g. "anime-to-real", "image-to-image").</summary>
+    public required string WorkflowId { get; init; }
+
+    /// <summary>Absolute paths of the images to load as the workflow's loose-image input batch.</summary>
+    public required IReadOnlyList<string> ImagePaths { get; init; }
+}
+
+/// <summary>
 /// Event raised when the dataset list should be refreshed.
 /// </summary>
 public sealed class RefreshDatasetsRequestedEventArgs : DatasetEventArgs
@@ -510,6 +524,11 @@ public interface IDatasetEventAggregator
     /// </summary>
     event EventHandler<NavigateToBatchUpscaleEventArgs>? NavigateToBatchUpscaleRequested;
 
+    /// <summary>
+    /// Raised when images are sent to a guided Workflow (pipeline).
+    /// </summary>
+    event EventHandler<NavigateToWorkflowEventArgs>? NavigateToWorkflowRequested;
+
     #endregion
 
     #region Publish Methods
@@ -533,6 +552,7 @@ public interface IDatasetEventAggregator
     void PublishNavigateToImageComparer(NavigateToImageComparerEventArgs args);
     void PublishNavigateToCaptioning(NavigateToCaptioningEventArgs args);
     void PublishNavigateToBatchUpscale(NavigateToBatchUpscaleEventArgs args);
+    void PublishNavigateToWorkflow(NavigateToWorkflowEventArgs args);
     void PublishSettingsSaved(SettingsSavedEventArgs args);
     void PublishInstallerPackagesChanged(InstallerPackagesChangedEventArgs args);
 
@@ -619,6 +639,9 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
 
     /// <inheritdoc/>
     public event EventHandler<NavigateToBatchUpscaleEventArgs>? NavigateToBatchUpscaleRequested;
+
+    /// <inheritdoc/>
+    public event EventHandler<NavigateToWorkflowEventArgs>? NavigateToWorkflowRequested;
 
     #endregion
 
@@ -755,6 +778,13 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
     {
         ArgumentNullException.ThrowIfNull(args);
         RaiseEvent(NavigateToBatchUpscaleRequested, args);
+    }
+
+    /// <inheritdoc/>
+    public void PublishNavigateToWorkflow(NavigateToWorkflowEventArgs args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+        RaiseEvent(NavigateToWorkflowRequested, args);
     }
 
     /// <inheritdoc/>

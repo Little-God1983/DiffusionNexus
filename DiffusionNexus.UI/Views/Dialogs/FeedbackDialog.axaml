@@ -1,0 +1,149 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:DiffusionNexus.UI.Views.Dialogs"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.FeedbackDialog"
+        x:DataType="local:FeedbackDialog"
+        Title="Send Feedback"
+        Width="600"
+        Height="860"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False">
+
+    <Window.Styles>
+        <Style Selector="Window">
+            <Setter Property="Background">
+                <Setter.Value>
+                    <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+                        <GradientStop Color="#1a1a2e" Offset="0"/>
+                        <GradientStop Color="#16213e" Offset="0.5"/>
+                        <GradientStop Color="#0f3460" Offset="1"/>
+                    </LinearGradientBrush>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style Selector="Button.primary-btn">
+            <Setter Property="Background">
+                <Setter.Value>
+                    <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,0%">
+                        <GradientStop Color="#4CAF50" Offset="0"/>
+                        <GradientStop Color="#45a049" Offset="1"/>
+                    </LinearGradientBrush>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Padding" Value="24,12"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+        </Style>
+
+        <Style Selector="Button.secondary-btn">
+            <Setter Property="Background" Value="#3a3a5a"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Padding" Value="20,10"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+        </Style>
+
+        <Style Selector="TextBox">
+            <Setter Property="Background" Value="#2a2a4a"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#3a3a5a"/>
+            <Setter Property="CornerRadius" Value="4"/>
+        </Style>
+
+        <Style Selector="TextBlock.field-label">
+            <Setter Property="Foreground" Value="#ccccee"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+
+        <Style Selector="RadioButton">
+            <Setter Property="Foreground" Value="White"/>
+        </Style>
+    </Window.Styles>
+
+    <Border Padding="24">
+        <!-- Fixed header · scrollable fields · fixed bottom (consent + actions).
+             The disclaimer checkbox gates Submit, so it stays pinned with the
+             buttons and is never scrolled out of view. -->
+        <Grid RowDefinitions="Auto,*,Auto">
+            <TextBlock Grid.Row="0" Text="Send Feedback" FontSize="22" FontWeight="Bold" Foreground="White" Margin="0,0,0,16"/>
+
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <Grid>
+                    <!-- Compose state: the input fields -->
+                    <StackPanel x:Name="FormPanel" Spacing="16">
+                        <StackPanel Spacing="6">
+                            <TextBlock Classes="field-label" Text="Report type"/>
+                            <StackPanel Orientation="Horizontal" Spacing="18">
+                                <RadioButton x:Name="TypeFeedbackRadio" GroupName="ReportType" Content="Feedback"/>
+                                <RadioButton x:Name="TypeBugRadio" GroupName="ReportType" Content="Bug report" IsChecked="True"/>
+                                <RadioButton x:Name="TypeFeatureRadio" GroupName="ReportType" Content="Feature request"/>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <StackPanel Spacing="4">
+                            <TextBlock Classes="field-label" Text="Title *"/>
+                            <TextBox x:Name="TitleBox" Watermark="Short summary of the problem"/>
+                        </StackPanel>
+
+                        <StackPanel Spacing="4">
+                            <TextBlock Classes="field-label" Text="Description *"/>
+                            <TextBox x:Name="DescriptionBox" Watermark="Describe the problem" AcceptsReturn="True" Height="120" TextWrapping="Wrap"/>
+                        </StackPanel>
+
+                        <StackPanel Spacing="4">
+                            <TextBlock Classes="field-label" Text="What happened (optional)"/>
+                            <TextBox x:Name="WhatHappenedBox" AcceptsReturn="True" Height="60" TextWrapping="Wrap"/>
+                        </StackPanel>
+
+                        <StackPanel Spacing="4">
+                            <TextBlock Classes="field-label" Text="What should have happened (optional)"/>
+                            <TextBox x:Name="WhatShouldHaveHappenedBox" AcceptsReturn="True" Height="60" TextWrapping="Wrap"/>
+                        </StackPanel>
+
+                        <StackPanel Spacing="4">
+                            <TextBlock Classes="field-label" Text="E-mail (optional — in case we have questions)"/>
+                            <TextBox x:Name="EmailBox" Watermark="you@example.com"/>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- Success state -->
+                    <StackPanel x:Name="SuccessPanel" Spacing="12" IsVisible="False" VerticalAlignment="Top">
+                        <TextBlock Text="Thanks! Your feedback was submitted." FontSize="16" Foreground="White" FontWeight="SemiBold"/>
+                        <TextBlock Text="Want to send another? You can, or close this window." FontSize="13" Foreground="#ccccee" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Grid>
+            </ScrollViewer>
+
+            <!-- Fixed bottom: disclaimer + status + action buttons -->
+            <StackPanel Grid.Row="2" Spacing="14" Margin="0,16,0,0">
+                <Border x:Name="DisclaimerPanel" Background="#1E1E1E" BorderBrush="#FF6B6B" BorderThickness="1" CornerRadius="4" Padding="16">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="Before you submit" FontWeight="Bold" FontSize="14" Foreground="#FF6B6B"/>
+                        <TextBlock TextWrapping="Wrap" FontSize="13" Foreground="#ccccee" LineHeight="20">
+                            Bug reports include the last 500 lines of the application log to help with debugging — these can contain local file and folder names, for example downloaded LoRA or model filenames. Feedback and feature requests don't include the log. Screenshots aren't supported, so no unintended images can end up in a report.
+                        </TextBlock>
+                        <CheckBox x:Name="DisclaimerCheckBox" Content="I understand and accept this" Foreground="White" FontSize="13"/>
+                    </StackPanel>
+                </Border>
+
+                <TextBlock x:Name="StatusText" Foreground="#ff8080" TextWrapping="Wrap" IsVisible="False"/>
+                <TextBlock x:Name="SubmittingIndicator" Text="Submitting..." Foreground="#ccccee" IsVisible="False"/>
+
+                <Grid x:Name="FormFooter" ColumnDefinitions="*,10,*">
+                    <Button x:Name="CancelButton" Grid.Column="0" Classes="secondary-btn" Content="Cancel"/>
+                    <Button x:Name="SubmitButton" Grid.Column="2" Classes="primary-btn" Content="Submit"/>
+                </Grid>
+                <Grid x:Name="SuccessFooter" ColumnDefinitions="*,10,*" IsVisible="False">
+                    <Button x:Name="SubmitAnotherButton" Grid.Column="0" Classes="secondary-btn" Content="Submit another"/>
+                    <Button x:Name="CloseAfterSuccessButton" Grid.Column="2" Classes="primary-btn" Content="Close"/>
+                </Grid>
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>

@@ -2,9 +2,12 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
+using DiffusionNexus.UI.ViewModels.Controls;
 
 namespace DiffusionNexus.UI.ViewModels.Tabs;
 
@@ -46,6 +49,8 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     private readonly IComfyUIWrapperService? _comfyUiService;
     private readonly IThumbnailOrchestrator? _thumbnailOrchestrator;
     private readonly IFeatureReadinessService? _readinessService;
+    private readonly IAppSettingsService? _settingsService;
+    private readonly IVideoThumbnailService? _videoThumbnailService;
     private bool _disposed;
 
     private readonly ObservableCollection<DatasetCardViewModel> _editorDatasets = [];
@@ -60,10 +65,21 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     private bool _showTrash = true;
     private bool _showUnrated = true;
 
+    private IDialogService? _dialogService;
+
     /// <summary>
-    /// Gets or sets the dialog service for showing dialogs.
+    /// Gets or sets the dialog service for showing dialogs. Propagated to <see cref="ImageActions"/>
+    /// so its "Add To…" destinations can show their dialogs.
     /// </summary>
-    public IDialogService? DialogService { get; set; }
+    public IDialogService? DialogService
+    {
+        get => _dialogService;
+        set
+        {
+            _dialogService = value;
+            ImageActions.DialogService = value;
+        }
+    }
 
     #region Filter Properties
 
@@ -255,6 +271,13 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     /// </summary>
     public ImageEditorViewModel ImageEditor { get; }
 
+    /// <summary>
+    /// Reusable "Add To… / Send To…" actions operating on the current edited image — the same
+    /// component the pipeline result view uses, configured with "Image Editor" + "Comparer" hidden
+    /// (no point sending an image from the editor back to itself, and a single image can't be compared).
+    /// </summary>
+    public ImageActionsViewModel ImageActions { get; }
+
     #region Constructors
 
     /// <summary>
@@ -267,7 +290,9 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         IComfyUIWrapperService? comfyUiService = null,
         IThumbnailOrchestrator? thumbnailOrchestrator = null,
         IFeatureReadinessService? readinessService = null,
-        Domain.Services.UnifiedLogging.IUnifiedLogger? unifiedLogger = null)
+        Domain.Services.UnifiedLogging.IUnifiedLogger? unifiedLogger = null,
+        IAppSettingsService? settingsService = null,
+        IVideoThumbnailService? videoThumbnailService = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
@@ -275,9 +300,25 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         _comfyUiService = comfyUiService;
         _thumbnailOrchestrator = thumbnailOrchestrator;
         _readinessService = readinessService;
+        _settingsService = settingsService;
+        _videoThumbnailService = videoThumbnailService;
 
         // Create the image editor with background removal service
         ImageEditor = new ImageEditorViewModel(_eventAggregator, _backgroundRemovalService, _comfyUiService, readinessService: _readinessService, unifiedLogger: unifiedLogger);
+
+        // Reusable Add/Send actions over the current edited image. "Image Editor" + "Comparer" are
+        // hidden; enablement tracks whether an image is loaded.
+        ImageActions = new ImageActionsViewModel(_state, _eventAggregator, _videoThumbnailService, _settingsService)
+        {
+            AddButtonText = "Add To...",
+            SendButtonText = "Send To...",
+            ShowSendToImageEditor = false,
+            ShowSendToComparer = false,
+            PathProvider = AcquireCurrentImagePathsAsync,
+        };
+        ImageEditor.PropertyChanged += OnImageEditorPropertyChanged;
+        ImageActions.PropertyChanged += OnImageActionsPropertyChanged;
+        UpdateImageActionsCanAct();
 
         // Subscribe to events
         _eventAggregator.NavigateToImageEditorRequested += OnNavigateToImageEditorRequested;
@@ -596,6 +637,62 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     #region Private Methods
 
     /// <summary>
+    /// Supplies the current edited image to <see cref="ImageActions"/>: exports the in-memory edits to
+    /// a temp file (so destinations receive the edits, not the on-disk original) and returns a cleanup
+    /// that deletes it. The cleanup runs for the synchronous "Add To…" destinations; the deferred
+    /// "Send To…" destinations leave the temp for the OS (as the editor always has). Falls back to the
+    /// on-disk path when export isn't available.
+    /// </summary>
+    private Task<ImageActionPaths> AcquireCurrentImagePathsAsync()
+    {
+        var currentPath = ImageEditor.CurrentImagePath;
+        if (string.IsNullOrEmpty(currentPath) || !ImageEditor.HasImage)
+            return Task.FromResult(ImageActionPaths.Empty);
+
+        var sourcePath = currentPath;
+        string? tempPath = null;
+        if (ImageEditor.SaveImageFunc is not null)
+        {
+            var ext = Path.GetExtension(currentPath);
+            tempPath = Path.Combine(Path.GetTempPath(), $"DiffusionNexus_act_{Guid.NewGuid()}{ext}");
+            if (ImageEditor.SaveImageFunc(tempPath))
+                sourcePath = tempPath;
+            else
+                tempPath = null;
+        }
+
+        var tempToDelete = tempPath;
+        Action? cleanup = tempToDelete is null
+            ? null
+            : () => { try { File.Delete(tempToDelete); } catch { /* best effort */ } };
+
+        return Task.FromResult(new ImageActionPaths([sourcePath], cleanup));
+    }
+
+    private void OnImageEditorPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(ImageEditorViewModel.HasImage)
+            or nameof(ImageEditorViewModel.CurrentImagePath))
+        {
+            UpdateImageActionsCanAct();
+        }
+    }
+
+    // Surface the shared actions' status (e.g. "Added image to …") in the editor's status bar.
+    private void OnImageActionsPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(ImageActionsViewModel.StatusMessage)
+            && !string.IsNullOrEmpty(ImageActions.StatusMessage))
+        {
+            StatusMessage = ImageActions.StatusMessage;
+        }
+    }
+
+    /// <summary>Gates the Add/Send actions on whether an image is currently loaded in the editor.</summary>
+    private void UpdateImageActionsCanAct()
+        => ImageActions.CanAct = ImageEditor.HasImage && !string.IsNullOrEmpty(ImageEditor.CurrentImagePath);
+
+    /// <summary>
     /// Applies the current filter settings to update FilteredEditorImages.
     /// </summary>
     private void ApplyFilters()
@@ -832,6 +929,8 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
             _eventAggregator.ImageAdded -= OnImageAdded;
             _state.StateChanged -= OnStateChanged;
             _state.Datasets.CollectionChanged -= OnDatasetsCollectionChanged;
+            ImageEditor.PropertyChanged -= OnImageEditorPropertyChanged;
+            ImageActions.PropertyChanged -= OnImageActionsPropertyChanged;
         }
 
         _disposed = true;
@@ -867,11 +966,64 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         SelectedEditorVersion = versionItem;
     }
 
+    /// <summary>
+    /// Builds a temporary "Drag and Drop Selection" dataset from one or more dropped image
+    /// files and loads it into the editor — the same flow used when images are sent from the
+    /// gallery. Every image appears in the left thumbnail list; the first one is opened in the
+    /// editor. Works for a single dropped image or many.
+    /// </summary>
+    public void LoadDirectDropSelection(IReadOnlyList<string> imagePaths)
+    {
+        if (imagePaths is null) return;
+
+        // The View already restricts the drop/open payload to image files, and its filter
+        // accepts TIFF. Here we only drop non-existent files, videos and video thumbnails — we
+        // must NOT re-apply the narrower SupportedMediaTypes image set (no .tif/.tiff), which
+        // would silently discard dropped TIFFs. De-dupe so the same file dropped twice shows a
+        // single thumbnail.
+        var images = imagePaths
+            .Where(p => !string.IsNullOrWhiteSpace(p)
+                        && File.Exists(p)
+                        && !MediaFileExtensions.IsVideoFile(p)
+                        && !MediaFileExtensions.IsVideoThumbnailFile(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(p => DatasetImageViewModel.FromFile(p, _eventAggregator))
+            .Where(img => !img.IsVideo)
+            .ToList();
+
+        if (images.Count == 0)
+        {
+            StatusMessage = "No images available for editing.";
+            return;
+        }
+
+        var tempDataset = new DatasetCardViewModel
+        {
+            Name = "Drag and Drop Selection",
+            FolderPath = "TEMP://ImageEditDrop",
+            IsVersionedStructure = true,
+            CurrentVersion = 1,
+            TotalVersions = 1,
+            ImageCount = images.Count,
+            TotalImageCountAllVersions = images.Count,
+            IsTemporary = true
+        };
+
+        LoadTemporaryEditorDataset(tempDataset, images, images[0]);
+    }
+
     private void LoadTemporaryEditorDataset(
         DatasetCardViewModel dataset,
         IReadOnlyList<DatasetImageViewModel> images,
         DatasetImageViewModel selectedImage)
     {
+        // Drop any previous temporary selection from the combo so successive Gallery /
+        // Drag-and-Drop selections replace each other instead of stacking up.
+        if (_temporaryEditorDataset is not null && !ReferenceEquals(_temporaryEditorDataset, dataset))
+        {
+            _editorDatasets.Remove(_temporaryEditorDataset);
+        }
+
         _temporaryEditorDataset = dataset;
         _temporaryEditorDataset.IsTemporary = true;
         _temporaryEditorDataset.CurrentVersion = 1;

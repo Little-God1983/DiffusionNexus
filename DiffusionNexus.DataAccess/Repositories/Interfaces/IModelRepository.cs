@@ -55,6 +55,15 @@ public interface IModelRepository : IRepository<Model>
     Task<Model?> FindByLocalFilePathAsync(string localFilePath, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Finds a model by SHA256 hash on any of its files, with full includes. Case-insensitive.
+    /// Used by the download path as a fallback when no model matches by
+    /// <c>CivitaiModelPageId</c> — catches local-discovery rows that have the
+    /// file on disk but no Civitai linkage yet, so we don't create a duplicate
+    /// Model for the same file. Returns null if no match.
+    /// </summary>
+    Task<Model?> FindByFileHashAsync(string sha256, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Checks whether any model (other than <paramref name="excludeModelId"/>) already owns the given CivitaiId.
     /// </summary>
     Task<bool> IsCivitaiIdTakenAsync(int civitaiId, int excludeModelId, CancellationToken cancellationToken = default);
@@ -73,6 +82,19 @@ public interface IModelRepository : IRepository<Model>
     /// enabled-source toggles in Settings.
     /// </summary>
     Task<HashSet<int>> GetInstalledCivitaiVersionIdsAsync(
+        IReadOnlyList<string>? allowedRootPaths = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Returns the set of SHA256 hashes (lowercase) of locally-valid model files —
+    /// the same eligibility rule as <see cref="GetInstalledCivitaiVersionIdsAsync"/>
+    /// (non-empty LocalPath and either IsLocalFileValid or never verified).
+    /// Used by the Civitai browser as a fallback signal: when a local row's
+    /// <see cref="ModelVersion.CivitaiId"/> is missing (e.g. orphan duplicate rows
+    /// from past indexing bugs), a hash match against the API response still
+    /// surfaces the model as installed.
+    /// </summary>
+    Task<HashSet<string>> GetInstalledFileHashesAsync(
         IReadOnlyList<string>? allowedRootPaths = null,
         CancellationToken cancellationToken = default);
 

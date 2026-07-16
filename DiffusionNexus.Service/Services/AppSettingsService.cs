@@ -141,6 +141,7 @@ public sealed class AppSettingsService : IAppSettingsService
 
         // Update scalar properties
         existingSettings.EncryptedCivitaiApiKey = settings.EncryptedCivitaiApiKey;
+        existingSettings.EncryptedHuggingfaceApiKey = settings.EncryptedHuggingfaceApiKey;
         existingSettings.ShowNsfw = settings.ShowNsfw;
         existingSettings.GenerateVideoThumbnails = settings.GenerateVideoThumbnails;
         existingSettings.ShowVideoPreview = settings.ShowVideoPreview;
@@ -150,7 +151,8 @@ public sealed class AppSettingsService : IAppSettingsService
         existingSettings.LoraSortTargetPath = settings.LoraSortTargetPath;
         existingSettings.DatasetStoragePath = settings.DatasetStoragePath;
         existingSettings.DeleteEmptySourceFolders = settings.DeleteEmptySourceFolders;
-        existingSettings.AutoBackupEnabled = settings.AutoBackupEnabled;
+        existingSettings.BackupDatasetImagesEnabled = settings.BackupDatasetImagesEnabled;
+        existingSettings.BackupDatabaseEnabled = settings.BackupDatabaseEnabled;
         existingSettings.AutoBackupIntervalDays = settings.AutoBackupIntervalDays;
         existingSettings.AutoBackupIntervalHours = settings.AutoBackupIntervalHours;
         existingSettings.AutoBackupLocation = settings.AutoBackupLocation;
@@ -298,6 +300,25 @@ public sealed class AppSettingsService : IAppSettingsService
     }
 
     /// <inheritdoc />
+    public async Task<string?> GetHuggingfaceApiKeyAsync(CancellationToken cancellationToken = default)
+    {
+        var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+        return _secureStorage.Decrypt(settings.EncryptedHuggingfaceApiKey);
+    }
+
+    /// <inheritdoc />
+    public async Task SetHuggingfaceApiKeyAsync(string? token, CancellationToken cancellationToken = default)
+    {
+        var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+        settings.EncryptedHuggingfaceApiKey = string.IsNullOrWhiteSpace(token)
+            ? null
+            : _secureStorage.Encrypt(token);
+        settings.UpdatedAt = DateTimeOffset.UtcNow;
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
     public async Task<IReadOnlyList<string>> GetEnabledLoraSourcesAsync(CancellationToken cancellationToken = default)
     {
         var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
@@ -381,6 +402,28 @@ public sealed class AppSettingsService : IAppSettingsService
 
         // Normalize empty string to null so "no favorite" is unambiguous.
         settings.FavoriteLoraSourcePath = string.IsNullOrWhiteSpace(folderPath) ? null : folderPath;
+        settings.UpdatedAt = DateTimeOffset.UtcNow;
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<string?> GetFeedbackReporterEmailAsync(CancellationToken cancellationToken = default)
+    {
+        var settings = await _unitOfWork.AppSettings
+            .GetSettingsAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return settings?.FeedbackReporterEmail;
+    }
+
+    /// <inheritdoc />
+    public async Task SetFeedbackReporterEmailAsync(string? email, CancellationToken cancellationToken = default)
+    {
+        var settings = await _unitOfWork.AppSettings
+            .GetSettingsAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (settings is null) return;
+
+        settings.FeedbackReporterEmail = string.IsNullOrWhiteSpace(email) ? null : email.Trim();
         settings.UpdatedAt = DateTimeOffset.UtcNow;
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }

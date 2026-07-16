@@ -404,18 +404,6 @@ EfaWzpDlgX/Platforms/Windows/Package.appxmanifest
 
 # ZIP files
 *.zip
-=======
-# Ignore all files with the specified name.
-# Scope is all repo folders.
-config.json
-
-# Ignore all files with the specified extension.
-# Scope is all repo folders.
-*.json
-
-# Add an exception to prevent ignoring a file with the specified name.
-# Scope is all repo folders.
-!package.json
 
 # Ignore a file with the specified name.
 # Scoped to the 'logs' subfolder.
@@ -427,7 +415,6 @@ config.json
 
 # Ignore all files in the 'logs' subfolder.
 /logs/
->>>>>>> 13fa9c9 (first commit)
 *.db-shm
 *.db-wal
 DemoFiles/

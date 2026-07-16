@@ -109,10 +109,21 @@ public class DiffusionNexusCoreDbContext : DbContext
     {
         var dir = directory ?? GetDatabaseDirectory();
         Directory.CreateDirectory(dir);
-        var path = Path.Combine(dir, DatabaseFileName);
-        // Use default timeout and disable pooling to prevent connection locking issues
-        return $"Data Source={path};Mode=ReadWriteCreate;Cache=Shared;Pooling=False;Default Timeout=30";
+        var path = GetDatabaseFilePath(dir);
+        // No shared cache: with WAL journaling (set at startup) private-cache
+        // connections let readers proceed while a writer commits — shared cache
+        // serialized them and stalled UI-thread reads behind background writes.
+        return $"Data Source={path};Mode=ReadWriteCreate;Pooling=False;Default Timeout=30";
     }
+
+    /// <summary>
+    /// Gets the full path to the core database file (directory + <see cref="DatabaseFileName"/>)
+    /// using portable-first resolution (see <see cref="GetDatabaseDirectory"/>). This is the exact
+    /// file the app reads and writes — shown in Settings and copied by the database backup service.
+    /// </summary>
+    /// <param name="directory">Directory containing the database. Uses portable-first resolution if null.</param>
+    public static string GetDatabaseFilePath(string? directory = null)
+        => Path.Combine(directory ?? GetDatabaseDirectory(), DatabaseFileName);
 
     /// <summary>
     /// Gets the database directory using portable-first resolution.

@@ -54,7 +54,6 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 {
     private readonly IAppSettingsService _settingsService;
     private readonly IDatasetStorageService _datasetStorageService;
-    private readonly IDatasetBackupService? _backupService;
     private readonly ICaptioningService? _captioningService; // Made optional to avoid breaking existing tests/instantiation if any
     private readonly IVideoThumbnailService? _videoThumbnailService;
     private readonly IDatasetEventAggregator _eventAggregator;
@@ -66,13 +65,6 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
     private DatasetCategoryViewModel? _selectedCategory;
     private DatasetType? _selectedType;
-
-    // Backup status fields
-    private bool _isAutoBackupConfigured;
-    private string _backupStatusText = "No backup set up";
-    private Timer? _backupCountdownTimer;
-    private DateTimeOffset? _nextBackupTime;
-    private bool _isBackupInProgress;
 
     // Filter fields
     private string _filterText = string.Empty;
@@ -426,50 +418,6 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         set => _state.StatusMessage = value;
     }
 
-    /// <summary>
-    /// Whether automatic backup is configured.
-    /// </summary>
-    public bool IsAutoBackupConfigured
-    {
-        get => _isAutoBackupConfigured;
-        private set => SetProperty(ref _isAutoBackupConfigured, value);
-    }
-
-    /// <summary>
-    /// Whether a backup is currently in progress.
-    /// </summary>
-    public bool IsBackupInProgress
-    {
-        get => _isBackupInProgress;
-        private set
-        {
-            if (SetProperty(ref _isBackupInProgress, value))
-            {
-                OnPropertyChanged(nameof(BackupButtonContent));
-            }
-        }
-    }
-
-    /// <summary>
-    /// Content for the backup button - shows hourglass when running.
-    /// </summary>
-    public string BackupButtonContent => _isBackupInProgress ? "? Backup Running..." : BackupStatusText;
-
-    /// <summary>
-    /// Text to display on the backup status button.
-    /// </summary>
-    public string BackupStatusText
-    {
-        get => _backupStatusText;
-        private set
-        {
-            if (SetProperty(ref _backupStatusText, value))
-            {
-                OnPropertyChanged(nameof(BackupButtonContent));
-            }
-        }
-    }
-
     #endregion
 
     #region Filter Properties
@@ -620,9 +568,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     public bool HasTrainingRuns => TrainingRuns.Count > 0;
 
     public IAsyncRelayCommand<DatasetImageViewModel?> OpenImageViewerCommand { get; }
-    public IRelayCommand GoToBackupSettingsCommand { get; }
     public IRelayCommand ClearFiltersCommand { get; }
-    public IAsyncRelayCommand BackupNowCommand { get; }
     public IAsyncRelayCommand<DatasetImageViewModel?> DeleteImageCommand { get; }
 
     // Selection commands
@@ -675,7 +621,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         _state = state ?? throw new ArgumentNullException(nameof(state));
         _captioningService = captioningService;
         _videoThumbnailService = videoThumbnailService;
-        _backupService = backupService;
+        // backupService param retained for DI/caller compatibility; automatic backups are now
+        // owned by the app-level IBackupScheduler (see BackupScheduler), not this tab.
         _activityLog = activityLog;
         _thumbnailOrchestrator = thumbnailOrchestrator;
         _baseModelCatalog = baseModelCatalog;
@@ -745,9 +692,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         ExportDatasetOnlyCommand = new AsyncRelayCommand(ExportDatasetOnlyAsync);
         ExportTrainingRunsCommand = new AsyncRelayCommand(ExportTrainingRunsAsync);
         OpenImageViewerCommand = new AsyncRelayCommand<DatasetImageViewModel?>(OpenImageViewerAsync);
-        GoToBackupSettingsCommand = new RelayCommand(GoToBackupSettings);
         ClearFiltersCommand = new RelayCommand(ClearFilters);
-        BackupNowCommand = new AsyncRelayCommand(BackupNowAsync, () => IsAutoBackupConfigured && !_isBackupInProgress);
         DeleteImageCommand = new AsyncRelayCommand<DatasetImageViewModel?>(DeleteImageAsync);
 
         // Selection commands
@@ -898,9 +843,6 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                            && _datasetStorageService.DirectoryExists(settings.DatasetStoragePath);
         _state.SetStorageConfigured(isConfigured);
 
-        // Update backup status
-        UpdateBackupStatus(settings);
-
         // Load categories
         await LoadCategoriesAsync(settings);
 
@@ -908,338 +850,6 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         {
             await LoadDatasetsAsync();
         }
-    }
-
-    /// <summary>
-    /// Updates the backup status properties based on settings.
-    /// </summary>
-    private void UpdateBackupStatus(AppSettings settings)
-    {
-        // Stop existing timer
-        StopBackupCountdownTimer();
-
-        var isBackupConfigured = settings.AutoBackupEnabled
-            && !string.IsNullOrWhiteSpace(settings.AutoBackupLocation)
-            && _datasetStorageService.DirectoryExists(settings.AutoBackupLocation);
-
-        IsAutoBackupConfigured = isBackupConfigured;
-
-        if (isBackupConfigured)
-        {
-            // Calculate next backup time
-            var intervalTicks = TimeSpan.FromDays(settings.AutoBackupIntervalDays).Ticks
-                              + TimeSpan.FromHours(settings.AutoBackupIntervalHours).Ticks;
-            var interval = TimeSpan.FromTicks(intervalTicks);
-
-            if (interval.TotalMinutes < 1)
-            {
-                interval = TimeSpan.FromHours(1); // Minimum 1 hour
-            }
-
-            var lastBackup = settings.LastBackupAt ?? DateTimeOffset.MinValue;
-            _nextBackupTime = lastBackup + interval;
-
-            // If next backup is in the past, it's due now - trigger backup
-                if (_nextBackupTime <= DateTimeOffset.UtcNow)
-                {
-                    BackupStatusText = "Backup: Due now";
-                    if (!_isBackupInProgress)
-                    {
-                        _ = ExecuteBackupIfDueAsync();
-                    }
-                }
-            else
-            {
-                UpdateBackupCountdownText();
-                StartBackupCountdownTimer();
-            }
-        }
-        else
-        {
-            _nextBackupTime = null;
-            BackupStatusText = "No backup set up";
-        }
-    }
-
-    /// <summary>
-    /// Executes a backup if one is due and not already in progress.
-    /// </summary>
-    private async Task ExecuteBackupIfDueAsync()
-    {
-        if (_backupService is null || _isBackupInProgress)
-        {
-            return;
-        }
-
-        // Set in-progress BEFORE any await to prevent TOCTOU race:
-        // without this, a second caller can pass the _isBackupInProgress check
-        // while the first caller is awaiting IsBackupDueAsync, starting two concurrent backups.
-        _isBackupInProgress = true;
-        BackupNowCommand.NotifyCanExecuteChanged();
-
-        var isDue = await _backupService.IsBackupDueAsync();
-        if (!isDue)
-        {
-            _isBackupInProgress = false;
-            BackupNowCommand.NotifyCanExecuteChanged();
-            return;
-        }
-
-        BackupStatusText = "Backup: Running...";
-
-        // Start backup progress tracking in the status bar
-        _activityLog?.StartBackupProgress("Backing up datasets");
-
-        try
-        {
-            var progress = new Progress<BackupProgress>(p =>
-            {
-                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-                {
-                    BackupStatusText = $"Backup: {p.ProgressPercent}%";
-                    _activityLog?.ReportBackupProgress(p.ProgressPercent, p.Phase);
-                });
-            });
-
-            // Run backup on a background thread with its own DI scope to avoid
-            // concurrent DbContext access (the shared scoped DbContext is not thread-safe).
-            var result = await Task.Run(async () =>
-            {
-                using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
-                var scopedBackupService = scope.ServiceProvider.GetRequiredService<IDatasetBackupService>();
-                return await scopedBackupService.BackupDatasetsAsync(progress);
-            });
-
-            if (result.Success)
-            {
-                _activityLog?.CompleteBackupProgress(true, $"Backup completed: {result.FilesBackedUp} files");
-                StatusMessage = $"Backup completed: {result.FilesBackedUp} files";
-
-                // Refresh backup status to show next backup time.
-                // The backup ran on a separate DI scope, so the main DbContext still has
-                // the old LastBackupAt cached. Force the fresh timestamp to prevent
-                // UpdateBackupStatus from seeing a stale value and immediately re-triggering.
-                var settings = await _settingsService.GetSettingsAsync();
-                settings.LastBackupAt = DateTimeOffset.UtcNow;
-                UpdateBackupStatus(settings);
-            }
-            else
-            {
-                _activityLog?.CompleteBackupProgress(false, $"Backup failed: {result.ErrorMessage}");
-                StatusMessage = $"Backup failed: {result.ErrorMessage}";
-                BackupStatusText = "Backup: Failed";
-            }
-        }
-        catch (Exception ex)
-        {
-            _activityLog?.CompleteBackupProgress(false, $"Backup error: {ex.Message}");
-            StatusMessage = $"Backup error: {ex.Message}";
-            BackupStatusText = "Backup: Error";
-        }
-        finally
-        {
-            _isBackupInProgress = false;
-            BackupNowCommand.NotifyCanExecuteChanged();
-        }
-    }
-
-    /// <summary>
-    /// Manually triggers a backup now.
-    /// </summary>
-    private async Task BackupNowAsync()
-    {
-        if (_backupService is null || _isBackupInProgress)
-        {
-            return;
-        }
-
-        _isBackupInProgress = true;
-        BackupStatusText = "Backup: Running...";
-        BackupNowCommand.NotifyCanExecuteChanged();
-
-        // Start backup progress tracking in the status bar
-        _activityLog?.StartBackupProgress("Backing up datasets");
-
-        try
-        {
-            var progress = new Progress<BackupProgress>(p =>
-            {
-                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-                {
-                    BackupStatusText = $"Backup: {p.ProgressPercent}%";
-                    _activityLog?.ReportBackupProgress(p.ProgressPercent, p.Phase);
-                });
-            });
-
-            // Run backup on a background thread with its own DI scope to avoid
-            // concurrent DbContext access (the shared scoped DbContext is not thread-safe).
-            var result = await Task.Run(async () =>
-            {
-                using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
-                var scopedBackupService = scope.ServiceProvider.GetRequiredService<IDatasetBackupService>();
-                return await scopedBackupService.BackupDatasetsAsync(progress);
-            });
-
-            if (result.Success)
-            {
-                _activityLog?.CompleteBackupProgress(true, $"Backup completed: {result.FilesBackedUp} files");
-                StatusMessage = $"Backup completed: {result.FilesBackedUp} files";
-
-                // Refresh backup status to show next backup time.
-                // The backup ran on a separate DI scope, so the main DbContext still has
-                // the old LastBackupAt cached. Force the fresh timestamp to prevent
-                // UpdateBackupStatus from seeing a stale value and immediately re-triggering.
-                var settings = await _settingsService.GetSettingsAsync();
-                settings.LastBackupAt = DateTimeOffset.UtcNow;
-                UpdateBackupStatus(settings);
-            }
-            else
-            {
-                _activityLog?.CompleteBackupProgress(false, $"Backup failed: {result.ErrorMessage}");
-                StatusMessage = $"Backup failed: {result.ErrorMessage}";
-                BackupStatusText = "Backup: Failed";
-            }
-        }
-        catch (Exception ex)
-        {
-            _activityLog?.CompleteBackupProgress(false, $"Backup error: {ex.Message}");
-            StatusMessage = $"Backup error: {ex.Message}";
-            BackupStatusText = "Backup: Error";
-        }
-        finally
-        {
-            _isBackupInProgress = false;
-            BackupNowCommand.NotifyCanExecuteChanged();
-        }
-    }
-
-    /// <summary>
-    /// Updates the backup countdown text based on remaining time.
-    /// </summary>
-    private void UpdateBackupCountdownText()
-    {
-        if (_nextBackupTime is null)
-        {
-            BackupStatusText = "No backup set up";
-            return;
-        }
-
-        var remaining = _nextBackupTime.Value - DateTimeOffset.UtcNow;
-
-        if (remaining.TotalSeconds <= 0)
-        {
-            BackupStatusText = "Backup: Due now";
-            StopBackupCountdownTimer();
-            return;
-        }
-
-        // Format the remaining time
-        if (remaining.TotalDays >= 1)
-        {
-            var days = (int)remaining.TotalDays;
-            var hours = remaining.Hours;
-            BackupStatusText = hours > 0
-                ? $"Backup in {days}d {hours}h"
-                : $"Backup in {days}d";
-        }
-        else if (remaining.TotalHours >= 1)
-        {
-            var hours = (int)remaining.TotalHours;
-            var minutes = remaining.Minutes;
-            BackupStatusText = minutes > 0
-                ? $"Backup in {hours}h {minutes}m"
-                : $"Backup in {hours}h";
-        }
-        else if (remaining.TotalMinutes >= 1)
-        {
-            var minutes = (int)remaining.TotalMinutes;
-            var seconds = remaining.Seconds;
-            BackupStatusText = seconds > 0
-                ? $"Backup in {minutes}m {seconds}s"
-                : $"Backup in {minutes}m";
-        }
-        else
-        {
-            var seconds = (int)remaining.TotalSeconds;
-            BackupStatusText = $"Backup in {seconds}s";
-        }
-
-        // Adjust timer interval based on remaining time for more accurate updates
-        AdjustTimerInterval(remaining);
-    }
-
-    /// <summary>
-    /// Adjusts the backup countdown timer interval based on remaining time.
-    /// Updates every second when under 1 minute, every minute otherwise.
-    /// </summary>
-    private void AdjustTimerInterval(TimeSpan remaining)
-    {
-        if (_backupCountdownTimer is null) return;
-
-        var desiredInterval = remaining.TotalMinutes < 1 ? 1000 : 60000; // 1 second or 1 minute
-
-        if (Math.Abs(_backupCountdownTimer.Interval - desiredInterval) > 1)
-        {
-            _backupCountdownTimer.Interval = desiredInterval;
-        }
-    }
-
-    /// <summary>
-    /// Starts the backup countdown timer.
-    /// </summary>
-    private void StartBackupCountdownTimer()
-    {
-        // Determine initial interval based on remaining time
-        var remaining = _nextBackupTime.HasValue
-            ? _nextBackupTime.Value - DateTimeOffset.UtcNow
-            : TimeSpan.MaxValue;
-        
-        var interval = remaining.TotalMinutes < 1 ? 1000 : 60000; // 1 second or 1 minute
-
-        _backupCountdownTimer = new Timer(interval);
-        _backupCountdownTimer.Elapsed += OnBackupCountdownTimerElapsed;
-        _backupCountdownTimer.AutoReset = true;
-        _backupCountdownTimer.Start();
-    }
-
-    /// <summary>
-    /// Stops the backup countdown timer.
-    /// </summary>
-    private void StopBackupCountdownTimer()
-    {
-        if (_backupCountdownTimer is not null)
-        {
-            _backupCountdownTimer.Stop();
-            _backupCountdownTimer.Elapsed -= OnBackupCountdownTimerElapsed;
-            _backupCountdownTimer.Dispose();
-            _backupCountdownTimer = null;
-        }
-    }
-
-    /// <summary>
-    /// Handles the backup countdown timer tick.
-    /// </summary>
-    private void OnBackupCountdownTimerElapsed(object? sender, ElapsedEventArgs e)
-    {
-        // Update on UI thread
-        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-        {
-            UpdateBackupCountdownText();
-            
-            // Check if backup is now due
-            if (_nextBackupTime.HasValue && _nextBackupTime.Value <= DateTimeOffset.UtcNow && !_isBackupInProgress)
-            {
-                _ = ExecuteBackupIfDueAsync();
-            }
-        });
-    }
-
-    /// <summary>
-    /// Navigates to the Settings page to configure backup.
-    /// </summary>
-    private void GoToBackupSettings()
-    {
-        _eventAggregator.PublishNavigateToSettings(new NavigateToSettingsEventArgs());
     }
 
     private async Task LoadCategoriesAsync(AppSettings? settings = null)
@@ -3502,9 +3112,6 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
         if (disposing)
         {
-            // Stop the backup countdown timer
-            StopBackupCountdownTimer();
-
             // Unsubscribe from events to prevent memory leaks
             _state.StateChanged -= OnStateChanged;
             _eventAggregator.ImageSaved -= OnImageSaved;

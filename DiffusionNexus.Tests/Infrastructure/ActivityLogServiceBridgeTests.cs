@@ -85,4 +85,24 @@ public class ActivityLogServiceBridgeTests
         sut.CurrentStatusSeverity.Should().Be(ActivitySeverity.Error);
         sut.IsBackupInProgress.Should().BeFalse();
     }
+
+    [Fact]
+    public void ReportBackupProgress_SurfacesLiveStepLabel_AndIndeterminateToggles()
+    {
+        // Regression: the per-step label + counts must reach the backup indicator's operation name
+        // (the general status is hidden while the backup bar is shown), and the indeterminate flag
+        // must switch on for steps without a percentage (the database copy) and off again.
+        var sut = CreateSut();
+        sut.StartBackupProgress("Backing up datasets + database");
+        sut.BackupProgressIsIndeterminate.Should().BeFalse();
+
+        sut.ReportBackupIndeterminate("Copying database…");
+        sut.BackupProgressIsIndeterminate.Should().BeTrue();
+        sut.BackupOperationName.Should().Be("Copying database…");
+
+        sut.ReportBackupProgress(42, "Zipping dataset images — 21/50");
+        sut.BackupProgressIsIndeterminate.Should().BeFalse();
+        sut.BackupProgressPercent.Should().Be(42);
+        sut.BackupOperationName.Should().Be("Zipping dataset images — 21/50");
+    }
 }

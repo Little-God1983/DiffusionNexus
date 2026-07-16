@@ -10,6 +10,8 @@ using DiffusionNexus.Infrastructure;
 using DiffusionNexus.Installer.SDK.DataAccess;
 using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.Installer.SDK.Services.Installation;
+using DiffusionNexus.Installer.SDK.Shared.Services;
+using DiffusionNexus.Installer.SDK.Shared.Services.Feedback;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.Service.Services.DatasetQuality;
 using DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
@@ -109,43 +111,20 @@ public partial class App : Application
                 _appScope = rootProvider.CreateScope();
                 Services = _appScope.ServiceProvider;
 
-                // Initialize ThumbnailService for converters
-                Serilog.Log.Information("Initializing thumbnail service...");
-                InitializeThumbnailService();
-
-                // Initialize spell check and autocomplete for caption editors
-                Serilog.Log.Information("Initializing spell check services...");
-                InitializeSpellCheckServices();
-
-                // Initialize databases
-                Serilog.Log.Information("Initializing app database...");
-                InitializeDatabase();
-
-                Serilog.Log.Information("Initializing SDK database...");
-                InitializeSdkDatabase();
-
-                // Create main window with modules
+                // Create main window view model
                 Serilog.Log.Information("Creating main window view model...");
                 var mainViewModel = new DiffusionNexusMainWindowViewModel();
+                mainViewModel.StartupOverlay = new StartupOverlayViewModel(
+                    Services!.GetRequiredService<DiffusionNexus.UI.Services.Startup.StartupProgressService>());
 
-                // Initialize status bar with activity log service
+                // Initialize status bar with activity log service. This only constructs
+                // the in-memory status-bar / unified-console view models (no DB access);
+                // DB-backed instance loading is wired later in CompleteStartupAsync.
                 Serilog.Log.Information("Initializing status bar...");
                 mainViewModel.InitializeStatusBar();
 
-                // Force-resolve the InstanceProcessManager singleton so its constructor
-                // wires PackageProcessManager.OutputReceived ? IUnifiedLogger.
-                // Without this, process stdout/stderr never reaches the Unified Console.
-                Serilog.Log.Information("Initializing instance process manager...");
-                _ = Services!.GetRequiredService<IInstanceProcessManager>();
-
-                // Wire the Civitai base-model catalog into the Unified Console:
-                // - log how old the on-disk definition is right now
-                // - log every refresh attempt (cache hit, live fetch + result, fallback)
-                Serilog.Log.Information("Initializing Civitai base-model catalog...");
-                InitializeCivitaiBaseModelCatalog();
-
-                // Create and assign the main window before registering modules,
-                // because module resolution requires IDialogService which needs MainWindow.
+                // Create and assign the main window before showing it. Module resolution
+                // (deferred to CompleteStartupAsync) requires IDialogService, which needs MainWindow.
                 Serilog.Log.Information("Creating main window...");
                 var mainWindow = new DiffusionNexusMainWindow
                 {
@@ -154,33 +133,8 @@ public partial class App : Application
                 desktop.MainWindow = mainWindow;
                 Serilog.Log.Information("Main window assigned to desktop.MainWindow");
 
-                Serilog.Log.Information("Registering modules...");
-                RegisterModules(mainViewModel);
-
-                // Ensure the local-diffusion outputs folder is visible in the Generation Gallery.
-                // Fire-and-forget: failure to register must not block startup (registrar logs internally).
-                if (DiffusionNexus.UI.Services.Diffusion.DiffusionFeatureFlags.UseLocalDiffusionBackend)
-                {
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            using var scope = Services!.CreateScope();
-                            var registrar = scope.ServiceProvider.GetRequiredService<DiffusionNexus.UI.Services.Diffusion.OutputsFolderRegistrar>();
-                            await registrar.EnsureRegisteredAsync();
-                        }
-                        catch (Exception ex)
-                        {
-                            Serilog.Log.Warning(ex, "OutputsFolderRegistrar failed during startup.");
-                        }
-                    });
-                }
-
-                // Force show the window explicitly
-                mainWindow.Show();
-                Serilog.Log.Information("Main window Show() called");
-
-                // Cleanup on shutdown
+                // Cleanup on shutdown — registered before Show() so it is wired before
+                // anything can close the app.
                 desktop.ShutdownRequested += (_, _) =>
                 {
                     // Dispose the instance process manager (unwires events)
@@ -196,6 +150,14 @@ public partial class App : Application
                     Services?.GetService<PackageProcessManager>()?.Dispose();
                     _appScope?.Dispose();
                 };
+
+                // Show FIRST: the window becomes visible and interactive immediately;
+                // databases, service warm-up and module registration follow asynchronously
+                // (CompleteStartupAsync). A lightweight overlay covers the module host until then.
+                mainWindow.Show();
+                Serilog.Log.Information("Main window Show() called");
+
+                _ = CompleteStartupAsync(mainViewModel);
             }
             catch (Exception ex)
             {
@@ -207,6 +169,137 @@ public partial class App : Application
         Serilog.Log.Information("Calling base.OnFrameworkInitializationCompleted...");
         base.OnFrameworkInitializationCompleted();
         Serilog.Log.Information("OnFrameworkInitializationCompleted finished");
+    }
+
+    /// <summary>
+    /// Deferred startup: everything that used to run before Show() but doesn't
+    /// need to. Database init runs on a pool thread; the UI-affine service warm-up
+    /// and module registration (which inflates XAML views) resume on the UI thread
+    /// afterwards. On completion (success or failure) the main window's startup
+    /// overlay is dismissed via <see cref="DiffusionNexusMainWindowViewModel.IsStartupComplete"/>.
+    /// <para>Each phase reports to the <see cref="DiffusionNexus.UI.Services.Startup.StartupProgressService"/>
+    /// ready-check list. The <c>finally</c> block enforces the hard requirement that the
+    /// UI is responsive the moment the overlay vanishes: it drains the dispatcher with a
+    /// Background-priority sentinel, sets <see cref="DiffusionNexusMainWindowViewModel.IsStartupComplete"/>,
+    /// then releases deferred background work (autocomplete trie) via
+    /// <see cref="DiffusionNexus.UI.Services.Startup.StartupProgressService.SignalUiReady"/>.</para>
+    /// </summary>
+    private async Task CompleteStartupAsync(DiffusionNexusMainWindowViewModel mainViewModel)
+    {
+        var startupProgress = Services!.GetRequiredService<DiffusionNexus.UI.Services.Startup.StartupProgressService>();
+        try
+        {
+            startupProgress.Begin("database");
+            // Database initialization is pure logging + EF work — safe off the UI thread.
+            await Task.Run(() =>
+            {
+                Serilog.Log.Information("Initializing app database...");
+                InitializeDatabase();
+                Serilog.Log.Information("Initializing SDK database...");
+                InitializeSdkDatabase();
+            });
+            startupProgress.Complete("database");
+
+            // Everything below resumes on the Avalonia UI thread (its SynchronizationContext
+            // was captured at the await above), which these steps require: they touch
+            // converter singletons, spell-check wiring and — via RegisterModulesAsync — inflate
+            // XAML views. Do NOT add ConfigureAwait(false) in this method.
+            Serilog.Log.Information("Initializing thumbnail service...");
+            InitializeThumbnailService();
+
+            Serilog.Log.Information("Initializing spell check services...");
+            InitializeSpellCheckServices();
+
+            // Force-resolve the InstanceProcessManager singleton so its constructor
+            // wires PackageProcessManager output -> IUnifiedLogger. Without this, process
+            // stdout/stderr never reaches the Unified Console.
+            Serilog.Log.Information("Initializing instance process manager...");
+            _ = Services!.GetRequiredService<IInstanceProcessManager>();
+
+            // Wire the Civitai base-model catalog into the Unified Console (age report +
+            // per-refresh logging), then kick off a background load.
+            Serilog.Log.Information("Initializing Civitai base-model catalog...");
+            InitializeCivitaiBaseModelCatalog();
+
+            // Wire DB-backed instance management now that the databases exist. Moved here
+            // from InitializeStatusBar because it triggers LoadInstancesAsync, which reads
+            // the core database's InstallerPackages table (see Step 4 of the perf plan).
+            Serilog.Log.Information("Initializing instance management...");
+            mainViewModel.InitializeInstanceManagement();
+
+            // Start the app-level backup scheduler now that the database is ready. It arms the
+            // auto-backup timer and runs a due-check in the background, independent of any module
+            // being open (this replaces the timer that used to live in the LoRA Dataset Helper).
+            Serilog.Log.Information("Starting backup scheduler...");
+            Services!.GetService<IBackupScheduler>()?.Start();
+
+            Serilog.Log.Information("Registering modules...");
+            await RegisterModulesAsync(mainViewModel, startupProgress);
+
+            // Diffusion Engine: the heavy native warm-up happens inside module
+            // construction; this check confirms the backend singleton resolves.
+            if (DiffusionNexus.UI.Services.Diffusion.DiffusionFeatureFlags.UseLocalDiffusionBackend)
+            {
+                startupProgress.Begin("diffusion-engine");
+                try
+                {
+                    _ = Services!.GetRequiredService<DiffusionNexus.UI.Services.Diffusion.LocalDiffusionBackendProvider>();
+                    startupProgress.Complete("diffusion-engine");
+                }
+                catch (Exception ex)
+                {
+                    Serilog.Log.Error(ex, "Diffusion engine warm-up failed");
+                    startupProgress.Fail("diffusion-engine", ex.Message);
+                }
+
+                // Ensure the local-diffusion outputs folder is visible in the Generation Gallery.
+                // Fire-and-forget: failure to register must not block startup (registrar logs internally).
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        using var scope = Services!.CreateScope();
+                        var registrar = scope.ServiceProvider.GetRequiredService<DiffusionNexus.UI.Services.Diffusion.OutputsFolderRegistrar>();
+                        await registrar.EnsureRegisteredAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        Serilog.Log.Warning(ex, "OutputsFolderRegistrar failed during startup.");
+                    }
+                });
+            }
+            else
+            {
+                startupProgress.Complete("diffusion-engine");
+            }
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Fatal(ex, "Deferred startup initialization failed");
+            foreach (var check in startupProgress.Checks)
+            {
+                if (check.State is DiffusionNexus.UI.Services.Startup.StartupCheckState.Pending
+                                or DiffusionNexus.UI.Services.Startup.StartupCheckState.Running
+                    && check.GatesReadiness)
+                {
+                    startupProgress.Fail(check.Id, ex.Message);
+                }
+            }
+            Services?.GetService<IActivityLogService>()
+                ?.LogError("Startup", "Startup initialization failed — some features may be unavailable", ex);
+        }
+        finally
+        {
+            // HARD REQUIREMENT (user): the UI must be responsive when the overlay
+            // vanishes. All core checks are terminal here; drain everything at-and-
+            // above Background priority before dismissing, then release deferred
+            // background work (autocomplete trie) via SignalUiReady.
+            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
+                static () => { }, Avalonia.Threading.DispatcherPriority.Background);
+            mainViewModel.IsStartupComplete = true;
+            startupProgress.SignalUiReady();
+            Serilog.Log.Information("Startup ready - overlay dismissed");
+        }
     }
 
     /// <summary>
@@ -367,6 +460,11 @@ public partial class App : Application
             // Post-migration verification to catch schema gaps
             Serilog.Log.Information("InitializeDatabase: Post-migration schema verification...");
             CheckAndRepairSchema(dbContext);
+
+            // WAL: readers no longer block behind writers (e.g. the end-of-backup
+            // LastBackupAt write). Persistent — set once per launch is idempotent.
+            Serilog.Log.Information("InitializeDatabase: Ensuring WAL journal mode...");
+            dbContext.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
         }
         catch (SqliteException ex) when (ex.Message.Contains("already exists"))
         {
@@ -482,11 +580,21 @@ public partial class App : Application
                     break;
             }
 
-            // Apply any pending schema migrations on top of the (seed) data.
+            // Apply pending schema migrations on top of the (seed) data — but only
+            // when there are any; an unconditional Migrate() costs a full EF
+            // migration pass on every launch (mirrors the core-DB gating above).
             var sdkContext = Services!.GetRequiredService<SdkContext>();
-            Serilog.Log.Information("InitializeSdkDatabase: Applying migrations to SDK database...");
-            sdkContext.Database.Migrate();
-            Serilog.Log.Information("InitializeSdkDatabase: Migration completed successfully");
+            var pendingSdkMigrations = sdkContext.Database.GetPendingMigrations().ToList();
+            if (pendingSdkMigrations.Count > 0)
+            {
+                Serilog.Log.Information("InitializeSdkDatabase: Applying {Count} pending migration(s)...", pendingSdkMigrations.Count);
+                sdkContext.Database.Migrate();
+                Serilog.Log.Information("InitializeSdkDatabase: Migration completed successfully");
+            }
+            else
+            {
+                Serilog.Log.Information("InitializeSdkDatabase: No pending migrations - SKIPPING Migrate()");
+            }
 
             activityLog?.LogInfo(logSource, $"Database loaded from: {runtimeDb}");
         }
@@ -571,7 +679,8 @@ public partial class App : Application
                 { "LastBackupAt", "ALTER TABLE AppSettings ADD COLUMN LastBackupAt TEXT" },
                 { "ComfyUiServerUrl", "ALTER TABLE AppSettings ADD COLUMN ComfyUiServerUrl TEXT NOT NULL DEFAULT 'http://127.0.0.1:8188/'" },
                 { "LoraUpdateCheckStalenessDays", "ALTER TABLE AppSettings ADD COLUMN LoraUpdateCheckStalenessDays INTEGER NOT NULL DEFAULT 3" },
-                { "FavoriteLoraSourcePath", "ALTER TABLE AppSettings ADD COLUMN FavoriteLoraSourcePath TEXT" }
+                { "FavoriteLoraSourcePath", "ALTER TABLE AppSettings ADD COLUMN FavoriteLoraSourcePath TEXT" },
+                { "EncryptedHuggingfaceApiKey", "ALTER TABLE AppSettings ADD COLUMN EncryptedHuggingfaceApiKey TEXT" }
             };
 
             foreach (var col in requiredColumns)
@@ -782,6 +891,18 @@ public partial class App : Application
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetService<IActivityLogService>()));
 
+        // DatabaseBackupService - backs up the core user DB (Diffusion_Nexus-core.db) via VACUUM INTO.
+        // Source path resolved from the core DbContext (portable-first).
+        services.AddTransient<IDatabaseBackupService>(sp => new DatabaseBackupService(
+            sp.GetRequiredService<IAppSettingsService>()));
+
+        // BackupScheduler - app-level singleton owning the auto-backup timer; orchestrates dataset
+        // + database backups and narrates each step to the Unified Console.
+        services.AddSingleton<IBackupScheduler>(sp => new BackupScheduler(
+            sp.GetRequiredService<IServiceScopeFactory>(),
+            sp.GetRequiredService<IActivityLogService>(),
+            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+
         services.AddTransient<IDisclaimerService, DisclaimerService>();
 
         // Video thumbnail service (singleton - maintains FFmpeg initialization state)
@@ -812,6 +933,10 @@ public partial class App : Application
         // Outputs folder registrar — ensures <exe-dir>/outputs/ is in the gallery list.
         services.AddTransient<DiffusionNexus.UI.Services.Diffusion.OutputsFolderRegistrar>();
 
+        // GPU VRAM + system RAM monitor (reusable widget shown in the canvas and the Pipelines view).
+        services.AddSingleton<IResourceMonitorService, ResourceMonitorService>();
+        services.AddTransient<ResourceMonitorViewModel>();
+
         // Diffusion Canvas view model (singleton — frames persist across navigation in v1).
         services.AddSingleton<DiffusionNexus.UI.ViewModels.DiffusionCanvas.DiffusionCanvasViewModel>();
 
@@ -822,6 +947,31 @@ public partial class App : Application
 
         // Register SDK installation pipeline and all step handlers
         services.AddInstallationServices();
+
+        // Gist-backed server message service (operator announcements shown in the main window banner).
+        // Edit the Gist to change what users see — no rebuild required. App id "app" filters targeting.
+        services.AddSingleton<IServerMessageService>(_ => new GistServerMessageService(
+            new ServerMessageServiceOptions
+            {
+                Url = "https://gist.githubusercontent.com/Little-God1983/358c5fccc6655f6e56aef8470bb17c1c/raw/messages.json"
+            },
+            new HttpClient(),
+            ownsHttpClient: true));
+        services.AddSingleton(_ =>
+        {
+            var settingsPath = DiffusionNexus.Installer.SDK.DataAccess.ServiceCollectionExtensions.GetUserSettingsFilePath();
+            var dir = System.IO.Path.GetDirectoryName(settingsPath) ?? AppContext.BaseDirectory;
+            return new DismissedMessageStore(System.IO.Path.Combine(dir, "dismissed_messages.json"));
+        });
+
+        // Feedback reporting service (posts to the Cloudflare Worker relay, which holds
+        // the GitHub credential — see docs/superpowers/plans/2026-07-03-feedback-sdk-and-relay.md
+        // in the DiffusionNexus.Installer.SDK repo).
+        services.AddSingleton<IFeedbackReportingService>(_ => new FeedbackReportingService(
+            new FeedbackReportingServiceOptions
+            {
+                RelayUrl = "https://diffusionnexus-feedback-relay.diffusionnexus.workers.dev"
+            }));
 
         // Configuration checker (singleton - accessible across the entire application)
         services.AddSingleton<IConfigurationCheckerService, ConfigurationCheckerService>();
@@ -955,7 +1105,11 @@ public partial class App : Application
         services.AddSingleton<IUserDictionaryService, UserDictionaryService>();
         services.AddSingleton<ISpellCheckService>(sp =>
             new SpellCheckService(sp.GetRequiredService<IUserDictionaryService>()));
-        services.AddSingleton<IAutoCompleteService, AutoCompleteService>();
+        services.AddSingleton(_ => new DiffusionNexus.UI.Services.Startup.StartupProgressService(
+            DiffusionNexus.UI.Services.Startup.StartupProgressService.BuildDefaultChecks(
+                DiffusionNexus.UI.Services.Diffusion.DiffusionFeatureFlags.UseLocalDiffusionBackend)));
+        services.AddSingleton<IAutoCompleteService>(sp => new AutoCompleteService(
+            sp.GetRequiredService<DiffusionNexus.UI.Services.Startup.StartupProgressService>().UiReady));
 
         // Bridge UI spell check into the domain contract used by dataset quality checks
         services.AddSingleton<ISpellChecker>(sp =>
@@ -985,8 +1139,9 @@ public partial class App : Application
             sp.GetService<IDatasetEventAggregator>(),
             sp.GetService<IActivityLogService>(),
             sp.GetService<ISettingsExportService>(),
-            sp.GetService<Civitai.ICivitaiBaseModelCatalog>()));
-        
+            sp.GetService<Civitai.ICivitaiBaseModelCatalog>(),
+            sp.GetService<IBackupScheduler>()));
+
         services.AddSingleton<ILoraUpdateChecker, LoraUpdateChecker>();
 
         services.AddScoped<LoraViewerViewModel>(sp => new LoraViewerViewModel(
@@ -1000,6 +1155,38 @@ public partial class App : Application
         services.AddScoped<LoraDownloadService>(sp => new LoraDownloadService(
             sp.GetService<Civitai.ICivitaiClient>(),
             sp.GetService<IAppSettingsService>(),
+            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+
+        // Reusable LoRA catalog for the Multi-LoRA Picker (same sources as the LoRA Viewer Installed tab).
+        services.AddSingleton<Services.Lora.ILoraCatalog, Services.Lora.LoraCatalog>();
+
+        // Pipelines: app-side manifest provider + asset installer + module ViewModel.
+        services.AddSingleton<Services.Pipelines.IPipelineManifestProvider, Services.Pipelines.PipelineManifestProvider>();
+        services.AddScoped<Services.Pipelines.IPipelineAssetInstaller>(sp => new Services.Pipelines.PipelineAssetInstaller(
+            sp.GetRequiredService<IDownloadCoordinator>(),
+            sp.GetRequiredService<Civitai.ICivitaiClient>(),
+            sp.GetRequiredService<LoraDownloadService>(),
+            sp.GetRequiredService<IAppSettingsService>(),
+            sp.GetRequiredService<Services.Diffusion.LocalDiffusionBackendProvider>(),
+            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+
+        // Pipeline run UI: output writer + a tile-id -> run-ViewModel factory.
+        services.AddScoped<Services.Pipelines.IPipelineOutputWriter, Services.Pipelines.PipelineOutputWriter>();
+        services.AddTransient<Func<PipelineTileViewModel, ViewModels.Pipelines.IPipelineRun>>(sp => tile =>
+            tile.Id switch
+            {
+                "anime-to-real" => ActivatorUtilities.CreateInstance<ViewModels.Pipelines.AnimeToRealPipelineRunViewModel>(sp, tile.Manifest),
+                "image-to-image" => ActivatorUtilities.CreateInstance<ViewModels.Pipelines.ImageToImagePipelineRunViewModel>(sp, tile.Manifest),
+                "batch-metadata-distiller" => ActivatorUtilities.CreateInstance<ViewModels.Pipelines.BatchMetadataDistillerViewModel>(sp, tile.Manifest),
+                _ => throw new NotSupportedException($"No run UI is registered for pipeline '{tile.Id}'."),
+            });
+
+        services.AddScoped<PipelinesViewModel>(sp => new PipelinesViewModel(
+            sp.GetRequiredService<Services.Pipelines.IPipelineManifestProvider>(),
+            sp.GetRequiredService<Services.Pipelines.IPipelineAssetInstaller>(),
+            sp.GetService<ResourceMonitorViewModel>(),
+            sp.GetService<Func<PipelineTileViewModel, ViewModels.Pipelines.IPipelineRun>>(),
+            sp.GetService<IDialogService>(),
             sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
         services.AddScoped<InstallerManagerViewModel>(sp => new InstallerManagerViewModel(
             sp.GetRequiredService<IDialogService>(),
@@ -1091,83 +1278,156 @@ public partial class App : Application
         }
     }
 
-    private void RegisterModules(DiffusionNexusMainWindowViewModel mainViewModel)
+    /// <summary>
+    /// Builds and registers every module, one module per Background-priority
+    /// dispatcher tick, so rendering and input interleave with construction
+    /// (the old synchronous loop held the UI thread ~3.6s and froze the
+    /// startup overlay). Each module reports Running/Done/Failed to the
+    /// ready-check list. Must be called on the UI thread.
+    /// </summary>
+    private async Task RegisterModulesAsync(
+        DiffusionNexusMainWindowViewModel mainViewModel,
+        DiffusionNexus.UI.Services.Startup.StartupProgressService startupProgress)
     {
+        // Locals consumed after the per-block loop (navigation-event wiring +
+        // LoadStartupDataAsync) are declared nullable up front: a block that fails
+        // leaves its slot null, and the compound guard below skips wiring + data
+        // load for the degraded app (the ready-check list shows which module died).
+        InstallerManagerViewModel? installerManagerVm = null;
+        LoraDatasetHelperViewModel? loraDatasetHelperVm = null;
+        ModuleItem? loraDatasetHelperModule = null;
+        LoraViewerViewModel? loraViewerVm = null;
+        GenerationGalleryViewModel? generationGalleryVm = null;
+        ImageCompareViewModel? imageCompareVm = null;
+        ModuleItem? imageComparerModule = null;
+        PipelinesViewModel? pipelinesVm = null;
+        ModuleItem? pipelinesModule = null;
+        SettingsViewModel? settingsVm = null;
+        ModuleItem? settingsModule = null;
+
         // Installer Manager module
-        var installerManagerVm = Services!.GetRequiredService<InstallerManagerViewModel>();
-        var installerManagerView = new InstallerManagerView { DataContext = installerManagerVm };
-        var installerManagerModule = new ModuleItem(
-            "Installer Manager",
-            "avares://DiffusionNexus.UI/Assets/Installer.png", // TODO: add dedicated Installer Manager icon
-            installerManagerView)
+        startupProgress.Begin("installer-manager");
+        try
         {
-            ViewModel = installerManagerVm
-        };
-
-        mainViewModel.RegisterModule(installerManagerModule);
-
-        // Open the unified console panel when the installer manager requests it (e.g., during updates)
-        installerManagerVm.UnifiedConsolePanelRequested += (_, _) =>
-        {
-            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            installerManagerVm = Services!.GetRequiredService<InstallerManagerViewModel>();
+            var installerManagerView = new InstallerManagerView { DataContext = installerManagerVm };
+            var installerManagerModule = new ModuleItem(
+                "Installer Manager",
+                "avares://DiffusionNexus.UI/Assets/Installer.png", // TODO: add dedicated Installer Manager icon
+                installerManagerView)
             {
-                if (mainViewModel.StatusBar is { } statusBar)
+                ViewModel = installerManagerVm
+            };
+
+            mainViewModel.RegisterModule(installerManagerModule);
+
+            // Open the unified console panel when the installer manager requests it (e.g., during updates)
+            installerManagerVm.UnifiedConsolePanelRequested += (_, _) =>
+            {
+                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
                 {
-                    statusBar.IsLogPanelOpen = true;
-                    if (statusBar.UnifiedConsole is not null)
-                        statusBar.UnifiedConsole.IsPanelOpen = true;
-                }
-            });
-        };
+                    if (mainViewModel.StatusBar is { } statusBar)
+                    {
+                        statusBar.IsLogPanelOpen = true;
+                        if (statusBar.UnifiedConsole is not null)
+                            statusBar.UnifiedConsole.IsPanelOpen = true;
+                    }
+                });
+            };
 
-        // Wire Unified Console ↔ Installer Manager update synchronisation:
-        // 1. Console "Update" button delegates to the Installer Manager's centralised logic
-        // 2. Installer Manager state changes flow back to the console tabs
-        if (mainViewModel.StatusBar?.UnifiedConsole is { } unifiedConsole)
-        {
-            unifiedConsole.SetUpdateDelegate(installerManagerVm.UpdatePackageByIdAsync);
+            // Wire Unified Console ↔ Installer Manager update synchronisation:
+            // 1. Console "Update" button delegates to the Installer Manager's centralised logic
+            // 2. Installer Manager state changes flow back to the console tabs
+            if (mainViewModel.StatusBar?.UnifiedConsole is { } unifiedConsole)
+            {
+                unifiedConsole.SetUpdateDelegate(installerManagerVm.UpdatePackageByIdAsync);
 
-            installerManagerVm.InstallerUpdateStateChanged += (_, e) =>
-                unifiedConsole.OnExternalUpdateStateChanged(e);
+                installerManagerVm.InstallerUpdateStateChanged += (_, e) =>
+                    unifiedConsole.OnExternalUpdateStateChanged(e);
+            }
+            startupProgress.Complete("installer-manager");
         }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Module registration failed: {Module}", "installer-manager");
+            startupProgress.Fail("installer-manager", ex.Message);
+        }
+        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
+            static () => { }, Avalonia.Threading.DispatcherPriority.Background);
 
         // LoRA Dataset Helper module - default on startup
-        var loraDatasetHelperVm = Services!.GetRequiredService<LoraDatasetHelperViewModel>();
-        var loraDatasetHelperView = new LoraDatasetHelperView { DataContext = loraDatasetHelperVm };
-        var loraDatasetHelperModule = new ModuleItem(
-            "LoRA Dataset Helper",
-            "avares://DiffusionNexus.UI/Assets/LoraTrain.png",
-            loraDatasetHelperView)
+        startupProgress.Begin("lora-dataset-helper");
+        try
         {
-            ViewModel = loraDatasetHelperVm
-        };
+            loraDatasetHelperVm = Services!.GetRequiredService<LoraDatasetHelperViewModel>();
+            var loraDatasetHelperView = new LoraDatasetHelperView { DataContext = loraDatasetHelperVm };
+            loraDatasetHelperModule = new ModuleItem(
+                "LoRA Dataset Helper",
+                "avares://DiffusionNexus.UI/Assets/LoraTrain.png",
+                loraDatasetHelperView)
+            {
+                ViewModel = loraDatasetHelperVm
+            };
 
-        mainViewModel.RegisterModule(loraDatasetHelperModule);
+            mainViewModel.RegisterModule(loraDatasetHelperModule);
+            startupProgress.Complete("lora-dataset-helper");
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Module registration failed: {Module}", "lora-dataset-helper");
+            startupProgress.Fail("lora-dataset-helper", ex.Message);
+        }
+        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
+            static () => { }, Avalonia.Threading.DispatcherPriority.Background);
 
         // LoRA Viewer module
-        var loraViewerVm = Services!.GetRequiredService<LoraViewerViewModel>();
-        var loraViewerView = new LoraViewerView { DataContext = loraViewerVm };
-
-        mainViewModel.RegisterModule(new ModuleItem(
-            "LoRA Viewer",
-            "avares://DiffusionNexus.UI/Assets/LoraSort.png",
-            loraViewerView,
-            isVisible: true)
+        startupProgress.Begin("lora-viewer");
+        try
         {
-            ViewModel = loraViewerVm
-        });
+            loraViewerVm = Services!.GetRequiredService<LoraViewerViewModel>();
+            var loraViewerView = new LoraViewerView { DataContext = loraViewerVm };
+
+            mainViewModel.RegisterModule(new ModuleItem(
+                "LoRA Viewer",
+                "avares://DiffusionNexus.UI/Assets/LoraSort.png",
+                loraViewerView,
+                isVisible: true)
+            {
+                ViewModel = loraViewerVm
+            });
+            startupProgress.Complete("lora-viewer");
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Module registration failed: {Module}", "lora-viewer");
+            startupProgress.Fail("lora-viewer", ex.Message);
+        }
+        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
+            static () => { }, Avalonia.Threading.DispatcherPriority.Background);
 
         // Generation Gallery module
-        var generationGalleryVm = Services!.GetRequiredService<GenerationGalleryViewModel>();
-        var generationGalleryView = new GenerationGalleryView { DataContext = generationGalleryVm };
-
-        mainViewModel.RegisterModule(new ModuleItem(
-            "Generation Gallery",
-            "avares://DiffusionNexus.UI/Assets/GalleryView.png",
-            generationGalleryView)
+        startupProgress.Begin("generation-gallery");
+        try
         {
-            ViewModel = generationGalleryVm
-        });
+            generationGalleryVm = Services!.GetRequiredService<GenerationGalleryViewModel>();
+            var generationGalleryView = new GenerationGalleryView { DataContext = generationGalleryVm };
+
+            mainViewModel.RegisterModule(new ModuleItem(
+                "Generation Gallery",
+                "avares://DiffusionNexus.UI/Assets/GalleryView.png",
+                generationGalleryView)
+            {
+                ViewModel = generationGalleryVm
+            });
+            startupProgress.Complete("generation-gallery");
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Module registration failed: {Module}", "generation-gallery");
+            startupProgress.Fail("generation-gallery", ex.Message);
+        }
+        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
+            static () => { }, Avalonia.Threading.DispatcherPriority.Background);
 
         // Diffusion Canvas module — local Z-Image-Turbo generation on an Invoke-AI-style canvas.
         // Gated behind DiffusionFeatureFlags.UseLocalDiffusionBackend so the module disappears
@@ -1176,97 +1436,178 @@ public partial class App : Application
         // (IsDiffusionCanvasEnabled) reveals it.
         if (DiffusionNexus.UI.Services.Diffusion.DiffusionFeatureFlags.UseLocalDiffusionBackend)
         {
-            var diffusionCanvasVm = Services!.GetRequiredService<DiffusionNexus.UI.ViewModels.DiffusionCanvas.DiffusionCanvasViewModel>();
-            var diffusionCanvasView = new DiffusionNexus.UI.Views.DiffusionCanvas.DiffusionCanvasView
+            startupProgress.Begin("diffusion-canvas");
+            try
             {
-                DataContext = diffusionCanvasVm
-            };
+                var diffusionCanvasVm = Services!.GetRequiredService<DiffusionNexus.UI.ViewModels.DiffusionCanvas.DiffusionCanvasViewModel>();
+                var diffusionCanvasView = new DiffusionNexus.UI.Views.DiffusionCanvas.DiffusionCanvasView
+                {
+                    DataContext = diffusionCanvasVm
+                };
 
-            var diffusionCanvasModule = new ModuleItem(
-                "Diffusion Canvas",
-                "avares://DiffusionNexus.UI/Assets/PromptEdit.png", // TODO: dedicated canvas icon
-                diffusionCanvasView,
-                isVisible: mainViewModel.IsDiffusionCanvasEnabled)
+                var diffusionCanvasModule = new ModuleItem(
+                    "Diffusion Canvas",
+                    "avares://DiffusionNexus.UI/Assets/PromptEdit.png", // TODO: dedicated canvas icon
+                    diffusionCanvasView,
+                    isVisible: mainViewModel.IsDiffusionCanvasEnabled)
+                {
+                    ViewModel = diffusionCanvasVm
+                };
+
+                mainViewModel.RegisterModule(diffusionCanvasModule);
+                mainViewModel.SetDiffusionCanvasModule(diffusionCanvasModule);
+                startupProgress.Complete("diffusion-canvas");
+            }
+            catch (Exception ex)
             {
-                ViewModel = diffusionCanvasVm
-            };
-
-            mainViewModel.RegisterModule(diffusionCanvasModule);
-            mainViewModel.SetDiffusionCanvasModule(diffusionCanvasModule);
+                Serilog.Log.Error(ex, "Module registration failed: {Module}", "diffusion-canvas");
+                startupProgress.Fail("diffusion-canvas", ex.Message);
+            }
         }
+        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
+            static () => { }, Avalonia.Threading.DispatcherPriority.Background);
 
         // Image Comparer module
-        var datasetState = Services!.GetRequiredService<IDatasetState>();
-        var thumbnailOrchestrator = Services!.GetService<IThumbnailOrchestrator>();
-        var dialogService = Services!.GetRequiredService<IDialogService>();
-        var imageCompareVm = new ImageCompareViewModel(datasetState, thumbnailOrchestrator, dialogService);
-        var imageCompareView = new ImageCompareView { DataContext = imageCompareVm };
-
-        var imageComparerModule = new ModuleItem(
-            "Image Comparer",
-            "avares://DiffusionNexus.UI/Assets/ImageComparer.png",
-            imageCompareView)
+        startupProgress.Begin("image-comparer");
+        try
         {
-            ViewModel = imageCompareVm
-        };
+            var datasetState = Services!.GetRequiredService<IDatasetState>();
+            var thumbnailOrchestrator = Services!.GetService<IThumbnailOrchestrator>();
+            var dialogService = Services!.GetRequiredService<IDialogService>();
+            imageCompareVm = new ImageCompareViewModel(datasetState, thumbnailOrchestrator, dialogService);
+            var imageCompareView = new ImageCompareView { DataContext = imageCompareVm };
 
-        mainViewModel.RegisterModule(imageComparerModule);
+            imageComparerModule = new ModuleItem(
+                "Image Comparer",
+                "avares://DiffusionNexus.UI/Assets/ImageComparer.png",
+                imageCompareView)
+            {
+                ViewModel = imageCompareVm
+            };
+
+            mainViewModel.RegisterModule(imageComparerModule);
+            startupProgress.Complete("image-comparer");
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Module registration failed: {Module}", "image-comparer");
+            startupProgress.Fail("image-comparer", ex.Message);
+        }
+        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
+            static () => { }, Avalonia.Threading.DispatcherPriority.Background);
+
+        // Pipelines module — tile gallery of guided image pipelines (currently Anime-To-Real).
+        startupProgress.Begin("workflows");
+        try
+        {
+            pipelinesVm = Services!.GetRequiredService<PipelinesViewModel>();
+            var pipelinesView = new PipelinesView { DataContext = pipelinesVm };
+
+            pipelinesModule = new ModuleItem(
+                "Workflows",
+                "avares://DiffusionNexus.UI/Assets/HumanCogwheel.png",
+                pipelinesView)
+            {
+                ViewModel = pipelinesVm
+            };
+
+            mainViewModel.RegisterModule(pipelinesModule);
+            startupProgress.Complete("workflows");
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Module registration failed: {Module}", "workflows");
+            startupProgress.Fail("workflows", ex.Message);
+        }
+        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
+            static () => { }, Avalonia.Threading.DispatcherPriority.Background);
 
         // Settings module
-        var settingsVm = Services!.GetRequiredService<SettingsViewModel>();
-        var settingsView = new SettingsView { DataContext = settingsVm };
-
-        var settingsModule = new ModuleItem(
-            "Settings",
-            "avares://DiffusionNexus.UI/Assets/settings.png",
-            settingsView);
-
-        mainViewModel.RegisterModule(settingsModule);
-
-        // Subscribe to navigation events
-        var eventAggregator = Services!.GetRequiredService<IDatasetEventAggregator>();
-        
-        eventAggregator.NavigateToImageEditorRequested += (_, _) =>
+        startupProgress.Begin("settings");
+        try
         {
-            mainViewModel.NavigateToModuleCommand.Execute(loraDatasetHelperModule);
-        };
+            settingsVm = Services!.GetRequiredService<SettingsViewModel>();
+            var settingsView = new SettingsView { DataContext = settingsVm };
 
-        eventAggregator.NavigateToBatchCropScaleRequested += (_, _) =>
+            settingsModule = new ModuleItem(
+                "Settings",
+                "avares://DiffusionNexus.UI/Assets/settings.png",
+                settingsView);
+
+            mainViewModel.RegisterModule(settingsModule);
+            startupProgress.Complete("settings");
+        }
+        catch (Exception ex)
         {
-            mainViewModel.NavigateToModuleCommand.Execute(loraDatasetHelperModule);
-        };
+            Serilog.Log.Error(ex, "Module registration failed: {Module}", "settings");
+            startupProgress.Fail("settings", ex.Message);
+        }
+        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
+            static () => { }, Avalonia.Threading.DispatcherPriority.Background);
 
-        eventAggregator.NavigateToBatchUpscaleRequested += (_, _) =>
+        // If any module failed to build, its slot is null: skip event wiring + data
+        // load for the degraded app (the ready-check list shows which module died).
+        if (installerManagerVm is not null && loraDatasetHelperVm is not null && loraViewerVm is not null
+            && generationGalleryVm is not null && imageCompareVm is not null && pipelinesVm is not null
+            && settingsVm is not null && settingsModule is not null && loraDatasetHelperModule is not null
+            && imageComparerModule is not null && pipelinesModule is not null)
         {
-            mainViewModel.NavigateToModuleCommand.Execute(loraDatasetHelperModule);
-        };
+            // Subscribe to navigation events
+            var eventAggregator = Services!.GetRequiredService<IDatasetEventAggregator>();
 
-        eventAggregator.NavigateToCaptioningRequested += (_, _) =>
+            eventAggregator.NavigateToImageEditorRequested += (_, _) =>
+            {
+                mainViewModel.NavigateToModuleCommand.Execute(loraDatasetHelperModule);
+            };
+
+            eventAggregator.NavigateToBatchCropScaleRequested += (_, _) =>
+            {
+                mainViewModel.NavigateToModuleCommand.Execute(loraDatasetHelperModule);
+            };
+
+            eventAggregator.NavigateToBatchUpscaleRequested += (_, _) =>
+            {
+                mainViewModel.NavigateToModuleCommand.Execute(loraDatasetHelperModule);
+            };
+
+            eventAggregator.NavigateToCaptioningRequested += (_, _) =>
+            {
+                mainViewModel.NavigateToModuleCommand.Execute(loraDatasetHelperModule);
+            };
+
+            eventAggregator.NavigateToSettingsRequested += (_, _) =>
+            {
+                mainViewModel.NavigateToModuleCommand.Execute(settingsModule);
+            };
+
+            eventAggregator.NavigateToImageComparerRequested += (_, e) =>
+            {
+                imageCompareVm.LoadExternalImages(e.ImagePaths);
+                mainViewModel.NavigateToModuleCommand.Execute(imageComparerModule);
+            };
+
+            eventAggregator.NavigateToWorkflowRequested += (_, e) =>
+            {
+                mainViewModel.NavigateToModuleCommand.Execute(pipelinesModule);
+                _ = pipelinesVm.OpenWorkflowAsync(e.WorkflowId, e.ImagePaths);
+            };
+
+            // Load startup data sequentially to avoid concurrent DbContext access.
+            // All scoped services share a single DiffusionNexusCoreDbContext instance
+            // which is NOT thread-safe; fire-and-forget Execute() calls run concurrently.
+            _ = LoadStartupDataAsync(
+                mainViewModel,
+                settingsVm,
+                loraViewerVm,
+                generationGalleryVm,
+                installerManagerVm,
+                loraDatasetHelperVm,
+                startupProgress);
+        }
+        else
         {
-            mainViewModel.NavigateToModuleCommand.Execute(loraDatasetHelperModule);
-        };
-
-        eventAggregator.NavigateToSettingsRequested += (_, _) =>
-        {
-            mainViewModel.NavigateToModuleCommand.Execute(settingsModule);
-        };
-
-        eventAggregator.NavigateToImageComparerRequested += (_, e) =>
-        {
-            imageCompareVm.LoadExternalImages(e.ImagePaths);
-            mainViewModel.NavigateToModuleCommand.Execute(imageComparerModule);
-        };
-
-        // Load startup data sequentially to avoid concurrent DbContext access.
-        // All scoped services share a single DiffusionNexusCoreDbContext instance
-        // which is NOT thread-safe; fire-and-forget Execute() calls run concurrently.
-        _ = LoadStartupDataAsync(
-            mainViewModel,
-            settingsVm,
-            loraViewerVm,
-            generationGalleryVm,
-            installerManagerVm,
-            loraDatasetHelperVm);
+            Serilog.Log.Warning("Skipping navigation wiring and startup data load: one or more modules failed to register.");
+        }
     }
 
     /// <summary>
@@ -1281,21 +1622,53 @@ public partial class App : Application
         LoraViewerViewModel loraViewerVm,
         GenerationGalleryViewModel generationGalleryVm,
         InstallerManagerViewModel installerManagerVm,
-        LoraDatasetHelperViewModel loraDatasetHelperVm)
+        LoraDatasetHelperViewModel loraDatasetHelperVm,
+        DiffusionNexus.UI.Services.Startup.StartupProgressService startupProgress)
     {
         try
         {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            static async Task Timed(System.Diagnostics.Stopwatch sw, string name, Func<Task> start)
+            {
+                var begin = sw.ElapsedMilliseconds;
+                Serilog.Log.Information("LoadStartupData: {Phase} starting at +{Start}ms", name, begin);
+                var task = start();
+                var headEnd = sw.ElapsedMilliseconds;
+                if (headEnd - begin > 50)
+                    Serilog.Log.Information("LoadStartupData: {Phase} synchronous head took {Head}ms ON THE UI THREAD", name, headEnd - begin);
+                await task;
+                Serilog.Log.Information("LoadStartupData: {Phase} finished at +{End}ms ({Duration}ms total)", name, sw.ElapsedMilliseconds, sw.ElapsedMilliseconds - begin);
+            }
+
             // Disclaimer + settings must complete first � other modules depend on them.
-            await mainViewModel.CheckDisclaimerStatusAsync();
-            await settingsVm.LoadCommand.ExecuteAsync(null);
+            await Timed(sw, "disclaimer", () => mainViewModel.CheckDisclaimerStatusAsync());
+            await Timed(sw, "settings", () => settingsVm.LoadCommand.ExecuteAsync(null));
 
             // Remaining modules are independent � load in parallel.
+            // NOTE: each command runs synchronously on the UI thread until its first
+            // real await — the per-phase "synchronous head" stamps expose which load
+            // is hogging the dispatcher.
             await Task.WhenAll(
-                loraViewerVm.RefreshCommand.ExecuteAsync(null),
-                generationGalleryVm.LoadMediaCommand.ExecuteAsync(null),
-                installerManagerVm.LoadInstallationsCommand.ExecuteAsync(null),
-                loraDatasetHelperVm.DatasetManagement
-                    .CheckStorageConfigurationCommand.ExecuteAsync(null));
+                Timed(sw, "loraViewer", () => loraViewerVm.RefreshCommand.ExecuteAsync(null)),
+                Timed(sw, "generationGallery", () => generationGalleryVm.LoadMediaCommand.ExecuteAsync(null)),
+                Timed(sw, "installerManager", async () =>
+                {
+                    startupProgress.Begin("updates");
+                    try
+                    {
+                        await installerManagerVm.LoadInstallationsCommand.ExecuteAsync(null);
+                        startupProgress.Complete("updates");
+                    }
+                    catch (Exception ex)
+                    {
+                        startupProgress.Fail("updates", ex.Message);
+                        throw;
+                    }
+                }),
+                Timed(sw, "datasetStorageCheck", () => loraDatasetHelperVm.DatasetManagement
+                    .CheckStorageConfigurationCommand.ExecuteAsync(null)),
+                Timed(sw, "serverMessages", () => mainViewModel.LoadServerMessagesAsync()));
+            Serilog.Log.Information("LoadStartupData: all phases complete at +{Total}ms", sw.ElapsedMilliseconds);
         }
         catch (Exception ex)
         {

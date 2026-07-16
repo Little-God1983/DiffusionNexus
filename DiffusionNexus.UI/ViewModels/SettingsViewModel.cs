@@ -21,6 +21,7 @@ public partial class SettingsViewModel : BusyViewModelBase
     private readonly IAppSettingsService _settingsService;
     private readonly ISecureStorage _secureStorage;
     private readonly IDatasetBackupService? _backupService;
+    private readonly IBackupScheduler? _backupScheduler;
     private readonly IDatasetEventAggregator? _eventAggregator;
     private readonly IActivityLogService? _activityLogService;
     private readonly ISettingsExportService? _exportService;
@@ -105,10 +106,16 @@ public partial class SettingsViewModel : BusyViewModelBase
     private string? _datasetStoragePath;
 
     /// <summary>
-    /// Whether automatic backup is enabled.
+    /// Whether automatic backup of the dataset-image folders (zipped) is enabled.
     /// </summary>
     [ObservableProperty]
-    private bool _autoBackupEnabled;
+    private bool _backupDatasetImagesEnabled;
+
+    /// <summary>
+    /// Whether automatic backup of the core user database is enabled.
+    /// </summary>
+    [ObservableProperty]
+    private bool _backupDatabaseEnabled = true;
 
     /// <summary>
     /// Days component of the backup interval (1-30).
@@ -218,6 +225,19 @@ public partial class SettingsViewModel : BusyViewModelBase
     #endregion
 
     /// <summary>
+    /// Full path to the core user database file currently in use (portable-first resolution).
+    /// Shown read-only in the Backup section so users can locate it for a manual restore.
+    /// </summary>
+    public string DatabaseFilePath =>
+        DiffusionNexus.DataAccess.Data.DiffusionNexusCoreDbContext.GetDatabaseFilePath();
+
+    /// <summary>
+    /// True when at least one backup type is enabled — drives the enabled state of the shared
+    /// backup controls (interval, location, max backups). Raised from <see cref="OnBackupToggleChanged"/>.
+    /// </summary>
+    public bool AnyBackupEnabled => BackupDatasetImagesEnabled || BackupDatabaseEnabled;
+
+    /// <summary>
     /// Creates a new SettingsViewModel.
     /// </summary>
     public SettingsViewModel(
@@ -227,11 +247,13 @@ public partial class SettingsViewModel : BusyViewModelBase
         IDatasetEventAggregator? eventAggregator = null,
         IActivityLogService? activityLogService = null,
         ISettingsExportService? exportService = null,
-        ICivitaiBaseModelCatalog? baseModelCatalog = null)
+        ICivitaiBaseModelCatalog? baseModelCatalog = null,
+        IBackupScheduler? backupScheduler = null)
     {
         _settingsService = settingsService;
         _secureStorage = secureStorage;
         _backupService = backupService;
+        _backupScheduler = backupScheduler;
         _eventAggregator = eventAggregator;
         _activityLogService = activityLogService;
         _exportService = exportService;
@@ -252,6 +274,7 @@ public partial class SettingsViewModel : BusyViewModelBase
         _settingsService = null!;
         _secureStorage = null!;
         _backupService = null;
+        _backupScheduler = null;
         _eventAggregator = null;
         _activityLogService = null;
         _exportService = null;
@@ -281,8 +304,9 @@ public partial class SettingsViewModel : BusyViewModelBase
         {
             var settings = await _settingsService.GetSettingsAsync();
 
-            // Decrypt API key
+            // Decrypt API keys
             CivitaiApiKey = _secureStorage.Decrypt(settings.EncryptedCivitaiApiKey);
+            HuggingfaceApiKey = _secureStorage.Decrypt(settings.EncryptedHuggingfaceApiKey);
 
             // Map settings to view model
             ComfyUiServerUrl = settings.ComfyUiServerUrl;
@@ -295,7 +319,8 @@ public partial class SettingsViewModel : BusyViewModelBase
             LoraSortSourcePath = settings.LoraSortSourcePath;
             LoraSortTargetPath = settings.LoraSortTargetPath;
             DatasetStoragePath = settings.DatasetStoragePath;
-            AutoBackupEnabled = settings.AutoBackupEnabled;
+            BackupDatasetImagesEnabled = settings.BackupDatasetImagesEnabled;
+            BackupDatabaseEnabled = settings.BackupDatabaseEnabled;
             AutoBackupIntervalDays = settings.AutoBackupIntervalDays;
             AutoBackupIntervalHours = settings.AutoBackupIntervalHours;
             AutoBackupLocation = settings.AutoBackupLocation;
@@ -491,6 +516,9 @@ public partial class SettingsViewModel : BusyViewModelBase
                 EncryptedCivitaiApiKey = string.IsNullOrWhiteSpace(CivitaiApiKey)
                     ? null
                     : _secureStorage.Encrypt(CivitaiApiKey),
+                EncryptedHuggingfaceApiKey = string.IsNullOrWhiteSpace(HuggingfaceApiKey)
+                    ? null
+                    : _secureStorage.Encrypt(HuggingfaceApiKey),
                 ComfyUiServerUrl = ComfyUiServerUrl,
                 ShowNsfw = ShowNsfw,
                 GenerateVideoThumbnails = GenerateVideoThumbnails,
@@ -501,7 +529,8 @@ public partial class SettingsViewModel : BusyViewModelBase
                 LoraSortSourcePath = LoraSortSourcePath,
                 LoraSortTargetPath = LoraSortTargetPath,
                 DatasetStoragePath = DatasetStoragePath,
-                AutoBackupEnabled = AutoBackupEnabled,
+                BackupDatasetImagesEnabled = BackupDatasetImagesEnabled,
+                BackupDatabaseEnabled = BackupDatabaseEnabled,
                 AutoBackupIntervalDays = AutoBackupIntervalDays,
                 AutoBackupIntervalHours = AutoBackupIntervalHours,
                 AutoBackupLocation = AutoBackupLocation,
@@ -596,7 +625,9 @@ public partial class SettingsViewModel : BusyViewModelBase
     /// Forces a live refresh of the Civitai base model catalog from GitHub,
     /// bypassing the in-memory and on-disk caches. Status is surfaced to the
     /// Unified Console via the catalog's <see cref="ICivitaiBaseModelCatalog.StatusChanged"/>
-    /// event (wired up in <c>App.axaml.cs</c>).
+    /// event (wired up in <c>App.axaml.cs</c>). The LoRA Viewer also listens to that
+    /// event and rebuilds its base-model filter (shared by the Installed and Browse
+    /// Civitai tabs) from the refreshed list, so the filter updates without a restart.
     /// </summary>
     [RelayCommand]
     private async Task RefreshBaseModelCatalogAsync()
@@ -824,7 +855,7 @@ public partial class SettingsViewModel : BusyViewModelBase
         AutoBackupLocationError = null;
         AutoBackupIntervalError = null;
 
-        if (!AutoBackupEnabled)
+        if (!BackupDatasetImagesEnabled && !BackupDatabaseEnabled)
         {
             return true;
         }
@@ -941,20 +972,43 @@ public partial class SettingsViewModel : BusyViewModelBase
     }
 
     /// <summary>
+    /// Opens the folder containing the core user database in the file explorer, so the user can
+    /// copy a database backup over it for a manual restore (while the app is closed).
+    /// </summary>
+    [RelayCommand]
+    private void OpenDatabaseFolder()
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(DatabaseFilePath);
+            if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
+            {
+                StatusMessage = "Database folder does not exist.";
+                return;
+            }
+
+            // TODO: Linux Implementation — UseShellExecute folder open maps to xdg-open on Linux.
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = dir,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error opening folder: {ex.Message}";
+        }
+    }
+
+    /// <summary>
     /// Runs a backup immediately.
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanExecuteBackup))]
     private async Task BackupNowAsync()
     {
-        if (_backupService is null)
+        if (_backupScheduler is null)
         {
-            StatusMessage = "Backup service is not available.";
-            return;
-        }
-
-        if (_backupService.IsOperationInProgress)
-        {
-            StatusMessage = "A backup or restore operation is already in progress.";
+            StatusMessage = "Backup scheduler is not available.";
             return;
         }
 
@@ -962,43 +1016,18 @@ public partial class SettingsViewModel : BusyViewModelBase
         BackupNowCommand.NotifyCanExecuteChanged();
         LoadBackupCommand.NotifyCanExecuteChanged();
 
-        // Start backup progress tracking in the status bar
-        _activityLogService?.StartBackupProgress("Backing up datasets");
-
         try
         {
-            var progress = new Progress<BackupProgress>(p =>
-            {
-                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-                {
-                    BusyMessage = $"Backup: {p.Phase} ({p.ProgressPercent}%)";
-                    _activityLogService?.ReportBackupProgress(p.ProgressPercent, p.Phase);
-                });
-            });
-
-            // Run backup on a background thread with its own DI scope to avoid
-            // concurrent DbContext access (the shared scoped DbContext is not thread-safe).
-            var result = await Task.Run(async () =>
-            {
-                using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
-                var scopedBackupService = scope.ServiceProvider.GetRequiredService<IDatasetBackupService>();
-                return await scopedBackupService.BackupDatasetsAsync(progress);
-            });
-
-            if (result.Success)
-            {
-                _activityLogService?.CompleteBackupProgress(true, $"Backup completed: {result.FilesBackedUp} files");
-                StatusMessage = $"Backup completed: {result.FilesBackedUp} files backed up.";
-            }
-            else
-            {
-                _activityLogService?.CompleteBackupProgress(false, $"Backup failed: {result.ErrorMessage}");
-                StatusMessage = $"Backup failed: {result.ErrorMessage}";
-            }
+            // The app-level scheduler backs up whichever payloads are enabled (dataset images
+            // and/or the database), narrates each step to the Unified Console, and drives the
+            // status-bar progress bar. The work runs on a background thread.
+            var result = await _backupScheduler.RunBackupNowAsync();
+            StatusMessage = result.Success
+                ? "Backup completed. See the Unified Console for step-by-step details."
+                : $"Backup failed: {result.ErrorMessage}";
         }
         catch (Exception ex)
         {
-            _activityLogService?.CompleteBackupProgress(false, $"Backup error: {ex.Message}");
             StatusMessage = $"Backup error: {ex.Message}";
         }
         finally
@@ -1011,9 +1040,8 @@ public partial class SettingsViewModel : BusyViewModelBase
 
     private bool CanExecuteBackup()
     {
-        return AutoBackupEnabled 
+        return (BackupDatasetImagesEnabled || BackupDatabaseEnabled)
             && !string.IsNullOrWhiteSpace(AutoBackupLocation)
-            && !string.IsNullOrWhiteSpace(DatasetStoragePath)
             && !IsBackupInProgress;
     }
 
@@ -1116,15 +1144,15 @@ public partial class SettingsViewModel : BusyViewModelBase
                 // Perform the restore
                 BusyMessage = "Restoring backup...";
 
+                // Progress<T> captures the UI SynchronizationContext at construction
+                // (this runs on the UI thread inside RunBusyAsync, which does not
+                // offload), so the callback is already marshaled.
                 var progress = new Progress<BackupProgress>(p =>
                 {
-                    Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-                    {
-                        var fileInfo = p.TotalFiles > 0
-                            ? $" — {p.FilesProcessed}/{p.TotalFiles}"
-                            : string.Empty;
-                        BusyMessage = $"Restore: {p.Phase} ({p.ProgressPercent}%){fileInfo}";
-                    });
+                    var fileInfo = p.TotalFiles > 0
+                        ? $" — {p.FilesProcessed}/{p.TotalFiles}"
+                        : string.Empty;
+                    BusyMessage = $"Restore: {p.Phase} ({p.ProgressPercent}%){fileInfo}";
                 });
 
                 // Run the restore on a background thread with its own DI scope.
@@ -1224,15 +1252,20 @@ public partial class SettingsViewModel : BusyViewModelBase
         HasChanges = true;
         ValidateAutoBackupLocation();
     }
-    partial void OnAutoBackupEnabledChanged(bool value)
+    partial void OnBackupDatasetImagesEnabledChanged(bool value) => OnBackupToggleChanged();
+    partial void OnBackupDatabaseEnabledChanged(bool value) => OnBackupToggleChanged();
+
+    private void OnBackupToggleChanged()
     {
         HasChanges = true;
-        // Clear errors when disabling auto backup
-        if (!value)
+        OnPropertyChanged(nameof(AnyBackupEnabled));
+        // Clear validation errors when no backup type is enabled.
+        if (!BackupDatasetImagesEnabled && !BackupDatabaseEnabled)
         {
             AutoBackupIntervalError = null;
             AutoBackupLocationError = null;
         }
+        BackupNowCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnAutoBackupIntervalDaysChanged(int value)

@@ -135,9 +135,11 @@ public partial class ModelDetailViewModel : ViewModelBase
     private Bitmap? _thumbnailImage;
 
     /// <summary>
-    /// Whether data is loading.
+    /// Whether data is loading. Also gates the "Download Metadata" button so it
+    /// can't be triggered while a fetch is already in flight.
     /// </summary>
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(DownloadMetadataCommand))]
     private bool _isLoading;
 
     /// <summary>
@@ -151,6 +153,14 @@ public partial class ModelDetailViewModel : ViewModelBase
     /// </summary>
     [ObservableProperty]
     private string _fileNameDisplay = string.Empty;
+
+    /// <summary>
+    /// Folder containing the selected version's local file ("—" when the version
+    /// has no file on disk). For per-location tiles this is the file in the tile's
+    /// own LoRA-source location.
+    /// </summary>
+    [ObservableProperty]
+    private string _folderPathDisplay = "—";
 
     /// <summary>
     /// Version ID display for the selected version.
@@ -187,6 +197,7 @@ public partial class ModelDetailViewModel : ViewModelBase
         BaseModelDisplay = "Flux.1 Kontext";
         ModelTypeDisplay = "LORA";
         FileNameDisplay = "40fy_v1.safetensors";
+        FolderPathDisplay = @"C:\AI\Loras\Styles";
         CreatorDisplay = "ExampleCreator";
         DescriptionText = "Transform persons into a vibrant semi-transparent 3D style with this LoRA for Flux Kontext!";
         TriggerWordsDisplay = "40fy, 3d style, fortnite";
@@ -269,6 +280,22 @@ public partial class ModelDetailViewModel : ViewModelBase
         if (!CanOpenOnCivitai) return;
         SourceTile?.OpenOnCivitaiCommand.Execute(null);
     }
+
+    /// <summary>
+    /// Requests a Civitai metadata download for this single LoRA. The parent
+    /// <see cref="LoraViewerViewModel"/> handles the request (it owns the hash-lookup
+    /// and persistence logic shared with the bulk "Download Metadata" flow): it hashes
+    /// the LoRA file, looks it up on Civitai, persists the returned metadata, and then
+    /// reloads this detail view so the new description/tags/images/versions appear.
+    /// Disabled while a load or fetch is already in flight.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanDownloadMetadata))]
+    private void DownloadMetadata()
+    {
+        MetadataDownloadRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private bool CanDownloadMetadata() => !IsLoading;
 
     /// <summary>
     /// Copies trigger words to clipboard.
@@ -802,8 +829,8 @@ public partial class ModelDetailViewModel : ViewModelBase
                     Url = civImage.Url,
                     MediaType = civImage.Type,
                     IsNsfw = civImage.Nsfw,
-                    Width = civImage.Width,
-                    Height = civImage.Height,
+                    Width = civImage.Width ?? 0,
+                    Height = civImage.Height ?? 0,
                     BlurHash = civImage.Hash,
                     SortOrder = sortOrder++,
                     CreatedAt = civImage.CreatedAt,
@@ -937,6 +964,13 @@ public partial class ModelDetailViewModel : ViewModelBase
     public event EventHandler? CloseRequested;
 
     /// <summary>
+    /// Raised when the user clicks "Download Metadata" for this individual LoRA.
+    /// The parent <see cref="LoraViewerViewModel"/> performs the hash-based Civitai
+    /// lookup + persistence, then reloads this detail view.
+    /// </summary>
+    public event EventHandler? MetadataDownloadRequested;
+
+    /// <summary>
     /// Raised after a version download completes and is persisted to the database.
     /// The parent LoraViewerViewModel subscribes to rebuild tiles with proper grouping.
     /// </summary>
@@ -965,9 +999,13 @@ public partial class ModelDetailViewModel : ViewModelBase
         VersionIdDisplay = version?.CivitaiId?.ToString() ?? "\u2014";
         BaseModelDisplay = version?.BaseModelRaw ?? "Unknown";
 
-        // File name
+        // File name + containing folder
         var primaryFile = version?.PrimaryFile;
         FileNameDisplay = primaryFile?.FileName ?? "\u2014";
+        var localFile = version is not null
+            ? tile.GetScopedFileForVersion(version.Id) ?? primaryFile
+            : null;
+        FolderPathDisplay = FolderDisplayFromFile(localFile);
 
         // Description
         DescriptionText = HtmlTextHelper.HtmlToPlainText(model?.Description);
@@ -982,6 +1020,18 @@ public partial class ModelDetailViewModel : ViewModelBase
 
         // Build version tabs from local data only (Civitai fetch will enhance this)
         BuildLocalVersionTabs(tile);
+    }
+
+    /// <summary>
+    /// Directory of the given file's <see cref="ModelFile.LocalPath"/>, or "—"
+    /// when the version has no file on disk.
+    /// </summary>
+    private static string FolderDisplayFromFile(ModelFile? file)
+    {
+        var path = file?.LocalPath;
+        if (string.IsNullOrWhiteSpace(path)) return "—";
+        var dir = Path.GetDirectoryName(path);
+        return string.IsNullOrEmpty(dir) ? "—" : dir;
     }
 
     private void PopulateTags(Model? model)
@@ -1337,6 +1387,12 @@ public partial class ModelDetailViewModel : ViewModelBase
                           ?? selected.CivitaiVersion.Files.FirstOrDefault();
             FileNameDisplay = civFile?.Name ?? "\u2014";
         }
+
+        // Containing folder \u2014 prefer the file in the tile's own location (#380)
+        var versionFile = selected.LocalVersion is { } lv
+            ? SourceTile?.GetScopedFileForVersion(lv.Id) ?? lv.PrimaryFile
+            : null;
+        FolderPathDisplay = FolderDisplayFromFile(versionFile);
 
         // Update thumbnail if local version available
         if (selected.LocalVersion is not null && SourceTile is not null)
