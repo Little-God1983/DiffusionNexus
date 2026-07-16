@@ -467,8 +467,9 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             _nextCursor = cursor;
             OnPropertyChanged(nameof(HasMore));
 
-            // Tag-fallback: REST query= is a name-only substring match; civitai.com's web
-            // index also matches tags/descriptions. When a fresh name-search yielded thin
+            // Tag-fallback: REST query= is Meilisearch full-text these days (names, tags,
+            // and more), but an explicit tag= query can still surface models the text
+            // ranking pushed out of the fetched pages. When a fresh search yielded thin
             // results, fire a tag= query with the same text and merge unique ids in.
             if (isFirstBatch
                 && !string.IsNullOrWhiteSpace(SearchText)
@@ -476,6 +477,16 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                 && lastQuery is not null)
             {
                 await RunTagFallbackAsync(lastQuery, apiKey, existingIds, ct);
+            }
+
+            // The REST API silently ignores sort= whenever query= is present — pages come
+            // back in Meilisearch relevance order — and the tag-fallback appends its items
+            // at the end. Re-sort the collected results locally so the selected sort still
+            // holds during a text search. Without a search term the API order is already
+            // correct, so don't touch it.
+            if (!string.IsNullOrWhiteSpace(SearchText))
+            {
+                await ResortResultsAsync();
             }
 
             var addedThisBatch = Results.Count - preBatchCount;
@@ -505,6 +516,20 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         {
             IsBusy = false;
         }
+    }
+
+    /// <summary>
+    /// Re-sorts the result list on the UI thread by the currently selected sort option.
+    /// Move-based so bound cards keep their instances (selection, loaded previews).
+    /// </summary>
+    private async Task ResortResultsAsync()
+    {
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            if (Results.Count < 2) return;
+            var desired = CivitaiSearchResultSorter.Sort(Results, r => r.Model, SelectedSort);
+            CivitaiSearchResultSorter.ApplyOrder(Results, desired);
+        });
     }
 
     /// <summary>
