@@ -19,9 +19,15 @@ public sealed record CivitaiModelImage
     [JsonPropertyName("nsfw")]
     public bool Nsfw { get; init; }
 
-    /// <summary>The NSFW level of the image.</summary>
+    /// <summary>
+    /// Browsing-level bitmask of this image: 1=PG, 2=PG13, 4=R, 8=X, 16=XXX.
+    /// The API used to send the legacy string levels (None/Soft/Mature/X) but has
+    /// returned this numeric scheme for a long time — the old
+    /// <c>CivitaiNsfwLevel</c> enum typing silently swallowed every value.
+    /// Null when the API omitted the field.
+    /// </summary>
     [JsonPropertyName("nsfwLevel")]
-    public CivitaiNsfwLevel? NsfwLevel { get; init; }
+    public int? NsfwLevel { get; init; }
 
     /// <summary>
     /// Image width in pixels. Nullable because Civitai sends <c>null</c> for some

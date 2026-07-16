@@ -16,7 +16,8 @@ namespace DiffusionNexus.UI.ViewModels.CivitaiBrowser;
 /// </summary>
 public partial class CivitaiResultViewModel : ObservableObject
 {
-    private readonly CancellationTokenSource _cts = new();
+    private CancellationTokenSource _cts = new();
+    private bool _showNsfwPreviews;
 
     /// <summary>
     /// Signals every in-flight preview download (image fetch, video stream,
@@ -28,15 +29,19 @@ public partial class CivitaiResultViewModel : ObservableObject
         try { _cts.Cancel(); } catch { /* already disposed */ }
     }
 
-    public CivitaiResultViewModel(CivitaiModel model)
+    public CivitaiResultViewModel(CivitaiModel model, bool showNsfwPreviews)
     {
         Model = model;
         Name = model.Name;
         Creator = model.Creator?.Username ?? "Unknown";
         DownloadCount = model.Stats?.DownloadCount ?? 0;
         ThumbsUp = model.Stats?.ThumbsUpCount ?? 0;
-        IsNsfw = model.Nsfw;
+        // Policy-based, NOT the raw model.Nsfw boolean: that flag only marks models
+        // *designated* mature, while unflagged models routinely carry X/XXX gallery
+        // imagery (we request nsfw=true, so the API returns every image unfiltered).
+        IsNsfw = CivitaiNsfwPolicy.IsCardNsfw(model);
         Category = InferCategoryFromTags(model.Tags) ?? string.Empty;
+        _showNsfwPreviews = showNsfwPreviews;
 
         var first = model.ModelVersions.FirstOrDefault();
         BaseModel = first?.BaseModel ?? "";
@@ -57,20 +62,22 @@ public partial class CivitaiResultViewModel : ObservableObject
         // Pre-select latest by default for cards' simple "select card → enqueue latest" flow.
         if (Versions.Count > 0) Versions[0].IsSelected = true;
 
-        // Prefer the first non-video preview across every version. Many models pair
-        // an animated demo with one or more static frames — use the still where
-        // available so we don't have to ask the CDN to extract a poster.
-        var allPreviews = model.ModelVersions
-            .SelectMany(v => v.Images)
-            .Where(i => !string.IsNullOrWhiteSpace(i.Url))
-            .ToList();
-        var preferred = allPreviews.FirstOrDefault(i => !IsVideoAsset(i))
-                        ?? allPreviews.FirstOrDefault();
+        SetPreview(CivitaiNsfwPolicy.SelectPreview(model, showNsfwPreviews));
 
-        IsVideoPreview = preferred is not null && IsVideoAsset(preferred);
-        // For video previews: keep the original URL (FFmpeg streams from it directly).
-        // For images: rewrite to a server-side-resized variant so we get a
-        // decoder-friendly thumbnail instead of full-resolution.
+        _ = LoadPreviewAsync();
+    }
+
+    /// <summary>
+    /// Applies preview selection to the card's bindable fields. Candidates come from
+    /// <see cref="CivitaiNsfwPolicy.SelectPreview"/> (stills preferred over videos;
+    /// restricted to PG/PG13 images while NSFW is hidden). For video previews the
+    /// original URL is kept (FFmpeg streams from it directly); images are rewritten
+    /// to a server-side-resized variant so we get a decoder-friendly thumbnail
+    /// instead of full-resolution.
+    /// </summary>
+    private void SetPreview(CivitaiModelImage? preferred)
+    {
+        IsVideoPreview = preferred is not null && CivitaiNsfwPolicy.IsVideoAsset(preferred);
         PreviewUrl = IsVideoPreview
             ? preferred?.Url
             : RewriteToResizedImageUrl(preferred?.Url);
@@ -79,11 +86,35 @@ public partial class CivitaiResultViewModel : ObservableObject
         _previewCacheKey = IsVideoPreview
             ? CivitaiPreviewCache.ComputeKey(preferred?.Id, preferred?.Url)
             : null;
+    }
 
+    /// <summary>
+    /// Re-evaluates the preview when the browser's "Show NSFW content" toggle flips:
+    /// hiding NSFW swaps an adult thumbnail for the model's safest image (and back).
+    /// The in-flight load of the old preview is cancelled so a slow stale download
+    /// can't overwrite the new thumbnail after the swap.
+    /// </summary>
+    public void ApplyNsfwPreference(bool showNsfw)
+    {
+        if (_showNsfwPreviews == showNsfw) return;
+        _showNsfwPreviews = showNsfw;
+        if (Model is null) return;
+
+        var preferred = CivitaiNsfwPolicy.SelectPreview(Model, showNsfw);
+        var newUrl = preferred is not null && CivitaiNsfwPolicy.IsVideoAsset(preferred)
+            ? preferred.Url
+            : RewriteToResizedImageUrl(preferred?.Url);
+        if (string.Equals(newUrl, PreviewUrl, StringComparison.Ordinal)) return;
+
+        try { _cts.Cancel(); } catch { /* already disposed */ }
+        _cts = new CancellationTokenSource();
+
+        PreviewImage = null;
+        SetPreview(preferred);
         _ = LoadPreviewAsync();
     }
 
-    private readonly string? _previewCacheKey;
+    private string? _previewCacheKey;
 
     private CivitaiResultViewModel() { }
 
@@ -108,8 +139,19 @@ public partial class CivitaiResultViewModel : ObservableObject
     public bool IsEarlyAccess { get; private init; }
     public bool IsNsfw { get; private init; }
     public string Category { get; private init; } = string.Empty;
-    public bool IsVideoPreview { get; private init; }
-    public string? PreviewUrl { get; private init; }
+    private bool _isVideoPreview;
+    public bool IsVideoPreview
+    {
+        get => _isVideoPreview;
+        private set => SetProperty(ref _isVideoPreview, value);
+    }
+
+    private string? _previewUrl;
+    public string? PreviewUrl
+    {
+        get => _previewUrl;
+        private set => SetProperty(ref _previewUrl, value);
+    }
 
     public ObservableCollection<CivitaiVersionPickItemViewModel> Versions { get; } = [];
 
@@ -207,23 +249,6 @@ public partial class CivitaiResultViewModel : ObservableObject
             if (sel.Count == 1) return sel[0].Name;
             return $"{sel.Count} versions selected";
         }
-    }
-
-    /// <summary>
-    /// Determines whether a Civitai preview asset is animated. Uses the API's own
-    /// <c>type</c> field first (authoritative), falling back to the URL extension for
-    /// records that didn't report it.
-    /// </summary>
-    private static bool IsVideoAsset(CivitaiModelImage? image)
-    {
-        if (image is null) return false;
-        if (string.Equals(image.Type, "video", StringComparison.OrdinalIgnoreCase)) return true;
-
-        var url = image.Url;
-        if (string.IsNullOrWhiteSpace(url)) return false;
-        return url.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase)
-            || url.EndsWith(".webm", StringComparison.OrdinalIgnoreCase)
-            || url.EndsWith(".gif", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
