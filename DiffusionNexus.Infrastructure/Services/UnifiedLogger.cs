@@ -132,7 +132,10 @@ public sealed class UnifiedLogger : IUnifiedLogger
                 SerilogLogger.Information(template, entry.Category, entry.Source, entry.Message);
                 break;
             case LogLevel.Warning:
-                SerilogLogger.Warning(template, entry.Category, entry.Source, entry.Message);
+                if (string.IsNullOrEmpty(entry.Detail))
+                    SerilogLogger.Warning(template, entry.Category, entry.Source, entry.Message);
+                else
+                    SerilogLogger.Warning(template + " Detail: {Detail}", entry.Category, entry.Source, entry.Message, entry.Detail);
                 break;
             case LogLevel.Error:
                 if (entry.Exception is not null)

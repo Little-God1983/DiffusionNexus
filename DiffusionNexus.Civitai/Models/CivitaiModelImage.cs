@@ -23,13 +23,17 @@ public sealed record CivitaiModelImage
     [JsonPropertyName("nsfwLevel")]
     public CivitaiNsfwLevel? NsfwLevel { get; init; }
 
-    /// <summary>Image width in pixels.</summary>
+    /// <summary>
+    /// Image width in pixels. Nullable because Civitai sends <c>null</c> for some
+    /// preview media (e.g. videos whose dimensions haven't been probed yet) rather
+    /// than omitting the field or defaulting to 0.
+    /// </summary>
     [JsonPropertyName("width")]
-    public int Width { get; init; }
+    public int? Width { get; init; }
 
-    /// <summary>Image height in pixels.</summary>
+    /// <summary>Image height in pixels. See <see cref="Width"/> for why this is nullable.</summary>
     [JsonPropertyName("height")]
-    public int Height { get; init; }
+    public int? Height { get; init; }
 
     /// <summary>BlurHash of the image for placeholders.</summary>
     [JsonPropertyName("hash")]

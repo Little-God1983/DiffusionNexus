@@ -374,7 +374,7 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     [RelayCommand]
     private void OpenYoutube()
     {
-        OpenUrl("https://youtube.com/@AIKnowledge2Go");
+        OpenUrl("https://www.youtube.com/@IntoTheLatent");
     }
 
     [RelayCommand]
