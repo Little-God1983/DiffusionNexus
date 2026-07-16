@@ -2,7 +2,7 @@ name: .NET 10 Build & Test
 
 on:
   push:
-    branches: [main, develop]
+    branches: [develop]
   pull_request:
 
 jobs:
