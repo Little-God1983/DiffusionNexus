@@ -28,6 +28,16 @@ public sealed record CivitaiModel
     [JsonPropertyName("nsfw")]
     public bool Nsfw { get; init; }
 
+    /// <summary>
+    /// Browsing-level bitmask of the content this model carries:
+    /// 1=PG, 2=PG13, 4=R, 8=X, 16=XXX, 32=Blocked. Broader than <see cref="Nsfw"/>,
+    /// which is only true for models *designated* mature — a model with
+    /// <c>nsfw=false</c> can still include X/XXX gallery imagery (bits 8/16 set here).
+    /// 0 when the API omitted the field.
+    /// </summary>
+    [JsonPropertyName("nsfwLevel")]
+    public int NsfwLevel { get; init; }
+
     /// <summary>Whether the model is of a person of interest.</summary>
     [JsonPropertyName("poi")]
     public bool Poi { get; init; }

@@ -437,7 +437,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                         if (model.ModelVersions.Count == 0) continue;
                         if (model.Mode is not null) continue; // skip archived/taken-down
                         if (!existingIds.Add(model.Id)) continue;
-                        var vm = new CivitaiResultViewModel(model)
+                        var vm = new CivitaiResultViewModel(model, ShowNsfwContent)
                         {
                             IsInstalled = IsModelInstalled(model),
                             EnqueueAllVersionsHandler = EnqueueAllVersionsForCard
@@ -574,7 +574,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                 {
                     if (model.ModelVersions.Count == 0) continue;
                     if (!existingIds.Add(model.Id)) continue;
-                    var vm = new CivitaiResultViewModel(model)
+                    var vm = new CivitaiResultViewModel(model, ShowNsfwContent)
                     {
                         IsInstalled = IsModelInstalled(model),
                         EnqueueAllVersionsHandler = EnqueueAllVersionsForCard
@@ -702,6 +702,10 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     {
         foreach (var result in Results)
         {
+            // Keep each card's thumbnail in line with the toggle: hiding NSFW swaps
+            // adult previews for the model's safest image (no-op when unchanged).
+            result.ApplyNsfwPreference(ShowNsfwContent);
+
             var hide = (HideEarlyAccessModels && result.IsEarlyAccess)
                        || (HideInstalledModels && result.IsInstalled)
                        || (!ShowNsfwContent && result.IsNsfw);
