@@ -20,7 +20,7 @@
     <PackageReference Include="SkiaSharp" Version="3.119.4" />
 
     <!-- Logging + DI surface -->
-    <PackageReference Include="Serilog" Version="4.3.1" />
+    <PackageReference Include="Serilog" Version="4.4.0" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.*" />
   </ItemGroup>
 
