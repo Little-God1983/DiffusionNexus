@@ -524,65 +524,75 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Ensures the SDK database (diffusion_nexus.db) is deployed and up-to-date by
-    /// delegating to <see cref="SdkDatabaseDeployer"/>, then applies any pending EF Core
-    /// migrations. Reports the resulting status (version, up-to-date, replaced) to the
-    /// unified activity log.
+    /// Reports the SDK catalog database status and applies any pending EF Core migrations.
+    /// Path resolution and the embedded-catalog deploy are owned entirely by
+    /// <see cref="ServiceCollectionExtensions.AddDiffusionNexusDataAccess"/> (which ran at DI
+    /// registration); this method reads the resulting <see cref="ISdkCatalogDatabase"/> for
+    /// reporting and migrates the SAME context the app uses. It deliberately does NOT re-resolve
+    /// the path or re-deploy — doing so previously diverged from the file the context opened
+    /// (a hardcoded %LocalAppData% deploy vs. an honored db_override.txt), surfacing as
+    /// "SQLite Error 14: unable to open database file".
     /// </summary>
     private static void InitializeSdkDatabase()
     {
-        const string databaseFileName = "diffusion_nexus.db";
         const string logSource = "Installer SDK";
 
         var activityLog = Services!.GetService<IActivityLogService>();
 
         try
         {
-            // The NuGet contentFiles mechanism copies the seed DB next to the executable.
-            var shippedDb = Path.Combine(AppContext.BaseDirectory, databaseFileName);
+            // Single source of truth: the resolved path + embedded-deploy outcome captured at
+            // registration. The deploy already happened there (before the first connection).
+            var catalog = Services!.GetRequiredService<ISdkCatalogDatabase>();
+            var runtimeDb = catalog.DatabasePath;
+            var deploy = catalog.DeployResult;
 
-            // Runtime location: directly in %LocalAppData% (no subfolder).
-            // TODO: Linux implementation — use XDG_DATA_HOME or ~/.local/share.
-            var runtimeDb = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                databaseFileName);
-
-            var result = SdkDatabaseDeployer.EnsureUpToDate(shippedDb, runtimeDb);
-
-            // a) DB version (always)
-            activityLog?.LogInfo(
-                logSource,
-                $"SDK database version: {result.ShippedVersion}",
-                $"Path: {runtimeDb}");
-
-            // b) up-to-date / c) replaced
-            switch (result.Outcome)
+            if (deploy is not null)
             {
-                case SdkDatabaseDeployOutcome.UpToDate:
-                case SdkDatabaseDeployOutcome.SamePath:
-                    activityLog?.LogInfo(logSource, "SDK database is up to date.");
-                    break;
-                case SdkDatabaseDeployOutcome.FirstTimeDeploy:
-                    activityLog?.LogSuccess(
-                        logSource,
-                        $"SDK database deployed for the first time (v{result.ShippedVersion}).");
-                    break;
-                case SdkDatabaseDeployOutcome.Upgraded:
-                    activityLog?.LogSuccess(
-                        logSource,
-                        $"SDK database upgraded from v{result.RuntimeVersionBefore ?? "unknown"} to v{result.ShippedVersion}.",
-                        $"Backup saved to: {result.BackupPath}");
-                    break;
-                case SdkDatabaseDeployOutcome.NoShippedDatabase:
-                    activityLog?.LogWarning(
-                        logSource,
-                        "No shipped SDK database found; using existing runtime DB.");
-                    break;
+                // a) DB version (always)
+                activityLog?.LogInfo(
+                    logSource,
+                    $"SDK database version: {deploy.ShippedVersion}",
+                    $"Path: {runtimeDb}");
+
+                // b) up-to-date / c) replaced
+                switch (deploy.Outcome)
+                {
+                    case SdkDatabaseDeployOutcome.UpToDate:
+                    case SdkDatabaseDeployOutcome.SamePath:
+                        activityLog?.LogInfo(logSource, "SDK database is up to date.");
+                        break;
+                    case SdkDatabaseDeployOutcome.FirstTimeDeploy:
+                        activityLog?.LogSuccess(
+                            logSource,
+                            $"SDK database deployed for the first time (v{deploy.ShippedVersion}).");
+                        break;
+                    case SdkDatabaseDeployOutcome.Upgraded:
+                        activityLog?.LogSuccess(
+                            logSource,
+                            $"SDK database upgraded from v{deploy.RuntimeVersionBefore ?? "unknown"} to v{deploy.ShippedVersion}.",
+                            $"Backup saved to: {deploy.BackupPath}");
+                        break;
+                    case SdkDatabaseDeployOutcome.NoShippedDatabase:
+                        activityLog?.LogWarning(
+                            logSource,
+                            "No shipped SDK database found; using existing runtime DB.");
+                        break;
+                }
+            }
+            else
+            {
+                // Consumer-managed path (a valid db_override.txt or an explicit path): the SDK does
+                // not deploy or version-stamp it — it is opened as-is.
+                activityLog?.LogInfo(
+                    logSource,
+                    "Using consumer-managed SDK database (no embedded deploy).",
+                    $"Path: {runtimeDb}");
             }
 
-            // Apply pending schema migrations on top of the (seed) data — but only
-            // when there are any; an unconditional Migrate() costs a full EF
-            // migration pass on every launch (mirrors the core-DB gating above).
+            // Apply pending schema migrations against the SAME context the app uses — but only
+            // when there are any; an unconditional Migrate() costs a full EF migration pass on
+            // every launch (mirrors the core-DB gating above).
             var sdkContext = Services!.GetRequiredService<SdkContext>();
             var pendingSdkMigrations = sdkContext.Database.GetPendingMigrations().ToList();
             if (pendingSdkMigrations.Count > 0)
