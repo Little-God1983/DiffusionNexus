@@ -171,6 +171,14 @@ public sealed class CaptioningModelManager
     private readonly Dictionary<CaptioningModelType, bool> _downloadingModels = new();
 
     /// <summary>
+    /// Reports the on-disk length of a file, in bytes. Defaults to
+    /// <see cref="FileInfo.Length"/>; every "is this file the right size"
+    /// check in this class goes through it so tests can inject fake sizes
+    /// instead of writing real multi-gigabyte fixtures to disk.
+    /// </summary>
+    private readonly Func<string, long> _fileSizeProbe;
+
+    /// <summary>
     /// Environment variable read at construction to add extra search paths.
     /// Separator is the platform's <see cref="Path.PathSeparator"/> (';' on Windows).
     /// </summary>
@@ -194,10 +202,16 @@ public sealed class CaptioningModelManager
     /// The callback is invoked lazily, so it can return live results without
     /// requiring the manager to be reconstructed when installations change.
     /// </param>
+    /// <param name="fileSizeProbe">
+    /// Optional override for reading a file's length. Defaults to
+    /// <see cref="FileInfo.Length"/> on the real filesystem. Exposed purely as
+    /// a test seam — production callers should never need to pass this.
+    /// </param>
     public CaptioningModelManager(
         string? modelsBasePath,
         HttpClient? httpClient,
-        Func<IReadOnlyList<string>>? extraSearchPathsProvider = null)
+        Func<IReadOnlyList<string>>? extraSearchPathsProvider = null,
+        Func<string, long>? fileSizeProbe = null)
     {
         _modelsBasePath = modelsBasePath ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -211,6 +225,7 @@ public sealed class CaptioningModelManager
 
         _staticSearchPaths = BuildStaticSearchPaths(_modelsBasePath);
         _extraSearchPathsProvider = extraSearchPathsProvider;
+        _fileSizeProbe = fileSizeProbe ?? (static path => new FileInfo(path).Length);
     }
 
     /// <summary>
@@ -699,11 +714,11 @@ public sealed class CaptioningModelManager
         if (!File.Exists(modelPath) || !File.Exists(clipPath))
             return CaptioningModelStatus.NotDownloaded;
 
-        var modelInfo = new FileInfo(modelPath);
+        var modelLength = _fileSizeProbe(modelPath);
         var expectedSize = GetExpectedModelSize(modelType);
 
         // Basic size check - model should be at least 80% of expected size
-        if (modelInfo.Length < expectedSize * 0.8)
+        if (modelLength < expectedSize * 0.8)
             return CaptioningModelStatus.Corrupted;
 
         return CaptioningModelStatus.Ready;
@@ -716,7 +731,7 @@ public sealed class CaptioningModelManager
     {
         var modelPath = GetModelPath(modelType);
         var status = GetModelStatus(modelType);
-        var fileSize = File.Exists(modelPath) ? new FileInfo(modelPath).Length : 0;
+        var fileSize = File.Exists(modelPath) ? _fileSizeProbe(modelPath) : 0;
         var expectedSize = GetExpectedModelSize(modelType);
 
         return new CaptioningModelInfo(
@@ -797,8 +812,8 @@ public sealed class CaptioningModelManager
             : Path.Combine(destinationDirectory, clipFileName);
 
         var alreadyPresent =
-            File.Exists(modelDestPath) && new FileInfo(modelDestPath).Length >= modelSize * 0.8 &&
-            File.Exists(clipDestPath) && new FileInfo(clipDestPath).Length >= clipSize * 0.8;
+            File.Exists(modelDestPath) && _fileSizeProbe(modelDestPath) >= modelSize * 0.8 &&
+            File.Exists(clipDestPath) && _fileSizeProbe(clipDestPath) >= clipSize * 0.8;
 
         if (alreadyPresent)
         {
@@ -824,7 +839,7 @@ public sealed class CaptioningModelManager
             var displayName = GetDisplayName(modelType);
 
             // CLIP/mmproj first — smaller, fails fast on connectivity issues.
-            if (!File.Exists(clipDestPath) || new FileInfo(clipDestPath).Length < clipSize * 0.8)
+            if (!File.Exists(clipDestPath) || _fileSizeProbe(clipDestPath) < clipSize * 0.8)
             {
                 progress?.Report(new ModelDownloadProgress(0, totalSize, $"Downloading {displayName} CLIP projector..."));
                 var clipSuccess = await DownloadFileInternalAsync(
@@ -837,7 +852,7 @@ public sealed class CaptioningModelManager
                     return false;
             }
 
-            if (!File.Exists(modelDestPath) || new FileInfo(modelDestPath).Length < modelSize * 0.8)
+            if (!File.Exists(modelDestPath) || _fileSizeProbe(modelDestPath) < modelSize * 0.8)
             {
                 progress?.Report(new ModelDownloadProgress(clipSize, totalSize, $"Downloading {displayName} model..."));
                 var modelSuccess = await DownloadFileInternalAsync(
@@ -920,8 +935,8 @@ public sealed class CaptioningModelManager
         // actually missing.
         var modelOnDisk = ResolveFile(tier.ModelFileName);
         var mmprojOnDisk = ResolveFile(tier.MmprojFileName);
-        var modelPresent = File.Exists(modelOnDisk) && new FileInfo(modelOnDisk).Length >= tier.ModelSizeBytes * 0.8;
-        var mmprojPresent = File.Exists(mmprojOnDisk) && new FileInfo(mmprojOnDisk).Length >= tier.MmprojSizeBytes * 0.8;
+        var modelPresent = File.Exists(modelOnDisk) && _fileSizeProbe(modelOnDisk) >= tier.ModelSizeBytes * 0.8;
+        var mmprojPresent = File.Exists(mmprojOnDisk) && _fileSizeProbe(mmprojOnDisk) >= tier.MmprojSizeBytes * 0.8;
 
         if (modelPresent && mmprojPresent)
         {
