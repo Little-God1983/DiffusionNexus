@@ -64,7 +64,11 @@ public sealed class ThumbnailService : IThumbnailService, IDisposable
 {
     private readonly int _maxCacheSize;
     private readonly ConcurrentDictionary<string, CacheEntry> _cache = new(StringComparer.OrdinalIgnoreCase);
-    private readonly LinkedList<string> _accessOrder = new();
+    // Case-insensitive LRU tracker so it agrees with the comparer used by _cache above.
+    // (#429: a LinkedList<string> here previously used the default, case-sensitive
+    // comparer, so paths differing only in casing produced stale duplicate entries
+    // that prevented the cache from ever shrinking back to _maxCacheSize.)
+    private readonly LruKeyTracker _accessOrder = new();
     private readonly object _evictionLock = new();
     private readonly SemaphoreSlim _loadSemaphore;
     private bool _disposed;
@@ -261,17 +265,18 @@ public sealed class ThumbnailService : IThumbnailService, IDisposable
         {
             // Add to cache
             _cache[imagePath] = entry;
-            
-            // Add to access order (most recent at end)
-            _accessOrder.Remove(imagePath); // Remove if exists
-            _accessOrder.AddLast(imagePath);
+
+            // Mark as most-recently-used (moves the existing entry if already tracked,
+            // case-insensitively, instead of appending a duplicate)
+            _accessOrder.Touch(imagePath);
 
             // Evict oldest entries if over capacity
-            while (_cache.Count > _maxCacheSize && _accessOrder.First is not null)
+            while (_cache.Count > _maxCacheSize)
             {
-                var oldestKey = _accessOrder.First.Value;
-                _accessOrder.RemoveFirst();
-                
+                var oldestKey = _accessOrder.EvictLeastRecentlyUsed();
+                if (oldestKey is null)
+                    break;
+
                 if (_cache.TryRemove(oldestKey, out _))
                 {
                     // NOTE: Don't dispose evicted bitmaps - they may still be bound to UI elements.
@@ -290,8 +295,7 @@ public sealed class ThumbnailService : IThumbnailService, IDisposable
     {
         lock (_evictionLock)
         {
-            _accessOrder.Remove(imagePath);
-            _accessOrder.AddLast(imagePath);
+            _accessOrder.Touch(imagePath);
         }
     }
 
