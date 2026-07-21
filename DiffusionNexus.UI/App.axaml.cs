@@ -1650,11 +1650,11 @@ public partial class App : Application
                 Serilog.Log.Information("LoadStartupData: {Phase} finished at +{End}ms ({Duration}ms total)", name, sw.ElapsedMilliseconds, sw.ElapsedMilliseconds - begin);
             }
 
-            // Disclaimer + settings must complete first � other modules depend on them.
+            // Disclaimer + settings must complete first - other modules depend on them.
             await Timed(sw, "disclaimer", () => mainViewModel.CheckDisclaimerStatusAsync());
             await Timed(sw, "settings", () => settingsVm.LoadCommand.ExecuteAsync(null));
 
-            // Remaining modules are independent � load in parallel.
+            // Remaining modules are independent - load in parallel.
             // NOTE: each command runs synchronously on the UI thread until its first
             // real await — the per-phase "synchronous head" stamps expose which load
             // is hogging the dispatcher.

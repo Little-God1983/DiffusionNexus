@@ -176,7 +176,7 @@ public partial class ImageEditorViewModel : ObservableObject
     }
 
     /// <summary>Formatted image dimensions for display.</summary>
-    public string ImageDimensions => HasImage ? $"{ImageWidth} � {ImageHeight}" : string.Empty;
+    public string ImageDimensions => HasImage ? $"{ImageWidth} \u00D7 {ImageHeight}" : string.Empty;
 
     /// <summary>Whether the crop tool is currently active.</summary>
     public bool IsCropToolActive
@@ -273,7 +273,7 @@ public partial class ImageEditorViewModel : ObservableObject
 
     /// <summary>Combined image info for display.</summary>
     public string ImageInfo => HasImage
-        ? $"Size: {ImageWidth} � {ImageHeight} px\nResolution: {ImageDpi} DPI\nFile: {FileSizeText}"
+        ? $"Size: {ImageWidth} \u00D7 {ImageHeight} px\nResolution: {ImageDpi} DPI\nFile: {FileSizeText}"
         : string.Empty;
 
     #endregion
