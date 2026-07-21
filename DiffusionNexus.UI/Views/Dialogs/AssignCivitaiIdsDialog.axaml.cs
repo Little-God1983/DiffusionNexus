@@ -296,3 +296,15 @@ public partial class AssignCivitaiIdsDialog : Window
         Close(false);
     }
 }
+
+/// <summary>
+/// Result of the <see cref="AssignCivitaiIdsDialog"/> shown via
+/// <see cref="Services.IDialogService.ShowAssignCivitaiIdsDialogAsync"/>.
+/// </summary>
+/// <param name="IsConfirmed">True when the user confirmed the resolved model.</param>
+/// <param name="ResolvedModel">The Civitai model resolved from the URL/IDs, or null.</param>
+/// <param name="ResolvedVersion">The selected version, or the model's first version.</param>
+public readonly record struct AssignCivitaiIdsDialogResult(
+    bool IsConfirmed,
+    CivitaiModel? ResolvedModel,
+    CivitaiModelVersion? ResolvedVersion);

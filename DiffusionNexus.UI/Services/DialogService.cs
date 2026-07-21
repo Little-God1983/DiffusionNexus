@@ -679,4 +679,46 @@ public class DialogService : IDialogService
         var tail = entries.Count <= 500 ? entries : entries.Skip(entries.Count - 500);
         return string.Join('\n', tail.Select(e => e.ToDisplayString()));
     }
+
+    public async Task<LoraDeleteResult?> ShowSelectLoraVersionsToDeleteDialogAsync(
+        string displayName,
+        IEnumerable<ModelVersion> versions,
+        IReadOnlyList<Model> allGroupedModels)
+    {
+        if (!Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+        {
+            return await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
+                () => ShowSelectLoraVersionsToDeleteDialogAsync(displayName, versions, allGroupedModels));
+        }
+
+        var dialog = new SelectLoraVersionsToDeleteDialog()
+            .WithVersions(displayName, versions, allGroupedModels);
+
+        await dialog.ShowDialog(_window);
+        return dialog.Result;
+    }
+
+    public async Task<CivitaiTokenDialogResult> ShowCivitaiTokenDialogAsync()
+    {
+        if (!Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+        {
+            return await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(ShowCivitaiTokenDialogAsync);
+        }
+
+        var dialog = new CivitaiTokenDialog();
+        await dialog.ShowDialog(_window);
+        return new CivitaiTokenDialogResult(dialog.IsSaved, dialog.TokenText);
+    }
+
+    public async Task<AssignCivitaiIdsDialogResult> ShowAssignCivitaiIdsDialogAsync()
+    {
+        if (!Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+        {
+            return await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(ShowAssignCivitaiIdsDialogAsync);
+        }
+
+        var dialog = new AssignCivitaiIdsDialog();
+        await dialog.ShowDialog(_window);
+        return new AssignCivitaiIdsDialogResult(dialog.IsConfirmed, dialog.ResolvedModel, dialog.ResolvedVersion);
+    }
     }

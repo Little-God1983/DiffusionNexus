@@ -391,6 +391,33 @@ public interface IDialogService
     /// attached when the user submits a bug report (not for feedback/feature requests).
     /// </summary>
     Task ShowFeedbackDialogAsync();
+
+    /// <summary>
+    /// Shows the LoRA version delete picker for a grouped tile. Marshals to the UI
+    /// thread internally so it is safe to call from a background context.
+    /// </summary>
+    /// <param name="displayName">Model display name shown in the dialog title.</param>
+    /// <param name="versions">All versions across the grouped models.</param>
+    /// <param name="allGroupedModels">All model entities in the group (for DB removal).</param>
+    /// <returns>The delete result, or a cancelled result if the user backed out.</returns>
+    Task<LoraDeleteResult?> ShowSelectLoraVersionsToDeleteDialogAsync(
+        string displayName,
+        IEnumerable<Domain.Entities.ModelVersion> versions,
+        IReadOnlyList<Domain.Entities.Model> allGroupedModels);
+
+    /// <summary>
+    /// Shows the Civitai API-token prompt (used when a download needs a token that
+    /// is not yet configured). Marshals to the UI thread internally.
+    /// </summary>
+    /// <returns>Whether the user saved a validated token, plus the token text.</returns>
+    Task<CivitaiTokenDialogResult> ShowCivitaiTokenDialogAsync();
+
+    /// <summary>
+    /// Shows the manual "Assign Civitai IDs" dialog where the user pastes a URL or
+    /// enters Model/Version IDs. Marshals to the UI thread internally.
+    /// </summary>
+    /// <returns>Whether the user confirmed, plus the resolved Civitai model/version.</returns>
+    Task<AssignCivitaiIdsDialogResult> ShowAssignCivitaiIdsDialogAsync();
 }
 
 /// <summary>

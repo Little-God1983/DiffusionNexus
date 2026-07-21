@@ -28,6 +28,14 @@ public interface IUiScheduler
     Task InvokeAsync(Action action);
 
     /// <summary>
+    /// Runs the asynchronous <paramref name="action"/> on the UI thread and
+    /// returns a task that completes when the inner task has finished. Maps to
+    /// <c>Dispatcher.UIThread.InvokeAsync(Func&lt;Task&gt;)</c>. Used where the
+    /// marshalled work is itself awaitable (e.g. reload-after-save flows).
+    /// </summary>
+    Task InvokeAsync(Func<Task> action);
+
+    /// <summary>
     /// Whether the calling thread is the UI thread. Maps to
     /// <c>Dispatcher.UIThread.CheckAccess()</c>.
     /// </summary>
