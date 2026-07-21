@@ -63,6 +63,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
     private readonly IDatasetState _state;
     private readonly IAppSettingsService? _settingsService;
     private readonly IDownloadCoordinator? _downloadCoordinator;
+    private readonly IUiScheduler _uiScheduler;
 
     /// <summary>
     /// Snapshot of in-flight downloads observed at the last StateChanged
@@ -141,7 +142,8 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         IReadOnlyList<ICaptioningBackend>? backends = null,
         IAppSettingsService? settingsService = null,
         IFeatureReadinessService? readinessService = null,
-        IDownloadCoordinator? downloadCoordinator = null)
+        IDownloadCoordinator? downloadCoordinator = null,
+        IUiScheduler? uiScheduler = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
@@ -149,6 +151,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         _backends = backends ?? [];
         _settingsService = settingsService;
         _downloadCoordinator = downloadCoordinator;
+        _uiScheduler = uiScheduler ?? AvaloniaUiScheduler.Instance;
 
         Readiness = new FeatureReadinessViewModel(readinessService, Feature.Captioning);
 
@@ -244,7 +247,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         // hint) reflects what's actually on disk now. The model manager's
         // resolve-cache was invalidated by the manager's own download
         // finally, so this call will see the new file.
-        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        _uiScheduler.Post(() =>
         {
             RefreshModelStatuses();
             OnPropertyChanged(nameof(IsModelReady));
