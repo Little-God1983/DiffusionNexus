@@ -1002,8 +1002,11 @@ public partial class App : Application
                 sp.GetRequiredService<IGitService>(),
                 new HttpClient()));
 
-        // Register SDK core services required by installation steps
-        services.AddSingleton<IProcessRunner, ProcessRunner>();
+        // Register SDK core services required by installation steps.
+        // Fully qualified: DiffusionNexus.Service.Services also defines an IProcessRunner
+        // (the backend-update seam, issue #439), so the unqualified name is ambiguous here.
+        services.AddSingleton<DiffusionNexus.Installer.SDK.Services.IProcessRunner,
+            DiffusionNexus.Installer.SDK.Services.ProcessRunner>();
         services.AddSingleton<IGitService, GitService>();
         services.AddSingleton<IPythonService, PythonService>();
 
