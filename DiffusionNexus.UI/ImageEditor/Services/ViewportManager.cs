@@ -2,7 +2,7 @@ namespace DiffusionNexus.UI.ImageEditor.Services;
 
 /// <summary>
 /// Manages viewport state: zoom, pan, fit mode.
-/// Single source of truth for zoom/pan — fires <see cref="Changed"/> on updates.
+/// Single source of truth for zoom/pan - fires <see cref="Changed"/> on updates.
 /// </summary>
 internal sealed class ViewportManager : IViewportManager
 {

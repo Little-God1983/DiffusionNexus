@@ -7,7 +7,7 @@ namespace DiffusionNexus.Domain.Services;
 public interface ICaptioningBackend
 {
     /// <summary>
-    /// Human-readable name of this backend (e.g. "Local Inference", "ComfyUI � Qwen3-VL").
+    /// Human-readable name of this backend (e.g. "Local Inference", "ComfyUI - Qwen3-VL").
     /// </summary>
     string DisplayName { get; }
 
@@ -21,7 +21,7 @@ public interface ICaptioningBackend
     /// <summary>
     /// Non-blocking warnings discovered during <see cref="IsAvailableAsync"/>.
     /// Unlike <see cref="MissingRequirements"/>, warnings do not prevent the backend from
-    /// being used � they inform the user about conditions that may affect the first run
+    /// being used - they inform the user about conditions that may affect the first run
     /// (e.g. a large model download that will happen on first execution).
     /// </summary>
     IReadOnlyList<string> Warnings { get; }
@@ -53,7 +53,7 @@ public interface ICaptioningBackend
     /// <param name="prompt">The prompt/instruction to guide caption generation.</param>
     /// <param name="triggerWord">Optional token to prepend to the generated caption.</param>
     /// <param name="blacklistedWords">Words to remove from the generated caption.</param>
-    /// <param name="temperature">Inference temperature (0.0�2.0). Lower values are more deterministic.</param>
+    /// <param name="temperature">Inference temperature (0.0-2.0). Lower values are more deterministic.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The captioning result.</returns>
     Task<CaptioningResult> GenerateSingleCaptionAsync(

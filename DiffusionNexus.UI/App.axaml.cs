@@ -1002,8 +1002,11 @@ public partial class App : Application
                 sp.GetRequiredService<IGitService>(),
                 new HttpClient()));
 
-        // Register SDK core services required by installation steps
-        services.AddSingleton<IProcessRunner, ProcessRunner>();
+        // Register SDK core services required by installation steps.
+        // Fully qualified: DiffusionNexus.Service.Services also defines an IProcessRunner
+        // (the backend-update seam, issue #439), so the unqualified name is ambiguous here.
+        services.AddSingleton<DiffusionNexus.Installer.SDK.Services.IProcessRunner,
+            DiffusionNexus.Installer.SDK.Services.ProcessRunner>();
         services.AddSingleton<IGitService, GitService>();
         services.AddSingleton<IPythonService, PythonService>();
 
@@ -1650,11 +1653,11 @@ public partial class App : Application
                 Serilog.Log.Information("LoadStartupData: {Phase} finished at +{End}ms ({Duration}ms total)", name, sw.ElapsedMilliseconds, sw.ElapsedMilliseconds - begin);
             }
 
-            // Disclaimer + settings must complete first � other modules depend on them.
+            // Disclaimer + settings must complete first - other modules depend on them.
             await Timed(sw, "disclaimer", () => mainViewModel.CheckDisclaimerStatusAsync());
             await Timed(sw, "settings", () => settingsVm.LoadCommand.ExecuteAsync(null));
 
-            // Remaining modules are independent � load in parallel.
+            // Remaining modules are independent - load in parallel.
             // NOTE: each command runs synchronously on the UI thread until its first
             // real await — the per-phase "synchronous head" stamps expose which load
             // is hogging the dispatcher.

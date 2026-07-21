@@ -2,6 +2,9 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Service.Services.DatasetQuality.Scoring;
 using FluentAssertions;
+using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 
 namespace DiffusionNexus.Tests.DatasetQuality.Scoring;
 
@@ -60,11 +63,54 @@ public class CheckScoreAdapterTests
         result.Weight.Should().Be(1.0);
     }
 
-    [Fact]
-    public void WhenCheckNameCasingDiffersThenLookupFailsAndReturnsNull()
+    [Theory]
+    [InlineData("trigger word")]
+    [InlineData("TRIGGER WORD")]
+    [InlineData("Trigger word")]
+    public void WhenCheckNameCasingDiffersThenLookupStillResolvesToTheRightCategoryAndWeight(string checkName)
     {
-        // The map uses the default ordinal comparer — names must match exactly.
-        CheckScoreAdapter.ScoreFromIssues("trigger word", [], 10).Should().BeNull();
+        // The map uses an ordinal-ignore-case comparer — casing/spacing drift in a
+        // check's display name must not silently drop it from the composite score.
+        var result = CheckScoreAdapter.ScoreFromIssues(checkName, [], 10);
+
+        result.Should().NotBeNull();
+        result!.Category.Should().Be(QualityScoreCategory.CaptionQuality);
+        result.Weight.Should().Be(1.5);
+    }
+
+    [Fact]
+    public void WhenCheckNameIsUnknownThenAWarningIsLoggedInsteadOfFailingSilently()
+    {
+        var events = new List<LogEvent>();
+        var testLogger = new LoggerConfiguration()
+            .MinimumLevel.Warning()
+            .WriteTo.Sink(new DelegatingSink(events.Add))
+            .CreateLogger();
+
+        var previousLogger = Log.Logger;
+        Log.Logger = testLogger;
+        try
+        {
+            CheckScoreAdapter.ScoreFromIssues("Not A Real Check", [], 10).Should().BeNull();
+        }
+        finally
+        {
+            Log.Logger = previousLogger;
+            testLogger.Dispose();
+        }
+
+        events.Should().ContainSingle(e =>
+            e.Level == LogEventLevel.Warning &&
+            e.RenderMessage().Contains("Not A Real Check"));
+    }
+
+    /// <summary>Minimal Serilog sink that forwards every emitted event to a delegate,
+    /// used to assert a warning was logged without pulling in a test-sink package.</summary>
+    private sealed class DelegatingSink : ILogEventSink
+    {
+        private readonly Action<LogEvent> _write;
+        public DelegatingSink(Action<LogEvent> write) => _write = write;
+        public void Emit(LogEvent logEvent) => _write(logEvent);
     }
 
     #endregion

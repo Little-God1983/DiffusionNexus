@@ -31,7 +31,7 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
     }
 
     /// <inheritdoc />
-    public string DisplayName => "ComfyUI � Qwen3-VL";
+    public string DisplayName => "ComfyUI \u2014 Qwen3-VL";
 
     /// <inheritdoc />
     public IReadOnlyList<string> MissingRequirements { get; private set; } = [];
