@@ -320,6 +320,70 @@ public sealed class DatabaseRecoveryServiceTests : IDisposable
         Assert.Equal("wal", JournalMode());
     }
 
+    // ---- Scenario 6: ResetDatabase (destructive, opt-in, no production caller) ----
+
+    [Fact]
+    public void ResetDatabase_ExistingCorruptDatabase_RecreatesCleanMigratedSchemaWithNoUserRows()
+    {
+        MigrateFresh();
+
+        // Seed user data that must NOT survive a reset.
+        using (var ctx = NewContext())
+        {
+            ctx.AppSettings.Add(new AppSettings { Id = 1, ComfyUiServerUrl = "http://seed/" });
+            ctx.Models.Add(new Model { Name = "Doomed Model", TotalVersionCount = 1 });
+            ctx.SaveChanges();
+        }
+
+        // Bogus schema mutation, mirroring the other corruption scenarios above.
+        Exec("ALTER TABLE Models DROP COLUMN TotalVersionCount;");
+        Assert.DoesNotContain("TotalVersionCount", Columns("Models"));
+
+        var svc = new DatabaseRecoveryService();
+        using (var ctx = NewContext()) svc.ResetDatabase(ctx);
+
+        Assert.True(File.Exists(DbPath));
+
+        // Current migrated schema restored, including the column the mutation dropped.
+        Assert.Contains("TotalVersionCount", Columns("Models"));
+
+        // No pending migrations against the recreated database.
+        using (var ctx = NewContext())
+            Assert.Empty(ctx.Database.GetPendingMigrations());
+
+        // Zero user rows — reset destroys all prior data.
+        using (var ctx = NewContext())
+        {
+            Assert.Empty(ctx.AppSettings);
+            Assert.Empty(ctx.Models);
+        }
+    }
+
+    [Fact]
+    public void ResetDatabase_NoExistingDatabaseFile_CreatesFreshMigratedDatabase()
+    {
+        // No MigrateFresh(): the directory has no database at all.
+        Assert.False(File.Exists(DbPath));
+
+        var svc = new DatabaseRecoveryService();
+        using (var ctx = NewContext()) svc.ResetDatabase(ctx);
+
+        Assert.True(File.Exists(DbPath));
+
+        using (var ctx = NewContext())
+            Assert.Empty(ctx.Database.GetPendingMigrations());
+
+        var models = Columns("Models");
+        Assert.Contains("Name", models);
+        Assert.Contains("TotalVersionCount", models);
+
+        using (var ctx = NewContext())
+        {
+            Assert.Empty(ctx.AppSettings);
+            Assert.Empty(ctx.Models);
+        }
+    }
+
     // ---- Extra coverage: first-run + combined corruption -------------------
 
     [Fact]

@@ -376,6 +376,14 @@ public sealed class DatabaseRecoveryService
     /// locked/busy path only logs (matching the original behavior) — so this remains an explicit,
     /// opt-in recovery operation rather than something the startup flow triggers automatically.
     /// </para>
+    /// <para>
+    /// This is an opt-in recovery API. As of this writing there are no production call sites -
+    /// nothing in the startup or repair choreography invokes it automatically. It is destructive:
+    /// a successful call permanently removes the database file (and its -wal/-shm sidecars) from
+    /// disk, and any data in it is unrecoverable once deleted. The caller owns the decision to
+    /// invoke this method and is responsible for confirming with the user (or otherwise justifying)
+    /// that deleting the file is the correct recovery action before calling it.
+    /// </para>
     /// </summary>
     /// <returns><c>true</c> if the main database file no longer exists after the attempt.</returns>
     public bool TryDeleteLockedDatabase(string databaseFilePath)
@@ -418,6 +426,15 @@ public sealed class DatabaseRecoveryService
     /// <summary>
     /// Deletes and recreates the database from scratch. WARNING: destroys ALL user data including
     /// settings; intended only for extreme recovery. No caller in the current startup choreography.
+    /// <para>
+    /// This is an opt-in recovery API, not part of the automatic repair choreography. As of this
+    /// writing there are no production call sites - nothing invokes it during normal startup or
+    /// repair. It is destructive: it calls <c>EnsureDeleted()</c> followed by <c>Migrate()</c>,
+    /// which removes the entire database file (all tables, all rows, all settings) and replaces it
+    /// with a freshly migrated, empty database. There is no undo. The caller owns the decision to
+    /// invoke this method and is responsible for confirming with the user (or otherwise justifying)
+    /// that a full data-destroying reset is warranted before calling it.
+    /// </para>
     /// </summary>
     public void ResetDatabase(DiffusionNexusCoreDbContext dbContext)
     {
