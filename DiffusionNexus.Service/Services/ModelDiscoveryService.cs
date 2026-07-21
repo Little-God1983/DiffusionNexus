@@ -12,10 +12,13 @@ public class FolderNode
     public bool IsExpanded { get; set; } = false;
 
     /// <summary>
-    /// False when this folder (or one of its ancestors, while it was being scanned) could not be
-    /// enumerated - e.g. an access-denied ACL, a broken junction, or another filesystem error.
-    /// When false, <see cref="ModelCount"/> reflects 0 for the unreadable part of the tree rather
-    /// than the true (unknown) count, and no further descendants could be discovered.
+    /// False only for the specific folder whose own enumeration failed - e.g. an access-denied
+    /// ACL, a broken junction, or another filesystem error. This is not propagated to ancestors:
+    /// a folder's own enumeration succeeding is independent of whether its descendants were
+    /// readable, so an ancestor node can be true (accessible) while still containing inaccessible
+    /// descendants further down the tree. When false, <see cref="ModelCount"/> reflects 0 for the
+    /// unreadable folder rather than the true (unknown) count, and no further descendants could be
+    /// discovered below it.
     /// </summary>
     public bool IsAccessible { get; set; } = true;
 }
@@ -100,8 +103,9 @@ public class ModelDiscoveryService
             .Count(f => StaticFileTypes.ModelExtensions.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase));
     }
 
+    // DirectoryNotFoundException derives from IOException, so it is already covered here.
     private static bool IsUnreadableDirectoryException(Exception ex) =>
-        ex is UnauthorizedAccessException or DirectoryNotFoundException or IOException;
+        ex is UnauthorizedAccessException or IOException;
 
     public List<ModelClass> CollectModels(string rootDirectory)
     {
