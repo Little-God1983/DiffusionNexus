@@ -26,6 +26,7 @@ public partial class SettingsViewModel : BusyViewModelBase
     private readonly IActivityLogService? _activityLogService;
     private readonly ISettingsExportService? _exportService;
     private readonly ICivitaiBaseModelCatalog? _baseModelCatalog;
+    private readonly IUiScheduler _uiScheduler;
     private bool _isSaving;
 
     #region Observable Properties
@@ -248,7 +249,8 @@ public partial class SettingsViewModel : BusyViewModelBase
         IActivityLogService? activityLogService = null,
         ISettingsExportService? exportService = null,
         ICivitaiBaseModelCatalog? baseModelCatalog = null,
-        IBackupScheduler? backupScheduler = null)
+        IBackupScheduler? backupScheduler = null,
+        IUiScheduler? uiScheduler = null)
     {
         _settingsService = settingsService;
         _secureStorage = secureStorage;
@@ -258,6 +260,7 @@ public partial class SettingsViewModel : BusyViewModelBase
         _activityLogService = activityLogService;
         _exportService = exportService;
         _baseModelCatalog = baseModelCatalog;
+        _uiScheduler = uiScheduler ?? AvaloniaUiScheduler.Instance;
 
         // Subscribe to settings changes from other components (e.g., Installer Manager adding galleries)
         if (_eventAggregator is not null)
@@ -279,6 +282,7 @@ public partial class SettingsViewModel : BusyViewModelBase
         _activityLogService = null;
         _exportService = null;
         _baseModelCatalog = null;
+        _uiScheduler = AvaloniaUiScheduler.Instance;
 
         // Design-time data
         LoraSources =
@@ -481,7 +485,7 @@ public partial class SettingsViewModel : BusyViewModelBase
         if (_isSaving) return;
 
         // Reload collections on the UI thread
-        Avalonia.Threading.Dispatcher.UIThread.Post(async () =>
+        _uiScheduler.Post(async () =>
         {
             try
             {
