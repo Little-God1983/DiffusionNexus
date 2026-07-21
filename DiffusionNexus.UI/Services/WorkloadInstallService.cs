@@ -808,18 +808,18 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
             var destination = ModelDestinationResolver.Resolve(
                 configuration, model, repositoryPath, modelBaseFolder);
 
-            var ok = await downloader.DownloadSingleFileAsync(
+            var result = await downloader.DownloadSingleFileAsync(
                 model.Url, destination, model.Name,
                 verboseLogging: false, logProgress: null, downloadProgress: downloadProgress,
                 cancellationToken, skipToken);
 
-            if (ok)
+            if (result.Succeeded)
             {
                 TryRenameToConfiguredName(model.Url, destination, model.Name);
             }
 
-            ReportDownloadResult(progress, model.Id, model.Name, ok);
-            return ok ? (1, 0) : (0, 1);
+            ReportDownloadResult(progress, model.Id, model.Name, result);
+            return TallyDownload(result);
         }
 
         // Select best links via VRAM profile helper
@@ -851,20 +851,22 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
                 : ModelDestinationResolver.Resolve(
                     configuration, model, repositoryPath, modelBaseFolder);
 
-            var ok = await downloader.DownloadSingleFileAsync(
+            var result = await downloader.DownloadSingleFileAsync(
                 link.Url, destination, model.Name,
                 verboseLogging: false, logProgress: null, downloadProgress: downloadProgress,
                 cancellationToken, skipToken);
 
-            if (ok)
+            if (result.Succeeded)
             {
                 TryRenameToConfiguredName(link.Url, destination, model.Name);
-                success++;
             }
-            else fail++;
+
+            var (linkSuccess, linkFail) = TallyDownload(result);
+            success += linkSuccess;
+            fail += linkFail;
         }
 
-        ReportDownloadResult(progress, model.Id, model.Name, fail == 0);
+        ReportMultiFileDownloadResult(progress, model.Id, model.Name, success, fail);
         return (success, fail);
     }
 
@@ -933,16 +935,75 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
             : Path.Combine(repositoryPath, resolved);
     }
 
+    /// <summary>
+    /// Maps one <see cref="FileDownloadResult"/> onto this service's (success, fail) tally.
+    /// A user skip counts as neither. SDK 1.2.34 split the old <c>bool</c> return into
+    /// distinct outcomes precisely because "the user pressed Skip" and "the download failed"
+    /// are different events; the bool reported both as a failure.
+    /// </summary>
+    internal static (int Success, int Fail) TallyDownload(FileDownloadResult result)
+        => result.Outcome switch
+        {
+            FileDownloadOutcome.Downloaded or FileDownloadOutcome.AlreadyPresent => (1, 0),
+            FileDownloadOutcome.SkippedByUser => (0, 0),
+            _ => (0, 1)
+        };
+
+    /// <summary>
+    /// Truthful progress message for one file, including any size-verification warning
+    /// the SDK attached (a warning does not by itself make the download a failure).
+    /// </summary>
+    internal static string DescribeDownload(string name, FileDownloadResult result)
+    {
+        var message = result.Outcome switch
+        {
+            FileDownloadOutcome.Downloaded => $"Downloaded {name}",
+            FileDownloadOutcome.AlreadyPresent => $"{name} already present",
+            FileDownloadOutcome.SkippedByUser => $"Skipped {name}",
+            _ => string.IsNullOrWhiteSpace(result.ErrorMessage)
+                ? $"Failed to download {name}"
+                : $"Failed to download {name}: {result.ErrorMessage}"
+        };
+
+        return string.IsNullOrWhiteSpace(result.Warning)
+            ? message
+            : $"{message} ({result.Warning})";
+    }
+
     private static void ReportDownloadResult(
-        IProgress<WorkloadInstallProgress>? progress, Guid id, string name, bool success)
+        IProgress<WorkloadInstallProgress>? progress, Guid id, string name, FileDownloadResult result)
     {
         progress?.Report(new WorkloadInstallProgress
         {
             ItemId = id,
             ItemName = name,
-            Message = success ? $"Downloaded {name}" : $"Failed to download {name}",
-            IsSuccess = success,
-            IsFailed = !success
+            Message = DescribeDownload(name, result),
+            IsSuccess = result.Succeeded,
+            IsFailed = result.Outcome == FileDownloadOutcome.Failed
+        });
+    }
+
+    /// <summary>
+    /// Aggregate report for a model assembled from several links. Keeps the same three-state
+    /// honesty as <see cref="ReportDownloadResult"/>: a model whose files the user skipped
+    /// wholesale is reported as skipped, not as a successful download.
+    /// </summary>
+    private static void ReportMultiFileDownloadResult(
+        IProgress<WorkloadInstallProgress>? progress, Guid id, string name, int success, int fail)
+    {
+        var message = fail > 0
+            ? $"Failed to download {fail} file(s) for {name}"
+            : success > 0
+                ? $"Downloaded {name}"
+                : $"Skipped {name}";
+
+        progress?.Report(new WorkloadInstallProgress
+        {
+            ItemId = id,
+            ItemName = name,
+            Message = message,
+            IsSuccess = fail == 0 && success > 0,
+            IsFailed = fail > 0
         });
     }
 

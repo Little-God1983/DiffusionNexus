@@ -257,11 +257,16 @@ captioning/inference pipelines.
 
 ### Priority 2 — Stability of core services
 
-5. **DiffusionNexus.Service / ComfyUI**: extract `HttpClient` and
-   process launching behind interfaces (already exist for some), then
-   add tests for `ComfyUIReadinessService` (state machine),
-   `ComfyUIFeatureRegistry` (mapping table) and `ComfyUIWrapperService`
-   process lifecycle.
+5. 🟡 **DiffusionNexus.Service / ComfyUI** — partially DONE.
+   ⚠️ `ComfyUIReadinessService` **no longer exists**; readiness was
+   refactored into `FeatureReadinessService` + `FeatureBackendRouter` +
+   `ComfyUIFeatureBackend`. All three now have tests, as do
+   `ComfyUICaptioningBackend` and `LocalInferenceFeatureBackend`.
+   `ComfyUIFeatureRegistry` was already covered by `FeatureRegistryTests`.
+   **Still pending:** `ComfyUIWrapperService` process lifecycle — it
+   news up its own `HttpClient` and `ClientWebSocket`, so it needs an
+   `HttpClient` constructor parameter plus extraction of the workflow
+   payload builder before it can be tested.
 6. **DiffusionNexus.Service / Metadata**: tests for
    `ModelMetadataService`, `ModelDiscoveryService` (filesystem walk +
    pairing logic) and `ModelFileSyncService` — these are pure logic
@@ -273,13 +278,15 @@ captioning/inference pipelines.
 
 ### Priority 3 — Persistence safety
 
-8. **DiffusionNexus.DataAccess**: introduce an integration test fixture
-   that spins up a SQLite (in-memory or temp file) `DiffusionNexusCoreDbContext`,
-   applies all migrations, and verifies each repository
-   (`AppSettings`, `DisclaimerAcceptance`, `InstallerPackage`,
-   `ModelFile`) round-trips. This guards against migration breakage
-   (per the repo guideline that `publish.ps1` must run before entity
-   changes).
+8. ✅ **DiffusionNexus.DataAccess** — DONE. `CoreDbMigrationTests` applies
+   the full migration chain against a throwaway file database, and
+   `AppSettingsRepositoryTests`, `ModelFileRepositoryTests`,
+   `InstallerPackageRepositoryTests` and
+   `DisclaimerAcceptanceRepositoryTests` round-trip each repository
+   against in-memory SQLite. These pin three invariants that were
+   previously unenforced: the settings get-or-create singleton, the
+   `OrdinalIgnoreCase` path set `ModelFileSyncService` relies on for
+   dedup, and "only one default per installer type".
 9. Add a smoke test that opens the SDK database
    (`diffusion_nexus.db`) read-only to confirm it remains separate from
    `Diffusion_Nexus-core.db`, preventing the documented mix-up.
@@ -332,8 +339,50 @@ captioning/inference pipelines.
 
 ---
 
-_Last updated: refreshed after adding ~210 new tests across
-Domain (5 fixtures, 78 tests), Infrastructure (3 fixtures, 48 tests),
-Civitai (2 fixtures, 29 tests), Inference (2 fixtures, 17 tests) and
-Captioning (2 fixtures, 39 tests). Re-run this analysis (or replace
-with Coverlet output) after the next substantial test additions._
+---
+
+## Tier A additions (2026-07-21)
+
+Suite went from **2136 → 2950 tests** (+814) across 28 new fixtures, with
+**zero production-code changes** — every target was already testable as
+written. Areas closed:
+
+| Area | Fixtures | What is now pinned |
+|---|---|---|
+| Readiness subsystem | 5 | `FeatureBackendRouter` last-write-wins, `FeatureReadinessService` null-backend fallback, the `ComfyUIFeatureBackend` "Installer Manager and feature panel agree" contract, `ComfyUICaptioningBackend`, `LocalInferenceFeatureBackend` |
+| DataAccess repositories | 4 | Settings get-or-create singleton, `OrdinalIgnoreCase` path set, one-default-per-installer-type |
+| Security & settings | 2 | `SecureStorageService` API-key round-trip + failure-swallowing; `SettingsExportService` forward/backward schema compat |
+| UI ViewModels | 4 | `FileConflictDialogViewModel` sidecar pairing, `ImageQualityTabViewModel.BuildVerdict` thresholds, `ImageViewerViewModel` index fixup on delete, `SettingsViewModel` backup validators |
+| DatasetQuality scorers | 4 | `CompositeScoreCalculator`, `CheckScoreAdapter`, `PerImageQualityAggregator`, `ImageQualityAdvisor` |
+| UI services & helpers | 9 | `UserDictionaryService`, `OutputsFolderRegistrar`, `ComfyUiPathDiscovery`, `PipelineOutputWriter`, `DocumentService`, `HuggingFaceUrl`, `HtmlTextHelper`, `CivitaiUrlParser`, `BatchObservableCollection`, `FileOperations` |
+
+Verified by mutation testing, not just a green run: inverting
+`ModelFileRepository`'s path comparer failed 3 tests, and shifting one
+`BuildVerdict` threshold by 5 points failed 1 — the fixtures bite.
+
+### Deliberately pinned quirks
+
+Several tests document current behavior that looks unintended. They are
+written so a future fix makes the test fail loudly rather than silently
+passing:
+
+- `ImageViewerViewModel.OnCollectionChanged` handles only `Remove`, so
+  `Clear()` leaves a stale `CurrentImage` and never fires `CloseRequested`.
+- `SettingsExportService` ORs the legacy `autoBackupEnabled` flag over an
+  explicit modern `false`, contradicting its adjacent comment.
+- `DocumentService.GenerateUniqueFilePath` returns `_edited_999` even when
+  that file exists — the loop exits on the counter, not on availability.
+- `CheckScoreAdapter.CheckCategoryMap` uses an ordinal comparer, so
+  differently-cased check names silently fail to resolve.
+- `ComfyUICaptioningBackend.IsAvailableAsync` swallows
+  `OperationCanceledException`; `LocalInferenceFeatureBackend` rethrows it.
+
+### Known defect found during this pass (not fixed here)
+
+`DiffusionNexus.UI/Services/ThumbnailService.cs:66-67` — `_cache` uses
+`StringComparer.OrdinalIgnoreCase` but `_accessOrder` is a `LinkedList<string>`
+using ordinal case-sensitive equality. The same path in different casing
+creates duplicate LRU keys, so eviction can drop a hot entry and can fail to
+drain `_cache` below its cap — an unbounded growth path.
+
+_Last updated: 2026-07-21, after the Tier A pass described above._
