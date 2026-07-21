@@ -202,7 +202,7 @@ public class ComfyUICaptioningBackendTests
     [Fact]
     public async Task WhenTheReadinessCheckIsCancelledThenTheCancellationPropagatesInsteadOfBecomingABlocker()
     {
-        // Cancellation is the caller's business, not a backend availability problem — swallowing
+        // Cancellation is the caller's business, not a backend availability problem -- swallowing
         // it into MissingRequirements would show the user a bogus "readiness check failed"
         // blocker every time they navigate away. Matches LocalInferenceFeatureBackend (#434).
         _readiness.Setup(r => r.CheckAsync(Feature.Captioning, It.IsAny<CancellationToken>()))

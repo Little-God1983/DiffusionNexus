@@ -21,10 +21,14 @@ public interface IFeatureBackend
     /// Checks whether the given feature is ready to execute on this backend.
     /// </summary>
     /// <remarks>
-    /// Cancellation contract: a cancelled check must propagate as <see cref="OperationCanceledException"/>
-    /// rather than being reported through <see cref="FeatureReadinessResult.MissingRequirements"/>.
-    /// The caller cancelling is not evidence the backend is unavailable, so implementations must
-    /// rethrow instead of mapping the exception onto a fabricated readiness failure (issue #434).
+    /// Cancellation contract: cancellation requested via the caller's token must propagate as
+    /// <see cref="OperationCanceledException"/> rather than being reported through
+    /// <see cref="FeatureReadinessResult.MissingRequirements"/>. The caller cancelling is not
+    /// evidence the backend is unavailable, so implementations must rethrow when the caller's
+    /// token requested the cancellation, instead of mapping the exception onto a fabricated
+    /// readiness failure. An <see cref="OperationCanceledException"/> that does not originate
+    /// from the caller's token (e.g. an internal HTTP timeout) is not caller cancellation and
+    /// must not be rethrown as one (issue #434).
     /// </remarks>
     /// <param name="feature">The feature to check.</param>
     /// <param name="ct">Cancellation token.</param>

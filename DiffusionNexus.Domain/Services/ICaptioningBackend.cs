@@ -7,7 +7,7 @@ namespace DiffusionNexus.Domain.Services;
 public interface ICaptioningBackend
 {
     /// <summary>
-    /// Human-readable name of this backend (e.g. "Local Inference", "ComfyUI – Qwen3-VL").
+    /// Human-readable name of this backend (e.g. "Local Inference", "ComfyUI ï¿½ Qwen3-VL").
     /// </summary>
     string DisplayName { get; }
 
@@ -21,7 +21,7 @@ public interface ICaptioningBackend
     /// <summary>
     /// Non-blocking warnings discovered during <see cref="IsAvailableAsync"/>.
     /// Unlike <see cref="MissingRequirements"/>, warnings do not prevent the backend from
-    /// being used — they inform the user about conditions that may affect the first run
+    /// being used ï¿½ they inform the user about conditions that may affect the first run
     /// (e.g. a large model download that will happen on first execution).
     /// </summary>
     IReadOnlyList<string> Warnings { get; }
@@ -33,10 +33,14 @@ public interface ICaptioningBackend
     /// Implementations should populate <see cref="MissingRequirements"/> when returning <c>false</c>.
     /// </summary>
     /// <remarks>
-    /// Cancellation contract: a cancelled check must propagate as <see cref="OperationCanceledException"/>
-    /// rather than being reported through <see cref="MissingRequirements"/>. The caller cancelling
-    /// is not evidence the backend is unavailable, so implementations must rethrow instead of
-    /// mapping the exception onto a fabricated readiness failure (issue #434).
+    /// Cancellation contract: cancellation requested via the caller's token must propagate as
+    /// <see cref="OperationCanceledException"/> rather than being reported through
+    /// <see cref="MissingRequirements"/>. The caller cancelling is not evidence the backend is
+    /// unavailable, so implementations must rethrow when the caller's token requested the
+    /// cancellation, instead of mapping the exception onto a fabricated readiness failure. An
+    /// <see cref="OperationCanceledException"/> that does not originate from the caller's token
+    /// (e.g. an internal HTTP timeout) is not caller cancellation and must not be rethrown as one
+    /// (issue #434).
     /// </remarks>
     /// <param name="ct">Cancellation token.</param>
     /// <returns><c>true</c> if the backend can accept captioning requests.</returns>
@@ -49,7 +53,7 @@ public interface ICaptioningBackend
     /// <param name="prompt">The prompt/instruction to guide caption generation.</param>
     /// <param name="triggerWord">Optional token to prepend to the generated caption.</param>
     /// <param name="blacklistedWords">Words to remove from the generated caption.</param>
-    /// <param name="temperature">Inference temperature (0.0–2.0). Lower values are more deterministic.</param>
+    /// <param name="temperature">Inference temperature (0.0ï¿½2.0). Lower values are more deterministic.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The captioning result.</returns>
     Task<CaptioningResult> GenerateSingleCaptionAsync(

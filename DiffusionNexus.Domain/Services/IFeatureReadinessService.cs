@@ -15,10 +15,11 @@ public interface IFeatureReadinessService
     /// selected backend.
     /// </summary>
     /// <remarks>
-    /// Cancellation contract: a cancelled check propagates as <see cref="OperationCanceledException"/>
-    /// rather than being reported through <see cref="FeatureReadinessResult.MissingRequirements"/>,
-    /// because this delegates straight to the resolved <see cref="IFeatureBackend.CheckFeatureAsync"/>
-    /// (issue #434).
+    /// Cancellation contract: cancellation requested via the caller's token propagates as
+    /// <see cref="OperationCanceledException"/> rather than being reported through
+    /// <see cref="FeatureReadinessResult.MissingRequirements"/>, because this delegates straight
+    /// to the resolved <see cref="IFeatureBackend.CheckFeatureAsync"/>, which carries the same
+    /// caller-token-only contract (issue #434).
     /// </remarks>
     Task<FeatureReadinessResult> CheckAsync(Feature feature, CancellationToken ct = default);
 

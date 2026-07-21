@@ -186,6 +186,29 @@ public class ComfyUIFeatureBackendTests
     }
 
     [Fact]
+    public async Task WhenTheHealthCheckHttpClientTimesOutThenTheResultIsOfflineNotCancelled()
+    {
+        // IsServerOnlineAsync's HttpClient carries its own internal 5-second Timeout, completely
+        // independent of the caller's token. That internal timeout also throws
+        // OperationCanceledException (as a TaskCanceledException), so a filter that rethrows
+        // every OperationCanceledException unconditionally would misreport a slow-but-reachable
+        // server as "check cancelled" instead of "server not reachable". The caller's token here
+        // is never cancelled, so this must fall through to the ordinary offline result (#434).
+        using var server = new StallingLoopbackServer();
+        GivenServerUrl(server.Url);
+        GivenWorkloadSummary(fullyInstalled: true);
+        var backend = CreateBackend();
+
+        var result = await backend.CheckFeatureAsync(Feature.Captioning);
+
+        result.IsBackendOnline.Should().BeFalse();
+        result.IsReady.Should().BeFalse();
+        result.MissingRequirements.Should().ContainSingle()
+            .Which.Should().Contain("not reachable");
+        _workloadChecker.Verify(c => c.CheckAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task WhenServerAnswersWithAnErrorStatusThenItCountsAsOffline()
     {
         using var server = new LoopbackHttpServer(statusCode: 500, reason: "Internal Server Error");
@@ -460,6 +483,73 @@ public class ComfyUIFeatureBackendTests
             catch
             {
                 // Client vanished or the server is shutting down.
+            }
+        }
+
+        public void Dispose()
+        {
+            _cts.Cancel();
+            try { _listener.Stop(); }
+            catch { /* already stopped */ }
+            _cts.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Loopback listener that accepts the TCP connection and drains the request head, but
+    /// deliberately never writes a response and never closes the connection. This is what
+    /// makes <see cref="HttpClient.Timeout"/> (not the caller's <see cref="CancellationToken"/>)
+    /// fire the cancellation, so tests can pin the distinction between an internal HTTP timeout
+    /// and caller-driven cancellation.
+    /// </summary>
+    private sealed class StallingLoopbackServer : IDisposable
+    {
+        private readonly TcpListener _listener;
+        private readonly CancellationTokenSource _cts = new();
+
+        public StallingLoopbackServer()
+        {
+            _listener = new TcpListener(IPAddress.Loopback, 0);
+            _listener.Start();
+            Url = $"http://127.0.0.1:{((IPEndPoint)_listener.LocalEndpoint).Port}";
+            _ = Task.Run(AcceptLoopAsync);
+        }
+
+        public string Url { get; }
+
+        private async Task AcceptLoopAsync()
+        {
+            try
+            {
+                while (!_cts.IsCancellationRequested)
+                {
+                    var client = await _listener.AcceptTcpClientAsync(_cts.Token);
+                    _ = Task.Run(() => HoldConnectionOpenAsync(client));
+                }
+            }
+            catch
+            {
+                // Listener stopped - expected on Dispose.
+            }
+        }
+
+        private async Task HoldConnectionOpenAsync(TcpClient client)
+        {
+            try
+            {
+                using (client)
+                {
+                    var scratch = new byte[4096];
+                    _ = await client.GetStream().ReadAsync(scratch, _cts.Token);
+
+                    // Never respond - hold the connection open until the client's own
+                    // HttpClient.Timeout gives up, or the test disposes the server.
+                    await Task.Delay(Timeout.Infinite, _cts.Token);
+                }
+            }
+            catch
+            {
+                // Client vanished (its HttpClient.Timeout fired) or the server is shutting down.
             }
         }
 

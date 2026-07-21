@@ -170,15 +170,13 @@ public sealed class ComfyUIFeatureBackend : IFeatureBackend
             using var response = await httpClient.GetAsync($"{serverUrl}/system_stats", ct);
             return response.IsSuccessStatusCode;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            // NOTE: HttpClient.Timeout also throws OperationCanceledException (a TaskCanceledException
-            // whose CancellationToken is an internal linked token, not necessarily `ct`), so a slow
-            // ComfyUI server can now surface as an unhandled cancellation instead of "server not
-            // reachable". LocalInferenceFeatureBackend rethrows every OperationCanceledException
-            // unconditionally with no such distinction, so this mirrors that discipline for
-            // consistency across IFeatureBackend implementations (#434) rather than special-casing
-            // the timeout here.
+            // Only rethrow when the caller's token requested the cancellation. HttpClient.Timeout
+            // also throws OperationCanceledException (a TaskCanceledException whose CancellationToken
+            // is an internal linked token, not `ct`), so a slow-but-reachable ComfyUI server must
+            // still fall through to "server not reachable" rather than being misreported as a
+            // cancelled check (#434).
             throw;
         }
         catch
