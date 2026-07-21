@@ -202,19 +202,18 @@ public class ComfyUICaptioningBackendTests
     }
 
     [Fact]
-    public async Task WhenTheReadinessCheckIsCancelledThenTheCancellationIsAlsoMappedNotRethrown()
+    public async Task WhenTheReadinessCheckIsCancelledThenTheCancellationPropagatesInsteadOfBecomingABlocker()
     {
-        // The catch-all deliberately has no OperationCanceledException escape hatch, so a
-        // cancelled check surfaces as "not available" rather than tearing down the caller.
+        // Cancellation is the caller's business, not a backend availability problem -- swallowing
+        // it into MissingRequirements would show the user a bogus "readiness check failed"
+        // blocker every time they navigate away. Matches LocalInferenceFeatureBackend (#434).
         _readiness.Setup(r => r.CheckAsync(Feature.Captioning, It.IsAny<CancellationToken>()))
                   .ThrowsAsync(new OperationCanceledException("cancelled"));
         var backend = CreateBackend();
 
-        var available = await backend.IsAvailableAsync();
+        var act = async () => await backend.IsAvailableAsync();
 
-        available.Should().BeFalse();
-        backend.MissingRequirements.Should().ContainSingle()
-            .Which.Should().StartWith("Readiness check failed:");
+        await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
     #endregion
