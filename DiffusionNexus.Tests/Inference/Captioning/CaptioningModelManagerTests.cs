@@ -7,9 +7,14 @@ namespace DiffusionNexus.Tests.Inference.Captioning;
 
 /// <summary>
 /// Unit tests for <see cref="CaptioningModelManager"/>. Uses temp directories
-/// plus the sparse-file pattern (<see cref="FileStream.SetLength"/>) to fake
-/// the multi-gigabyte model GGUFs without touching the network or actually
-/// allocating disk space — every fixture stays well under a megabyte.
+/// for real (but tiny) placeholder files, and the manager's
+/// <c>fileSizeProbe</c> constructor seam to fake multi-gigabyte GGUF sizes for
+/// the model/mmproj size-threshold checks — no fixture ever writes more than a
+/// few bytes to disk. See issue #444: an earlier version of this file believed
+/// <see cref="FileStream.SetLength"/> produced NTFS-sparse files; it does not
+/// (sparseness requires an explicit <c>FSCTL_SET_SPARSE</c> control code that
+/// .NET doesn't expose), so tests written that way allocated real multi-GB
+/// files and failed with <see cref="IOException"/> on disk-constrained machines.
 /// </summary>
 public sealed class CaptioningModelManagerTests : IDisposable
 {
@@ -28,17 +33,32 @@ public sealed class CaptioningModelManagerTests : IDisposable
     }
 
     /// <summary>
-    /// Writes a sparse file at <paramref name="absolutePath"/> with the given logical
-    /// length. NTFS allocates a small extent header — actual disk usage is bytes,
-    /// not gigabytes — but <see cref="FileInfo.Length"/> reports the full length, so
-    /// <see cref="CaptioningModelManager.GetModelStatus"/>'s 80%-threshold check
-    /// honours the fake size.
+    /// Creates a real file at <paramref name="absolutePath"/> containing exactly
+    /// <paramref name="length"/> bytes (default: empty). This is genuinely tiny
+    /// real content — not a sparse-file trick — so callers that care about the
+    /// file's actual on-disk size pass a small honest length (see the
+    /// "default real-filesystem probe" test below); callers that only need the
+    /// file to <em>exist</em> pair this with <see cref="FakeSizes"/> to fake out
+    /// whatever logical size <see cref="CaptioningModelManager"/> should see.
     /// </summary>
-    private static void WriteSparseFile(string absolutePath, long length)
+    private static void CreateFile(string absolutePath, int length = 0)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
-        using var fs = new FileStream(absolutePath, FileMode.Create, FileAccess.Write);
-        fs.SetLength(length);
+        File.WriteAllBytes(absolutePath, new byte[length]);
+    }
+
+    /// <summary>
+    /// Builds a <c>fileSizeProbe</c> delegate for the <see cref="CaptioningModelManager"/>
+    /// test seam: reports the given fake length for each listed path (case-insensitive)
+    /// and falls back to the real <see cref="FileInfo.Length"/> for anything else. Lets a
+    /// test assert size-threshold behaviour (e.g. the 80% corruption check, or the
+    /// "already downloaded" short-circuit) against a real-but-empty placeholder file
+    /// instead of writing gigabytes of real content.
+    /// </summary>
+    private static Func<string, long> FakeSizes(params (string Path, long Length)[] sizes)
+    {
+        var map = sizes.ToDictionary(s => s.Path, s => s.Length, StringComparer.OrdinalIgnoreCase);
+        return path => map.TryGetValue(path, out var length) ? length : new FileInfo(path).Length;
     }
 
     #region Constructor
@@ -258,15 +278,16 @@ public sealed class CaptioningModelManagerTests : IDisposable
     public void GetModelStatus_Corrupted_WhenModelFileWayUnderExpectedSize()
     {
         // Plant the model + mmproj files but make the model file way under the
-        // expected size (80% threshold). Reports Corrupted.
+        // expected (multi-gigabyte) size, using genuinely tiny real content —
+        // this test deliberately exercises the manager's *default*, unmocked
+        // file-size probe (real FileInfo.Length), so a handful of real bytes is
+        // "way under" the 80% threshold regardless of exact byte count.
         var modelPath = _manager.GetModelPath(CaptioningModelType.Qwen2_5_VL_7B);
         var mmprojPath = _manager.GetClipProjectorPath(CaptioningModelType.Qwen2_5_VL_7B);
-        var expectedSize = _manager.GetExpectedModelSize(CaptioningModelType.Qwen2_5_VL_7B);
 
-        // Model: 10% of expected — well below the 80% threshold.
-        WriteSparseFile(modelPath, expectedSize / 10);
+        CreateFile(modelPath, length: 64);
         // mmproj: any non-zero file is fine; status only checks the model size.
-        WriteSparseFile(mmprojPath, 1024);
+        CreateFile(mmprojPath, length: 32);
 
         _manager.GetModelStatus(CaptioningModelType.Qwen2_5_VL_7B)
             .Should().Be(CaptioningModelStatus.Corrupted);
@@ -275,14 +296,20 @@ public sealed class CaptioningModelManagerTests : IDisposable
     [Fact]
     public void GetModelStatus_Ready_WhenBothFilesPresentAtExpectedSize()
     {
+        // Real files stay empty placeholders; the injected fileSizeProbe fakes
+        // the multi-gigabyte "on disk" sizes GetModelStatus's 80%-threshold
+        // check reads, so this test costs bytes rather than gigabytes.
         var modelPath = _manager.GetModelPath(CaptioningModelType.Qwen2_5_VL_7B);
         var mmprojPath = _manager.GetClipProjectorPath(CaptioningModelType.Qwen2_5_VL_7B);
         var expectedSize = _manager.GetExpectedModelSize(CaptioningModelType.Qwen2_5_VL_7B);
 
-        WriteSparseFile(modelPath, expectedSize);
-        WriteSparseFile(mmprojPath, expectedSize / 4);
+        CreateFile(modelPath);
+        CreateFile(mmprojPath);
 
-        _manager.GetModelStatus(CaptioningModelType.Qwen2_5_VL_7B)
+        var manager = new CaptioningModelManager(_root, httpClient: null,
+            fileSizeProbe: FakeSizes((modelPath, expectedSize), (mmprojPath, expectedSize / 4)));
+
+        manager.GetModelStatus(CaptioningModelType.Qwen2_5_VL_7B)
             .Should().Be(CaptioningModelStatus.Ready);
     }
 
@@ -320,13 +347,19 @@ public sealed class CaptioningModelManagerTests : IDisposable
     [Fact]
     public async Task DownloadModelAsync_NonTieredAlreadyPresent_ShortCircuitsToTrue()
     {
-        // Pre-plant a model + mmproj for Qwen3_VL_8B at full expected size.
+        // Pre-plant empty placeholder files for Qwen3_VL_8B; the injected
+        // fileSizeProbe reports them as being at full expected size, so the
+        // manager short-circuits without either a real multi-gigabyte fixture
+        // or an HTTP call.
         var modelPath = _manager.GetModelPath(CaptioningModelType.Qwen3_VL_8B);
         var mmprojPath = _manager.GetClipProjectorPath(CaptioningModelType.Qwen3_VL_8B);
         var modelSize = _manager.GetExpectedModelSize(CaptioningModelType.Qwen3_VL_8B);
 
-        WriteSparseFile(modelPath, modelSize);
-        WriteSparseFile(mmprojPath, modelSize / 4);
+        CreateFile(modelPath);
+        CreateFile(mmprojPath);
+
+        var manager = new CaptioningModelManager(_root, httpClient: null,
+            fileSizeProbe: FakeSizes((modelPath, modelSize), (mmprojPath, modelSize / 4)));
 
         // Use a synchronous IProgress so the callback has definitely fired
         // before we observe it. Progress<T> would post to a SynchronizationContext
@@ -334,7 +367,7 @@ public sealed class CaptioningModelManagerTests : IDisposable
         var progressReports = new List<ModelDownloadProgress>();
         var progress = new SyncProgress(progressReports.Add);
 
-        var ok = await _manager.DownloadModelAsync(
+        var ok = await manager.DownloadModelAsync(
             CaptioningModelType.Qwen3_VL_8B,
             progress: progress,
             cancellationToken: CancellationToken.None);
@@ -358,6 +391,9 @@ public sealed class CaptioningModelManagerTests : IDisposable
     public async Task DownloadModelAsync_TieredAlreadyPresent_ShortCircuitsToTrue()
     {
         // Tiered overload short-circuits when the chosen tier's pair is present.
+        // Empty placeholder files stand in for the real GGUFs; the injected
+        // fileSizeProbe reports each as comfortably over its 80% threshold
+        // (tierTotal covers both files, so it's an over-sized fake for either).
         var modelPath = _manager.GetModelPath(
             CaptioningModelType.Qwen3_VL_8B_Abliterated_Caption, vramGb: 8);
         var mmprojPath = _manager.GetClipProjectorPath(
@@ -365,11 +401,13 @@ public sealed class CaptioningModelManagerTests : IDisposable
         var tierTotal = _manager.GetExpectedTierTotalBytes(
             CaptioningModelType.Qwen3_VL_8B_Abliterated_Caption, vramGb: 8);
 
-        // Use over-sized sparse files so each is comfortably above its 80% threshold.
-        WriteSparseFile(modelPath, tierTotal);
-        WriteSparseFile(mmprojPath, tierTotal);
+        CreateFile(modelPath);
+        CreateFile(mmprojPath);
 
-        var ok = await _manager.DownloadModelAsync(
+        var manager = new CaptioningModelManager(_root, httpClient: null,
+            fileSizeProbe: FakeSizes((modelPath, tierTotal), (mmprojPath, tierTotal)));
+
+        var ok = await manager.DownloadModelAsync(
             CaptioningModelType.Qwen3_VL_8B_Abliterated_Caption,
             vramGb: 8,
             progress: null,
@@ -388,8 +426,8 @@ public sealed class CaptioningModelManagerTests : IDisposable
         var modelPath = _manager.GetModelPath(CaptioningModelType.Qwen3_VL_8B);
         var mmprojPath = _manager.GetClipProjectorPath(CaptioningModelType.Qwen3_VL_8B);
 
-        WriteSparseFile(modelPath, 100);
-        WriteSparseFile(mmprojPath, 100);
+        CreateFile(modelPath, length: 100);
+        CreateFile(mmprojPath, length: 100);
 
         _manager.DeleteModel(CaptioningModelType.Qwen3_VL_8B);
 
