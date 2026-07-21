@@ -17,31 +17,93 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
     private const string Qwen3VlWorkflowFileName = "Assets/Workflows/Qwen-3VL-autocaption.json";
     private const string LoadImageNodeId = "100";
     private const string Qwen3VqaNodeId = "705";
+    private const string DefaultBaseUrl = "http://127.0.0.1:8188";
 
     private static readonly ILogger Logger = Log.ForContext<ComfyUIWrapperService>();
 
     private readonly HttpClient _httpClient;
+    private readonly bool _disposeHttpClient;
     private readonly string _baseUrl;
     private readonly string _clientId;
     private bool _disposed;
 
     /// <summary>
-    /// Creates a new ComfyUIWrapperService targeting the specified ComfyUI server.
+    /// Creates a new ComfyUIWrapperService targeting the specified ComfyUI server using an
+    /// internally-owned <see cref="HttpClient"/>.
     /// </summary>
     /// <param name="baseUrl">
     /// Base URL of the ComfyUI server (e.g. <c>http://127.0.0.1:8188</c>).
     /// </param>
-    public ComfyUIWrapperService(string baseUrl = "http://127.0.0.1:8188")
+    /// <remarks>
+    /// This convenience overload constructs (and owns) a default <see cref="HttpClient"/>
+    /// configured with a 10-minute timeout. It delegates to the
+    /// <see cref="ComfyUIWrapperService(HttpClient, string, bool)"/> seam so production call
+    /// sites remain unchanged while tests can inject a stub <see cref="HttpMessageHandler"/>.
+    /// </remarks>
+    public ComfyUIWrapperService(string baseUrl = DefaultBaseUrl)
+        : this(CreateDefaultHttpClient(baseUrl), baseUrl, disposeHttpClient: true)
     {
+    }
+
+    /// <summary>
+    /// Creates a new ComfyUIWrapperService driven by a caller-supplied <see cref="HttpClient"/>.
+    /// This is the testable seam: pass an <see cref="HttpClient"/> backed by a stub
+    /// <see cref="HttpMessageHandler"/> to exercise the HTTP paths without a live server.
+    /// </summary>
+    /// <param name="httpClient">The HTTP client used for all ComfyUI REST calls.</param>
+    /// <param name="baseUrl">
+    /// Base URL of the ComfyUI server. Still required even when <paramref name="httpClient"/>
+    /// is injected, because it derives the WebSocket URL and the image <c>/view</c> URLs.
+    /// </param>
+    /// <param name="disposeHttpClient">
+    /// When <c>true</c>, <see cref="Dispose"/> disposes <paramref name="httpClient"/>.
+    /// Defaults to <c>false</c> so externally-owned clients (e.g. from HttpClientFactory) survive.
+    /// </param>
+    public ComfyUIWrapperService(
+        HttpClient httpClient,
+        string baseUrl = DefaultBaseUrl,
+        bool disposeHttpClient = false)
+    {
+        ArgumentNullException.ThrowIfNull(httpClient);
         ArgumentException.ThrowIfNullOrWhiteSpace(baseUrl);
 
         _baseUrl = baseUrl.TrimEnd('/');
         _clientId = Guid.NewGuid().ToString();
-        _httpClient = new HttpClient
+        _httpClient = httpClient;
+        _disposeHttpClient = disposeHttpClient;
+
+        TryConfigureBaseAddress(_httpClient, _baseUrl);
+    }
+
+    private static HttpClient CreateDefaultHttpClient(string baseUrl)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(baseUrl);
+
+        return new HttpClient
         {
-            BaseAddress = new Uri(_baseUrl),
+            BaseAddress = new Uri(baseUrl.TrimEnd('/')),
             Timeout = TimeSpan.FromMinutes(10) // VL models can be slow
         };
+    }
+
+    private static void TryConfigureBaseAddress(HttpClient client, string baseUrl)
+    {
+        // Relative request URIs (e.g. "/prompt") only resolve when a BaseAddress is set.
+        // An injected client may not have one; a default (or already-used) client will.
+        // HttpClient throws if BaseAddress is mutated after the first request, so guard it.
+        if (client.BaseAddress is not null)
+        {
+            return;
+        }
+
+        try
+        {
+            client.BaseAddress = new Uri(baseUrl);
+        }
+        catch (InvalidOperationException)
+        {
+            // Client has already been used - the caller owns the BaseAddress.
+        }
     }
 
     /// <inheritdoc />
@@ -89,39 +151,11 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
         var workflow = JsonNode.Parse(workflowText)
                        ?? throw new InvalidOperationException($"Failed to parse workflow JSON from {workflowJsonPath}.");
 
-        // Apply caller-supplied modifications to individual nodes
-        foreach (var (nodeId, modifier) in nodeModifiers)
-        {
-            var node = workflow[nodeId];
-            if (node is not null)
-            {
-                modifier(node);
-            }
-            else
-            {
-                Logger.Warning("Node {NodeId} not found in workflow; skipping modifier", nodeId);
-            }
-        }
-
-        var payload = new JsonObject
-        {
-            ["prompt"] = workflow,
-            ["client_id"] = _clientId,
-            ["extra_data"] = new JsonObject
-            {
-                ["extra_pnginfo"] = new JsonObject
-                {
-                    ["workflow"] = new JsonObject
-                    {
-                        // Required by comfyui_queue_manager plugin (qm_queue.py lines 221-222)
-                        ["workflow_name"] = "DiffusionNexus",
-                        ["id"] = _clientId,
-                        // Required by ShowText|pysssss node (show_text.py line 34)
-                        ["nodes"] = new JsonArray()
-                    }
-                }
-            }
-        };
+        var payload = BuildPromptPayload(
+            workflow,
+            nodeModifiers,
+            _clientId,
+            nodeId => Logger.Warning("Node {NodeId} not found in workflow; skipping modifier", nodeId));
 
         var content = new StringContent(
             payload.ToJsonString(),
@@ -171,40 +205,82 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
                 continue;
             }
 
-            var json = JsonNode.Parse(msg);
-            var type = json?["type"]?.GetValue<string>();
+            var parsed = ParseProgressMessage(msg, promptId);
 
-            Logger.Debug("WebSocket event: {EventType} for prompt {PromptId}", type, promptId);
+            Logger.Debug("WebSocket event: {EventType} for prompt {PromptId}", parsed.Type, promptId);
 
-            // Detect execution errors and propagate them
-            if (type is "execution_error")
+            switch (parsed.Action)
             {
-                var errorData = json?["data"];
-                var errorPromptId = errorData?["prompt_id"]?.GetValue<string>();
+                case ComfyUIProgressAction.Error:
+                    Logger.Error(
+                        "ComfyUI execution error in node {NodeType}: {Error}",
+                        parsed.ErrorNodeType,
+                        parsed.ErrorDetail);
+                    throw new InvalidOperationException(parsed.ExecutionErrorMessage);
+
+                case ComfyUIProgressAction.Completed:
+                    Logger.Information("Workflow execution completed for prompt {PromptId}", promptId);
+                    return;
+
+                case ComfyUIProgressAction.Report:
+                    progress?.Report(parsed.ReportText!);
+                    break;
+
+                case ComfyUIProgressAction.None:
+                default:
+                    if (parsed.QueueRemaining.HasValue)
+                    {
+                        Logger.Debug("Queue remaining: {QueueRemaining}", parsed.QueueRemaining.Value);
+                    }
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Pure parser for the ComfyUI WebSocket progress protocol. Given a single text frame and
+    /// the prompt being awaited, decides what the caller should do without performing any I/O.
+    /// Preserves the exact behavior of the previous inline loop, including which events are
+    /// ignored (unknown types, events for a different prompt, zero-max progress).
+    /// </summary>
+    /// <param name="message">The raw WebSocket text frame (a JSON document).</param>
+    /// <param name="promptId">The prompt ID currently being awaited.</param>
+    /// <returns>A <see cref="ComfyUIProgressMessage"/> describing the decoded event.</returns>
+    internal static ComfyUIProgressMessage ParseProgressMessage(string message, string promptId)
+    {
+        var json = JsonNode.Parse(message);
+        var type = json?["type"]?.GetValue<string>();
+
+        switch (type)
+        {
+            case "execution_error":
+            {
+                var data = json?["data"];
+                var errorPromptId = data?["prompt_id"]?.GetValue<string>();
                 if (errorPromptId == promptId)
                 {
-                    var nodeType = errorData?["node_type"]?.GetValue<string>() ?? "unknown";
-                    var errorMsg = errorData?["exception_message"]?.GetValue<string>() ?? "Unknown execution error";
-                    Logger.Error("ComfyUI execution error in node {NodeType}: {Error}", nodeType, errorMsg);
-                    throw new InvalidOperationException(
-                        $"ComfyUI workflow failed in node '{nodeType}': {errorMsg}");
+                    var nodeType = data?["node_type"]?.GetValue<string>() ?? "unknown";
+                    var detail = data?["exception_message"]?.GetValue<string>() ?? "Unknown execution error";
+                    return new ComfyUIProgressMessage(
+                        ComfyUIProgressAction.Error, type, ErrorNodeType: nodeType, ErrorDetail: detail);
                 }
+
+                return new ComfyUIProgressMessage(ComfyUIProgressAction.None, type);
             }
 
-            if (type is "executing")
+            case "executing":
             {
                 var data = json?["data"];
                 var nodeId = data?["node"]?.GetValue<string>();
                 var currentPromptId = data?["prompt_id"]?.GetValue<string>();
 
-                // node == null means execution finished for this prompt
+                // node == null means execution finished for this prompt.
                 if (nodeId is null && currentPromptId == promptId)
                 {
-                    Logger.Information("Workflow execution completed for prompt {PromptId}", promptId);
-                    return;
+                    return new ComfyUIProgressMessage(ComfyUIProgressAction.Completed, type);
                 }
 
-                // Report which node is currently executing
+                // Report which node is currently executing.
                 if (currentPromptId == promptId && nodeId is not null)
                 {
                     var nodeLabel = nodeId switch
@@ -213,34 +289,34 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
                         LoadImageNodeId => "Loading image...",
                         _ => $"Executing node {nodeId}..."
                     };
-                    progress?.Report(nodeLabel);
+                    return new ComfyUIProgressMessage(ComfyUIProgressAction.Report, type, ReportText: nodeLabel);
                 }
 
-                continue;
+                return new ComfyUIProgressMessage(ComfyUIProgressAction.None, type);
             }
 
-            // Forward progress events (e.g. model loading steps reported by ComfyUI)
-            if (type is "progress")
+            case "progress":
             {
                 var data = json?["data"];
                 var value = data?["value"]?.GetValue<int>() ?? 0;
                 var max = data?["max"]?.GetValue<int>() ?? 0;
                 if (max > 0)
                 {
-                    progress?.Report($"Progress: {value}/{max}");
+                    return new ComfyUIProgressMessage(
+                        ComfyUIProgressAction.Report, type, ReportText: $"Progress: {value}/{max}");
                 }
-                continue;
+
+                return new ComfyUIProgressMessage(ComfyUIProgressAction.None, type);
             }
 
-            // Forward status events
-            if (type is "status")
+            case "status":
             {
                 var queueRemaining = json?["data"]?["status"]?["exec_info"]?["queue_remaining"]?.GetValue<int>();
-                if (queueRemaining.HasValue)
-                {
-                    Logger.Debug("Queue remaining: {QueueRemaining}", queueRemaining.Value);
-                }
+                return new ComfyUIProgressMessage(ComfyUIProgressAction.None, type, QueueRemaining: queueRemaining);
             }
+
+            default:
+                return new ComfyUIProgressMessage(ComfyUIProgressAction.None, type);
         }
     }
 
@@ -294,22 +370,15 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
                    ?? throw new InvalidOperationException("ComfyUI returned an unparseable /history response.");
 
         var outputs = json[promptId]?["outputs"];
-        var comfyResult = new ComfyUIResult();
 
-        if (outputs is not JsonObject outputNodes)
+        if (outputs is not JsonObject)
         {
             Logger.Warning("No outputs found for prompt {PromptId}. Raw history: {History}",
                 promptId, historyText.Length > 2000 ? historyText[..2000] + "..." : historyText);
-            return comfyResult;
+            return new ComfyUIResult();
         }
 
-        foreach (var (nodeId, nodeOutput) in outputNodes)
-        {
-            Logger.Debug("Processing output for node {NodeId}: {Keys}",
-                nodeId, nodeOutput is JsonObject obj ? string.Join(", ", obj.Select(kv => kv.Key)) : "null");
-            ExtractTextOutputs(nodeOutput, comfyResult);
-            ExtractImageOutputs(nodeOutput, comfyResult);
-        }
+        var comfyResult = ParseHistoryOutputs(json, promptId, _baseUrl);
 
         if (comfyResult.Texts.Count == 0 && comfyResult.Images.Count == 0)
         {
@@ -539,11 +608,104 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
             return;
         }
 
-        _httpClient.Dispose();
+        if (_disposeHttpClient)
+        {
+            _httpClient.Dispose();
+        }
+
         _disposed = true;
     }
 
-    private void ExtractTextOutputs(JsonNode? nodeOutput, ComfyUIResult result)
+    /// <summary>
+    /// Pure builder for the ComfyUI <c>/prompt</c> request envelope. Applies the caller-supplied
+    /// per-node modifiers to the workflow, then wraps it in the exact JSON shape ComfyUI and its
+    /// plugins expect. Performs no I/O.
+    /// </summary>
+    /// <param name="workflow">The parsed API-format workflow (mutated in place by the modifiers).</param>
+    /// <param name="nodeModifiers">Node ID to mutation action. Missing nodes are skipped.</param>
+    /// <param name="clientId">The client ID; echoed as <c>client_id</c> and <c>extra_pnginfo.workflow.id</c>.</param>
+    /// <param name="onNodeNotFound">
+    /// Optional callback invoked with the node ID whenever a modifier targets a node absent from
+    /// the workflow. Kept as a callback so this function stays pure (the caller does the logging).
+    /// </param>
+    /// <returns>The <c>/prompt</c> payload envelope.</returns>
+    /// <remarks>
+    /// The <c>extra_data.extra_pnginfo.workflow</c> block encodes two <b>undocumented,
+    /// reverse-engineered</b> contracts. Changing these bytes will silently break queuing:
+    /// <list type="bullet">
+    /// <item><c>workflow_name</c> + <c>id</c> are required by the comfyui_queue_manager plugin
+    /// (qm_queue.py lines 221-222).</item>
+    /// <item><c>nodes</c> (an empty array) is required by the ShowText|pysssss node
+    /// (show_text.py line 34).</item>
+    /// </list>
+    /// </remarks>
+    internal static JsonObject BuildPromptPayload(
+        JsonNode workflow,
+        IReadOnlyDictionary<string, Action<JsonNode>> nodeModifiers,
+        string clientId,
+        Action<string>? onNodeNotFound = null)
+    {
+        // Apply caller-supplied modifications to individual nodes.
+        foreach (var (nodeId, modifier) in nodeModifiers)
+        {
+            var node = workflow[nodeId];
+            if (node is not null)
+            {
+                modifier(node);
+            }
+            else
+            {
+                onNodeNotFound?.Invoke(nodeId);
+            }
+        }
+
+        return new JsonObject
+        {
+            ["prompt"] = workflow,
+            ["client_id"] = clientId,
+            ["extra_data"] = new JsonObject
+            {
+                ["extra_pnginfo"] = new JsonObject
+                {
+                    ["workflow"] = new JsonObject
+                    {
+                        // Required by comfyui_queue_manager plugin (qm_queue.py lines 221-222)
+                        ["workflow_name"] = "DiffusionNexus",
+                        ["id"] = clientId,
+                        // Required by ShowText|pysssss node (show_text.py line 34)
+                        ["nodes"] = new JsonArray()
+                    }
+                }
+            }
+        };
+    }
+
+    /// <summary>
+    /// Pure parser for a ComfyUI <c>/history/{promptId}</c> document. Extracts all text and image
+    /// outputs for the given prompt into a <see cref="ComfyUIResult"/>. Performs no I/O.
+    /// </summary>
+    /// <param name="historyJson">The parsed <c>/history</c> response.</param>
+    /// <param name="promptId">The prompt whose outputs to extract.</param>
+    /// <param name="baseUrl">Base URL used to build image <c>/view</c> URLs.</param>
+    internal static ComfyUIResult ParseHistoryOutputs(JsonNode? historyJson, string promptId, string baseUrl)
+    {
+        var result = new ComfyUIResult();
+
+        if (historyJson?[promptId]?["outputs"] is not JsonObject outputNodes)
+        {
+            return result;
+        }
+
+        foreach (var (_, nodeOutput) in outputNodes)
+        {
+            ExtractTextOutputs(nodeOutput, result);
+            ExtractImageOutputs(nodeOutput, baseUrl, result);
+        }
+
+        return result;
+    }
+
+    internal static void ExtractTextOutputs(JsonNode? nodeOutput, ComfyUIResult result)
     {
         if (nodeOutput?["text"] is not JsonArray textArray)
         {
@@ -576,7 +738,7 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
         }
     }
 
-    private void ExtractImageOutputs(JsonNode? nodeOutput, ComfyUIResult result)
+    internal static void ExtractImageOutputs(JsonNode? nodeOutput, string baseUrl, ComfyUIResult result)
     {
         if (nodeOutput?["images"] is not JsonArray imageArray)
         {
@@ -603,7 +765,46 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
                 Filename: filename,
                 Subfolder: subfolder,
                 Type: type,
-                Url: $"{_baseUrl}/view?filename={Uri.EscapeDataString(filename)}&subfolder={Uri.EscapeDataString(subfolder)}&type={Uri.EscapeDataString(type)}"));
+                Url: $"{baseUrl}/view?filename={Uri.EscapeDataString(filename)}&subfolder={Uri.EscapeDataString(subfolder)}&type={Uri.EscapeDataString(type)}"));
         }
     }
+}
+
+/// <summary>
+/// The decoded meaning of a single ComfyUI WebSocket progress frame, produced by
+/// <see cref="ComfyUIWrapperService.ParseProgressMessage"/>.
+/// </summary>
+internal enum ComfyUIProgressAction
+{
+    /// <summary>Nothing to do (unknown type, an event for another prompt, idle status, etc.).</summary>
+    None = 0,
+
+    /// <summary>Report <see cref="ComfyUIProgressMessage.ReportText"/> to the progress reporter.</summary>
+    Report,
+
+    /// <summary>Execution finished for the awaited prompt; the wait should complete.</summary>
+    Completed,
+
+    /// <summary>An execution error occurred for the awaited prompt; the wait should throw.</summary>
+    Error
+}
+
+/// <summary>
+/// A decoded ComfyUI WebSocket progress frame. Immutable value describing what the caller
+/// should do, keeping <see cref="ComfyUIWrapperService.ParseProgressMessage"/> free of I/O.
+/// </summary>
+internal readonly record struct ComfyUIProgressMessage(
+    ComfyUIProgressAction Action,
+    string? Type = null,
+    string? ReportText = null,
+    string? ErrorNodeType = null,
+    string? ErrorDetail = null,
+    int? QueueRemaining = null)
+{
+    /// <summary>
+    /// The exception message to surface when <see cref="Action"/> is
+    /// <see cref="ComfyUIProgressAction.Error"/>. Preserves the historical wording exactly.
+    /// </summary>
+    public string ExecutionErrorMessage =>
+        $"ComfyUI workflow failed in node '{ErrorNodeType}': {ErrorDetail}";
 }
