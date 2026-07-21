@@ -1,7 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Text.Json.Nodes;
 using Avalonia.Media.Imaging;
-using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Enums;
@@ -202,6 +201,8 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     private readonly IDatasetState _state;
     private readonly IComfyUIWrapperService? _comfyUiService;
     private readonly IAppSettingsService? _settingsService;
+    private readonly IUiScheduler _uiScheduler;
+    private readonly Func<string, int, Bitmap?> _thumbnailDecoder;
     private CancellationTokenSource? _cts;
     private bool _disposed;
     private string? _compareOriginalsTempDir;
@@ -276,12 +277,19 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         IDatasetState state,
         IComfyUIWrapperService? comfyUiService = null,
         IAppSettingsService? settingsService = null,
-        IFeatureReadinessService? readinessService = null)
+        IFeatureReadinessService? readinessService = null,
+        IUiScheduler? uiScheduler = null,
+        Func<string, int, Bitmap?>? thumbnailDecoder = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
         _comfyUiService = comfyUiService;
         _settingsService = settingsService;
+        _uiScheduler = uiScheduler ?? AvaloniaUiScheduler.Instance;
+        // The thumbnail decode is the other (filesystem/Skia) boundary in front of
+        // the UI-thread marshalling below; injectable so the marshalling seam can be
+        // exercised without a real Avalonia bitmap. Defaults to the real decoder.
+        _thumbnailDecoder = thumbnailDecoder ?? EfficientImageDecoder.DecodeThumbnail;
 
         // Create readiness ViewModels for both upscale variants
         Readiness = new FeatureReadinessViewModel(readinessService, Feature.BatchUpscale);
@@ -1083,14 +1091,14 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     /// Loads a thumbnail bitmap for the given item on the UI thread.
     /// Uses <see cref="EfficientImageDecoder"/> to avoid full-resolution decode for large images.
     /// </summary>
-    private static async Task LoadThumbnailAsync(UpscaleImageItemViewModel item, string imagePath, bool isOriginal)
+    private async Task LoadThumbnailAsync(UpscaleImageItemViewModel item, string imagePath, bool isOriginal)
     {
         try
         {
-            var bitmap = await Task.Run(() => EfficientImageDecoder.DecodeThumbnail(imagePath, 120));
+            var bitmap = await Task.Run(() => _thumbnailDecoder(imagePath, 120));
             if (bitmap is not null)
             {
-                await Dispatcher.UIThread.InvokeAsync(() =>
+                await _uiScheduler.InvokeAsync(() =>
                 {
                     if (isOriginal)
                         item.OriginalThumbnail = bitmap;
