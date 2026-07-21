@@ -143,6 +143,25 @@ public class LruKeyTrackerTests
     }
 
     [Fact]
+    public void EvictLeastRecentlyUsed_AfterDifferentCasingTouch_ReturnsOriginalFirstSeenCasing()
+    {
+        // Pins the casing-identity half of #429: re-touching with different casing
+        // moves the existing node (proven above), but the *stored* key string must
+        // still be the originally recorded casing, not the later touch's casing.
+        var tracker = new LruKeyTracker();
+        tracker.Touch(@"C:\ds\A.png");
+        tracker.Touch(@"C:\ds\b.png");
+
+        tracker.Touch(@"c:\ds\a.png");
+
+        // "A.png" is now most-recently-used, so "b.png" evicts first.
+        tracker.EvictLeastRecentlyUsed().Should().Be(@"C:\ds\b.png");
+
+        var evicted = tracker.EvictLeastRecentlyUsed();
+        evicted.Should().Be(@"C:\ds\A.png");
+    }
+
+    [Fact]
     public void EvictLeastRecentlyUsed_WhenEmpty_ReturnsNull()
     {
         var tracker = new LruKeyTracker();
