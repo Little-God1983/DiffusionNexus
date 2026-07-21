@@ -884,6 +884,9 @@ public partial class App : Application
         // Infrastructure services (secure storage, image caching, activity logging)
         services.AddInfrastructureServices();
 
+        // UI-thread scheduler seam over Dispatcher.UIThread (testability; #437)
+        services.AddSingleton<IUiScheduler, AvaloniaUiScheduler>();
+
         // Thumbnail service for async image loading with LRU cache (singleton)
         services.AddSingleton<IThumbnailService, ThumbnailService>();
 
