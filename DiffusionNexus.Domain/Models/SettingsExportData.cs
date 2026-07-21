@@ -60,8 +60,14 @@ public sealed record SettingsExportData
     public string? DatasetStoragePath { get; init; }
     public List<DatasetCategoryExport> DatasetCategories { get; init; } = [];
 
-    /// <summary>Whether automatic backup of the dataset-image folders is enabled.</summary>
-    public bool BackupDatasetImagesEnabled { get; init; }
+    /// <summary>
+    /// Whether automatic backup of the dataset-image folders is enabled. Nullable so
+    /// import can distinguish "absent from the document" (fall back to
+    /// <see cref="LegacyAutoBackupEnabled"/>, then <see langword="false"/>) from an
+    /// explicit <see langword="false"/> (which must win outright). Always written as
+    /// an explicit <see langword="true"/>/<see langword="false"/> on export.
+    /// </summary>
+    public bool? BackupDatasetImagesEnabled { get; init; }
 
     /// <summary>Whether automatic backup of the core user database is enabled. Defaults to true.</summary>
     public bool BackupDatabaseEnabled { get; init; } = true;
