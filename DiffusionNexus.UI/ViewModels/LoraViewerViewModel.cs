@@ -2244,12 +2244,23 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             DetailViewModel.MetadataDownloadRequested -= OnDetailMetadataDownloadRequested;
         }
 
+        // #438: the detail VM no longer reaches into App.Services — resolve the
+        // dependencies it previously fetched from the locator here and inject them.
+        var sp = App.Services;
         var detailVm = new ModelDetailViewModel(
             _civitaiClient,
             _settingsService,
             _secureStorage,
             _logger,
-            _baseModelCatalog);
+            _baseModelCatalog,
+            sp?.GetService<IServiceScopeFactory>(),
+            sp?.GetService<IDialogService>(),
+            sp?.GetService<LoraDownloadService>(),
+            sp?.GetService<IDownloadCoordinator>(),
+            sp?.GetService<ITaskTracker>(),
+            sp?.GetService<IActivityLogService>(),
+            sp?.GetService<DiffusionNexus.Installer.SDK.Shared.Services.IClipboardService>(),
+            sp?.GetService<IUiScheduler>());
 
         detailVm.CloseRequested += OnDetailCloseRequested;
         detailVm.DownloadCompleted += OnDetailDownloadCompleted;
