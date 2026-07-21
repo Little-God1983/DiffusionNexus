@@ -514,17 +514,22 @@ public class SettingsExportServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task WhenTheModernFlagIsAbsentAndTheLegacyFlagIsTrueThenTheLegacyValueIsHonored()
+    public async Task WhenSettingsWithBackupDatasetImagesDisabledAreExportedAndReimportedThenTheFlagStaysFalse()
     {
+        // Regression for #431: a settings row where the modern flag is explicitly
+        // false must round-trip through a real export/import unchanged — the
+        // legacy key must never resurrect it back to true on re-import.
+        var original = FullyPopulatedSettings();
+        original.BackupDatasetImagesEnabled = false;
+        GivenCurrentSettings(original);
         var captured = GivenSaveIsCaptured();
-        var path = await WriteJsonAsync("modern-absent-legacy-true.json", """
-        { "schemaVersion": 1, "autoBackupEnabled": true }
-        """);
         var sut = CreateSut();
+        var path = PathFor("backup-flag-round-trip.json");
 
+        await sut.ExportAsync(path);
         await sut.ImportAsync(path);
 
-        captured()!.BackupDatasetImagesEnabled.Should().BeTrue();
+        captured()!.BackupDatasetImagesEnabled.Should().BeFalse();
     }
 
     [Fact]
