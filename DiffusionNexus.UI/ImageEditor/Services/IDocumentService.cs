@@ -31,6 +31,11 @@ public interface IDocumentService
     /// <param name="directory">Target directory.</param>
     /// <param name="baseName">Base filename without extension.</param>
     /// <param name="extension">File extension including the dot.</param>
-    /// <returns>A unique file path.</returns>
+    /// <returns>A file path that does not currently exist.</returns>
+    /// <exception cref="IOException">
+    /// Thrown when all 999 numbered candidates (<c>_edited_001</c> through <c>_edited_999</c>)
+    /// already exist in <paramref name="directory"/>. The method never falls back to returning
+    /// an occupied path, since the caller would then silently overwrite existing user work.
+    /// </exception>
     string GenerateUniqueFilePath(string directory, string baseName, string extension);
 }
