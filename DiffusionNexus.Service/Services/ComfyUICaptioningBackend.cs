@@ -59,6 +59,12 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
 
             return result.IsReady;
         }
+        catch (OperationCanceledException)
+        {
+            // Cancellation is the caller's business, not a backend availability problem - do not
+            // report it via MissingRequirements. Matches LocalInferenceFeatureBackend (#434).
+            throw;
+        }
         catch (Exception ex)
         {
             Logger.Warning(ex, "Unified readiness check failed for Captioning");

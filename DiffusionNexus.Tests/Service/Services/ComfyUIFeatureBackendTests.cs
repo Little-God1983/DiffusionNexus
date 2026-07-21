@@ -129,6 +129,20 @@ public class ComfyUIFeatureBackendTests
         _workloadChecker.Verify(c => c.CheckAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Fact]
+    public async Task WhenSettingsLookupIsCancelledThenCancellationPropagatesInsteadOfBackendOffline()
+    {
+        // Same swallow pattern as #434's ComfyUICaptioningBackend bug, just one level down:
+        // a cancelled settings lookup must not be reported as "could not resolve server URL".
+        _settings.Setup(s => s.GetSettingsAsync(It.IsAny<CancellationToken>()))
+                 .ThrowsAsync(new OperationCanceledException("cancelled"));
+        var backend = CreateBackend();
+
+        var act = async () => await backend.CheckFeatureAsync(Feature.Captioning);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
     #endregion
 
     #region Installed-but-not-running (server offline)
@@ -150,6 +164,24 @@ public class ComfyUIFeatureBackendTests
         result.Endpoint.Should().Be(url);
         result.MissingRequirements.Should().ContainSingle()
             .Which.Should().Contain("not reachable").And.Contain(url);
+        _workloadChecker.Verify(c => c.CheckAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task WhenTheHealthCheckIsCancelledThenCancellationPropagatesInsteadOfServerOffline()
+    {
+        // IsServerOnlineAsync's bare catch used to swallow every exception from the live
+        // HttpClient.GetAsync call, including a caller-driven OperationCanceledException, and
+        // report it as "server not reachable". An already-cancelled token must instead surface
+        // as a genuine cancellation (#434).
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        GivenServerUrl(ClosedPortUrl());
+        var backend = CreateBackend();
+
+        var act = async () => await backend.CheckFeatureAsync(Feature.Captioning, cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
         _workloadChecker.Verify(c => c.CheckAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 

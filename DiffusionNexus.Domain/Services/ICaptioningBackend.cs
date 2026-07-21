@@ -32,6 +32,12 @@ public interface ICaptioningBackend
     /// For ComfyUI this means the server is reachable and all required custom nodes are installed.
     /// Implementations should populate <see cref="MissingRequirements"/> when returning <c>false</c>.
     /// </summary>
+    /// <remarks>
+    /// Cancellation contract: a cancelled check must propagate as <see cref="OperationCanceledException"/>
+    /// rather than being reported through <see cref="MissingRequirements"/>. The caller cancelling
+    /// is not evidence the backend is unavailable, so implementations must rethrow instead of
+    /// mapping the exception onto a fabricated readiness failure (issue #434).
+    /// </remarks>
     /// <param name="ct">Cancellation token.</param>
     /// <returns><c>true</c> if the backend can accept captioning requests.</returns>
     Task<bool> IsAvailableAsync(CancellationToken ct = default);

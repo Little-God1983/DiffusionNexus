@@ -48,6 +48,12 @@ public interface IDiffusionBackend
     /// Checks whether this diffusion backend is currently available and ready to generate.
     /// Implementations should populate <see cref="MissingRequirements"/> on a <c>false</c> result.
     /// </summary>
+    /// <remarks>
+    /// Cancellation contract: a cancelled check must propagate as <see cref="OperationCanceledException"/>
+    /// rather than being reported through <see cref="MissingRequirements"/>. The caller cancelling
+    /// is not evidence the backend is unavailable, so implementations must rethrow instead of
+    /// mapping the exception onto a fabricated readiness failure (issue #434).
+    /// </remarks>
     Task<bool> IsAvailableAsync(CancellationToken ct = default);
 
     /// <summary>
