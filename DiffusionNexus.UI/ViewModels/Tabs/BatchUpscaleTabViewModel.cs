@@ -202,6 +202,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     private readonly IComfyUIWrapperService? _comfyUiService;
     private readonly IAppSettingsService? _settingsService;
     private readonly IUiScheduler _uiScheduler;
+    private readonly Func<string, int, Bitmap?> _thumbnailDecoder;
     private CancellationTokenSource? _cts;
     private bool _disposed;
     private string? _compareOriginalsTempDir;
@@ -277,13 +278,18 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         IComfyUIWrapperService? comfyUiService = null,
         IAppSettingsService? settingsService = null,
         IFeatureReadinessService? readinessService = null,
-        IUiScheduler? uiScheduler = null)
+        IUiScheduler? uiScheduler = null,
+        Func<string, int, Bitmap?>? thumbnailDecoder = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
         _comfyUiService = comfyUiService;
         _settingsService = settingsService;
         _uiScheduler = uiScheduler ?? AvaloniaUiScheduler.Instance;
+        // The thumbnail decode is the other (filesystem/Skia) boundary in front of
+        // the UI-thread marshalling below; injectable so the marshalling seam can be
+        // exercised without a real Avalonia bitmap. Defaults to the real decoder.
+        _thumbnailDecoder = thumbnailDecoder ?? EfficientImageDecoder.DecodeThumbnail;
 
         // Create readiness ViewModels for both upscale variants
         Readiness = new FeatureReadinessViewModel(readinessService, Feature.BatchUpscale);
@@ -1089,7 +1095,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     {
         try
         {
-            var bitmap = await Task.Run(() => EfficientImageDecoder.DecodeThumbnail(imagePath, 120));
+            var bitmap = await Task.Run(() => _thumbnailDecoder(imagePath, 120));
             if (bitmap is not null)
             {
                 await _uiScheduler.InvokeAsync(() =>
