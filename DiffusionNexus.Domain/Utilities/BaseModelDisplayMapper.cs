@@ -192,6 +192,6 @@ public static class BaseModelDisplayMapper
             return value;
         }
 
-        return value[..(maxLength - 1)] + "…";
+        return value[..(maxLength - 1)] + "\u2026";
     }
 }

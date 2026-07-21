@@ -57,7 +57,7 @@ public sealed class ThumbnailOwnerToken
 /// </list>
 /// </para>
 /// <para>
-/// <b>TODO: Linux Implementation</b> — Verify that priority thread scheduling
+/// <b>TODO: Linux Implementation</b> - Verify that priority thread scheduling
 /// behaves identically on Linux; test under Wayland and X11 compositors.
 /// </para>
 /// </summary>

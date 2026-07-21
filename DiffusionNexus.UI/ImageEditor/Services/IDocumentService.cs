@@ -14,7 +14,7 @@ public interface IDocumentService
     /// <param name="bitmap">The bitmap to save.</param>
     /// <param name="filePath">Destination file path.</param>
     /// <param name="format">Image format.</param>
-    /// <param name="quality">Quality for lossy formats (0–100).</param>
+    /// <param name="quality">Quality for lossy formats (0-100).</param>
     /// <returns>True if saved successfully.</returns>
     bool Save(SKBitmap bitmap, string filePath, SKEncodedImageFormat format = SKEncodedImageFormat.Png, int quality = 95);
 

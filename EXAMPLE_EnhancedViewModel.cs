@@ -234,7 +234,7 @@ public partial class EnhancedLoraSortMainSettingsViewModel : ViewModelBase
                 options.ApiKey, 
                 useDatabase: UseDatabaseCache);
 
-            Log("Scanning…", LogSeverity.Info);
+            Log("Scanning\u2026", LogSeverity.Info);
             IsIndeterminate = true;
             var first = true;
             
@@ -247,7 +247,7 @@ public partial class EnhancedLoraSortMainSettingsViewModel : ViewModelBase
                         if (first)
                         {
                             IsIndeterminate = false;
-                            Log("Processing…", LogSeverity.Info);
+                            Log("Processing\u2026", LogSeverity.Info);
                             first = false;
                         }
                         Progress = report.Percentage.Value;
@@ -263,11 +263,11 @@ public partial class EnhancedLoraSortMainSettingsViewModel : ViewModelBase
             
             if (DeleteEmptySourceFolders)
             {
-                Log("Cleaning up empty folders…", LogSeverity.Info);
+                Log("Cleaning up empty folders\u2026", LogSeverity.Info);
                 await controllerService.DeleteEmptyDirectoriesAsync(BasePath!);
             }
             
-            Log("Finalising…", LogSeverity.Info);
+            Log("Finalising\u2026", LogSeverity.Info);
             
             // Refresh stats after processing
             await RefreshDatabaseStatsAsync();
@@ -279,7 +279,7 @@ public partial class EnhancedLoraSortMainSettingsViewModel : ViewModelBase
         catch (Exception ex)
         {
             Log($"Unexpected error: {ex.Message}", LogSeverity.Error);
-            await ShowDialog("Unexpected error – see log for details.", "Error");
+            await ShowDialog("Unexpected error \u2013 see log for details.", "Error");
         }
         finally
         {
