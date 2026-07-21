@@ -54,7 +54,9 @@ public class ComfyUICaptioningBackendTests
 
         backend.MissingRequirements.Should().BeEmpty();
         backend.Warnings.Should().BeEmpty();
-        backend.DisplayName.Should().Contain("ComfyUI").And.Contain("Qwen3-VL");
+        // Full-string assertion (not just substrings) to pin the exact separator glyph -
+        // regression guard for issue #441 (U+FFFD mojibake in place of the em dash).
+        backend.DisplayName.Should().Be("ComfyUI \u2014 Qwen3-VL");
     }
 
     #endregion

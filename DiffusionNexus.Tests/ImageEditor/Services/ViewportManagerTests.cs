@@ -48,7 +48,7 @@ public class ViewportManagerTests
     [Fact]
     public void WhenZoomOut_ZoomLevelDecreases()
     {
-        // Arrange — start at 1.0 (default)
+        // Arrange - start at 1.0 (default)
         _sut.ZoomLevel = 1f;
 
         // Act
@@ -147,7 +147,7 @@ public class ViewportManagerTests
     [Fact]
     public void WhenPanInFitMode_OffsetNotChanged()
     {
-        // Arrange — fit mode is default
+        // Arrange - fit mode is default
         _sut.IsFitMode.Should().BeTrue();
 
         // Act

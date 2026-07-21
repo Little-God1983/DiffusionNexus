@@ -1315,7 +1315,7 @@ public partial class CaptioningTabViewModel : ViewModelBase, IDialogServiceAware
         }
         else
         {
-            StatusMessage = "Compare cancelled � the newly generated caption remains on disk.";
+            StatusMessage = "Compare cancelled \u2014 the newly generated caption remains on disk.";
         }
     }
 

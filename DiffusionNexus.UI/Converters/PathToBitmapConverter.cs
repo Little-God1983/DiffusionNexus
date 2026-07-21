@@ -10,7 +10,7 @@ namespace DiffusionNexus.UI.Converters;
 /// Converts a file path string to a Bitmap for display in Image controls.
 /// <para>
 /// <b>Sync-only:</b> This converter only returns cache hits or performs synchronous fallback loading.
-/// It does NOT fire async loads — ViewModels with a <c>Thumbnail</c> property should be bound
+/// It does NOT fire async loads - ViewModels with a <c>Thumbnail</c> property should be bound
 /// directly instead of using this converter for thumbnail-mode images.
 /// </para>
 /// <para>
@@ -53,7 +53,7 @@ public class PathToBitmapConverter : IValueConverter
             return LoadFullResolution(path);
         }
 
-        // Thumbnail mode: return from cache only — ViewModels handle async loading via their Thumbnail property
+        // Thumbnail mode: return from cache only - ViewModels handle async loading via their Thumbnail property
         if (ThumbnailOrchestrator is not null &&
             ThumbnailOrchestrator.TryGetCached(path, out var cached) &&
             cached is not null)

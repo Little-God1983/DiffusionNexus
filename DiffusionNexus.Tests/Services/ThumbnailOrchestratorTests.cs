@@ -119,7 +119,7 @@ public class ThumbnailOrchestratorTests : IDisposable
         _orchestrator.SetActiveOwner(_ownerA);
         var requestTask = _orchestrator.RequestThumbnailAsync("slow.png", _ownerA);
 
-        // Switch active owner — this should NOT cancel ownerA's in-flight work
+        // Switch active owner - this should NOT cancel ownerA's in-flight work
         _orchestrator.SetActiveOwner(_ownerB);
 
         // The request should complete (not be cancelled)
@@ -263,7 +263,7 @@ public class ThumbnailOrchestratorTests : IDisposable
                 return null;
             });
 
-        // Act: start a request but don't await — just verify dispose doesn't throw
+        // Act: start a request but don't await - just verify dispose doesn't throw
         _ = _orchestrator.RequestThumbnailAsync("pending.png", _ownerA);
 
         var action = () => _orchestrator.Dispose();
@@ -276,7 +276,7 @@ public class ThumbnailOrchestratorTests : IDisposable
         var token1 = new ThumbnailOwnerToken("Test");
         var token2 = new ThumbnailOwnerToken("Test");
 
-        // Same name but different instances — should NOT be equal (reference equality)
+        // Same name but different instances - should NOT be equal (reference equality)
         token1.Should().NotBeSameAs(token2);
     }
 
