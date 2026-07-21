@@ -454,13 +454,28 @@ public class SettingsExportServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task WhenBothTheLegacyAndModernFlagsArePresentThenTheyAreOredTogether()
+    public async Task WhenBothTheLegacyAndModernFlagsArePresentThenTheExplicitModernFalseWins()
     {
-        // Documents the actual contract: the merge is `modern || legacy`, so a
-        // legacy "true" wins even when the v2 field explicitly says false.
+        // The v2 field, when explicitly present, is authoritative — even when it
+        // says "false" and the stale v1 key says "true". The legacy key must only
+        // fill in when the modern one is genuinely absent from the document.
         var captured = GivenSaveIsCaptured();
         var path = await WriteJsonAsync("both-flags.json", """
         { "schemaVersion": 2, "backupDatasetImagesEnabled": false, "autoBackupEnabled": true }
+        """);
+        var sut = CreateSut();
+
+        await sut.ImportAsync(path);
+
+        captured()!.BackupDatasetImagesEnabled.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task WhenTheModernFlagIsTrueAndTheLegacyFlagIsTrueThenItStaysTrue()
+    {
+        var captured = GivenSaveIsCaptured();
+        var path = await WriteJsonAsync("both-flags-true.json", """
+        { "schemaVersion": 2, "backupDatasetImagesEnabled": true, "autoBackupEnabled": true }
         """);
         var sut = CreateSut();
 
@@ -482,6 +497,63 @@ public class SettingsExportServiceTests : IDisposable
 
         captured()!.BackupDatasetImagesEnabled.Should().BeFalse();
         captured()!.BackupDatabaseEnabled.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task WhenTheModernFlagIsTrueAndTheLegacyFlagIsAbsentThenTheModernValueIsHonored()
+    {
+        var captured = GivenSaveIsCaptured();
+        var path = await WriteJsonAsync("v2-only-true.json", """
+        { "schemaVersion": 2, "backupDatasetImagesEnabled": true }
+        """);
+        var sut = CreateSut();
+
+        await sut.ImportAsync(path);
+
+        captured()!.BackupDatasetImagesEnabled.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task WhenTheModernFlagIsAbsentAndTheLegacyFlagIsTrueThenTheLegacyValueIsHonored()
+    {
+        var captured = GivenSaveIsCaptured();
+        var path = await WriteJsonAsync("modern-absent-legacy-true.json", """
+        { "schemaVersion": 1, "autoBackupEnabled": true }
+        """);
+        var sut = CreateSut();
+
+        await sut.ImportAsync(path);
+
+        captured()!.BackupDatasetImagesEnabled.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task WhenBothTheModernAndLegacyFlagsAreAbsentThenTheDefaultIsFalse()
+    {
+        var captured = GivenSaveIsCaptured();
+        var path = await WriteJsonAsync("both-absent.json", """{ "schemaVersion": 2 }""");
+        var sut = CreateSut();
+
+        await sut.ImportAsync(path);
+
+        captured()!.BackupDatasetImagesEnabled.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task WhenTheModernFlagKeyIsGenuinelyAbsentFromTheDocumentThenDeserializationYieldsNullNotFalse()
+    {
+        // The whole fix hinges on being able to tell "absent" apart from "false" at
+        // the DTO level. If this ever degraded back to a non-nullable bool, this
+        // assertion — not just the merged-import behavior — would catch it.
+        var path = await WriteJsonAsync("modern-key-absent.json", """
+        { "schemaVersion": 1, "autoBackupEnabled": true }
+        """);
+        var sut = CreateSut();
+
+        var read = await sut.ReadAsync(path);
+
+        read.BackupDatasetImagesEnabled.Should().BeNull();
+        read.LegacyAutoBackupEnabled.Should().BeTrue();
     }
 
     [Fact]
