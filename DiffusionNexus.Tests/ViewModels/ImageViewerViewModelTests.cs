@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
 
@@ -23,6 +24,28 @@ public class ImageViewerViewModelTests
 
     private static ObservableCollection<DatasetImageViewModel> Collection(params string[] names)
         => new(names.Select(Img));
+
+    /// <summary>
+    /// An <see cref="ObservableCollection{T}"/> that can replace its entire contents
+    /// through the protected <c>Items</c> list (no per-item Add/Remove events) and then
+    /// raise a single <see cref="NotifyCollectionChangedAction.Reset"/>, exactly like a
+    /// real "bulk reload" / "switch dataset" implementation would. This is the only way
+    /// to exercise a Reset that leaves some items in place — plain <c>Clear()</c> always
+    /// empties the collection.
+    /// </summary>
+    private sealed class ResettableCollection : ObservableCollection<DatasetImageViewModel>
+    {
+        public ResettableCollection(IEnumerable<DatasetImageViewModel> items) : base(items)
+        {
+        }
+
+        public void ResetWith(IEnumerable<DatasetImageViewModel> items)
+        {
+            Items.Clear();
+            foreach (var item in items) Items.Add(item);
+            OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+        }
+    }
 
     #region Constructor clamping
 
@@ -154,13 +177,16 @@ public class ImageViewerViewModelTests
     public void WhenNavigateToRunsOnAnEmptyCollectionThenStateIsResetRatherThanRejected()
     {
         // The empty-collection branch runs before the range check, so even an
-        // out-of-range index clears the viewer instead of being ignored.
+        // out-of-range index clears the viewer instead of being ignored. Clear()
+        // itself already resets/closes the viewer via the collection-changed
+        // resync; this extra NavigateTo(5) call on the now-empty collection
+        // confirms the method is still safe (idempotent) when invoked directly.
         var images = Collection("a", "b");
         using var vm = new ImageViewerViewModel(images, 1, isFavoriteCheck: _ => true);
         vm.CurrentIndex.Should().Be(1);
         vm.IsFavorite.Should().BeTrue();
 
-        images.Clear(); // Reset action -> handler ignores it, viewer keeps a stale image
+        images.Clear();
         vm.NavigateTo(5);
 
         vm.CurrentImage.Should().BeNull();
@@ -397,25 +423,28 @@ public class ImageViewerViewModelTests
     }
 
     [Fact]
-    public void WhenTheCollectionIsClearedThenTheResetIsIgnoredAndNoCloseIsRequested()
+    public void WhenTheCollectionIsClearedThenTheViewerClosesJustLikeRemovingTheLastItemWould()
     {
-        // Clear() raises Reset, not Remove — the handler only reacts to Remove,
-        // so the viewer keeps a stale current image and stays open.
+        // Clear() raises Reset, not Remove. The viewer must treat a Reset down to
+        // an empty collection exactly like removing the last item: drop the stale
+        // current image and request a close.
         var images = Collection("a", "b");
         using var vm = new ImageViewerViewModel(images, 0);
-        var a = images[0];
         var closeRequests = 0;
         vm.CloseRequested += (_, _) => closeRequests++;
 
         images.Clear();
 
-        closeRequests.Should().Be(0);
-        vm.CurrentImage.Should().BeSameAs(a);
+        closeRequests.Should().Be(1);
+        vm.CurrentImage.Should().BeNull();
+        vm.HasCurrentImage.Should().BeFalse();
+        vm.CurrentIndex.Should().Be(0);
         vm.TotalCount.Should().Be(0);
+        vm.PositionText.Should().Be("0 / 0");
     }
 
     [Fact]
-    public void WhenAnImageIsAddedThenTheAddIsIgnoredByTheChangeHandler()
+    public void WhenAnImageIsAddedWhileTheViewerIsOpenThenCountsRefresh()
     {
         var images = Collection("a");
         using var vm = new ImageViewerViewModel(images, 0);
@@ -424,11 +453,114 @@ public class ImageViewerViewModelTests
         {
             if (e.PropertyName == nameof(ImageViewerViewModel.TotalCount)) totalCountNotifications++;
         };
+        vm.CanGoNext.Should().BeFalse();
 
         images.Add(Img("b"));
 
-        totalCountNotifications.Should().Be(0);
-        vm.TotalCount.Should().Be(2); // computed live, but never announced
+        totalCountNotifications.Should().BeGreaterThan(0);
+        vm.TotalCount.Should().Be(2);
+        vm.PositionText.Should().Be("1 / 2");
+        vm.CanGoNext.Should().BeTrue();
+        vm.NextCommand.CanExecute(null).Should().BeTrue();
+        // The current image itself is untouched by an unrelated addition.
+        vm.CurrentImage.Should().BeSameAs(images[0]);
+    }
+
+    [Fact]
+    public void WhenAResetLeavesTheCurrentImageInPlaceThenItIsKeptAndTheIndexIsReclamped()
+    {
+        var images = new ResettableCollection(Collection("a", "b", "c"));
+        using var vm = new ImageViewerViewModel(images, 2);
+        var c = images[2];
+        vm.CurrentImage.Should().BeSameAs(c);
+
+        // Bulk "reload" that happens to keep the current image but move it earlier.
+        var a = images[0];
+        images.ResetWith([a, c]);
+
+        vm.TotalCount.Should().Be(2);
+        vm.CurrentImage.Should().BeSameAs(c);
+        vm.CurrentIndex.Should().Be(1);
+        vm.PositionText.Should().Be("2 / 2");
+    }
+
+    [Fact]
+    public void WhenAResetRemovesTheCurrentImageThenTheIndexIsClampedToTheNearestValidPosition()
+    {
+        var images = new ResettableCollection(Collection("a", "b", "c"));
+        using var vm = new ImageViewerViewModel(images, 2);
+        var closeRequests = 0;
+        vm.CloseRequested += (_, _) => closeRequests++;
+
+        // Bulk "reload" that drops the current image entirely, leaving two others.
+        var a = images[0];
+        var b = images[1];
+        images.ResetWith([a, b]);
+
+        closeRequests.Should().Be(0);
+        vm.TotalCount.Should().Be(2);
+        vm.CurrentIndex.Should().Be(1);
+        vm.CurrentImage.Should().BeSameAs(b);
+    }
+
+    [Fact]
+    public void WhenAResetLeavesTheCollectionEmptyThenTheViewerCloses()
+    {
+        var images = new ResettableCollection(Collection("a"));
+        using var vm = new ImageViewerViewModel(images, 0);
+        var closeRequests = 0;
+        vm.CloseRequested += (_, _) => closeRequests++;
+
+        images.ResetWith([]);
+
+        closeRequests.Should().Be(1);
+        vm.CurrentImage.Should().BeNull();
+        vm.TotalCount.Should().Be(0);
+    }
+
+    [Fact]
+    public void WhenADifferentImageIsReplacedThenTheCurrentImageIsUnaffected()
+    {
+        var images = Collection("a", "b", "c");
+        using var vm = new ImageViewerViewModel(images, 1);
+        var b = images[1];
+
+        images[2] = Img("d"); // Replace action on an item that isn't current
+
+        vm.CurrentImage.Should().BeSameAs(b);
+        vm.CurrentIndex.Should().Be(1);
+        vm.TotalCount.Should().Be(3);
+    }
+
+    [Fact]
+    public void WhenTheCurrentImageIsReplacedThenTheSlotsNewOccupantIsShown()
+    {
+        // The old reference is gone, so the resync clamps to the same index rather
+        // than jumping to a neighbor - the replacement item that now sits in that
+        // slot is what gets shown, same as landing on whatever fills a vacated slot.
+        var images = Collection("a", "b", "c");
+        using var vm = new ImageViewerViewModel(images, 1);
+        var d = Img("d");
+
+        images[1] = d; // Replace action on the current item itself
+
+        vm.CurrentImage.Should().BeSameAs(d);
+        vm.CurrentIndex.Should().Be(1);
+        vm.TotalCount.Should().Be(3);
+    }
+
+    [Fact]
+    public void WhenTheCurrentImageIsMovedThenTheIndexFollowsItAndTheImageStays()
+    {
+        var images = Collection("a", "b", "c");
+        using var vm = new ImageViewerViewModel(images, 0);
+        var a = images[0];
+
+        images.Move(0, 2); // -> [b, c, a]
+
+        vm.CurrentImage.Should().BeSameAs(a);
+        vm.CurrentIndex.Should().Be(2);
+        vm.PositionText.Should().Be("3 / 3");
     }
 
     [Fact]
