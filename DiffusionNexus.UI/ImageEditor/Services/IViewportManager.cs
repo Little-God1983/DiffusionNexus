@@ -13,7 +13,7 @@ public interface IViewportManager
     float ZoomLevel { get; set; }
 
     /// <summary>
-    /// Gets the zoom level as a percentage integer (10–1000).
+    /// Gets the zoom level as a percentage integer (10-1000).
     /// </summary>
     int ZoomPercentage { get; }
 

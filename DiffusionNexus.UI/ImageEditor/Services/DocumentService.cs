@@ -59,17 +59,14 @@ internal sealed class DocumentService : IDocumentService
     /// <inheritdoc />
     public string GenerateUniqueFilePath(string directory, string baseName, string extension)
     {
-        var counter = 1;
-        string newPath;
-
-        do
+        for (var counter = 1; counter < 1000; counter++)
         {
-            var suffix = $"_edited_{counter:D3}";
-            newPath = Path.Combine(directory, $"{baseName}{suffix}{extension}");
-            counter++;
+            var candidate = Path.Combine(directory, $"{baseName}_edited_{counter:D3}{extension}");
+            if (!File.Exists(candidate))
+                return candidate;
         }
-        while (File.Exists(newPath) && counter < 1000);
 
-        return newPath;
+        throw new IOException(
+            $"Could not find an unused file name for '{baseName}' in '{directory}' after 999 attempts.");
     }
 }

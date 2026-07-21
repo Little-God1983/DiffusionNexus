@@ -162,10 +162,11 @@ public class DocumentServiceTests : IDisposable
     }
 
     [Fact]
-    public void WhenEveryCandidateUpToNineNineNineIsTakenThenTheCapReturnsTheLastCandidate()
+    public void WhenEveryCandidateUpToNineNineNineIsTakenThenAnIOExceptionIsThrownInsteadOfReturningAnOccupiedPath()
     {
-        // The loop bails once the counter reaches 1000, so it hands back
-        // "_edited_999" even though that file already exists.
+        // All 999 numbered slots are taken, so there is no unoccupied path left to hand
+        // back. Returning "_edited_999" anyway would silently overwrite that file, so the
+        // method must fail loudly instead of returning a path that already exists.
         var dir = Path.Combine(_tempDir.FullName, "full");
         Directory.CreateDirectory(dir);
         for (var i = 1; i <= 999; i++)
@@ -173,10 +174,28 @@ public class DocumentServiceTests : IDisposable
             File.WriteAllBytes(Path.Combine(dir, $"photo_edited_{i:D3}.png"), Array.Empty<byte>());
         }
 
+        var act = () => _sut.GenerateUniqueFilePath(dir, "photo", ".png");
+
+        act.Should().Throw<IOException>();
+    }
+
+    [Fact]
+    public void WhenNineNineEightOfNineNineNineCandidatesAreTakenThenTheOneFreeSlotIsReturned()
+    {
+        // One slot short of the cap: the normal "first free suffix" behavior must still
+        // apply right up to the boundary, not just far away from it.
+        var dir = Path.Combine(_tempDir.FullName, "almost-full");
+        Directory.CreateDirectory(dir);
+        for (var i = 1; i <= 999; i++)
+        {
+            if (i == 999) continue;
+            File.WriteAllBytes(Path.Combine(dir, $"photo_edited_{i:D3}.png"), Array.Empty<byte>());
+        }
+
         var path = _sut.GenerateUniqueFilePath(dir, "photo", ".png");
 
         path.Should().Be(Path.Combine(dir, "photo_edited_999.png"));
-        File.Exists(path).Should().BeTrue();
+        File.Exists(path).Should().BeFalse();
     }
 
     [Fact]

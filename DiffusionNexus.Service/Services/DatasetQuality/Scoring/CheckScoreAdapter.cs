@@ -1,5 +1,6 @@
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
+using Serilog;
 
 namespace DiffusionNexus.Service.Services.DatasetQuality.Scoring;
 
@@ -20,8 +21,11 @@ public static class CheckScoreAdapter
 
     /// <summary>
     /// Maps a check name to its scoring category and weight.
+    /// Keys are matched case-insensitively: a check's display <c>Name</c> must line
+    /// up with a key here, but casing/spacing drift between the two must not
+    /// silently drop the check from the composite score (see issue #432).
     /// </summary>
-    private static readonly Dictionary<string, (QualityScoreCategory Category, double Weight)> CheckCategoryMap = new()
+    private static readonly Dictionary<string, (QualityScoreCategory Category, double Weight)> CheckCategoryMap = new(StringComparer.OrdinalIgnoreCase)
     {
         // Caption quality checks (weight reflects importance)
         ["Format Consistency"] = (QualityScoreCategory.CaptionQuality, 1.2),
@@ -45,7 +49,17 @@ public static class CheckScoreAdapter
     public static CheckScore? ScoreFromIssues(string checkName, IReadOnlyList<Issue> issues, int totalFiles)
     {
         if (!CheckCategoryMap.TryGetValue(checkName, out var mapping))
+        {
+            // This check's issues are silently excluded from the composite quality
+            // score. Log loudly instead of returning null unnoticed — a rename or
+            // casing drift in an IDatasetCheck implementation should be visible.
+            Log.Warning(
+                "CheckScoreAdapter: no scoring category mapped for check name \"{CheckName}\" — " +
+                "it will not contribute to the composite quality score. Check CheckCategoryMap in " +
+                "CheckScoreAdapter.cs against the check's Name property for a naming/casing mismatch.",
+                checkName);
             return null;
+        }
 
         double score = CalculateScoreFromIssues(issues, totalFiles);
 

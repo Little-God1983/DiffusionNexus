@@ -54,7 +54,9 @@ public class ComfyUICaptioningBackendTests
 
         backend.MissingRequirements.Should().BeEmpty();
         backend.Warnings.Should().BeEmpty();
-        backend.DisplayName.Should().Contain("ComfyUI").And.Contain("Qwen3-VL");
+        // Full-string assertion (not just substrings) to pin the exact separator glyph -
+        // regression guard for issue #441 (U+FFFD mojibake in place of the em dash).
+        backend.DisplayName.Should().Be("ComfyUI \u2014 Qwen3-VL");
     }
 
     #endregion
@@ -200,19 +202,18 @@ public class ComfyUICaptioningBackendTests
     }
 
     [Fact]
-    public async Task WhenTheReadinessCheckIsCancelledThenTheCancellationIsAlsoMappedNotRethrown()
+    public async Task WhenTheReadinessCheckIsCancelledThenTheCancellationPropagatesInsteadOfBecomingABlocker()
     {
-        // The catch-all deliberately has no OperationCanceledException escape hatch, so a
-        // cancelled check surfaces as "not available" rather than tearing down the caller.
+        // Cancellation is the caller's business, not a backend availability problem -- swallowing
+        // it into MissingRequirements would show the user a bogus "readiness check failed"
+        // blocker every time they navigate away. Matches LocalInferenceFeatureBackend (#434).
         _readiness.Setup(r => r.CheckAsync(Feature.Captioning, It.IsAny<CancellationToken>()))
                   .ThrowsAsync(new OperationCanceledException("cancelled"));
         var backend = CreateBackend();
 
-        var available = await backend.IsAvailableAsync();
+        var act = async () => await backend.IsAvailableAsync();
 
-        available.Should().BeFalse();
-        backend.MissingRequirements.Should().ContainSingle()
-            .Which.Should().StartWith("Readiness check failed:");
+        await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
     #endregion
