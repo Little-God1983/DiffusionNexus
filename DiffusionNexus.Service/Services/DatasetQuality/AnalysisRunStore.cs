@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using DiffusionNexus.Domain.Models;
@@ -24,6 +25,12 @@ public class AnalysisRunStore
     /// are automatically deleted after each save.
     /// </summary>
     private const int MaxRunsPerDataset = 50;
+
+    /// <summary>
+    /// The leading timestamp segment of a run file name (see <see cref="BuildFileName"/>). Shared by
+    /// the name-builder and the prune's chronological parser so the two never drift apart.
+    /// </summary>
+    private const string TimestampFormat = "dd-MM-yyyy-HH-mm-ss";
 
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
@@ -132,9 +139,10 @@ public class AnalysisRunStore
     /// </summary>
     private static string BuildFileName(DateTimeOffset timestamp, int version)
     {
-        // Use local time for human-readable file names
+        // Use local time for human-readable file names. Formatted with InvariantCulture: this app also
+        // runs under German locale, and culture-sensitive date formatting/parsing is a known trap here.
         var local = timestamp.ToLocalTime();
-        return $"{local:dd-MM-yyyy-HH-mm-ss}-Version-V{version}-run.json";
+        return $"{local.ToString(TimestampFormat, CultureInfo.InvariantCulture)}-Version-V{version}-run.json";
     }
 
     private static string GetRunsDirectory(string datasetFolderPath) =>
@@ -143,16 +151,25 @@ public class AnalysisRunStore
     /// <summary>
     /// Deletes the oldest run files when the total exceeds <see cref="MaxRunsPerDataset"/>.
     /// </summary>
+    /// <remarks>
+    /// Candidates are ordered by the timestamp PARSED from the file name (see
+    /// <see cref="GetSortableTimestamp"/>), not by a plain string sort of the path (issue #468). The
+    /// file name's <c>dd-MM-yyyy</c> prefix is day-first, so a lexicographic sort is NOT chronological
+    /// across month/year boundaries — e.g. "01-08-2026…" sorts before "28-07-2026…" as a string despite
+    /// being later in time — which could delete recently-saved runs while keeping older ones.
+    /// </remarks>
     private static void PruneOldRuns(string runsDir)
     {
-        var files = Directory.GetFiles(runsDir, "*-run.json")
-            .OrderByDescending(f => f)
-            .ToArray();
+        var files = Directory.GetFiles(runsDir, "*-run.json");
 
         if (files.Length <= MaxRunsPerDataset)
             return;
 
-        foreach (var file in files.Skip(MaxRunsPerDataset))
+        var ordered = files
+            .OrderByDescending(GetSortableTimestamp)
+            .ToArray();
+
+        foreach (var file in ordered.Skip(MaxRunsPerDataset))
         {
             try
             {
@@ -162,6 +179,52 @@ public class AnalysisRunStore
             {
                 // Best-effort cleanup; skip locked files
             }
+        }
+    }
+
+    /// <summary>
+    /// Resolves a comparable "age" for a run file so prune candidates can be ordered chronologically.
+    /// </summary>
+    /// <remarks>
+    /// Parses the leading <c>dd-MM-yyyy-HH-mm-ss</c> segment of the file NAME (not the full path) with
+    /// <see cref="CultureInfo.InvariantCulture"/> — this app also runs under German locale, where
+    /// culture-sensitive parsing is a known trap. The timestamps are local wall-clock values written
+    /// with <see cref="DateTimeStyles.None"/> (unspecified kind); only relative ordering matters here,
+    /// so a DST-ambiguous local time may mis-order within the repeated hour, which is accepted.
+    /// <para>
+    /// The <c>*-run.json</c> glob can also match foreign files that don't fit the naming convention
+    /// (e.g. a stray file dropped into the runs folder). Those fall back to
+    /// <see cref="File.GetLastWriteTimeUtc(string)"/> so an unparsable name can neither crash the prune
+    /// nor be silently preferred (or deprioritized) over real, parseable runs — it's ordered by its
+    /// actual last-write-time like any other file would be absent a name to parse.
+    /// </para>
+    /// </remarks>
+    private static DateTime GetSortableTimestamp(string filePath)
+    {
+        var name = Path.GetFileName(filePath);
+        if (name.Length >= TimestampFormat.Length)
+        {
+            var candidate = name[..TimestampFormat.Length];
+            if (DateTime.TryParseExact(
+                    candidate,
+                    TimestampFormat,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.None,
+                    out var parsed))
+            {
+                return parsed;
+            }
+        }
+
+        try
+        {
+            return File.GetLastWriteTimeUtc(filePath);
+        }
+        catch (IOException)
+        {
+            // File vanished or is otherwise inaccessible; treat as oldest so it's a prune candidate
+            // first rather than risk squatting on a slot ahead of a real run.
+            return DateTime.MinValue;
         }
     }
 }
