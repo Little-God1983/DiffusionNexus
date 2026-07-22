@@ -56,6 +56,18 @@ public partial class ModelDetailViewModel : ViewModelBase
     /// </summary>
     private CancellationTokenSource? _detailThumbnailCts;
 
+    /// <summary>
+    /// Shared HttpClient for Civitai version-thumbnail downloads (see
+    /// <see cref="LoadCivitaiThumbnailAsync"/>). Reusing a single instance avoids the
+    /// socket exhaustion (TIME_WAIT accumulation) that a fresh <c>new HttpClient()</c> per
+    /// call caused on the tile thumbnail path — mirrors <c>ModelTileViewModel</c>'s
+    /// <c>s_thumbnailClient</c> pattern (issue #460).
+    /// </summary>
+    private static readonly HttpClient s_civitaiThumbnailClient = new()
+    {
+        Timeout = TimeSpan.FromSeconds(15)
+    };
+
     #region Observable Properties
 
     /// <summary>
@@ -1455,8 +1467,7 @@ public partial class ModelDetailViewModel : ViewModelBase
 
         try
         {
-            using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-            var data = await httpClient.GetByteArrayAsync(image.Url, ct);
+            var data = await s_civitaiThumbnailClient.GetByteArrayAsync(image.Url, ct);
             if (data.Length == 0) return;
 
             ct.ThrowIfCancellationRequested();

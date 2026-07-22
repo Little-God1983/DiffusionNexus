@@ -1,3 +1,4 @@
+using System.Reflection;
 using DiffusionNexus.Civitai;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
@@ -79,5 +80,23 @@ public class ModelDetailViewModelTests
         await vm.CopyTriggerWordsCommand.ExecuteAsync(null);
 
         clipboard.Copied.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void CivitaiThumbnailDownloadsShareASingleStaticHttpClient()
+    {
+        // #460: LoadCivitaiThumbnailAsync used to create a fresh `new HttpClient()` per
+        // download — the same per-call-client anti-pattern that produced the tile's
+        // documented socket-exhaustion incident (TIME_WAIT accumulation -> OOM after ~100
+        // downloads; see ModelTileViewModelTests.ThumbnailDownloadsShareASingleStaticHttpClient).
+        // Assert the fix mirrors the tile's `s_thumbnailClient` pattern: one shared,
+        // readonly static client instead of a per-call instance.
+        var field = typeof(ModelDetailViewModel).GetField(
+            "s_civitaiThumbnailClient", BindingFlags.NonPublic | BindingFlags.Static);
+
+        field.Should().NotBeNull("Civitai thumbnail downloads must reuse one shared HttpClient");
+        field!.IsInitOnly.Should().BeTrue("the shared client must be readonly so it can't be swapped per-call");
+        field.FieldType.Should().Be<HttpClient>();
+        field.GetValue(null).Should().NotBeNull();
     }
 }
