@@ -199,7 +199,14 @@ public class AnalysisRunStoreTests : IDisposable
         // vice versa on a negative-offset machine). This test only proves something away from UTC+0.
         var neighborLocal = new DateTime(2026, 1, 10, 14, 0, 0, DateTimeKind.Local);
         var offset = TimeZoneInfo.Local.GetUtcOffset(neighborLocal);
-        offset.Should().NotBe(TimeSpan.Zero, "the Kind-mismatch regression is only observable away from UTC+0; this machine is expected to run a non-UTC (German) locale");
+        if (offset == TimeSpan.Zero)
+        {
+            // At UTC+0, local wall-clock ticks equal raw UTC ticks, so the buggy (raw UTC) and the
+            // fixed (ToLocalTime-normalized) orderings are indistinguishable and this regression
+            // cannot be observed. GitHub Actions runners run at UTC+0 - self-skip there; the test
+            // still exercises the regression on any non-UTC dev machine.
+            return;
+        }
 
         // Nudge the unparsable file's TRUE local write time a few minutes to the "newer" side of the
         // neighbor if the offset is positive, or the "older" side if negative - either way, by far less
