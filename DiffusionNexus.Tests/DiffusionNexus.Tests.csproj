@@ -38,9 +38,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\DiffusionNexus.DataAccess\DiffusionNexus.DataAccess.csproj" />
-    <!-- Orphan project (not in the .sln and referenced by no production project);
-         referenced here so its serializer adapters can be covered (issue #443). -->
-    <ProjectReference Include="..\DiffusionNexus.DataAccess.Infrastructure\DiffusionNexus.DataAccess.Infrastructure.csproj" />
     <ProjectReference Include="..\DiffusionNexus.Service\DiffusionNexus.Service.csproj" />
     <ProjectReference Include="..\DiffusionNexus.UI\DiffusionNexus.UI.csproj" />
   </ItemGroup>
