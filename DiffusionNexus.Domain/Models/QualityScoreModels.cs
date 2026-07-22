@@ -71,8 +71,21 @@ public record PerImageQualitySummary
     public string? JpegDetail { get; init; }
 
     /// <summary>
-    /// Mean of all non-null score components. Returns NaN when no checks reported a score.
+    /// Mean of all non-null score components. Returns <see cref="double.NaN"/> when no
+    /// checks reported a score for this image.
     /// </summary>
+    /// <remarks>
+    /// NaN is a deliberate "no data" sentinel, not an error state — it is produced (by
+    /// design, issue #449) for images that were seen only by checks that
+    /// <c>PerImageQualityAggregator</c> intentionally ignores (Duplicate Detection, Color
+    /// Distribution) or by an unrecognized check name, and the row is kept rather than
+    /// dropped so the image still shows up in the Fixer grid. Callers must call
+    /// <see cref="double.IsNaN(double)"/> before treating this as a real score: do not
+    /// average, sum, or otherwise let it flow unguarded into arithmetic (NaN silently
+    /// propagates) and do not rely on direct comparisons (NaN comparisons are always
+    /// <see langword="false"/>). The canonical consumer is <c>ImageQualityAdvisor.Analyze</c>,
+    /// which maps NaN to a distinct "Unknown" verdict instead of banding a non-existent score.
+    /// </remarks>
     public double OverallScore
     {
         get
