@@ -429,7 +429,7 @@ public class FileConflictDialogViewModelTests
 
     #endregion
 
-    #region FormatFileSize (duplicated in FileConflictItem and NonConflictingFileItem)
+    #region FormatFileSize (shared via FileSizeFormatter, used by both FileConflictItem and NonConflictingFileItem)
 
     [Theory]
     [InlineData(0L, "0 B")]
@@ -442,36 +442,21 @@ public class FileConflictDialogViewModelTests
     [InlineData(1073741823L, "1024.0 MB")]
     [InlineData(1073741824L, "1.00 GB")]
     [InlineData(2147483648L, "2.00 GB")]
-    public void WhenFormattingConflictItemSizesThenUnitBoundariesAreRespected(long bytes, string expected)
+    public void WhenFormattingFileSizesThenUnitBoundariesAreRespected(long bytes, string expected)
     {
         WithInvariantCulture(() =>
         {
-            var item = new FileConflictItem
+            var conflictItem = new FileConflictItem
             {
                 ConflictingName = "a.png",
                 ExistingFileSize = bytes,
                 NewFileSize = bytes
             };
+            var nonConflictingItem = new NonConflictingFileItem { FileName = "a.png", FileSize = bytes };
 
-            item.ExistingFileSizeText.Should().Be(expected);
-            item.NewFileSizeText.Should().Be(expected);
-        });
-    }
-
-    [Theory]
-    [InlineData(0L, "0 B")]
-    [InlineData(1023L, "1023 B")]
-    [InlineData(1024L, "1.0 KB")]
-    [InlineData(1048575L, "1024.0 KB")]
-    [InlineData(1048576L, "1.0 MB")]
-    [InlineData(1073741823L, "1024.0 MB")]
-    [InlineData(1073741824L, "1.00 GB")]
-    public void WhenFormattingNonConflictingItemSizesThenTheDuplicateFormatterMatches(long bytes, string expected)
-    {
-        WithInvariantCulture(() =>
-        {
-            var item = new NonConflictingFileItem { FileName = "a.png", FileSize = bytes };
-            item.FileSizeText.Should().Be(expected);
+            conflictItem.ExistingFileSizeText.Should().Be(expected);
+            conflictItem.NewFileSizeText.Should().Be(expected);
+            nonConflictingItem.FileSizeText.Should().Be(expected);
         });
     }
 

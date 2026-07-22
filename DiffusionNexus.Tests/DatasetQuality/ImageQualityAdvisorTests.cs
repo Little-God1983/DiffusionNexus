@@ -6,8 +6,11 @@ namespace DiffusionNexus.Tests.DatasetQuality;
 
 /// <summary>
 /// Unit tests for <see cref="ImageQualityAdvisor.Analyze"/>: verdict banding,
-/// which metrics become problems, the per-metric wording, the headline variants
-/// and the de-duplicated fix suggestions.
+/// which metrics become problems, the per-metric wording, the headline variants,
+/// the de-duplicated fix suggestions, and — in "Guard clauses" — the NaN
+/// <c>OverallScore</c> to <see cref="ImageQualityVerdict.Unknown"/> mapping that is the
+/// canonical consumer of the no-score-row contract on <c>PerImageQualityAggregator</c>
+/// (issue #449).
 /// </summary>
 public class ImageQualityAdvisorTests
 {
@@ -50,8 +53,15 @@ public class ImageQualityAdvisorTests
     [Fact]
     public void WhenNoChecksRanThenVerdictIsUnknownWithNoProblemsOrFixes()
     {
+        // Direct test of the NaN "no data" contract (issue #449): a summary with every
+        // column null has OverallScore == NaN (see PerImageQualitySummaryTests), and this
+        // is the canonical consumer that turns that NaN into the distinct Unknown verdict
+        // rather than trying to band a non-existent score. PerImageQualityAggregator
+        // deliberately keeps rows like this (images seen only by an ignored/unrecognized
+        // check) instead of dropping them, precisely so they reach this branch.
         var advice = ImageQualityAdvisor.Analyze(Summary());
 
+        double.IsNaN(Summary().OverallScore).Should().BeTrue("a summary with no columns set must produce the NaN sentinel");
         advice.Verdict.Should().Be(ImageQualityVerdict.Unknown);
         advice.Headline.Should().Be("No quality checks ran for this image.");
         advice.Problems.Should().BeEmpty();

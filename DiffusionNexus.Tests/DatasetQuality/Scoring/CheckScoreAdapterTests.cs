@@ -1,7 +1,12 @@
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
+using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Service.Services.DatasetQuality;
+using DiffusionNexus.Service.Services.DatasetQuality.Checks;
 using DiffusionNexus.Service.Services.DatasetQuality.Scoring;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
+using Moq;
 using Serilog;
 using Serilog.Core;
 using Serilog.Events;
@@ -41,7 +46,7 @@ public class CheckScoreAdapterTests
     [InlineData("Synonym Consistency", 1.0)]
     [InlineData("Feature Consistency", 1.0)]
     [InlineData("Type-Specific", 1.0)]
-    [InlineData("Spelling", 0.5)]
+    [InlineData("Spell Check", 0.5)]
     public void WhenCaptionCheckNameIsKnownThenScoreIsCaptionQualityWithMappedWeight(
         string checkName, double expectedWeight)
     {
@@ -61,6 +66,25 @@ public class CheckScoreAdapterTests
         result.Should().NotBeNull();
         result!.Category.Should().Be(QualityScoreCategory.DatasetConsistency);
         result.Weight.Should().Be(1.0);
+    }
+
+    [Fact]
+    public void WhenSpellCheckIssuesAreScoredThenTheyContributeToTheCaptionQualityCompositeAtWeightPointFive()
+    {
+        // Issue #448: the map key used to be "Spelling", which never matched
+        // SpellCheckQualityCheck.Name ("Spell Check") — the check silently
+        // contributed nothing. Uses the real check's Name property (not a
+        // hardcoded literal) so this test fails the same way the map itself
+        // would if the two names drift apart again.
+        var spellCheck = new SpellCheckQualityCheck(Mock.Of<ISpellChecker>(s => s.IsReady == true));
+        var issue = MakeIssue(IssueSeverity.Warning, checkName: spellCheck.Name);
+
+        var result = CheckScoreAdapter.ScoreFromIssues(spellCheck.Name, [issue], totalFiles: 10);
+
+        result.Should().NotBeNull("issue #448: spell check issues must contribute to the composite score");
+        result!.Category.Should().Be(QualityScoreCategory.CaptionQuality);
+        result.Weight.Should().Be(0.5);
+        result.Score.Should().Be(99.5); // 100 - (5 * 1) / 10, i.e. it actually contributed a penalty
     }
 
     [Theory]
@@ -102,6 +126,61 @@ public class CheckScoreAdapterTests
         events.Should().ContainSingle(e =>
             e.Level == LogEventLevel.Warning &&
             e.RenderMessage().Contains("Not A Real Check"));
+    }
+
+    /// <summary>
+    /// Kills the #448 bug class: a quality-check implementation whose <c>Name</c> doesn't
+    /// match any key in <see cref="CheckScoreAdapter"/>'s internal category map silently
+    /// drops out of the composite quality score (no exception — just a check that, since
+    /// #432, logs a warning and contributes nothing). This resolves every
+    /// <see cref="IDatasetCheck"/> the same way <see cref="AnalysisPipeline"/> does — via DI
+    /// registration through <see cref="DatasetQualityServiceExtensions.AddDatasetQualityServices"/> —
+    /// and asserts each one's <c>Name</c> is a known map key, with no #432 warning logged for any of them.
+    /// </summary>
+    [Fact]
+    public void WhenEveryRegisteredDatasetCheckIsInspectedThenItsNameResolvesInCheckCategoryMap()
+    {
+        var services = new ServiceCollection();
+        // SpellCheckQualityCheck requires an ISpellChecker; AddDatasetQualityServices doesn't
+        // register one itself (that's done at the app composition root), so supply a stub.
+        services.AddSingleton(Mock.Of<ISpellChecker>(s => s.IsReady == true));
+        services.AddDatasetQualityServices();
+
+        using var provider = services.BuildServiceProvider();
+        var checks = provider.GetServices<IDatasetCheck>().ToList();
+
+        // Sanity check: an empty list would make the rest of this test vacuously pass.
+        checks.Should().NotBeEmpty();
+
+        var events = new List<LogEvent>();
+        var testLogger = new LoggerConfiguration()
+            .MinimumLevel.Warning()
+            .WriteTo.Sink(new DelegatingSink(events.Add))
+            .CreateLogger();
+
+        var previousLogger = Log.Logger;
+        Log.Logger = testLogger;
+        try
+        {
+            foreach (var check in checks)
+            {
+                var score = CheckScoreAdapter.ScoreFromIssues(check.Name, [], totalFiles: 1);
+
+                score.Should().NotBeNull(
+                    $"check \"{check.Name}\" ({check.GetType().Name}) must have a matching key in " +
+                    "CheckCategoryMap — a Name/map-key mismatch silently drops the check from the " +
+                    "composite quality score (issue #448)");
+            }
+        }
+        finally
+        {
+            Log.Logger = previousLogger;
+            testLogger.Dispose();
+        }
+
+        events.Should().BeEmpty(
+            "no registered check's Name should be unmapped — an event here means CheckScoreAdapter " +
+            "logged the #432 \"no scoring category mapped\" warning for one of them");
     }
 
     /// <summary>Minimal Serilog sink that forwards every emitted event to a delegate,

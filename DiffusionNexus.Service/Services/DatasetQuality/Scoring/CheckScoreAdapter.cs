@@ -33,7 +33,7 @@ public static class CheckScoreAdapter
         ["Synonym Consistency"] = (QualityScoreCategory.CaptionQuality, 1.0),
         ["Feature Consistency"] = (QualityScoreCategory.CaptionQuality, 1.0),
         ["Type-Specific"] = (QualityScoreCategory.CaptionQuality, 1.0),
-        ["Spelling"] = (QualityScoreCategory.CaptionQuality, 0.5),
+        ["Spell Check"] = (QualityScoreCategory.CaptionQuality, 0.5),
 
         // Bucket analysis (Dataset Consistency)
         ["Bucket Analysis"] = (QualityScoreCategory.DatasetConsistency, 1.0),

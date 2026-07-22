@@ -8,7 +8,8 @@ namespace DiffusionNexus.Tests.DatasetQuality;
 /// <summary>
 /// Unit tests for <see cref="PerImageQualityAggregator"/>: joining the per-image
 /// scores of several image checks into one summary per file, which checks map to
-/// which column, and the case-insensitive path keying.
+/// which column, the case-insensitive path keying, and the no-score-row contract for
+/// images seen only by ignored/unrecognized checks (issue #449).
 /// </summary>
 public class PerImageQualityAggregatorTests
 {
@@ -175,19 +176,28 @@ public class PerImageQualityAggregatorTests
 
     #endregion
 
-    #region Ignored checks
+    #region No-score-row contract (issue #449)
+
+    // These two tests pin the deliberate contract documented on PerImageQualityAggregator:
+    // an image seen only by an ignored/unrecognized check still gets a row — all four
+    // score columns null, OverallScore == NaN — instead of being dropped from the result.
+    // Dropping it would silently hide the image from the Image Quality Fixer grid, which
+    // is the exact scenario the contract exists to avoid. Both cases must stay aligned:
+    // if one is ever changed to suppress the row, the other must change too.
 
     [Theory]
     [InlineData(DuplicateDetector.CheckDisplayName)]
     [InlineData(ColorDistributionAnalyzer.CheckDisplayName)]
-    public void WhenCheckHasItsOwnFixerThenItProducesNoScoreColumns(string checkName)
+    public void WhenImageIsSeenOnlyByAnIgnoredCheckThenItStillGetsANoScoreRow(string checkName)
     {
         const string path = @"C:\ds\img.png";
         var results = new[] { Result(checkName, new PerImageScore(path, 5, "detail")) };
 
         var summaries = PerImageQualityAggregator.Aggregate(results);
 
-        // The image is still keyed (it was seen), but none of the four columns are filled.
+        // Contract: the image is still keyed (it was seen), but none of the four columns
+        // are filled and OverallScore is the NaN "no data" sentinel — not suppressed,
+        // not zero.
         summaries.Should().ContainSingle();
         var summary = summaries[path];
         summary.BlurScore.Should().BeNull();
@@ -198,15 +208,23 @@ public class PerImageQualityAggregatorTests
     }
 
     [Fact]
-    public void WhenUnknownCheckNameThenNoColumnIsPopulated()
+    public void WhenImageIsSeenOnlyByAnUnrecognizedCheckNameThenItStillGetsANoScoreRow()
     {
         const string path = @"C:\ds\img.png";
         var results = new[] { Result("Some Future Check", new PerImageScore(path, 5, "detail")) };
 
-        var summary = PerImageQualityAggregator.Aggregate(results)[path];
+        var summaries = PerImageQualityAggregator.Aggregate(results);
 
+        // Same contract as the ignored-check case above: a forward-compatible/unknown
+        // check name must not cause the image to vanish from the aggregate, and must not
+        // throw when accessed via the indexer.
+        summaries.Should().ContainSingle();
+        var summary = summaries[path];
         summary.BlurScore.Should().BeNull();
+        summary.ExposureScore.Should().BeNull();
+        summary.NoiseScore.Should().BeNull();
         summary.JpegScore.Should().BeNull();
+        double.IsNaN(summary.OverallScore).Should().BeTrue();
     }
 
     #endregion
