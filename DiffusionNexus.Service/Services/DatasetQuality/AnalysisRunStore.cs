@@ -156,7 +156,10 @@ public class AnalysisRunStore
     /// <see cref="GetSortableTimestamp"/>), not by a plain string sort of the path (issue #468). The
     /// file name's <c>dd-MM-yyyy</c> prefix is day-first, so a lexicographic sort is NOT chronological
     /// across month/year boundaries — e.g. "01-08-2026…" sorts before "28-07-2026…" as a string despite
-    /// being later in time — which could delete recently-saved runs while keeping older ones.
+    /// being later in time — which could delete recently-saved runs while keeping older ones. Ties
+    /// (e.g. two runs saved within the same second) fall back to an ordinal compare of the full path,
+    /// purely to make the outcome deterministic — this secondary key is NOT chronological and must
+    /// never be promoted above the timestamp.
     /// </remarks>
     private static void PruneOldRuns(string runsDir)
     {
@@ -167,6 +170,7 @@ public class AnalysisRunStore
 
         var ordered = files
             .OrderByDescending(GetSortableTimestamp)
+            .ThenByDescending(f => f, StringComparer.Ordinal)
             .ToArray();
 
         foreach (var file in ordered.Skip(MaxRunsPerDataset))
@@ -194,9 +198,16 @@ public class AnalysisRunStore
     /// <para>
     /// The <c>*-run.json</c> glob can also match foreign files that don't fit the naming convention
     /// (e.g. a stray file dropped into the runs folder). Those fall back to
-    /// <see cref="File.GetLastWriteTimeUtc(string)"/> so an unparsable name can neither crash the prune
-    /// nor be silently preferred (or deprioritized) over real, parseable runs — it's ordered by its
-    /// actual last-write-time like any other file would be absent a name to parse.
+    /// <see cref="File.GetLastWriteTimeUtc(string)"/>, converted to LOCAL time via
+    /// <see cref="DateTime.ToLocalTime"/> so it lands in the same frame as the parsed branch above.
+    /// This conversion is required, not cosmetic: <see cref="DateTime"/> comparison ignores
+    /// <see cref="DateTime.Kind"/> and compares raw ticks, so leaving the fallback as raw UTC ticks
+    /// would silently misorder it against the parsed branch's local wall-clock ticks on any machine not
+    /// at UTC+0 (e.g. on UTC+2, a file genuinely written at local 15:30 has raw UTC ticks of 13:30,
+    /// which would incorrectly compare as OLDER than a parsed run stamped local 14:00). With the
+    /// conversion applied, an unparsable name can neither crash the prune nor be silently preferred (or
+    /// deprioritized) over real, parseable runs — it's ordered by its actual local last-write-time like
+    /// any other file would be absent a name to parse.
     /// </para>
     /// </remarks>
     private static DateTime GetSortableTimestamp(string filePath)
@@ -218,12 +229,17 @@ public class AnalysisRunStore
 
         try
         {
-            return File.GetLastWriteTimeUtc(filePath);
+            // GetLastWriteTimeUtc returns UTC; convert to local so its ticks are comparable to the
+            // parsed branch's local wall-clock ticks above (see the Kind-mismatch note in <remarks>).
+            return File.GetLastWriteTimeUtc(filePath).ToLocalTime();
         }
         catch (IOException)
         {
-            // File vanished or is otherwise inaccessible; treat as oldest so it's a prune candidate
-            // first rather than risk squatting on a slot ahead of a real run.
+            // A genuine I/O failure reading the last-write-time (e.g. a sharing violation) - NOT a
+            // missing file: GetLastWriteTimeUtc does not throw for a nonexistent path, it returns the
+            // 1601-01-01 UTC sentinel, which already sorts oldest on its own. Treat this failure case
+            // the same way (oldest) so it's a prune candidate first rather than risk squatting on a
+            // slot ahead of a real run.
             return DateTime.MinValue;
         }
     }

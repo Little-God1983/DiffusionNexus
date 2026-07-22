@@ -189,6 +189,64 @@ public class AnalysisRunStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task SaveAsync_PruneWithUnparsableFileName_RanksByLocalTime_NotRawUtcTicks()
+    {
+        // Regression: GetSortableTimestamp's parsed branch returns LOCAL wall-clock ticks
+        // (DateTimeKind.Unspecified). DateTime comparison ignores Kind and compares raw ticks, so the
+        // unparsable-name fallback (File.GetLastWriteTimeUtc) MUST be converted to local time before
+        // comparison - otherwise, on any machine away from UTC+0, a file genuinely written LATER can
+        // carry smaller raw UTC ticks than an earlier local-stamped run and be misranked as older (or
+        // vice versa on a negative-offset machine). This test only proves something away from UTC+0.
+        var neighborLocal = new DateTime(2026, 1, 10, 14, 0, 0, DateTimeKind.Local);
+        var offset = TimeZoneInfo.Local.GetUtcOffset(neighborLocal);
+        offset.Should().NotBe(TimeSpan.Zero, "the Kind-mismatch regression is only observable away from UTC+0; this machine is expected to run a non-UTC (German) locale");
+
+        // Nudge the unparsable file's TRUE local write time a few minutes to the "newer" side of the
+        // neighbor if the offset is positive, or the "older" side if negative - either way, by far less
+        // than the offset's magnitude, so an unconverted (raw UTC ticks) comparison would land it on
+        // the WRONG side of the neighbor once "offset" is baked into its raw ticks.
+        var gap = TimeSpan.FromMinutes(20);
+        var garbageIntendedLocal = offset > TimeSpan.Zero ? neighborLocal + gap : neighborLocal - gap;
+        var garbageIsTrulyNewer = garbageIntendedLocal > neighborLocal;
+
+        await _store.SaveAsync(_tempDir, MakeRecord(version: 1, new DateTimeOffset(neighborLocal)));
+
+        // 49 fillers, unambiguously newer than the neighbor/garbage pair (later calendar days) and
+        // never near the boundary being tested, so they always survive regardless of the bug.
+        for (int i = 0; i < 49; i++)
+            await _store.SaveAsync(_tempDir, MakeRecord(version: 100 + i, new DateTimeOffset(neighborLocal.AddDays(i + 1))));
+
+        var unparsablePath = Path.Combine(_runsDir, "not-a-timestamp-run.json");
+        await File.WriteAllTextAsync(unparsablePath, "{}");
+        // Store the UTC instant that corresponds to garbageIntendedLocal on THIS machine, so the test
+        // is self-consistent regardless of what the actual local offset is.
+        File.SetLastWriteTimeUtc(unparsablePath, garbageIntendedLocal.ToUniversalTime());
+
+        // An unambiguously ancient run (year 2000) is the mechanism that pushes the total to 52 and
+        // triggers a 2-file prune; it is always the single oldest of the 52 regardless of the bug, so
+        // it's dropped either way and isn't itself part of the assertion.
+        await _store.SaveAsync(_tempDir, MakeRecord(version: 999, new DateTimeOffset(new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Local))));
+
+        var remaining = Directory.GetFiles(_runsDir, "*-run.json");
+        remaining.Should().HaveCount(50);
+
+        var names = remaining.Select(Path.GetFileName).ToList();
+        names.Should().NotContain(n => n!.EndsWith("-Version-V999-run.json"), "the year-2000 run is unambiguously the oldest of the 52 and must be pruned");
+        if (garbageIsTrulyNewer)
+        {
+            names.Should().Contain("not-a-timestamp-run.json", "the unparsable file's fallback, correctly normalized to local time, ranks it newer than the neighbor and it must survive");
+            names.Should().NotContain(n => n!.EndsWith("-Version-V1-run.json"), "the neighbor is genuinely older than the unparsable file's true local write time and must be pruned");
+        }
+        else
+        {
+            names.Should().NotContain("not-a-timestamp-run.json", "the unparsable file's fallback, correctly normalized to local time, ranks it older than the neighbor and it must be pruned");
+            names.Should().Contain(n => n!.EndsWith("-Version-V1-run.json"), "the neighbor is genuinely newer than the unparsable file's true local write time and must survive");
+        }
+        for (int i = 0; i < 49; i++)
+            names.Should().Contain(n => n!.EndsWith($"-Version-V{100 + i}-run.json"), $"filler {100 + i} is far newer than the pruned pair and must survive");
+    }
+
+    [Fact]
     public async Task SaveAsync_Exactly50Runs_PrunesNothing()
     {
         for (int s = 0; s < 50; s++)
