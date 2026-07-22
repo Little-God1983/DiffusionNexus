@@ -105,7 +105,7 @@ public partial class ModelDetailViewModel
 
         try
         {
-            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            using var scope = _scopeFactory!.CreateScope();
             var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
             var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
@@ -203,7 +203,7 @@ public partial class ModelDetailViewModel
 
         try
         {
-            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            using var scope = _scopeFactory!.CreateScope();
             var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
             var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
@@ -330,7 +330,7 @@ public partial class ModelDetailViewModel
             labels = Array.Empty<string>();
         }
 
-        await Dispatcher.UIThread.InvokeAsync(() =>
+        await _uiScheduler.InvokeAsync(() =>
         {
             var current = ResolveCurrentBaseModelRaw();
 
@@ -419,7 +419,7 @@ public partial class ModelDetailViewModel
 
         try
         {
-            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            using var scope = _scopeFactory!.CreateScope();
             var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
             var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(localVersion.ModelId);
@@ -491,7 +491,7 @@ public partial class ModelDetailViewModel
 
         try
         {
-            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            using var scope = _scopeFactory!.CreateScope();
             var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
             var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
@@ -538,7 +538,7 @@ public partial class ModelDetailViewModel
 
         try
         {
-            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            using var scope = _scopeFactory!.CreateScope();
             var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
             var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
@@ -590,7 +590,7 @@ public partial class ModelDetailViewModel
 
         try
         {
-            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            using var scope = _scopeFactory!.CreateScope();
             var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
             var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
@@ -643,7 +643,7 @@ public partial class ModelDetailViewModel
 
         try
         {
-            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            using var scope = _scopeFactory!.CreateScope();
             var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
             var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(localVersion.ModelId);
@@ -700,8 +700,7 @@ public partial class ModelDetailViewModel
     [RelayCommand]
     private async Task UploadThumbnailAsync()
     {
-        var dialog = App.Services?.GetService<IDialogService>();
-        if (dialog is null) return;
+        if (_dialogService is null) return;
 
         var localVersion = SelectedVersionTab?.LocalVersion ?? SourceTile?.SelectedVersion;
         var model = SourceTile?.ModelEntity;
@@ -711,7 +710,7 @@ public partial class ModelDetailViewModel
             return;
         }
 
-        var path = await dialog.ShowOpenFileDialogAsync(
+        var path = await _dialogService.ShowOpenFileDialogAsync(
             "Choose thumbnail image",
             "*.png;*.jpg;*.jpeg;*.webp;*.bmp");
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
@@ -726,7 +725,7 @@ public partial class ModelDetailViewModel
                 return;
             }
 
-            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            using var scope = _scopeFactory!.CreateScope();
             var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
             var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
@@ -762,7 +761,7 @@ public partial class ModelDetailViewModel
             using (var ms = new MemoryStream(data))
             {
                 var bmp = new Bitmap(ms);
-                await Dispatcher.UIThread.InvokeAsync(() => ThumbnailImage = bmp);
+                await _uiScheduler.InvokeAsync(() => ThumbnailImage = bmp);
             }
 
             await PostSaveRefreshAsync(unitOfWork, model.Id);
@@ -999,21 +998,19 @@ public partial class ModelDetailViewModel
             return;
         }
 
-        var owner = (App.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)?.MainWindow;
-        if (owner is null) return;
+        if (_dialogService is null) return;
 
-        var dialog = new AssignCivitaiIdsDialog();
-        await dialog.ShowDialog(owner);
+        var dialogResult = await _dialogService.ShowAssignCivitaiIdsDialogAsync();
 
-        if (!dialog.IsConfirmed || dialog.ResolvedModel is null)
+        if (!dialogResult.IsConfirmed || dialogResult.ResolvedModel is null)
             return;
 
-        var civitaiModel = dialog.ResolvedModel;
-        var civitaiVersion = dialog.ResolvedVersion ?? civitaiModel.ModelVersions.FirstOrDefault();
+        var civitaiModel = dialogResult.ResolvedModel;
+        var civitaiVersion = dialogResult.ResolvedVersion ?? civitaiModel.ModelVersions.FirstOrDefault();
 
         try
         {
-            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            using var scope = _scopeFactory!.CreateScope();
             var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
             var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
@@ -1189,7 +1186,7 @@ public partial class ModelDetailViewModel
             var refreshed = await unitOfWork.Models.GetByIdWithIncludesAsync(dbModel.Id);
             if (refreshed is not null && SourceTile is not null)
             {
-                await Dispatcher.UIThread.InvokeAsync(async () =>
+                await _uiScheduler.InvokeAsync(async () =>
                 {
                     SourceTile.RefreshModelData(refreshed);
                     await LoadAsync(SourceTile);
@@ -1255,7 +1252,7 @@ public partial class ModelDetailViewModel
 
         try
         {
-            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            using var scope = _scopeFactory!.CreateScope();
             var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
             var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(selectedVersion.ModelId);
@@ -1279,7 +1276,7 @@ public partial class ModelDetailViewModel
             var refreshed = await unitOfWork.Models.GetByIdWithIncludesAsync(dbModel.Id);
             if (refreshed is not null)
             {
-                await Dispatcher.UIThread.InvokeAsync(async () =>
+                await _uiScheduler.InvokeAsync(async () =>
                 {
                     tile.RefreshModelData(refreshed);
                     await LoadAsync(tile);
@@ -1317,7 +1314,7 @@ public partial class ModelDetailViewModel
 
         try
         {
-            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            using var scope = _scopeFactory!.CreateScope();
             var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
             // A tile may group multiple Model rows (e.g. multiple versions of
@@ -1343,7 +1340,7 @@ public partial class ModelDetailViewModel
             _logger?.Info(LogCategory.General, "DeleteMetadata",
                 $"Deleted metadata for '{model.Name}' ({deleted} of {ids.Count} grouped model row(s)). Files on disk were not touched.");
 
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            await _uiScheduler.InvokeAsync(() =>
             {
                 // Order matters and each step is required:
                 // 1. RaiseDeleted() — synchronously removes the tile from the
@@ -1382,7 +1379,7 @@ public partial class ModelDetailViewModel
         var refreshed = await unitOfWork.Models.GetByIdWithIncludesAsync(modelId);
         if (refreshed is null) return;
 
-        await Dispatcher.UIThread.InvokeAsync(() =>
+        await _uiScheduler.InvokeAsync(() =>
         {
             SourceTile?.RefreshModelData(refreshed);
             _ = LoadEditableTagsAsync();

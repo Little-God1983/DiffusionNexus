@@ -533,6 +533,9 @@ public partial class App : Application
         // UI-thread scheduler seam over Dispatcher.UIThread (testability; #437)
         services.AddSingleton<IUiScheduler, AvaloniaUiScheduler>();
 
+        // System-clipboard seam (testability; #438)
+        services.AddSingleton<IClipboardService, AvaloniaClipboardService>();
+
         // Thumbnail service for async image loading with LRU cache (singleton)
         services.AddSingleton<IThumbnailService, ThumbnailService>();
 

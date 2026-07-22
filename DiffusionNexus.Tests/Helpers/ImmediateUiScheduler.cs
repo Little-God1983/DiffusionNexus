@@ -34,5 +34,11 @@ internal sealed class ImmediateUiScheduler : IUiScheduler
         return Task.CompletedTask;
     }
 
+    public Task InvokeAsync(Func<Task> action)
+    {
+        InvokeCount++;
+        return action();
+    }
+
     public bool IsOnUiThread => true;
 }

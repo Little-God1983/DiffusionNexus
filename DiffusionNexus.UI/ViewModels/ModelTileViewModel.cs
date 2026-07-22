@@ -9,6 +9,7 @@ using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Installer.SDK.Shared.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Views.Dialogs;
 using Microsoft.EntityFrameworkCore;
@@ -23,6 +24,43 @@ namespace DiffusionNexus.UI.ViewModels;
 /// </summary>
 public partial class ModelTileViewModel : ViewModelBase
 {
+    // #438: constructor-injected replacements for the former App.Services locator
+    // calls woven through this file. Nullable services degrade exactly as the old
+    // null-conditional locator lookups did; the scheduler/clipboard fall back to
+    // shared production instances so design-time / demo / grouping-test construction
+    // (which pass no dependency bundle) keeps working. The scope factory is a
+    // singleton whose CreateScope() is still called per DB operation below.
+    private readonly IUnifiedLogger? _logger;
+    private readonly IServiceScopeFactory? _scopeFactory;
+    private readonly IDialogService? _dialogService;
+    private readonly IVideoThumbnailService? _videoThumbnailService;
+    private readonly IClipboardService _clipboard = AvaloniaClipboardService.Instance;
+    private readonly IUiScheduler _uiScheduler = AvaloniaUiScheduler.Instance;
+
+    /// <summary>
+    /// Design-time / demo constructor. Produces a tile with no backing services —
+    /// commands that need the database or dialogs no-op, and the clipboard/scheduler
+    /// use their shared production defaults.
+    /// </summary>
+    public ModelTileViewModel() { }
+
+    /// <summary>
+    /// Runtime constructor. <paramref name="dependencies"/> carries the services the
+    /// tile previously pulled from <c>App.Services</c> (#438); it is optional so the
+    /// static factory methods and grouping tests keep compiling.
+    /// </summary>
+    public ModelTileViewModel(ModelTileDependencies? dependencies)
+    {
+        if (dependencies is { } d)
+        {
+            _logger = d.Logger;
+            _scopeFactory = d.ScopeFactory;
+            _dialogService = d.DialogService;
+            _videoThumbnailService = d.VideoThumbnailService;
+            _clipboard = d.Clipboard ?? AvaloniaClipboardService.Instance;
+            _uiScheduler = d.UiScheduler ?? AvaloniaUiScheduler.Instance;
+        }
+    }
     /// <summary>
     /// Maximum thumbnail BLOB size (1 MB). Images exceeding this limit are resized
     /// down to <see cref="MaxThumbnailWidth"/> pixels wide before being persisted to
@@ -516,21 +554,9 @@ public partial class ModelTileViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Copies text to the system clipboard via the Avalonia TopLevel.
+    /// Copies text to the system clipboard via the injected clipboard seam.
     /// </summary>
-    private static async Task CopyToClipboardAsync(string text)
-    {
-        var topLevel = Avalonia.Application.Current?.ApplicationLifetime
-            is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
-            ? desktop.MainWindow
-            : null;
-
-        var clipboard = topLevel?.Clipboard;
-        if (clipboard is not null)
-        {
-            await clipboard.SetTextAsync(text);
-        }
-    }
+    private Task CopyToClipboardAsync(string text) => _clipboard.SetTextAsync(text);
 
     /// <summary>
     /// Open model on Civitai. Tries multiple ID sources to build the URL:
@@ -563,8 +589,7 @@ public partial class ModelTileViewModel : ViewModelBase
 
         if (url is null)
         {
-            var logger = App.Services?.GetService<IUnifiedLogger>();
-            logger?.Warn(LogCategory.General, "OpenOnCivitai",
+            _logger?.Warn(LogCategory.General, "OpenOnCivitai",
                 $"No Civitai link available for '{DisplayName}' — run 'Download Metadata' first to sync with Civitai.");
             return;
         }
@@ -606,8 +631,8 @@ public partial class ModelTileViewModel : ViewModelBase
     [RelayCommand]
     private async Task DeleteAsync()
     {
-        var logger = App.Services?.GetService<IUnifiedLogger>();
-        var dialogService = App.Services?.GetService<IDialogService>();
+        var logger = _logger;
+        var dialogService = _dialogService;
 
         if (dialogService is null)
         {
@@ -667,7 +692,7 @@ public partial class ModelTileViewModel : ViewModelBase
         {
             DeleteFilesFromDisk(logger, [path]);
 
-            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            using var scope = _scopeFactory!.CreateScope();
             var dbContext = scope.ServiceProvider
                 .GetRequiredService<IDbContextFactory<DiffusionNexusCoreDbContext>>()
                 .CreateDbContext();
@@ -728,13 +753,9 @@ public partial class ModelTileViewModel : ViewModelBase
     /// </summary>
     private async Task DeleteWithVersionPickerAsync(IUnifiedLogger? logger)
     {
-        // Find the main window for ShowDialog
-        var lifetime = Avalonia.Application.Current?.ApplicationLifetime
-            as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime;
-        var mainWindow = lifetime?.MainWindow;
-        if (mainWindow is null)
+        if (_dialogService is null)
         {
-            logger?.Error(LogCategory.General, "Delete", "Cannot find main window for dialog.");
+            logger?.Error(LogCategory.General, "Delete", "Dialog service unavailable — cannot show version picker.");
             return;
         }
 
@@ -742,12 +763,9 @@ public partial class ModelTileViewModel : ViewModelBase
             ? _allGroupedModels
             : ModelEntity is not null ? new List<Model> { ModelEntity } : [];
 
-        var dialog = new SelectLoraVersionsToDeleteDialog()
-            .WithVersions(DisplayName, Versions, allModels);
+        var result = await _dialogService.ShowSelectLoraVersionsToDeleteDialogAsync(
+            DisplayName, Versions, allModels);
 
-        await dialog.ShowDialog(mainWindow);
-
-        var result = dialog.Result;
         if (result is null || !result.Confirmed || result.SelectedItems.Count == 0)
             return;
 
@@ -863,7 +881,7 @@ public partial class ModelTileViewModel : ViewModelBase
             // Remove entire model entities from the database
             if (modelIds.Count > 0)
             {
-                using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+                using var scope = _scopeFactory!.CreateScope();
                 var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
                 foreach (var modelId in modelIds)
@@ -902,7 +920,7 @@ public partial class ModelTileViewModel : ViewModelBase
 
             if (versionIds.Count > 0)
             {
-                using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+                using var scope = _scopeFactory!.CreateScope();
                 var dbContext = scope.ServiceProvider.GetRequiredService<IDbContextFactory<DiffusionNexusCoreDbContext>>()
                     .CreateDbContext();
                 await using (dbContext)
@@ -1292,7 +1310,7 @@ public partial class ModelTileViewModel : ViewModelBase
             {
                 var bitmap = CreateTileBitmap(data);
                 if (ct.IsCancellationRequested) return;
-                Dispatcher.UIThread.Post(() =>
+                _uiScheduler.Post(() =>
                 {
                     if (ct.IsCancellationRequested) return;
                     ThumbnailImage = bitmap;
@@ -1373,7 +1391,7 @@ public partial class ModelTileViewModel : ViewModelBase
         try
         {
             await Task.Delay(ThumbnailSettleDelayMs, ct).ConfigureAwait(false);
-            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            using var scope = _scopeFactory!.CreateScope();
             var unitOfWork = scope.ServiceProvider.GetRequiredService<DataAccess.UnitOfWork.IUnitOfWork>();
             var (data, mimeType) = await unitOfWork.Models
                 .GetImageThumbnailDataAsync(image.Id, ct)
@@ -1386,7 +1404,7 @@ public partial class ModelTileViewModel : ViewModelBase
                 // Gradual self-healing: resize legacy oversized BLOBs on first read
                 if (data.Length > MaxThumbnailBytes)
                 {
-                    var logger = App.Services?.GetService<IUnifiedLogger>();
+                    var logger = _logger;
                     var (resizedData, resizedMime) = ResizeIfOversized(
                         data, mimeType ?? "image/jpeg", logger, $"ImageId={image.Id}");
 
@@ -1407,7 +1425,7 @@ public partial class ModelTileViewModel : ViewModelBase
                 // assignment needs the UI thread.
                 var bitmap = CreateTileBitmap(data);
                 ct.ThrowIfCancellationRequested();
-                await Dispatcher.UIThread.InvokeAsync(() => ThumbnailImage = bitmap);
+                await _uiScheduler.InvokeAsync(() => ThumbnailImage = bitmap);
             }
             else
             {
@@ -1424,7 +1442,7 @@ public partial class ModelTileViewModel : ViewModelBase
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            var logger = App.Services?.GetService<IUnifiedLogger>();
+            var logger = _logger;
             logger?.Debug(LogCategory.General, "ThumbnailLazyLoad",
                 $"Failed to lazy-load thumbnail for image {image.Id}: {ex.Message}");
         }
@@ -1473,7 +1491,7 @@ public partial class ModelTileViewModel : ViewModelBase
 
             if (localImagePath is null) return;
 
-            var logger = App.Services?.GetService<IUnifiedLogger>();
+            var logger = _logger;
             logger?.Debug(LogCategory.General, "LocalPreview",
                 $"Found local preview for '{DisplayName}': {Path.GetFileName(localImagePath)}");
 
@@ -1510,7 +1528,7 @@ public partial class ModelTileViewModel : ViewModelBase
             {
                 try
                 {
-                    using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+                    using var scope = _scopeFactory!.CreateScope();
                     var dbContext = scope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>();
 
                     var dbVersion = await dbContext.ModelVersions
@@ -1556,7 +1574,7 @@ public partial class ModelTileViewModel : ViewModelBase
             ct.ThrowIfCancellationRequested();
 
             // Display the thumbnail immediately
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            await _uiScheduler.InvokeAsync(() =>
             {
                 try
                 {
@@ -1622,7 +1640,7 @@ public partial class ModelTileViewModel : ViewModelBase
 
             if (staticSibling is not null)
             {
-                var logger = App.Services?.GetService<IUnifiedLogger>();
+                var logger = _logger;
                 logger?.Debug(LogCategory.Network, "ThumbnailDownload",
                     $"Primary image for '{DisplayName}' is video — using static sibling (ImageId={staticSibling.Id})");
 
@@ -1640,7 +1658,7 @@ public partial class ModelTileViewModel : ViewModelBase
     /// </summary>
     private async Task DownloadThumbnailAsync(ModelImage image, CancellationToken ct = default)
     {
-        var logger = App.Services?.GetService<IUnifiedLogger>();
+        var logger = _logger;
         var isVideo = IsVideoPreview(image);
         var previewType = isVideo ? "video" : "image";
         var displayName = DisplayName;
@@ -1710,7 +1728,7 @@ public partial class ModelTileViewModel : ViewModelBase
             ct.ThrowIfCancellationRequested();
 
             // Display the downloaded thumbnail
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            await _uiScheduler.InvokeAsync(() =>
             {
                 try
                 {
@@ -1744,7 +1762,7 @@ public partial class ModelTileViewModel : ViewModelBase
         }
         finally
         {
-            await Dispatcher.UIThread.InvokeAsync(() => IsLoading = false);
+            await _uiScheduler.InvokeAsync(() => IsLoading = false);
         }
     }
 
@@ -1786,11 +1804,11 @@ public partial class ModelTileViewModel : ViewModelBase
     /// The Civitai CDN does not serve static poster images for video URLs;
     /// the <c>/width=300</c> trick only works for image URLs.
     /// </summary>
-    private static async Task<(byte[] Data, string MimeType)> DownloadVideoThumbnailAsync(
+    private async Task<(byte[] Data, string MimeType)> DownloadVideoThumbnailAsync(
         string videoUrl, IUnifiedLogger? logger)
     {
         // FFmpeg frame extraction — the only reliable way to get a poster from a video URL
-        var videoThumbnailService = App.Services?.GetService<IVideoThumbnailService>();
+        var videoThumbnailService = _videoThumbnailService;
         if (videoThumbnailService is null)
         {
             logger?.Warn(LogCategory.General, "ThumbnailDownload",
@@ -2024,15 +2042,15 @@ public partial class ModelTileViewModel : ViewModelBase
     /// Persists downloaded thumbnail bytes to the database for a given ModelImage.
     /// Applies <see cref="ResizeIfOversized"/> as a safety net before writing to DB.
     /// </summary>
-    private static async Task PersistThumbnailAsync(int imageId, byte[] thumbnailData, string mimeType)
+    private async Task PersistThumbnailAsync(int imageId, byte[] thumbnailData, string mimeType)
     {
-        var logger = App.Services?.GetService<IUnifiedLogger>();
+        var logger = _logger;
         try
         {
             // Safety net: resize if somehow oversized bytes reach persist directly
             (thumbnailData, mimeType) = ResizeIfOversized(thumbnailData, mimeType, logger, $"ImageId={imageId}");
 
-            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            using var scope = _scopeFactory!.CreateScope();
             var dbContext = scope.ServiceProvider.GetRequiredService<DataAccess.Data.DiffusionNexusCoreDbContext>();
             var dbImage = await dbContext.ModelImages.FindAsync(imageId);
             if (dbImage is not null)
@@ -2061,11 +2079,13 @@ public partial class ModelTileViewModel : ViewModelBase
     #region Factory Methods
 
     /// <summary>
-    /// Creates a ModelTileViewModel from a Model entity.
+    /// Creates a ModelTileViewModel from a Model entity. <paramref name="dependencies"/>
+    /// carries the services the tile needs at runtime (#438); pass <c>null</c> for
+    /// design-time / grouping-logic tests.
     /// </summary>
-    public static ModelTileViewModel FromModel(Model model)
+    public static ModelTileViewModel FromModel(Model model, ModelTileDependencies? dependencies = null)
     {
-        var vm = new ModelTileViewModel();
+        var vm = new ModelTileViewModel(dependencies);
         vm._allGroupedModels = [model];
         vm._allDatabaseModelIds = [model.Id];
         vm.ModelEntity = model;
@@ -2083,7 +2103,8 @@ public partial class ModelTileViewModel : ViewModelBase
     public static ModelTileViewModel FromModelInLocation(
         IReadOnlyList<Model> models,
         string rootPath,
-        IReadOnlyList<(ModelVersion Version, ModelFile File)> versionFiles)
+        IReadOnlyList<(ModelVersion Version, ModelFile File)> versionFiles,
+        ModelTileDependencies? dependencies = null)
     {
         var map = new Dictionary<int, ModelFile>(versionFiles.Count);
         foreach (var (version, file) in versionFiles)
@@ -2101,7 +2122,7 @@ public partial class ModelTileViewModel : ViewModelBase
             .ThenByDescending(m => m.LastSyncedAt)
             .First();
 
-        var vm = new ModelTileViewModel
+        var vm = new ModelTileViewModel(dependencies)
         {
             _allGroupedModels = models.ToList(),
             _allDatabaseModelIds = models.Select(m => m.Id).ToHashSet(),
@@ -2116,7 +2137,7 @@ public partial class ModelTileViewModel : ViewModelBase
     /// Creates a ModelTileViewModel from multiple Model entities that share the same Civitai page.
     /// Versions from all models are merged into a single tile.
     /// </summary>
-    public static ModelTileViewModel FromModelGroup(IReadOnlyList<Model> models)
+    public static ModelTileViewModel FromModelGroup(IReadOnlyList<Model> models, ModelTileDependencies? dependencies = null)
     {
         // Use the model with the richest data as the primary display model
         var primary = models
@@ -2125,7 +2146,7 @@ public partial class ModelTileViewModel : ViewModelBase
             .ThenByDescending(m => m.LastSyncedAt)
             .First();
 
-        var vm = new ModelTileViewModel();
+        var vm = new ModelTileViewModel(dependencies);
         vm._allGroupedModels = models.ToList();
         vm._allDatabaseModelIds = models.Select(m => m.Id).ToHashSet();
         vm.ModelEntity = primary;

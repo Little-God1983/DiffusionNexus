@@ -12,6 +12,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Infrastructure;
+using DiffusionNexus.Installer.SDK.Shared.Services;
 using DiffusionNexus.UI.Helpers;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Views.Dialogs;
@@ -30,6 +31,19 @@ public partial class ModelDetailViewModel : ViewModelBase
     private readonly ISecureStorage? _secureStorage;
     private readonly IUnifiedLogger? _logger;
     private readonly ICivitaiBaseModelCatalog? _baseModelCatalog;
+
+    // #438: constructor-injected replacements for the former App.Services locator
+    // calls. Nullable services degrade gracefully (as the null-conditional locator
+    // calls did); the scheduler/clipboard fall back to shared production instances
+    // so design-time / demo construction keeps working.
+    private readonly IServiceScopeFactory? _scopeFactory;
+    private readonly IDialogService? _dialogService;
+    private readonly LoraDownloadService? _downloadService;
+    private readonly IDownloadCoordinator? _downloadCoordinator;
+    private readonly ITaskTracker? _taskTracker;
+    private readonly IActivityLogService? _activityLog;
+    private readonly IClipboardService _clipboard = AvaloniaClipboardService.Instance;
+    private readonly IUiScheduler _uiScheduler = AvaloniaUiScheduler.Instance;
 
     /// <summary>
     /// Cached Civitai model data from the initial API fetch.
@@ -209,20 +223,40 @@ public partial class ModelDetailViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Runtime constructor with DI.
+    /// Runtime constructor with DI. The parameters after <paramref name="baseModelCatalog"/>
+    /// are the dependencies the method bodies previously resolved from the
+    /// <c>App.Services</c> locator (#438); they are optional so existing construction
+    /// sites keep compiling, but the production site (<c>LoraViewerViewModel</c>)
+    /// passes them from DI.
     /// </summary>
     public ModelDetailViewModel(
         ICivitaiClient? civitaiClient,
         IAppSettingsService? settingsService,
         ISecureStorage? secureStorage,
         IUnifiedLogger? logger,
-        ICivitaiBaseModelCatalog? baseModelCatalog = null)
+        ICivitaiBaseModelCatalog? baseModelCatalog = null,
+        IServiceScopeFactory? scopeFactory = null,
+        IDialogService? dialogService = null,
+        LoraDownloadService? downloadService = null,
+        IDownloadCoordinator? downloadCoordinator = null,
+        ITaskTracker? taskTracker = null,
+        IActivityLogService? activityLog = null,
+        IClipboardService? clipboard = null,
+        IUiScheduler? uiScheduler = null)
     {
         _civitaiClient = civitaiClient;
         _settingsService = settingsService;
         _secureStorage = secureStorage;
         _logger = logger;
         _baseModelCatalog = baseModelCatalog;
+        _scopeFactory = scopeFactory;
+        _dialogService = dialogService;
+        _downloadService = downloadService;
+        _downloadCoordinator = downloadCoordinator;
+        _taskTracker = taskTracker;
+        _activityLog = activityLog;
+        _clipboard = clipboard ?? AvaloniaClipboardService.Instance;
+        _uiScheduler = uiScheduler ?? AvaloniaUiScheduler.Instance;
     }
 
     #endregion
@@ -341,10 +375,9 @@ public partial class ModelDetailViewModel : ViewModelBase
         }
 
         // Show download destination dialog
-        var dialogService = App.Services?.GetService<IDialogService>();
-        if (dialogService is null) return;
+        if (_dialogService is null) return;
 
-        var result = await dialogService.ShowDownloadLoraVersionDialogAsync(
+        var result = await _dialogService.ShowDownloadLoraVersionDialogAsync(
             ModelName, tab.CivitaiVersion, sourceFolders, CategoryDisplay);
 
         if (!result.Confirmed || string.IsNullOrWhiteSpace(result.TargetFolder))
@@ -372,13 +405,13 @@ public partial class ModelDetailViewModel : ViewModelBase
 
         try
         {
-            var downloadService = App.Services?.GetService<LoraDownloadService>();
+            var downloadService = _downloadService;
             if (downloadService is not null)
             {
                 // Route through IDownloadCoordinator so this aggregates with any
                 // other downloads in flight (Civitai queue, etc.) instead of stealing
                 // the single-slot activity-log progress.
-                var coordinator = App.Services?.GetService<IDownloadCoordinator>();
+                var coordinator = _downloadCoordinator;
                 var tcs = new TaskCompletionSource<bool>();
 
                 async Task<bool> RunAsync(IProgress<DownloadTaskProgress>? progress, CancellationToken ct)
@@ -390,12 +423,12 @@ public partial class ModelDetailViewModel : ViewModelBase
                         taskName,
                         reportProgress: (pct, msg) =>
                             progress?.Report(new DownloadTaskProgress((int)(pct * 100), msg)),
-                        completed: () => Dispatcher.UIThread.Post(async () =>
+                        completed: () => _uiScheduler.Post(async () =>
                         {
                             await RefreshAfterDownloadAsync(targetPath);
                             tcs.TrySetResult(true);
                         }),
-                        failed: () => Dispatcher.UIThread.Post(() =>
+                        failed: () => _uiScheduler.Post(() =>
                         {
                             tab.IsDownloading = false;
                             tcs.TrySetResult(false);
@@ -414,8 +447,8 @@ public partial class ModelDetailViewModel : ViewModelBase
                 return;
             }
 
-            var taskTracker = App.Services?.GetService<ITaskTracker>();
-            activityLog = App.Services?.GetService<IActivityLogService>();
+            var taskTracker = _taskTracker;
+            activityLog = _activityLog;
             taskHandle = taskTracker?.BeginTask(taskName, LogCategory.Download);
 
             activityLog?.StartDownloadProgress(taskName);
@@ -542,7 +575,7 @@ public partial class ModelDetailViewModel : ViewModelBase
         finally
         {
             taskHandle?.Dispose();
-            await Dispatcher.UIThread.InvokeAsync(() => tab.IsDownloading = false);
+            await _uiScheduler.InvokeAsync(() => tab.IsDownloading = false);
         }
     }
 
@@ -556,9 +589,9 @@ public partial class ModelDetailViewModel : ViewModelBase
         try
         {
             var sourceTile = SourceTile;
-            if (sourceTile is null) return;
+            if (sourceTile is null || _scopeFactory is null) return;
 
-            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            using var scope = _scopeFactory.CreateScope();
             var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
             // Find the model that owns the file we just downloaded (targeted query, not full DB load)
@@ -571,7 +604,7 @@ public partial class ModelDetailViewModel : ViewModelBase
 
             if (refreshedModel is not null)
             {
-                await Dispatcher.UIThread.InvokeAsync(() =>
+                await _uiScheduler.InvokeAsync(() =>
                 {
                     sourceTile.RefreshModelData(refreshedModel);
 
@@ -642,15 +675,14 @@ public partial class ModelDetailViewModel : ViewModelBase
     {
         try
         {
-            var scopeFactory = App.Services?.GetService<IServiceScopeFactory>();
-            if (scopeFactory is null)
+            if (_scopeFactory is null)
             {
                 _logger?.Warn(LogCategory.Download, "LoraDownload",
                     "Cannot persist to database: IServiceScopeFactory not available");
                 return;
             }
 
-            using var scope = scopeFactory.CreateScope();
+            using var scope = _scopeFactory.CreateScope();
             var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
             // Skip if file is already tracked (e.g., from a prior DiscoverNewFilesAsync)
@@ -1227,7 +1259,7 @@ public partial class ModelDetailViewModel : ViewModelBase
             _logger?.Debug(LogCategory.Network, "LoraUpdateChecker",
                 $"Update check completed for '{tileName}' (trigger={LoraUpdateTriggerSource.DetailView}, civitaiId={modelId.Value}): remoteVersions={totalRemoteVersions} ({deltaText} vs previous {previousTotal})");
 
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            await _uiScheduler.InvokeAsync(() =>
             {
                 // Refresh the tile's "+N" badge in-place without waiting for a reload.
                 tile.UpdateRemoteVersionCount(totalRemoteVersions, checkedAtUtc);
@@ -1286,10 +1318,9 @@ public partial class ModelDetailViewModel : ViewModelBase
             var modelIds = tile.GetAllModelIds();
             if (modelIds.Count == 0) return;
 
-            var scopeFactory = App.Services?.GetService<IServiceScopeFactory>();
-            if (scopeFactory is null) return;
+            if (_scopeFactory is null) return;
 
-            using var scope = scopeFactory.CreateScope();
+            using var scope = _scopeFactory.CreateScope();
             var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
             foreach (var id in modelIds)
@@ -1430,7 +1461,7 @@ public partial class ModelDetailViewModel : ViewModelBase
 
             ct.ThrowIfCancellationRequested();
 
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            await _uiScheduler.InvokeAsync(() =>
             {
                 try
                 {
@@ -1459,9 +1490,10 @@ public partial class ModelDetailViewModel : ViewModelBase
     /// The injected <c>_settingsService</c> may hold a cached <see cref="AppSettings"/> entity from
     /// a long-lived DbContext that was loaded before the key was saved via the Settings view.
     /// </summary>
-    private static async Task<string?> GetApiKeyAsync()
+    private async Task<string?> GetApiKeyAsync()
     {
-        using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+        if (_scopeFactory is null) return null;
+        using var scope = _scopeFactory.CreateScope();
         var settingsService = scope.ServiceProvider.GetRequiredService<IAppSettingsService>();
         return await settingsService.GetCivitaiApiKeyAsync();
     }
@@ -1477,44 +1509,26 @@ public partial class ModelDetailViewModel : ViewModelBase
         if (!string.IsNullOrWhiteSpace(existingKey))
             return true;
 
-        // Show the token dialog on the UI thread
-        return await Dispatcher.UIThread.InvokeAsync(async () =>
+        if (_dialogService is null) return false;
+
+        // The dialog service marshals to the UI thread internally.
+        var result = await _dialogService.ShowCivitaiTokenDialogAsync();
+
+        if (!result.IsSaved || string.IsNullOrWhiteSpace(result.TokenText))
+            return false;
+
+        // Persist the token (encrypted) via the settings service
+        if (_settingsService is not null)
         {
-            var mainWindow = (App.Current?.ApplicationLifetime
-                as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.MainWindow;
-            if (mainWindow is null) return false;
-
-            var dialog = new CivitaiTokenDialog();
-            await dialog.ShowDialog(mainWindow);
-
-            if (!dialog.IsSaved || string.IsNullOrWhiteSpace(dialog.TokenText))
-                return false;
-
-            // Persist the token (encrypted) via the settings service
-            if (_settingsService is not null)
-            {
-                await _settingsService.SetCivitaiApiKeyAsync(dialog.TokenText);
-                _logger?.Info(LogCategory.General, "CivitaiToken",
-                    "Civitai API token saved from download prompt");
-            }
-
-            return true;
-        });
-    }
-
-    private static async Task CopyToClipboardAsync(string text)
-    {
-        var topLevel = Avalonia.Application.Current?.ApplicationLifetime
-            is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
-            ? desktop.MainWindow
-            : null;
-
-        var clipboard = topLevel?.Clipboard;
-        if (clipboard is not null)
-        {
-            await clipboard.SetTextAsync(text);
+            await _settingsService.SetCivitaiApiKeyAsync(result.TokenText);
+            _logger?.Info(LogCategory.General, "CivitaiToken",
+                "Civitai API token saved from download prompt");
         }
+
+        return true;
     }
+
+    private Task CopyToClipboardAsync(string text) => _clipboard.SetTextAsync(text);
 
     #endregion
 }

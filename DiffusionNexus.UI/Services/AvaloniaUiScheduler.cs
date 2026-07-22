@@ -23,5 +23,8 @@ public sealed class AvaloniaUiScheduler : IUiScheduler
     public Task InvokeAsync(Action action) => Dispatcher.UIThread.InvokeAsync(action).GetTask();
 
     /// <inheritdoc/>
+    public Task InvokeAsync(Func<Task> action) => Dispatcher.UIThread.InvokeAsync(action);
+
+    /// <inheritdoc/>
     public bool IsOnUiThread => Dispatcher.UIThread.CheckAccess();
 }
