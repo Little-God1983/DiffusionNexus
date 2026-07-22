@@ -270,7 +270,16 @@ public partial class App : Application
             }
             else
             {
+                // DiffusionFeatureFlags.UseLocalDiffusionBackend is currently hardcoded to `true`
+                // (see its TODO(v2-backend-dropdown) doc comment — it's slated to become a runtime
+                // AppSettings option once the backend dropdown ships). While it's a const, the
+                // compiler proves this branch unreachable and reports CS0162; the branch itself is
+                // intentional — it's what keeps the "diffusion-engine" ready-check from hanging when
+                // the flag is flipped to `false` locally — so it's suppressed here rather than
+                // deleted.
+#pragma warning disable CS0162 // Unreachable code detected
                 startupProgress.Complete("diffusion-engine");
+#pragma warning restore CS0162
             }
         }
         catch (Exception ex)
