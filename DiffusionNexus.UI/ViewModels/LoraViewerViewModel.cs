@@ -505,8 +505,38 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// tile with multiple version buttons.
     /// Delegates to <see cref="TileGroupingHelper"/> for testability.
     /// </summary>
-    private static List<ModelTileViewModel> GroupModelsIntoTiles(IReadOnlyList<Model> allModels)
-        => TileGroupingHelper.GroupModelsIntoTiles(allModels);
+    private List<ModelTileViewModel> GroupModelsIntoTiles(IReadOnlyList<Model> allModels)
+        => TileGroupingHelper.GroupModelsIntoTiles(allModels, BuildTileDependencies());
+
+    /// <summary>
+    /// Builds the dependency bundle each freshly-created <see cref="ModelTileViewModel"/>
+    /// is constructed with (#438). Resolves from <c>App.Services</c> here — the tile no
+    /// longer reaches into the locator itself. Returns an all-null bundle at design time
+    /// (no <c>App.Services</c>), which is exactly how the tile behaved before.
+    /// </summary>
+    private ModelTileDependencies BuildTileDependencies()
+    {
+        var sp = App.Services;
+        return new ModelTileDependencies(
+            Logger: _logger,
+            ScopeFactory: sp?.GetService<IServiceScopeFactory>(),
+            DialogService: TryResolveDialogService(sp),
+            VideoThumbnailService: sp?.GetService<IVideoThumbnailService>(),
+            Clipboard: sp?.GetService<DiffusionNexus.Installer.SDK.Shared.Services.IClipboardService>(),
+            UiScheduler: sp?.GetService<IUiScheduler>());
+    }
+
+    /// <summary>
+    /// Resolves <see cref="IDialogService"/> defensively: its DI factory throws when the
+    /// main window is not available yet. Tiles are normally built after the window exists,
+    /// but guarding keeps an early / design-time build from throwing — the tile just gets
+    /// a null dialog service (delete no-ops with a logged error) until the next rebuild.
+    /// </summary>
+    private static IDialogService? TryResolveDialogService(IServiceProvider? sp)
+    {
+        try { return sp?.GetService<IDialogService>(); }
+        catch { return null; }
+    }
 
     /// <summary>
     /// Download missing metadata from Civitai for models that were discovered locally.
@@ -756,8 +786,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// map for that location so the version switcher and OpenFolder/Delete work
     /// correctly. Issue #380.
     /// </summary>
-    private static List<ModelTileViewModel> BuildPerLocationTiles(IReadOnlyList<InstalledModelFile> files)
+    private List<ModelTileViewModel> BuildPerLocationTiles(IReadOnlyList<InstalledModelFile> files)
     {
+        var dependencies = BuildTileDependencies();
         return files
             // Group by Civitai page so two Model rows that point at the same page (legacy
             // local-discovery duplicates) collapse into one tile; fall back to Model.Id
@@ -769,7 +800,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             {
                 var models = g.Select(f => f.Model).DistinctBy(m => m.Id).ToList();
                 var versionFiles = g.Select(f => (f.Version, f.File)).ToList();
-                return ModelTileViewModel.FromModelInLocation(models, g.Key.SourceRoot, versionFiles);
+                return ModelTileViewModel.FromModelInLocation(models, g.Key.SourceRoot, versionFiles, dependencies);
             })
             .ToList();
     }

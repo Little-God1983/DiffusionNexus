@@ -22,7 +22,9 @@ internal static class TileGroupingHelper
     /// Within each group, re-discovery duplicates (same filename) are collapsed — only the
     /// model with the richest metadata is kept per unique filename.
     /// </summary>
-    internal static List<ModelTileViewModel> GroupModelsIntoTiles(IReadOnlyList<Model> allModels)
+    internal static List<ModelTileViewModel> GroupModelsIntoTiles(
+        IReadOnlyList<Model> allModels,
+        ModelTileDependencies? dependencies = null)
     {
         var tiles = new List<ModelTileViewModel>();
 
@@ -44,8 +46,8 @@ internal static class TileGroupingHelper
                 consumed.Add(m.Id);
 
             var tile = deduped.Count == 1
-                ? ModelTileViewModel.FromModel(deduped[0])
-                : ModelTileViewModel.FromModelGroup(deduped);
+                ? ModelTileViewModel.FromModel(deduped[0], dependencies)
+                : ModelTileViewModel.FromModelGroup(deduped, dependencies);
 
             // Track every original DB id (incl. dropped duplicates) so destructive
             // ops like "Delete Metadata" don't leave orphan rows behind.
@@ -68,8 +70,8 @@ internal static class TileGroupingHelper
                 consumed.Add(m.Id);
 
             var tile = deduped.Count == 1
-                ? ModelTileViewModel.FromModel(deduped[0])
-                : ModelTileViewModel.FromModelGroup(deduped);
+                ? ModelTileViewModel.FromModel(deduped[0], dependencies)
+                : ModelTileViewModel.FromModelGroup(deduped, dependencies);
 
             tile.RegisterAdditionalDatabaseIds(groupModels.Select(m => m.Id));
 
