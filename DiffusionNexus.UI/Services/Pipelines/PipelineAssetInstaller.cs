@@ -4,10 +4,12 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using DiffusionNexus.Civitai;
+using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Installer.SDK.Models.Entities;
@@ -113,6 +115,35 @@ public sealed class PipelineAssetInstaller : IPipelineAssetInstaller, IDisposabl
         var hfToken = await _settings.GetHuggingfaceApiKeyAsync(cancellationToken).ConfigureAwait(false);
         var civitaiKey = await _settings.GetCivitaiApiKeyAsync(cancellationToken).ConfigureAwait(false);
 
+        var errors = await InstallAssetsAsync(
+            manifest, missing, downloadRoot, vramGb, hfToken, civitaiKey, cancellationToken).ConfigureAwait(false);
+
+        if (errors.Count > 0)
+            throw new InvalidOperationException(string.Join(Environment.NewLine, errors));
+
+        var afterRoots = await _backendProvider.GetComfyUiModelsRootsAsync(cancellationToken).ConfigureAwait(false);
+        return await ComputeReadinessAsync(manifest, afterRoots, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Downloads every asset named in <paramref name="missingAssetNames"/>. A failure on one
+    /// asset is collected and the remaining assets are still attempted — one gated Civitai LoRA
+    /// (e.g. HTTP 401 without an API key) must not abort the rest of the workload install.
+    /// </summary>
+    /// <returns>One error line per failed asset; empty when everything succeeded.</returns>
+    internal async Task<IReadOnlyList<string>> InstallAssetsAsync(
+        PipelineManifest manifest,
+        IReadOnlyCollection<string> missingAssetNames,
+        string downloadRoot,
+        int vramGb,
+        string? hfToken,
+        string? civitaiKey,
+        CancellationToken cancellationToken)
+    {
+        var missing = missingAssetNames as ISet<string>
+            ?? missingAssetNames.ToHashSet(StringComparer.Ordinal);
+        var errors = new List<string>();
+
         foreach (var asset in manifest.Assets)
         {
             if (!missing.Contains(asset.Name))
@@ -120,17 +151,30 @@ public sealed class PipelineAssetInstaller : IPipelineAssetInstaller, IDisposabl
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            var targetDir = Path.Combine(downloadRoot, asset.TargetSubfolder);
-            Directory.CreateDirectory(targetDir);
+            try
+            {
+                var targetDir = Path.Combine(downloadRoot, asset.TargetSubfolder);
+                Directory.CreateDirectory(targetDir);
 
-            if (asset.Kind == PipelineAssetKind.Lora && asset.CivitaiModelId is int modelId)
-                await InstallCivitaiLoraAsync(asset, modelId, targetDir, civitaiKey, cancellationToken).ConfigureAwait(false);
-            else
-                await InstallHuggingFaceAssetAsync(asset, targetDir, vramGb, hfToken, cancellationToken).ConfigureAwait(false);
+                if (asset.Kind == PipelineAssetKind.Lora && asset.CivitaiModelId is int modelId)
+                    await InstallCivitaiLoraAsync(asset, modelId, targetDir, civitaiKey, cancellationToken).ConfigureAwait(false);
+                else
+                    await InstallHuggingFaceAssetAsync(asset, targetDir, vramGb, hfToken, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error(ex, "Pipeline asset install failed for {Asset}", asset.Name);
+                errors.Add(ex.Message.StartsWith(asset.Name + ":", StringComparison.Ordinal)
+                    ? ex.Message
+                    : $"{asset.Name}: {ex.Message}");
+            }
         }
 
-        var afterRoots = await _backendProvider.GetComfyUiModelsRootsAsync(cancellationToken).ConfigureAwait(false);
-        return await ComputeReadinessAsync(manifest, afterRoots, cancellationToken).ConfigureAwait(false);
+        return errors;
     }
 
     /// <inheritdoc />
@@ -140,9 +184,7 @@ public sealed class PipelineAssetInstaller : IPipelineAssetInstaller, IDisposabl
         foreach (var root in roots)
         {
             var hit = FindLoraByCivitaiModelId(root, civitaiModelId);
-            // FindLoraByCivitaiModelId may return the sidecar path when no weights file sits beside it;
-            // for inference we need the actual .safetensors.
-            if (hit is not null && hit.EndsWith(".safetensors", StringComparison.OrdinalIgnoreCase))
+            if (hit is not null)
                 return hit;
         }
         return null;
@@ -165,7 +207,7 @@ public sealed class PipelineAssetInstaller : IPipelineAssetInstaller, IDisposabl
         return null;
     }
 
-    private static PipelineReadiness BuildReadiness(PipelineManifest manifest, IReadOnlyList<string> roots)
+    internal static PipelineReadiness BuildReadiness(PipelineManifest manifest, IReadOnlyList<string> roots)
     {
         var states = new List<PipelineAssetState>(manifest.Assets.Count);
 
@@ -343,7 +385,13 @@ public sealed class PipelineAssetInstaller : IPipelineAssetInstaller, IDisposabl
         var fileName = primary?.Name ?? $"civitai_{modelId}_{version.Id}.safetensors";
         var target = Path.Combine(targetDir, fileName);
         if (File.Exists(target))
+        {
+            // Self-heal: builds that pre-date the sidecar write left the weights undetectable,
+            // so the asset showed as missing forever while re-installs bailed out right here.
+            if (!File.Exists(Path.ChangeExtension(target, ".civitai.info")))
+                WriteCivitaiInfoSidecar(target, version, modelId);
             return;
+        }
 
         var earlyAccess = version.EarlyAccessTimeFrame > 0
             || string.Equals(version.Availability, "EarlyAccess", StringComparison.OrdinalIgnoreCase);
@@ -379,8 +427,37 @@ public sealed class PipelineAssetInstaller : IPipelineAssetInstaller, IDisposabl
             throw new InvalidOperationException(lastError ?? $"{asset.Name}: download failed.{hint}");
         }
 
+        // Link the file to its Civitai model so the readiness check (sidecar modelId scan)
+        // and the run screen's LoRA lookup can find it again.
+        WriteCivitaiInfoSidecar(target, version, modelId);
+
         _unifiedLogger?.Info(LogCategory.Download, "Pipelines", $"Downloaded {fileName} for pipeline LoRA '{asset.Name}'.");
     }
+
+    /// <summary>
+    /// Writes the <c>.civitai.info</c> sidecar next to a downloaded LoRA weights file. The
+    /// sidecar is how the app links a file on disk back to its Civitai model — without it,
+    /// <see cref="FindLoraByCivitaiModelId"/> (and therefore the workload readiness check and
+    /// the pipeline run screen) can never recognise the download. <paramref name="modelId"/>
+    /// is stamped into the payload because versions nested in <c>/api/v1/models/{id}</c>
+    /// responses do not always carry their parent model id. Best-effort: a sidecar write
+    /// failure must never fail the download itself.
+    /// </summary>
+    internal static void WriteCivitaiInfoSidecar(string weightsPath, CivitaiModelVersion version, int modelId)
+    {
+        try
+        {
+            var payload = version.ModelId == modelId ? version : version with { ModelId = modelId };
+            var json = JsonSerializer.Serialize(payload, SidecarJsonOptions);
+            File.WriteAllText(Path.ChangeExtension(weightsPath, ".civitai.info"), json);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning(ex, "Failed to write .civitai.info sidecar next to {Weights}", weightsPath);
+        }
+    }
+
+    private static readonly JsonSerializerOptions SidecarJsonOptions = new() { WriteIndented = true };
 
     // ── Disk checks ────────────────────────────────────────────────────────────
 
@@ -449,7 +526,9 @@ public sealed class PipelineAssetInstaller : IPipelineAssetInstaller, IDisposabl
     /// <summary>
     /// Finds a LoRA previously downloaded from the given Civitai model by scanning for a
     /// <c>*.civitai.info</c> sidecar containing <c>"modelId": &lt;id&gt;</c>. Returns the matching
-    /// weights file (same base name + <c>.safetensors</c>) when present, else the sidecar path.
+    /// weights file (same base name + <c>.safetensors</c>), or <c>null</c> when no sidecar
+    /// matches — a sidecar whose weights file was deleted does not count, otherwise the
+    /// readiness check would report an uninstallable LoRA as present.
     /// </summary>
     private static string? FindLoraByCivitaiModelId(string root, int modelId)
     {
@@ -470,9 +549,9 @@ public sealed class PipelineAssetInstaller : IPipelineAssetInstaller, IDisposabl
                 if (!Regex.IsMatch(text, pattern))
                     continue;
 
-                var baseName = sidecar[..^".civitai.info".Length];
-                var weights = baseName + ".safetensors";
-                return File.Exists(weights) ? weights : sidecar;
+                var weights = sidecar[..^".civitai.info".Length] + ".safetensors";
+                if (File.Exists(weights))
+                    return weights;
             }
         }
         catch (Exception ex)
