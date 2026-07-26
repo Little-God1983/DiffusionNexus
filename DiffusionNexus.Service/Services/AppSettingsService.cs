@@ -1,3 +1,4 @@
+using DiffusionNexus.DataAccess.Exceptions;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Services;
@@ -51,7 +52,120 @@ public sealed class AppSettingsService : IAppSettingsService
             await RemoveDuplicateCategoriesAsync(settings, cancellationToken).ConfigureAwait(false);
         }
 
+        settings = await RemoveDuplicateFolderRowsAsync(settings, cancellationToken).ConfigureAwait(false);
+
         return settings;
+    }
+
+    /// <summary>
+    /// Prunes folder rows that sit duplicated in the database (historical concurrent
+    /// startup saves) from the Generation Gallery, LoRA source, and Base Model Folder
+    /// lists — same self-healing idea as <see cref="RemoveDuplicateCategoriesAsync"/>.
+    /// The row worth keeping wins: ⭐ default, then installer-linked, then persisted.
+    /// </summary>
+    private async Task<AppSettings> RemoveDuplicateFolderRowsAsync(AppSettings settings, CancellationToken cancellationToken)
+    {
+        var removed =
+            PruneDuplicates(settings.LoraSources, s => s.FolderPath,
+                s => (s.Id > 0 ? 2 : 0) + (s.IsEnabled ? 1 : 0),
+                _unitOfWork.AppSettings.RemoveLoraSource)
+            + PruneDuplicates(settings.ImageGalleries, g => g.FolderPath,
+                g => (g.InstallerPackageId is not null ? 4 : 0) + (g.Id > 0 ? 2 : 0) + (g.IsEnabled ? 1 : 0),
+                _unitOfWork.AppSettings.RemoveImageGallery)
+            + PruneDuplicates(settings.BaseModelFolders, f => f.FolderPath,
+                f => (f.IsDefault ? 8 : 0) + (f.InstallerPackageId is not null ? 4 : 0) + (f.Id > 0 ? 2 : 0) + (f.IsEnabled ? 1 : 0),
+                _unitOfWork.AppSettings.RemoveBaseModelFolder);
+
+        if (removed == 0)
+        {
+            return settings;
+        }
+
+        try
+        {
+            await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            return settings;
+        }
+        catch (ConcurrencyConflictException)
+        {
+            // Another context pruned the same duplicates first (0-row DELETE).
+            // Discard the poisoned entries and hand back a fresh read instead.
+            _unitOfWork.ClearChangeTracker();
+            return await _unitOfWork.AppSettings
+                .GetSettingsWithIncludesAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Removes all but the highest-scoring row per normalized folder path from both
+    /// the navigation collection and the context. Blank paths are left alone.
+    /// </summary>
+    private static int PruneDuplicates<T>(
+        ICollection<T> rows,
+        Func<T, string?> pathOf,
+        Func<T, int> keepScore,
+        Action<T> removeAction)
+    {
+        var duplicates = rows
+            .GroupBy(r => NormalizeFolderKey(pathOf(r)), StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Key.Length > 0 && g.Count() > 1)
+            .SelectMany(g => g.OrderByDescending(keepScore).Skip(1))
+            .ToList();
+
+        foreach (var duplicate in duplicates)
+        {
+            removeAction(duplicate);
+            rows.Remove(duplicate);
+        }
+
+        return duplicates.Count;
+    }
+
+    /// <summary>
+    /// Keeps only the highest-scoring entry per normalized folder path, preserving
+    /// the original order of the survivors. Blank paths are never merged.
+    /// </summary>
+    private static List<T> DedupeFolderRows<T>(List<T> rows, Func<T, string?> pathOf, Func<T, int> keepScore)
+    {
+        if (rows.Count < 2)
+        {
+            return rows;
+        }
+
+        return rows
+            .Select((row, index) => (Row: row, Index: index))
+            .GroupBy(x => NormalizeFolderKey(pathOf(x.Row)), StringComparer.OrdinalIgnoreCase)
+            .SelectMany(g => g.Key.Length == 0
+                ? g.AsEnumerable()
+                : new[] { g.OrderByDescending(x => keepScore(x.Row)).ThenBy(x => x.Index).First() })
+            .OrderBy(x => x.Index)
+            .Select(x => x.Row)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Comparison key for folder paths: full form when resolvable, trailing
+    /// separators trimmed. Case-insensitive comparison is the caller's job.
+    /// </summary>
+    private static string NormalizeFolderKey(string? path)
+    {
+        var trimmed = path?.Trim() ?? string.Empty;
+        if (trimmed.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            trimmed = Path.GetFullPath(trimmed);
+        }
+        catch (Exception)
+        {
+            // Invalid path characters — compare the raw string instead.
+        }
+
+        return Path.TrimEndingDirectorySeparator(trimmed);
     }
 
     /// <summary>
@@ -152,6 +266,14 @@ public sealed class AppSettingsService : IAppSettingsService
         var incomingFolderData = settings.BaseModelFolders
             .Select(f => new { f.Id, f.FolderPath, f.IsEnabled, f.Order, f.IsDefault, f.InstallerPackageId })
             .ToList();
+
+        // A folder must never appear twice in a list (case-insensitive, trailing
+        // separators ignored). Persisted rows outrank new ones so their FK links
+        // survive; the ⭐ default outranks everything.
+        incomingSourceData = DedupeFolderRows(incomingSourceData, d => d.FolderPath, d => d.Id > 0 ? 1 : 0);
+        incomingGalleryData = DedupeFolderRows(incomingGalleryData, d => d.FolderPath, d => d.Id > 0 ? 1 : 0);
+        incomingFolderData = DedupeFolderRows(incomingFolderData, d => d.FolderPath,
+            d => (d.IsDefault ? 4 : 0) + (d.InstallerPackageId is not null ? 2 : 0) + (d.Id > 0 ? 1 : 0));
 
         // Sync against database truth, not this context's identity map — rows
         // deleted by another context would otherwise still sit in the tracked
