@@ -47,6 +47,39 @@ public class SettingsExportServiceTests : IDisposable
         return path;
     }
 
+    [Fact]
+    public async Task BaseModelFoldersRoundTripThroughExportAndImport()
+    {
+        GivenCurrentSettings(new AppSettings
+        {
+            Id = 1,
+            BaseModelFolders =
+            [
+                new BaseModelFolder { FolderPath = @"D:\ModelsA", IsEnabled = true, Order = 0, IsDefault = false, InstallerPackageId = 7 },
+                new BaseModelFolder { FolderPath = @"E:\ModelsB", IsEnabled = false, Order = 1, IsDefault = true },
+            ],
+        });
+        var getSaved = GivenSaveIsCaptured();
+        var sut = CreateSut();
+        var path = PathFor("base-model-folders.json");
+
+        await sut.ExportAsync(path);
+        await sut.ImportAsync(path);
+
+        var saved = getSaved();
+        saved.Should().NotBeNull();
+        saved!.BaseModelFolders.Should().HaveCount(2);
+
+        var first = saved.BaseModelFolders.First(f => f.FolderPath == @"D:\ModelsA");
+        first.IsEnabled.Should().BeTrue();
+        first.IsDefault.Should().BeFalse();
+        first.InstallerPackageId.Should().BeNull("package links are machine-specific and must not be exported");
+
+        var second = saved.BaseModelFolders.First(f => f.FolderPath == @"E:\ModelsB");
+        second.IsEnabled.Should().BeFalse();
+        second.IsDefault.Should().BeTrue();
+    }
+
     private static AppSettings FullyPopulatedSettings() => new()
     {
         Id = 1,

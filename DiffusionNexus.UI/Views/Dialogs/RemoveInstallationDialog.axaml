@@ -1,0 +1,74 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:DiffusionNexus.UI.Views.Dialogs"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.RemoveInstallationDialog"
+        x:DataType="local:RemoveInstallationDialog"
+        Title="Remove Installation"
+        Width="480"
+        MaxHeight="620"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="#2D2D30">
+
+  <StackPanel Margin="20" Spacing="12">
+
+    <!-- Message -->
+    <TextBlock Text="{Binding Message}"
+               TextWrapping="Wrap"
+               FontSize="14"
+               Foreground="White"/>
+
+    <!-- Linked settings cleanup. A ComfyUI install sharing model trees via
+         extra_model_paths.yaml can contribute a dozen long paths — the section
+         scrolls so the buttons below always stay reachable. -->
+    <StackPanel Spacing="6">
+      <TextBlock Text="Remove these from settings:"
+                 FontWeight="SemiBold"
+                 FontSize="13"
+                 Foreground="White"/>
+
+      <ScrollViewer MaxHeight="260" VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="6">
+          <CheckBox IsChecked="{Binding RemoveGalleries, Mode=TwoWay}"
+                    IsEnabled="{Binding HasGalleries}">
+            <TextBlock Text="{Binding GalleryLabel}" TextWrapping="Wrap"/>
+          </CheckBox>
+
+          <CheckBox IsChecked="{Binding RemoveLoraSources, Mode=TwoWay}"
+                    IsEnabled="{Binding HasLoraSources}">
+            <TextBlock Text="{Binding LoraSourceLabel}" TextWrapping="Wrap"/>
+          </CheckBox>
+
+          <CheckBox IsChecked="{Binding RemoveBaseModelFolders, Mode=TwoWay}"
+                    IsEnabled="{Binding HasBaseModelFolders}">
+            <TextBlock Text="{Binding BaseModelFolderLabel}" TextWrapping="Wrap"/>
+          </CheckBox>
+        </StackPanel>
+      </ScrollViewer>
+    </StackPanel>
+
+    <!-- Consequence info -->
+    <Border Background="#3A3222" CornerRadius="4" Padding="10">
+      <TextBlock Text="Removed folders are no longer scanned by Diffusion Nexus — models and images stored in them can't be found in the future."
+                 TextWrapping="Wrap"
+                 FontSize="12"
+                 Foreground="#FBBF24"/>
+    </Border>
+
+    <!-- Buttons -->
+    <StackPanel Orientation="Horizontal"
+                HorizontalAlignment="Right"
+                Spacing="8">
+      <Button Content="Cancel"
+              Width="80"
+              Click="OnCancelClick"/>
+      <Button Content="Yes"
+              Width="80"
+              IsDefault="True"
+              Background="#D9534F"
+              Click="OnYesClick"/>
+    </StackPanel>
+
+  </StackPanel>
+</Window>

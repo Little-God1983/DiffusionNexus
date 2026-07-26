@@ -82,10 +82,11 @@ public sealed class LocalDiffusionBackendProvider : IAsyncDisposable
         => _backend?.UnloadAllAsync(cancellationToken) ?? Task.CompletedTask;
 
     /// <summary>
-    /// Resolves the ComfyUI <c>models/</c> roots without constructing the (heavier) diffusion
-    /// backend or loading any native library. The first entry is the default ComfyUI installation
-    /// — the canonical download target for pipeline assets. Returns an empty list when no usable
-    /// ComfyUI installation is registered; callers should surface a friendly message in that case.
+    /// Resolves the model search roots without constructing the (heavier) diffusion backend or
+    /// loading any native library. Base Model Folders (including the LocalAppData fallback) come
+    /// first, followed by every registered ComfyUI installation's models roots. Download targets
+    /// are chosen via <see cref="IModelFolderCatalog"/>, not by position in this list. Returns an
+    /// empty list only when neither a base model folder nor a usable ComfyUI installation exists.
     /// </summary>
     public Task<IReadOnlyList<string>> GetComfyUiModelsRootsAsync(CancellationToken cancellationToken = default)
         => ResolveModelsRootsAsync(cancellationToken);
@@ -97,6 +98,25 @@ public sealed class LocalDiffusionBackendProvider : IAsyncDisposable
             // Use IUnitOfWork (same path as InstallerManagerViewModel). Repositories are NOT
             // registered directly in DI — they are only accessible through the Unit of Work.
             using var scope = _serviceProvider.CreateScope();
+
+            // Base Model Folders (incl. the LocalAppData fallback) come first: they are the
+            // preferred download targets, and prepending them here gives every consumer
+            // (pipeline readiness, LoRA lookups, local inference) the same superset view.
+            var catalogRoots = new List<string>();
+            try
+            {
+                var catalog = scope.ServiceProvider.GetRequiredService<IModelFolderCatalog>();
+                catalogRoots.AddRange(await catalog.GetSearchRootsAsync(ct).ConfigureAwait(false));
+                foreach (var root in catalogRoots)
+                {
+                    Logger.Information("Base model folder → models search root: {Root}", root);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning(ex, "Failed to resolve base model folders; continuing with ComfyUI roots only.");
+            }
+
             var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
             var packages = await uow.InstallerPackages.GetAllAsync(ct).ConfigureAwait(false);
 
@@ -109,18 +129,18 @@ public sealed class LocalDiffusionBackendProvider : IAsyncDisposable
                 .ThenBy(p => p.Name)
                 .ToList();
 
-            if (comfyInstalls.Count == 0)
+            if (comfyInstalls.Count == 0 && catalogRoots.Count == 0)
             {
                 var typeCounts = packages.GroupBy(p => p.Type).Select(g => $"{g.Key}={g.Count()}").ToList();
                 Logger.Warning(
-                    "No ComfyUI installation found in database (looked for InstallerType.ComfyUI). " +
+                    "No base model folder and no ComfyUI installation found (looked for InstallerType.ComfyUI). " +
                     "Found: [{Types}]. The local diffusion backend uses the ComfyUI models folder layout " +
                     "but does NOT run ComfyUI — it generates locally on your GPU.",
                     string.Join(", ", typeCounts));
                 return [];
             }
 
-            var roots = new List<string>();
+            var roots = new List<string>(catalogRoots);
             foreach (var pkg in comfyInstalls)
             {
                 foreach (var root in ResolveRootsForPackage(pkg))

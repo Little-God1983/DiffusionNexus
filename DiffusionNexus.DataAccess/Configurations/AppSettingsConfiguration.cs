@@ -35,5 +35,10 @@ internal sealed class AppSettingsConfiguration : IEntityTypeConfiguration<AppSet
             .WithOne(g => g.AppSettings)
             .HasForeignKey(g => g.AppSettingsId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        entity.HasMany(e => e.BaseModelFolders)
+            .WithOne(f => f.AppSettings)
+            .HasForeignKey(f => f.AppSettingsId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }

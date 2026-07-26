@@ -1,3 +1,4 @@
+using DiffusionNexus.DataAccess.Exceptions;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Services;
@@ -23,6 +24,13 @@ public sealed class AppSettingsService : IAppSettingsService
     /// <inheritdoc />
     public async Task<AppSettings> GetSettingsAsync(CancellationToken cancellationToken = default)
     {
+        // Each consumer holds this service (and its context) for the app lifetime,
+        // while other components delete the same settings rows through their own
+        // contexts. EF's identity map never evicts those deletions, so without a
+        // reset every re-read returns phantom children — they reappear in the UI,
+        // keep being scanned, and poison the next save with a 0-row DELETE/UPDATE.
+        _unitOfWork.ClearChangeTracker();
+
         var settings = await _unitOfWork.AppSettings
             .GetSettingsWithIncludesAsync(cancellationToken)
             .ConfigureAwait(false);
@@ -44,7 +52,120 @@ public sealed class AppSettingsService : IAppSettingsService
             await RemoveDuplicateCategoriesAsync(settings, cancellationToken).ConfigureAwait(false);
         }
 
+        settings = await RemoveDuplicateFolderRowsAsync(settings, cancellationToken).ConfigureAwait(false);
+
         return settings;
+    }
+
+    /// <summary>
+    /// Prunes folder rows that sit duplicated in the database (historical concurrent
+    /// startup saves) from the Generation Gallery, LoRA source, and Base Model Folder
+    /// lists — same self-healing idea as <see cref="RemoveDuplicateCategoriesAsync"/>.
+    /// The row worth keeping wins: ⭐ default, then installer-linked, then persisted.
+    /// </summary>
+    private async Task<AppSettings> RemoveDuplicateFolderRowsAsync(AppSettings settings, CancellationToken cancellationToken)
+    {
+        var removed =
+            PruneDuplicates(settings.LoraSources, s => s.FolderPath,
+                s => (s.Id > 0 ? 2 : 0) + (s.IsEnabled ? 1 : 0),
+                _unitOfWork.AppSettings.RemoveLoraSource)
+            + PruneDuplicates(settings.ImageGalleries, g => g.FolderPath,
+                g => (g.InstallerPackageId is not null ? 4 : 0) + (g.Id > 0 ? 2 : 0) + (g.IsEnabled ? 1 : 0),
+                _unitOfWork.AppSettings.RemoveImageGallery)
+            + PruneDuplicates(settings.BaseModelFolders, f => f.FolderPath,
+                f => (f.IsDefault ? 8 : 0) + (f.InstallerPackageId is not null ? 4 : 0) + (f.Id > 0 ? 2 : 0) + (f.IsEnabled ? 1 : 0),
+                _unitOfWork.AppSettings.RemoveBaseModelFolder);
+
+        if (removed == 0)
+        {
+            return settings;
+        }
+
+        try
+        {
+            await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            return settings;
+        }
+        catch (ConcurrencyConflictException)
+        {
+            // Another context pruned the same duplicates first (0-row DELETE).
+            // Discard the poisoned entries and hand back a fresh read instead.
+            _unitOfWork.ClearChangeTracker();
+            return await _unitOfWork.AppSettings
+                .GetSettingsWithIncludesAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Removes all but the highest-scoring row per normalized folder path from both
+    /// the navigation collection and the context. Blank paths are left alone.
+    /// </summary>
+    private static int PruneDuplicates<T>(
+        ICollection<T> rows,
+        Func<T, string?> pathOf,
+        Func<T, int> keepScore,
+        Action<T> removeAction)
+    {
+        var duplicates = rows
+            .GroupBy(r => NormalizeFolderKey(pathOf(r)), StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Key.Length > 0 && g.Count() > 1)
+            .SelectMany(g => g.OrderByDescending(keepScore).Skip(1))
+            .ToList();
+
+        foreach (var duplicate in duplicates)
+        {
+            removeAction(duplicate);
+            rows.Remove(duplicate);
+        }
+
+        return duplicates.Count;
+    }
+
+    /// <summary>
+    /// Keeps only the highest-scoring entry per normalized folder path, preserving
+    /// the original order of the survivors. Blank paths are never merged.
+    /// </summary>
+    private static List<T> DedupeFolderRows<T>(List<T> rows, Func<T, string?> pathOf, Func<T, int> keepScore)
+    {
+        if (rows.Count < 2)
+        {
+            return rows;
+        }
+
+        return rows
+            .Select((row, index) => (Row: row, Index: index))
+            .GroupBy(x => NormalizeFolderKey(pathOf(x.Row)), StringComparer.OrdinalIgnoreCase)
+            .SelectMany(g => g.Key.Length == 0
+                ? g.AsEnumerable()
+                : new[] { g.OrderByDescending(x => keepScore(x.Row)).ThenBy(x => x.Index).First() })
+            .OrderBy(x => x.Index)
+            .Select(x => x.Row)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Comparison key for folder paths: full form when resolvable, trailing
+    /// separators trimmed. Case-insensitive comparison is the caller's job.
+    /// </summary>
+    private static string NormalizeFolderKey(string? path)
+    {
+        var trimmed = path?.Trim() ?? string.Empty;
+        if (trimmed.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            trimmed = Path.GetFullPath(trimmed);
+        }
+        catch (Exception)
+        {
+            // Invalid path characters — compare the raw string instead.
+        }
+
+        return Path.TrimEndingDirectorySeparator(trimmed);
     }
 
     /// <summary>
@@ -122,6 +243,13 @@ public sealed class AppSettingsService : IAppSettingsService
             gallery.AppSettingsId = 1;
         }
 
+        var folderOrder = 0;
+        foreach (var folder in settings.BaseModelFolders)
+        {
+            folder.Order = folderOrder++;
+            folder.AppSettingsId = 1;
+        }
+
         // Capture incoming data before any tracking queries
         var incomingSourceData = settings.LoraSources
             .Select(s => new { s.Id, s.FolderPath, s.IsEnabled, s.Order })
@@ -134,6 +262,23 @@ public sealed class AppSettingsService : IAppSettingsService
         var incomingGalleryData = settings.ImageGalleries
             .Select(g => new { g.Id, g.FolderPath, g.IsEnabled, g.Order })
             .ToList();
+
+        var incomingFolderData = settings.BaseModelFolders
+            .Select(f => new { f.Id, f.FolderPath, f.IsEnabled, f.Order, f.IsDefault, f.InstallerPackageId })
+            .ToList();
+
+        // A folder must never appear twice in a list (case-insensitive, trailing
+        // separators ignored). Persisted rows outrank new ones so their FK links
+        // survive; the ⭐ default outranks everything.
+        incomingSourceData = DedupeFolderRows(incomingSourceData, d => d.FolderPath, d => d.Id > 0 ? 1 : 0);
+        incomingGalleryData = DedupeFolderRows(incomingGalleryData, d => d.FolderPath, d => d.Id > 0 ? 1 : 0);
+        incomingFolderData = DedupeFolderRows(incomingFolderData, d => d.FolderPath,
+            d => (d.IsDefault ? 4 : 0) + (d.InstallerPackageId is not null ? 2 : 0) + (d.Id > 0 ? 1 : 0));
+
+        // Sync against database truth, not this context's identity map — rows
+        // deleted by another context would otherwise still sit in the tracked
+        // graph and turn the save into a failing 0-row DELETE/UPDATE.
+        _unitOfWork.ClearChangeTracker();
 
         var existingSettings = await _unitOfWork.AppSettings
             .GetSettingsWithIncludesAsync(cancellationToken)
@@ -240,6 +385,41 @@ public sealed class AppSettingsService : IAppSettingsService
             _unitOfWork.AppSettings.RemoveImageGallery,
             async gallery => await _unitOfWork.AppSettings.AddImageGalleryAsync(gallery, cancellationToken).ConfigureAwait(false));
 
+        // Handle BaseModelFolders (remove deleted, update existing, add new)
+        SyncChildCollection(
+            existingSettings.BaseModelFolders,
+            incomingFolderData,
+            f => f.Id,
+            d => d.Id,
+            (existing, data) =>
+            {
+                existing.FolderPath = data.FolderPath;
+                existing.IsEnabled = data.IsEnabled;
+                existing.Order = data.Order;
+                existing.IsDefault = data.IsDefault;
+                existing.InstallerPackageId = data.InstallerPackageId;
+            },
+            data => new BaseModelFolder
+            {
+                AppSettingsId = 1,
+                FolderPath = data.FolderPath,
+                IsEnabled = data.IsEnabled,
+                Order = data.Order,
+                IsDefault = data.IsDefault,
+                InstallerPackageId = data.InstallerPackageId
+            },
+            _unitOfWork.AppSettings.RemoveBaseModelFolder,
+            async folder => await _unitOfWork.AppSettings.AddBaseModelFolderAsync(folder, cancellationToken).ConfigureAwait(false));
+
+        // Single-default invariant: at most one Base Model Folder may be the default.
+        // When several incoming rows are flagged, the last one (incoming order) wins.
+        var lastDefaultPath = incomingFolderData.LastOrDefault(d => d.IsDefault)?.FolderPath;
+        foreach (var folder in existingSettings.BaseModelFolders.Where(f => f.IsDefault))
+        {
+            if (!string.Equals(folder.FolderPath, lastDefaultPath, StringComparison.OrdinalIgnoreCase))
+                folder.IsDefault = false;
+        }
+
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -316,6 +496,55 @@ public sealed class AppSettingsService : IAppSettingsService
         settings.UpdatedAt = DateTimeOffset.UtcNow;
 
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<BaseModelFolder>> GetEnabledBaseModelFoldersAsync(CancellationToken cancellationToken = default)
+    {
+        var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+        return settings.BaseModelFolders
+            .Where(f => f.IsEnabled && !string.IsNullOrWhiteSpace(f.FolderPath))
+            .OrderBy(f => f.Order)
+            .ToList();
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> AddBaseModelFolderAsync(string folderPath, int? installerPackageId = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
+
+        var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+
+        var existing = settings.BaseModelFolders.FirstOrDefault(f =>
+            string.Equals(f.FolderPath, folderPath, StringComparison.OrdinalIgnoreCase));
+
+        if (existing is not null)
+        {
+            if (installerPackageId is not null && existing.InstallerPackageId != installerPackageId)
+            {
+                existing.InstallerPackageId = installerPackageId;
+                existing.UpdatedAt = DateTimeOffset.UtcNow;
+                await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            }
+            return false;
+        }
+
+        var maxOrder = settings.BaseModelFolders.Any()
+            ? settings.BaseModelFolders.Max(f => f.Order)
+            : -1;
+
+        await _unitOfWork.AppSettings.AddBaseModelFolderAsync(new BaseModelFolder
+        {
+            AppSettingsId = settings.Id,
+            FolderPath = folderPath,
+            IsEnabled = true,
+            IsDefault = false,
+            Order = maxOrder + 1,
+            InstallerPackageId = installerPackageId
+        }, cancellationToken).ConfigureAwait(false);
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     /// <inheritdoc />

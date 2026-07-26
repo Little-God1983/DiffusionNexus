@@ -266,6 +266,30 @@ public partial class App : Application
                     {
                         Serilog.Log.Warning(ex, "OutputsFolderRegistrar failed during startup.");
                     }
+
+                    // Backfill Base Model Folders for already-registered installations so
+                    // existing users see their model roots without re-adding anything.
+                    try
+                    {
+                        using var scope = Services!.CreateScope();
+                        var folderRegistrar = scope.ServiceProvider.GetRequiredService<DiffusionNexus.UI.Services.Diffusion.BaseModelFolderRegistrar>();
+                        var uow = scope.ServiceProvider.GetRequiredService<DiffusionNexus.DataAccess.UnitOfWork.IUnitOfWork>();
+                        var packages = await uow.InstallerPackages.GetAllAsync();
+                        var added = await folderRegistrar.EnsureRegisteredAsync(packages);
+
+                        // The Settings page preloads its data before this backfill runs.
+                        // Announce the change so an already-loaded Settings VM reloads its
+                        // Base Model Folders list (same mechanism the gallery link uses).
+                        if (added > 0)
+                        {
+                            Services!.GetService<IDatasetEventAggregator>()
+                                ?.PublishSettingsSaved(new SettingsSavedEventArgs());
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Serilog.Log.Warning(ex, "BaseModelFolderRegistrar backfill failed during startup.");
+                    }
                 });
             }
             else
@@ -604,6 +628,14 @@ public partial class App : Application
         // Outputs folder registrar — ensures <exe-dir>/outputs/ is in the gallery list.
         services.AddTransient<DiffusionNexus.UI.Services.Diffusion.OutputsFolderRegistrar>();
 
+        // Base Model Folders: resolution authority for Core model download targets + search roots.
+        services.AddScoped<DiffusionNexus.UI.Services.Diffusion.IModelFolderCatalog,
+            DiffusionNexus.UI.Services.Diffusion.ModelFolderCatalog>();
+
+        // Auto-registers installation model folders (incl. extra_model_paths.yaml roots)
+        // as Base Model Folders — on package add and as startup backfill.
+        services.AddTransient<DiffusionNexus.UI.Services.Diffusion.BaseModelFolderRegistrar>();
+
         // GPU VRAM + system RAM monitor (reusable widget shown in the canvas and the Pipelines view).
         services.AddSingleton<IResourceMonitorService, ResourceMonitorService>();
         services.AddTransient<ResourceMonitorViewModel>();
@@ -875,7 +907,12 @@ public partial class App : Application
             sp.GetService<Inference.Captioning.CaptioningModelManager>(),
             sp.GetService<ICaptioningService>(),
             sp.GetService<IActivityLogService>(),
-            sp.GetService<IDownloadCoordinator>()));
+            sp.GetService<IDownloadCoordinator>(),
+            sp.GetService<Services.Diffusion.BaseModelFolderRegistrar>(),
+            // IUnitOfWork is transient: each factory call yields a fresh context for
+            // one destructive operation (remove / delete-from-disk), so those flows
+            // never act on — or poison — the VM's long-lived shared context.
+            unitOfWorkFactory: () => sp.GetRequiredService<IUnitOfWork>()));
         services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),

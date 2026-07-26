@@ -187,6 +187,57 @@ public sealed class PipelineAssetInstallerTests : IDisposable
             "re-installing must heal the missing sidecar so the asset stops showing as missing");
     }
 
+    // ── Explicit download root (Base Model Folders) ──
+
+    [Fact]
+    public async Task InstallMissing_DownloadsIntoThePassedRoot_NotTheFirstSearchRoot()
+    {
+        // Two candidate roots exist; the caller (workload-window dropdown) picked the second.
+        Directory.CreateDirectory(Path.Combine(_root, "first-root"));
+        var chosenRoot = Path.Combine(_root, "chosen-root");
+
+        _civitai.Setup(c => c.GetModelAsync(1934100, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CivitaiModelWithFile(2674717, "A2R_Klein_Standard.safetensors", modelId: 1934100));
+        _settings.Setup(s => s.GetHuggingfaceApiKeyAsync(It.IsAny<CancellationToken>())).ReturnsAsync((string?)null);
+        _settings.Setup(s => s.GetCivitaiApiKeyAsync(It.IsAny<CancellationToken>())).ReturnsAsync((string?)null);
+
+        // Simulate a successful download without invoking the real download delegate.
+        _coordinator.Setup(c => c.EnqueueAsync(It.IsAny<string>(),
+                It.IsAny<Func<IProgress<DownloadTaskProgress>, CancellationToken, Task<bool>>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var installer = CreateInstaller();
+        var manifest = ManifestWithLora(1934100, "anime2real");
+
+        // New public contract: the caller chooses the download root explicitly —
+        // no ComfyUI installation is required at all.
+        await installer.InstallMissingAsync(manifest, vramGb: 0, chosenRoot, CancellationToken.None);
+
+        // The sidecar written after the (mocked) download proves which root received the files.
+        File.Exists(Path.Combine(chosenRoot, "loras", "A2R_Klein_Standard.civitai.info"))
+            .Should().BeTrue("assets must land in the explicitly chosen download root");
+        Directory.Exists(Path.Combine(_root, "first-root", "loras")).Should().BeFalse();
+    }
+
+    [Fact]
+    public void BuildReadiness_FindsAssets_AcrossCatalogAndComfyRoots()
+    {
+        // Asset lives only in the second (ComfyUI) root — readiness must still see it.
+        var catalogRoot = Path.Combine(_root, "catalog-root");
+        Directory.CreateDirectory(Path.Combine(catalogRoot, "loras"));
+        var comfyRoot = _root; // fixture root already contains loras/ from the constructor
+        var weights = Path.Combine(comfyRoot, "loras", "A2R_Klein_Standard.safetensors");
+        File.WriteAllBytes(weights, [0x1]);
+        var version = CivitaiModelWithFile(2674717, "A2R_Klein_Standard.safetensors").ModelVersions[0];
+        PipelineAssetInstaller.WriteCivitaiInfoSidecar(weights, version, 1934100);
+
+        var readiness = PipelineAssetInstaller.BuildReadiness(
+            ManifestWithLora(1934100, "anime2real"), [catalogRoot, comfyRoot]);
+
+        readiness.IsComplete.Should().BeTrue();
+    }
+
     // ── Per-asset isolation: one failing asset must not abort the rest ──
 
     [Fact]

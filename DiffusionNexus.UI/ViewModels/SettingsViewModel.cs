@@ -206,6 +206,12 @@ public partial class SettingsViewModel : BusyViewModelBase
     private ObservableCollection<ImageGalleryViewModel> _imageGallerySources = [];
 
     /// <summary>
+    /// Collection of Base Model Folders (model storage roots for the Diffusion Nexus Core).
+    /// </summary>
+    [ObservableProperty]
+    private ObservableCollection<BaseModelFolderViewModel> _baseModelFolders = [];
+
+    /// <summary>
     /// Collection of dataset categories.
     /// </summary>
     [ObservableProperty]
@@ -393,12 +399,18 @@ public partial class SettingsViewModel : BusyViewModelBase
                 ImageGallerySources.Add(sourceVm);
             }
 
+            // Map Base Model Folders
+            ReloadBaseModelFolders(settings);
+
             HasChanges = false;
             StatusMessage = null;
         }, "Loading settings...");
 
         // Check ComfyUI server connectivity in the background
         _ = TestComfyUiConnectionAsync();
+
+        // Compute the ⚠ folder-presence badges off-thread; never gates startup.
+        _ = RefreshFolderPresenceAsync();
     }
 
     /// <summary>
@@ -472,6 +484,103 @@ public partial class SettingsViewModel : BusyViewModelBase
             };
             sourceVm.SourceChanged += OnImageGalleryChanged;
             ImageGallerySources.Add(sourceVm);
+        }
+
+        // Reload Base Model Folders
+        ReloadBaseModelFolders(settings);
+
+        // Re-check the ⚠ folder-presence badges off-thread.
+        _ = RefreshFolderPresenceAsync();
+    }
+
+    /// <summary>
+    /// (Re)builds the Base Model Folder rows from the given settings entity.
+    /// </summary>
+    private void ReloadBaseModelFolders(AppSettings settings)
+    {
+        foreach (var existing in BaseModelFolders)
+        {
+            existing.SourceChanged -= OnBaseModelFolderChanged;
+            existing.DefaultSelected -= OnBaseModelFolderDefaultSelected;
+        }
+        BaseModelFolders.Clear();
+
+        foreach (var folder in settings.BaseModelFolders.OrderBy(f => f.Order))
+        {
+            var folderVm = new BaseModelFolderViewModel
+            {
+                Id = folder.Id,
+                FolderPath = folder.FolderPath,
+                IsEnabled = folder.IsEnabled,
+                IsDefault = folder.IsDefault,
+                InstallerPackageId = folder.InstallerPackageId
+            };
+            folderVm.SourceChanged += OnBaseModelFolderChanged;
+            folderVm.DefaultSelected += OnBaseModelFolderDefaultSelected;
+            BaseModelFolders.Add(folderVm);
+        }
+    }
+
+    /// <summary>
+    /// Debounce for the presence re-check triggered by row edits (the path TextBoxes
+    /// update per keystroke). Internal so tests can shorten it.
+    /// </summary>
+    internal TimeSpan PresenceRefreshDebounce { get; set; } = TimeSpan.FromMilliseconds(500);
+
+    private CancellationTokenSource? _presenceRefreshCts;
+
+    /// <summary>
+    /// Re-checks disk presence (⚠ badge) for every folder row in the LoRA source,
+    /// Generation Gallery, and Base Model Folder lists. The <c>Directory.Exists</c>
+    /// probes run on the thread pool — a configured-but-offline network share blocks
+    /// for the SMB timeout (~20s per dead host), which must never stall the UI
+    /// thread. Runs after (re)load, each time the Settings view is shown, and
+    /// debounced after row edits.
+    /// </summary>
+    public async Task RefreshFolderPresenceAsync(CancellationToken cancellationToken = default)
+    {
+        var rows = LoraSources.Cast<IFolderPresenceRow>()
+            .Concat(ImageGallerySources)
+            .Concat(BaseModelFolders)
+            .ToList();
+        var paths = rows.Select(r => r.FolderPath).ToArray();
+
+        var missing = await Task.Run(
+            () => Array.ConvertAll(paths, FolderRowPresence.IsMissing),
+            cancellationToken);
+
+        // Back on the caller's (UI) context; rows removed meanwhile just get a
+        // harmless flag update on a detached object.
+        for (var i = 0; i < rows.Count; i++)
+        {
+            rows[i].IsMissing = missing[i];
+        }
+    }
+
+    /// <summary>
+    /// Debounced <see cref="RefreshFolderPresenceAsync"/>: row edits raise
+    /// SourceChanged per keystroke; only the last edit inside the debounce window
+    /// triggers a scan.
+    /// </summary>
+    private void SchedulePresenceRefresh()
+    {
+        _presenceRefreshCts?.Cancel();
+        _presenceRefreshCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _presenceRefreshCts = cts;
+        _ = DebouncedPresenceRefreshAsync(cts.Token);
+    }
+
+    private async Task DebouncedPresenceRefreshAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(PresenceRefreshDebounce, cancellationToken);
+            await RefreshFolderPresenceAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // Superseded by a newer edit.
         }
     }
 
@@ -581,6 +690,22 @@ public partial class SettingsViewModel : BusyViewModelBase
                     FolderPath = sourceVm.FolderPath!,
                     IsEnabled = sourceVm.IsEnabled,
                     Order = galleryOrder++
+                });
+            }
+
+            // Map Base Model Folders (skip empty)
+            var folderOrder = 0;
+            foreach (var folderVm in BaseModelFolders.Where(f => !string.IsNullOrWhiteSpace(f.FolderPath)))
+            {
+                settings.BaseModelFolders.Add(new BaseModelFolder
+                {
+                    Id = folderVm.Id,
+                    AppSettingsId = 1,
+                    FolderPath = folderVm.FolderPath!,
+                    IsEnabled = folderVm.IsEnabled,
+                    IsDefault = folderVm.IsDefault,
+                    InstallerPackageId = folderVm.InstallerPackageId,
+                    Order = folderOrder++
                 });
             }
 
@@ -757,6 +882,53 @@ public partial class SettingsViewModel : BusyViewModelBase
         {
             source.SourceChanged -= OnImageGalleryChanged;
             ImageGallerySources.Remove(source);
+            HasChanges = true;
+        }
+    }
+
+    /// <summary>
+    /// Adds a new Base Model Folder row.
+    /// </summary>
+    [RelayCommand]
+    private void AddBaseModelFolder()
+    {
+        var folder = new BaseModelFolderViewModel { IsEnabled = true };
+        folder.SourceChanged += OnBaseModelFolderChanged;
+        folder.DefaultSelected += OnBaseModelFolderDefaultSelected;
+        BaseModelFolders.Add(folder);
+        HasChanges = true;
+    }
+
+    /// <summary>
+    /// Removes a Base Model Folder row.
+    /// </summary>
+    [RelayCommand]
+    private void RemoveBaseModelFolder(BaseModelFolderViewModel? folder)
+    {
+        if (folder is not null)
+        {
+            folder.SourceChanged -= OnBaseModelFolderChanged;
+            folder.DefaultSelected -= OnBaseModelFolderDefaultSelected;
+            BaseModelFolders.Remove(folder);
+            HasChanges = true;
+        }
+    }
+
+    /// <summary>
+    /// Browse for a Base Model Folder.
+    /// </summary>
+    [RelayCommand]
+    private async Task BrowseBaseModelFolderAsync(BaseModelFolderViewModel? folder)
+    {
+        if (folder is null || DialogService is null)
+        {
+            return;
+        }
+
+        var path = await DialogService.ShowOpenFolderDialogAsync("Select Base Model Folder");
+        if (!string.IsNullOrEmpty(path))
+        {
+            folder.FolderPath = path;
             HasChanges = true;
         }
     }
@@ -1197,6 +1369,7 @@ public partial class SettingsViewModel : BusyViewModelBase
     private void OnLoraSourceChanged(object? sender, EventArgs e)
     {
         HasChanges = true;
+        SchedulePresenceRefresh();
     }
 
     /// <summary>
@@ -1239,6 +1412,28 @@ public partial class SettingsViewModel : BusyViewModelBase
     private void OnImageGalleryChanged(object? sender, EventArgs e)
     {
         HasChanges = true;
+        SchedulePresenceRefresh();
+    }
+
+    private void OnBaseModelFolderChanged(object? sender, EventArgs e)
+    {
+        HasChanges = true;
+        SchedulePresenceRefresh();
+    }
+
+    /// <summary>
+    /// Enforces the exclusive ⭐ default: when one Base Model Folder row is flagged,
+    /// every other row's flag is cleared.
+    /// </summary>
+    private void OnBaseModelFolderDefaultSelected(object? sender, EventArgs e)
+    {
+        foreach (var folder in BaseModelFolders)
+        {
+            if (!ReferenceEquals(folder, sender) && folder.IsDefault)
+            {
+                folder.IsDefault = false;
+            }
+        }
     }
 
     partial void OnCivitaiApiKeyChanged(string? value) => HasChanges = true;
@@ -1525,9 +1720,74 @@ public partial class DatasetCategoryViewModel : ObservableObject
 }
 
 /// <summary>
+/// A Settings folder row that shows the ⚠ missing-on-disk badge. Implemented by
+/// the LoRA source, Generation Gallery, and Base Model Folder row VMs so
+/// <see cref="SettingsViewModel.RefreshFolderPresenceAsync"/> can scan them uniformly.
+/// </summary>
+public interface IFolderPresenceRow
+{
+    /// <summary>Folder path configured for the row.</summary>
+    string? FolderPath { get; }
+
+    /// <summary>Badge state; set only by the parent's async presence scan.</summary>
+    bool IsMissing { get; set; }
+}
+
+/// <summary>
+/// ViewModel for a single Base Model Folder row (model storage root for the
+/// Diffusion Nexus Core). Mirrors <see cref="LoraSourceViewModel"/>: the ⭐ default
+/// flag is exclusive; the parent VM enforces it via <see cref="DefaultSelected"/>.
+/// </summary>
+public partial class BaseModelFolderViewModel : ObservableObject, IFolderPresenceRow
+{
+    /// <summary>Database ID (0 for new rows).</summary>
+    public int Id { get; set; }
+
+    /// <summary>Installer package this folder was auto-registered for (null for manual rows).</summary>
+    public int? InstallerPackageId { get; set; }
+
+    /// <summary>Folder path.</summary>
+    [ObservableProperty]
+    private string? _folderPath;
+
+    /// <summary>Whether this folder participates in scanning and the download dropdown.</summary>
+    [ObservableProperty]
+    private bool _isEnabled = true;
+
+    /// <summary>
+    /// Default download target marker (⭐). Only one row can be the default;
+    /// the parent VM clears the others when this flips to true.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isDefault;
+
+    /// <summary>
+    /// True when a non-empty path does not exist on disk (⚠ badge in the row).
+    /// Set only by the parent VM's async presence scan — never computed in the
+    /// path setter, which would put blocking disk IO on the UI thread.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isMissing;
+
+    /// <summary>Raised on any property change so the parent flags unsaved changes.</summary>
+    public event EventHandler? SourceChanged;
+
+    /// <summary>Raised when <see cref="IsDefault"/> flips to true.</summary>
+    public event EventHandler? DefaultSelected;
+
+    partial void OnFolderPathChanged(string? value) => SourceChanged?.Invoke(this, EventArgs.Empty);
+    partial void OnIsEnabledChanged(bool value) => SourceChanged?.Invoke(this, EventArgs.Empty);
+    partial void OnIsDefaultChanged(bool value)
+    {
+        if (value) DefaultSelected?.Invoke(this, EventArgs.Empty);
+        SourceChanged?.Invoke(this, EventArgs.Empty);
+    }
+}
+
+/// <summary>
 /// ViewModel for a single LoRA source folder.
 /// </summary>
-public partial class LoraSourceViewModel : ObservableObject
+public partial class LoraSourceViewModel : ObservableObject, IFolderPresenceRow
 {
     /// <summary>
     /// Database ID (0 for new sources).
@@ -1556,6 +1816,14 @@ public partial class LoraSourceViewModel : ObservableObject
     private bool _isFavorite;
 
     /// <summary>
+    /// True when a non-empty path does not exist on disk (⚠ badge in the row).
+    /// Set only by the parent VM's async presence scan — never computed in the
+    /// path setter, which would put blocking disk IO on the UI thread.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isMissing;
+
+    /// <summary>
     /// Event raised when any property changes (for parent to detect changes).
     /// </summary>
     public event EventHandler? SourceChanged;
@@ -1574,7 +1842,7 @@ public partial class LoraSourceViewModel : ObservableObject
         SourceChanged?.Invoke(this, EventArgs.Empty);
     }
 }
-public partial class ImageGalleryViewModel : ObservableObject
+public partial class ImageGalleryViewModel : ObservableObject, IFolderPresenceRow
 {
     /// <summary>
     /// Database ID (0 for new sources).
@@ -1594,10 +1862,30 @@ public partial class ImageGalleryViewModel : ObservableObject
     private bool _isEnabled = true;
 
     /// <summary>
+    /// True when a non-empty path does not exist on disk (⚠ badge in the row).
+    /// Set only by the parent VM's async presence scan — never computed in the
+    /// path setter, which would put blocking disk IO on the UI thread.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isMissing;
+
+    /// <summary>
     /// Event raised when any property changes (for parent to detect changes).
     /// </summary>
     public event EventHandler? SourceChanged;
 
     partial void OnFolderPathChanged(string? value) => SourceChanged?.Invoke(this, EventArgs.Empty);
+
     partial void OnIsEnabledChanged(bool value) => SourceChanged?.Invoke(this, EventArgs.Empty);
+}
+
+/// <summary>
+/// Shared disk-presence check for the Settings folder rows (LoRA Viewer sources,
+/// Generation Galleries, Base Model Folders). An empty path is not "missing" —
+/// a freshly added row must not warn before the user entered anything.
+/// </summary>
+internal static class FolderRowPresence
+{
+    public static bool IsMissing(string? folderPath) =>
+        !string.IsNullOrWhiteSpace(folderPath) && !Directory.Exists(folderPath);
 }

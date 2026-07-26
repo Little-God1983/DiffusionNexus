@@ -75,16 +75,18 @@ public class AppSettingsServiceCivitaiKeyTests : IDisposable
     }
 
     [Fact]
-    public async Task WhenApiKeySavedInOneScopeThenStaleScopeDoesNotSeeUpdate()
+    public async Task WhenApiKeySavedInOneScope_LongLivedServiceSeesUpdate()
     {
-        // This test documents the root-cause behavior: a long-lived
-        // AppSettingsService (same DbContext) returns the stale cached entity.
-        // It is intentionally the inverse of the fix — proving the bug exists.
+        // Historically the inverse held (a long-lived AppSettingsService returned
+        // the stale cached entity, and this test pinned that bug). GetSettingsAsync
+        // now clears the change tracker before reading, so even a long-lived
+        // service always reflects database truth — updates AND deletions made by
+        // other contexts (see AppSettingsServiceStaleContextTests).
 
         // Arrange: read settings to populate the change tracker
         using var longLivedScope = _serviceProvider.CreateScope();
-        var staleService = longLivedScope.ServiceProvider.GetRequiredService<IAppSettingsService>();
-        await staleService.GetSettingsAsync();
+        var longLivedService = longLivedScope.ServiceProvider.GetRequiredService<IAppSettingsService>();
+        await longLivedService.GetSettingsAsync();
 
         // Act: save the key from a different scope
         using (var settingsScope = _serviceProvider.CreateScope())
@@ -93,9 +95,9 @@ public class AppSettingsServiceCivitaiKeyTests : IDisposable
             await settingsService.SetCivitaiApiKeyAsync("my-secret-key");
         }
 
-        // Assert: the stale service still returns null (cached tracked entity)
-        var staleKey = await staleService.GetCivitaiApiKeyAsync();
-        staleKey.Should().BeNull("EF Core returns the cached tracked entity, not the database value");
+        // Assert: the long-lived service reads the fresh value
+        var key = await longLivedService.GetCivitaiApiKeyAsync();
+        key.Should().Be("my-secret-key", "settings reads must reflect database truth, not the identity map");
     }
 
     public void Dispose()

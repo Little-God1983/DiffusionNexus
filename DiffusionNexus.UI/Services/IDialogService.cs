@@ -324,6 +324,15 @@ public interface IDialogService
     Task<AddExistingInstallationResult> ShowAddExistingInstallationDialogAsync(string initialPath);
 
     /// <summary>
+    /// Shows the remove-installation confirmation with checkboxes offering to also
+    /// remove the settings folders linked to the installation (Generation Gallery,
+    /// LoRA sources, Base Model Folders).
+    /// </summary>
+    /// <param name="prompt">Installation name and its linked settings folders.</param>
+    /// <returns>The user's choice, or cancelled.</returns>
+    Task<RemoveInstallationResult> ShowRemoveInstallationDialogAsync(RemoveInstallationPrompt prompt);
+
+    /// <summary>
     /// Shows the installation dialog in edit mode with pre-filled values.
     /// </summary>
     Task<AddExistingInstallationResult> ShowEditInstallationDialogAsync(

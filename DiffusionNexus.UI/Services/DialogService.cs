@@ -138,6 +138,15 @@ public class DialogService : IDialogService
         return dialog.Result;
     }
 
+    public async Task<RemoveInstallationResult> ShowRemoveInstallationDialogAsync(RemoveInstallationPrompt prompt)
+    {
+        var dialog = new RemoveInstallationDialog();
+        dialog.Configure(prompt);
+
+        await dialog.ShowDialog(_window);
+        return dialog.Result;
+    }
+
     public async Task<string?> ShowInputAsync(string title, string message, string? defaultValue = null)
     {
         var dialog = new TextInputDialog

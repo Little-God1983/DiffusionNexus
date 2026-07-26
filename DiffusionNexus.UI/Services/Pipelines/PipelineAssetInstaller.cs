@@ -95,23 +95,22 @@ public sealed class PipelineAssetInstaller : IPipelineAssetInstaller, IDisposabl
     public async Task<PipelineReadiness> InstallMissingAsync(
         PipelineManifest manifest,
         int vramGb,
+        string downloadRoot,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(manifest);
+        ArgumentException.ThrowIfNullOrWhiteSpace(downloadRoot);
 
+        // Existing copies anywhere in the search roots (Base Model Folders, the LocalAppData
+        // fallback, and every ComfyUI models tree) still count as present — only genuinely
+        // missing assets are downloaded, and they land in the caller-chosen root.
         var roots = await _backendProvider.GetComfyUiModelsRootsAsync(cancellationToken).ConfigureAwait(false);
-        if (roots.Count == 0)
-            throw new InvalidOperationException(
-                "No ComfyUI installation is registered, so there is no models folder to download into.");
 
         var before = await ComputeReadinessAsync(manifest, roots, cancellationToken).ConfigureAwait(false);
         var missing = before.Missing.Select(m => m.Name).ToHashSet(StringComparer.Ordinal);
         if (missing.Count == 0)
             return before;
 
-        // New downloads land in the primary (default) install's models tree; existing copies in
-        // other roots (e.g. an extra_model_paths library) are still detected by the check above.
-        var downloadRoot = roots[0];
         var hfToken = await _settings.GetHuggingfaceApiKeyAsync(cancellationToken).ConfigureAwait(false);
         var civitaiKey = await _settings.GetCivitaiApiKeyAsync(cancellationToken).ConfigureAwait(false);
 
