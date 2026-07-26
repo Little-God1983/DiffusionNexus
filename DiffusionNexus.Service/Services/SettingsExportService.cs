@@ -98,6 +98,18 @@ public sealed class SettingsExportService : ISettingsExportService
         }
 
         order = 0;
+        foreach (var f in settings.BaseModelFolders.OrderBy(x => x.Order))
+        {
+            export.BaseModelFolders.Add(new BaseModelFolderExport
+            {
+                FolderPath = f.FolderPath,
+                IsEnabled = f.IsEnabled,
+                IsDefault = f.IsDefault,
+                Order = order++
+            });
+        }
+
+        order = 0;
         foreach (var c in settings.DatasetCategories.OrderBy(x => x.Order))
         {
             export.DatasetCategories.Add(new DatasetCategoryExport
@@ -186,6 +198,18 @@ public sealed class SettingsExportService : ISettingsExportService
                 FolderPath = g.FolderPath,
                 IsEnabled = g.IsEnabled,
                 Order = g.Order
+            });
+        }
+
+        foreach (var f in export.BaseModelFolders.OrderBy(x => x.Order))
+        {
+            settings.BaseModelFolders.Add(new BaseModelFolder
+            {
+                AppSettingsId = 1,
+                FolderPath = f.FolderPath,
+                IsEnabled = f.IsEnabled,
+                IsDefault = f.IsDefault,
+                Order = f.Order
             });
         }
 

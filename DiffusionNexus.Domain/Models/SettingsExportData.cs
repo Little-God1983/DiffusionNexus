@@ -42,6 +42,7 @@ public sealed record SettingsExportData
 
     public List<LoraSourceExport> LoraSources { get; init; } = [];
     public List<ImageGalleryExport> ImageGalleries { get; init; } = [];
+    public List<BaseModelFolderExport> BaseModelFolders { get; init; } = [];
     public bool ShowNsfw { get; init; }
     public bool GenerateVideoThumbnails { get; init; } = true;
     public bool ShowVideoPreview { get; init; }
@@ -108,6 +109,18 @@ public sealed record ImageGalleryExport
     public string FolderPath { get; init; } = string.Empty;
     public bool IsEnabled { get; init; } = true;
     public int Order { get; init; }
+}
+
+/// <summary>
+/// Exported Base Model Folder (model storage root). The installer-package link is
+/// machine-specific and intentionally not exported.
+/// </summary>
+public sealed record BaseModelFolderExport
+{
+    public string FolderPath { get; init; } = string.Empty;
+    public bool IsEnabled { get; init; } = true;
+    public int Order { get; init; }
+    public bool IsDefault { get; init; }
 }
 
 /// <summary>
