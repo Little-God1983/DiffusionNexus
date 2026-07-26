@@ -24,6 +24,16 @@ public partial class InstallerManagerViewModel : ViewModelBase
 {
     private readonly IDialogService _dialogService;
     private readonly IUnitOfWork _unitOfWork;
+
+    /// <summary>
+    /// Creates a fresh unit of work (own DbContext) for one destructive operation.
+    /// The VM's shared <see cref="_unitOfWork"/> lives for the whole app session, so
+    /// its identity map goes stale (rows deleted/edited elsewhere linger) and a failed
+    /// save would leave poisoned Deleted-state entries that a later unrelated save
+    /// replays. Null in tests that pass only the shared instance.
+    /// </summary>
+    private readonly Func<IUnitOfWork>? _unitOfWorkFactory;
+
     private readonly PackageProcessManager _processManager;
     private readonly IDatasetEventAggregator _eventAggregator;
     private readonly IConfigurationRepository _configurationRepository;
@@ -78,10 +88,12 @@ public partial class InstallerManagerViewModel : ViewModelBase
         ICaptioningService? captioningService = null,
         IActivityLogService? activityLogService = null,
         IDownloadCoordinator? downloadCoordinator = null,
-        Services.Diffusion.BaseModelFolderRegistrar? baseModelFolderRegistrar = null)
+        Services.Diffusion.BaseModelFolderRegistrar? baseModelFolderRegistrar = null,
+        Func<IUnitOfWork>? unitOfWorkFactory = null)
     {
         _dialogService = dialogService;
         _unitOfWork = unitOfWork;
+        _unitOfWorkFactory = unitOfWorkFactory;
         _processManager = processManager;
         _eventAggregator = eventAggregator;
         _configurationRepository = configurationRepository;
@@ -355,6 +367,13 @@ public partial class InstallerManagerViewModel : ViewModelBase
         await _processManager.RestartAsync(card.Id);
     }
 
+    /// <summary>
+    /// Rents a unit of work for one destructive operation — fresh (owned, must be
+    /// disposed) when a factory is available, the shared instance otherwise.
+    /// </summary>
+    private (IUnitOfWork UnitOfWork, bool Owned) RentUnitOfWork() =>
+        _unitOfWorkFactory is null ? (_unitOfWork, false) : (_unitOfWorkFactory(), true);
+
     private async Task OnRemoveRequestedAsync(InstallerPackageCardViewModel card)
     {
         if (_processManager.IsRunning(card.Id))
@@ -363,34 +382,98 @@ public partial class InstallerManagerViewModel : ViewModelBase
             return;
         }
 
-        var confirmed = await _dialogService.ShowConfirmAsync(
-            "Remove Installation",
-            $"Remove \"{card.Name}\" from the Installer Manager?\n\nThis will NOT delete any files on disk.");
-
-        if (!confirmed) return;
-
+        var (unitOfWork, owned) = RentUnitOfWork();
         try
         {
-            var entity = await _unitOfWork.InstallerPackages.GetByIdAsync(card.Id);
-            if (entity is not null)
+            var entity = await unitOfWork.InstallerPackages.GetByIdAsync(card.Id);
+            if (entity is null)
             {
-                _unitOfWork.InstallerPackages.Remove(entity);
-                await _unitOfWork.SaveChangesAsync();
+                // Stale card without a DB row — nothing to clean up, just drop it.
+                InstallerCards.Remove(card);
+                return;
             }
 
-            InstallerCards.Remove(card);
+            // Model roots other registered installations still discover must never be
+            // offered for removal — their startup backfill would silently re-add them.
+            // ResolveModelRoots reads extra_model_paths.yaml files: keep it off the UI thread.
+            var allPackages = await unitOfWork.InstallerPackages.GetAllAsync();
+            var otherPackages = allPackages.Where(p => p.Id != entity.Id).ToList();
+            var protectedRoots = await Task.Run(() => otherPackages
+                .SelectMany(Services.Diffusion.BaseModelFolderRegistrar.ResolveModelRoots)
+                .ToList());
 
-            _unifiedLogger.Info(LogCategory.Installation, card.Name,
-                "Removed from Installer Manager. Files on disk were left untouched.");
+            // Resolve the settings folders tied to this installation so the dialog can
+            // offer to remove them too (galleries/base folders by FK, LoRA sources by path).
+            var settings = await unitOfWork.AppSettings.GetSettingsWithIncludesAsync();
+            var plan = InstallationSettingsCleanup.Resolve(settings, entity, protectedRoots);
 
-            _eventAggregator.PublishInstallerPackagesChanged(new InstallerPackagesChangedEventArgs());
+            var choice = await _dialogService.ShowRemoveInstallationDialogAsync(new RemoveInstallationPrompt(
+                card.Name,
+                plan.Galleries.Select(g => g.FolderPath).ToList(),
+                plan.LoraSources.Select(s => s.FolderPath).ToList(),
+                plan.BaseModelFolders.Select(f => f.FolderPath).ToList()));
+
+            if (!choice.Confirmed) return;
+
+            try
+            {
+                var removedFolders = 0;
+                if (choice.RemoveGalleries)
+                {
+                    foreach (var gallery in plan.Galleries)
+                    {
+                        unitOfWork.AppSettings.RemoveImageGallery(gallery);
+                        removedFolders++;
+                    }
+                }
+                if (choice.RemoveLoraSources)
+                {
+                    foreach (var source in plan.LoraSources)
+                    {
+                        unitOfWork.AppSettings.RemoveLoraSource(source);
+                        removedFolders++;
+                    }
+                }
+                if (choice.RemoveBaseModelFolders)
+                {
+                    foreach (var folder in plan.BaseModelFolders)
+                    {
+                        unitOfWork.AppSettings.RemoveBaseModelFolder(folder);
+                        removedFolders++;
+                    }
+                }
+
+                unitOfWork.InstallerPackages.Remove(entity);
+                await unitOfWork.SaveChangesAsync();
+
+                InstallerCards.Remove(card);
+
+                _unifiedLogger.Info(LogCategory.Installation, card.Name,
+                    removedFolders > 0
+                        ? $"Removed from Installer Manager together with {removedFolders} linked settings folder(s). Files on disk were left untouched."
+                        : "Removed from Installer Manager. Files on disk were left untouched.");
+
+                if (removedFolders > 0)
+                {
+                    // Let the Settings page / galleries / LoRA viewer reload their folder lists.
+                    _eventAggregator.PublishSettingsSaved(new SettingsSavedEventArgs());
+                }
+
+                _eventAggregator.PublishInstallerPackagesChanged(new InstallerPackagesChangedEventArgs());
+            }
+            catch (Exception ex)
+            {
+                Serilog.Log.Error(ex, "Failed to remove installation {Name}", card.Name);
+                _unifiedLogger.Error(LogCategory.Installation, card.Name,
+                    $"Failed to remove installation: {ex.Message}", ex);
+                await _dialogService.ShowMessageAsync("Error", $"Failed to remove installation: {ex.Message}");
+            }
         }
-        catch (Exception ex)
+        finally
         {
-            Serilog.Log.Error(ex, "Failed to remove installation {Name}", card.Name);
-            _unifiedLogger.Error(LogCategory.Installation, card.Name,
-                $"Failed to remove installation: {ex.Message}", ex);
-            await _dialogService.ShowMessageAsync("Error", $"Failed to remove installation: {ex.Message}");
+            // Owned = fresh context; disposing on failure also discards any staged
+            // deletes so no later unrelated save can replay them.
+            if (owned) unitOfWork.Dispose();
         }
     }
 
@@ -461,19 +544,44 @@ public partial class InstallerManagerViewModel : ViewModelBase
             "Delete from Disk",
             $"Are you sure you want to permanently delete \"{card.Name}\"?\n\n" +
             $"Path: {card.InstallationPath}\n\n" +
-            "This will delete the folder on your hard drive including models and generated images.\n\n" +
+            "This will delete the folder on your hard drive including models and generated images. " +
+            "Settings folders that live in it (gallery, LoRA sources, base model folders) are removed from the settings as well.\n\n" +
             "⚠ This action CANNOT be undone.");
 
         if (!confirmed) return;
 
+        var (unitOfWork, owned) = RentUnitOfWork();
         try
         {
-            // Remove from database first
-            var entity = await _unitOfWork.InstallerPackages.GetByIdAsync(card.Id);
+            // Remove from database first — including the settings rows tied to this
+            // installation: their folders cease to exist, so unlike the plain remove
+            // flow there is no choice to offer (dead rows would only linger as ⚠
+            // badges and dangling scan/download targets).
+            var removedFolders = 0;
+            var entity = await unitOfWork.InstallerPackages.GetByIdAsync(card.Id);
             if (entity is not null)
             {
-                _unitOfWork.InstallerPackages.Remove(entity);
-                await _unitOfWork.SaveChangesAsync();
+                var settings = await unitOfWork.AppSettings.GetSettingsWithIncludesAsync();
+                var plan = InstallationSettingsCleanup.Resolve(settings, entity);
+
+                foreach (var gallery in plan.Galleries)
+                {
+                    unitOfWork.AppSettings.RemoveImageGallery(gallery);
+                    removedFolders++;
+                }
+                foreach (var source in plan.LoraSources)
+                {
+                    unitOfWork.AppSettings.RemoveLoraSource(source);
+                    removedFolders++;
+                }
+                foreach (var folder in plan.BaseModelFolders)
+                {
+                    unitOfWork.AppSettings.RemoveBaseModelFolder(folder);
+                    removedFolders++;
+                }
+
+                unitOfWork.InstallerPackages.Remove(entity);
+                await unitOfWork.SaveChangesAsync();
             }
 
             InstallerCards.Remove(card);
@@ -487,7 +595,14 @@ public partial class InstallerManagerViewModel : ViewModelBase
             }
 
             _unifiedLogger.Info(LogCategory.Installation, card.Name,
-                $"Deleted installation and removed folder {card.InstallationPath}.");
+                removedFolders > 0
+                    ? $"Deleted installation, removed folder {card.InstallationPath} and {removedFolders} linked settings folder(s)."
+                    : $"Deleted installation and removed folder {card.InstallationPath}.");
+
+            if (removedFolders > 0)
+            {
+                _eventAggregator.PublishSettingsSaved(new SettingsSavedEventArgs());
+            }
 
             _eventAggregator.PublishInstallerPackagesChanged(new InstallerPackagesChangedEventArgs());
         }
@@ -497,6 +612,10 @@ public partial class InstallerManagerViewModel : ViewModelBase
             _unifiedLogger.Error(LogCategory.Installation, card.Name,
                 $"Failed to delete from disk: {ex.Message}", ex);
             await _dialogService.ShowMessageAsync("Error", $"Failed to delete: {ex.Message}\n\nSome files may have been partially removed.");
+        }
+        finally
+        {
+            if (owned) unitOfWork.Dispose();
         }
     }
 

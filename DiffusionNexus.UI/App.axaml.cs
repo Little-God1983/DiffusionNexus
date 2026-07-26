@@ -908,7 +908,11 @@ public partial class App : Application
             sp.GetService<ICaptioningService>(),
             sp.GetService<IActivityLogService>(),
             sp.GetService<IDownloadCoordinator>(),
-            sp.GetService<Services.Diffusion.BaseModelFolderRegistrar>()));
+            sp.GetService<Services.Diffusion.BaseModelFolderRegistrar>(),
+            // IUnitOfWork is transient: each factory call yields a fresh context for
+            // one destructive operation (remove / delete-from-disk), so those flows
+            // never act on — or poison — the VM's long-lived shared context.
+            unitOfWorkFactory: () => sp.GetRequiredService<IUnitOfWork>()));
         services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),
