@@ -74,18 +74,26 @@ public sealed class BaseModelFolderRegistrarTests : IDisposable
     }
 
     [Fact]
-    public async Task RegisterPackageFolders_RegistersEachRoot_WithPackageLink()
+    public async Task RegisterPackageFolders_RegistersEachRoot_AndReportsHowManyWereNew()
     {
         var install = Dir("Forge");
         var modelsDir = Dir("Forge", "models");
         var settings = new Mock<IAppSettingsService>();
+        // First call inserts a new row, the second is a no-op (path already registered).
+        settings
+            .SetupSequence(s => s.AddBaseModelFolderAsync(modelsDir, 42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true)
+            .ReturnsAsync(false);
         var sut = new BaseModelFolderRegistrar(settings.Object);
 
-        await sut.RegisterPackageFoldersAsync(Package(install, InstallerType.Forge, id: 42));
-        await sut.RegisterPackageFoldersAsync(Package(install, InstallerType.Forge, id: 42));
+        var firstAdded = await sut.RegisterPackageFoldersAsync(Package(install, InstallerType.Forge, id: 42));
+        var secondAdded = await sut.RegisterPackageFoldersAsync(Package(install, InstallerType.Forge, id: 42));
 
         // Idempotency lives in IAppSettingsService.AddBaseModelFolderAsync (path-unique);
-        // the registrar simply funnels every root through it with the package id.
+        // the registrar funnels every root through it and reports how many were new so
+        // callers know whether to announce a settings change (Settings page reload).
+        firstAdded.Should().Be(1);
+        secondAdded.Should().Be(0);
         settings.Verify(
             s => s.AddBaseModelFolderAsync(modelsDir, 42, It.IsAny<CancellationToken>()),
             Times.Exactly(2));
@@ -104,13 +112,15 @@ public sealed class BaseModelFolderRegistrarTests : IDisposable
 
         var sut = new BaseModelFolderRegistrar(settings.Object);
 
-        var act = async () => await sut.EnsureRegisteredAsync(
+        var added = 0;
+        var act = async () => added = await sut.EnsureRegisteredAsync(
         [
             Package(install, InstallerType.Forge, id: 1),
             Package(install, InstallerType.Forge, id: 2),
         ]);
 
         await act.Should().NotThrowAsync("startup backfill must never break app startup");
+        added.Should().Be(0, "failed registrations must not count as added");
         settings.Verify(
             s => s.AddBaseModelFolderAsync(modelsDir, It.IsAny<int?>(), It.IsAny<CancellationToken>()),
             Times.Exactly(2));

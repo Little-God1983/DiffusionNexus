@@ -275,7 +275,16 @@ public partial class App : Application
                         var folderRegistrar = scope.ServiceProvider.GetRequiredService<DiffusionNexus.UI.Services.Diffusion.BaseModelFolderRegistrar>();
                         var uow = scope.ServiceProvider.GetRequiredService<DiffusionNexus.DataAccess.UnitOfWork.IUnitOfWork>();
                         var packages = await uow.InstallerPackages.GetAllAsync();
-                        await folderRegistrar.EnsureRegisteredAsync(packages);
+                        var added = await folderRegistrar.EnsureRegisteredAsync(packages);
+
+                        // The Settings page preloads its data before this backfill runs.
+                        // Announce the change so an already-loaded Settings VM reloads its
+                        // Base Model Folders list (same mechanism the gallery link uses).
+                        if (added > 0)
+                        {
+                            Services!.GetService<IDatasetEventAggregator>()
+                                ?.PublishSettingsSaved(new SettingsSavedEventArgs());
+                        }
                     }
                     catch (Exception ex)
                     {

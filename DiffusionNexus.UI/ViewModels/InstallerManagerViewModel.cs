@@ -181,9 +181,11 @@ public partial class InstallerManagerViewModel : ViewModelBase
             // Register the installation's model folders as Base Model Folders
             // (for ComfyUI this includes every extra_model_paths.yaml root).
             // Non-fatal by design — EnsureRegisteredAsync logs and swallows failures.
-            if (_baseModelFolderRegistrar is not null)
+            if (_baseModelFolderRegistrar is not null
+                && await _baseModelFolderRegistrar.EnsureRegisteredAsync([package]) > 0)
             {
-                await _baseModelFolderRegistrar.EnsureRegisteredAsync([package]);
+                // Let an open Settings page reload its Base Model Folders list.
+                _eventAggregator.PublishSettingsSaved(new SettingsSavedEventArgs());
             }
 
             var card = CreateCard(package);

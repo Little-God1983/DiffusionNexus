@@ -114,7 +114,8 @@ public interface IAppSettingsService
     /// <param name="folderPath">Absolute path of the models root.</param>
     /// <param name="installerPackageId">Owning installer package, when auto-registered.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    Task AddBaseModelFolderAsync(string folderPath, int? installerPackageId = null, CancellationToken cancellationToken = default);
+    /// <returns><c>true</c> when a new row was inserted; <c>false</c> when the path already existed.</returns>
+    Task<bool> AddBaseModelFolderAsync(string folderPath, int? installerPackageId = null, CancellationToken cancellationToken = default);
 
     /// <summary>Gets the remembered feedback-reporter e-mail, or null if not set.</summary>
     Task<string?> GetFeedbackReporterEmailAsync(CancellationToken cancellationToken = default);

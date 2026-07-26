@@ -49,7 +49,7 @@ public sealed class ModelFolderCatalogTests : IDisposable
     }
 
     [Fact]
-    public async Task DownloadTargets_DefaultFolderFirst_ThenByOrder()
+    public async Task DownloadTargets_DefaultFolderFirst_ThenByOrder_ThenAppFolder()
     {
         var a = Dir("A");
         var b = Dir("B");
@@ -59,9 +59,22 @@ public sealed class ModelFolderCatalogTests : IDisposable
 
         var targets = await sut.GetDownloadTargetsAsync();
 
-        targets.Select(t => t.Path).Should().Equal(b, a);
+        targets.Select(t => t.Path).Should().Equal(b, a, ModelFolderCatalog.FallbackRoot);
         targets[0].IsDefault.Should().BeTrue();
         targets[1].IsDefault.Should().BeFalse();
+        targets[2].IsDefault.Should().BeFalse(
+            "the app folder is always selectable but only the default when nothing else exists");
+    }
+
+    [Fact]
+    public async Task DownloadTargets_DoNotDuplicateTheAppFolder_WhenItIsAlsoARegisteredRow()
+    {
+        var sut = CreateSut(
+            new BaseModelFolder { FolderPath = ModelFolderCatalog.FallbackRoot.ToUpperInvariant(), Order = 0 });
+
+        var targets = await sut.GetDownloadTargetsAsync();
+
+        targets.Should().ContainSingle();
     }
 
     [Fact]

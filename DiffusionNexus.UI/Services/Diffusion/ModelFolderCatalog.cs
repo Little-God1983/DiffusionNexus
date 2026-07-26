@@ -48,12 +48,21 @@ public sealed class ModelFolderCatalog : IModelFolderCatalog
             .ThenBy(f => f.Order)
             .ToList();
 
-        return ordered
+        var targets = ordered
             .Select((f, index) => new ModelFolderOption(
                 f.FolderPath,
                 IsDefault: index == 0,
                 Directory.Exists(f.FolderPath)))
             .ToList();
+
+        // The app's own folder is always selectable, even when other folders are
+        // registered — it just never claims the default from a configured row.
+        if (!targets.Any(t => string.Equals(t.Path, FallbackRoot, StringComparison.OrdinalIgnoreCase)))
+        {
+            targets.Add(new ModelFolderOption(FallbackRoot, IsDefault: false, Directory.Exists(FallbackRoot)));
+        }
+
+        return targets;
     }
 
     /// <inheritdoc />

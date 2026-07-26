@@ -116,8 +116,9 @@ public class AppSettingsServiceBaseModelFolderTests : IDisposable
         using (var scope = _serviceProvider.CreateScope())
         {
             var service = CreateService(scope);
-            await service.AddBaseModelFolderAsync(@"D:\Shared\Models");
-            await service.AddBaseModelFolderAsync(@"d:\shared\MODELS", installerPackageId: null);
+            (await service.AddBaseModelFolderAsync(@"D:\Shared\Models")).Should().BeTrue("a new row was inserted");
+            (await service.AddBaseModelFolderAsync(@"d:\shared\MODELS", installerPackageId: null))
+                .Should().BeFalse("the path already exists (case-insensitive)");
         }
 
         using (var scope = _serviceProvider.CreateScope())

@@ -38,32 +38,45 @@ public sealed class BaseModelFolderRegistrar
     /// and package re-linking are handled by
     /// <see cref="IAppSettingsService.AddBaseModelFolderAsync(string, int?, CancellationToken)"/>.
     /// </summary>
-    public async Task RegisterPackageFoldersAsync(InstallerPackage package, CancellationToken cancellationToken = default)
+    /// <returns>How many folders were newly inserted (0 when everything already existed).</returns>
+    public async Task<int> RegisterPackageFoldersAsync(InstallerPackage package, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(package);
 
+        var added = 0;
         foreach (var root in ResolveModelRoots(package))
         {
-            await _settingsService
-                .AddBaseModelFolderAsync(root, package.Id, cancellationToken)
-                .ConfigureAwait(false);
-            Logger.Information("Registered base model folder {Root} for installation '{Name}'.", root, package.Name);
+            if (await _settingsService
+                    .AddBaseModelFolderAsync(root, package.Id, cancellationToken)
+                    .ConfigureAwait(false))
+            {
+                added++;
+                Logger.Information("Registered base model folder {Root} for installation '{Name}'.", root, package.Name);
+            }
         }
+
+        return added;
     }
 
     /// <summary>
     /// Startup backfill over all packages. Never throws — a registration failure must
     /// not block app startup.
     /// </summary>
-    public async Task EnsureRegisteredAsync(IEnumerable<InstallerPackage> packages, CancellationToken cancellationToken = default)
+    /// <returns>
+    /// How many folders were newly inserted across all packages. Callers should publish a
+    /// settings-saved notification when this is non-zero so an already-loaded Settings
+    /// page reloads its Base Model Folders list.
+    /// </returns>
+    public async Task<int> EnsureRegisteredAsync(IEnumerable<InstallerPackage> packages, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(packages);
 
+        var added = 0;
         foreach (var package in packages)
         {
             try
             {
-                await RegisterPackageFoldersAsync(package, cancellationToken).ConfigureAwait(false);
+                added += await RegisterPackageFoldersAsync(package, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -74,6 +87,8 @@ public sealed class BaseModelFolderRegistrar
                 Logger.Warning(ex, "Failed to register base model folders for '{Name}'.", package.Name);
             }
         }
+
+        return added;
     }
 
     /// <summary>

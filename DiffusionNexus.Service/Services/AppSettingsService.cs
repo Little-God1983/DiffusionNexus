@@ -375,7 +375,7 @@ public sealed class AppSettingsService : IAppSettingsService
     }
 
     /// <inheritdoc />
-    public async Task AddBaseModelFolderAsync(string folderPath, int? installerPackageId = null, CancellationToken cancellationToken = default)
+    public async Task<bool> AddBaseModelFolderAsync(string folderPath, int? installerPackageId = null, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
 
@@ -392,7 +392,7 @@ public sealed class AppSettingsService : IAppSettingsService
                 existing.UpdatedAt = DateTimeOffset.UtcNow;
                 await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             }
-            return;
+            return false;
         }
 
         var maxOrder = settings.BaseModelFolders.Any()
@@ -410,6 +410,7 @@ public sealed class AppSettingsService : IAppSettingsService
         }, cancellationToken).ConfigureAwait(false);
 
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     /// <inheritdoc />
