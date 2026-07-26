@@ -98,6 +98,18 @@ public sealed class SettingsExportService : ISettingsExportService
         }
 
         order = 0;
+        foreach (var f in settings.BaseModelFolders.OrderBy(x => x.Order))
+        {
+            export.BaseModelFolders.Add(new BaseModelFolderExport
+            {
+                FolderPath = f.FolderPath,
+                IsEnabled = f.IsEnabled,
+                IsDefault = f.IsDefault,
+                Order = order++
+            });
+        }
+
+        order = 0;
         foreach (var c in settings.DatasetCategories.OrderBy(x => x.Order))
         {
             export.DatasetCategories.Add(new DatasetCategoryExport
@@ -154,8 +166,10 @@ public sealed class SettingsExportService : ISettingsExportService
             DeleteEmptySourceFolders = export.DeleteEmptySourceFolders,
 
             DatasetStoragePath = export.DatasetStoragePath,
-            // v1 files carry the flag as "autoBackupEnabled"; honor it when the v2 field is absent.
-            BackupDatasetImagesEnabled = export.BackupDatasetImagesEnabled || (export.LegacyAutoBackupEnabled ?? false),
+            // v1 files carry the flag as "autoBackupEnabled"; honor it only when the v2
+            // field is genuinely absent. An explicit v2 value — including `false` —
+            // is authoritative and must not be overridden by the stale legacy key.
+            BackupDatasetImagesEnabled = export.BackupDatasetImagesEnabled ?? export.LegacyAutoBackupEnabled ?? false,
             BackupDatabaseEnabled = export.BackupDatabaseEnabled,
             AutoBackupIntervalDays = export.AutoBackupIntervalDays,
             AutoBackupIntervalHours = export.AutoBackupIntervalHours,
@@ -184,6 +198,18 @@ public sealed class SettingsExportService : ISettingsExportService
                 FolderPath = g.FolderPath,
                 IsEnabled = g.IsEnabled,
                 Order = g.Order
+            });
+        }
+
+        foreach (var f in export.BaseModelFolders.OrderBy(x => x.Order))
+        {
+            settings.BaseModelFolders.Add(new BaseModelFolder
+            {
+                AppSettingsId = 1,
+                FolderPath = f.FolderPath,
+                IsEnabled = f.IsEnabled,
+                IsDefault = f.IsDefault,
+                Order = f.Order
             });
         }
 

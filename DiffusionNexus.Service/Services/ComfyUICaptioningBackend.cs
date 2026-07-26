@@ -31,7 +31,7 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
     }
 
     /// <inheritdoc />
-    public string DisplayName => "ComfyUI � Qwen3-VL";
+    public string DisplayName => "ComfyUI \u2014 Qwen3-VL";
 
     /// <inheritdoc />
     public IReadOnlyList<string> MissingRequirements { get; private set; } = [];
@@ -58,6 +58,12 @@ public sealed class ComfyUICaptioningBackend : ICaptioningBackend
             Warnings = result.Warnings;
 
             return result.IsReady;
+        }
+        catch (OperationCanceledException)
+        {
+            // Cancellation is the caller's business, not a backend availability problem - do not
+            // report it via MissingRequirements. Matches LocalInferenceFeatureBackend (#434).
+            throw;
         }
         catch (Exception ex)
         {

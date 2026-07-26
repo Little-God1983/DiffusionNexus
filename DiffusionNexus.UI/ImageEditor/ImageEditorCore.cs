@@ -22,11 +22,11 @@ public partial class ImageEditorCore : IDisposable
     private readonly object _bitmapLock = new();
     private SKRect _lastImageRect;
 
-    // Layer state � delegated to LayerManager when services are wired
+    // Layer state - delegated to LayerManager when services are wired
     private LayerStack? _layers => _services?.Layers.Stack;
     private bool _isLayerMode => _services?.Layers.IsLayerMode ?? false;
 
-    // Viewport state � delegated to ViewportManager when services are wired
+    // Viewport state - delegated to ViewportManager when services are wired
     private float _zoomLevel
     {
         get => _services?.Viewport.ZoomLevel ?? 1f;

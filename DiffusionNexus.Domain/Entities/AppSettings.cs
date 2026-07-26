@@ -41,6 +41,12 @@ public class AppSettings
     public ICollection<ImageGallery> ImageGalleries { get; set; } = new List<ImageGallery>();
 
     /// <summary>
+    /// Registered model storage roots (Base Model Folders) used by the
+    /// Diffusion Nexus Core for downloading and looking up models.
+    /// </summary>
+    public ICollection<BaseModelFolder> BaseModelFolders { get; set; } = new List<BaseModelFolder>();
+
+    /// <summary>
     /// Whether to show NSFW content by default.
     /// </summary>
     public bool ShowNsfw { get; set; }

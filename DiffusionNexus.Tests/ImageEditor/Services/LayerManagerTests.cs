@@ -79,7 +79,7 @@ public class LayerManagerTests : IDisposable
         using var anotherBitmap = new SKBitmap(200, 200);
         _sut.EnableLayerMode(anotherBitmap, "Second");
 
-        // Assert — still has original dimensions
+        // Assert - still has original dimensions
         _sut.Width.Should().Be(100);
         _sut.Count.Should().Be(1);
     }
@@ -115,7 +115,7 @@ public class LayerManagerTests : IDisposable
         // Act
         _sut.EnableLayerMode(_testBitmap, "Background");
 
-        // Assert — LayerStack fires LayersChanged when a layer is added
+        // Assert - LayerStack fires LayersChanged when a layer is added
         raised.Should().BeTrue();
     }
 
@@ -624,7 +624,7 @@ public class LayerManagerTests : IDisposable
         var raised = false;
         _sut.ContentChanged += (_, _) => raised = true;
 
-        // Act — modify the layer content
+        // Act - modify the layer content
         _sut.ActiveLayer!.NotifyContentChanged();
 
         // Assert

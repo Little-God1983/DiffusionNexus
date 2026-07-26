@@ -12,6 +12,9 @@ public class PerImageQualitySummaryTests
     [Fact]
     public void OverallScore_IsNaN_WhenNoChecksRan()
     {
+        // This is the NaN "no data" sentinel documented as a deliberate contract
+        // (issue #449): PerImageQualityAggregator keeps a row like this instead of
+        // dropping it, and ImageQualityAdvisor.Analyze maps it to the Unknown verdict.
         var summary = new PerImageQualitySummary { FilePath = "image.png" };
 
         double.IsNaN(summary.OverallScore).Should().BeTrue();

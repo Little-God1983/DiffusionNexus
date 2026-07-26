@@ -34,7 +34,7 @@ public class ImageEditorCoreInpaintBaseTests : IDisposable
     [Fact]
     public void WhenResetToOriginal_InpaintBaseIsCleared()
     {
-        // Arrange — capture an inpaint base
+        // Arrange - capture an inpaint base
         _sut.SetInpaintBaseBitmap();
         _sut.HasInpaintBase.Should().BeTrue();
 
@@ -48,7 +48,7 @@ public class ImageEditorCoreInpaintBaseTests : IDisposable
     [Fact]
     public void WhenClear_InpaintBaseIsCleared()
     {
-        // Arrange — capture an inpaint base
+        // Arrange - capture an inpaint base
         _sut.SetInpaintBaseBitmap();
         _sut.HasInpaintBase.Should().BeTrue();
 

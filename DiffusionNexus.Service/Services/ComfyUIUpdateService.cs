@@ -1,6 +1,4 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
-using System.Text;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using Serilog;
@@ -17,12 +15,44 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
 {
     private static readonly ILogger Logger = Log.ForContext<ComfyUIUpdateService>();
 
+    /// <summary>
+    /// Environment applied to every git/pip process launched by this service.
+    /// <list type="bullet">
+    ///   <item><c>PYTHONUNBUFFERED</c>/<c>PYTHONIOENCODING</c> force Python children to
+    ///     flush stdout/stderr immediately; without them pip's output is line-buffered
+    ///     off a TTY and arrives in one blob at exit (root cause of the "updater hangs"
+    ///     perception).</item>
+    ///   <item><c>GIT_PROGRESS_DELAY=0</c> makes git emit progress lines even though
+    ///     stderr isn't a TTY.</item>
+    /// </list>
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, string?> ProcessEnvironment =
+        new Dictionary<string, string?>
+        {
+            ["PYTHONUNBUFFERED"] = "1",
+            ["PYTHONIOENCODING"] = "utf-8",
+            ["GIT_PROGRESS_DELAY"] = "0",
+        };
+
+    private readonly IProcessRunner _processRunner;
+
     // Collapses concurrent CheckForUpdatesAsync calls for the same path to a single
     // git fetch. UnifiedConsoleViewModel and InstallerManagerViewModel both fan out
     // update checks at startup against the same installations — without this they
     // race on ref updates and one fetch fails with "incorrect old value provided".
     private readonly ConcurrentDictionary<string, Lazy<Task<UpdateCheckResult>>> _inflight =
         new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Creates the service. <paramref name="processRunner"/> is optional and defaults to
+    /// the real process launcher, so existing call sites (including DI activation via the
+    /// public parameterless path) keep working; tests inject a fake to make git/pip
+    /// invocations observable.
+    /// </summary>
+    public ComfyUIUpdateService(IProcessRunner? processRunner = null)
+    {
+        _processRunner = processRunner ?? new DefaultProcessRunner();
+    }
 
     /// <inheritdoc />
     public IReadOnlySet<InstallerType> SupportedTypes { get; } =
@@ -179,28 +209,24 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
     /// resolves the default remote branch (origin/HEAD → origin/main → origin/master).
     /// </summary>
     /// <returns>The resolved branch name and whether the repo was in detached HEAD state.</returns>
-    private static async Task<(string Branch, bool IsDetached)> ResolveBranchAsync(
+    private async Task<(string Branch, bool IsDetached)> ResolveBranchAsync(
         string dir, CancellationToken ct)
     {
         var branchResult = await RunGitAsync(dir, "rev-parse --abbrev-ref HEAD", progress: null, ct);
-        var branch = branchResult.Success ? branchResult.Output.Trim() : null;
+        var attached = GitBranchParser.ParseAttachedBranch(branchResult.Success, branchResult.Output);
 
-        if (!string.IsNullOrEmpty(branch) && branch != "HEAD")
-            return (branch, IsDetached: false);
+        if (attached is not null)
+            return (attached, IsDetached: false);
 
         Logger.Debug("Detached HEAD in {Dir}, trying to find default remote branch", dir);
 
-        // Try origin/HEAD symbolic ref first
+        // Try origin/HEAD symbolic ref first (returns "origin/main" or "origin/master")
         var symbolicRef = await RunGitAsync(dir, "symbolic-ref refs/remotes/origin/HEAD --short", progress: null, ct);
-        if (symbolicRef.Success)
-        {
-            // Returns "origin/main" or "origin/master" — strip "origin/"
-            branch = symbolicRef.Output.Trim().Replace("origin/", "");
-        }
-        else
+        var branch = GitBranchParser.ParseSymbolicRefBranch(symbolicRef.Success, symbolicRef.Output);
+
+        if (branch is null)
         {
             // Fallback: try common branch names
-            branch = null;
             foreach (var candidate in new[] { "main", "master" })
             {
                 var check = await RunGitAsync(dir, $"rev-parse --verify origin/{candidate}", progress: null, ct);
@@ -216,7 +242,7 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
     /// <summary>
     /// Pulls updates for a git directory, handling detached HEAD by checking out the resolved branch first.
     /// </summary>
-    private static async Task<ProcessResult> PullDirectoryAsync(
+    private async Task<CommandResult> PullDirectoryAsync(
         string dir, IProgress<string>? progress, string label, CancellationToken ct)
     {
         // Fetch latest refs first so we have up-to-date remote tracking
@@ -359,7 +385,7 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
     /// Runs <c>pip install -r requirements.txt</c> in the backend directory to update
     /// pip-managed dependencies including the frontend package (<c>comfyui-frontend-package</c>).
     /// </summary>
-    private static async Task UpdatePipRequirementsAsync(
+    private async Task UpdatePipRequirementsAsync(
         string installationPath, string backendDir,
         IProgress<string>? progress, CancellationToken ct)
     {
@@ -409,20 +435,20 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
     /// so the unified console can show real-time feedback instead of waiting for the
     /// process to exit (which can take many minutes for fetch/pull on slow networks).
     /// </summary>
-    private static Task<ProcessResult> RunGitAsync(
+    private Task<CommandResult> RunGitAsync(
         string workingDir, string arguments, IProgress<string>? progress, CancellationToken ct)
         => RunProcessAsync("git", arguments, workingDir, progress, "git", ct);
 
     /// <summary>
-    /// Runs an external process and captures stdout/stderr. Each line is also reported
-    /// through <paramref name="progress"/> as it arrives so the user sees live output
-    /// (the prior implementation only logged the full buffer once the process exited,
-    /// which made long-running pip installs look frozen).
-    /// On cancellation the entire process tree is killed so an aborted update doesn't
-    /// leave git or pip running in the background mid-operation — that was corrupting
-    /// installations and forcing users to fix things by running update.bat manually.
+    /// Runs an external process via the injected <see cref="IProcessRunner"/> and maps the
+    /// raw exit code / streams onto this service's success semantics. Each output line is
+    /// forwarded to <paramref name="progress"/> (with a <c>[prefix]</c>) as it arrives, and
+    /// the runner kills the whole process tree if <paramref name="ct"/> fires — an aborted
+    /// git/pip run left alive was corrupting installations. On cancellation the abort is
+    /// reported and surfaced as a failed result (not rethrown) so the caller's sequential
+    /// git steps unwind quietly, matching the pre-seam behaviour.
     /// </summary>
-    private static async Task<ProcessResult> RunProcessAsync(
+    private async Task<CommandResult> RunProcessAsync(
         string fileName,
         string arguments,
         string workingDir,
@@ -430,106 +456,37 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
         string? logPrefix,
         CancellationToken ct)
     {
-        var psi = new ProcessStartInfo
-        {
-            FileName = fileName,
-            Arguments = arguments,
-            WorkingDirectory = workingDir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-
-        // Force Python child processes to flush stdout/stderr immediately. Without this
-        // pip's output is line-buffered when not attached to a TTY and we'd only see it
-        // in big chunks (or at process exit), which is the root cause of the
-        // "updater hangs forever" perception.
-        psi.EnvironmentVariables["PYTHONUNBUFFERED"] = "1";
-        psi.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
-        // Make git progress lines come through as well, even though stderr isn't a TTY.
-        psi.EnvironmentVariables["GIT_PROGRESS_DELAY"] = "0";
-
         var prefix = string.IsNullOrEmpty(logPrefix) ? string.Empty : $"[{logPrefix}] ";
 
-        Process? process = null;
         try
         {
-            process = Process.Start(psi);
-            if (process is null)
-                return new ProcessResult(false, $"Failed to start {fileName}");
+            var result = await _processRunner.RunAsync(
+                fileName, arguments, workingDir,
+                ProcessEnvironment,
+                line => progress?.Report(prefix + line),
+                ct);
 
-            var stdout = new StringBuilder();
-            var stderr = new StringBuilder();
-
-            process.OutputDataReceived += (_, e) =>
-            {
-                if (e.Data is null) return;
-                stdout.AppendLine(e.Data);
-                progress?.Report(prefix + e.Data);
-            };
-            process.ErrorDataReceived += (_, e) =>
-            {
-                if (e.Data is null) return;
-                stderr.AppendLine(e.Data);
-                // git and pip both write progress information to stderr — surface it too.
-                progress?.Report(prefix + e.Data);
-            };
-
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-
-            try
-            {
-                await process.WaitForExitAsync(ct);
-            }
-            catch (OperationCanceledException)
-            {
-                // Kill the whole tree so child processes (e.g. pip's spawned setup.py
-                // builds) don't keep running and corrupt the installation.
-                TryKillProcessTree(process, fileName, arguments, workingDir);
-                progress?.Report($"{prefix}Aborted by user.");
-                return new ProcessResult(false, "Cancelled by user");
-            }
-
-            var exitCode = process.ExitCode;
-            var output = stdout.ToString().TrimEnd();
-            var error = stderr.ToString().TrimEnd();
+            var output = result.StandardOutput.TrimEnd();
+            var error = result.StandardError.TrimEnd();
 
             Logger.Debug("{Exe} {Args} in {Dir} → exit {Code}, stdout: {Out}, stderr: {Err}",
-                fileName, arguments, workingDir, exitCode, output, error);
+                fileName, arguments, workingDir, result.ExitCode, output, error);
 
-            return exitCode == 0
-                ? new ProcessResult(true, output)
-                : new ProcessResult(false, string.IsNullOrEmpty(error) ? output : error);
+            return result.ExitCode == 0
+                ? new CommandResult(true, output)
+                : new CommandResult(false, string.IsNullOrEmpty(error) ? output : error);
+        }
+        catch (OperationCanceledException)
+        {
+            progress?.Report($"{prefix}Aborted by user.");
+            return new CommandResult(false, "Cancelled by user");
         }
         catch (Exception ex)
         {
             Logger.Error(ex, "Failed to run {Exe} {Args} in {Dir}", fileName, arguments, workingDir);
-            return new ProcessResult(false, ex.Message);
-        }
-        finally
-        {
-            process?.Dispose();
+            return new CommandResult(false, ex.Message);
         }
     }
 
-    private static void TryKillProcessTree(Process process, string fileName, string arguments, string workingDir)
-    {
-        try
-        {
-            if (!process.HasExited)
-            {
-                Logger.Warning("Killing process tree for {Exe} {Args} in {Dir} due to cancellation",
-                    fileName, arguments, workingDir);
-                process.Kill(entireProcessTree: true);
-            }
-        }
-        catch (Exception killEx)
-        {
-            Logger.Error(killEx, "Failed to kill {Exe} on cancellation", fileName);
-        }
-    }
-
-    private sealed record ProcessResult(bool Success, string Output);
+    private sealed record CommandResult(bool Success, string Output);
 }

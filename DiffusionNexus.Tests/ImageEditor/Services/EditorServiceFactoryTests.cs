@@ -28,7 +28,7 @@ public class EditorServiceFactoryTests
         // Act
         var services = EditorServiceFactory.Create();
 
-        // Assert — publish via viewport and verify event fires
+        // Assert - publish via viewport and verify event fires
         var raised = false;
         services.Viewport.Changed += (_, _) => raised = true;
         services.Viewport.ZoomIn();
@@ -42,10 +42,10 @@ public class EditorServiceFactoryTests
         var services1 = EditorServiceFactory.Create();
         var services2 = EditorServiceFactory.Create();
 
-        // Act — activate a tool on services1
+        // Act - activate a tool on services1
         services1.Tools.Activate(ToolIds.Crop);
 
-        // Assert — services2 is unaffected
+        // Assert - services2 is unaffected
         services2.Tools.ActiveToolId.Should().BeNull();
     }
 

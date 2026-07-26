@@ -1,6 +1,5 @@
 using System.Collections.ObjectModel;
 using Avalonia.Media.Imaging;
-using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Civitai;
@@ -23,6 +22,7 @@ public partial class TrainingRunCardViewModel : ObservableObject, IDialogService
 {
     private readonly IDatasetEventAggregator _eventAggregator;
     private readonly ICivitaiBaseModelCatalog? _baseModelCatalog;
+    private readonly IUiScheduler _uiScheduler;
     private string _runFolderPath = string.Empty;
     private TrainingRunSubTab _selectedSubTab = TrainingRunSubTab.Epochs;
     private bool _isViewingDetail;
@@ -428,12 +428,14 @@ public partial class TrainingRunCardViewModel : ObservableObject, IDialogService
         TrainingRunInfo runInfo,
         string runFolderPath,
         IDatasetEventAggregator eventAggregator,
-        ICivitaiBaseModelCatalog? baseModelCatalog = null)
+        ICivitaiBaseModelCatalog? baseModelCatalog = null,
+        IUiScheduler? uiScheduler = null)
     {
         RunInfo = runInfo ?? throw new ArgumentNullException(nameof(runInfo));
         ArgumentNullException.ThrowIfNull(runFolderPath);
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _baseModelCatalog = baseModelCatalog;
+        _uiScheduler = uiScheduler ?? AvaloniaUiScheduler.Instance;
 
         _runFolderPath = runFolderPath;
 
@@ -514,7 +516,7 @@ public partial class TrainingRunCardViewModel : ObservableObject, IDialogService
             return;
         }
 
-        await Dispatcher.UIThread.InvokeAsync(() =>
+        await _uiScheduler.InvokeAsync(() =>
         {
             var current = RunInfo.BaseModel;
 
@@ -683,7 +685,7 @@ public partial class TrainingRunCardViewModel : ObservableObject, IDialogService
 
             if (bitmap is not null)
             {
-                if (Dispatcher.UIThread.CheckAccess())
+                if (_uiScheduler.IsOnUiThread)
                 {
                     _thumbnail = bitmap;
                     _isThumbnailLoading = false;
@@ -691,7 +693,7 @@ public partial class TrainingRunCardViewModel : ObservableObject, IDialogService
                 }
                 else
                 {
-                    Dispatcher.UIThread.Post(() =>
+                    _uiScheduler.Post(() =>
                     {
                         try
                         {

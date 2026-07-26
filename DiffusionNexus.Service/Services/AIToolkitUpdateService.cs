@@ -1,6 +1,4 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
-using System.Text;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using Serilog;
@@ -18,12 +16,25 @@ public sealed class AIToolkitUpdateService : IInstallerUpdateService
 {
     private static readonly ILogger Logger = Log.ForContext<AIToolkitUpdateService>();
 
+    private readonly IProcessRunner _processRunner;
+
     // Collapses concurrent CheckForUpdatesAsync calls for the same path to a single
     // git fetch. UnifiedConsoleViewModel and InstallerManagerViewModel both fan out
     // update checks at startup against the same installations — without this they
     // race on ref updates and one fetch fails with "incorrect old value provided".
     private readonly ConcurrentDictionary<string, Lazy<Task<UpdateCheckResult>>> _inflight =
         new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Creates the service. <paramref name="processRunner"/> is optional and defaults to
+    /// the real process launcher, so existing call sites (including DI activation via the
+    /// public parameterless path) keep working; tests inject a fake to make git/pip/uv
+    /// invocations observable.
+    /// </summary>
+    public AIToolkitUpdateService(IProcessRunner? processRunner = null)
+    {
+        _processRunner = processRunner ?? new DefaultProcessRunner();
+    }
 
     /// <inheritdoc />
     public IReadOnlySet<InstallerType> SupportedTypes { get; } =
@@ -219,7 +230,7 @@ public sealed class AIToolkitUpdateService : IInstallerUpdateService
         return new UpdateResult(true, hash, "Update completed successfully");
     }
 
-    private static Task<ProcessResult> InstallPackageAsync(
+    private Task<CommandResult> InstallPackageAsync(
         string? uvExe, string pythonExe, string workingDir, string venvDir,
         IProgress<string>? progress, CancellationToken ct,
         string uvArgs, string pipArgs)
@@ -289,23 +300,20 @@ public sealed class AIToolkitUpdateService : IInstallerUpdateService
     /// Detects the current branch for a git directory. If in detached HEAD state,
     /// resolves the default remote branch (origin/HEAD → origin/main → origin/master).
     /// </summary>
-    private static async Task<(string Branch, bool IsDetached)> ResolveBranchAsync(
+    private async Task<(string Branch, bool IsDetached)> ResolveBranchAsync(
         string dir, CancellationToken ct)
     {
         var branchResult = await RunGitAsync(dir, "rev-parse --abbrev-ref HEAD", progress: null, ct);
-        var branch = branchResult.Success ? branchResult.Output.Trim() : null;
+        var attached = GitBranchParser.ParseAttachedBranch(branchResult.Success, branchResult.Output);
 
-        if (!string.IsNullOrEmpty(branch) && branch != "HEAD")
-            return (branch, IsDetached: false);
+        if (attached is not null)
+            return (attached, IsDetached: false);
 
         var symbolicRef = await RunGitAsync(dir, "symbolic-ref refs/remotes/origin/HEAD --short", progress: null, ct);
-        if (symbolicRef.Success)
+        var branch = GitBranchParser.ParseSymbolicRefBranch(symbolicRef.Success, symbolicRef.Output);
+
+        if (branch is null)
         {
-            branch = symbolicRef.Output.Trim().Replace("origin/", "");
-        }
-        else
-        {
-            branch = null;
             foreach (var candidate in new[] { "main", "master" })
             {
                 var check = await RunGitAsync(dir, $"rev-parse --verify origin/{candidate}", progress: null, ct);
@@ -321,7 +329,7 @@ public sealed class AIToolkitUpdateService : IInstallerUpdateService
     /// Pulls updates for a git directory, handling detached HEAD by checking out
     /// the resolved branch first.
     /// </summary>
-    private static async Task<ProcessResult> PullDirectoryAsync(
+    private async Task<CommandResult> PullDirectoryAsync(
         string dir, IProgress<string>? progress, CancellationToken ct)
     {
         var fetchResult = await RunGitAsync(dir, "fetch --all", progress, ct);
@@ -353,22 +361,21 @@ public sealed class AIToolkitUpdateService : IInstallerUpdateService
         return pullResult;
     }
 
-    private static Task<ProcessResult> RunGitAsync(
+    private Task<CommandResult> RunGitAsync(
         string workingDir, string arguments, IProgress<string>? progress, CancellationToken ct)
         => RunIsolatedAsync("git", arguments, workingDir, progress, "git", ct, venvDir: null);
 
     /// <summary>
-    /// Runs an external process with the AI-Toolkit isolation profile applied:
-    /// clears ambient Python configuration (PYTHONPATH, CONDA_PREFIX, venv hints,
-    /// etc.) so the venv-local interpreter / uv don't get redirected to a global
-    /// install. Mirrors the SET-empty lines at the top of update.bat. When
-    /// <paramref name="venvDir"/> is supplied, the venv is "activated" by setting
-    /// VIRTUAL_ENV and prepending its Scripts/bin directory to PATH — required
-    /// for <c>uv pip</c>, which otherwise refuses to install without a venv.
-    /// Streams stdout/stderr live to <paramref name="progress"/> and kills the
-    /// whole process tree on cancellation.
+    /// Runs an external process via the injected <see cref="IProcessRunner"/> with the
+    /// AI-Toolkit isolation profile applied (see <see cref="BuildEnvironment"/>): ambient
+    /// Python configuration is cleared so the venv-local interpreter / uv aren't
+    /// redirected to a global install, and — when <paramref name="venvDir"/> is supplied —
+    /// the venv is "activated" (VIRTUAL_ENV + PATH). Output is streamed live to
+    /// <paramref name="progress"/> and the runner kills the whole process tree on
+    /// cancellation. On cancellation the abort is reported and surfaced as a failed result
+    /// (not rethrown), matching the pre-seam behaviour.
     /// </summary>
-    private static async Task<ProcessResult> RunIsolatedAsync(
+    private async Task<CommandResult> RunIsolatedAsync(
         string fileName,
         string arguments,
         string workingDir,
@@ -377,102 +384,78 @@ public sealed class AIToolkitUpdateService : IInstallerUpdateService
         CancellationToken ct,
         string? venvDir)
     {
-        var psi = new ProcessStartInfo
-        {
-            FileName = fileName,
-            Arguments = arguments,
-            WorkingDirectory = workingDir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-
-        // Live streaming for pip / uv (otherwise output arrives in one blob at exit).
-        psi.EnvironmentVariables["PYTHONUNBUFFERED"] = "1";
-        psi.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
-        psi.EnvironmentVariables["GIT_PROGRESS_DELAY"] = "0";
-        psi.EnvironmentVariables["GIT_LFS_SKIP_SMUDGE"] = "1";
-
-        // Remove ambient Python config so the venv-local interpreter wins.
-        foreach (var key in IsolatedEnvironmentKeys)
-            psi.EnvironmentVariables.Remove(key);
-
-        if (!string.IsNullOrEmpty(venvDir))
-        {
-            // Equivalent to "CALL venv\Scripts\activate.bat": set VIRTUAL_ENV so
-            // uv targets this venv, and prepend the binary dir to PATH so any
-            // bare "pip"/"python" lookups resolve there too.
-            var binDir = OperatingSystem.IsWindows()
-                ? Path.Combine(venvDir, "Scripts")
-                : Path.Combine(venvDir, "bin");
-
-            psi.EnvironmentVariables["VIRTUAL_ENV"] = venvDir;
-            var existingPath = psi.EnvironmentVariables["PATH"];
-            psi.EnvironmentVariables["PATH"] = string.IsNullOrEmpty(existingPath)
-                ? binDir
-                : binDir + Path.PathSeparator + existingPath;
-        }
-
         var prefix = string.IsNullOrEmpty(logPrefix) ? string.Empty : $"[{logPrefix}] ";
 
-        Process? process = null;
         try
         {
-            process = Process.Start(psi);
-            if (process is null)
-                return new ProcessResult(false, $"Failed to start {fileName}");
+            var result = await _processRunner.RunAsync(
+                fileName, arguments, workingDir,
+                BuildEnvironment(venvDir),
+                line => progress?.Report(prefix + line),
+                ct);
 
-            var stdout = new StringBuilder();
-            var stderr = new StringBuilder();
-
-            process.OutputDataReceived += (_, e) =>
-            {
-                if (e.Data is null) return;
-                stdout.AppendLine(e.Data);
-                progress?.Report(prefix + e.Data);
-            };
-            process.ErrorDataReceived += (_, e) =>
-            {
-                if (e.Data is null) return;
-                stderr.AppendLine(e.Data);
-                progress?.Report(prefix + e.Data);
-            };
-
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-
-            try
-            {
-                await process.WaitForExitAsync(ct);
-            }
-            catch (OperationCanceledException)
-            {
-                TryKillProcessTree(process, fileName, arguments, workingDir);
-                progress?.Report($"{prefix}Aborted by user.");
-                return new ProcessResult(false, "Cancelled by user");
-            }
-
-            var exitCode = process.ExitCode;
-            var output = stdout.ToString().TrimEnd();
-            var error = stderr.ToString().TrimEnd();
+            var output = result.StandardOutput.TrimEnd();
+            var error = result.StandardError.TrimEnd();
 
             Logger.Debug("{Exe} {Args} in {Dir} → exit {Code}, stdout: {Out}, stderr: {Err}",
-                fileName, arguments, workingDir, exitCode, output, error);
+                fileName, arguments, workingDir, result.ExitCode, output, error);
 
-            return exitCode == 0
-                ? new ProcessResult(true, output)
-                : new ProcessResult(false, string.IsNullOrEmpty(error) ? output : error);
+            return result.ExitCode == 0
+                ? new CommandResult(true, output)
+                : new CommandResult(false, string.IsNullOrEmpty(error) ? output : error);
+        }
+        catch (OperationCanceledException)
+        {
+            progress?.Report($"{prefix}Aborted by user.");
+            return new CommandResult(false, "Cancelled by user");
         }
         catch (Exception ex)
         {
             Logger.Error(ex, "Failed to run {Exe} {Args} in {Dir}", fileName, arguments, workingDir);
-            return new ProcessResult(false, ex.Message);
+            return new CommandResult(false, ex.Message);
         }
-        finally
+    }
+
+    /// <summary>
+    /// Builds the environment overrides for a process. Mirrors the SET-empty lines at the
+    /// top of update.bat: clears ambient Python configuration (null value = remove the
+    /// variable), forces unbuffered streaming, and — when <paramref name="venvDir"/> is
+    /// supplied — activates the venv by setting <c>VIRTUAL_ENV</c> and prepending its
+    /// <c>Scripts</c>/<c>bin</c> directory to <c>PATH</c> (required for <c>uv pip</c>, which
+    /// otherwise refuses to install without a venv).
+    /// </summary>
+    private static IReadOnlyDictionary<string, string?> BuildEnvironment(string? venvDir)
+    {
+        var env = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+
+        // Remove ambient Python config so the venv-local interpreter wins.
+        foreach (var key in IsolatedEnvironmentKeys)
+            env[key] = null;
+
+        // Live streaming for pip / uv (otherwise output arrives in one blob at exit).
+        env["PYTHONUNBUFFERED"] = "1";
+        env["PYTHONIOENCODING"] = "utf-8";
+        env["GIT_PROGRESS_DELAY"] = "0";
+        env["GIT_LFS_SKIP_SMUDGE"] = "1";
+
+        if (!string.IsNullOrEmpty(venvDir))
         {
-            process?.Dispose();
+            // Equivalent to "CALL venv\Scripts\activate.bat": set VIRTUAL_ENV so uv
+            // targets this venv, and prepend the binary dir to PATH so any bare
+            // "pip"/"python" lookups resolve there too.
+            var binDir = OperatingSystem.IsWindows()
+                ? Path.Combine(venvDir, "Scripts")
+                : Path.Combine(venvDir, "bin");
+
+            env["VIRTUAL_ENV"] = venvDir;
+
+            var existingPath = Environment.GetEnvironmentVariable("PATH");
+            env["PATH"] = string.IsNullOrEmpty(existingPath)
+                ? binDir
+                : binDir + Path.PathSeparator + existingPath;
         }
+
+        return env;
     }
 
     private static readonly string[] IsolatedEnvironmentKeys =
@@ -482,22 +465,5 @@ public sealed class AIToolkitUpdateService : IInstallerUpdateService
         "CONDA_PREFIX", "CONDA_DEFAULT_ENV", "PYENV_ROOT", "PYENV_VERSION"
     };
 
-    private static void TryKillProcessTree(Process process, string fileName, string arguments, string workingDir)
-    {
-        try
-        {
-            if (!process.HasExited)
-            {
-                Logger.Warning("Killing process tree for {Exe} {Args} in {Dir} due to cancellation",
-                    fileName, arguments, workingDir);
-                process.Kill(entireProcessTree: true);
-            }
-        }
-        catch (Exception killEx)
-        {
-            Logger.Error(killEx, "Failed to kill {Exe} on cancellation", fileName);
-        }
-    }
-
-    private sealed record ProcessResult(bool Success, string Output);
+    private sealed record CommandResult(bool Success, string Output);
 }

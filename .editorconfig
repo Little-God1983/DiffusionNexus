@@ -1,0 +1,7 @@
+# EditorConfig: https://editorconfig.org
+# Recurrence prevention for issue #441 (U+FFFD mojibake from a lossy save):
+# pin UTF-8 so editors/tools stop guessing the encoding of source files.
+root = true
+
+[*]
+charset = utf-8

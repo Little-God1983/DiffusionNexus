@@ -14,7 +14,7 @@ public interface IDocumentService
     /// <param name="bitmap">The bitmap to save.</param>
     /// <param name="filePath">Destination file path.</param>
     /// <param name="format">Image format.</param>
-    /// <param name="quality">Quality for lossy formats (0–100).</param>
+    /// <param name="quality">Quality for lossy formats (0-100).</param>
     /// <returns>True if saved successfully.</returns>
     bool Save(SKBitmap bitmap, string filePath, SKEncodedImageFormat format = SKEncodedImageFormat.Png, int quality = 95);
 
@@ -31,6 +31,11 @@ public interface IDocumentService
     /// <param name="directory">Target directory.</param>
     /// <param name="baseName">Base filename without extension.</param>
     /// <param name="extension">File extension including the dot.</param>
-    /// <returns>A unique file path.</returns>
+    /// <returns>A file path that does not currently exist.</returns>
+    /// <exception cref="IOException">
+    /// Thrown when all 999 numbered candidates (<c>_edited_001</c> through <c>_edited_999</c>)
+    /// already exist in <paramref name="directory"/>. The method never falls back to returning
+    /// an occupied path, since the caller would then silently overwrite existing user work.
+    /// </exception>
     string GenerateUniqueFilePath(string directory, string baseName, string extension);
 }

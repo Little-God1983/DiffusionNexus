@@ -43,4 +43,13 @@ public interface IUnitOfWork : IDisposable, IAsyncDisposable
     /// Rolls back the current transaction.
     /// </summary>
     Task RollbackTransactionAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Evicts every tracked entity from this unit's identity map. A long-lived
+    /// context never sees row deletions made by another context otherwise — a
+    /// tracking re-query returns the stale graph including phantom children.
+    /// Call before a read that must reflect current database truth. Any tracked
+    /// entities previously handed out become detached.
+    /// </summary>
+    void ClearChangeTracker();
 }

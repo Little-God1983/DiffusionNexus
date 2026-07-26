@@ -110,6 +110,49 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                     b.ToTable("AppSettings", (string)null);
                 });
 
+            modelBuilder.Entity("DiffusionNexus.Domain.Entities.BaseModelFolder", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("AppSettingsId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FolderPath")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("InstallerPackageId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsDefault")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Order")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AppSettingsId");
+
+                    b.HasIndex("FolderPath");
+
+                    b.HasIndex("InstallerPackageId");
+
+                    b.ToTable("BaseModelFolders", (string)null);
+                });
+
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.Creator", b =>
                 {
                     b.Property<int>("Id")
@@ -812,6 +855,24 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                     b.ToTable("TriggerWords", (string)null);
                 });
 
+            modelBuilder.Entity("DiffusionNexus.Domain.Entities.BaseModelFolder", b =>
+                {
+                    b.HasOne("DiffusionNexus.Domain.Entities.AppSettings", "AppSettings")
+                        .WithMany("BaseModelFolders")
+                        .HasForeignKey("AppSettingsId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("DiffusionNexus.Domain.Entities.InstallerPackage", "InstallerPackage")
+                        .WithMany()
+                        .HasForeignKey("InstallerPackageId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("AppSettings");
+
+                    b.Navigation("InstallerPackage");
+                });
+
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.DatasetCategory", b =>
                 {
                     b.HasOne("DiffusionNexus.Domain.Entities.AppSettings", "AppSettings")
@@ -927,6 +988,8 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
 
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.AppSettings", b =>
                 {
+                    b.Navigation("BaseModelFolders");
+
                     b.Navigation("DatasetCategories");
 
                     b.Navigation("ImageGalleries");

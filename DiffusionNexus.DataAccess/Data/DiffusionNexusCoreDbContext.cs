@@ -59,6 +59,7 @@ public class DiffusionNexusCoreDbContext : DbContext
     /// <summary>Disclaimer acceptances.</summary>
     public DbSet<DisclaimerAcceptance> DisclaimerAcceptances => Set<DisclaimerAcceptance>();
     public DbSet<ImageGallery> ImageGalleries => Set<ImageGallery>();
+    public DbSet<BaseModelFolder> BaseModelFolders => Set<BaseModelFolder>();
 
     /// <summary>Installed packages (ComfyUI, A1111, etc.).</summary>
     public DbSet<InstallerPackage> InstallerPackages => Set<InstallerPackage>();

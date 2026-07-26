@@ -196,46 +196,69 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// Handles collection changes to properly update navigation when images are deleted.
+    /// Handles collection changes (Add/Remove/Replace/Move/Reset) by funnelling every
+    /// action through <see cref="ResyncToCollection"/> rather than patching state per
+    /// action. <see cref="ObservableCollection{T}.Clear"/> raises <c>Reset</c> (not
+    /// <c>Remove</c>) and plain additions raise <c>Add</c> — both used to fall through
+    /// this handler untouched, leaving the viewer holding a stale <see cref="CurrentImage"/>
+    /// and never closing when the dataset was cleared out from under it. Resyncing from
+    /// scratch on every action fixes that without having to reason about each
+    /// <see cref="NotifyCollectionChangedAction"/> independently: Replace/Move are handled
+    /// "for free" the same way (see <see cref="ResyncToCollection"/> for the details).
     /// </summary>
     private void OnCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+        => ResyncToCollection();
+
+    /// <summary>
+    /// Re-derives <see cref="CurrentIndex"/>, <see cref="TotalCount"/>, the validity of
+    /// <see cref="CurrentImage"/>, and the close condition from what <c>_allImages</c>
+    /// actually contains right now — instead of patching state based on which
+    /// <see cref="NotifyCollectionChangedAction"/> fired.
+    /// <para>
+    /// This intentionally does not special-case <c>Replace</c> or <c>Move</c>: a Replace
+    /// of the current image looks identical to a Remove-of-current to this method (the
+    /// old reference is simply no longer <c>Contains</c>-ed, so the index gets clamped),
+    /// a Replace of a different item is a no-op for the current image/index, and a Move
+    /// of the current image is picked up by the "still Contains, re-read IndexOf" branch.
+    /// </para>
+    /// </summary>
+    private void ResyncToCollection()
     {
-        if (e.Action == NotifyCollectionChangedAction.Remove)
+        OnPropertyChanged(nameof(TotalCount));
+        OnPropertyChanged(nameof(PositionText));
+        OnPropertyChanged(nameof(CanGoPrevious));
+        OnPropertyChanged(nameof(CanGoNext));
+
+        if (_allImages.Count == 0)
         {
-            // Collection has changed - update the UI
-            OnPropertyChanged(nameof(TotalCount));
-            OnPropertyChanged(nameof(PositionText));
-
-            if (_allImages.Count == 0)
-            {
-                // No more images - close the viewer
-                CurrentImage = null;
-                CurrentIndex = 0;
-                Close();
-                return;
-            }
-
-            // If the current image was removed, navigate to appropriate image
-            if (_currentImage is not null && !_allImages.Contains(_currentImage))
-            {
-                // Current image was deleted - navigate to next available
-                var newIndex = Math.Min(_currentIndex, _allImages.Count - 1);
-                NavigateTo(newIndex);
-            }
-            else if (_currentImage is not null)
-            {
-                // Current image still exists but index may have changed
-                var actualIndex = _allImages.IndexOf(_currentImage);
-                if (actualIndex >= 0 && actualIndex != _currentIndex)
-                {
-                    CurrentIndex = actualIndex;
-                }
-            }
-
-            // Update command states
-            ((RelayCommand)PreviousCommand).NotifyCanExecuteChanged();
-            ((RelayCommand)NextCommand).NotifyCanExecuteChanged();
+            // No images left - close the viewer, just like removing the last item does.
+            CurrentImage = null;
+            CurrentIndex = 0;
+            IsFavorite = false;
+            Close();
         }
+        else if (_currentImage is not null && _allImages.Contains(_currentImage))
+        {
+            // The current image is still present, possibly at a new position (Move,
+            // or a Reset/Replace elsewhere in the collection shifted it).
+            var actualIndex = _allImages.IndexOf(_currentImage);
+            if (actualIndex != _currentIndex)
+            {
+                CurrentIndex = actualIndex;
+            }
+        }
+        else
+        {
+            // The current image is gone (removed/replaced), or there wasn't one yet
+            // (collection went from empty to populated) - clamp to the nearest valid
+            // index and navigate there.
+            var newIndex = Math.Clamp(_currentIndex, 0, _allImages.Count - 1);
+            NavigateTo(newIndex);
+        }
+
+        // Update command states
+        ((RelayCommand)PreviousCommand).NotifyCanExecuteChanged();
+        ((RelayCommand)NextCommand).NotifyCanExecuteChanged();
     }
 
     /// <summary>Navigates to a specific index in the collection.</summary>

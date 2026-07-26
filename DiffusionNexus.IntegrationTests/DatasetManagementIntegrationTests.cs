@@ -145,6 +145,18 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
         public Task<ReplaceImageResult> ShowReplaceImageDialogAsync(DatasetImageViewModel originalImage) =>
             Task.FromResult(ReplaceImageResult.Cancelled());
 
+        public Task<LoraDeleteResult?> ShowSelectLoraVersionsToDeleteDialogAsync(
+            string displayName,
+            IEnumerable<ModelVersion> versions,
+            IReadOnlyList<Model> allGroupedModels) =>
+            Task.FromResult<LoraDeleteResult?>(null);
+
+        public Task<CivitaiTokenDialogResult> ShowCivitaiTokenDialogAsync() =>
+            Task.FromResult(new CivitaiTokenDialogResult(false, string.Empty));
+
+        public Task<AssignCivitaiIdsDialogResult> ShowAssignCivitaiIdsDialogAsync() =>
+            Task.FromResult(new AssignCivitaiIdsDialogResult(false, null, null));
+
         public Task<bool> ShowBackupCompareDialogAsync(BackupCompareData currentStats, BackupCompareData backupStats) =>
             Task.FromResult(false);
 
@@ -207,6 +219,9 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
 
         public Task<AddExistingInstallationResult> ShowAddExistingInstallationDialogAsync(string initialPath) =>
             Task.FromResult(AddExistingInstallationResult.Cancelled());
+
+        public Task<RemoveInstallationResult> ShowRemoveInstallationDialogAsync(RemoveInstallationPrompt prompt) =>
+            Task.FromResult(RemoveInstallationResult.Cancelled());
 
         public Task<AddExistingInstallationResult> ShowEditInstallationDialogAsync(
             string name, string installationPath, DiffusionNexus.Domain.Enums.InstallerType type,

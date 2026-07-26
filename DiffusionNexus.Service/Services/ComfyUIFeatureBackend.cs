@@ -70,6 +70,12 @@ public sealed class ComfyUIFeatureBackend : IFeatureBackend
         {
             serverUrl = await GetServerUrlAsync(ct);
         }
+        catch (OperationCanceledException)
+        {
+            // Cancellation is the caller's business, not a backend availability problem - do not
+            // report it via MissingRequirements. Matches LocalInferenceFeatureBackend (#434).
+            throw;
+        }
         catch (Exception ex)
         {
             SerilogLogger.Debug(ex, "Failed to resolve ComfyUI server URL for feature {Feature}", feature);
@@ -163,6 +169,15 @@ public sealed class ComfyUIFeatureBackend : IFeatureBackend
             using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
             using var response = await httpClient.GetAsync($"{serverUrl}/system_stats", ct);
             return response.IsSuccessStatusCode;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Only rethrow when the caller's token requested the cancellation. HttpClient.Timeout
+            // also throws OperationCanceledException (a TaskCanceledException whose CancellationToken
+            // is an internal linked token, not `ct`), so a slow-but-reachable ComfyUI server must
+            // still fall through to "server not reachable" rather than being misreported as a
+            // cancelled check (#434).
+            throw;
         }
         catch
         {

@@ -7,7 +7,7 @@ namespace DiffusionNexus.UI.ImageEditor;
 /// </summary>
 public enum ShapeToolPhase
 {
-    /// <summary>No shape is active � ready to draw a new one.</summary>
+    /// <summary>No shape is active - ready to draw a new one.</summary>
     Idle,
     /// <summary>User is dragging to create a new shape.</summary>
     Drawing,
@@ -26,9 +26,9 @@ public enum ShapeToolPhase
 /// </summary>
 public enum ShapeManipulationHandle
 {
-    /// <summary>No handle � click is outside the shape.</summary>
+    /// <summary>No handle - click is outside the shape.</summary>
     None,
-    /// <summary>Click is inside the shape body � drag to move.</summary>
+    /// <summary>Click is inside the shape body - drag to move.</summary>
     Body,
     /// <summary>Top-left corner resize handle.</summary>
     TopLeft,
@@ -436,7 +436,7 @@ public class ShapeTool
 
         if (handle == ShapeManipulationHandle.None)
         {
-            // Click outside � commit current shape and start a new one if inside image
+            // Click outside - commit current shape and start a new one if inside image
             CommitPlacedShape();
             if (_imageRect.Contains(screenPoint))
             {

@@ -311,7 +311,6 @@ internal sealed partial class ImageMetadataParser
     {
         foreach (var match in LoraTagRegex().EnumerateMatches(prompt))
         {
-            var fullMatch = prompt.AsSpan(match.Index, match.Length);
             // Parse via the Regex object to get groups
             var regexMatch = LoraTagRegex().Match(prompt, match.Index, match.Length);
             if (!regexMatch.Success) continue;

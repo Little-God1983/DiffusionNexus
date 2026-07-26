@@ -21,6 +21,7 @@ internal sealed class AppSettingsRepository : RepositoryBase<AppSettings>, IAppS
             .Include(s => s.LoraSources.OrderBy(ls => ls.Order))
             .Include(s => s.DatasetCategories.OrderBy(c => c.Order))
             .Include(s => s.ImageGalleries.OrderBy(g => g.Order))
+            .Include(s => s.BaseModelFolders.OrderBy(f => f.Order))
             .FirstOrDefaultAsync(s => s.Id == 1, cancellationToken)
             .ConfigureAwait(false);
 
@@ -98,5 +99,19 @@ internal sealed class AppSettingsRepository : RepositoryBase<AppSettings>, IAppS
     public void RemoveImageGallery(ImageGallery gallery)
     {
         Context.ImageGalleries.Remove(gallery);
+    }
+
+    /// <inheritdoc />
+    public async Task AddBaseModelFolderAsync(BaseModelFolder folder, CancellationToken cancellationToken = default)
+    {
+        await Context.BaseModelFolders
+            .AddAsync(folder, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public void RemoveBaseModelFolder(BaseModelFolder folder)
+    {
+        Context.BaseModelFolders.Remove(folder);
     }
 }

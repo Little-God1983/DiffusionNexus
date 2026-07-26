@@ -31,9 +31,23 @@ public partial class CoreWorkloadsViewModel : ViewModelBase
 
     private readonly IPipelineManifestProvider? _manifestProvider;
     private readonly IPipelineAssetInstaller? _installer;
+    private readonly Services.Diffusion.IModelFolderCatalog? _modelFolderCatalog;
 
     /// <summary>Pipeline workload rows shown on the "Pipelines" tab.</summary>
     public ObservableCollection<WorkloadItemViewModel> Pipelines { get; } = [];
+
+    /// <summary>
+    /// Selectable download targets (Base Model Folders; the LocalAppData fallback when
+    /// none are configured). Shown in the window's "Download to:" dropdown.
+    /// </summary>
+    public ObservableCollection<Services.Diffusion.ModelFolderOption> DownloadTargets { get; } = [];
+
+    /// <summary>
+    /// The download target chosen for installs started from this window. Per-window only —
+    /// changing it does not touch the ⭐ default in Settings.
+    /// </summary>
+    [ObservableProperty]
+    private Services.Diffusion.ModelFolderOption? _selectedDownloadTarget;
 
     /// <summary>Backing ViewModel for the "Captioning Models" tab.</summary>
     public CaptioningModelsDialogViewModel Captioning { get; }
@@ -44,17 +58,70 @@ public partial class CoreWorkloadsViewModel : ViewModelBase
     public CoreWorkloadsViewModel(
         CaptioningModelsDialogViewModel captioning,
         IPipelineManifestProvider? manifestProvider,
-        IPipelineAssetInstaller? installer)
+        IPipelineAssetInstaller? installer,
+        Services.Diffusion.IModelFolderCatalog? modelFolderCatalog = null)
     {
         Captioning = captioning ?? throw new ArgumentNullException(nameof(captioning));
         _manifestProvider = manifestProvider;
         _installer = installer;
+        _modelFolderCatalog = modelFolderCatalog;
+    }
+
+    /// <summary>
+    /// Fills the "Download to:" dropdown from the model folder catalog and preselects
+    /// the default target.
+    /// </summary>
+    private async Task LoadDownloadTargetsAsync()
+    {
+        if (_modelFolderCatalog is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var targets = await _modelFolderCatalog.GetDownloadTargetsAsync();
+
+            DownloadTargets.Clear();
+            foreach (var target in targets)
+            {
+                DownloadTargets.Add(target);
+            }
+
+            SelectedDownloadTarget = DownloadTargets.FirstOrDefault(t => t.IsDefault)
+                ?? DownloadTargets.FirstOrDefault();
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Failed to load base model folder download targets.");
+        }
+    }
+
+    /// <summary>
+    /// Resolves the download root for pipeline installs: the window's dropdown selection
+    /// when available, else the catalog default, else the LocalAppData fallback.
+    /// </summary>
+    private async Task<string> ResolveDownloadRootAsync(CancellationToken ct)
+    {
+        if (SelectedDownloadTarget is { } selected)
+        {
+            return selected.Path;
+        }
+
+        if (_modelFolderCatalog is not null)
+        {
+            return await _modelFolderCatalog.GetDefaultDownloadRootAsync(ct);
+        }
+
+        return Services.Diffusion.ModelFolderCatalog.FallbackRoot;
     }
 
     /// <summary>Builds the pipeline rows and checks each one's on-disk readiness.</summary>
     [RelayCommand]
     private async Task LoadAsync()
     {
+        await LoadDownloadTargetsAsync();
+
         if (_manifestProvider is null || _installer is null)
         {
             return;
@@ -219,7 +286,8 @@ public partial class CoreWorkloadsViewModel : ViewModelBase
                 Message = $"Installing assets for {manifest.Title}… (download progress is shown in the status bar)"
             });
 
-            var result = await _installer.InstallMissingAsync(manifest, vramGb, ct);
+            var downloadRoot = await ResolveDownloadRootAsync(ct);
+            var result = await _installer.InstallMissingAsync(manifest, vramGb, downloadRoot, ct);
 
             foreach (var asset in result.Assets)
             {

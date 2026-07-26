@@ -4,6 +4,7 @@ using Avalonia.Data.Core.Plugins;
 using Avalonia.Markup.Xaml;
 using DiffusionNexus.DataAccess;
 using DiffusionNexus.DataAccess.Data;
+using DiffusionNexus.DataAccess.Recovery;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Infrastructure;
@@ -22,7 +23,6 @@ using DiffusionNexus.UI.Services.ConfigurationChecker;
 using DiffusionNexus.UI.Services.SpellCheck;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views;
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using SdkContext = DiffusionNexus.Installer.SDK.DataAccess.DiffusionNexusContext;
@@ -266,11 +266,44 @@ public partial class App : Application
                     {
                         Serilog.Log.Warning(ex, "OutputsFolderRegistrar failed during startup.");
                     }
+
+                    // Backfill Base Model Folders for already-registered installations so
+                    // existing users see their model roots without re-adding anything.
+                    try
+                    {
+                        using var scope = Services!.CreateScope();
+                        var folderRegistrar = scope.ServiceProvider.GetRequiredService<DiffusionNexus.UI.Services.Diffusion.BaseModelFolderRegistrar>();
+                        var uow = scope.ServiceProvider.GetRequiredService<DiffusionNexus.DataAccess.UnitOfWork.IUnitOfWork>();
+                        var packages = await uow.InstallerPackages.GetAllAsync();
+                        var added = await folderRegistrar.EnsureRegisteredAsync(packages);
+
+                        // The Settings page preloads its data before this backfill runs.
+                        // Announce the change so an already-loaded Settings VM reloads its
+                        // Base Model Folders list (same mechanism the gallery link uses).
+                        if (added > 0)
+                        {
+                            Services!.GetService<IDatasetEventAggregator>()
+                                ?.PublishSettingsSaved(new SettingsSavedEventArgs());
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Serilog.Log.Warning(ex, "BaseModelFolderRegistrar backfill failed during startup.");
+                    }
                 });
             }
             else
             {
+                // DiffusionFeatureFlags.UseLocalDiffusionBackend is currently hardcoded to `true`
+                // (see its TODO(v2-backend-dropdown) doc comment — it's slated to become a runtime
+                // AppSettings option once the backend dropdown ships). While it's a const, the
+                // compiler proves this branch unreachable and reports CS0162; the branch itself is
+                // intentional — it's what keeps the "diffusion-engine" ready-check from hanging when
+                // the flag is flipped to `false` locally — so it's suppressed here rather than
+                // deleted.
+#pragma warning disable CS0162 // Unreachable code detected
                 startupProgress.Complete("diffusion-engine");
+#pragma warning restore CS0162
             }
         }
         catch (Exception ex)
@@ -415,174 +448,88 @@ public partial class App : Application
         using var scope = Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>();
 
-        try
-        {
-            // Get the database path for logging
-            var dbPath = DiffusionNexusCoreDbContext.GetConnectionString();
-            var dbDirectory = DiffusionNexusCoreDbContext.GetDatabaseDirectory();
-            Serilog.Log.Information("InitializeDatabase: Connection string: {DbPath}", dbPath);
+        // Log the database folder path to the activity log so users can find their DB file.
+        var dbDirectory = DiffusionNexusCoreDbContext.GetDatabaseDirectory();
+        var activityLog = Services!.GetService<IActivityLogService>();
+        activityLog?.LogInfo("Database", $"Database loaded from: {dbDirectory}");
 
-            // Log the database folder path to the activity log so users can find their DB file
-            var activityLog = Services!.GetService<IActivityLogService>();
-            activityLog?.LogInfo("Database", $"Database loaded from: {dbDirectory}");
-            
-            // First verify we can connect
-            Serilog.Log.Information("InitializeDatabase: Testing connection...");
-            if (!dbContext.Database.CanConnect())
-            {
-                Serilog.Log.Warning("InitializeDatabase: Cannot connect to database - will try to create it");
-            }
-
-            // Remove migration history entries for migrations that no longer exist in the codebase
-            Serilog.Log.Information("InitializeDatabase: Cleaning stale migration history entries...");
-            CleanStaleMigrationHistory(dbContext);
-
-            Serilog.Log.Information("InitializeDatabase: Getting pending migrations...");
-            var pendingMigrations = dbContext.Database.GetPendingMigrations().ToList();
-            
-            if (pendingMigrations.Count > 0)
-            {
-                Serilog.Log.Information("InitializeDatabase: Applying {Count} pending migrations...", pendingMigrations.Count);
-                foreach (var migration in pendingMigrations)
-                {
-                    Serilog.Log.Information("InitializeDatabase:   - {Migration}", migration);
-                }
-                
-                Serilog.Log.Information("InitializeDatabase: Running Migrate()...");
-                dbContext.Database.Migrate();
-                Serilog.Log.Information("InitializeDatabase: Migration completed successfully");
-            }
-            else
-            {
-                Serilog.Log.Information("InitializeDatabase: No pending migrations - SKIPPING Migrate()");
-            }
-
-            // Post-migration verification to catch schema gaps
-            Serilog.Log.Information("InitializeDatabase: Post-migration schema verification...");
-            CheckAndRepairSchema(dbContext);
-
-            // WAL: readers no longer block behind writers (e.g. the end-of-backup
-            // LastBackupAt write). Persistent — set once per launch is idempotent.
-            Serilog.Log.Information("InitializeDatabase: Ensuring WAL journal mode...");
-            dbContext.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
-        }
-        catch (SqliteException ex) when (ex.Message.Contains("already exists"))
-        {
-            Serilog.Log.Warning("InitializeDatabase: Table/column already exists (continuing): {Message}", ex.Message);
-            CheckAndRepairSchema(dbContext);
-            MarkPendingMigrationsAsApplied(dbContext);
-        }
-        catch (DbUpdateException ex) when (ex.InnerException is SqliteException sqlEx && sqlEx.Message.Contains("already exists"))
-        {
-            Serilog.Log.Warning("InitializeDatabase: Table/column already exists (continuing): {Message}", ex.Message);
-            CheckAndRepairSchema(dbContext);
-            MarkPendingMigrationsAsApplied(dbContext);
-        }
-        catch (SqliteException ex) when (ex.Message.Contains("duplicate column"))
-        {
-            // Migration ADD COLUMN ran against a schema where the column was already present
-            // — typically because an earlier startup applied the schema but failed before
-            // stamping __EFMigrationsHistory. Repair + stamp so the next startup is clean.
-            Serilog.Log.Warning("InitializeDatabase: Column already present from a prior partial migration (continuing): {Message}", ex.Message);
-            CheckAndRepairSchema(dbContext);
-            MarkPendingMigrationsAsApplied(dbContext);
-        }
-        catch (DbUpdateException ex) when (ex.InnerException is SqliteException sqlEx && sqlEx.Message.Contains("duplicate column"))
-        {
-            Serilog.Log.Warning("InitializeDatabase: Column already present from a prior partial migration (continuing): {Message}", ex.Message);
-            CheckAndRepairSchema(dbContext);
-            MarkPendingMigrationsAsApplied(dbContext);
-        }
-        catch (SqliteException ex) when (ex.Message.Contains("no such column"))
-        {
-            Serilog.Log.Warning("InitializeDatabase: Schema mismatch detected: {Message}", ex.Message);
-            CheckAndRepairSchema(dbContext);
-            MarkPendingMigrationsAsApplied(dbContext);
-        }
-        catch (SqliteException ex) when (ex.Message.Contains("database is locked") || ex.Message.Contains("busy"))
-        {
-            Serilog.Log.Error(ex, "InitializeDatabase: Database is locked/busy - this may indicate another process is using the database");
-        }
-        catch (Exception ex)
-        {
-            Serilog.Log.Error(ex, "InitializeDatabase: Unexpected error during migration");
-            try
-            {
-                CheckAndRepairSchema(dbContext);
-                // After repairing the schema, stamp any still-pending migrations as applied
-                // so the next startup doesn't re-attempt them and hit the same exception.
-                // Defense-in-depth for schema errors not matched by the specific filters above.
-                MarkPendingMigrationsAsApplied(dbContext);
-            }
-            catch (Exception repairEx)
-            {
-                Serilog.Log.Error(repairEx, "InitializeDatabase: Schema repair also failed");
-            }
-        }
-
-        Serilog.Log.Information("InitializeDatabase: Completed");
+        // The migration/repair choreography (stale-history cleanup, pending-migration gating,
+        // schema repair, WAL, and the partial-migration recovery catches) lives in the testable
+        // DataAccess service; App keeps only the call sequence and Serilog wiring (issue #436).
+        var recovery = new DatabaseRecoveryService(new SerilogDatabaseRecoveryLogger());
+        recovery.InitializeAndRepair(dbContext);
     }
 
     /// <summary>
-    /// Ensures the SDK database (diffusion_nexus.db) is deployed and up-to-date by
-    /// delegating to <see cref="SdkDatabaseDeployer"/>, then applies any pending EF Core
-    /// migrations. Reports the resulting status (version, up-to-date, replaced) to the
-    /// unified activity log.
+    /// Reports the SDK catalog database status and applies any pending EF Core migrations.
+    /// Path resolution and the embedded-catalog deploy are owned entirely by
+    /// <see cref="ServiceCollectionExtensions.AddDiffusionNexusDataAccess"/> (which ran at DI
+    /// registration); this method reads the resulting <see cref="ISdkCatalogDatabase"/> for
+    /// reporting and migrates the SAME context the app uses. It deliberately does NOT re-resolve
+    /// the path or re-deploy — doing so previously diverged from the file the context opened
+    /// (a hardcoded %LocalAppData% deploy vs. an honored db_override.txt), surfacing as
+    /// "SQLite Error 14: unable to open database file".
     /// </summary>
     private static void InitializeSdkDatabase()
     {
-        const string databaseFileName = "diffusion_nexus.db";
         const string logSource = "Installer SDK";
 
         var activityLog = Services!.GetService<IActivityLogService>();
 
         try
         {
-            // The NuGet contentFiles mechanism copies the seed DB next to the executable.
-            var shippedDb = Path.Combine(AppContext.BaseDirectory, databaseFileName);
+            // Single source of truth: the resolved path + embedded-deploy outcome captured at
+            // registration. The deploy already happened there (before the first connection).
+            var catalog = Services!.GetRequiredService<ISdkCatalogDatabase>();
+            var runtimeDb = catalog.DatabasePath;
+            var deploy = catalog.DeployResult;
 
-            // Runtime location: directly in %LocalAppData% (no subfolder).
-            // TODO: Linux implementation — use XDG_DATA_HOME or ~/.local/share.
-            var runtimeDb = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                databaseFileName);
-
-            var result = SdkDatabaseDeployer.EnsureUpToDate(shippedDb, runtimeDb);
-
-            // a) DB version (always)
-            activityLog?.LogInfo(
-                logSource,
-                $"SDK database version: {result.ShippedVersion}",
-                $"Path: {runtimeDb}");
-
-            // b) up-to-date / c) replaced
-            switch (result.Outcome)
+            if (deploy is not null)
             {
-                case SdkDatabaseDeployOutcome.UpToDate:
-                case SdkDatabaseDeployOutcome.SamePath:
-                    activityLog?.LogInfo(logSource, "SDK database is up to date.");
-                    break;
-                case SdkDatabaseDeployOutcome.FirstTimeDeploy:
-                    activityLog?.LogSuccess(
-                        logSource,
-                        $"SDK database deployed for the first time (v{result.ShippedVersion}).");
-                    break;
-                case SdkDatabaseDeployOutcome.Upgraded:
-                    activityLog?.LogSuccess(
-                        logSource,
-                        $"SDK database upgraded from v{result.RuntimeVersionBefore ?? "unknown"} to v{result.ShippedVersion}.",
-                        $"Backup saved to: {result.BackupPath}");
-                    break;
-                case SdkDatabaseDeployOutcome.NoShippedDatabase:
-                    activityLog?.LogWarning(
-                        logSource,
-                        "No shipped SDK database found; using existing runtime DB.");
-                    break;
+                // a) DB version (always)
+                activityLog?.LogInfo(
+                    logSource,
+                    $"SDK database version: {deploy.ShippedVersion}",
+                    $"Path: {runtimeDb}");
+
+                // b) up-to-date / c) replaced
+                switch (deploy.Outcome)
+                {
+                    case SdkDatabaseDeployOutcome.UpToDate:
+                    case SdkDatabaseDeployOutcome.SamePath:
+                        activityLog?.LogInfo(logSource, "SDK database is up to date.");
+                        break;
+                    case SdkDatabaseDeployOutcome.FirstTimeDeploy:
+                        activityLog?.LogSuccess(
+                            logSource,
+                            $"SDK database deployed for the first time (v{deploy.ShippedVersion}).");
+                        break;
+                    case SdkDatabaseDeployOutcome.Upgraded:
+                        activityLog?.LogSuccess(
+                            logSource,
+                            $"SDK database upgraded from v{deploy.RuntimeVersionBefore ?? "unknown"} to v{deploy.ShippedVersion}.",
+                            $"Backup saved to: {deploy.BackupPath}");
+                        break;
+                    case SdkDatabaseDeployOutcome.NoShippedDatabase:
+                        activityLog?.LogWarning(
+                            logSource,
+                            "No shipped SDK database found; using existing runtime DB.");
+                        break;
+                }
+            }
+            else
+            {
+                // Consumer-managed path (a valid db_override.txt or an explicit path): the SDK does
+                // not deploy or version-stamp it — it is opened as-is.
+                activityLog?.LogInfo(
+                    logSource,
+                    "Using consumer-managed SDK database (no embedded deploy).",
+                    $"Path: {runtimeDb}");
             }
 
-            // Apply pending schema migrations on top of the (seed) data — but only
-            // when there are any; an unconditional Migrate() costs a full EF
-            // migration pass on every launch (mirrors the core-DB gating above).
+            // Apply pending schema migrations against the SAME context the app uses — but only
+            // when there are any; an unconditional Migrate() costs a full EF migration pass on
+            // every launch (mirrors the core-DB gating above).
             var sdkContext = Services!.GetRequiredService<SdkContext>();
             var pendingSdkMigrations = sdkContext.Database.GetPendingMigrations().ToList();
             if (pendingSdkMigrations.Count > 0)
@@ -605,264 +552,6 @@ public partial class App : Application
         }
     }
 
-    /// <summary>
-    /// Attempts to delete a locked database file so it can be recreated fresh.
-    /// </summary>
-    private static void TryDeleteLockedDatabase()
-    {
-        try
-        {
-            var dbDir = DiffusionNexusCoreDbContext.GetDatabaseDirectory();
-            var dbFile = Path.Combine(dbDir, "DiffusionNexusCore.sqlite");
-            
-            Serilog.Log.Warning("TryDeleteLockedDatabase: Attempting to delete locked database at {Path}", dbFile);
-            
-            if (File.Exists(dbFile))
-            {
-                // Try to delete the database file
-                File.Delete(dbFile);
-                Serilog.Log.Information("TryDeleteLockedDatabase: Database file deleted successfully");
-            }
-            
-            // Also delete journal/wal files if they exist
-            var walFile = dbFile + "-wal";
-            var shmFile = dbFile + "-shm";
-            
-            if (File.Exists(walFile)) File.Delete(walFile);
-            if (File.Exists(shmFile)) File.Delete(shmFile);
-        }
-        catch (Exception ex)
-        {
-            Serilog.Log.Error(ex, "TryDeleteLockedDatabase: Failed to delete database file");
-        }
-    }
-
-    /// <summary>
-    /// Checks and repairs the database schema by ensuring all required columns exist.
-    /// This is safer than waiting for a crash.
-    /// </summary>
-    private static void CheckAndRepairSchema(DiffusionNexusCoreDbContext dbContext)
-    {
-        try
-        {
-            Serilog.Log.Information("CheckAndRepairSchema: Checking table schema...");
-            
-            var connection = dbContext.Database.GetDbConnection();
-            var wasOpen = connection.State == System.Data.ConnectionState.Open;
-            if (!wasOpen) connection.Open();
-
-            var existingColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            
-            try
-            {
-                using var command = connection.CreateCommand();
-                command.CommandText = "PRAGMA table_info('AppSettings');";
-                using var reader = command.ExecuteReader();
-                
-                while (reader.Read())
-                {
-                    var name = reader["name"].ToString();
-                    if (!string.IsNullOrEmpty(name)) existingColumns.Add(name);
-                }
-            }
-            finally
-            {
-                if (!wasOpen) connection.Close();
-            }
-
-            Serilog.Log.Information("CheckAndRepairSchema: Found AppSettings columns: {Columns}", string.Join(", ", existingColumns));
-
-            // List of columns to verify and their add scripts
-            var requiredColumns = new Dictionary<string, string>
-            {
-                { "MaxBackups", "ALTER TABLE AppSettings ADD COLUMN MaxBackups INTEGER NOT NULL DEFAULT 10" },
-                { "LastBackupAt", "ALTER TABLE AppSettings ADD COLUMN LastBackupAt TEXT" },
-                { "ComfyUiServerUrl", "ALTER TABLE AppSettings ADD COLUMN ComfyUiServerUrl TEXT NOT NULL DEFAULT 'http://127.0.0.1:8188/'" },
-                { "LoraUpdateCheckStalenessDays", "ALTER TABLE AppSettings ADD COLUMN LoraUpdateCheckStalenessDays INTEGER NOT NULL DEFAULT 3" },
-                { "FavoriteLoraSourcePath", "ALTER TABLE AppSettings ADD COLUMN FavoriteLoraSourcePath TEXT" },
-                { "EncryptedHuggingfaceApiKey", "ALTER TABLE AppSettings ADD COLUMN EncryptedHuggingfaceApiKey TEXT" }
-            };
-
-            foreach (var col in requiredColumns)
-            {
-                if (!existingColumns.Contains(col.Key))
-                {
-                    Serilog.Log.Warning("CheckAndRepairSchema: Missing '{Column}' column. Attempting to add...", col.Key);
-                    try 
-                    {
-                        dbContext.Database.ExecuteSqlRaw(col.Value);
-                        Serilog.Log.Information("CheckAndRepairSchema: Successfully added '{Column}'", col.Key);
-                    }
-                    catch (Exception ex)
-                    {
-                        Serilog.Log.Error(ex, "CheckAndRepairSchema: Failed to add '{Column}'", col.Key);
-                        // Don't throw, try next
-                    }
-                }
-            }
-
-            // Self-heal Models columns added by later migrations. Needed when a previous
-            // run marked the migration as applied (MarkPendingMigrationsAsApplied) but the
-            // ALTER TABLE never actually executed — leaving queries to fail with
-            // "no such column: …". Mirrors the AppSettings repair above.
-            RepairModelsTableColumns(dbContext, connection);
-        }
-        catch (Exception ex)
-        {
-             Serilog.Log.Error(ex, "CheckAndRepairSchema: Fatal error during check");
-        }
-    }
-
-    /// <summary>
-    /// Ensures every column EF expects on the <c>Models</c> table actually exists,
-    /// applying ALTER TABLE statements for any that were lost when a migration row
-    /// was force-marked as applied without the schema actually being updated.
-    /// Add new entries here whenever a migration adds nullable / defaulted columns
-    /// to the Models table.
-    /// </summary>
-    private static void RepairModelsTableColumns(DiffusionNexusCoreDbContext dbContext, System.Data.Common.DbConnection connection)
-    {
-        var wasOpen = connection.State == System.Data.ConnectionState.Open;
-        if (!wasOpen) connection.Open();
-
-        var existingColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        try
-        {
-            using var command = connection.CreateCommand();
-            command.CommandText = "PRAGMA table_info('Models');";
-            using var reader = command.ExecuteReader();
-            while (reader.Read())
-            {
-                var name = reader["name"].ToString();
-                if (!string.IsNullOrEmpty(name)) existingColumns.Add(name);
-            }
-        }
-        finally
-        {
-            if (!wasOpen) connection.Close();
-        }
-
-        if (existingColumns.Count == 0)
-        {
-            // Table doesn't exist yet — initial migration will create it.
-            return;
-        }
-
-        // Migration 20260509105621_AddLoraUpdateCheckFields
-        var requiredModelsColumns = new Dictionary<string, string>
-        {
-            { "LastCheckedForUpdatesUtc", "ALTER TABLE Models ADD COLUMN LastCheckedForUpdatesUtc TEXT" },
-            { "TotalVersionCount",        "ALTER TABLE Models ADD COLUMN TotalVersionCount INTEGER NOT NULL DEFAULT 0" },
-        };
-
-        foreach (var col in requiredModelsColumns)
-        {
-            if (existingColumns.Contains(col.Key)) continue;
-
-            Serilog.Log.Warning("CheckAndRepairSchema: Missing Models.'{Column}' column. Attempting to add...", col.Key);
-            try
-            {
-                dbContext.Database.ExecuteSqlRaw(col.Value);
-                Serilog.Log.Information("CheckAndRepairSchema: Successfully added Models.'{Column}'", col.Key);
-            }
-            catch (Exception ex)
-            {
-                Serilog.Log.Error(ex, "CheckAndRepairSchema: Failed to add Models.'{Column}'", col.Key);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Removes entries from __EFMigrationsHistory that no longer have corresponding migration classes.
-    /// This prevents EF Core from failing when migrations are removed from the codebase.
-    /// </summary>
-    private static void CleanStaleMigrationHistory(DiffusionNexusCoreDbContext dbContext)
-    {
-        try
-        {
-            var connection = dbContext.Database.GetDbConnection();
-            var wasOpen = connection.State == System.Data.ConnectionState.Open;
-            if (!wasOpen) connection.Open();
-
-            try
-            {
-                // Check if __EFMigrationsHistory table exists
-                using var checkCmd = connection.CreateCommand();
-                checkCmd.CommandText = "SELECT name FROM sqlite_master WHERE type='table' AND name='__EFMigrationsHistory';";
-                var tableExists = checkCmd.ExecuteScalar() is not null;
-                if (!tableExists) return;
-
-                // Get all migration IDs known to EF Core from the assembly
-                var knownMigrations = dbContext.Database.GetMigrations().ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-                // Get all migration IDs from the history table
-                var appliedMigrations = new List<string>();
-                using var listCmd = connection.CreateCommand();
-                listCmd.CommandText = "SELECT MigrationId FROM __EFMigrationsHistory;";
-                using var reader = listCmd.ExecuteReader();
-                while (reader.Read())
-                {
-                    appliedMigrations.Add(reader.GetString(0));
-                }
-
-                // Remove stale entries (applied but no longer in codebase)
-                foreach (var migrationId in appliedMigrations)
-                {
-                    if (!knownMigrations.Contains(migrationId))
-                    {
-                        Serilog.Log.Warning("CleanStaleMigrationHistory: Removing stale entry '{MigrationId}'", migrationId);
-                        dbContext.Database.ExecuteSqlRaw(
-                            "DELETE FROM __EFMigrationsHistory WHERE MigrationId = {0}", migrationId);
-                    }
-                }
-            }
-            finally
-            {
-                if (!wasOpen) connection.Close();
-            }
-        }
-        catch (Exception ex)
-        {
-            Serilog.Log.Error(ex, "CleanStaleMigrationHistory: Failed to clean stale entries");
-        }
-    }
-
-    /// <summary>
-    /// Marks any pending migrations as applied in __EFMigrationsHistory without running them.
-    /// Used after schema repair when migrations failed due to "already exists" errors.
-    /// </summary>
-    private static void MarkPendingMigrationsAsApplied(DiffusionNexusCoreDbContext dbContext)
-    {
-        try
-        {
-            var pending = dbContext.Database.GetPendingMigrations().ToList();
-            if (pending.Count == 0) return;
-
-            foreach (var migrationId in pending)
-            {
-                Serilog.Log.Information("MarkPendingMigrationsAsApplied: Marking '{MigrationId}' as applied", migrationId);
-                dbContext.Database.ExecuteSqlRaw(
-                    "INSERT OR IGNORE INTO __EFMigrationsHistory (MigrationId, ProductVersion) VALUES ({0}, {1})",
-                    migrationId,
-                    typeof(DbContext).Assembly.GetName().Version?.ToString() ?? "9.0.0");
-            }
-        }
-        catch (Exception ex)
-        {
-            Serilog.Log.Error(ex, "MarkPendingMigrationsAsApplied: Failed");
-        }
-    }
-
-    private static void ResetDatabase()
-    {
-        // WARNING: This deletes ALL user data including settings!
-        // Only called in extreme cases - should rarely be needed
-        using var freshScope = Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
-        var freshContext = freshScope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>();
-        freshContext.Database.EnsureDeleted();
-        freshContext.Database.Migrate();
-    }
-
     private static void ConfigureServices(IServiceCollection services)
     {
         // Database + Repositories + Unit of Work
@@ -873,6 +562,12 @@ public partial class App : Application
 
         // Infrastructure services (secure storage, image caching, activity logging)
         services.AddInfrastructureServices();
+
+        // UI-thread scheduler seam over Dispatcher.UIThread (testability; #437)
+        services.AddSingleton<IUiScheduler, AvaloniaUiScheduler>();
+
+        // System-clipboard seam (testability; #438)
+        services.AddSingleton<IClipboardService, AvaloniaClipboardService>();
 
         // Thumbnail service for async image loading with LRU cache (singleton)
         services.AddSingleton<IThumbnailService, ThumbnailService>();
@@ -933,6 +628,14 @@ public partial class App : Application
         // Outputs folder registrar — ensures <exe-dir>/outputs/ is in the gallery list.
         services.AddTransient<DiffusionNexus.UI.Services.Diffusion.OutputsFolderRegistrar>();
 
+        // Base Model Folders: resolution authority for Core model download targets + search roots.
+        services.AddScoped<DiffusionNexus.UI.Services.Diffusion.IModelFolderCatalog,
+            DiffusionNexus.UI.Services.Diffusion.ModelFolderCatalog>();
+
+        // Auto-registers installation model folders (incl. extra_model_paths.yaml roots)
+        // as Base Model Folders — on package add and as startup backfill.
+        services.AddTransient<DiffusionNexus.UI.Services.Diffusion.BaseModelFolderRegistrar>();
+
         // GPU VRAM + system RAM monitor (reusable widget shown in the canvas and the Pipelines view).
         services.AddSingleton<IResourceMonitorService, ResourceMonitorService>();
         services.AddTransient<ResourceMonitorViewModel>();
@@ -992,8 +695,11 @@ public partial class App : Application
                 sp.GetRequiredService<IGitService>(),
                 new HttpClient()));
 
-        // Register SDK core services required by installation steps
-        services.AddSingleton<IProcessRunner, ProcessRunner>();
+        // Register SDK core services required by installation steps.
+        // Fully qualified: DiffusionNexus.Service.Services also defines an IProcessRunner
+        // (the backend-update seam, issue #439), so the unqualified name is ambiguous here.
+        services.AddSingleton<DiffusionNexus.Installer.SDK.Services.IProcessRunner,
+            DiffusionNexus.Installer.SDK.Services.ProcessRunner>();
         services.AddSingleton<IGitService, GitService>();
         services.AddSingleton<IPythonService, PythonService>();
 
@@ -1201,7 +907,12 @@ public partial class App : Application
             sp.GetService<Inference.Captioning.CaptioningModelManager>(),
             sp.GetService<ICaptioningService>(),
             sp.GetService<IActivityLogService>(),
-            sp.GetService<IDownloadCoordinator>()));
+            sp.GetService<IDownloadCoordinator>(),
+            sp.GetService<Services.Diffusion.BaseModelFolderRegistrar>(),
+            // IUnitOfWork is transient: each factory call yields a fresh context for
+            // one destructive operation (remove / delete-from-disk), so those flows
+            // never act on — or poison — the VM's long-lived shared context.
+            unitOfWorkFactory: () => sp.GetRequiredService<IUnitOfWork>()));
         services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),
@@ -1640,11 +1351,11 @@ public partial class App : Application
                 Serilog.Log.Information("LoadStartupData: {Phase} finished at +{End}ms ({Duration}ms total)", name, sw.ElapsedMilliseconds, sw.ElapsedMilliseconds - begin);
             }
 
-            // Disclaimer + settings must complete first � other modules depend on them.
+            // Disclaimer + settings must complete first - other modules depend on them.
             await Timed(sw, "disclaimer", () => mainViewModel.CheckDisclaimerStatusAsync());
             await Timed(sw, "settings", () => settingsVm.LoadCommand.ExecuteAsync(null));
 
-            // Remaining modules are independent � load in parallel.
+            // Remaining modules are independent - load in parallel.
             // NOTE: each command runs synchronously on the UI thread until its first
             // real await — the per-phase "synchronous head" stamps expose which load
             // is hogging the dispatcher.

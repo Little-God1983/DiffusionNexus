@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
+using DiffusionNexus.UI.Helpers;
 using DiffusionNexus.UI.Services;
 
 namespace DiffusionNexus.UI.Views.Dialogs;
@@ -62,22 +63,8 @@ public partial class BackupCompareDialog : Window
     public int CurrentCaptions => _currentStats?.CaptionCount ?? 0;
     public int BackupCaptions => _backupStats?.CaptionCount ?? 0;
 
-    public string CurrentSizeText => FormatSize(_currentStats?.TotalSizeBytes ?? 0);
-    public string BackupSizeText => FormatSize(_backupStats?.TotalSizeBytes ?? 0);
-
-    /// <summary>
-    /// Formats bytes as a human-readable string (KB, MB, GB).
-    /// </summary>
-    private static string FormatSize(long bytes)
-    {
-        if (bytes < 1024)
-            return $"{bytes} B";
-        if (bytes < 1024 * 1024)
-            return $"{bytes / 1024.0:F1} KB";
-        if (bytes < 1024 * 1024 * 1024)
-            return $"{bytes / (1024.0 * 1024.0):F1} MB";
-        return $"{bytes / (1024.0 * 1024.0 * 1024.0):F2} GB";
-    }
+    public string CurrentSizeText => FileSizeFormatter.Format(_currentStats?.TotalSizeBytes ?? 0);
+    public string BackupSizeText => FileSizeFormatter.Format(_backupStats?.TotalSizeBytes ?? 0);
 
     private void OnRestoreClick(object? sender, RoutedEventArgs e)
     {

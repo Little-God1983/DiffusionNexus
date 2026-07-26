@@ -163,3 +163,11 @@ public partial class CivitaiTokenDialog : Window
         }
     }
 }
+
+/// <summary>
+/// Result of the <see cref="CivitaiTokenDialog"/> shown via
+/// <see cref="Services.IDialogService.ShowCivitaiTokenDialogAsync"/>.
+/// </summary>
+/// <param name="IsSaved">True when the user saved a validated token.</param>
+/// <param name="TokenText">The entered token text (empty when cancelled).</param>
+public readonly record struct CivitaiTokenDialogResult(bool IsSaved, string TokenText);

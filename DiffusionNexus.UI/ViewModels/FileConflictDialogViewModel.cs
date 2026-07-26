@@ -5,6 +5,7 @@ using System.Runtime.CompilerServices;
 using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.UI.Helpers;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -176,12 +177,12 @@ public sealed class FileConflictItem : INotifyPropertyChanged
     /// <summary>
     /// Formatted existing file size for display.
     /// </summary>
-    public string ExistingFileSizeText => FormatFileSize(ExistingFileSize);
+    public string ExistingFileSizeText => FileSizeFormatter.Format(ExistingFileSize);
 
     /// <summary>
     /// Formatted new file size for display.
     /// </summary>
-    public string NewFileSizeText => FormatFileSize(NewFileSize);
+    public string NewFileSizeText => FileSizeFormatter.Format(NewFileSize);
 
     /// <summary>
     /// Formatted existing creation date for display.
@@ -192,17 +193,6 @@ public sealed class FileConflictItem : INotifyPropertyChanged
     /// Formatted new creation date for display.
     /// </summary>
     public string NewCreationDateText => NewCreationDate.ToString("dd.MM.yyyy");
-
-    private static string FormatFileSize(long bytes)
-    {
-        if (bytes < 1024)
-            return $"{bytes} B";
-        if (bytes < 1024 * 1024)
-            return $"{bytes / 1024.0:F1} KB";
-        if (bytes < 1024 * 1024 * 1024)
-            return $"{bytes / (1024.0 * 1024.0):F1} MB";
-        return $"{bytes / (1024.0 * 1024.0 * 1024.0):F2} GB";
-    }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -261,18 +251,7 @@ public sealed class NonConflictingFileItem
     /// <summary>
     /// Formatted file size for display.
     /// </summary>
-    public string FileSizeText => FormatFileSize(FileSize);
-
-    private static string FormatFileSize(long bytes)
-    {
-        if (bytes < 1024)
-            return $"{bytes} B";
-        if (bytes < 1024 * 1024)
-            return $"{bytes / 1024.0:F1} KB";
-        if (bytes < 1024 * 1024 * 1024)
-            return $"{bytes / (1024.0 * 1024.0):F1} MB";
-        return $"{bytes / (1024.0 * 1024.0 * 1024.0):F2} GB";
-    }
+    public string FileSizeText => FileSizeFormatter.Format(FileSize);
 }
 
 /// <summary>

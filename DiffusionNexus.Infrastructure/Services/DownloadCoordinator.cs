@@ -29,19 +29,39 @@ public sealed class DownloadCoordinator : IDownloadCoordinator, IDisposable
     }
 
     private int _maxConcurrent = 3;
+
+    /// <summary>
+    /// Maximum number of downloads the coordinator admits concurrently. Setting this swaps in a
+    /// fresh <see cref="SemaphoreSlim"/> sized to the new value.
+    /// <para>
+    /// <see cref="EnqueueAsync"/> captures the current semaphore into a local once, before
+    /// <c>WaitAsync</c>, and releases through that same local — so an in-flight download always
+    /// finishes its wait/release pair on the instance it started with, even if this setter swaps
+    /// <c>_slots</c> mid-flight.
+    /// </para>
+    /// <para>
+    /// Trade-off (accepted, not a bug): during a swap window the total number of simultaneously
+    /// active downloads can transiently exceed the newly configured limit — old in-flight
+    /// downloads keep running under the old semaphore's permits while new admissions are governed
+    /// by the new one. The invariant this class guarantees is "no semaphore instance is ever
+    /// over-released", not "the global active count is capped at every instant during a resize".
+    /// </para>
+    /// </summary>
     public int MaxConcurrent
     {
         get => _maxConcurrent;
         set
         {
-            // Resizing live: swap the semaphore. Already-in-flight downloads
-            // hold permits from the previous instance and will release back
-            // into it via captured local — we just lose tracking, but since
-            // the semaphore is single-instance-only owned by the coordinator
-            // we accept the leak for the rare resize case.
             if (value < 1) throw new ArgumentOutOfRangeException(nameof(value), "MaxConcurrent must be ≥ 1.");
             if (value == _maxConcurrent) return;
             _maxConcurrent = value;
+
+            // Deliberately NOT disposing the swapped-out semaphore: in-flight downloads captured
+            // it into a local (see EnqueueAsync) and will Release() it later; disposing it here
+            // would make that Release() throw ObjectDisposedException. This class never
+            // materializes AvailableWaitHandle, so SemaphoreSlim.Dispose() has nothing
+            // load-bearing to clean up — letting the old instance be GC'd once the last
+            // in-flight holder releases it is simpler and safe.
             _slots = new SemaphoreSlim(value, value);
             RaiseStateChanged();
         }
@@ -95,12 +115,18 @@ public sealed class DownloadCoordinator : IDownloadCoordinator, IDisposable
         var success = false;
         var slotAcquired = false;
 
+        // Capture the semaphore instance once, before waiting on it. MaxConcurrent's setter can
+        // swap the _slots field concurrently; capturing here guarantees this download's wait and
+        // its eventual release always target the SAME instance, even if a resize happens while
+        // this download is in flight (issue #467).
+        var slots = _slots;
+
         try
         {
             // Cancelling a queued task wakes us right back up; the resulting
             // OperationCanceledException is caught below and the status flips
             // to Cancelled before we ever consume a semaphore slot.
-            await _slots.WaitAsync(linkedCts.Token).ConfigureAwait(false);
+            await slots.WaitAsync(linkedCts.Token).ConfigureAwait(false);
             slotAcquired = true;
 
             // Promote to active. The state-change notification covers both the
@@ -138,7 +164,7 @@ public sealed class DownloadCoordinator : IDownloadCoordinator, IDisposable
         }
         finally
         {
-            if (slotAcquired) _slots.Release();
+            if (slotAcquired) slots.Release();
             // Remove from the tracked list so the UI list doesn't grow
             // unbounded. The unified console keeps a permanent log entry
             // via the activity log so users still see the completion event.
@@ -233,6 +259,11 @@ public sealed class DownloadCoordinator : IDownloadCoordinator, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+
+        // Only the CURRENT _slots is disposed here — that's fine by the same reasoning as the
+        // MaxConcurrent setter: any already-swapped-out (old) instance was never captured by this
+        // method, and in-flight downloads on the current instance are expected to have completed
+        // before the coordinator itself is disposed.
         _slots.Dispose();
     }
 

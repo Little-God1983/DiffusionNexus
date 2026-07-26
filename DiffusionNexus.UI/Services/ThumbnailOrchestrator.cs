@@ -19,10 +19,10 @@ internal sealed record ThumbnailRequest(
 /// <para>
 /// Wraps <see cref="IThumbnailService"/> and adds:
 /// <list type="bullet">
-/// <item>Priority queue — <see cref="ThumbnailPriority.Critical"/> requests are processed first.</item>
-/// <item>Active-owner boosting — the active view's requests are auto-promoted.</item>
-/// <item>Per-owner cancellation — switching views cancels the previous view's pending work.</item>
-/// <item>Concurrency control — limits parallel decode operations.</item>
+/// <item>Priority queue - <see cref="ThumbnailPriority.Critical"/> requests are processed first.</item>
+/// <item>Active-owner boosting - the active view's requests are auto-promoted.</item>
+/// <item>Per-owner cancellation - switching views cancels the previous view's pending work.</item>
+/// <item>Concurrency control - limits parallel decode operations.</item>
 /// </list>
 /// </para>
 /// <para>
@@ -30,7 +30,7 @@ internal sealed record ThumbnailRequest(
 /// Cache hits bypass the queue entirely for zero-latency returns.
 /// </para>
 /// <para>
-/// <b>TODO: Linux Implementation</b> — Profile queue throughput under X11/Wayland to ensure
+/// <b>TODO: Linux Implementation</b> - Profile queue throughput under X11/Wayland to ensure
 /// the priority processing loop does not starve the UI thread on single-core VMs.
 /// </para>
 /// </summary>
@@ -51,7 +51,7 @@ public sealed class ThumbnailOrchestrator : IThumbnailOrchestrator, IDisposable
     /// Creates a new ThumbnailOrchestrator.
     /// </summary>
     /// <param name="thumbnailService">The underlying thumbnail service for loading and caching.
-    /// The service owns concurrency throttling — the orchestrator does not add another semaphore.</param>
+    /// The service owns concurrency throttling - the orchestrator does not add another semaphore.</param>
     public ThumbnailOrchestrator(IThumbnailService thumbnailService)
     {
         ArgumentNullException.ThrowIfNull(thumbnailService);
@@ -124,7 +124,7 @@ public sealed class ThumbnailOrchestrator : IThumbnailOrchestrator, IDisposable
     public void SetActiveOwner(ThumbnailOwnerToken owner)
     {
         // Simply update the active owner. New requests from this owner will be boosted
-        // to Critical priority. We do NOT cancel the previous owner's in-flight work —
+        // to Critical priority. We do NOT cancel the previous owner's in-flight work -
         // completed loads populate the cache which benefits the user when switching back.
         _activeOwner = owner;
     }
@@ -194,7 +194,7 @@ public sealed class ThumbnailOrchestrator : IThumbnailOrchestrator, IDisposable
                 continue;
             }
 
-            // Dispatch to background — semaphore is acquired inside ProcessRequestAsync
+            // Dispatch to background - semaphore is acquired inside ProcessRequestAsync
             _ = ProcessRequestAsync(request);
         }
     }

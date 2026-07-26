@@ -14,6 +14,13 @@ public interface IFeatureReadinessService
     /// Checks whether <paramref name="feature"/> is ready to execute on its currently
     /// selected backend.
     /// </summary>
+    /// <remarks>
+    /// Cancellation contract: cancellation requested via the caller's token propagates as
+    /// <see cref="OperationCanceledException"/> rather than being reported through
+    /// <see cref="FeatureReadinessResult.MissingRequirements"/>, because this delegates straight
+    /// to the resolved <see cref="IFeatureBackend.CheckFeatureAsync"/>, which carries the same
+    /// caller-token-only contract (issue #434).
+    /// </remarks>
     Task<FeatureReadinessResult> CheckAsync(Feature feature, CancellationToken ct = default);
 
     /// <summary>

@@ -76,4 +76,17 @@ public interface IAppSettingsRepository : IRepository<AppSettings>
     /// </summary>
     /// <param name="gallery">The gallery to remove.</param>
     void RemoveImageGallery(ImageGallery gallery);
+
+    /// <summary>
+    /// Adds a base model folder.
+    /// </summary>
+    /// <param name="folder">The folder to add.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task AddBaseModelFolderAsync(BaseModelFolder folder, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Removes a base model folder.
+    /// </summary>
+    /// <param name="folder">The folder to remove.</param>
+    void RemoveBaseModelFolder(BaseModelFolder folder);
 }
