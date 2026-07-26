@@ -220,6 +220,40 @@ public class AppSettingsRepositoryTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task WhenBaseModelFolderIsAddedThenItRoundTripsWithIncludes()
+    {
+        using (var scope = _serviceProvider.CreateScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            await uow.AppSettings.GetSettingsWithIncludesAsync();
+            await uow.SaveChangesAsync();
+
+            await uow.AppSettings.AddBaseModelFolderAsync(new BaseModelFolder
+            {
+                AppSettingsId = 1,
+                FolderPath = @"D:\Models",
+                IsEnabled = true,
+                IsDefault = true,
+                Order = 0
+            });
+            await uow.SaveChangesAsync();
+        }
+
+        using (var scope = _serviceProvider.CreateScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+            var settings = await uow.AppSettings.GetSettingsWithIncludesAsync();
+
+            var folder = settings.BaseModelFolders.Should().ContainSingle().Subject;
+            folder.FolderPath.Should().Be(@"D:\Models");
+            folder.IsEnabled.Should().BeTrue();
+            folder.IsDefault.Should().BeTrue();
+            folder.InstallerPackageId.Should().BeNull();
+        }
+    }
+
     public void Dispose()
     {
         _serviceProvider.Dispose();
