@@ -29,5 +29,13 @@ public partial class SettingsView : UserControl
         {
             aware.DialogService = new DialogService(window);
         }
+
+        // Re-check the ⚠ folder-not-found badges every time the page is shown,
+        // so folders deleted (or restored) on disk mid-session are reflected.
+        // Fire-and-forget: the probes run off-thread and must not delay attach.
+        if (DataContext is SettingsViewModel settingsViewModel)
+        {
+            _ = settingsViewModel.RefreshFolderPresenceAsync();
+        }
     }
 }
