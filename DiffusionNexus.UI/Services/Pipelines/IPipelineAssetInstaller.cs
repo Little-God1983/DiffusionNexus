@@ -36,14 +36,17 @@ public interface IPipelineAssetInstaller
     Task<PipelineReadiness> CheckAsync(PipelineManifest manifest, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Downloads every currently-missing asset for <paramref name="manifest"/> into the primary
-    /// models root, selecting the diffusion-model variant that fits <paramref name="vramGb"/>.
+    /// Downloads every currently-missing asset for <paramref name="manifest"/> into
+    /// <paramref name="downloadRoot"/> (a Base Model Folder chosen by the caller — e.g. the
+    /// workload window's dropdown selection or <see cref="Diffusion.IModelFolderCatalog.GetDefaultDownloadRootAsync"/>),
+    /// selecting the diffusion-model variant that fits <paramref name="vramGb"/>.
     /// Each download is routed through the download coordinator (status-bar progress + cancel).
-    /// Returns the readiness re-computed (across all roots) after install.
+    /// Returns the readiness re-computed (across all search roots) after install.
     /// </summary>
     Task<PipelineReadiness> InstallMissingAsync(
         PipelineManifest manifest,
         int vramGb,
+        string downloadRoot,
         CancellationToken cancellationToken = default);
 
     /// <summary>

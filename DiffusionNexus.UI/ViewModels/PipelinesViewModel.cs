@@ -112,7 +112,7 @@ public partial class PipelinesViewModel : ViewModelBase
 
             if (root is null)
             {
-                SetStatus(tile, PipelineStatus.NotInstalled, "No ComfyUI install");
+                SetStatus(tile, PipelineStatus.NotInstalled, "No model folder yet");
                 continue;
             }
 
@@ -191,10 +191,10 @@ public partial class PipelinesViewModel : ViewModelBase
             var root = await _installer.ResolveModelsRootAsync();
             if (string.IsNullOrEmpty(root))
             {
-                await ShowMessageAsync("No ComfyUI installation",
-                    "Pipeline models live in a ComfyUI installation's models folder (which the local renderer also reads).\n\n" +
-                    "Add a ComfyUI installation in the Installer Manager first, then try again.");
-                SetStatus(tile, PipelineStatus.NotInstalled, "No ComfyUI install");
+                await ShowMessageAsync("No model folder",
+                    "Pipeline models live in a Base Model Folder (configurable in Settings) or a ComfyUI installation's models folder.\n\n" +
+                    "Install this workload's models via Installer Manager → Diffusion Nexus Core → Workloads, then try again.");
+                SetStatus(tile, PipelineStatus.NotInstalled, "No model folder yet");
                 return;
             }
 

@@ -4,6 +4,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="using:DiffusionNexus.UI.ViewModels"
         xmlns:dialogs="using:DiffusionNexus.UI.Views.Dialogs"
+        xmlns:diffusion="using:DiffusionNexus.UI.Services.Diffusion"
         mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="560"
         x:Class="DiffusionNexus.UI.Views.Dialogs.CoreWorkloadsDialog"
         x:DataType="vm:CoreWorkloadsViewModel"
@@ -36,8 +37,23 @@
     </Window.Styles>
 
     <Grid Margin="16" RowDefinitions="Auto,*,Auto">
-        <TextBlock Grid.Row="0" Text="Diffusion Nexus Core" FontSize="18" FontWeight="Bold"
-                   Foreground="White" Margin="0,0,0,8"/>
+        <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto" Margin="0,0,0,8">
+            <TextBlock Grid.Column="0" Text="Diffusion Nexus Core" FontSize="18" FontWeight="Bold"
+                       Foreground="White" VerticalAlignment="Center"/>
+            <TextBlock Grid.Column="2" Text="Download to:" Foreground="#AAAAAA"
+                       VerticalAlignment="Center" Margin="16,0,8,0"
+                       ToolTip.Tip="Where models installed from this window are stored. Manage folders and the default in Settings → Base Model Folders."/>
+            <ComboBox Grid.Column="3" MinWidth="280" MaxWidth="360" VerticalAlignment="Center"
+                      ItemsSource="{Binding DownloadTargets}"
+                      SelectedItem="{Binding SelectedDownloadTarget}">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate x:DataType="diffusion:ModelFolderOption">
+                        <TextBlock Text="{Binding Display}" TextTrimming="CharacterEllipsis"
+                                   ToolTip.Tip="{Binding Path}"/>
+                    </DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+        </Grid>
 
         <TabControl Grid.Row="1">
             <!-- Workflows tab -->

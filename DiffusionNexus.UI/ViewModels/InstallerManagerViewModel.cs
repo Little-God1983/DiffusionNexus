@@ -640,7 +640,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
             var coreVm = new CoreWorkloadsViewModel(
                 captioningVm,
                 App.Services?.GetService<Services.Pipelines.IPipelineManifestProvider>(),
-                App.Services?.GetService<Services.Pipelines.IPipelineAssetInstaller>());
+                App.Services?.GetService<Services.Pipelines.IPipelineAssetInstaller>(),
+                App.Services?.GetService<Services.Diffusion.IModelFolderCatalog>());
             await coreVm.LoadCommand.ExecuteAsync(null);
 
             var dialog = new Views.Dialogs.CoreWorkloadsDialog
