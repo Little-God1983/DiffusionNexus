@@ -23,6 +23,13 @@ public sealed class AppSettingsService : IAppSettingsService
     /// <inheritdoc />
     public async Task<AppSettings> GetSettingsAsync(CancellationToken cancellationToken = default)
     {
+        // Each consumer holds this service (and its context) for the app lifetime,
+        // while other components delete the same settings rows through their own
+        // contexts. EF's identity map never evicts those deletions, so without a
+        // reset every re-read returns phantom children — they reappear in the UI,
+        // keep being scanned, and poison the next save with a 0-row DELETE/UPDATE.
+        _unitOfWork.ClearChangeTracker();
+
         var settings = await _unitOfWork.AppSettings
             .GetSettingsWithIncludesAsync(cancellationToken)
             .ConfigureAwait(false);
@@ -145,6 +152,11 @@ public sealed class AppSettingsService : IAppSettingsService
         var incomingFolderData = settings.BaseModelFolders
             .Select(f => new { f.Id, f.FolderPath, f.IsEnabled, f.Order, f.IsDefault, f.InstallerPackageId })
             .ToList();
+
+        // Sync against database truth, not this context's identity map — rows
+        // deleted by another context would otherwise still sit in the tracked
+        // graph and turn the save into a failing 0-row DELETE/UPDATE.
+        _unitOfWork.ClearChangeTracker();
 
         var existingSettings = await _unitOfWork.AppSettings
             .GetSettingsWithIncludesAsync(cancellationToken)

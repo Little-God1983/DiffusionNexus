@@ -74,6 +74,9 @@ internal sealed class UnitOfWork : IUnitOfWork
     }
 
     /// <inheritdoc />
+    public void ClearChangeTracker() => _context.ChangeTracker.Clear();
+
+    /// <inheritdoc />
     public async Task BeginTransactionAsync(CancellationToken cancellationToken = default)
     {
         _transaction = await _context.Database
