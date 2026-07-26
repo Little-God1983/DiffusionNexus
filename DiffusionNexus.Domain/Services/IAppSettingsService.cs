@@ -99,6 +99,23 @@ public interface IAppSettingsService
     /// </summary>
     Task SetFavoriteLoraSourceAsync(string? folderPath, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Gets all enabled Base Model Folders, ordered by <c>Order</c>.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<IReadOnlyList<BaseModelFolder>> GetEnabledBaseModelFoldersAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Registers a Base Model Folder. Idempotent: when a row with the same path already
+    /// exists (case-insensitive) no duplicate is created; a non-null
+    /// <paramref name="installerPackageId"/> is linked onto the existing row.
+    /// Never sets the default flag.
+    /// </summary>
+    /// <param name="folderPath">Absolute path of the models root.</param>
+    /// <param name="installerPackageId">Owning installer package, when auto-registered.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task AddBaseModelFolderAsync(string folderPath, int? installerPackageId = null, CancellationToken cancellationToken = default);
+
     /// <summary>Gets the remembered feedback-reporter e-mail, or null if not set.</summary>
     Task<string?> GetFeedbackReporterEmailAsync(CancellationToken cancellationToken = default);
 

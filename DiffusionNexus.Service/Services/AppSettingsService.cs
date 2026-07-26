@@ -122,6 +122,13 @@ public sealed class AppSettingsService : IAppSettingsService
             gallery.AppSettingsId = 1;
         }
 
+        var folderOrder = 0;
+        foreach (var folder in settings.BaseModelFolders)
+        {
+            folder.Order = folderOrder++;
+            folder.AppSettingsId = 1;
+        }
+
         // Capture incoming data before any tracking queries
         var incomingSourceData = settings.LoraSources
             .Select(s => new { s.Id, s.FolderPath, s.IsEnabled, s.Order })
@@ -133,6 +140,10 @@ public sealed class AppSettingsService : IAppSettingsService
 
         var incomingGalleryData = settings.ImageGalleries
             .Select(g => new { g.Id, g.FolderPath, g.IsEnabled, g.Order })
+            .ToList();
+
+        var incomingFolderData = settings.BaseModelFolders
+            .Select(f => new { f.Id, f.FolderPath, f.IsEnabled, f.Order, f.IsDefault, f.InstallerPackageId })
             .ToList();
 
         var existingSettings = await _unitOfWork.AppSettings
@@ -240,6 +251,41 @@ public sealed class AppSettingsService : IAppSettingsService
             _unitOfWork.AppSettings.RemoveImageGallery,
             async gallery => await _unitOfWork.AppSettings.AddImageGalleryAsync(gallery, cancellationToken).ConfigureAwait(false));
 
+        // Handle BaseModelFolders (remove deleted, update existing, add new)
+        SyncChildCollection(
+            existingSettings.BaseModelFolders,
+            incomingFolderData,
+            f => f.Id,
+            d => d.Id,
+            (existing, data) =>
+            {
+                existing.FolderPath = data.FolderPath;
+                existing.IsEnabled = data.IsEnabled;
+                existing.Order = data.Order;
+                existing.IsDefault = data.IsDefault;
+                existing.InstallerPackageId = data.InstallerPackageId;
+            },
+            data => new BaseModelFolder
+            {
+                AppSettingsId = 1,
+                FolderPath = data.FolderPath,
+                IsEnabled = data.IsEnabled,
+                Order = data.Order,
+                IsDefault = data.IsDefault,
+                InstallerPackageId = data.InstallerPackageId
+            },
+            _unitOfWork.AppSettings.RemoveBaseModelFolder,
+            async folder => await _unitOfWork.AppSettings.AddBaseModelFolderAsync(folder, cancellationToken).ConfigureAwait(false));
+
+        // Single-default invariant: at most one Base Model Folder may be the default.
+        // When several incoming rows are flagged, the last one (incoming order) wins.
+        var lastDefaultPath = incomingFolderData.LastOrDefault(d => d.IsDefault)?.FolderPath;
+        foreach (var folder in existingSettings.BaseModelFolders.Where(f => f.IsDefault))
+        {
+            if (!string.Equals(folder.FolderPath, lastDefaultPath, StringComparison.OrdinalIgnoreCase))
+                folder.IsDefault = false;
+        }
+
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -314,6 +360,54 @@ public sealed class AppSettingsService : IAppSettingsService
             ? null
             : _secureStorage.Encrypt(token);
         settings.UpdatedAt = DateTimeOffset.UtcNow;
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<BaseModelFolder>> GetEnabledBaseModelFoldersAsync(CancellationToken cancellationToken = default)
+    {
+        var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+        return settings.BaseModelFolders
+            .Where(f => f.IsEnabled && !string.IsNullOrWhiteSpace(f.FolderPath))
+            .OrderBy(f => f.Order)
+            .ToList();
+    }
+
+    /// <inheritdoc />
+    public async Task AddBaseModelFolderAsync(string folderPath, int? installerPackageId = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
+
+        var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+
+        var existing = settings.BaseModelFolders.FirstOrDefault(f =>
+            string.Equals(f.FolderPath, folderPath, StringComparison.OrdinalIgnoreCase));
+
+        if (existing is not null)
+        {
+            if (installerPackageId is not null && existing.InstallerPackageId != installerPackageId)
+            {
+                existing.InstallerPackageId = installerPackageId;
+                existing.UpdatedAt = DateTimeOffset.UtcNow;
+                await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            }
+            return;
+        }
+
+        var maxOrder = settings.BaseModelFolders.Any()
+            ? settings.BaseModelFolders.Max(f => f.Order)
+            : -1;
+
+        await _unitOfWork.AppSettings.AddBaseModelFolderAsync(new BaseModelFolder
+        {
+            AppSettingsId = settings.Id,
+            FolderPath = folderPath,
+            IsEnabled = true,
+            IsDefault = false,
+            Order = maxOrder + 1,
+            InstallerPackageId = installerPackageId
+        }, cancellationToken).ConfigureAwait(false);
 
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
