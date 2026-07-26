@@ -35,6 +35,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
     private readonly ICaptioningService? _captioningService;
     private readonly IActivityLogService? _activityLogService;
     private readonly IDownloadCoordinator? _downloadCoordinator;
+    private readonly Services.Diffusion.BaseModelFolderRegistrar? _baseModelFolderRegistrar;
 
     /// <summary>
     /// Raised when the unified console panel should be opened (e.g., during an update).
@@ -76,7 +77,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         DiffusionNexus.Inference.Captioning.CaptioningModelManager? captioningModelManager = null,
         ICaptioningService? captioningService = null,
         IActivityLogService? activityLogService = null,
-        IDownloadCoordinator? downloadCoordinator = null)
+        IDownloadCoordinator? downloadCoordinator = null,
+        Services.Diffusion.BaseModelFolderRegistrar? baseModelFolderRegistrar = null)
     {
         _dialogService = dialogService;
         _unitOfWork = unitOfWork;
@@ -91,6 +93,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         _captioningService = captioningService;
         _activityLogService = activityLogService;
         _downloadCoordinator = downloadCoordinator;
+        _baseModelFolderRegistrar = baseModelFolderRegistrar;
 
         InstallerCards.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
 
@@ -173,6 +176,14 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
                 // Notify other components (Settings dialog, Generation Gallery) about the new gallery
                 _eventAggregator.PublishSettingsSaved(new SettingsSavedEventArgs());
+            }
+
+            // Register the installation's model folders as Base Model Folders
+            // (for ComfyUI this includes every extra_model_paths.yaml root).
+            // Non-fatal by design — EnsureRegisteredAsync logs and swallows failures.
+            if (_baseModelFolderRegistrar is not null)
+            {
+                await _baseModelFolderRegistrar.EnsureRegisteredAsync([package]);
             }
 
             var card = CreateCard(package);
