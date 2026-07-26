@@ -1,3 +1,4 @@
+using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
@@ -148,6 +149,35 @@ public sealed class SettingsFolderRowMissingTests : IDisposable
         await sut.RefreshFolderPresenceAsync();
 
         row.IsMissing.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task LoadCommand_FlagsMissingBaseModelFolders_ViaTheBackgroundScan()
+    {
+        // End-to-end through LoadAsync: rows are built from settings and the
+        // fire-and-forget presence scan must flag them — covers the wiring
+        // between load and RefreshFolderPresenceAsync for the base model list.
+        var settings = new AppSettings
+        {
+            Id = 1,
+            BaseModelFolders =
+            [
+                new BaseModelFolder { Id = 1, FolderPath = _existingDir, IsEnabled = true, Order = 0 },
+                new BaseModelFolder { Id = 2, FolderPath = _missingDir, IsEnabled = true, Order = 1 },
+            ],
+        };
+        var settingsService = new Mock<IAppSettingsService>();
+        settingsService
+            .Setup(s => s.GetSettingsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(settings);
+        var sut = new SettingsViewModel(settingsService.Object, new Mock<ISecureStorage>().Object);
+
+        await sut.LoadCommand.ExecuteAsync(null);
+
+        sut.BaseModelFolders.Should().HaveCount(2);
+        (await WaitForAsync(() => sut.BaseModelFolders[1].IsMissing)).Should().BeTrue(
+            "the load-time scan should flag the missing base model folder");
+        sut.BaseModelFolders[0].IsMissing.Should().BeFalse();
     }
 
     private static async Task<bool> WaitForAsync(Func<bool> condition)
