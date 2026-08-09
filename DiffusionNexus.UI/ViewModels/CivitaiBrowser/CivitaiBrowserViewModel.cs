@@ -719,10 +719,6 @@ public partial class CivitaiBrowserViewModel : ObservableObject
 
         foreach (var src in _baseModelSource)
         {
-            // Installed-only labels (union-appended in the Installed tab) are not part
-            // of Civitai's catalog and would be invalid in the API's baseModels query.
-            if (src.IsInstalledOnly) continue;
-
             var item = new BaseModelFilterItem(src.BaseModelRaw)
             {
                 IsSelected = previouslySelected.Contains(src.BaseModelRaw)

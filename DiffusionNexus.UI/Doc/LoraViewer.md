@@ -377,7 +377,7 @@ The toolbar's self-labeled **Base Model** button (same control style on both tab
 - **"Only models I have installed" checkbox** (`OnlyInstalledBaseModels`, off by default) — hides catalog-only entries; Unknown stays visible only when placeholder tiles exist.
 - The composed view reuses the shared `BaseModelFilterItem` instances, so selection state stays single-sourced across the flyout, the filter pipeline, and the browser mirror.
 - **Selected items are pinned visible** even when the search text or the only-installed toggle would hide them — otherwise an active filter could become un-toggleable. The installed set is cached (`_installedBaseModels`) and refreshed on tile changes, not per keystroke.
-- Installed base models missing from the Civitai catalog (renamed/dropped labels like "Krea 2", hand-edited sidecars) are union-appended with `IsInstalledOnly = true`; the Browse Civitai mirror **skips** those items because they are not valid values for the API's `baseModels` query. The browser has its own `FlyoutBaseModels` + `BaseModelFilterSearchText` (search + pinning only).
+- Installed base models missing from the Civitai catalog (renamed/dropped labels like "Krea 2", hand-edited sidecars) are union-appended, and the Browse Civitai mirror renders the **same full list — single source of truth**. This is safe because Civitai's API tolerates unknown `baseModels` values (200 + zero items; verified live 2026-08, and "Krea 2" is in fact a valid API value despite being absent from the scraped constants). The browser has its own `FlyoutBaseModels` + `BaseModelFilterSearchText` (search + pinning only).
 
 **Clear all** clears every selection including Unknown; **Reset** additionally clears the flyout search text and the only-installed checkbox.
 

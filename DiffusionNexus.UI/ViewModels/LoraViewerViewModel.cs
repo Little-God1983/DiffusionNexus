@@ -2752,7 +2752,6 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         }
 
         List<string> source;
-        HashSet<string>? installedOnly = null;
         if (_catalogBaseModels is { Count: > 0 } catalog)
         {
             // Catalog first, in catalog order (Civitai's natural ordering — alphabetizing
@@ -2760,13 +2759,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             source = new List<string>(catalog);
 
             // ...then installed base models the catalog doesn't know, appended
-            // alphabetically so they are always filterable. Flagged installed-only so
-            // the Browse Civitai mirror skips them (invalid for the API query).
+            // alphabetically so they are always filterable. The browser mirrors this
+            // full list too — single source of truth; Civitai's API tolerates unknown
+            // baseModels values (200 + zero items, verified live 2026-08).
             var known = catalog.ToHashSet(StringComparer.OrdinalIgnoreCase);
-            installedOnly = _installedBaseModels
+            source.AddRange(_installedBaseModels
                 .Where(raw => !known.Contains(raw))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            source.AddRange(installedOnly.OrderBy(raw => raw, StringComparer.OrdinalIgnoreCase));
+                .OrderBy(raw => raw, StringComparer.OrdinalIgnoreCase));
         }
         else
         {
@@ -2798,7 +2797,6 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             var item = new BaseModelFilterItem(raw)
             {
                 IsSelected = previouslySelected.Contains(raw) || restorePending,
-                IsInstalledOnly = installedOnly?.Contains(raw) == true,
             };
             item.SelectionChanged += OnBaseModelFilterChanged;
             AvailableBaseModels.Add(item);

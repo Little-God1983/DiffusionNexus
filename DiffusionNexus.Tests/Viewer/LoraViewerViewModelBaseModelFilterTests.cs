@@ -358,11 +358,6 @@ public class LoraViewerViewModelBaseModelFilterTests
         names.Should().Contain("Z-Image-Turbo");
         names.Should().NotContain("???",
             "the placeholder is represented by the Unknown entry, never as a raw item");
-
-        vm.AvailableBaseModels.First(i => i.BaseModelRaw == "Illustrious").IsInstalledOnly
-            .Should().BeTrue("union-appended labels are flagged so the browser mirror can skip them");
-        vm.AvailableBaseModels.First(i => i.BaseModelRaw == "SDXL 1.0").IsInstalledOnly
-            .Should().BeFalse("catalog labels are safe to send to the Civitai API");
     }
 
     [Fact]
