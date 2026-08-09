@@ -2715,37 +2715,32 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     }
 
     /// <summary>
+    /// Applies a fresh catalog label list and rebuilds the filter options. Single entry
+    /// point for catalog updates (startup load and forced refresh) — and the test seam
+    /// for catalog-mode behavior.
+    /// </summary>
+    internal void ApplyCatalogBaseModels(IReadOnlyList<string> labels)
+    {
+        _catalogBaseModels = labels;
+        RebuildAvailableBaseModels();
+    }
+
+    /// <summary>
     /// Rebuilds <see cref="AvailableBaseModels"/>. Primary source is the full Civitai
     /// catalog (<see cref="ICivitaiBaseModelCatalog"/>) so users can filter for any
-    /// base model Civitai supports, not just ones installed locally. Falls back to
-    /// distinct <c>BaseModelRaw</c> values across installed tiles when the catalog
-    /// is unavailable (design-time, missing DI, or before initial load completes).
-    /// Preserves existing selections where the value still exists.
+    /// base model Civitai supports — UNIONED with the distinct <c>BaseModelRaw</c>
+    /// values across installed tiles, because the scraped catalog can lack labels the
+    /// Civitai API stamped on installed files (real case: "Krea 2" disappeared from
+    /// Civitai's constants while 99 installed versions carried it — an installed base
+    /// model must never become unfilterable). Falls back to installed values alone when
+    /// the catalog is unavailable. Preserves existing selections where the value still
+    /// exists and consumes pending saved-filter names as they materialize.
     /// </summary>
     private void RebuildAvailableBaseModels()
     {
-        IReadOnlyList<string> source;
-        if (_catalogBaseModels is { Count: > 0 } catalog)
-        {
-            // Catalog is the canonical source. Preserve catalog order (Civitai's natural
-            // ordering — alphabetizing would split related entries like "SDXL 1.0" / "SDXL Turbo").
-            source = catalog;
-        }
-        else
-        {
-            // Fallback: distinct values from installed tiles, alphabetical.
-            source = AllTiles
-                .SelectMany(t => t.Versions)
-                .Select(v => v.BaseModelRaw)
-                .Where(raw => !IsPlaceholderBaseModel(raw))
-                .Select(raw => raw!)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(raw => raw, StringComparer.OrdinalIgnoreCase)
-                .ToList();
-        }
-
-        // Refresh the installed-set cache here — every tile-change path funnels through
-        // this method, and the flyout narrowing must not rescan tiles per keystroke.
+        // Refresh the installed-set cache first — every tile-change path funnels through
+        // this method, the source composition below needs it, and the flyout narrowing
+        // must not rescan tiles per keystroke.
         _installedBaseModels.Clear();
         _hasUnknownInstalled = false;
         foreach (var version in AllTiles.SelectMany(t => t.Versions))
@@ -2754,6 +2749,28 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                 _hasUnknownInstalled = true;
             else
                 _installedBaseModels.Add(version.BaseModelRaw!);
+        }
+
+        List<string> source;
+        if (_catalogBaseModels is { Count: > 0 } catalog)
+        {
+            // Catalog first, in catalog order (Civitai's natural ordering — alphabetizing
+            // would split related entries like "SDXL 1.0" / "SDXL Turbo")...
+            source = new List<string>(catalog);
+
+            // ...then installed base models the catalog doesn't know, appended
+            // alphabetically so they are always filterable.
+            var known = catalog.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            source.AddRange(_installedBaseModels
+                .Where(raw => !known.Contains(raw))
+                .OrderBy(raw => raw, StringComparer.OrdinalIgnoreCase));
+        }
+        else
+        {
+            // Fallback: distinct values from installed tiles, alphabetical.
+            source = _installedBaseModels
+                .OrderBy(raw => raw, StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
 
         // Snapshot currently selected values so we can restore them
@@ -2976,11 +2993,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             var labels = await _baseModelCatalog.GetBaseModelsAsync().ConfigureAwait(false);
             if (labels is null || labels.Count == 0) return;
 
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                _catalogBaseModels = labels;
-                RebuildAvailableBaseModels();
-            });
+            await Dispatcher.UIThread.InvokeAsync(() => ApplyCatalogBaseModels(labels));
         }
         catch (Exception ex)
         {

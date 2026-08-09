@@ -340,4 +340,37 @@ public class LoraViewerViewModelBaseModelFilterTests
             "an explicit clear voids the not-yet-materialized saved intent too");
         vm.CaptureFilter().SelectedBaseModels.Should().BeEmpty();
     }
+
+    [Fact]
+    public void CatalogModeStillListsInstalledBaseModelsMissingFromTheCatalog()
+    {
+        var vm = CreateViewModel();
+
+        // Refreshed catalog no longer contains several labels the installed LoRAs carry
+        // (real case: Civitai dropped "Krea 2" from its constants while the API had
+        // stamped it on installed files).
+        vm.ApplyCatalogBaseModels(["SDXL 1.0", "Pony"]);
+
+        var names = vm.AvailableBaseModels.Select(i => i.BaseModelRaw).ToList();
+        names.Take(2).Should().Equal("SDXL 1.0", "Pony");
+        names.Should().Contain("Illustrious",
+            "installed base models missing from the catalog must stay filterable");
+        names.Should().Contain("Z-Image-Turbo");
+        names.Should().NotContain("???",
+            "the placeholder is represented by the Unknown entry, never as a raw item");
+    }
+
+    [Fact]
+    public void CatalogRefreshThatDropsALabelKeepsTheSelectionFilterable()
+    {
+        var vm = CreateViewModel();
+        vm.AvailableBaseModels.First(i => i.BaseModelRaw == "Illustrious").IsSelected = true;
+
+        vm.ApplyCatalogBaseModels(["SDXL 1.0", "Pony"]);
+
+        var illustrious = vm.AvailableBaseModels.FirstOrDefault(i => i.BaseModelRaw == "Illustrious");
+        illustrious.Should().NotBeNull();
+        illustrious!.IsSelected.Should().BeTrue(
+            "a catalog refresh that loses a label must not drop the user's active selection");
+    }
 }
