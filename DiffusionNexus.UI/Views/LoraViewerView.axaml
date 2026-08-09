@@ -34,16 +34,14 @@
                      VerticalAlignment="Center"
                      Margin="0,4,12,4"/>
 
-            <StackPanel Orientation="Horizontal" Spacing="6"
-                        VerticalAlignment="Center"
-                        Margin="0,4,12,4">
-              <TextBlock Text="Filter"
-                         VerticalAlignment="Center"
-                         Opacity="0.7"/>
-              <Button VerticalAlignment="Center"
-                      Padding="8,6"
+            <StackPanel Margin="0,4,12,4" VerticalAlignment="Center">
+              <TextBlock Text="Base Model" Opacity="0.6" FontSize="11"/>
+              <Button Padding="8,6"
+                      MinWidth="140"
+                      HorizontalContentAlignment="Left"
                       ToolTip.Tip="Filter by base model">
                 <StackPanel Orientation="Horizontal" Spacing="4">
+                  <TextBlock Text="Filter" VerticalAlignment="Center"/>
                   <TextBlock Text="&#x25BD;" FontSize="14"
                              IsVisible="{Binding !IsBaseModelFilterActive}"
                              Foreground="#AAAAAA"/>
@@ -58,7 +56,7 @@
                 </StackPanel>
                 <Button.Flyout>
                   <Flyout Placement="BottomEdgeAlignedLeft"
-                          ShowMode="TransientWithDismissOnPointerMoveAway">
+                          ShowMode="Transient">
                     <Border Background="#1E1E1E"
                             BorderBrush="#444"
                             BorderThickness="1"

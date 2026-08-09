@@ -66,7 +66,7 @@
             </StackPanel>
             <Button.Flyout>
               <Flyout Placement="BottomEdgeAlignedLeft"
-                      ShowMode="TransientWithDismissOnPointerMoveAway">
+                      ShowMode="Transient">
                 <Border Background="#1E1E1E"
                         BorderBrush="#444"
                         BorderThickness="1"
