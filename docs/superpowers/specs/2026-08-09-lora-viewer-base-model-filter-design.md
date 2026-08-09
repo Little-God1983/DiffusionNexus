@@ -74,14 +74,17 @@ across `AllTiles[*].Versions`, compared case-insensitively (same comparison
 `ApplyFilters()` currently matches a tile when any version's `BaseModelRaw`
 is in the active set. Extension: when the Unknown sentinel is selected, a
 tile also matches when any of its versions has a placeholder base model
-(`IsPlaceholderBaseModel`). Clear all / Reset also clears the sentinel,
-the checkbox and the flyout search text.
+(`IsPlaceholderBaseModel`). Clear all clears every selection including the
+sentinel; Reset additionally clears the flyout search text and the
+only-installed checkbox.
 
 ### Persistence
 
 New nullable string column `AppSettings.LoraViewerFilterJson` (precedent:
 `DistillerRuleSetsJson`), with one EF Core migration in
-`DiffusionNexus.DataAccess\Migrations\Core\` plus the `schema.sql` update.
+`DiffusionNexus.DataAccess\Migrations\Core\`. `schema.sql` is not touched —
+the `DistillerRuleSetsJson` precedent (commit `af40cef`) changed only the
+entity + migration; migrations apply automatically at app start.
 
 JSON payload (versionless, tolerant deserialize):
 
