@@ -43,13 +43,12 @@
                     MinWidth="100"/>
         </StackPanel>
 
-        <StackPanel Grid.Column="3" Margin="0,0,16,0">
-          <TextBlock Text="Base Model" Opacity="0.6" FontSize="11"/>
-          <Button Padding="8,6" MinWidth="140"
-                  HorizontalContentAlignment="Left"
+          <Button Grid.Column="3" Margin="0,0,16,0"
+                  Padding="8,6"
+                  VerticalAlignment="Center"
                   ToolTip.Tip="Filter by base model (mirrors the Installed tab list)">
             <StackPanel Orientation="Horizontal" Spacing="6">
-              <TextBlock Text="Filter" VerticalAlignment="Center"/>
+              <TextBlock Text="Base Model" VerticalAlignment="Center"/>
               <TextBlock Text="&#x25BD;" FontSize="12"
                          VerticalAlignment="Center"
                          IsVisible="{Binding !IsBaseModelFilterActive}"
@@ -66,22 +65,27 @@
             </StackPanel>
             <Button.Flyout>
               <Flyout Placement="BottomEdgeAlignedLeft"
-                      ShowMode="TransientWithDismissOnPointerMoveAway">
+                      ShowMode="Standard">
                 <Border Background="#1E1E1E"
                         BorderBrush="#444"
                         BorderThickness="1"
                         CornerRadius="4"
                         Padding="8"
                         MinWidth="200"
-                        MaxHeight="400">
-                  <Grid RowDefinitions="Auto,Auto,*">
+                        MaxHeight="460">
+                  <Grid RowDefinitions="Auto,Auto,Auto,*">
                     <TextBlock Grid.Row="0"
                                Text="Filter by base model"
                                FontWeight="SemiBold"
                                Margin="4,0,4,8"
                                Opacity="0.7"/>
 
-                    <Button Grid.Row="1"
+                    <TextBox Grid.Row="1"
+                             Text="{Binding BaseModelFilterSearchText, Mode=TwoWay}"
+                             Watermark="Search base models..."
+                             Margin="4,0,4,8"/>
+
+                    <Button Grid.Row="2"
                             Content="Clear all"
                             Command="{Binding ClearBaseModelFiltersCommand}"
                             IsVisible="{Binding IsBaseModelFilterActive}"
@@ -90,11 +94,11 @@
                             FontSize="11"
                             HorizontalAlignment="Left"/>
 
-                    <ScrollViewer Grid.Row="2"
+                    <ScrollViewer Grid.Row="3"
                                   MaxHeight="340"
                                   HorizontalScrollBarVisibility="Disabled"
                                   VerticalScrollBarVisibility="Auto">
-                      <ItemsControl ItemsSource="{Binding AvailableBaseModels}">
+                      <ItemsControl ItemsSource="{Binding FlyoutBaseModels}">
                         <ItemsControl.ItemsPanel>
                           <ItemsPanelTemplate>
                             <StackPanel Spacing="2"/>
@@ -122,7 +126,6 @@
               </Flyout>
             </Button.Flyout>
           </Button>
-        </StackPanel>
 
         <!-- spacer -->
 

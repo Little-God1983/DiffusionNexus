@@ -671,4 +671,20 @@ public sealed class AppSettingsService : IAppSettingsService
             await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
     }
+
+    /// <inheritdoc />
+    public async Task<string?> GetLoraViewerFilterJsonAsync(CancellationToken cancellationToken = default)
+    {
+        var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+        return settings.LoraViewerFilterJson;
+    }
+
+    /// <inheritdoc />
+    public async Task SetLoraViewerFilterJsonAsync(string? json, CancellationToken cancellationToken = default)
+    {
+        var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+        settings.LoraViewerFilterJson = string.IsNullOrWhiteSpace(json) ? null : json;
+        settings.UpdatedAt = DateTimeOffset.UtcNow;
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
 }

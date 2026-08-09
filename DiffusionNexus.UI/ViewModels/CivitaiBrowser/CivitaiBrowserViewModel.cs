@@ -11,6 +11,7 @@ using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.CivitaiBrowser;
+using DiffusionNexus.UI.Utilities;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace DiffusionNexus.UI.ViewModels.CivitaiBrowser;
@@ -148,8 +149,49 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     /// </summary>
     public ObservableCollection<BaseModelFilterItem> AvailableBaseModels { get; }
 
+    /// <summary>
+    /// Search text typed inside the base-model flyout. Narrows the visible option list
+    /// (<see cref="FlyoutBaseModels"/>) only — selections are untouched.
+    /// </summary>
+    [ObservableProperty]
+    private string? _baseModelFilterSearchText;
+
+    /// <summary>
+    /// The option list the flyout renders: the mirror items narrowed by
+    /// <see cref="BaseModelFilterSearchText"/>, with selected items pinned visible so an
+    /// active filter can always be untoggled. Holds the SAME item instances as
+    /// <see cref="AvailableBaseModels"/>, so selection state stays single-sourced.
+    /// </summary>
+    public BatchObservableCollection<BaseModelFilterItem> FlyoutBaseModels { get; } = [];
+
     public bool IsBaseModelFilterActive => AvailableBaseModels.Any(f => f.IsSelected);
     public int ActiveBaseModelFilterCount => AvailableBaseModels.Count(f => f.IsSelected);
+
+    partial void OnBaseModelFilterSearchTextChanged(string? value) => RebuildFlyoutBaseModels();
+
+    /// <summary>
+    /// Recomputes <see cref="FlyoutBaseModels"/> from the mirror + the flyout search.
+    /// Single Reset notification — the flyout's ItemsControl is not virtualized.
+    /// </summary>
+    private void RebuildFlyoutBaseModels()
+    {
+        var search = BaseModelFilterSearchText?.Trim();
+        var hasSearch = !string.IsNullOrWhiteSpace(search);
+
+        var items = new List<BaseModelFilterItem>();
+        foreach (var item in AvailableBaseModels)
+        {
+            if (!item.IsSelected
+                && hasSearch
+                && !item.BaseModelRaw.Contains(search!, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            items.Add(item);
+        }
+
+        FlyoutBaseModels.ReplaceAll(items);
+    }
 
     #endregion
 
@@ -655,6 +697,8 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         foreach (var item in AvailableBaseModels) item.IsSelected = false;
         OnPropertyChanged(nameof(IsBaseModelFilterActive));
         OnPropertyChanged(nameof(ActiveBaseModelFilterCount));
+        if (!string.IsNullOrWhiteSpace(BaseModelFilterSearchText))
+            RebuildFlyoutBaseModels();
         _ = SearchAsync();
     }
 
@@ -684,6 +728,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         }
         OnPropertyChanged(nameof(IsBaseModelFilterActive));
         OnPropertyChanged(nameof(ActiveBaseModelFilterCount));
+        RebuildFlyoutBaseModels();
     }
 
     private void OnBaseModelSourceChanged(object? sender, NotifyCollectionChangedEventArgs e)
@@ -695,6 +740,12 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(IsBaseModelFilterActive));
         OnPropertyChanged(nameof(ActiveBaseModelFilterCount));
+
+        // A toggle can change which items the narrowed flyout shows (selected items
+        // are pinned visible), so refresh the composed view while a search is active.
+        if (!string.IsNullOrWhiteSpace(BaseModelFilterSearchText))
+            RebuildFlyoutBaseModels();
+
         if (_initialized) _ = SearchAsync();
     }
 

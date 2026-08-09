@@ -67,10 +67,12 @@ public sealed record CivitaiModel
     public bool AllowNoCredit { get; init; }
 
     /// <summary>
-    /// Commercial use permissions. Civitai returns this as a set-notation string
-    /// (e.g. "{Image,RentCivit,Rent,Sell}") rather than a single enum value.
+    /// Commercial use permissions. Historically a set-notation string
+    /// (e.g. "{Image,RentCivit,Rent,Sell}"); the API now returns an array of
+    /// strings, which the converter comma-joins (empty array → null).
     /// </summary>
     [JsonPropertyName("allowCommercialUse")]
+    [JsonConverter(typeof(AllowCommercialUseJsonConverter))]
     public string? AllowCommercialUse { get; init; }
 
     [JsonPropertyName("allowDerivatives")]
