@@ -131,13 +131,16 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
     /// <summary>
     /// Whether any base model filter is currently active (for visual indicator on the filter button).
+    /// Includes the "Unknown" sentinel.
     /// </summary>
-    public bool IsBaseModelFilterActive => AvailableBaseModels.Any(f => f.IsSelected);
+    public bool IsBaseModelFilterActive
+        => UnknownBaseModelItem.IsSelected || AvailableBaseModels.Any(f => f.IsSelected);
 
     /// <summary>
-    /// Count of currently active base model filters.
+    /// Count of currently active base model filters (including the "Unknown" sentinel).
     /// </summary>
-    public int ActiveBaseModelFilterCount => AvailableBaseModels.Count(f => f.IsSelected);
+    public int ActiveBaseModelFilterCount
+        => AvailableBaseModels.Count(f => f.IsSelected) + (UnknownBaseModelItem.IsSelected ? 1 : 0);
 
     /// <summary>
     /// Whether the detail panel is open.
@@ -176,6 +179,17 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// </summary>
     public ObservableCollection<BaseModelFilterItem> AvailableBaseModels { get; } = [];
 
+    /// <summary>Display label of the "Unknown" pseudo base model.</summary>
+    public const string UnknownBaseModelLabel = "Unknown";
+
+    /// <summary>
+    /// Sentinel filter item matching tiles whose base model is the "???" placeholder
+    /// (local files without metadata). Owned by the Installed tab only — it is NEVER
+    /// added to <see cref="AvailableBaseModels"/>, which the Civitai browser mirrors
+    /// and whose entries are sent to the Civitai API.
+    /// </summary>
+    public BaseModelFilterItem UnknownBaseModelItem { get; } = new(UnknownBaseModelLabel);
+
     /// <summary>
     /// Cached catalog labels (full Civitai base-model list). When non-empty, drives
     /// <see cref="RebuildAvailableBaseModels"/> instead of the distinct-from-installed
@@ -210,6 +224,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         _logger = null;
         _baseModelCatalog = null;
         _updateChecker = null;
+        UnknownBaseModelItem.SelectionChanged += OnBaseModelFilterChanged;
         BrowserViewModel = new CivitaiBrowserViewModel();
         // Load demo data for design-time preview
         LoadDemoData();
@@ -228,6 +243,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         ILoraUpdateChecker? updateChecker = null)
     {
         _selectedSortOption = SortOptions[0];
+        UnknownBaseModelItem.SelectionChanged += OnBaseModelFilterChanged;
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
         _syncService = syncService ?? throw new ArgumentNullException(nameof(syncService));
         _civitaiClient = civitaiClient;
@@ -2470,6 +2486,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     [RelayCommand]
     private void ClearBaseModelFilters()
     {
+        UnknownBaseModelItem.IsSelected = false;
+
         foreach (var item in AvailableBaseModels)
         {
             item.IsSelected = false;
@@ -2483,6 +2501,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     private void ResetFilters()
     {
         SearchText = null;
+        UnknownBaseModelItem.IsSelected = false;
 
         foreach (var item in AvailableBaseModels)
         {
@@ -2589,7 +2608,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             source = AllTiles
                 .SelectMany(t => t.Versions)
                 .Select(v => v.BaseModelRaw)
-                .Where(raw => !string.IsNullOrWhiteSpace(raw))
+                .Where(raw => !IsPlaceholderBaseModel(raw))
                 .Select(raw => raw!)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(raw => raw, StringComparer.OrdinalIgnoreCase)
@@ -2770,13 +2789,15 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             .Where(f => f.IsSelected)
             .Select(f => f.BaseModelRaw)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var includeUnknown = UnknownBaseModelItem.IsSelected;
 
-        if (activeBaseModels.Count > 0)
+        if (activeBaseModels.Count > 0 || includeUnknown)
         {
             query = query.Where(t =>
                 t.Versions.Any(v =>
-                    !string.IsNullOrEmpty(v.BaseModelRaw) &&
-                    activeBaseModels.Contains(v.BaseModelRaw)));
+                    (includeUnknown && IsPlaceholderBaseModel(v.BaseModelRaw)) ||
+                    (!string.IsNullOrEmpty(v.BaseModelRaw) &&
+                     activeBaseModels.Contains(v.BaseModelRaw))));
         }
 
         var filtered = SortTiles(query.ToList());
@@ -2884,6 +2905,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             CreateDemoModel("Sci-Fi Concepts", "FutureTech", "Flux.1 D", 4500),
             CreateDemoModel("Video Enhancer", "VideoMaster", "Wan Video 14B t2v", 2100),
             CreateDemoModel("Turbo Generator", "SpeedyAI", "Z-Image-Turbo", 11000),
+            // A local file discovered without metadata — exercises the "Unknown" filter.
+            CreateDemoModel("Legacy Style", "OldTimer", "???", 100),
         };
 
         // Add grouped demo models (separate entities sharing the same Name)
