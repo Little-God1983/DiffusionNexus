@@ -13,6 +13,7 @@ public partial class BackgroundRemovalViewModel : ObservableObject
     private readonly Func<bool> _hasImage;
     private readonly Action<string> _deactivateOtherTools;
     private readonly IBackgroundRemovalService? _service;
+    private readonly IDownloadCoordinator? _downloadCoordinator;
 
     private bool _isPanelOpen;
     private bool _isBusy;
@@ -22,13 +23,15 @@ public partial class BackgroundRemovalViewModel : ObservableObject
     public BackgroundRemovalViewModel(
         Func<bool> hasImage,
         Action<string> deactivateOtherTools,
-        IBackgroundRemovalService? service)
+        IBackgroundRemovalService? service,
+        IDownloadCoordinator? downloadCoordinator = null)
     {
         ArgumentNullException.ThrowIfNull(hasImage);
         ArgumentNullException.ThrowIfNull(deactivateOtherTools);
         _hasImage = hasImage;
         _deactivateOtherTools = deactivateOtherTools;
         _service = service;
+        _downloadCoordinator = downloadCoordinator;
 
         RemoveBackgroundCommand = new AsyncRelayCommand(ExecuteRemoveBackgroundAsync, CanExecuteRemoveBackground);
         RemoveBackgroundToLayerCommand = new AsyncRelayCommand(ExecuteRemoveBackgroundToLayerAsync, CanExecuteRemoveBackground);
@@ -356,14 +359,40 @@ public partial class BackgroundRemovalViewModel : ObservableObject
 
         try
         {
-            var progress = new Progress<ModelDownloadProgress>(p =>
-            {
-                if (p.Percentage >= 0)
-                    Progress = (int)p.Percentage;
-                Status = p.Status;
-            });
+            bool success;
 
-            var success = await _service.DownloadModelAsync(progress);
+            if (_downloadCoordinator is not null)
+            {
+                success = await _downloadCoordinator.EnqueueAsync(
+                    "RMBG-1.4 background removal model",
+                    async (taskProgress, ct) =>
+                    {
+                        var fileProgress = new Progress<ModelDownloadProgress>(p =>
+                        {
+                            if (p.Percentage >= 0)
+                                Progress = (int)p.Percentage;
+                            Status = p.Status;
+
+                            var percent = p.TotalBytes > 0
+                                ? (int)((double)p.BytesDownloaded / p.TotalBytes * 100.0)
+                                : 0;
+                            taskProgress.Report(new DownloadTaskProgress(percent, p.Status));
+                        });
+
+                        return await _service.DownloadModelAsync(fileProgress, ct);
+                    });
+            }
+            else
+            {
+                var progress = new Progress<ModelDownloadProgress>(p =>
+                {
+                    if (p.Percentage >= 0)
+                        Progress = (int)p.Percentage;
+                    Status = p.Status;
+                });
+
+                success = await _service.DownloadModelAsync(progress);
+            }
 
             if (success)
             {
