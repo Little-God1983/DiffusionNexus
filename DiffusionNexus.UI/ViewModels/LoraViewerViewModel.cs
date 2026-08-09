@@ -74,6 +74,21 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     private bool _showNsfw = true;
 
     /// <summary>
+    /// Search text typed inside the base-model flyout. Narrows the visible option
+    /// list (<see cref="FlyoutBaseModels"/>) only — selections are untouched.
+    /// </summary>
+    [ObservableProperty]
+    private string? _baseModelFilterSearchText;
+
+    /// <summary>
+    /// When true, the base-model flyout lists only base models actually present
+    /// among the installed LoRAs (plus "Unknown" when placeholder tiles exist).
+    /// Off by default.
+    /// </summary>
+    [ObservableProperty]
+    private bool _onlyInstalledBaseModels;
+
+    /// <summary>
     /// Sort options offered in the Installed-tab "Sort by" dropdown. The record's
     /// <c>ToString</c> returns its label, so the ComboBox renders it without a template.
     /// </summary>
@@ -189,6 +204,15 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// and whose entries are sent to the Civitai API.
     /// </summary>
     public BaseModelFilterItem UnknownBaseModelItem { get; } = new(UnknownBaseModelLabel);
+
+    /// <summary>
+    /// The option list the Installed tab's flyout renders: "Unknown" first, then the
+    /// shared <see cref="AvailableBaseModels"/> items, narrowed by
+    /// <see cref="BaseModelFilterSearchText"/> and <see cref="OnlyInstalledBaseModels"/>.
+    /// Holds the SAME item instances as the shared list, so toggling a checkbox here
+    /// drives the same selection state the filter pipeline and the browser mirror use.
+    /// </summary>
+    public ObservableCollection<BaseModelFilterItem> FlyoutBaseModels { get; } = [];
 
     /// <summary>
     /// Cached catalog labels (full Civitai base-model list). When non-empty, drives
@@ -2502,6 +2526,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     {
         SearchText = null;
         UnknownBaseModelItem.IsSelected = false;
+        BaseModelFilterSearchText = null;
+        OnlyInstalledBaseModels = false;
 
         foreach (var item in AvailableBaseModels)
         {
@@ -2549,6 +2575,10 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     {
         ApplyFilters();
     }
+
+    partial void OnBaseModelFilterSearchTextChanged(string? value) => RebuildFlyoutBaseModels();
+
+    partial void OnOnlyInstalledBaseModelsChanged(bool value) => RebuildFlyoutBaseModels();
 
     #endregion
 
@@ -2637,6 +2667,50 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             };
             item.SelectionChanged += OnBaseModelFilterChanged;
             AvailableBaseModels.Add(item);
+        }
+
+        RebuildFlyoutBaseModels();
+    }
+
+    /// <summary>
+    /// Recomputes <see cref="FlyoutBaseModels"/>: "Unknown" first (hidden when
+    /// "only installed" is on and no placeholder tiles exist), then the shared items,
+    /// filtered by the flyout search text and the only-installed toggle. Reuses the
+    /// shared item instances — never copies — so selection state stays single-sourced.
+    /// </summary>
+    private void RebuildFlyoutBaseModels()
+    {
+        var search = BaseModelFilterSearchText?.Trim();
+        var hasSearch = !string.IsNullOrWhiteSpace(search);
+
+        HashSet<string>? installed = null;
+        var hasUnknownInstalled = false;
+        if (OnlyInstalledBaseModels)
+        {
+            installed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var version in AllTiles.SelectMany(t => t.Versions))
+            {
+                if (IsPlaceholderBaseModel(version.BaseModelRaw))
+                    hasUnknownInstalled = true;
+                else
+                    installed.Add(version.BaseModelRaw!);
+            }
+        }
+
+        FlyoutBaseModels.Clear();
+
+        var showUnknown = (!OnlyInstalledBaseModels || hasUnknownInstalled)
+            && (!hasSearch || UnknownBaseModelLabel.Contains(search!, StringComparison.OrdinalIgnoreCase));
+        if (showUnknown)
+            FlyoutBaseModels.Add(UnknownBaseModelItem);
+
+        foreach (var item in AvailableBaseModels)
+        {
+            if (installed is not null && !installed.Contains(item.BaseModelRaw))
+                continue;
+            if (hasSearch && !item.BaseModelRaw.Contains(search!, StringComparison.OrdinalIgnoreCase))
+                continue;
+            FlyoutBaseModels.Add(item);
         }
     }
 

@@ -89,4 +89,88 @@ public class LoraViewerViewModelBaseModelFilterTests
         vm.UnknownBaseModelItem.IsSelected.Should().BeFalse();
         vm.IsBaseModelFilterActive.Should().BeFalse();
     }
+
+    [Fact]
+    public void FlyoutListContainsUnknownFirstThenAllSharedItems()
+    {
+        var vm = CreateViewModel();
+
+        vm.FlyoutBaseModels.First().Should().BeSameAs(vm.UnknownBaseModelItem);
+        vm.FlyoutBaseModels.Skip(1).Should().Equal(vm.AvailableBaseModels);
+    }
+
+    [Fact]
+    public void FlyoutSearchNarrowsTheListCaseInsensitively()
+    {
+        var vm = CreateViewModel();
+
+        vm.BaseModelFilterSearchText = "sdxl";
+
+        vm.FlyoutBaseModels.Should().NotBeEmpty();
+        vm.FlyoutBaseModels.Should().OnlyContain(i =>
+            i.BaseModelRaw.Contains("SDXL", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void FlyoutSearchMatchesTheUnknownEntryByLabel()
+    {
+        var vm = CreateViewModel();
+
+        vm.BaseModelFilterSearchText = "unk";
+
+        vm.FlyoutBaseModels.Should().ContainSingle()
+            .Which.Should().BeSameAs(vm.UnknownBaseModelItem);
+    }
+
+    [Fact]
+    public void ClearingTheFlyoutSearchRestoresTheFullList()
+    {
+        var vm = CreateViewModel();
+        var fullCount = vm.FlyoutBaseModels.Count;
+
+        vm.BaseModelFilterSearchText = "sdxl";
+        vm.BaseModelFilterSearchText = null;
+
+        vm.FlyoutBaseModels.Count.Should().Be(fullCount);
+    }
+
+    [Fact]
+    public void OnlyInstalledNarrowsToBaseModelsPresentInTheLibrary()
+    {
+        var vm = CreateViewModel();
+
+        vm.OnlyInstalledBaseModels = true;
+
+        // Demo data installs SDXL 1.0 (among others) but the shared list may hold more.
+        vm.FlyoutBaseModels.Should().Contain(i => i.BaseModelRaw == "SDXL 1.0");
+        vm.FlyoutBaseModels.Where(i => i != vm.UnknownBaseModelItem)
+            .Should().OnlyContain(i => vm.AllTiles.Any(t =>
+                t.Versions.Any(v => string.Equals(v.BaseModelRaw, i.BaseModelRaw,
+                    StringComparison.OrdinalIgnoreCase))));
+    }
+
+    [Fact]
+    public void OnlyInstalledKeepsUnknownWhenPlaceholderTilesExist()
+    {
+        var vm = CreateViewModel();
+
+        vm.OnlyInstalledBaseModels = true;
+
+        vm.FlyoutBaseModels.Should().Contain(vm.UnknownBaseModelItem,
+            "demo data contains a '???' tile, so Unknown is an installed option");
+    }
+
+    [Fact]
+    public void SelectionSurvivesFlyoutNarrowing()
+    {
+        var vm = CreateViewModel();
+        var sdxl = vm.AvailableBaseModels.First(i => i.BaseModelRaw == "SDXL 1.0");
+        sdxl.IsSelected = true;
+
+        vm.BaseModelFilterSearchText = "pony";
+        vm.BaseModelFilterSearchText = null;
+
+        sdxl.IsSelected.Should().BeTrue("narrowing the visible list must not touch selections");
+        vm.ActiveBaseModelFilterCount.Should().Be(1);
+    }
 }
