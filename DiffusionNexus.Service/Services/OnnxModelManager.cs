@@ -21,11 +21,21 @@ public sealed class OnnxModelManager
     private const string UltraSharp4xModelUrl = "https://huggingface.co/ofter/4x-UltraSharp/resolve/main/4x-UltraSharp.onnx";
     private const long ExpectedUltraSharp4xSizeBytes = 67_000_000; // ~67MB
 
+    // WD14 ViT Tagger v3 (booru-style image tags + content rating, one ONNX pass)
+    private const string Wd14TaggerModelFileName = "wd-vit-tagger-v3.onnx";
+    private const string Wd14TaggerModelUrl = "https://huggingface.co/SmilingWolf/wd-vit-tagger-v3/resolve/main/model.onnx";
+    private const long ExpectedWd14TaggerSizeBytes = 379_000_000; // ~379MB
+
+    private const string Wd14TaggerTagsFileName = "wd-vit-tagger-v3-tags.csv";
+    private const string Wd14TaggerTagsUrl = "https://huggingface.co/SmilingWolf/wd-vit-tagger-v3/resolve/main/selected_tags.csv";
+    private const long ExpectedWd14TaggerTagsSizeBytes = 308_000; // ~308KB
+
     private readonly string _modelsBasePath;
     private readonly HttpClient _httpClient;
     private readonly object _downloadLock = new();
     private bool _isDownloadingRmbg14;
     private bool _isDownloadingUltraSharp4x;
+    private bool _isDownloadingWd14Tagger;
 
     /// <summary>
     /// Creates a new OnnxModelManager with the default models directory.
@@ -59,6 +69,12 @@ public sealed class OnnxModelManager
     /// Gets the full path to the 4x-UltraSharp model file.
     /// </summary>
     public string UltraSharp4xModelPath => Path.Combine(_modelsBasePath, UltraSharp4xModelFileName);
+
+    /// <summary>Gets the full path to the WD14 tagger ONNX model file.</summary>
+    public string Wd14TaggerModelPath => Path.Combine(_modelsBasePath, Wd14TaggerModelFileName);
+
+    /// <summary>Gets the full path to the WD14 tagger's tag list CSV.</summary>
+    public string Wd14TaggerTagsPath => Path.Combine(_modelsBasePath, Wd14TaggerTagsFileName);
 
     /// <summary>
     /// Gets the status of the RMBG-1.4 model.
@@ -98,9 +114,36 @@ public sealed class OnnxModelManager
             return ModelStatus.NotDownloaded;
 
         var fileInfo = new FileInfo(UltraSharp4xModelPath);
-        
+
         // Basic size check - model should be at least 60MB
         if (fileInfo.Length < 60_000_000)
+            return ModelStatus.Corrupted;
+
+        return ModelStatus.Ready;
+    }
+
+    /// <summary>
+    /// Gets the status of the WD14 tagger. Both the model and its tag list
+    /// must be present and correctly sized — the tagger is unusable without
+    /// its CSV, so a missing/corrupt CSV counts the whole entry as not ready.
+    /// </summary>
+    public ModelStatus GetWd14TaggerStatus()
+    {
+        lock (_downloadLock)
+        {
+            if (_isDownloadingWd14Tagger)
+                return ModelStatus.Downloading;
+        }
+
+        if (!File.Exists(Wd14TaggerModelPath) || !File.Exists(Wd14TaggerTagsPath))
+            return ModelStatus.NotDownloaded;
+
+        var modelInfo = new FileInfo(Wd14TaggerModelPath);
+        if (modelInfo.Length < 300_000_000)
+            return ModelStatus.Corrupted;
+
+        var tagsInfo = new FileInfo(Wd14TaggerTagsPath);
+        if (tagsInfo.Length < 100_000)
             return ModelStatus.Corrupted;
 
         return ModelStatus.Ready;
@@ -200,6 +243,74 @@ public sealed class OnnxModelManager
             lock (_downloadLock)
             {
                 _isDownloadingUltraSharp4x = false;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Downloads the WD14 ViT Tagger v3 model and its tag list from HuggingFace.
+    /// Two files, downloaded sequentially; both must succeed for the entry to be Ready.
+    /// Only downloads missing or corrupt files — if the model is already valid, skips re-downloading it.
+    /// </summary>
+    public async Task<bool> DownloadWd14TaggerModelAsync(
+        IProgress<ModelDownloadProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        var status = GetWd14TaggerStatus();
+        if (status == ModelStatus.Ready)
+        {
+            progress?.Report(new ModelDownloadProgress(
+                ExpectedWd14TaggerSizeBytes, ExpectedWd14TaggerSizeBytes, "Model already downloaded"));
+            return true;
+        }
+
+        lock (_downloadLock)
+        {
+            if (_isDownloadingWd14Tagger)
+            {
+                Log.Warning("WD14 tagger model download already in progress");
+                return false;
+            }
+            _isDownloadingWd14Tagger = true;
+        }
+
+        try
+        {
+            // Check model file separately — if it's already valid, skip re-downloading
+            var modelNeedsDownload = !File.Exists(Wd14TaggerModelPath) ||
+                                     new FileInfo(Wd14TaggerModelPath).Length < 300_000_000;
+
+            if (modelNeedsDownload)
+            {
+                var modelOk = await DownloadModelInternalAsync(
+                    Wd14TaggerModelUrl, Wd14TaggerModelPath, ExpectedWd14TaggerSizeBytes,
+                    "WD14 Tagger", progress, cancellationToken);
+
+                if (!modelOk)
+                    return false;
+            }
+
+            // Check tags file separately — if it's already valid, skip re-downloading
+            var tagsNeedsDownload = !File.Exists(Wd14TaggerTagsPath) ||
+                                    new FileInfo(Wd14TaggerTagsPath).Length < 100_000;
+
+            if (tagsNeedsDownload)
+            {
+                var tagsOk = await DownloadModelInternalAsync(
+                    Wd14TaggerTagsUrl, Wd14TaggerTagsPath, ExpectedWd14TaggerTagsSizeBytes,
+                    "WD14 Tagger tag list", progress, cancellationToken);
+
+                if (!tagsOk)
+                    return false;
+            }
+
+            return true;
+        }
+        finally
+        {
+            lock (_downloadLock)
+            {
+                _isDownloadingWd14Tagger = false;
             }
         }
     }
@@ -342,6 +453,24 @@ public sealed class OnnxModelManager
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to delete 4x-UltraSharp model: {Path}", UltraSharp4xModelPath);
+            throw;
+        }
+    }
+
+    /// <summary>Deletes both WD14 tagger files if they exist.</summary>
+    public void DeleteWd14TaggerModel()
+    {
+        try
+        {
+            if (File.Exists(Wd14TaggerModelPath))
+                File.Delete(Wd14TaggerModelPath);
+            if (File.Exists(Wd14TaggerTagsPath))
+                File.Delete(Wd14TaggerTagsPath);
+            Log.Information("WD14 tagger model deleted: {ModelPath}, {TagsPath}", Wd14TaggerModelPath, Wd14TaggerTagsPath);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to delete WD14 tagger model: {ModelPath}, {TagsPath}", Wd14TaggerModelPath, Wd14TaggerTagsPath);
             throw;
         }
     }
