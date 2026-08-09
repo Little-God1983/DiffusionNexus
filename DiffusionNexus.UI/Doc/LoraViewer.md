@@ -368,6 +368,21 @@ AllTiles
 
 `RebuildAvailableBaseModels` scans all versions across all tiles to build the distinct base model list. Previous selections are preserved when the list is rebuilt.
 
+### Base Model flyout (Installed tab)
+
+The toolbar's **Base Model** button opens a `Flyout` with `ShowMode="Transient"` — it stays open while multi-selecting and dismisses on outside click / Esc (same for the Browse Civitai tab's flyout). The flyout renders `FlyoutBaseModels`, a composed view rebuilt by `RebuildFlyoutBaseModels`:
+
+- **"Unknown" entry first** — the `UnknownBaseModelItem` sentinel matches tiles whose base model is the `"???"` placeholder (files discovered without metadata). It is owned by the Installed tab only and is never added to `AvailableBaseModels`, which the Civitai browser mirrors and sends to the Civitai API.
+- **Search box** (`BaseModelFilterSearchText`) — narrows the visible option list case-insensitively; selections are untouched.
+- **"Only models I have installed" checkbox** (`OnlyInstalledBaseModels`, off by default) — hides catalog-only entries; Unknown stays visible only when placeholder tiles exist.
+- The composed view reuses the shared `BaseModelFilterItem` instances, so selection state stays single-sourced across the flyout, the filter pipeline, and the browser mirror.
+
+**Clear all** clears every selection including Unknown; **Reset** additionally clears the flyout search text and the only-installed checkbox.
+
+### Saved filter
+
+The toolbar's **Save filter** button (`SaveFilterCommand`) serializes the current selections + Unknown flag + only-installed toggle (`LoraViewerFilterData`) into `AppSettings.LoraViewerFilterJson`. On startup, `InitializeBaseModelFilterAsync` loads the catalog first, then restores the saved filter (`RestoreSavedFilterAsync`); saved names no longer in the list are ignored and corrupt JSON degrades silently to the unfiltered default. Single slot — saving overwrites the previous filter.
+
 ---
 
 ## 9. Thumbnail Pipeline
