@@ -114,7 +114,7 @@ public sealed class OnnxModelManager
             return ModelStatus.NotDownloaded;
 
         var fileInfo = new FileInfo(UltraSharp4xModelPath);
-
+        
         // Basic size check - model should be at least 60MB
         if (fileInfo.Length < 60_000_000)
             return ModelStatus.Corrupted;
