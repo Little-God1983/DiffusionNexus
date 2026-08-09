@@ -110,6 +110,13 @@ public class AppSettings
     public string? DistillerRuleSetsJson { get; set; }
 
     /// <summary>
+    /// The LoRA Viewer's saved base-model filter (selected base models, Unknown flag,
+    /// only-installed toggle), serialized as JSON. Null when the user never saved one.
+    /// Owned and (de)serialized by the LoRA Viewer ViewModel.
+    /// </summary>
+    public string? LoraViewerFilterJson { get; set; }
+
+    /// <summary>
     /// Default target folder for LoRA Sort.
     /// </summary>
     public string? LoraSortTargetPath { get; set; }

@@ -125,6 +125,16 @@
               </Button>
             </StackPanel>
 
+            <Button Command="{Binding SaveFilterCommand}"
+                    VerticalAlignment="Center"
+                    Margin="0,4,12,4"
+                    ToolTip.Tip="Save the current base-model filter — it is applied automatically the next time the viewer opens">
+              <StackPanel Orientation="Horizontal" Spacing="6">
+                <TextBlock Text="&#x1F4BE;" FontSize="13" VerticalAlignment="Center"/>
+                <TextBlock Text="Save filter" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+
             <CheckBox Content="Show NSFW"
                       IsChecked="{Binding ShowNsfw, Mode=TwoWay}"
                       VerticalAlignment="Center"

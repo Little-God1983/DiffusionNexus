@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -13,6 +14,7 @@ using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Infrastructure;
 using DiffusionNexus.Service.Services;
+using DiffusionNexus.UI.Models;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.CivitaiBrowser;
 using DiffusionNexus.UI.Utilities;
@@ -294,7 +296,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         var queue = new CivitaiDownloadQueue(downloadService, _logger, _civitaiClient, destination);
         BrowserViewModel = new CivitaiBrowserViewModel(_civitaiClient, _settingsService, _logger, queue, AvailableBaseModels);
 
-        _ = LoadBaseModelCatalogAsync();
+        _ = InitializeBaseModelFilterAsync();
         _ = LoadDestinationFoldersAsync(destination);
     }
 
@@ -2537,6 +2539,28 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         ApplyFilters();
     }
 
+    /// <summary>
+    /// Persists the current base-model filter (selections + Unknown + only-installed)
+    /// to AppSettings. Restored automatically the next time the viewer opens.
+    /// </summary>
+    [RelayCommand]
+    private async Task SaveFilterAsync()
+    {
+        if (_settingsService is null) return;
+        try
+        {
+            var json = JsonSerializer.Serialize(CaptureFilter());
+            await _settingsService.SetLoraViewerFilterJsonAsync(json);
+            SyncStatus = "Base-model filter saved.";
+        }
+        catch (Exception ex)
+        {
+            _logger?.Warn(LogCategory.General, "LoraViewer",
+                $"Could not save base-model filter: {ex.Message}");
+            SyncStatus = "Could not save the filter.";
+        }
+    }
+
     #endregion
 
     #region Property Changed Handlers
@@ -2712,6 +2736,70 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                 continue;
             FlyoutBaseModels.Add(item);
         }
+    }
+
+    /// <summary>Snapshots the current base-model filter state for persistence.</summary>
+    internal LoraViewerFilterData CaptureFilter() => new()
+    {
+        SelectedBaseModels = AvailableBaseModels
+            .Where(f => f.IsSelected)
+            .Select(f => f.BaseModelRaw)
+            .ToList(),
+        IncludeUnknown = UnknownBaseModelItem.IsSelected,
+        OnlyInstalled = OnlyInstalledBaseModels,
+    };
+
+    /// <summary>
+    /// Applies a saved filter: selects matching names (case-insensitive; names no
+    /// longer in the list are ignored silently), the Unknown sentinel, and the
+    /// only-installed toggle. Must run on the UI thread (mutates bound state).
+    /// </summary>
+    internal void ApplySavedFilter(LoraViewerFilterData data)
+    {
+        var wanted = data.SelectedBaseModels.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in AvailableBaseModels)
+        {
+            if (wanted.Contains(item.BaseModelRaw))
+                item.IsSelected = true;
+        }
+        UnknownBaseModelItem.IsSelected = data.IncludeUnknown;
+        OnlyInstalledBaseModels = data.OnlyInstalled;
+    }
+
+    /// <summary>
+    /// Loads the saved filter from AppSettings and applies it on the UI thread.
+    /// Runs once at startup, after the catalog load so the full option list exists.
+    /// Corrupt or missing data degrades silently to the unfiltered default.
+    /// </summary>
+    private async Task RestoreSavedFilterAsync()
+    {
+        if (_settingsService is null) return;
+        try
+        {
+            var json = await _settingsService.GetLoraViewerFilterJsonAsync().ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(json)) return;
+
+            var data = JsonSerializer.Deserialize<LoraViewerFilterData>(json);
+            if (data is null) return;
+
+            await Dispatcher.UIThread.InvokeAsync(() => ApplySavedFilter(data));
+        }
+        catch (Exception ex)
+        {
+            _logger?.Warn(LogCategory.General, "LoraViewer",
+                $"Could not restore saved base-model filter: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Startup sequence for the base-model filter: catalog first (builds the full
+    /// option list), then the saved-filter restore (selection by name needs the
+    /// list to exist). A later catalog refresh preserves selections by name.
+    /// </summary>
+    private async Task InitializeBaseModelFilterAsync()
+    {
+        await LoadBaseModelCatalogAsync().ConfigureAwait(false);
+        await RestoreSavedFilterAsync().ConfigureAwait(false);
     }
 
     /// <summary>

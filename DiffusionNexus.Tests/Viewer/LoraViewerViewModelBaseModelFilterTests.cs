@@ -1,3 +1,4 @@
+using DiffusionNexus.UI.Models;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
 
@@ -172,5 +173,73 @@ public class LoraViewerViewModelBaseModelFilterTests
 
         sdxl.IsSelected.Should().BeTrue("narrowing the visible list must not touch selections");
         vm.ActiveBaseModelFilterCount.Should().Be(1);
+    }
+
+    [Fact]
+    public void CaptureFilterSerializesSelectionUnknownAndOnlyInstalled()
+    {
+        var vm = CreateViewModel();
+        vm.AvailableBaseModels.First(i => i.BaseModelRaw == "SDXL 1.0").IsSelected = true;
+        vm.AvailableBaseModels.First(i => i.BaseModelRaw == "Pony").IsSelected = true;
+        vm.UnknownBaseModelItem.IsSelected = true;
+        vm.OnlyInstalledBaseModels = true;
+
+        var data = vm.CaptureFilter();
+
+        data.SelectedBaseModels.Should().BeEquivalentTo("SDXL 1.0", "Pony");
+        data.IncludeUnknown.Should().BeTrue();
+        data.OnlyInstalled.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ApplySavedFilterRestoresTheCapturedState()
+    {
+        var vm = CreateViewModel();
+        var data = new LoraViewerFilterData
+        {
+            SelectedBaseModels = ["SDXL 1.0", "Pony"],
+            IncludeUnknown = true,
+            OnlyInstalled = true,
+        };
+
+        vm.ApplySavedFilter(data);
+
+        vm.AvailableBaseModels.Where(i => i.IsSelected).Select(i => i.BaseModelRaw)
+            .Should().BeEquivalentTo("SDXL 1.0", "Pony");
+        vm.UnknownBaseModelItem.IsSelected.Should().BeTrue();
+        vm.OnlyInstalledBaseModels.Should().BeTrue();
+        vm.IsBaseModelFilterActive.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ApplySavedFilterIgnoresNamesNotInTheCurrentList()
+    {
+        var vm = CreateViewModel();
+        var data = new LoraViewerFilterData
+        {
+            SelectedBaseModels = ["SDXL 1.0", "No Such Base Model 9000"],
+        };
+
+        vm.ApplySavedFilter(data);
+
+        vm.ActiveBaseModelFilterCount.Should().Be(1, "unknown saved names are ignored silently");
+    }
+
+    [Fact]
+    public void CaptureThenApplyRoundTripsThroughJson()
+    {
+        var vm = CreateViewModel();
+        vm.AvailableBaseModels.First(i => i.BaseModelRaw == "Illustrious").IsSelected = true;
+        vm.UnknownBaseModelItem.IsSelected = true;
+
+        var json = System.Text.Json.JsonSerializer.Serialize(vm.CaptureFilter());
+
+        var vm2 = CreateViewModel();
+        vm2.ApplySavedFilter(
+            System.Text.Json.JsonSerializer.Deserialize<LoraViewerFilterData>(json)!);
+
+        vm2.AvailableBaseModels.Where(i => i.IsSelected).Select(i => i.BaseModelRaw)
+            .Should().BeEquivalentTo("Illustrious");
+        vm2.UnknownBaseModelItem.IsSelected.Should().BeTrue();
     }
 }
