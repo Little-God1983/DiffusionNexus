@@ -14,6 +14,14 @@ public partial class BaseModelFilterItem : ObservableObject
     public string BaseModelRaw { get; }
 
     /// <summary>
+    /// True when this label exists only among installed files, not in the Civitai
+    /// catalog (e.g. a label Civitai renamed or dropped, or hand-edited sidecar
+    /// metadata). Such items stay filterable in the Installed tab but are skipped by
+    /// the Browse Civitai mirror — they are not valid values for the Civitai API query.
+    /// </summary>
+    public bool IsInstalledOnly { get; init; }
+
+    /// <summary>
     /// Whether this filter item is currently selected (active).
     /// </summary>
     [ObservableProperty]
