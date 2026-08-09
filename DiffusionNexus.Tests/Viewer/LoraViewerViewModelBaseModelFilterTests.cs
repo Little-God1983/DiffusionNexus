@@ -242,4 +242,102 @@ public class LoraViewerViewModelBaseModelFilterTests
             .Should().BeEquivalentTo("Illustrious");
         vm2.UnknownBaseModelItem.IsSelected.Should().BeTrue();
     }
+
+    [Fact]
+    public void SelectedItemsStayVisibleWhenNarrowedAway()
+    {
+        var vm = CreateViewModel();
+        var sdxl = vm.AvailableBaseModels.First(i => i.BaseModelRaw == "SDXL 1.0");
+        sdxl.IsSelected = true;
+
+        vm.BaseModelFilterSearchText = "pony";
+
+        vm.FlyoutBaseModels.Should().Contain(sdxl,
+            "a selected item must stay visible while narrowed, or it becomes un-toggleable");
+
+        sdxl.IsSelected = false;
+
+        vm.FlyoutBaseModels.Should().NotContain(sdxl,
+            "once deselected, the narrowing applies to it normally again");
+    }
+
+    [Fact]
+    public void ApplySavedFilterReplacesTheExistingSelection()
+    {
+        var vm = CreateViewModel();
+        vm.AvailableBaseModels.First(i => i.BaseModelRaw == "Illustrious").IsSelected = true;
+        vm.UnknownBaseModelItem.IsSelected = true;
+
+        vm.ApplySavedFilter(new LoraViewerFilterData { SelectedBaseModels = ["SDXL 1.0"] });
+
+        vm.AvailableBaseModels.Where(i => i.IsSelected).Select(i => i.BaseModelRaw)
+            .Should().BeEquivalentTo("SDXL 1.0");
+        vm.UnknownBaseModelItem.IsSelected.Should().BeFalse(
+            "the saved filter is applied as-is, not merged into the current selection");
+    }
+
+    [Fact]
+    public void ApplySavedFilterToleratesANullSelectionList()
+    {
+        var vm = CreateViewModel();
+
+        var act = () => vm.ApplySavedFilter(new LoraViewerFilterData
+        {
+            SelectedBaseModels = null!,
+            IncludeUnknown = true,
+        });
+
+        act.Should().NotThrow("a hand-edited or legacy JSON blob must degrade, not crash the restore");
+        vm.UnknownBaseModelItem.IsSelected.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ApplySavedFilterRunsASingleFilterPass()
+    {
+        var vm = CreateViewModel();
+        var resets = 0;
+        vm.FilteredTiles.CollectionChanged += (_, e) =>
+        {
+            if (e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Reset) resets++;
+        };
+
+        vm.ApplySavedFilter(new LoraViewerFilterData
+        {
+            SelectedBaseModels = ["SDXL 1.0", "Pony", "Illustrious"],
+            IncludeUnknown = true,
+        });
+
+        resets.Should().Be(1, "restoring N selections must not run N full filter passes");
+    }
+
+    [Fact]
+    public void UnmatchedSavedNamesAreKeptAndNeverTruncatedOnResave()
+    {
+        var vm = CreateViewModel();
+
+        vm.ApplySavedFilter(new LoraViewerFilterData
+        {
+            SelectedBaseModels = ["SDXL 1.0", "Some Future Base Model"],
+        });
+
+        vm.PendingRestoredBaseModels.Should().BeEquivalentTo("Some Future Base Model");
+        vm.CaptureFilter().SelectedBaseModels
+            .Should().BeEquivalentTo("SDXL 1.0", "Some Future Base Model");
+    }
+
+    [Fact]
+    public void ClearAllDropsPendingSavedNames()
+    {
+        var vm = CreateViewModel();
+        vm.ApplySavedFilter(new LoraViewerFilterData
+        {
+            SelectedBaseModels = ["Some Future Base Model"],
+        });
+
+        vm.ClearBaseModelFiltersCommand.Execute(null);
+
+        vm.PendingRestoredBaseModels.Should().BeNull(
+            "an explicit clear voids the not-yet-materialized saved intent too");
+        vm.CaptureFilter().SelectedBaseModels.Should().BeEmpty();
+    }
 }

@@ -56,14 +56,14 @@
                 </StackPanel>
                 <Button.Flyout>
                   <Flyout Placement="BottomEdgeAlignedLeft"
-                          ShowMode="Transient">
+                          ShowMode="Standard">
                     <Border Background="#1E1E1E"
                             BorderBrush="#444"
                             BorderThickness="1"
                             CornerRadius="4"
                             Padding="8"
                             MinWidth="200"
-                            MaxHeight="400">
+                            MaxHeight="500">
                       <Grid RowDefinitions="Auto,Auto,Auto,Auto,*">
                         <TextBlock Grid.Row="0"
                                    Text="Filter by base model"
@@ -92,7 +92,7 @@
                                 HorizontalAlignment="Left"/>
 
                         <ScrollViewer Grid.Row="4"
-                                      MaxHeight="300"
+                                      MaxHeight="340"
                                       HorizontalScrollBarVisibility="Disabled"
                                       VerticalScrollBarVisibility="Auto">
                           <ItemsControl ItemsSource="{Binding FlyoutBaseModels}">

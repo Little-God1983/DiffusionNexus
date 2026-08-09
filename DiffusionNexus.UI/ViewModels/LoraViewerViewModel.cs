@@ -214,7 +214,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// Holds the SAME item instances as the shared list, so toggling a checkbox here
     /// drives the same selection state the filter pipeline and the browser mirror use.
     /// </summary>
-    public ObservableCollection<BaseModelFilterItem> FlyoutBaseModels { get; } = [];
+    public BatchObservableCollection<BaseModelFilterItem> FlyoutBaseModels { get; } = [];
 
     /// <summary>
     /// Cached catalog labels (full Civitai base-model list). When non-empty, drives
@@ -222,6 +222,34 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// fallback. Populated by <see cref="LoadBaseModelCatalogAsync"/>.
     /// </summary>
     private IReadOnlyList<string>? _catalogBaseModels;
+
+    /// <summary>
+    /// Distinct non-placeholder base models across installed tiles, cached so the
+    /// flyout narrowing doesn't rescan every tile version on each keystroke.
+    /// Rebuilt in <see cref="RebuildAvailableBaseModels"/> (all tile-change paths).
+    /// </summary>
+    private readonly HashSet<string> _installedBaseModels = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Whether any installed tile has a placeholder ("???") base model.</summary>
+    private bool _hasUnknownInstalled;
+
+    /// <summary>
+    /// Saved-filter names that didn't exist in <see cref="AvailableBaseModels"/> when the
+    /// filter was restored (stale catalog, offline start). Reconciled — and consumed — by
+    /// the next <see cref="RebuildAvailableBaseModels"/> that surfaces them, and included
+    /// in <see cref="CaptureFilter"/> so re-saving never truncates the saved intent.
+    /// </summary>
+    private HashSet<string>? _pendingRestoredSelections;
+
+    /// <summary>
+    /// Batches multi-item selection changes (clear/reset/restore): while set,
+    /// <see cref="OnBaseModelFilterChanged"/> is a no-op and the batch operation raises
+    /// the indicator properties and runs <see cref="ApplyFilters"/> once at the end.
+    /// </summary>
+    private bool _suppressBaseModelFilterEvents;
+
+    /// <summary>Saved-filter names awaiting a list rebuild that contains them. Test seam.</summary>
+    internal IReadOnlyCollection<string>? PendingRestoredBaseModels => _pendingRestoredSelections;
 
     /// <summary>
     /// Upper bound on how many tiles the passive "new version available" check looks
@@ -2512,12 +2540,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     [RelayCommand]
     private void ClearBaseModelFilters()
     {
-        UnknownBaseModelItem.IsSelected = false;
-
-        foreach (var item in AvailableBaseModels)
-        {
-            item.IsSelected = false;
-        }
+        ClearBaseModelSelectionsCore();
+        ApplyFilters();
+        RebuildFlyoutBaseModels();
     }
 
     /// <summary>
@@ -2527,16 +2552,39 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     private void ResetFilters()
     {
         SearchText = null;
-        UnknownBaseModelItem.IsSelected = false;
         BaseModelFilterSearchText = null;
         OnlyInstalledBaseModels = false;
 
-        foreach (var item in AvailableBaseModels)
+        ClearBaseModelSelectionsCore();
+        ApplyFilters();
+        RebuildFlyoutBaseModels();
+    }
+
+    /// <summary>
+    /// Deselects every base-model item (including the Unknown sentinel) in one batch —
+    /// a single indicator update and one filter pass at the caller instead of one full
+    /// pass per item — and drops any not-yet-materialized saved-filter names (the user
+    /// explicitly cleared, so the pending intent is void).
+    /// </summary>
+    private void ClearBaseModelSelectionsCore()
+    {
+        _suppressBaseModelFilterEvents = true;
+        try
         {
-            item.IsSelected = false;
+            UnknownBaseModelItem.IsSelected = false;
+            foreach (var item in AvailableBaseModels)
+            {
+                item.IsSelected = false;
+            }
+        }
+        finally
+        {
+            _suppressBaseModelFilterEvents = false;
         }
 
-        ApplyFilters();
+        _pendingRestoredSelections = null;
+        OnPropertyChanged(nameof(IsBaseModelFilterActive));
+        OnPropertyChanged(nameof(ActiveBaseModelFilterCount));
     }
 
     /// <summary>
@@ -2550,7 +2598,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         try
         {
             var json = JsonSerializer.Serialize(CaptureFilter());
-            await _settingsService.SetLoraViewerFilterJsonAsync(json);
+            await UseSettingsServiceAsync(async s =>
+            {
+                await s.SetLoraViewerFilterJsonAsync(json).ConfigureAwait(false);
+                return true;
+            });
             SyncStatus = "Base-model filter saved.";
         }
         catch (Exception ex)
@@ -2559,6 +2611,29 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                 $"Could not save base-model filter: {ex.Message}");
             SyncStatus = "Could not save the filter.";
         }
+    }
+
+    /// <summary>
+    /// Runs a settings operation on a fresh scoped <see cref="IAppSettingsService"/> when
+    /// DI is available. The constructor-injected instance is shared with other startup
+    /// tasks (destination folders, the Civitai browser) over a single non-thread-safe
+    /// DbContext, so the save/restore paths — which run concurrently with them — must not
+    /// reuse it. Falls back to the injected instance without DI (design-time/tests).
+    /// </summary>
+    private async Task<T?> UseSettingsServiceAsync<T>(Func<IAppSettingsService, Task<T>> action)
+    {
+        var scopeFactory = App.Services?.GetService<IServiceScopeFactory>();
+        if (scopeFactory is not null)
+        {
+            using var scope = scopeFactory.CreateScope();
+            return await action(scope.ServiceProvider.GetRequiredService<IAppSettingsService>())
+                .ConfigureAwait(false);
+        }
+
+        if (_settingsService is not null)
+            return await action(_settingsService).ConfigureAwait(false);
+
+        return default;
     }
 
     #endregion
@@ -2669,6 +2744,18 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                 .ToList();
         }
 
+        // Refresh the installed-set cache here — every tile-change path funnels through
+        // this method, and the flyout narrowing must not rescan tiles per keystroke.
+        _installedBaseModels.Clear();
+        _hasUnknownInstalled = false;
+        foreach (var version in AllTiles.SelectMany(t => t.Versions))
+        {
+            if (IsPlaceholderBaseModel(version.BaseModelRaw))
+                _hasUnknownInstalled = true;
+            else
+                _installedBaseModels.Add(version.BaseModelRaw!);
+        }
+
         // Snapshot currently selected values so we can restore them
         var previouslySelected = AvailableBaseModels
             .Where(f => f.IsSelected)
@@ -2683,87 +2770,130 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         AvailableBaseModels.Clear();
 
+        var consumedPending = false;
         foreach (var raw in source)
         {
+            var restorePending = _pendingRestoredSelections?.Remove(raw) == true;
+            consumedPending |= restorePending;
             var item = new BaseModelFilterItem(raw)
             {
-                IsSelected = previouslySelected.Contains(raw)
+                IsSelected = previouslySelected.Contains(raw) || restorePending
             };
             item.SelectionChanged += OnBaseModelFilterChanged;
             AvailableBaseModels.Add(item);
         }
+        if (_pendingRestoredSelections is { Count: 0 })
+            _pendingRestoredSelections = null;
 
         RebuildFlyoutBaseModels();
+
+        // A pending saved-filter name materialized: the effective selection changed, so
+        // the indicator and the grid must catch up (normal rebuilds preserve the selection
+        // set exactly, and their callers re-apply afterwards where needed).
+        if (consumedPending)
+        {
+            OnPropertyChanged(nameof(IsBaseModelFilterActive));
+            OnPropertyChanged(nameof(ActiveBaseModelFilterCount));
+            ApplyFilters();
+        }
     }
+
+    /// <summary>
+    /// Whether the flyout's option list is currently narrowed (search text or the
+    /// only-installed toggle). While narrowed, selection toggles also refresh the
+    /// composed view because selected items are pinned visible.
+    /// </summary>
+    private bool IsFlyoutNarrowingActive
+        => OnlyInstalledBaseModels || !string.IsNullOrWhiteSpace(BaseModelFilterSearchText);
 
     /// <summary>
     /// Recomputes <see cref="FlyoutBaseModels"/>: "Unknown" first (hidden when
     /// "only installed" is on and no placeholder tiles exist), then the shared items,
-    /// filtered by the flyout search text and the only-installed toggle. Reuses the
-    /// shared item instances — never copies — so selection state stays single-sourced.
+    /// filtered by the flyout search text and the only-installed toggle. Selected items
+    /// always stay visible — otherwise a narrowed list would leave an active filter with
+    /// no way to untoggle it. Reuses the shared item instances — never copies — so
+    /// selection state stays single-sourced.
     /// </summary>
     private void RebuildFlyoutBaseModels()
     {
         var search = BaseModelFilterSearchText?.Trim();
         var hasSearch = !string.IsNullOrWhiteSpace(search);
 
-        HashSet<string>? installed = null;
-        var hasUnknownInstalled = false;
-        if (OnlyInstalledBaseModels)
-        {
-            installed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var version in AllTiles.SelectMany(t => t.Versions))
-            {
-                if (IsPlaceholderBaseModel(version.BaseModelRaw))
-                    hasUnknownInstalled = true;
-                else
-                    installed.Add(version.BaseModelRaw!);
-            }
-        }
+        var items = new List<BaseModelFilterItem>();
 
-        FlyoutBaseModels.Clear();
-
-        var showUnknown = (!OnlyInstalledBaseModels || hasUnknownInstalled)
-            && (!hasSearch || UnknownBaseModelLabel.Contains(search!, StringComparison.OrdinalIgnoreCase));
+        var showUnknown = UnknownBaseModelItem.IsSelected
+            || ((!OnlyInstalledBaseModels || _hasUnknownInstalled)
+                && (!hasSearch || UnknownBaseModelLabel.Contains(search!, StringComparison.OrdinalIgnoreCase)));
         if (showUnknown)
-            FlyoutBaseModels.Add(UnknownBaseModelItem);
+            items.Add(UnknownBaseModelItem);
 
         foreach (var item in AvailableBaseModels)
         {
-            if (installed is not null && !installed.Contains(item.BaseModelRaw))
-                continue;
-            if (hasSearch && !item.BaseModelRaw.Contains(search!, StringComparison.OrdinalIgnoreCase))
-                continue;
-            FlyoutBaseModels.Add(item);
+            if (!item.IsSelected)
+            {
+                if (OnlyInstalledBaseModels && !_installedBaseModels.Contains(item.BaseModelRaw))
+                    continue;
+                if (hasSearch && !item.BaseModelRaw.Contains(search!, StringComparison.OrdinalIgnoreCase))
+                    continue;
+            }
+            items.Add(item);
         }
+
+        // Single Reset notification — the flyout's ItemsControl is not virtualized, so
+        // per-item Adds would trigger one layout pass per entry.
+        FlyoutBaseModels.ReplaceAll(items);
     }
 
-    /// <summary>Snapshots the current base-model filter state for persistence.</summary>
+    /// <summary>
+    /// Snapshots the current base-model filter state for persistence. Includes any
+    /// saved names still pending a list rebuild, so re-saving while the catalog is
+    /// stale/offline never truncates the previously saved intent.
+    /// </summary>
     internal LoraViewerFilterData CaptureFilter() => new()
     {
         SelectedBaseModels = AvailableBaseModels
             .Where(f => f.IsSelected)
             .Select(f => f.BaseModelRaw)
+            .Concat(_pendingRestoredSelections as IEnumerable<string> ?? [])
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList(),
         IncludeUnknown = UnknownBaseModelItem.IsSelected,
         OnlyInstalled = OnlyInstalledBaseModels,
     };
 
     /// <summary>
-    /// Applies a saved filter: selects matching names (case-insensitive; names no
-    /// longer in the list are ignored silently), the Unknown sentinel, and the
-    /// only-installed toggle. Must run on the UI thread (mutates bound state).
+    /// Applies a saved filter, REPLACING the current selection (case-insensitive name
+    /// match), the Unknown sentinel, and the only-installed toggle — in one batch with a
+    /// single filter pass. Saved names the current list doesn't contain yet (stale or
+    /// offline catalog) are kept in <see cref="_pendingRestoredSelections"/> for the next
+    /// list rebuild. Must run on the UI thread (mutates bound state).
     /// </summary>
     internal void ApplySavedFilter(LoraViewerFilterData data)
     {
-        var wanted = data.SelectedBaseModels.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var item in AvailableBaseModels)
+        var wanted = (data.SelectedBaseModels ?? []).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        _suppressBaseModelFilterEvents = true;
+        try
         {
-            if (wanted.Contains(item.BaseModelRaw))
-                item.IsSelected = true;
+            foreach (var item in AvailableBaseModels)
+            {
+                item.IsSelected = wanted.Remove(item.BaseModelRaw);
+            }
+
+            UnknownBaseModelItem.IsSelected = data.IncludeUnknown;
+            OnlyInstalledBaseModels = data.OnlyInstalled;
         }
-        UnknownBaseModelItem.IsSelected = data.IncludeUnknown;
-        OnlyInstalledBaseModels = data.OnlyInstalled;
+        finally
+        {
+            _suppressBaseModelFilterEvents = false;
+        }
+
+        _pendingRestoredSelections = wanted.Count > 0 ? wanted : null;
+
+        OnPropertyChanged(nameof(IsBaseModelFilterActive));
+        OnPropertyChanged(nameof(ActiveBaseModelFilterCount));
+        ApplyFilters();
+        RebuildFlyoutBaseModels();
     }
 
     /// <summary>
@@ -2776,7 +2906,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         if (_settingsService is null) return;
         try
         {
-            var json = await _settingsService.GetLoraViewerFilterJsonAsync().ConfigureAwait(false);
+            var json = await UseSettingsServiceAsync(s => s.GetLoraViewerFilterJsonAsync())
+                .ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(json)) return;
 
             var data = JsonSerializer.Deserialize<LoraViewerFilterData>(json);
@@ -2881,9 +3012,16 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// </summary>
     private void OnBaseModelFilterChanged(object? sender, EventArgs e)
     {
+        if (_suppressBaseModelFilterEvents) return;
+
         OnPropertyChanged(nameof(IsBaseModelFilterActive));
         OnPropertyChanged(nameof(ActiveBaseModelFilterCount));
         ApplyFilters();
+
+        // A toggle can change which items the narrowed flyout shows (selected items are
+        // pinned visible), so refresh the composed view while narrowing is active.
+        if (IsFlyoutNarrowingActive)
+            RebuildFlyoutBaseModels();
     }
 
     /// <summary>
