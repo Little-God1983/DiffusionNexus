@@ -2,6 +2,8 @@ using System.Globalization;
 using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Infrastructure.Services;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels;
@@ -748,7 +750,11 @@ public class GenerationGalleryViewModelTests : IDisposable
 
         var settings = new AppSettings
         {
-            ImageGalleries = [new() { FolderPath = galleryPath, IsEnabled = true, Order = 0 }]
+            ImageGalleries = [new() { FolderPath = galleryPath, IsEnabled = true, Order = 0 }],
+            // Keep the AppSettings NSFW seed out of this test: SearchAsync
+            // below answers every query with the indexed set, so a seeded
+            // Hide NSFW would treat every indexed file as known-NSFW.
+            ShowNsfw = true,
         };
         var mockSettings = new Mock<IAppSettingsService>();
         mockSettings.Setup(service => service.GetSettingsAsync(It.IsAny<CancellationToken>()))
@@ -939,6 +945,10 @@ public class GenerationGalleryViewModelTests : IDisposable
         mockSettings.Setup(service => service.GetSettingsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(settings);
 
+        // The tile carries IsNsfw: true, so the AppSettings NSFW seed would
+        // hide it before the assertion could look at it.
+        settings.ShowNsfw = true;
+
         var mockTagIndex = new Mock<ITagIndexService>();
         mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(1);
         mockTagIndex.Setup(t => t.GetTagsForFilesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
@@ -960,6 +970,230 @@ public class GenerationGalleryViewModelTests : IDisposable
         var item = viewModel.MediaItems.Single();
         item.IsNsfw.Should().BeTrue();
         item.Tags.Should().BeEquivalentTo(new[] { "dog", "outdoor" });
+    }
+
+    [Fact]
+    public void IsTaggingAvailable_ReflectsWhetherATagIndexServiceExists()
+    {
+        // Issue #489: the view binds every tagging affordance's visibility to
+        // this single gate, so a configuration without the service shows no
+        // tagging UI instead of clickable buttons that silently do nothing.
+        var without = new GenerationGalleryViewModel(
+            new Mock<IAppSettingsService>().Object,
+            new Mock<IDatasetEventAggregator>().Object,
+            new Mock<IDatasetState>().Object,
+            null);
+        without.IsTaggingAvailable.Should().BeFalse();
+
+        var with = new GenerationGalleryViewModel(
+            new Mock<IAppSettingsService>().Object,
+            new Mock<IDatasetEventAggregator>().Object,
+            new Mock<IDatasetState>().Object,
+            null,
+            tagIndexService: new Mock<ITagIndexService>().Object);
+        with.IsTaggingAvailable.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task LoadMediaAsync_SeedsHideNsfwFromTheAppWideSetting_AndHidesKnownNsfwImages()
+    {
+        // Issue #492: AppSettings.ShowNsfw (off by default) and the drawer's
+        // NSFW mode used to be two disconnected switches for one user intent —
+        // hiding NSFW app-wide did nothing here. The setting seeds the
+        // drawer's mode, so the filtering is visible (radio + filter strip)
+        // rather than an invisible standing gate.
+        var galleryPath = CreateTempDirectory();
+        var sfwImage = Path.Combine(galleryPath, "sfw.png");
+        var nsfwImage = Path.Combine(galleryPath, "nsfw.png");
+        File.WriteAllText(sfwImage, "test");
+        File.WriteAllText(nsfwImage, "test");
+
+        var settings = new AppSettings
+        {
+            ImageGalleries = [new() { FolderPath = galleryPath, IsEnabled = true, Order = 0 }],
+            ShowNsfw = false,
+        };
+        var mockSettings = new Mock<IAppSettingsService>();
+        mockSettings.Setup(service => service.GetSettingsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(settings);
+
+        var mockTagIndex = new Mock<ITagIndexService>();
+        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(2);
+        mockTagIndex.Setup(t => t.GetTagsForFilesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, ImageTagLookup>());
+        mockTagIndex.Setup(t => t.SearchAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<NsfwFilterMode>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { nsfwImage });
+
+        var viewModel = new GenerationGalleryViewModel(
+            mockSettings.Object,
+            new Mock<IDatasetEventAggregator>().Object,
+            new Mock<IDatasetState>().Object,
+            null,
+            tagIndexService: mockTagIndex.Object);
+
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+        await viewModel.WaitForSortingAsync();
+
+        viewModel.NsfwFilter.Should().Be(NsfwFilterMode.HideNsfw,
+            "the app-wide setting seeds the drawer so the two switches agree");
+        viewModel.HasActiveTagFilters.Should().BeTrue(
+            "the seeded filter must be visible in the filter strip, not an invisible gate");
+        viewModel.MediaItems.Should().ContainSingle()
+            .Which.FilePath.Should().Be(sfwImage);
+    }
+
+    [Fact]
+    public async Task LoadMediaAsync_DoesNotReSeed_AfterTheUserExplicitlyChoseAMode()
+    {
+        // A reload (settings saved, folders changed) must never stomp a
+        // deliberate per-session choice with the seed.
+        var galleryPath = CreateTempDirectory();
+        File.WriteAllText(Path.Combine(galleryPath, "a.png"), "test");
+
+        var settings = new AppSettings
+        {
+            ImageGalleries = [new() { FolderPath = galleryPath, IsEnabled = true, Order = 0 }],
+            ShowNsfw = false,
+        };
+        var mockSettings = new Mock<IAppSettingsService>();
+        mockSettings.Setup(service => service.GetSettingsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(settings);
+
+        var mockTagIndex = new Mock<ITagIndexService>();
+        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(0);
+        mockTagIndex.Setup(t => t.SearchAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<NsfwFilterMode>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<string>());
+
+        var viewModel = new GenerationGalleryViewModel(
+            mockSettings.Object,
+            new Mock<IDatasetEventAggregator>().Object,
+            new Mock<IDatasetState>().Object,
+            null,
+            tagIndexService: mockTagIndex.Object);
+
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+        viewModel.NsfwFilter.Should().Be(NsfwFilterMode.HideNsfw, "the first load seeds from the setting");
+
+        viewModel.SetNsfwFilterCommand.Execute(nameof(NsfwFilterMode.ShowAll));
+        await viewModel.WaitForSortingAsync();
+
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+        viewModel.NsfwFilter.Should().Be(NsfwFilterMode.ShowAll,
+            "the user's explicit choice survives the reload");
+    }
+
+    [Fact]
+    public async Task BuildTagIndexCommand_CompletesItsTrackedTask_InTheUnifiedConsole()
+    {
+        // Issue #488: the ~30-second model download was already visible in
+        // the Unified Console but the potentially far longer index build was
+        // not. The build registers a tracked task and finishes it with the
+        // same summary the gallery shows.
+        var galleryPath = CreateTempDirectory();
+        File.WriteAllText(Path.Combine(galleryPath, "a.png"), "test");
+
+        var tracker = new TaskTracker(new Mock<IUnifiedLogger>().Object);
+        var mockTagIndex = BuildableTagIndex(new TagIndexBuildResult(Indexed: 1, Skipped: 0, Failed: 0, NsfwCount: 0));
+
+        var viewModel = CreateGalleryViewModel(galleryPath, mockTagIndex.Object, tracker);
+
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+        await viewModel.BuildTagIndexCommand.ExecuteAsync(null);
+
+        var tracked = tracker.AllTasks.Should().ContainSingle(t => t.Name == "Building tag index").Subject;
+        tracked.Status.Should().Be(TrackedTaskStatus.Completed);
+        tracked.StatusText.Should().Be(viewModel.StatusMessage,
+            "the console shows the same summary as the gallery");
+    }
+
+    [Fact]
+    public async Task BuildTagIndexCommand_CanBeCancelledFromTheUnifiedConsole()
+    {
+        // The tracker is handed the same CancellationTokenSource as the
+        // toolbar Cancel button, so the console's per-task Cancel stops a
+        // build started from the gallery.
+        var galleryPath = CreateTempDirectory();
+        File.WriteAllText(Path.Combine(galleryPath, "a.png"), "test");
+
+        var tracker = new TaskTracker(new Mock<IUnifiedLogger>().Object);
+
+        var buildStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var mockTagIndex = new Mock<ITagIndexService>();
+        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(0);
+        mockTagIndex.Setup(t => t.GetTagCloudAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<TagFrequency>());
+        mockTagIndex.Setup(t => t.GetTagsForFilesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, ImageTagLookup>());
+        mockTagIndex.Setup(t => t.BuildIndexAsync(
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<IProgress<TagIndexBuildProgress>>(), It.IsAny<CancellationToken>()))
+            .Returns(async (IReadOnlyList<string> _, IProgress<TagIndexBuildProgress> _, CancellationToken ct) =>
+            {
+                buildStarted.TrySetResult();
+                // Ends only through cancellation — exactly the long build the
+                // console needs to be able to stop.
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+                return new TagIndexBuildResult(0, 0, 0, 0);
+            });
+
+        var viewModel = CreateGalleryViewModel(galleryPath, mockTagIndex.Object, tracker);
+
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+        var buildTask = viewModel.BuildTagIndexCommand.ExecuteAsync(null);
+        await buildStarted.Task;
+
+        var tracked = tracker.AllTasks.Should().ContainSingle(t => t.Name == "Building tag index").Subject;
+        tracked.Status.Should().Be(TrackedTaskStatus.Running);
+
+        tracker.CancelTask(tracked.TaskId);
+        await buildTask;
+
+        viewModel.StatusMessage.Should().Contain("cancelled");
+        viewModel.IsIndexingTagIndex.Should().BeFalse();
+        tracked.IsTerminal.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task TagCloudSearchText_FiltersTheVisibleChips_WithoutTouchingActiveFilters()
+    {
+        // A fully indexed gallery fills the cloud's 200-chip budget with booru
+        // tags — the filter box narrows what is SHOWN, case-insensitively,
+        // and must never alter which filters are ACTIVE.
+        var galleryPath = CreateTempDirectory();
+        File.WriteAllText(Path.Combine(galleryPath, "a.png"), "test");
+
+        var mockTagIndex = BuildableTagIndex(new TagIndexBuildResult(1, 0, 0, 0));
+        mockTagIndex.Setup(t => t.GetTagCloudAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { new TagFrequency("dog", 3), new TagFrequency("door", 2), new TagFrequency("cat", 1) });
+        mockTagIndex.Setup(t => t.SearchAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<NsfwFilterMode>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<string>());
+
+        var viewModel = CreateGalleryViewModel(galleryPath, mockTagIndex.Object);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+        await viewModel.BuildTagIndexCommand.ExecuteAsync(null);
+
+        viewModel.TagCloud.Should().HaveCount(3, "no filter shows the whole cloud");
+
+        viewModel.ToggleTagFilterCommand.Execute("dog");
+        viewModel.TagCloudSearchText = "do";
+
+        viewModel.TagCloud.Select(t => t.Name).Should().BeEquivalentTo(new[] { "dog", "door" });
+        viewModel.ActiveTagFilters.Should().ContainSingle().Which.Should().Be("dog",
+            "the box filters the display, not the active filter set");
+        viewModel.TagCloudHeader.Should().Contain("3 tags",
+            "the header describes the index and must not shrink while typing");
+
+        viewModel.TagCloudSearchText = "DOOR";
+        viewModel.TagCloud.Select(t => t.Name).Should().BeEquivalentTo(new[] { "door" }, "matching is case-insensitive");
+
+        // Deactivate "dog" while the filter hides its chip, then clear the
+        // filter: the chip must come back with its CURRENT state, not the
+        // state it had when it was hidden.
+        viewModel.ToggleTagFilterCommand.Execute("dog");
+        viewModel.TagCloudSearchText = null;
+
+        viewModel.TagCloud.Should().HaveCount(3);
+        viewModel.TagCloud.Single(t => t.Name == "dog").IsActive.Should().BeFalse(
+            "chips hidden by the display filter stay in sync with the active filter set");
     }
 
     // ---- Final-review fixes: threading, resilience, feedback, cancellation ----
@@ -1385,11 +1619,17 @@ public class GenerationGalleryViewModelTests : IDisposable
     /// A gallery ViewModel over a single enabled folder, with the supplied tag
     /// index service.
     /// </summary>
-    private static GenerationGalleryViewModel CreateGalleryViewModel(string galleryPath, ITagIndexService tagIndexService)
+    private static GenerationGalleryViewModel CreateGalleryViewModel(
+        string galleryPath, ITagIndexService tagIndexService, ITaskTracker? taskTracker = null)
     {
         var settings = new AppSettings
         {
-            ImageGalleries = [new() { FolderPath = galleryPath, IsEnabled = true, Order = 0 }]
+            ImageGalleries = [new() { FolderPath = galleryPath, IsEnabled = true, Order = 0 }],
+            // ShowNsfw=false (the AppSettings default) seeds the drawer's
+            // Hide NSFW mode on load, which makes every filter pass query the
+            // known-NSFW set — noise these tests don't set up. Tests covering
+            // the seeding itself build their own settings with ShowNsfw=false.
+            ShowNsfw = true,
         };
         var mockSettings = new Mock<IAppSettingsService>();
         mockSettings.Setup(service => service.GetSettingsAsync(It.IsAny<CancellationToken>()))
@@ -1400,7 +1640,8 @@ public class GenerationGalleryViewModelTests : IDisposable
             new Mock<IDatasetEventAggregator>().Object,
             new Mock<IDatasetState>().Object,
             null,
-            tagIndexService: tagIndexService);
+            tagIndexService: tagIndexService,
+            taskTracker: taskTracker);
     }
 
     /// <summary>

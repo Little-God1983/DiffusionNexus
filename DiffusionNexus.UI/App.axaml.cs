@@ -926,7 +926,8 @@ public partial class App : Application
             sp.GetService<IVideoThumbnailService>(),
             sp.GetService<IThumbnailOrchestrator>(),
             sp.GetService<IImageFavoritesService>(),
-            sp.GetService<ITagIndexService>()));
+            sp.GetService<ITagIndexService>(),
+            sp.GetService<Domain.Services.UnifiedLogging.ITaskTracker>()));
         
         // LoraDatasetHelperViewModel - use factory to inject all required services
         services.AddScoped<LoraDatasetHelperViewModel>(sp => new LoraDatasetHelperViewModel(

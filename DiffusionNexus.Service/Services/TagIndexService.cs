@@ -24,6 +24,20 @@ public sealed class TagIndexService : ITagIndexService
     private readonly IImageTaggingService _taggingService;
     private readonly IDownloadCoordinator? _downloadCoordinator;
 
+    /// <summary>
+    /// One index build at a time, app-wide (this service is a DI singleton).
+    /// Two overlapping builds — reachable because every gallery-page scope
+    /// gets its own Build command over these shared services — used to
+    /// interact badly twice over: both raced the tagger's single-flight gate
+    /// (per-file "already processing" failures on a healthy install), and each
+    /// build's "already indexed?" snapshot couldn't see the other's unflushed
+    /// inserts, so both staged the same FilePath and the loser's whole
+    /// 25-file chunk died on the UNIQUE constraint. Serializing here removes
+    /// both: the second build waits, then sees the first's rows and skips them
+    /// as unchanged.
+    /// </summary>
+    private readonly SemaphoreSlim _buildGate = new(1, 1);
+
     public TagIndexService(
         IDbContextFactory<DiffusionNexusCoreDbContext> contextFactory,
         IImageTaggingService taggingService,
@@ -64,17 +78,33 @@ public sealed class TagIndexService : ITagIndexService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+        // Nothing taggable was supplied. Return before the download gate:
+        // otherwise an empty selection — or a folder that only holds videos —
+        // would trigger a ~379 MB model download to index zero files.
+        if (work.Count == 0)
+            return new TagIndexBuildResult(Indexed: 0, Skipped: 0, Failed: 0, NsfwCount: 0);
+
+        await _buildGate.WaitAsync(cancellationToken);
+        try
+        {
+            return await BuildIndexCoreAsync(work, progress, cancellationToken);
+        }
+        finally
+        {
+            _buildGate.Release();
+        }
+    }
+
+    private async Task<TagIndexBuildResult> BuildIndexCoreAsync(
+        List<string> work,
+        IProgress<TagIndexBuildProgress>? progress,
+        CancellationToken cancellationToken)
+    {
         var indexed = 0;
         var skipped = 0;
         var failed = 0;
         var nsfwCount = 0;
         var total = work.Count;
-
-        // Nothing taggable was supplied. Return before the download gate:
-        // otherwise an empty selection — or a folder that only holds videos —
-        // would trigger a ~379 MB model download to index zero files.
-        if (total == 0)
-            return new TagIndexBuildResult(Indexed: 0, Skipped: 0, Failed: 0, NsfwCount: 0);
 
         // The model downloads on first use, not eagerly — this is that
         // trigger point. Routed through IDownloadCoordinator when available
@@ -135,7 +165,7 @@ public sealed class TagIndexService : ITagIndexService
         // clearing flushes.
         var existingMeta = await context.ImageMediaTagIndexes
             .AsNoTracking()
-            .Select(e => new { e.Id, e.FilePath, e.FileSizeBytes, e.FileLastWriteTimeUtc, e.IsNsfw })
+            .Select(e => new { e.Id, e.FilePath, e.FileSizeBytes, e.FileLastWriteTimeUtc, e.RatingLabel })
             .ToListAsync(cancellationToken);
         var metaByPath = existingMeta.ToDictionary(e => e.FilePath, e => e, StringComparer.OrdinalIgnoreCase);
 
@@ -210,7 +240,7 @@ public sealed class TagIndexService : ITagIndexService
                     && meta.FileLastWriteTimeUtc == fileInfo.LastWriteTimeUtc)
                 {
                     skipped++;
-                    if (meta.IsNsfw) nsfwCount++;
+                    if (ContentRatingPolicy.IsNsfw(meta.RatingLabel)) nsfwCount++;
                     continue;
                 }
 
@@ -366,10 +396,18 @@ public sealed class TagIndexService : ITagIndexService
 
         var query = context.ImageMediaTagIndexes.AsQueryable();
 
+        // NSFW is derived from the stored RatingLabel at query time via
+        // ContentRatingPolicy — never from the frozen IsNsfw column — so a
+        // rating-policy change takes effect without re-running the tagger over
+        // the whole gallery. The comparison is a plain equality against the
+        // policy's SFW label: it translates to indexed SQL
+        // (IX_ImageMediaTagIndexes_RatingLabel), and any row whose label
+        // doesn't exactly match the safest bucket (different casing, corrupt
+        // value) classifies as NSFW — filtering fails closed.
         query = nsfwFilter switch
         {
-            NsfwFilterMode.HideNsfw => query.Where(e => !e.IsNsfw),
-            NsfwFilterMode.NsfwOnly => query.Where(e => e.IsNsfw),
+            NsfwFilterMode.HideNsfw => query.Where(e => e.RatingLabel == ContentRatingPolicy.SfwRatingLabel),
+            NsfwFilterMode.NsfwOnly => query.Where(e => e.RatingLabel != ContentRatingPolicy.SfwRatingLabel),
             _ => query,
         };
 
@@ -433,14 +471,15 @@ public sealed class TagIndexService : ITagIndexService
             .Select(e => new
             {
                 e.FilePath,
-                e.IsNsfw,
+                e.RatingLabel,
                 Tags = e.TagAssignments.Select(a => a.ImageTag!.Name).ToList(),
             })
             .ToListAsync(cancellationToken);
 
+        // NSFW derived at read time from the stored rating (see SearchAsync).
         return rows.ToDictionary(
             e => e.FilePath,
-            e => new ImageTagLookup(e.IsNsfw, e.Tags),
+            e => new ImageTagLookup(ContentRatingPolicy.IsNsfw(e.RatingLabel), e.Tags),
             StringComparer.OrdinalIgnoreCase);
     }
 

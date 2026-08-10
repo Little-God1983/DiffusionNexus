@@ -22,22 +22,12 @@ public sealed class ImageTaggingService : IImageTaggingService
     private const string GeneralCategory = "0";
     private const string CharacterCategory = "4";
 
-    // The one hardcoded rating-name assumption in this class: WD14/Danbooru's
-    // rating taxonomy has used "general" as the safest bucket since the
-    // schema's introduction. Every other tag/rating name is read from the CSV.
-    private const string SfwRatingLabel = "general";
-
     private readonly OnnxModelManager _modelManager;
-    private readonly SemaphoreSlim _sessionLock = new(1, 1);
-    private InferenceSession? _session;
+    private readonly OnnxSessionHost _host = new("WD14 tagger");
     private string? _inputName;
     private string? _outputName;
     private int _inputSize;
     private List<(string Name, string Category)>? _tagList;
-    private bool _isGpuAvailable;
-    private bool _isProcessing;
-    private bool _disposed;
-    private bool _disableGpu;
 
     public ImageTaggingService() : this(new OnnxModelManager()) { }
 
@@ -46,8 +36,8 @@ public sealed class ImageTaggingService : IImageTaggingService
         _modelManager = modelManager ?? throw new ArgumentNullException(nameof(modelManager));
     }
 
-    public bool IsGpuAvailable => _isGpuAvailable;
-    public bool IsProcessing => _isProcessing;
+    public bool IsGpuAvailable => _host.IsGpuAvailable;
+    public bool IsProcessing => _host.IsProcessing;
 
     public ModelStatus GetModelStatus() => _modelManager.GetWd14TaggerStatus();
 
@@ -58,7 +48,7 @@ public sealed class ImageTaggingService : IImageTaggingService
 
     public async Task<bool> InitializeAsync(CancellationToken cancellationToken = default)
     {
-        if (_session is not null)
+        if (_host.IsInitialized && _tagList is not null)
             return true;
 
         var status = GetModelStatus();
@@ -68,14 +58,12 @@ public sealed class ImageTaggingService : IImageTaggingService
             return false;
         }
 
-        await _sessionLock.WaitAsync(cancellationToken);
-        try
+        if (_tagList is null)
         {
-            if (_session is not null)
-                return true;
-
             try
             {
+                // Concurrent callers may both load the CSV; the assignment is an
+                // atomic reference swap of identical content, so last-wins is fine.
                 _tagList = await Task.Run(() =>
                 {
                     using var reader = new StreamReader(_modelManager.Wd14TaggerTagsPath);
@@ -84,22 +72,18 @@ public sealed class ImageTaggingService : IImageTaggingService
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                // Mirrors CreateSession()'s own defensive catch: a failure here (file
-                // deleted mid-race, permissions, or a CSV that parses to zero rows
-                // despite passing the coarse size check in GetWd14TaggerStatus) must
-                // surface as InitializeAsync returning false — not as an exception
-                // escaping past TagImageAsync's Task<ImageTagResult> contract.
+                // Mirrors the session host's own defensive catch: a failure here
+                // (file deleted mid-race, permissions, or a CSV that parses to zero
+                // rows despite passing the coarse size check in GetWd14TaggerStatus)
+                // must surface as InitializeAsync returning false — not as an
+                // exception escaping past TagImageAsync's Task<ImageTagResult>
+                // contract.
                 Log.Error(ex, "Failed to load WD14 tagger tag list: {Path}", _modelManager.Wd14TaggerTagsPath);
                 return false;
             }
+        }
 
-            _session = await Task.Run(CreateSession, cancellationToken);
-            return _session is not null;
-        }
-        finally
-        {
-            _sessionLock.Release();
-        }
+        return await _host.InitializeAsync(_modelManager.Wd14TaggerModelPath, DiscoverModelShape, cancellationToken);
     }
 
     /// <summary>Parses a WD14 <c>selected_tags.csv</c> stream into (name, category) pairs.</summary>
@@ -168,68 +152,6 @@ public sealed class ImageTaggingService : IImageTaggingService
         return (tags.OrderByDescending(t => t.Confidence).ToList(), bestRatingName, bestRatingScore);
     }
 
-    private InferenceSession? CreateSession()
-    {
-        var modelPath = _modelManager.Wd14TaggerModelPath;
-        if (!File.Exists(modelPath))
-        {
-            Log.Error("WD14 tagger model file not found: {Path}", modelPath);
-            return null;
-        }
-
-        if (!_disableGpu)
-        {
-            InferenceSession? session = null;
-            try
-            {
-                using var dmlOptions = new SessionOptions();
-                dmlOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_BASIC;
-                dmlOptions.ExecutionMode = ExecutionMode.ORT_SEQUENTIAL;
-                dmlOptions.EnableMemoryPattern = false;
-                dmlOptions.EnableCpuMemArena = false;
-                // TODO: Linux Implementation — DirectML is Windows-only; a Linux
-                // port needs CUDA/ROCm providers here (the CPU fallback below
-                // already keeps this path non-fatal on other platforms).
-                dmlOptions.AppendExecutionProvider_DML(0);
-                dmlOptions.AppendExecutionProvider_CPU(0);
-
-                session = new InferenceSession(modelPath, dmlOptions);
-                DiscoverModelShape(session);
-                _isGpuAvailable = true;
-                Log.Information("WD14 tagger ONNX session created with GPU (DirectML) acceleration");
-                return session;
-            }
-            catch (Exception ex)
-            {
-                // Dispose on the shape-discovery throw path too — a session that
-                // constructed fine but reported an unusable input shape would
-                // otherwise leak its native model memory on every retry.
-                session?.Dispose();
-                Log.Warning(ex, "DirectML not available or failed to initialize, falling back to CPU");
-            }
-        }
-
-        {
-            InferenceSession? session = null;
-            try
-            {
-                using var cpuOptions = new SessionOptions();
-                cpuOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
-                session = new InferenceSession(modelPath, cpuOptions);
-                DiscoverModelShape(session);
-                _isGpuAvailable = false;
-                Log.Information("WD14 tagger ONNX session created with CPU execution");
-                return session;
-            }
-            catch (Exception ex)
-            {
-                session?.Dispose();
-                Log.Error(ex, "Failed to create WD14 tagger ONNX session");
-                return null;
-            }
-        }
-    }
-
     /// <summary>
     /// Reads input/output tensor names and the model's square input size from
     /// its own metadata rather than hardcoding them — WD14 tagger variants
@@ -258,72 +180,63 @@ public sealed class ImageTaggingService : IImageTaggingService
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(imagePath);
 
-        if (_disposed)
+        if (_host.IsDisposed)
             return ImageTagResult.Failed("Service is disposed");
 
-        if (_isProcessing)
+        if (!_host.TryBeginProcessing())
             return ImageTagResult.Failed("Service is already processing an image");
 
-        if (!await InitializeAsync(cancellationToken))
-            return ImageTagResult.Failed("Failed to initialize ONNX session. Please ensure the model is downloaded.");
-
-        _isProcessing = true;
         try
         {
-            return await Task.Run(() => ProcessImage(imagePath, tagConfidenceThreshold, cancellationToken), cancellationToken);
-        }
-        catch (OnnxRuntimeException ex) when (_isGpuAvailable && !_disableGpu)
-        {
-            Log.Warning("GPU inference failed for WD14 tagger, disabling GPU and retrying on CPU. Error: {Error}", ex.Message);
+            if (!await InitializeAsync(cancellationToken))
+                return ImageTagResult.Failed("Failed to initialize ONNX session. Please ensure the model is downloaded.");
 
-            await _sessionLock.WaitAsync(cancellationToken);
             try
             {
-                _session?.Dispose();
-                _session = null;
-                _disableGpu = true;
-                _isGpuAvailable = false;
+                return await Task.Run(() => ProcessImage(imagePath, tagConfidenceThreshold, cancellationToken), cancellationToken);
             }
-            finally
+            catch (OnnxRuntimeException ex) when (_host.CanRetryOnCpu)
             {
-                _sessionLock.Release();
-            }
+                Log.Warning("GPU inference failed for WD14 tagger, disabling GPU and retrying on CPU. Error: {Error}", ex.Message);
 
-            if (await InitializeAsync(cancellationToken))
+                await _host.DemoteToCpuAsync(cancellationToken);
+
+                if (await InitializeAsync(cancellationToken))
+                {
+                    try
+                    {
+                        return await Task.Run(() => ProcessImage(imagePath, tagConfidenceThreshold, cancellationToken), cancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception retryEx)
+                    {
+                        return ImageTagResult.Failed($"Tagging failed (CPU retry): {retryEx.Message}");
+                    }
+                }
+
+                return ImageTagResult.Failed($"Tagging failed (GPU error): {ex.Message}");
+            }
+            // One cancellation policy for the whole class: InitializeAsync lets
+            // OperationCanceledException propagate raw, so TagImageAsync must too.
+            // Without this the general catch below would quietly turn a cancelled
+            // batch into a stream of "Failed" results, which callers cannot tell
+            // apart from real tagging errors.
+            catch (OperationCanceledException)
             {
-                try
-                {
-                    return await Task.Run(() => ProcessImage(imagePath, tagConfidenceThreshold, cancellationToken), cancellationToken);
-                }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
-                catch (Exception retryEx)
-                {
-                    return ImageTagResult.Failed($"Tagging failed (CPU retry): {retryEx.Message}");
-                }
+                throw;
             }
-
-            return ImageTagResult.Failed($"Tagging failed (GPU error): {ex.Message}");
-        }
-        // One cancellation policy for the whole class: InitializeAsync lets
-        // OperationCanceledException propagate raw, so TagImageAsync must too.
-        // Without this the general catch below would quietly turn a cancelled
-        // batch into a stream of "Failed" results, which callers cannot tell
-        // apart from real tagging errors.
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Image tagging failed");
-            return ImageTagResult.Failed($"Tagging failed: {ex.Message}");
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Image tagging failed");
+                return ImageTagResult.Failed($"Tagging failed: {ex.Message}");
+            }
         }
         finally
         {
-            _isProcessing = false;
+            _host.EndProcessing();
         }
     }
 
@@ -344,15 +257,14 @@ public sealed class ImageTaggingService : IImageTaggingService
 
         cancellationToken.ThrowIfCancellationRequested();
         var inputs = new List<NamedOnnxValue> { NamedOnnxValue.CreateFromTensor(_inputName!, inputTensor) };
-        using var results = _session!.Run(inputs);
-        var scores = results.First().AsTensor<float>().ToArray();
+        var scores = _host.Run(inputs, results => results.First().AsTensor<float>().ToArray());
 
         var (tags, ratingLabel, ratingScore) = SelectTagsAndRating(_tagList!, scores, tagConfidenceThreshold);
 
         if (ratingLabel is null)
             return ImageTagResult.Failed("Tag list contains no rating (category 9) entries");
 
-        var isNsfw = !string.Equals(ratingLabel, SfwRatingLabel, StringComparison.OrdinalIgnoreCase);
+        var isNsfw = ContentRatingPolicy.IsNsfw(ratingLabel);
         return ImageTagResult.Succeeded(tags, ratingLabel, ratingScore, isNsfw);
     }
 
@@ -426,20 +338,5 @@ public sealed class ImageTaggingService : IImageTaggingService
         return tensor;
     }
 
-    public void Dispose()
-    {
-        if (_disposed) return;
-        _sessionLock.Wait();
-        try
-        {
-            _session?.Dispose();
-            _session = null;
-        }
-        finally
-        {
-            _sessionLock.Release();
-        }
-        _sessionLock.Dispose();
-        _disposed = true;
-    }
+    public void Dispose() => _host.Dispose();
 }
