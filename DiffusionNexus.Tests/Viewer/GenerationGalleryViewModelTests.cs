@@ -1024,6 +1024,56 @@ public class GenerationGalleryViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task RebuildTagIndexCommand_ClearsTheIndex_ThenRunsAFullBuild()
+    {
+        // The incremental build skips unchanged files forever, so a row
+        // written by an older build (different tagger/threshold, or simply
+        // bad) is sticky — Rebuild is the escape hatch: wipe, then re-tag.
+        var galleryPath = CreateTempDirectory();
+        var image = Path.Combine(galleryPath, "a.png");
+        File.WriteAllText(image, "test");
+
+        var calls = new List<string>();
+        var mockTagIndex = BuildableTagIndex(new TagIndexBuildResult(1, 0, 0, 0));
+        mockTagIndex.Setup(t => t.RemoveIndexEntriesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .Callback(() => calls.Add("remove"))
+            .ReturnsAsync(1);
+        mockTagIndex.Setup(t => t.BuildIndexAsync(
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<IProgress<TagIndexBuildProgress>>(), It.IsAny<CancellationToken>()))
+            .Callback(() => calls.Add("build"))
+            .ReturnsAsync(new TagIndexBuildResult(1, 0, 0, 0));
+
+        var viewModel = CreateGalleryViewModel(galleryPath, mockTagIndex.Object);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+
+        await viewModel.RebuildTagIndexCommand.ExecuteAsync(null);
+
+        calls.Should().Equal("remove", "build");
+        mockTagIndex.Verify(t => t.RemoveIndexEntriesAsync(
+            It.Is<IReadOnlyList<string>>(p => p.Contains(image)), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RebuildTagIndexCommand_WhenTheWipeFails_DoesNotBuildOnTopOfStaleRows()
+    {
+        var galleryPath = CreateTempDirectory();
+        File.WriteAllText(Path.Combine(galleryPath, "a.png"), "test");
+
+        var mockTagIndex = BuildableTagIndex(new TagIndexBuildResult(1, 0, 0, 0));
+        mockTagIndex.Setup(t => t.RemoveIndexEntriesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("SQLite Error 5: 'database is locked'."));
+
+        var viewModel = CreateGalleryViewModel(galleryPath, mockTagIndex.Object);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+
+        await viewModel.RebuildTagIndexCommand.ExecuteAsync(null);
+
+        mockTagIndex.Verify(t => t.BuildIndexAsync(
+            It.IsAny<IReadOnlyList<string>>(), It.IsAny<IProgress<TagIndexBuildProgress>>(), It.IsAny<CancellationToken>()), Times.Never);
+        viewModel.StatusMessage.Should().NotBeNullOrEmpty("the user must learn the rebuild did not happen");
+    }
+
+    [Fact]
     public async Task BuildTagIndexCommand_CompletesItsTrackedTask_InTheUnifiedConsole()
     {
         // Issue #488: the ~30-second model download was already visible in

@@ -399,15 +399,15 @@ public sealed class TagIndexService : ITagIndexService
         // NSFW is derived from the stored RatingLabel at query time via
         // ContentRatingPolicy — never from the frozen IsNsfw column — so a
         // rating-policy change takes effect without re-running the tagger over
-        // the whole gallery. The comparison is a plain equality against the
-        // policy's SFW label: it translates to indexed SQL
-        // (IX_ImageMediaTagIndexes_RatingLabel), and any row whose label
-        // doesn't exactly match the safest bucket (different casing, corrupt
-        // value) classifies as NSFW — filtering fails closed.
+        // the whole gallery. Contains over the policy's SFW label set
+        // translates to an IN (...) that uses IX_ImageMediaTagIndexes_RatingLabel,
+        // and any row whose label matches none of the safe buckets (different
+        // casing, corrupt value) classifies as NSFW — filtering fails closed.
+        var sfwLabels = ContentRatingPolicy.SfwRatingLabels;
         query = nsfwFilter switch
         {
-            NsfwFilterMode.HideNsfw => query.Where(e => e.RatingLabel == ContentRatingPolicy.SfwRatingLabel),
-            NsfwFilterMode.NsfwOnly => query.Where(e => e.RatingLabel != ContentRatingPolicy.SfwRatingLabel),
+            NsfwFilterMode.HideNsfw => query.Where(e => sfwLabels.Contains(e.RatingLabel)),
+            NsfwFilterMode.NsfwOnly => query.Where(e => !sfwLabels.Contains(e.RatingLabel)),
             _ => query,
         };
 

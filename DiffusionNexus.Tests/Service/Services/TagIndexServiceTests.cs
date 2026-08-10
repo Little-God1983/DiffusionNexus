@@ -222,24 +222,27 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
         // read — a rating-policy change has to take effect at query time
         // without re-running the tagger over the whole gallery. This tagger
         // stamps a contradictory frozen flag (isNsfw: false on a
-        // non-"general" rating); every query has to side with the rating.
-        var sfwPath = CreateFakeImage("rating-sfw.png");
-        var sensitivePath = CreateFakeImage("rating-sensitive.png", width: 8);
+        // "questionable" rating); every query has to side with the rating.
+        // "sensitive" deliberately lands on the SFW side: WD14 assigns it to
+        // a large share of completely ordinary character art.
+        var sensitivePath = CreateFakeImage("rating-sensitive.png");
+        var questionablePath = CreateFakeImage("rating-questionable.png", width: 8);
         var tagging = TaggerByWidth(w => w == 8
-            ? ImageTagResult.Succeeded(Array.Empty<ImageTagScore>(), "sensitive", 0.9f, isNsfw: false)
-            : ImageTagResult.Succeeded(Array.Empty<ImageTagScore>(), "general", 0.9f, isNsfw: false));
+            ? ImageTagResult.Succeeded(Array.Empty<ImageTagScore>(), "questionable", 0.9f, isNsfw: false)
+            : ImageTagResult.Succeeded(Array.Empty<ImageTagScore>(), "sensitive", 0.9f, isNsfw: false));
         var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
-        await service.BuildIndexAsync(new[] { sfwPath, sensitivePath });
+        await service.BuildIndexAsync(new[] { sensitivePath, questionablePath });
 
         var hidden = await service.SearchAsync(Array.Empty<string>(), NsfwFilterMode.HideNsfw);
-        hidden.Should().ContainSingle().Which.Should().Be(Path.GetFullPath(sfwPath));
+        hidden.Should().ContainSingle("a 'sensitive'-rated image is SFW under the policy")
+            .Which.Should().Be(Path.GetFullPath(sensitivePath));
 
         var nsfwOnly = await service.SearchAsync(Array.Empty<string>(), NsfwFilterMode.NsfwOnly);
-        nsfwOnly.Should().ContainSingle().Which.Should().Be(Path.GetFullPath(sensitivePath));
+        nsfwOnly.Should().ContainSingle().Which.Should().Be(Path.GetFullPath(questionablePath));
 
-        var lookup = await service.GetTagsForFilesAsync(new[] { sfwPath, sensitivePath });
-        lookup[Path.GetFullPath(sensitivePath)].IsNsfw.Should().BeTrue("tile badges derive from the rating too");
-        lookup[Path.GetFullPath(sfwPath)].IsNsfw.Should().BeFalse();
+        var lookup = await service.GetTagsForFilesAsync(new[] { sensitivePath, questionablePath });
+        lookup[Path.GetFullPath(questionablePath)].IsNsfw.Should().BeTrue("tile badges derive from the rating too");
+        lookup[Path.GetFullPath(sensitivePath)].IsNsfw.Should().BeFalse("no NSFW badge on ordinary 'sensitive'-rated art");
     }
 
     [Fact]
