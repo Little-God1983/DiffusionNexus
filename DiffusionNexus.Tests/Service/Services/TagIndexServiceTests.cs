@@ -33,10 +33,10 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
         await ValueTask.CompletedTask;
     }
 
-    private string CreateFakeImage(string name)
+    private string CreateFakeImage(string name, int width = 4)
     {
         var path = Path.Combine(_imagesDir, name);
-        using var image = new Image<Rgba32>(4, 4);
+        using var image = new Image<Rgba32>(width, 4);
         image.SaveAsPng(path);
         return path;
     }
@@ -48,6 +48,45 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
         public DiffusionNexusCoreDbContext CreateDbContext() => new(_options);
         public Task<DiffusionNexusCoreDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default)
             => Task.FromResult(CreateDbContext());
+    }
+
+    /// <summary>
+    /// Reads normally but fails every write — stands in for the WAL-mode
+    /// contention ("database is locked") that a real gallery build can hit
+    /// while the rest of the app is using the same file.
+    /// </summary>
+    private sealed class UnwritableDbContext : DiffusionNexusCoreDbContext
+    {
+        public UnwritableDbContext(DbContextOptions<DiffusionNexusCoreDbContext> options) : base(options) { }
+
+        public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+            => Task.FromException<int>(new DbUpdateException(
+                "An error occurred while saving the entity changes.",
+                new InvalidOperationException("SQLite Error 5: 'database is locked'.")));
+    }
+
+    private sealed class UnwritableDbContextFactory : IDbContextFactory<DiffusionNexusCoreDbContext>
+    {
+        private readonly DbContextOptions<DiffusionNexusCoreDbContext> _options;
+        public UnwritableDbContextFactory(DbContextOptions<DiffusionNexusCoreDbContext> options) => _options = options;
+        public DiffusionNexusCoreDbContext CreateDbContext() => new UnwritableDbContext(_options);
+        public Task<DiffusionNexusCoreDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult(CreateDbContext());
+    }
+
+    /// <summary>
+    /// Tagger stub keyed on image width, so each test file gets a
+    /// deterministic result regardless of the order the service processes
+    /// them in. <paramref name="perWidth"/> maps image width to the outcome.
+    /// </summary>
+    private static Mock<IImageTaggingService> TaggerByWidth(Func<int, ImageTagResult> perWidth)
+    {
+        var tagging = new Mock<IImageTaggingService>();
+        tagging.Setup(t => t.GetModelStatus()).Returns(ModelStatus.Ready);
+        tagging.Setup(t => t.TagImageAsync(
+                It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((byte[] _, int w, int _, float _, CancellationToken _) => perWidth(w));
+        return tagging;
     }
 
     [Fact]
@@ -243,5 +282,313 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
         result.Failed.Should().Be(1);
         result.Indexed.Should().Be(0);
         tagging.Verify(t => t.TagImageAsync(It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ---- Fix 1: duplicate input paths ------------------------------------
+
+    [Fact]
+    public async Task BuildIndexAsync_DeduplicatesInputPaths_InsteadOfFailingTheWholeBatch()
+    {
+        // The "already indexed?" check is a DB query, so it cannot see a row
+        // staged earlier in the same run. Two identical paths used to stage
+        // two inserts against one unique FilePath, and the terminal
+        // SaveChanges threw DbUpdateException out of BuildIndexAsync —
+        // taking the whole batch down, not just the duplicate. Reachable
+        // whenever a user configures nested/overlapping gallery folders.
+        var path = CreateFakeImage("dupe.png");
+        var tagging = TaggerByWidth(_ => ImageTagResult.Succeeded(
+            new[] { new ImageTagScore("dog", 0.9f) }, "general", 0.9f, false));
+        var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
+
+        // Same file three ways: verbatim, relative-round-tripped, and
+        // case-varied (Windows paths are case-insensitive).
+        var viaDot = Path.Combine(_imagesDir, ".", "dupe.png");
+        var act = async () => await service.BuildIndexAsync(new[] { path, path, viaDot, path.ToUpperInvariant() });
+
+        var result = await act.Should().NotThrowAsync();
+        result.Which.Indexed.Should().Be(1);
+        result.Which.Failed.Should().Be(0);
+        (await service.GetIndexedCountAsync()).Should().Be(1);
+        tagging.Verify(t => t.TagImageAsync(It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ---- Fixes 2 + 3: chunked flush/clear, and failure containment -------
+
+    [Fact]
+    public async Task BuildIndexAsync_IndexesEveryFile_AcrossMultipleFlushAndClearBoundaries()
+    {
+        // 60 files at a flush cadence of 25 crosses two flush/clear
+        // boundaries. ChangeTracker.Clear() detaches every tracked ImageTag,
+        // so this is what proves the indexer carries tag identity as IDs
+        // rather than entity references: the shared "common" tag must be
+        // reused by files on both sides of every boundary instead of being
+        // re-inserted (which the unique index would reject).
+        const int fileCount = 60;
+        var paths = new List<string>();
+        for (var i = 1; i <= fileCount; i++)
+            paths.Add(CreateFakeImage($"batch-{i:D2}.png", width: i));
+
+        var tagging = TaggerByWidth(w => ImageTagResult.Succeeded(
+            new[] { new ImageTagScore($"tag{w}", 0.9f), new ImageTagScore("common", 0.5f) },
+            "general", 0.9f, isNsfw: false));
+        var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
+
+        var result = await service.BuildIndexAsync(paths);
+
+        result.Indexed.Should().Be(fileCount);
+        result.Failed.Should().Be(0);
+        result.Skipped.Should().Be(0);
+        (await service.GetIndexedCountAsync()).Should().Be(fileCount);
+
+        // Every file kept its own unique tag, including the ones staged in
+        // the chunk that was cleared mid-run.
+        for (var i = 1; i <= fileCount; i++)
+        {
+            var matches = await service.SearchAsync(new[] { $"tag{i}" }, NsfwFilterMode.ShowAll);
+            matches.Should().ContainSingle($"file {i} should be findable by its own tag")
+                .Which.Should().Be(Path.GetFullPath(paths[i - 1]));
+        }
+
+        // The shared tag exists exactly once and is attached to all 60 files.
+        var cloud = await service.GetTagCloudAsync(maxTags: 500);
+        cloud.Should().ContainSingle(t => t.Name == "common")
+            .Which.Count.Should().Be(fileCount);
+        cloud.Should().HaveCount(fileCount + 1, "60 per-file tags plus one shared tag, with no duplicates across flush boundaries");
+        (await service.SearchAsync(new[] { "common" }, NsfwFilterMode.ShowAll)).Should().HaveCount(fileCount);
+    }
+
+    [Fact]
+    public async Task BuildIndexAsync_NeverPersistsARowForAFileItReportedAsFailed()
+    {
+        // The permanent-skip bug. A file's row used to be mutated and staged
+        // BEFORE its tag loop ran, so a failure partway through that loop
+        // still got committed by the terminal SaveChanges — stamped with the
+        // file's current size/mtime. The UI reported the file as Failed while
+        // every future build saw it as "unchanged" and skipped it forever.
+        var ok = CreateFakeImage("contain-ok.png", width: 1);
+        var thrower = CreateFakeImage("contain-throw.png", width: 2);
+        var poison = CreateFakeImage("contain-poison.png", width: 3);
+
+        var failing = new Mock<IImageTaggingService>();
+        failing.Setup(t => t.GetModelStatus()).Returns(ModelStatus.Ready);
+        failing.Setup(t => t.TagImageAsync(
+                It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
+            .Returns((byte[] _, int w, int _, float _, CancellationToken _) => w switch
+            {
+                // Fails before the context is touched at all.
+                2 => Task.FromException<ImageTagResult>(new InvalidOperationException("tagger exploded")),
+                // Duplicate tag names: the second assignment threw on a
+                // duplicate tracked key — AFTER the row had been staged.
+                // This is the exact composition that froze a file.
+                3 => Task.FromResult(ImageTagResult.Succeeded(
+                    new[] { new ImageTagScore("dog", 0.9f), new ImageTagScore("dog", 0.5f) }, "general", 0.9f, false)),
+                _ => Task.FromResult(ImageTagResult.Succeeded(
+                    new[] { new ImageTagScore($"tag{w}", 0.9f) }, "general", 0.9f, false)),
+            });
+
+        var service = new TagIndexService(new SingleDbContextFactory(_options), failing.Object);
+
+        var first = await service.BuildIndexAsync(new[] { ok, thrower, poison });
+
+        first.Indexed.Should().Be(2, "the healthy file and the duplicate-tag file both index cleanly now");
+        first.Failed.Should().Be(1, "only the throwing file fails");
+        (await service.GetIndexedCountAsync()).Should().Be(first.Indexed,
+            "a file reported as Failed must leave no row behind — a committed row carries a fresh size/mtime stamp, which makes every future run skip it forever");
+
+        // Second run with a healthy tagger: the failed file must be retried,
+        // not silently treated as up to date.
+        var healthy = TaggerByWidth(w => ImageTagResult.Succeeded(
+            new[] { new ImageTagScore($"tag{w}", 0.9f) }, "general", 0.9f, false));
+        var retryService = new TagIndexService(new SingleDbContextFactory(_options), healthy.Object);
+
+        var second = await retryService.BuildIndexAsync(new[] { ok, thrower, poison });
+
+        second.Indexed.Should().Be(1, "only the previously failed file should need work");
+        second.Skipped.Should().Be(2);
+        second.Failed.Should().Be(0);
+        (await retryService.SearchAsync(new[] { "tag2" }, NsfwFilterMode.ShowAll))
+            .Should().ContainSingle().Which.Should().Be(Path.GetFullPath(thrower));
+    }
+
+    [Fact]
+    public async Task BuildIndexAsync_PropagatesCancellation_InsteadOfCountingItAsFailure()
+    {
+        // Cancellation is the one thing that is an exception, not a Failed
+        // count — the per-file catch filter and the flush guard must both
+        // let OperationCanceledException through, or a cancelled build would
+        // look like a build where every file failed.
+        var path = CreateFakeImage("cancel.png");
+        var tagging = new Mock<IImageTaggingService>();
+        tagging.Setup(t => t.GetModelStatus()).Returns(ModelStatus.Ready);
+        tagging.Setup(t => t.TagImageAsync(
+                It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.FromException<ImageTagResult>(new OperationCanceledException()));
+        var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
+
+        var act = async () => await service.BuildIndexAsync(new[] { path });
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    // ---- Fix 4: duplicate tag names within one result --------------------
+
+    [Fact]
+    public async Task BuildIndexAsync_DeduplicatesTagsWithinOneResult_KeepingHighestConfidence()
+    {
+        // Two entries with the same name (the lookup is case-insensitive)
+        // produced two assignments sharing one composite key, which threw
+        // mid-staging — the exact trigger for the permanent-skip bug above.
+        var path = CreateFakeImage("dupetags.png");
+        var tagging = TaggerByWidth(_ => ImageTagResult.Succeeded(
+            new[]
+            {
+                new ImageTagScore("dog", 0.4f),
+                new ImageTagScore("Dog", 0.95f),
+                new ImageTagScore("dog", 0.7f),
+                new ImageTagScore("outdoor", 0.6f),
+            },
+            "general", 0.9f, false));
+        var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
+
+        var act = async () => await service.BuildIndexAsync(new[] { path });
+
+        var result = await act.Should().NotThrowAsync();
+        result.Which.Indexed.Should().Be(1);
+        result.Which.Failed.Should().Be(0);
+
+        var cloud = await service.GetTagCloudAsync();
+        cloud.Should().ContainSingle(t => string.Equals(t.Name, "dog", StringComparison.OrdinalIgnoreCase))
+            .Which.Count.Should().Be(1, "the three 'dog' entries collapse into one assignment");
+        cloud.Should().ContainSingle(t => t.Name == "outdoor");
+
+        await using var context = new DiffusionNexusCoreDbContext(_options);
+        var confidence = await context.ImageMediaTagAssignments
+            .Where(a => a.ImageTag!.Name == "dog")
+            .Select(a => a.Confidence)
+            .SingleAsync();
+        confidence.Should().Be(0.95f, "de-duplication keeps the highest-confidence entry");
+    }
+
+    // ---- Fix 5: a failing save is a result, not an exception -------------
+
+    [Fact]
+    public async Task BuildIndexAsync_ReportsSaveFailureAsFailedFiles_InsteadOfThrowing()
+    {
+        var pathA = CreateFakeImage("locked-a.png", width: 1);
+        var pathB = CreateFakeImage("locked-b.png", width: 2);
+        var tagging = TaggerByWidth(w => ImageTagResult.Succeeded(
+            new[] { new ImageTagScore($"tag{w}", 0.9f) }, "general", 0.9f, isNsfw: w == 2));
+        var service = new TagIndexService(new UnwritableDbContextFactory(_options), tagging.Object);
+
+        var act = async () => await service.BuildIndexAsync(new[] { pathA, pathB });
+
+        var result = await act.Should().NotThrowAsync();
+        result.Which.Failed.Should().Be(2, "both staged files were lost when the flush failed");
+        result.Which.Indexed.Should().Be(0, "nothing reached the database");
+        result.Which.NsfwCount.Should().Be(0, "the NSFW tally must unwind with the lost files too");
+        (await service.GetIndexedCountAsync()).Should().Be(0);
+    }
+
+    // ---- Fix 6: non-image inputs -----------------------------------------
+
+    [Fact]
+    public async Task BuildIndexAsync_SkipsNonImageFiles_WithoutCountingThemAsFailures()
+    {
+        // The intended caller enumerates gallery folders, which contain
+        // videos. Each one used to reach Image.Load, throw, and be reported
+        // as a failure for a file that was never eligible for tagging.
+        var image = CreateFakeImage("real.png");
+        var video = Path.Combine(_imagesDir, "clip.mp4");
+        File.WriteAllBytes(video, new byte[] { 0x00, 0x01, 0x02, 0x03 });
+        var sidecar = Path.Combine(_imagesDir, "real.txt");
+        File.WriteAllText(sidecar, "caption");
+
+        var tagging = TaggerByWidth(_ => ImageTagResult.Succeeded(
+            Array.Empty<ImageTagScore>(), "general", 0.9f, false));
+        var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
+
+        var result = await service.BuildIndexAsync(new[] { image, video, sidecar });
+
+        result.Indexed.Should().Be(1);
+        result.Failed.Should().Be(0, "non-images were never eligible, so they are not failures");
+        result.Skipped.Should().Be(0, "Skipped is reserved for images that were genuinely skipped");
+        tagging.Verify(t => t.TagImageAsync(It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ---- Fix 10: nothing to do means no 379 MB download ------------------
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BuildIndexAsync_ReturnsEmptyResult_WithoutDownloadingTheModel_WhenNothingIsTaggable(bool useVideoOnlyList)
+    {
+        var tagging = new Mock<IImageTaggingService>();
+        tagging.Setup(t => t.GetModelStatus()).Returns(ModelStatus.NotDownloaded);
+        tagging.Setup(t => t.DownloadModelAsync(It.IsAny<IProgress<ModelDownloadProgress>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        var coordinator = new Mock<IDownloadCoordinator>();
+        var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object, coordinator.Object);
+
+        string[] input;
+        if (useVideoOnlyList)
+        {
+            var video = Path.Combine(_imagesDir, "only.mp4");
+            File.WriteAllBytes(video, new byte[] { 0x00 });
+            input = new[] { video };
+        }
+        else
+        {
+            input = Array.Empty<string>();
+        }
+
+        var result = await service.BuildIndexAsync(input);
+
+        result.Should().Be(new TagIndexBuildResult(0, 0, 0, 0));
+        tagging.Verify(t => t.DownloadModelAsync(It.IsAny<IProgress<ModelDownloadProgress>>(), It.IsAny<CancellationToken>()), Times.Never);
+        coordinator.Verify(c => c.EnqueueAsync(
+            It.IsAny<string>(),
+            It.IsAny<Func<IProgress<DownloadTaskProgress>, CancellationToken, Task<bool>>>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ---- Fix 11: tag cloud ordering and zero-assignment exclusion --------
+
+    [Fact]
+    public async Task GetTagCloudAsync_OrdersByCountDescending_AndExcludesTagsWithNoAssignments()
+    {
+        // Both behaviors are deliberate and both are load-bearing: the query
+        // filters, then orders by the entity's own correlated-count subquery,
+        // then projects — reordering those steps reintroduces a real SQLite
+        // translation failure. And a tag whose last assignment was dropped by
+        // a re-index must vanish from the cloud rather than linger at zero.
+        var twice = CreateFakeImage("cloud-a.png", width: 1);
+        var once = CreateFakeImage("cloud-b.png", width: 2);
+        var orphaned = CreateFakeImage("cloud-c.png", width: 3);
+
+        var tagging = TaggerByWidth(w => w switch
+        {
+            1 => ImageTagResult.Succeeded(new[] { new ImageTagScore("alpha", 0.9f), new ImageTagScore("beta", 0.8f) }, "general", 0.9f, false),
+            2 => ImageTagResult.Succeeded(new[] { new ImageTagScore("alpha", 0.7f) }, "general", 0.9f, false),
+            _ => ImageTagResult.Succeeded(new[] { new ImageTagScore("gamma", 0.6f) }, "general", 0.9f, false),
+        });
+        var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
+        await service.BuildIndexAsync(new[] { twice, once, orphaned });
+
+        (await service.GetTagCloudAsync()).Should().Contain(t => t.Name == "gamma");
+
+        // Re-index the third file with no tags at all, orphaning "gamma".
+        using (var changed = new Image<Rgba32>(3, 9)) changed.SaveAsPng(orphaned);
+        var retagged = TaggerByWidth(_ => ImageTagResult.Succeeded(Array.Empty<ImageTagScore>(), "general", 0.9f, false));
+        await new TagIndexService(new SingleDbContextFactory(_options), retagged.Object)
+            .BuildIndexAsync(new[] { orphaned });
+
+        var cloud = await service.GetTagCloudAsync();
+
+        cloud.Select(t => t.Name).Should().BeEquivalentTo(
+            new[] { "alpha", "beta" },
+            options => options.WithStrictOrdering(),
+            "the cloud is ordered strictly by descending assignment count");
+        cloud.Select(t => t.Count).Should().BeEquivalentTo(new[] { 2, 1 }, options => options.WithStrictOrdering());
+        cloud.Should().NotContain(t => t.Name == "gamma", "a tag with zero assignments is excluded, not shown at zero");
     }
 }
