@@ -28,6 +28,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     private readonly IVideoThumbnailService? _videoThumbnailService;
     private readonly IThumbnailOrchestrator? _thumbnailOrchestrator;
     private readonly IImageFavoritesService? _favoritesService;
+    private readonly ITagIndexService? _tagIndexService;
     private readonly List<GenerationGalleryMediaItemViewModel> _allMediaItems = [];
     private GenerationGalleryMediaItemViewModel? _lastClickedItem;
     private int _selectionCount;
@@ -62,7 +63,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         IDatasetState datasetState,
         IVideoThumbnailService? videoThumbnailService,
         IThumbnailOrchestrator? thumbnailOrchestrator = null,
-        IImageFavoritesService? favoritesService = null)
+        IImageFavoritesService? favoritesService = null,
+        ITagIndexService? tagIndexService = null)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
@@ -70,6 +72,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         _videoThumbnailService = videoThumbnailService;
         _thumbnailOrchestrator = thumbnailOrchestrator;
         _favoritesService = favoritesService;
+        _tagIndexService = tagIndexService;
 
         // Both toolbars are the SAME reusable component the workflow result strips use, so "Add
         // Selected To…" and "Send Selected To…" behave identically everywhere. They're split into two
@@ -199,6 +202,28 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     [ObservableProperty]
     private bool _showFavoritesOnly;
 
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IndexStatusText))]
+    private int _indexedImageCount;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IndexStatusText))]
+    [NotifyPropertyChangedFor(nameof(TagCloudHeader))]
+    private int _totalGalleryImageCount;
+
+    [ObservableProperty]
+    private bool _isAdvancedSearchOpen;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsNsfwFilterShowAll))]
+    [NotifyPropertyChangedFor(nameof(IsNsfwFilterHideNsfw))]
+    [NotifyPropertyChangedFor(nameof(IsNsfwFilterNsfwOnly))]
+    private NsfwFilterMode _nsfwFilter = NsfwFilterMode.ShowAll;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(FilteredMatchCountText))]
+    private int _filteredMatchCount;
+
     private string _selectedLayoutMode = "Showcase";
 
     public string SelectedLayoutMode
@@ -255,6 +280,22 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
     public bool IsGroupingEnabled => !string.Equals(SelectedGroupingOption, "None", StringComparison.OrdinalIgnoreCase);
 
+    public string IndexStatusText => $"{IndexedImageCount:N0} / {TotalGalleryImageCount:N0} indexed";
+
+    public BatchObservableCollection<TagCloudEntryViewModel> TagCloud { get; } = [];
+
+    public ObservableCollection<string> ActiveTagFilters { get; } = [];
+
+    public bool HasActiveTagFilters => ActiveTagFilters.Count > 0;
+
+    public bool IsNsfwFilterShowAll => NsfwFilter == NsfwFilterMode.ShowAll;
+    public bool IsNsfwFilterHideNsfw => NsfwFilter == NsfwFilterMode.HideNsfw;
+    public bool IsNsfwFilterNsfwOnly => NsfwFilter == NsfwFilterMode.NsfwOnly;
+
+    public string FilteredMatchCountText => $"{FilteredMatchCount:N0} images match";
+
+    public string TagCloudHeader => $"TAG INDEX — {TotalGalleryImageCount:N0} images · {TagCloud.Count:N0} tags";
+
     #region IThumbnailAware
 
     /// <inheritdoc />
@@ -295,6 +336,13 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             // startup (issue #397). RunBusyAsync itself does not offload.
             var mediaItems = await Task.Run(() => CollectMediaItemsAsync(enabledPaths, includeSubFolders));
             await ApplyMediaItemsAsync(mediaItems, enabledPaths.Count);
+
+            TotalGalleryImageCount = mediaItems.Count(i => i.IsImage);
+            if (_tagIndexService is not null)
+            {
+                IndexedImageCount = await _tagIndexService.GetIndexedCountAsync();
+                await HydrateTagDataAsync(mediaItems);
+            }
 
             // Fire-and-forget: generate missing video thumbnails after gallery is displayed
             StartBackgroundVideoThumbnailGeneration(mediaItems);
@@ -447,6 +495,105 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         if (ShowFavoritesOnly && !newState)
         {
             ApplySortingAndGrouping();
+        }
+    }
+
+    [RelayCommand]
+    private void ToggleAdvancedSearch()
+    {
+        IsAdvancedSearchOpen = !IsAdvancedSearchOpen;
+        if (IsAdvancedSearchOpen)
+        {
+            _ = RefreshTagCloudAsync();
+        }
+    }
+
+    [RelayCommand]
+    private async Task BuildTagIndexAsync()
+    {
+        if (_tagIndexService is null) return;
+
+        await RunBusyAsync(async () =>
+        {
+            // BuildIndexAsync filters to image-only extensions internally (and
+            // documents this on its own XML doc) — pass the full mixed
+            // image/video list through rather than duplicating that filter here.
+            var paths = _allMediaItems.Select(i => i.FilePath).ToList();
+            var progress = new Progress<TagIndexBuildProgress>(p =>
+            {
+                BusyMessage = p.CurrentFile is not null
+                    ? $"Indexing images… {p.Completed}/{p.Total}"
+                    : "Finalizing index…";
+            });
+
+            await _tagIndexService.BuildIndexAsync(paths, progress);
+            IndexedImageCount = await _tagIndexService.GetIndexedCountAsync();
+            await RefreshTagCloudAsync();
+            await HydrateTagDataAsync(_allMediaItems);
+        }, "Indexing images…");
+    }
+
+    [RelayCommand]
+    private void ToggleTagFilter(string? tagName)
+    {
+        if (string.IsNullOrEmpty(tagName)) return;
+
+        if (!ActiveTagFilters.Remove(tagName))
+            ActiveTagFilters.Add(tagName);
+
+        foreach (var entry in TagCloud)
+            entry.IsActive = ActiveTagFilters.Contains(entry.Name);
+
+        OnPropertyChanged(nameof(HasActiveTagFilters));
+        ApplySortingAndGrouping();
+    }
+
+    [RelayCommand]
+    private void ClearTagFilters()
+    {
+        ActiveTagFilters.Clear();
+        foreach (var entry in TagCloud)
+            entry.IsActive = false;
+
+        OnPropertyChanged(nameof(HasActiveTagFilters));
+        ApplySortingAndGrouping();
+    }
+
+    [RelayCommand]
+    private void SetNsfwFilter(string mode)
+    {
+        // The Is*-flavored booleans are notified via [NotifyPropertyChangedFor]
+        // on the NsfwFilter backing field, so they stay in sync however
+        // NsfwFilter is set (not just through this command).
+        NsfwFilter = Enum.Parse<NsfwFilterMode>(mode);
+        ApplySortingAndGrouping();
+    }
+
+    private async Task RefreshTagCloudAsync()
+    {
+        if (_tagIndexService is null) return;
+
+        var cloud = await _tagIndexService.GetTagCloudAsync();
+        var activeNames = ActiveTagFilters.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        TagCloud.ReplaceAll(cloud.Select(t => new TagCloudEntryViewModel(t.Name, t.Count) { IsActive = activeNames.Contains(t.Name) }).ToList());
+        OnPropertyChanged(nameof(TagCloudHeader));
+    }
+
+    private async Task HydrateTagDataAsync(IReadOnlyList<GenerationGalleryMediaItemViewModel> items)
+    {
+        if (_tagIndexService is null) return;
+
+        var paths = items.Where(i => i.IsImage).Select(i => i.FilePath).ToList();
+        if (paths.Count == 0) return;
+
+        var lookup = await _tagIndexService.GetTagsForFilesAsync(paths);
+        foreach (var item in items)
+        {
+            if (lookup.TryGetValue(Path.GetFullPath(item.FilePath), out var info))
+            {
+                item.IsNsfw = info.IsNsfw;
+                item.Tags = info.Tags;
+            }
         }
     }
 
@@ -828,6 +975,18 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         var isGroupingEnabled = IsGroupingEnabled;
         var showFavoritesOnly = ShowFavoritesOnly;
 
+        // Tag/NSFW filtering needs the database, so it's resolved here (async,
+        // before the CPU-bound Task.Run below) rather than inside the closure.
+        // Skipped entirely when no tag filter is active, so the common case
+        // (typing in the filename search box) never touches the DB.
+        HashSet<string>? tagMatchPaths = null;
+        var hasTagFilter = ActiveTagFilters.Count > 0 || NsfwFilter != NsfwFilterMode.ShowAll;
+        if (hasTagFilter && _tagIndexService is not null)
+        {
+            var matches = await _tagIndexService.SearchAsync(ActiveTagFilters.ToList(), NsfwFilter);
+            tagMatchPaths = matches.Select(Path.GetFullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
+
         // Run sorting, filtering, and group creation on a background thread
         var (sortedList, groups) = await Task.Run(() =>
         {
@@ -848,6 +1007,11 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             if (showFavoritesOnly)
             {
                 filtered = filtered.Where(item => item.IsFavorite);
+            }
+
+            if (tagMatchPaths is not null)
+            {
+                filtered = filtered.Where(item => tagMatchPaths.Contains(Path.GetFullPath(item.FilePath)));
             }
 
             IEnumerable<GenerationGalleryMediaItemViewModel> sorted = filtered;
@@ -881,6 +1045,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
             return (resultList, resultGroups);
         });
+
+        FilteredMatchCount = sortedList.Count;
 
         // Back on the original context (UI thread) — apply results directly
         ApplySortedResults(sortedList, groups);

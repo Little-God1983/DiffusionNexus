@@ -637,6 +637,96 @@ public class GenerationGalleryViewModelTests : IDisposable
             "the media scan does blocking file IO and must not run on the thread that invoked the command (issue #397)");
     }
 
+    [Fact]
+    public async Task BuildTagIndexCommand_UpdatesIndexedCount_AndPopulatesTagCloud()
+    {
+        var mockSettings = new Mock<IAppSettingsService>();
+        var mockEventAggregator = new Mock<IDatasetEventAggregator>();
+        var mockDatasetState = new Mock<IDatasetState>();
+        var mockTagIndex = new Mock<ITagIndexService>();
+        mockTagIndex.Setup(t => t.BuildIndexAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<IProgress<TagIndexBuildProgress>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TagIndexBuildResult(Indexed: 2, Skipped: 0, Failed: 0, NsfwCount: 0));
+        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<CancellationToken>())).ReturnsAsync(2);
+        mockTagIndex.Setup(t => t.GetTagCloudAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { new TagFrequency("dog", 2) });
+        mockTagIndex.Setup(t => t.GetTagsForFilesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, ImageTagLookup>());
+
+        var viewModel = new GenerationGalleryViewModel(
+            mockSettings.Object, mockEventAggregator.Object, mockDatasetState.Object, null,
+            tagIndexService: mockTagIndex.Object);
+
+        await viewModel.BuildTagIndexCommand.ExecuteAsync(null);
+
+        viewModel.IndexedImageCount.Should().Be(2);
+        viewModel.TagCloud.Should().ContainSingle(t => t.Name == "dog" && t.Count == 2);
+    }
+
+    [Fact]
+    public void ToggleAdvancedSearchCommand_TogglesIsAdvancedSearchOpen()
+    {
+        var mockSettings = new Mock<IAppSettingsService>();
+        var mockEventAggregator = new Mock<IDatasetEventAggregator>();
+        var mockDatasetState = new Mock<IDatasetState>();
+        var viewModel = new GenerationGalleryViewModel(mockSettings.Object, mockEventAggregator.Object, mockDatasetState.Object, null);
+
+        viewModel.IsAdvancedSearchOpen.Should().BeFalse();
+        viewModel.ToggleAdvancedSearchCommand.Execute(null);
+        viewModel.IsAdvancedSearchOpen.Should().BeTrue();
+        viewModel.ToggleAdvancedSearchCommand.Execute(null);
+        viewModel.IsAdvancedSearchOpen.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ToggleTagFilterCommand_AddsThenRemovesTag_AndTracksHasActiveTagFilters()
+    {
+        var mockSettings = new Mock<IAppSettingsService>();
+        var mockEventAggregator = new Mock<IDatasetEventAggregator>();
+        var mockDatasetState = new Mock<IDatasetState>();
+        var viewModel = new GenerationGalleryViewModel(mockSettings.Object, mockEventAggregator.Object, mockDatasetState.Object, null);
+
+        viewModel.HasActiveTagFilters.Should().BeFalse();
+        viewModel.ToggleTagFilterCommand.Execute("dog");
+        viewModel.ActiveTagFilters.Should().Contain("dog");
+        viewModel.HasActiveTagFilters.Should().BeTrue();
+
+        viewModel.ToggleTagFilterCommand.Execute("dog");
+        viewModel.ActiveTagFilters.Should().NotContain("dog");
+        viewModel.HasActiveTagFilters.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ApplySortingAndGrouping_WithActiveTagFilter_RestrictsToSearchAsyncResults()
+    {
+        var mockSettings = new Mock<IAppSettingsService>();
+        mockSettings.Setup(s => s.GetSettingsAsync()).ReturnsAsync(new AppSettings
+        {
+            ImageGalleries = { new ImageGallery { FolderPath = Path.GetTempPath(), IsEnabled = true } }
+        });
+        var mockEventAggregator = new Mock<IDatasetEventAggregator>();
+        var mockDatasetState = new Mock<IDatasetState>();
+        var mockTagIndex = new Mock<ITagIndexService>();
+        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<CancellationToken>())).ReturnsAsync(0);
+        mockTagIndex.Setup(t => t.GetTagsForFilesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, ImageTagLookup>());
+        mockTagIndex.Setup(t => t.SearchAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<NsfwFilterMode>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<string>()); // no file matches "dog" in this fixture
+
+        var viewModel = new GenerationGalleryViewModel(
+            mockSettings.Object, mockEventAggregator.Object, mockDatasetState.Object, null,
+            tagIndexService: mockTagIndex.Object);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+
+        viewModel.ToggleTagFilterCommand.Execute("dog");
+        await viewModel.WaitForSortingAsync();
+
+        viewModel.MediaItems.Should().BeEmpty();
+        mockTagIndex.Verify(t => t.SearchAsync(
+            It.Is<IReadOnlyList<string>>(tags => tags.Contains("dog")),
+            NsfwFilterMode.ShowAll,
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
     public void Dispose()
     {
         foreach (var path in _tempPaths)
