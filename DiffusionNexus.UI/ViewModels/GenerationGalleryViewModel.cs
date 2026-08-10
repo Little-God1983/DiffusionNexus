@@ -792,6 +792,47 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     private void CancelTagIndex() => _tagIndexCts?.Cancel();
 
     /// <summary>
+    /// Deletes this gallery's index rows, then re-tags everything from
+    /// scratch. This is the escape hatch the incremental build cannot
+    /// provide: it skips any file whose size/mtime is unchanged, so a row
+    /// written by an older build (different tagger, different threshold, or
+    /// simply suspected bad) is sticky forever. NSFW policy changes do NOT
+    /// need this — they apply at query time (see ContentRatingPolicy).
+    /// </summary>
+    [RelayCommand]
+    private async Task RebuildTagIndexAsync()
+    {
+        if (_tagIndexService is null || IsIndexingTagIndex) return;
+
+        if (DialogService is not null)
+        {
+            var confirm = await DialogService.ShowConfirmAsync(
+                "Rebuild Tag Index",
+                $"Delete the tag index for this gallery and re-tag all {TotalGalleryImageCount:N0} images from scratch? " +
+                "The tagger runs over every image again, which can take a while.");
+            if (!confirm) return;
+        }
+
+        var imagePaths = _allMediaItems.Where(i => i.IsImage).Select(i => i.FilePath).ToList();
+        try
+        {
+            await Task.Run(() => _tagIndexService.RemoveIndexEntriesAsync(imagePaths));
+        }
+        catch (Exception ex)
+        {
+            // Bail rather than build: building on top of rows that failed to
+            // clear would silently keep the stale data this command exists to
+            // destroy.
+            Logger.Error(ex, "Failed to clear the tag index before a rebuild");
+            StatusMessage = $"Rebuild failed while clearing the old index: {ex.Message}";
+            return;
+        }
+
+        InvalidateTagSearchCache();
+        await BuildTagIndexAsync();
+    }
+
+    /// <summary>
     /// Pulls the indexed count, the tag cloud and the per-tile tag data back
     /// into sync after a build. Guarded for the same reason the gallery-load
     /// path is: these are DB calls on a table set that may not exist, and

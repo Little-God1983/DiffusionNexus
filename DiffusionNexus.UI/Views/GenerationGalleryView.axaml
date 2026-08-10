@@ -421,6 +421,13 @@
                           IsVisible="{Binding IsIndexingTagIndex}"
                           Padding="10,6"
                           ToolTip.Tip="Stop the running tag index build — images already indexed are kept"/>
+                  <!-- Swaps with Cancel (hidden while a build runs) so the row
+                       never overflows the panel. -->
+                  <Button Content="♻ Rebuild"
+                          Command="{Binding RebuildTagIndexCommand}"
+                          IsVisible="{Binding !IsIndexingTagIndex}"
+                          Padding="10,6"
+                          ToolTip.Tip="Delete the tag index for this gallery and re-tag every image from scratch"/>
                   <Border Background="#1c1c1c" BorderBrush="#3a3a3a" BorderThickness="1" CornerRadius="100"
                           Padding="8,2" VerticalAlignment="Center">
                     <TextBlock Text="{Binding IndexStatusText}" FontSize="11" Foreground="#9a9a9a"/>
