@@ -8,6 +8,8 @@ public sealed record TagIndexBuildProgress(int Completed, int Total, string? Cur
 
 public sealed record TagIndexBuildResult(int Indexed, int Skipped, int Failed, int NsfwCount);
 
+public sealed record ImageTagLookup(bool IsNsfw, IReadOnlyList<string> Tags);
+
 /// <summary>
 /// Builds and queries the searchable local tag index for the Generation
 /// Gallery. Indexing is incremental: a file whose size and last-write time
@@ -60,4 +62,14 @@ public interface ITagIndexService
         CancellationToken cancellationToken = default);
 
     Task<int> GetIndexedCountAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Bulk lookup for gallery tile hydration: NSFW flag + tag names for
+    /// every already-indexed path in <paramref name="filePaths"/>. Paths with
+    /// no index row (never indexed, or since deleted) are simply absent from
+    /// the result — callers should treat a missing key as "not yet tagged."
+    /// </summary>
+    Task<IReadOnlyDictionary<string, ImageTagLookup>> GetTagsForFilesAsync(
+        IReadOnlyList<string> filePaths,
+        CancellationToken cancellationToken = default);
 }

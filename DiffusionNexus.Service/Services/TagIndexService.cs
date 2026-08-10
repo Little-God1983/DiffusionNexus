@@ -364,6 +364,29 @@ public sealed class TagIndexService : ITagIndexService
         return await context.ImageMediaTagIndexes.CountAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyDictionary<string, ImageTagLookup>> GetTagsForFilesAsync(
+        IReadOnlyList<string> filePaths,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(filePaths);
+        if (filePaths.Count == 0)
+            return new Dictionary<string, ImageTagLookup>();
+
+        var normalizedPaths = filePaths.Select(Path.GetFullPath).ToList();
+
+        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
+        var rows = await context.ImageMediaTagIndexes
+            .Where(e => normalizedPaths.Contains(e.FilePath))
+            .Include(e => e.TagAssignments).ThenInclude(a => a.ImageTag)
+            .ToListAsync(cancellationToken);
+
+        return rows.ToDictionary(
+            e => e.FilePath,
+            e => new ImageTagLookup(e.IsNsfw, e.TagAssignments.Select(a => a.ImageTag!.Name).ToList()),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
     private static (byte[] Data, int Width, int Height) LoadImagePixels(string path)
     {
         using var image = Image.Load<Rgba32>(path);

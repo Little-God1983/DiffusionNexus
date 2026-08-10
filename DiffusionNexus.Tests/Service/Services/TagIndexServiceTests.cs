@@ -605,4 +605,45 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
         cloud.Select(t => t.Count).Should().BeEquivalentTo(new[] { 3, 2, 1 }, options => options.WithStrictOrdering());
         cloud.Should().NotContain(t => t.Name == "gamma", "a tag with zero assignments is excluded, not shown at zero");
     }
+
+    // ---- GetTagsForFilesAsync: bulk tile hydration ------------------------
+
+    [Fact]
+    public async Task GetTagsForFilesAsync_ReturnsNsfwFlagAndTagsKeyedByNormalizedPath()
+    {
+        var path = CreateFakeImage("lookup.png");
+        var tagging = new Mock<IImageTaggingService>();
+        // Brief's original test omitted this stub. Without it Moq's
+        // unconfigured GetModelStatus() returns default(ModelStatus), which
+        // is NotDownloaded (the first enum member, = 0) — sending
+        // BuildIndexAsync down the model-download gate, where the also-
+        // unstubbed DownloadModelAsync() returns Moq's built-in Task<bool>
+        // default (false), so the build bails out with everything Failed and
+        // no row is ever written. Confirmed empirically: the test failed with
+        // KeyNotFoundException before this stub was added. Every other test
+        // in this file sets this up explicitly; this one follows suit.
+        tagging.Setup(t => t.GetModelStatus()).Returns(ModelStatus.Ready);
+        tagging.Setup(t => t.TagImageAsync(It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ImageTagResult.Succeeded(
+                new[] { new ImageTagScore("dog", 0.9f), new ImageTagScore("outdoor", 0.6f) },
+                "explicit", 0.7f, isNsfw: true));
+        var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
+        await service.BuildIndexAsync(new[] { path });
+
+        var lookup = await service.GetTagsForFilesAsync(new[] { path });
+
+        var entry = lookup[Path.GetFullPath(path)];
+        entry.IsNsfw.Should().BeTrue();
+        entry.Tags.Should().BeEquivalentTo(new[] { "dog", "outdoor" });
+    }
+
+    [Fact]
+    public async Task GetTagsForFilesAsync_OmitsUnindexedPaths()
+    {
+        var service = new TagIndexService(new SingleDbContextFactory(_options), new Mock<IImageTaggingService>().Object);
+
+        var lookup = await service.GetTagsForFilesAsync(new[] { @"C:\never\indexed.png" });
+
+        lookup.Should().BeEmpty();
+    }
 }
