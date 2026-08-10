@@ -1024,6 +1024,44 @@ public class GenerationGalleryViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task WhenTagMatchesAreHiddenByTheDateFilter_TheEmptyStateNamesTheCulprit()
+    {
+        // Field-diagnosed: 331 images matched the tag, the grid showed zero,
+        // and nothing on screen said why — the default "Last 3 Months" date
+        // window was quietly excluding every match (a partially built index
+        // covers the oldest files first, exactly what a recent-only window
+        // hides). The empty state must name the culprit and the fix.
+        var galleryPath = CreateTempDirectory();
+        var oldImage = Path.Combine(galleryPath, "old.png");
+        File.WriteAllText(oldImage, "test");
+        File.SetCreationTimeUtc(oldImage, DateTime.UtcNow.AddYears(-1));
+
+        var mockTagIndex = new Mock<ITagIndexService>();
+        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(1);
+        mockTagIndex.Setup(t => t.GetTagsForFilesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, ImageTagLookup>());
+        mockTagIndex.Setup(t => t.SearchAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<NsfwFilterMode>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { oldImage });
+
+        var viewModel = CreateGalleryViewModel(galleryPath, mockTagIndex.Object);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+
+        viewModel.SelectedDateFilter.Should().Be("Last 3 Months", "precondition: the default window hides year-old files");
+
+        viewModel.ToggleTagFilterCommand.Execute("dog");
+        await viewModel.WaitForSortingAsync();
+
+        viewModel.MediaItems.Should().BeEmpty();
+        viewModel.NoMediaMessage.Should().Contain("date filter")
+            .And.Contain("Last 3 Months")
+            .And.Contain("All Time", "the message must hand the user the fix, not just the diagnosis");
+
+        viewModel.SelectedDateFilter = "All Time";
+        await viewModel.WaitForSortingAsync();
+        viewModel.MediaItems.Should().ContainSingle("widening the window reveals the match, proving the diagnosis");
+    }
+
+    [Fact]
     public async Task RebuildTagIndexCommand_ClearsTheIndex_ThenRunsAFullBuild()
     {
         // The incremental build skips unchanged files forever, so a row
