@@ -1069,6 +1069,69 @@ public class GenerationGalleryViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task HiddenIndicator_AppearsWheneverAnyFilterHidesImages()
+    {
+        // User requirement, verbatim: "I want a warning whenever something is
+        // hidden." Not just toolbar-vs-tag interactions — Hide NSFW on its
+        // own, with All Time and no chips, must announce what it swallowed.
+        var galleryPath = CreateTempDirectory();
+        var sfwImage = Path.Combine(galleryPath, "sfw.png");
+        var nsfwImage = Path.Combine(galleryPath, "nsfw.png");
+        File.WriteAllText(sfwImage, "test");
+        File.WriteAllText(nsfwImage, "test");
+
+        var mockTagIndex = new Mock<ITagIndexService>();
+        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(2);
+        mockTagIndex.Setup(t => t.GetTagsForFilesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, ImageTagLookup>());
+        mockTagIndex.Setup(t => t.SearchAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<NsfwFilterMode>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { nsfwImage });
+
+        var viewModel = CreateGalleryViewModel(galleryPath, mockTagIndex.Object);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+
+        viewModel.SelectedDateFilter = "All Time";
+        await viewModel.WaitForSortingAsync();
+        viewModel.HasHiddenTagMatches.Should().BeFalse("nothing narrows the gallery yet");
+
+        viewModel.SetNsfwFilterCommand.Execute(nameof(NsfwFilterMode.HideNsfw));
+        await viewModel.WaitForSortingAsync();
+
+        viewModel.MediaItems.Should().ContainSingle();
+        viewModel.HasHiddenTagMatches.Should().BeTrue("Hide NSFW swallowed an image and must say so");
+        viewModel.HiddenTagMatchesText.Should().Contain("1").And.Contain("NSFW");
+    }
+
+    [Fact]
+    public async Task HiddenIndicator_AppearsForTheDateWindowAlone_WithoutAnyDrawerFilter()
+    {
+        // The other half of "whenever something is hidden": a time constraint
+        // with Show all and no chips still hides files — say so.
+        var galleryPath = CreateTempDirectory();
+        var oldImage = Path.Combine(galleryPath, "old.png");
+        var newImage = Path.Combine(galleryPath, "new.png");
+        File.WriteAllText(oldImage, "test");
+        File.WriteAllText(newImage, "test");
+        File.SetCreationTimeUtc(oldImage, DateTime.UtcNow.AddYears(-1));
+
+        var mockTagIndex = new Mock<ITagIndexService>();
+        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(0);
+
+        var viewModel = CreateGalleryViewModel(galleryPath, mockTagIndex.Object);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+        await viewModel.WaitForSortingAsync();
+
+        viewModel.SelectedDateFilter.Should().Be("Last 3 Months");
+        viewModel.MediaItems.Should().ContainSingle("the year-old file is outside the window");
+        viewModel.HasHiddenTagMatches.Should().BeTrue();
+        viewModel.HiddenTagMatchesText.Should().Contain("1").And.Contain("Last 3 Months");
+
+        viewModel.SelectedDateFilter = "All Time";
+        await viewModel.WaitForSortingAsync();
+        viewModel.HasHiddenTagMatches.Should().BeFalse("nothing is hidden any more");
+    }
+
+    [Fact]
     public async Task TagCloudChips_ShowScopedCounts_WhenTheDateFilterHidesCarriers()
     {
         // "1girl (55)" clicking into an empty grid was a lie: the chip count
