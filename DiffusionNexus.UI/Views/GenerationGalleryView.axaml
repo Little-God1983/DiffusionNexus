@@ -319,15 +319,19 @@
       </WrapPanel>
     </Border>
 
-    <Grid Grid.Row="3">
-      <Border IsVisible="{Binding IsBusy}" Background="#80000000" ZIndex="100">
+    <!-- Two columns: gallery content | docked Advanced Search panel. The
+         panel is docked, not a modal overlay — filtering and browsing are
+         one activity, so the gallery must stay scrollable and clickable
+         while the panel is open (the old dim backdrop blocked it). -->
+    <Grid Grid.Row="3" ColumnDefinitions="*,Auto">
+      <Border Grid.Column="0" IsVisible="{Binding IsBusy}" Background="#80000000" ZIndex="100">
         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
           <ProgressBar IsIndeterminate="True" Width="200"/>
           <TextBlock Text="{Binding BusyMessage}" Foreground="White" HorizontalAlignment="Center"/>
         </StackPanel>
       </Border>
 
-      <Border IsVisible="{Binding HasNoMedia}"
+      <Border Grid.Column="0" IsVisible="{Binding HasNoMedia}"
               Background="#1A1A1A" CornerRadius="8" Margin="16" Padding="32"
               HorizontalAlignment="Center" VerticalAlignment="Center">
         <StackPanel Spacing="16" HorizontalAlignment="Center">
@@ -343,7 +347,7 @@
         </StackPanel>
       </Border>
 
-      <ScrollViewer x:Name="GalleryScrollViewer" IsVisible="{Binding HasMedia}" Padding="16">
+      <ScrollViewer Grid.Column="0" x:Name="GalleryScrollViewer" IsVisible="{Binding HasMedia}" Padding="16">
         <Grid>
           <ItemsControl ItemsSource="{Binding GroupedMediaItems}" IsVisible="{Binding IsGroupingEnabled}">
             <ItemsControl.ItemsPanel>
@@ -384,17 +388,12 @@
         </Grid>
       </ScrollViewer>
 
-      <Border IsVisible="{Binding IsAdvancedSearchOpen}"
-              Background="#66000000" ZIndex="90"
-              Tapped="OnAdvancedSearchBackdropTapped"/>
-
-      <!-- ZIndex above the busy overlay (100): the drawer now hosts the
-           build's Cancel button, which must stay clickable while the busy
-           dim is up — that is the only time it exists. -->
-      <Border IsVisible="{Binding IsAdvancedSearchOpen}"
-              Width="420" HorizontalAlignment="Right"
-              Background="#1a1a1c" BorderBrush="#6a4fb3" BorderThickness="1,0,0,0"
-              ZIndex="110">
+      <!-- Docked in its own column: the busy overlay dims only the content
+           column, so the build's Cancel button in here stays clickable while
+           the busy dim is up — the only time it exists. -->
+      <Border Grid.Column="1" IsVisible="{Binding IsAdvancedSearchOpen}"
+              Width="420"
+              Background="#1a1a1c" BorderBrush="#6a4fb3" BorderThickness="1,0,0,0">
         <Grid RowDefinitions="Auto,*,Auto">
           <Border Grid.Row="0" Padding="16,14" BorderBrush="#333" BorderThickness="0,0,0,1">
             <Grid ColumnDefinitions="*,Auto">
