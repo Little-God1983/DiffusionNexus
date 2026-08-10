@@ -83,6 +83,16 @@ public interface ITagIndexService
     Task<int> GetIndexedCountAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Counts how many of the supplied paths have an index row. Unlike the
+    /// parameterless overload this is scoped to the caller's file set, so a
+    /// "N / M indexed" display stays honest when index rows exist for gallery
+    /// folders that are currently disabled.
+    /// </summary>
+    Task<int> GetIndexedCountAsync(
+        IReadOnlyList<string> filePaths,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Bulk lookup for gallery tile hydration: NSFW flag + tag names for
     /// every already-indexed path in <paramref name="filePaths"/>. Paths with
     /// no index row (never indexed, or since deleted) are simply absent from

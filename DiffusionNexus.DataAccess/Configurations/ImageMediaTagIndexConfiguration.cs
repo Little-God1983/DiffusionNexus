@@ -21,6 +21,11 @@ internal sealed class ImageMediaTagIndexConfiguration : IEntityTypeConfiguration
         // de-duplicates its input case-insensitively, so this keeps the DB and
         // the in-memory side of the indexer on the same definition of "same
         // file".
+        // TODO: Linux Implementation — on case-sensitive filesystems
+        // /gallery/a.png and /gallery/A.PNG are distinct files that this
+        // NOCASE unique index would collapse into one row; a Linux port needs
+        // a per-platform collation choice (and the matching comparer in
+        // TagIndexService).
         entity.Property(e => e.FilePath).IsRequired().HasMaxLength(1000).UseCollation("NOCASE");
         entity.Property(e => e.RatingLabel).IsRequired().HasMaxLength(50);
     }

@@ -291,34 +291,40 @@ public sealed class OnnxModelManager
 
         try
         {
-            // Wrap progress to suppress "Download complete" until both files are done
-            var wrappedProgress = new Wd14ProgressWrapper(progress);
-
-            // Check model file separately — if it's already valid, skip re-downloading
+            // Decide the download plan up front so the progress wrapper knows
+            // which file is the final one in EVERY combination. The previous
+            // shape marked "final" only on the tags branch, so a model-only
+            // redownload (corrupted .onnx, intact CSV) suppressed the terminal
+            // "Download complete" report and parked the UI at ~99% forever.
             var modelNeedsDownload = !IsWd14ModelFileValid();
+            var tagsNeedsDownload = !IsWd14TagsFileValid();
+
+            var plannedBytes = (modelNeedsDownload ? ExpectedWd14TaggerSizeBytes : 0)
+                             + (tagsNeedsDownload ? ExpectedWd14TaggerTagsSizeBytes : 0);
+            var wrappedProgress = new Wd14ProgressWrapper(progress, plannedBytes);
 
             if (modelNeedsDownload)
             {
+                wrappedProgress.BeginFile(ExpectedWd14TaggerSizeBytes, isFinal: !tagsNeedsDownload);
                 var modelOk = await DownloadModelInternalAsync(
                     Wd14TaggerModelUrl, Wd14TaggerModelPath, ExpectedWd14TaggerSizeBytes,
                     "WD14 Tagger", wrappedProgress, cancellationToken);
 
                 if (!modelOk)
                     return false;
+                wrappedProgress.CompleteFile();
             }
-
-            // Check tags file separately — if it's already valid, skip re-downloading
-            var tagsNeedsDownload = !IsWd14TagsFileValid();
 
             if (tagsNeedsDownload)
             {
-                wrappedProgress.SetFinalFile(); // Allow "Download complete" for the final file
+                wrappedProgress.BeginFile(ExpectedWd14TaggerTagsSizeBytes, isFinal: true);
                 var tagsOk = await DownloadModelInternalAsync(
                     Wd14TaggerTagsUrl, Wd14TaggerTagsPath, ExpectedWd14TaggerTagsSizeBytes,
                     "WD14 Tagger tag list", wrappedProgress, cancellationToken);
 
                 if (!tagsOk)
                     return false;
+                wrappedProgress.CompleteFile();
             }
 
             // Validate both files are correctly sized before returning success
@@ -340,49 +346,53 @@ public sealed class OnnxModelManager
     }
 
     /// <summary>
-    /// Wrapper around IProgress to weight combined progress across two files and suppress "Download complete" until final.
-    /// Maps the two sequential 0-100% downloads into a single continuous 0-100% progress report.
+    /// Maps sequential per-file 0-100% downloads onto one continuous progress
+    /// report over the bytes actually planned for this run, and suppresses
+    /// "Download complete" for every file except the last one. Callers declare
+    /// each file via <see cref="BeginFile"/> and account for it with
+    /// <see cref="CompleteFile"/>, so the arithmetic is a plain byte offset
+    /// with no per-combination special cases.
     /// </summary>
     private sealed class Wd14ProgressWrapper : IProgress<ModelDownloadProgress>
     {
         private readonly IProgress<ModelDownloadProgress>? _inner;
+        private readonly long _plannedTotalBytes;
+        private long _completedBytes;
+        private long _currentFileBytes;
         private bool _isFinalFile;
 
-        public Wd14ProgressWrapper(IProgress<ModelDownloadProgress>? inner) => _inner = inner;
+        public Wd14ProgressWrapper(IProgress<ModelDownloadProgress>? inner, long plannedTotalBytes)
+        {
+            _inner = inner;
+            _plannedTotalBytes = plannedTotalBytes;
+        }
 
-        public void SetFinalFile() => _isFinalFile = true;
+        public void BeginFile(long expectedBytes, bool isFinal)
+        {
+            _currentFileBytes = expectedBytes;
+            _isFinalFile = isFinal;
+        }
+
+        public void CompleteFile() => _completedBytes += _currentFileBytes;
 
         public void Report(ModelDownloadProgress value)
         {
-            // Weight progress: first file progress contributes to first ~99.9% (model is ~379MB, tags are ~308KB)
-            // Second file completes the remaining ~0.1%
-            var combinedTotal = ExpectedWd14TaggerSizeBytes + ExpectedWd14TaggerTagsSizeBytes;
+            // DownloadModelInternalAsync always supplies a positive TotalBytes
+            // (Content-Length, or the expected size when the server omits it),
+            // but a progress transform must not be able to divide by zero.
+            var scaled = value.TotalBytes > 0
+                ? (value.BytesDownloaded * _currentFileBytes) / value.TotalBytes
+                : 0;
+            var adjustedBytes = _completedBytes + scaled;
 
-            long adjustedBytes;
-
-            if (!_isFinalFile)
-            {
-                // First file: map its 0-100% to 0-~99.9% of the combined total
-                // Progress = (downloaded / total) * modelSize, within the combined scale
-                adjustedBytes = (value.BytesDownloaded * ExpectedWd14TaggerSizeBytes) / value.TotalBytes;
-            }
-            else
-            {
-                // Second file: starts after model, so offset + scale tags progress
-                // Progress = modelSize + (downloaded / total) * tagsSize
-                adjustedBytes = ExpectedWd14TaggerSizeBytes +
-                               (value.BytesDownloaded * ExpectedWd14TaggerTagsSizeBytes) / value.TotalBytes;
-            }
-
-            // Suppress "Download complete" status until the final file
             var status = value.Status;
-            if (!_isFinalFile && value.Status == "Download complete")
+            if (!_isFinalFile && status == "Download complete")
             {
-                // Continue reporting progress without "complete" message
-                status = $"Downloading... {adjustedBytes / 1024 / 1024}MB / {combinedTotal / 1024 / 1024}MB";
+                // A non-final file finishing is not "complete" for the run.
+                status = $"Downloading... {adjustedBytes / 1024 / 1024}MB / {_plannedTotalBytes / 1024 / 1024}MB";
             }
 
-            _inner?.Report(new ModelDownloadProgress(adjustedBytes, combinedTotal, status));
+            _inner?.Report(new ModelDownloadProgress(adjustedBytes, _plannedTotalBytes, status));
         }
     }
 

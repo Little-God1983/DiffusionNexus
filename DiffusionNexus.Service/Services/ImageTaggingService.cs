@@ -179,42 +179,54 @@ public sealed class ImageTaggingService : IImageTaggingService
 
         if (!_disableGpu)
         {
+            InferenceSession? session = null;
             try
             {
-                var dmlOptions = new SessionOptions();
+                using var dmlOptions = new SessionOptions();
                 dmlOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_BASIC;
                 dmlOptions.ExecutionMode = ExecutionMode.ORT_SEQUENTIAL;
                 dmlOptions.EnableMemoryPattern = false;
                 dmlOptions.EnableCpuMemArena = false;
+                // TODO: Linux Implementation — DirectML is Windows-only; a Linux
+                // port needs CUDA/ROCm providers here (the CPU fallback below
+                // already keeps this path non-fatal on other platforms).
                 dmlOptions.AppendExecutionProvider_DML(0);
                 dmlOptions.AppendExecutionProvider_CPU(0);
 
-                var session = new InferenceSession(modelPath, dmlOptions);
-                _isGpuAvailable = true;
+                session = new InferenceSession(modelPath, dmlOptions);
                 DiscoverModelShape(session);
+                _isGpuAvailable = true;
                 Log.Information("WD14 tagger ONNX session created with GPU (DirectML) acceleration");
                 return session;
             }
             catch (Exception ex)
             {
+                // Dispose on the shape-discovery throw path too — a session that
+                // constructed fine but reported an unusable input shape would
+                // otherwise leak its native model memory on every retry.
+                session?.Dispose();
                 Log.Warning(ex, "DirectML not available or failed to initialize, falling back to CPU");
             }
         }
 
-        try
         {
-            var cpuOptions = new SessionOptions();
-            cpuOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
-            var session = new InferenceSession(modelPath, cpuOptions);
-            _isGpuAvailable = false;
-            DiscoverModelShape(session);
-            Log.Information("WD14 tagger ONNX session created with CPU execution");
-            return session;
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Failed to create WD14 tagger ONNX session");
-            return null;
+            InferenceSession? session = null;
+            try
+            {
+                using var cpuOptions = new SessionOptions();
+                cpuOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
+                session = new InferenceSession(modelPath, cpuOptions);
+                DiscoverModelShape(session);
+                _isGpuAvailable = false;
+                Log.Information("WD14 tagger ONNX session created with CPU execution");
+                return session;
+            }
+            catch (Exception ex)
+            {
+                session?.Dispose();
+                Log.Error(ex, "Failed to create WD14 tagger ONNX session");
+                return null;
+            }
         }
     }
 
@@ -240,15 +252,14 @@ public sealed class ImageTaggingService : IImageTaggingService
     }
 
     public async Task<ImageTagResult> TagImageAsync(
-        byte[] imageData,
-        int width,
-        int height,
+        string imagePath,
         float tagConfidenceThreshold = 0.35f,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(imageData);
-        if (width <= 0 || height <= 0)
-            return ImageTagResult.Failed("Invalid image dimensions");
+        ArgumentException.ThrowIfNullOrWhiteSpace(imagePath);
+
+        if (_disposed)
+            return ImageTagResult.Failed("Service is disposed");
 
         if (_isProcessing)
             return ImageTagResult.Failed("Service is already processing an image");
@@ -259,7 +270,7 @@ public sealed class ImageTaggingService : IImageTaggingService
         _isProcessing = true;
         try
         {
-            return await Task.Run(() => ProcessImage(imageData, width, height, tagConfidenceThreshold, cancellationToken), cancellationToken);
+            return await Task.Run(() => ProcessImage(imagePath, tagConfidenceThreshold, cancellationToken), cancellationToken);
         }
         catch (OnnxRuntimeException ex) when (_isGpuAvailable && !_disableGpu)
         {
@@ -282,7 +293,7 @@ public sealed class ImageTaggingService : IImageTaggingService
             {
                 try
                 {
-                    return await Task.Run(() => ProcessImage(imageData, width, height, tagConfidenceThreshold, cancellationToken), cancellationToken);
+                    return await Task.Run(() => ProcessImage(imagePath, tagConfidenceThreshold, cancellationToken), cancellationToken);
                 }
                 catch (OperationCanceledException)
                 {
@@ -317,10 +328,16 @@ public sealed class ImageTaggingService : IImageTaggingService
     }
 
     private ImageTagResult ProcessImage(
-        byte[] imageData, int width, int height, float tagConfidenceThreshold, CancellationToken cancellationToken)
+        string imagePath, float tagConfidenceThreshold, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        using var original = Image.LoadPixelData<Rgba32>(imageData, width, height);
+        if (!File.Exists(imagePath))
+            return ImageTagResult.Failed($"Image file not found: {imagePath}");
+
+        // Decode here rather than accepting a caller-supplied pixel buffer: the
+        // model only ever sees a ~448² square, so the decoded full-resolution
+        // image should be the single large allocation on this path.
+        using var original = Image.Load<Rgba32>(imagePath);
         using var prepared = ResizeAndPadToSquare(original, _inputSize);
 
         var inputTensor = PreprocessImage(prepared);
@@ -384,18 +401,24 @@ public sealed class ImageTaggingService : IImageTaggingService
     private DenseTensor<float> PreprocessImage(Image<Rgba32> image)
     {
         var tensor = new DenseTensor<float>([1, _inputSize, _inputSize, 3]);
+        // Write through the contiguous backing buffer: Tensor<T>'s only int
+        // indexer is `this[params int[]]`, which would allocate an int[4] for
+        // every one of the ~600k pixel-channel writes per image.
+        var buffer = tensor.Buffer;
 
         image.ProcessPixelRows(accessor =>
         {
+            var span = buffer.Span;
             for (var y = 0; y < accessor.Height; y++)
             {
                 var row = accessor.GetRowSpan(y);
+                var offset = y * accessor.Width * 3;
                 for (var x = 0; x < accessor.Width; x++)
                 {
                     var pixel = row[x];
-                    tensor[0, y, x, 0] = pixel.B;
-                    tensor[0, y, x, 1] = pixel.G;
-                    tensor[0, y, x, 2] = pixel.R;
+                    span[offset++] = pixel.B;
+                    span[offset++] = pixel.G;
+                    span[offset++] = pixel.R;
                 }
             }
         });

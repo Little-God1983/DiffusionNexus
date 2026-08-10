@@ -124,12 +124,19 @@ public partial class GenerationGalleryMediaItemViewModel : ObservableObject
             if (SetProperty(ref _tags, value))
             {
                 OnPropertyChanged(nameof(TopTags));
+                OnPropertyChanged(nameof(HasTopTags));
             }
         }
     }
 
     /// <summary>The first 3 tags, for the tile's hover strip — keeps the card readable.</summary>
     public IReadOnlyList<string> TopTags => _tags.Count <= 3 ? _tags : _tags.Take(3).ToList();
+
+    /// <summary>
+    /// Gates the tile's tag-strip visuals: an un-indexed gallery shouldn't pay
+    /// three extra visual-tree nodes per tile for a strip that is always empty.
+    /// </summary>
+    public bool HasTopTags => _tags.Count > 0;
 
     /// <summary>
     /// The loaded thumbnail bitmap. Loads asynchronously on first access.

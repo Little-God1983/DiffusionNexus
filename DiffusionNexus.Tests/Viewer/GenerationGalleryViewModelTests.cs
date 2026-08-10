@@ -652,7 +652,7 @@ public class GenerationGalleryViewModelTests : IDisposable
         var mockTagIndex = new Mock<ITagIndexService>();
         mockTagIndex.Setup(t => t.BuildIndexAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<IProgress<TagIndexBuildProgress>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TagIndexBuildResult(Indexed: 2, Skipped: 0, Failed: 0, NsfwCount: 0));
-        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<CancellationToken>())).ReturnsAsync(2);
+        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(2);
         mockTagIndex.Setup(t => t.GetTagCloudAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { new TagFrequency("dog", 2) });
         mockTagIndex.Setup(t => t.GetTagsForFilesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
@@ -712,7 +712,7 @@ public class GenerationGalleryViewModelTests : IDisposable
         var mockEventAggregator = new Mock<IDatasetEventAggregator>();
         var mockDatasetState = new Mock<IDatasetState>();
         var mockTagIndex = new Mock<ITagIndexService>();
-        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<CancellationToken>())).ReturnsAsync(0);
+        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(0);
         mockTagIndex.Setup(t => t.GetTagsForFilesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Dictionary<string, ImageTagLookup>());
         mockTagIndex.Setup(t => t.SearchAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<NsfwFilterMode>(), It.IsAny<CancellationToken>()))
@@ -758,7 +758,7 @@ public class GenerationGalleryViewModelTests : IDisposable
         // SearchAsync genuinely changes its answer across the two passes.
         IReadOnlyList<string> indexedPaths = Array.Empty<string>();
         var mockTagIndex = new Mock<ITagIndexService>();
-        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<CancellationToken>()))
+        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => indexedPaths.Count);
         mockTagIndex.Setup(t => t.GetTagsForFilesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Dictionary<string, ImageTagLookup>());
@@ -845,7 +845,7 @@ public class GenerationGalleryViewModelTests : IDisposable
             .ReturnsAsync(settings);
 
         var mockTagIndex = new Mock<ITagIndexService>();
-        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<CancellationToken>())).ReturnsAsync(0);
+        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(0);
         mockTagIndex.Setup(t => t.SearchAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<NsfwFilterMode>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<string>());
 
@@ -859,11 +859,18 @@ public class GenerationGalleryViewModelTests : IDisposable
         await viewModel.LoadMediaCommand.ExecuteAsync(null);
         viewModel.MediaItems.Should().ContainSingle();
 
-        // HideNsfw only matches rows that are already in the tag index, so an
-        // unindexed gallery empties out completely. That is the intended,
-        // conservative behavior — the message just has to say so instead of
-        // sending the user off to reconfigure folders that are perfectly fine.
+        // Hide NSFW works on the KNOWN-NSFW set. With nothing indexed that
+        // set is empty, so nothing is hidden — an unindexed file is "not
+        // known NSFW", not "excluded from the universe" (blanking the whole
+        // gallery here was a bug).
         viewModel.SetNsfwFilterCommand.Execute(nameof(NsfwFilterMode.HideNsfw));
+        await viewModel.WaitForSortingAsync();
+        viewModel.MediaItems.Should().ContainSingle("Hide NSFW must not hide images that were never indexed");
+
+        // NSFW-only inverts that: only known-NSFW files match, and nothing is
+        // known — the grid empties, and the message must blame the filter,
+        // not the folder configuration.
+        viewModel.SetNsfwFilterCommand.Execute(nameof(NsfwFilterMode.NsfwOnly));
         await viewModel.WaitForSortingAsync();
 
         viewModel.HasNoMedia.Should().BeTrue();
@@ -896,7 +903,7 @@ public class GenerationGalleryViewModelTests : IDisposable
             .ReturnsAsync(settings);
 
         var mockTagIndex = new Mock<ITagIndexService>();
-        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<CancellationToken>())).ReturnsAsync(0);
+        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(0);
         mockTagIndex.Setup(t => t.GetTagsForFilesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Dictionary<string, ImageTagLookup>());
 
@@ -910,7 +917,7 @@ public class GenerationGalleryViewModelTests : IDisposable
         await viewModel.LoadMediaCommand.ExecuteAsync(null);
 
         viewModel.IndexedImageCount.Should().Be(0);
-        mockTagIndex.Verify(t => t.GetIndexedCountAsync(It.IsAny<CancellationToken>()), Times.Once,
+        mockTagIndex.Verify(t => t.GetIndexedCountAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()), Times.Once,
             "the status pill still needs the count refresh");
         mockTagIndex.Verify(t => t.GetTagsForFilesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -933,7 +940,7 @@ public class GenerationGalleryViewModelTests : IDisposable
             .ReturnsAsync(settings);
 
         var mockTagIndex = new Mock<ITagIndexService>();
-        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
+        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(1);
         mockTagIndex.Setup(t => t.GetTagsForFilesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Dictionary<string, ImageTagLookup>(StringComparer.OrdinalIgnoreCase)
             {
@@ -1086,7 +1093,7 @@ public class GenerationGalleryViewModelTests : IDisposable
         File.WriteAllText(Path.Combine(galleryPath, "a.png"), "test");
 
         var mockTagIndex = new Mock<ITagIndexService>();
-        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<CancellationToken>()))
+        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("SQLite Error 1: 'no such table: ImageMediaTagIndexes'."));
 
         var viewModel = CreateGalleryViewModel(galleryPath, mockTagIndex.Object);
@@ -1108,7 +1115,7 @@ public class GenerationGalleryViewModelTests : IDisposable
         File.WriteAllText(Path.Combine(galleryPath, "a.png"), "test");
 
         var mockTagIndex = new Mock<ITagIndexService>();
-        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<CancellationToken>())).ReturnsAsync(7);
+        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(7);
         mockTagIndex.Setup(t => t.GetTagsForFilesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("SQLite Error 1: 'no such table: ImageMediaTagAssignments'."));
 
@@ -1122,17 +1129,19 @@ public class GenerationGalleryViewModelTests : IDisposable
     }
 
     [Fact]
-    public async Task ApplySortingAndGrouping_WhenTagSearchThrows_KeepsTheGalleryPopulated()
+    public async Task ApplySortingAndGrouping_WhenTagSearchThrows_FailsClosedWithAStatusMessage()
     {
         // This one runs from property setters and fire-and-forget
         // continuations, so a fault does not even have a command to surface
-        // through. A tag filter that cannot be resolved degrades to "no tag
-        // filter" instead of taking the gallery with it.
+        // through. It must not crash — but it must not fail OPEN either: a
+        // content filter the user believes is active silently showing
+        // everything (e.g. NSFW images during screen-sharing) is worse than
+        // an empty grid. The pipeline hides results and says why.
         var galleryPath = CreateTempDirectory();
         File.WriteAllText(Path.Combine(galleryPath, "a.png"), "test");
 
         var mockTagIndex = new Mock<ITagIndexService>();
-        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
+        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(1);
         mockTagIndex.Setup(t => t.GetTagsForFilesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Dictionary<string, ImageTagLookup>());
         mockTagIndex.Setup(t => t.SearchAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<NsfwFilterMode>(), It.IsAny<CancellationToken>()))
@@ -1145,7 +1154,8 @@ public class GenerationGalleryViewModelTests : IDisposable
         var act = async () => await viewModel.WaitForSortingAsync();
 
         await act.Should().NotThrowAsync();
-        viewModel.MediaItems.Should().ContainSingle("a DB-errored tag filter is dropped, not applied");
+        viewModel.MediaItems.Should().BeEmpty("a filter that cannot be resolved fails closed rather than showing unfiltered results");
+        viewModel.StatusMessage.Should().NotBeNullOrEmpty("the user must be told the filter is unavailable");
     }
 
     [Fact]
@@ -1259,7 +1269,7 @@ public class GenerationGalleryViewModelTests : IDisposable
 
         var tagging = new Mock<IImageTaggingService>();
         tagging.Setup(t => t.GetModelStatus()).Returns(ModelStatus.Ready);
-        tagging.Setup(t => t.TagImageAsync(It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
+        tagging.Setup(t => t.TagImageAsync(It.IsAny<string>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(ImageTagResult.Succeeded(new[] { new ImageTagScore("dog", 0.9f) }, "general", 0.9f, isNsfw: false));
         var tagIndex = new TagIndexService(new TestDbContextFactory(options), tagging.Object);
         (await tagIndex.BuildIndexAsync(new[] { deleted, kept })).Indexed.Should().Be(2);
@@ -1294,7 +1304,7 @@ public class GenerationGalleryViewModelTests : IDisposable
         File.WriteAllText(Path.Combine(galleryPath, "a.png"), "test");
 
         var mockTagIndex = new Mock<ITagIndexService>();
-        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<CancellationToken>())).ReturnsAsync(5);
+        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(5);
         mockTagIndex.Setup(t => t.GetTagsForFilesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Dictionary<string, ImageTagLookup>());
         mockTagIndex.Setup(t => t.RemoveIndexEntriesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
@@ -1322,7 +1332,7 @@ public class GenerationGalleryViewModelTests : IDisposable
         File.WriteAllText(Path.Combine(galleryPath, "a.png"), "test");
 
         var mockTagIndex = new Mock<ITagIndexService>();
-        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
+        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(1);
         mockTagIndex.Setup(t => t.GetTagsForFilesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Dictionary<string, ImageTagLookup>());
         mockTagIndex.Setup(t => t.RemoveIndexEntriesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
@@ -1349,8 +1359,11 @@ public class GenerationGalleryViewModelTests : IDisposable
         foreach (var path in _tempPaths)
         {
             // Best effort: a test that opened a SQLite file may still be
-            // holding it through the provider's connection pool.
-            try { Directory.Delete(path, true); } catch { /* leave it to the OS */ }
+            // holding it through the provider's connection pool. Narrowed to
+            // the file-in-use/permission cases — a blanket catch would also
+            // hide a real handle leak from ever surfacing.
+            try { Directory.Delete(path, true); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* leave it to the OS */ }
         }
     }
 
@@ -1400,7 +1413,7 @@ public class GenerationGalleryViewModelTests : IDisposable
         mock.Setup(t => t.BuildIndexAsync(
                 It.IsAny<IReadOnlyList<string>>(), It.IsAny<IProgress<TagIndexBuildProgress>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(result);
-        mock.Setup(t => t.GetIndexedCountAsync(It.IsAny<CancellationToken>())).ReturnsAsync(result.Indexed);
+        mock.Setup(t => t.GetIndexedCountAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(result.Indexed);
         mock.Setup(t => t.GetTagCloudAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<TagFrequency>());
         mock.Setup(t => t.GetTagsForFilesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))

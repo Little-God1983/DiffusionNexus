@@ -4,8 +4,6 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
 
 namespace DiffusionNexus.Service.Services;
 
@@ -56,6 +54,10 @@ public sealed class TagIndexService : ITagIndexService
         //    overlapping gallery folders — would stage two inserts for one
         //    unique FilePath and blow up the whole batch on save.
         //  * Normalization here also removes the per-iteration GetFullPath.
+        // TODO: Linux Implementation — case-insensitive path identity (here and
+        // in the NOCASE FilePath collation) assumes Windows path semantics; a
+        // Linux port needs per-platform comparison or distinct files that
+        // differ only by case will collapse into one index row.
         var work = filePaths
             .Where(SupportedMediaTypes.IsImageFile)
             .Select(Path.GetFullPath)
@@ -93,12 +95,7 @@ public sealed class TagIndexService : ITagIndexService
                     async (taskProgress, ct) =>
                     {
                         var fileProgress = new Progress<ModelDownloadProgress>(p =>
-                        {
-                            var percent = p.TotalBytes > 0
-                                ? (int)((double)p.BytesDownloaded / p.TotalBytes * 100.0)
-                                : 0;
-                            taskProgress.Report(new DownloadTaskProgress(percent, p.Status));
-                        });
+                            taskProgress.Report(p.ToDownloadTaskProgress()));
                         return await _taggingService.DownloadModelAsync(fileProgress, ct);
                     },
                     cancellationToken);
@@ -129,6 +126,18 @@ public sealed class TagIndexService : ITagIndexService
         // a clear; references do not.
         var tagIds = await context.ImageTags
             .ToDictionaryAsync(t => t.Name, t => t.Id, StringComparer.OrdinalIgnoreCase, cancellationToken);
+
+        // One up-front metadata snapshot instead of one "already indexed?"
+        // SELECT per file: a no-op re-run over a big, fully indexed gallery
+        // used to pay N round trips just to discover it had nothing to do.
+        // Untracked by design — rows that actually need updating are re-read
+        // tracked below, which also keeps them safe across the tracker-
+        // clearing flushes.
+        var existingMeta = await context.ImageMediaTagIndexes
+            .AsNoTracking()
+            .Select(e => new { e.Id, e.FilePath, e.FileSizeBytes, e.FileLastWriteTimeUtc, e.IsNsfw })
+            .ToListAsync(cancellationToken);
+        var metaByPath = existingMeta.ToDictionary(e => e.FilePath, e => e, StringComparer.OrdinalIgnoreCase);
 
         // Tags first seen inside the chunk currently being staged. Their IDs
         // do not exist until that chunk is saved, so their assignments point
@@ -195,17 +204,22 @@ public sealed class TagIndexService : ITagIndexService
 
                 var fileInfo = new FileInfo(path);
 
-                var existing = await context.ImageMediaTagIndexes
-                    .FirstOrDefaultAsync(e => e.FilePath == path, cancellationToken);
-
-                if (existing is not null
-                    && existing.FileSizeBytes == fileInfo.Length
-                    && existing.FileLastWriteTimeUtc == fileInfo.LastWriteTimeUtc)
+                var meta = metaByPath.GetValueOrDefault(path);
+                if (meta is not null
+                    && meta.FileSizeBytes == fileInfo.Length
+                    && meta.FileLastWriteTimeUtc == fileInfo.LastWriteTimeUtc)
                 {
                     skipped++;
-                    if (existing.IsNsfw) nsfwCount++;
+                    if (meta.IsNsfw) nsfwCount++;
                     continue;
                 }
+
+                // Only files that actually changed pay a tracked read — needed
+                // because the update path below mutates the entity in place.
+                var existing = meta is null
+                    ? null
+                    : await context.ImageMediaTagIndexes
+                        .FirstOrDefaultAsync(e => e.Id == meta.Id, cancellationToken);
 
                 // Everything that can realistically fail for this file happens
                 // BEFORE the context is mutated: decode, classify,
@@ -217,8 +231,7 @@ public sealed class TagIndexService : ITagIndexService
                 // save, stamped with the current size/mtime, and every future
                 // build then saw it as "unchanged" and skipped it forever
                 // while the UI reported it as Failed.
-                var (imageData, width, height) = LoadImagePixels(path);
-                var result = await _taggingService.TagImageAsync(imageData, width, height, cancellationToken: cancellationToken);
+                var result = await _taggingService.TagImageAsync(path, cancellationToken: cancellationToken);
 
                 if (!result.Success || result.RatingLabel is null)
                 {
@@ -313,23 +326,34 @@ public sealed class TagIndexService : ITagIndexService
         await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
 
         // Grouping by a.ImageTag!.Name (join-then-group-by-navigation) does
-        // not translate on the SQLite provider ("could not be translated").
-        // Counting the Assignments collection per ImageTag instead compiles
-        // to a correlated COUNT(*) subquery, which is well-supported. Tags
-        // with zero assignments (all their images were re-indexed with that
-        // tag no longer present) are excluded — the cloud should only show
-        // tags actually carried by at least one indexed image.
-        // Order by the entity's own correlated-count subquery BEFORE
-        // projecting into the TagFrequency record: ordering by a property of
-        // an already-projected `new TagFrequency(...)` re-expands that whole
-        // constructor expression inside ORDER BY, which the SQLite provider
-        // cannot translate.
-        return await context.ImageTags
-            .Where(t => t.Assignments.Any())
-            .OrderByDescending(t => t.Assignments.Count)
-            .Select(t => new TagFrequency(t.Name, t.Assignments.Count))
+        // not translate on the SQLite provider ("could not be translated"),
+        // and counting t.Assignments per ImageTag row costs a correlated
+        // subquery per tag in Where, OrderBy AND Select. Grouping the
+        // assignment table by its scalar FK instead is one grouped aggregate
+        // over the (indexed) assignment table, then one small name lookup for
+        // the ≤maxTags winners. Tags with zero assignments never appear in
+        // the assignment table, so the "only tags actually carried by an
+        // indexed image" rule holds by construction.
+        var top = await context.ImageMediaTagAssignments
+            .GroupBy(a => a.ImageTagId)
+            .Select(g => new { TagId = g.Key, Count = g.Count() })
+            .OrderByDescending(x => x.Count)
             .Take(maxTags)
             .ToListAsync(cancellationToken);
+
+        if (top.Count == 0)
+            return Array.Empty<TagFrequency>();
+
+        var topIds = top.Select(t => t.TagId).ToList();
+        var names = await context.ImageTags
+            .Where(t => topIds.Contains(t.Id))
+            .Select(t => new { t.Id, t.Name })
+            .ToDictionaryAsync(t => t.Id, t => t.Name, cancellationToken);
+
+        return top
+            .Where(t => names.ContainsKey(t.TagId))
+            .Select(t => new TagFrequency(names[t.TagId], t.Count))
+            .ToList();
     }
 
     public async Task<IReadOnlyList<string>> SearchAsync(
@@ -365,6 +389,24 @@ public sealed class TagIndexService : ITagIndexService
     {
         await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
         return await context.ImageMediaTagIndexes.CountAsync(cancellationToken);
+    }
+
+    public async Task<int> GetIndexedCountAsync(
+        IReadOnlyList<string> filePaths,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(filePaths);
+        if (filePaths.Count == 0)
+            return 0;
+
+        var normalizedPaths = filePaths
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        return await context.ImageMediaTagIndexes
+            .CountAsync(e => normalizedPaths.Contains(e.FilePath), cancellationToken);
     }
 
     public async Task<IReadOnlyDictionary<string, ImageTagLookup>> GetTagsForFilesAsync(
@@ -431,11 +473,4 @@ public sealed class TagIndexService : ITagIndexService
             .ExecuteDeleteAsync(cancellationToken);
     }
 
-    private static (byte[] Data, int Width, int Height) LoadImagePixels(string path)
-    {
-        using var image = Image.Load<Rgba32>(path);
-        var pixels = new byte[image.Width * image.Height * 4];
-        image.CopyPixelDataTo(pixels);
-        return (pixels, image.Width, image.Height);
-    }
 }

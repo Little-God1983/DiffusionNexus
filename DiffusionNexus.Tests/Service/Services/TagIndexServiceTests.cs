@@ -122,17 +122,18 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Tagger stub keyed on image width, so each test file gets a
-    /// deterministic result regardless of the order the service processes
-    /// them in. <paramref name="perWidth"/> maps image width to the outcome.
+    /// Tagger stub keyed on image width (read back from the file, since the
+    /// service now hands the tagger a path rather than decoded pixels), so
+    /// each test file gets a deterministic result regardless of the order the
+    /// service processes them in. <paramref name="perWidth"/> maps image
+    /// width to the outcome.
     /// </summary>
     private static Mock<IImageTaggingService> TaggerByWidth(Func<int, ImageTagResult> perWidth)
     {
         var tagging = new Mock<IImageTaggingService>();
         tagging.Setup(t => t.GetModelStatus()).Returns(ModelStatus.Ready);
-        tagging.Setup(t => t.TagImageAsync(
-                It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((byte[] _, int w, int _, float _, CancellationToken _) => perWidth(w));
+        tagging.Setup(t => t.TagImageAsync(It.IsAny<string>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string path, float _, CancellationToken _) => perWidth(Image.Identify(path).Width));
         return tagging;
     }
 
@@ -142,7 +143,7 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
         var path = CreateFakeImage("a.png");
         var tagging = new Mock<IImageTaggingService>();
         tagging.Setup(t => t.GetModelStatus()).Returns(ModelStatus.Ready);
-        tagging.Setup(t => t.TagImageAsync(It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
+        tagging.Setup(t => t.TagImageAsync(It.IsAny<string>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(ImageTagResult.Succeeded(
                 new[] { new ImageTagScore("dog", 0.9f), new ImageTagScore("outdoor", 0.6f) },
                 "general", 0.8f, isNsfw: false));
@@ -163,7 +164,7 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
         var path = CreateFakeImage("b.png");
         var tagging = new Mock<IImageTaggingService>();
         tagging.Setup(t => t.GetModelStatus()).Returns(ModelStatus.Ready);
-        tagging.Setup(t => t.TagImageAsync(It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
+        tagging.Setup(t => t.TagImageAsync(It.IsAny<string>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(ImageTagResult.Succeeded(Array.Empty<ImageTagScore>(), "general", 0.9f, isNsfw: false));
         var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
 
@@ -172,7 +173,7 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
 
         second.Indexed.Should().Be(0);
         second.Skipped.Should().Be(1);
-        tagging.Verify(t => t.TagImageAsync(It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()), Times.Once);
+        tagging.Verify(t => t.TagImageAsync(It.IsAny<string>(), It.IsAny<float>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -182,7 +183,7 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
         var pathB = CreateFakeImage("dog-only.png");
         var tagging = new Mock<IImageTaggingService>();
         tagging.Setup(t => t.GetModelStatus()).Returns(ModelStatus.Ready);
-        tagging.SetupSequence(t => t.TagImageAsync(It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
+        tagging.SetupSequence(t => t.TagImageAsync(It.IsAny<string>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(ImageTagResult.Succeeded(new[] { new ImageTagScore("dog", 0.9f), new ImageTagScore("outdoor", 0.8f) }, "general", 0.9f, false))
             .ReturnsAsync(ImageTagResult.Succeeded(new[] { new ImageTagScore("dog", 0.9f) }, "general", 0.9f, false));
         var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
@@ -200,7 +201,7 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
         var pathB = CreateFakeImage("flagged.png");
         var tagging = new Mock<IImageTaggingService>();
         tagging.Setup(t => t.GetModelStatus()).Returns(ModelStatus.Ready);
-        tagging.SetupSequence(t => t.TagImageAsync(It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
+        tagging.SetupSequence(t => t.TagImageAsync(It.IsAny<string>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(ImageTagResult.Succeeded(Array.Empty<ImageTagScore>(), "general", 0.9f, isNsfw: false))
             .ReturnsAsync(ImageTagResult.Succeeded(Array.Empty<ImageTagScore>(), "explicit", 0.9f, isNsfw: true));
         var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
@@ -217,7 +218,7 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
         var path = CreateFakeImage("c.png");
         var tagging = new Mock<IImageTaggingService>();
         tagging.Setup(t => t.GetModelStatus()).Returns(ModelStatus.Ready);
-        tagging.Setup(t => t.TagImageAsync(It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
+        tagging.Setup(t => t.TagImageAsync(It.IsAny<string>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(ImageTagResult.Succeeded(Array.Empty<ImageTagScore>(), "general", 0.9f, false));
         var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
 
@@ -238,7 +239,7 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
         var path = CreateFakeImage("g.png");
         var tagging = new Mock<IImageTaggingService>();
         tagging.Setup(t => t.GetModelStatus()).Returns(ModelStatus.Ready);
-        tagging.SetupSequence(t => t.TagImageAsync(It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
+        tagging.SetupSequence(t => t.TagImageAsync(It.IsAny<string>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(ImageTagResult.Succeeded(new[] { new ImageTagScore("dog", 0.9f), new ImageTagScore("outdoor", 0.7f) }, "general", 0.9f, false))
             .ReturnsAsync(ImageTagResult.Succeeded(new[] { new ImageTagScore("dog", 0.95f), new ImageTagScore("cat", 0.5f) }, "general", 0.9f, false));
         var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
@@ -275,7 +276,7 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
             .Callback<IProgress<ModelDownloadProgress>?, CancellationToken>((p, _) =>
                 p?.Report(new ModelDownloadProgress(100, 100, "Download complete")))
             .ReturnsAsync(true);
-        tagging.Setup(t => t.TagImageAsync(It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
+        tagging.Setup(t => t.TagImageAsync(It.IsAny<string>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(ImageTagResult.Succeeded(Array.Empty<ImageTagScore>(), "general", 0.9f, false));
 
         var coordinator = new Mock<IDownloadCoordinator>();
@@ -305,7 +306,7 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
         var path = CreateFakeImage("e.png");
         var tagging = new Mock<IImageTaggingService>();
         tagging.Setup(t => t.GetModelStatus()).Returns(ModelStatus.Ready);
-        tagging.Setup(t => t.TagImageAsync(It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
+        tagging.Setup(t => t.TagImageAsync(It.IsAny<string>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(ImageTagResult.Succeeded(Array.Empty<ImageTagScore>(), "general", 0.9f, false));
         var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
 
@@ -328,7 +329,7 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
 
         result.Failed.Should().Be(1);
         result.Indexed.Should().Be(0);
-        tagging.Verify(t => t.TagImageAsync(It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()), Times.Never);
+        tagging.Verify(t => t.TagImageAsync(It.IsAny<string>(), It.IsAny<float>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ---- Fix 1: duplicate input paths ------------------------------------
@@ -356,7 +357,7 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
         result.Which.Indexed.Should().Be(1);
         result.Which.Failed.Should().Be(0);
         (await service.GetIndexedCountAsync()).Should().Be(1);
-        tagging.Verify(t => t.TagImageAsync(It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()), Times.Once);
+        tagging.Verify(t => t.TagImageAsync(It.IsAny<string>(), It.IsAny<float>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ---- Fixes 2 + 3: chunked flush/clear, and failure containment -------
@@ -418,19 +419,22 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
 
         var failing = new Mock<IImageTaggingService>();
         failing.Setup(t => t.GetModelStatus()).Returns(ModelStatus.Ready);
-        failing.Setup(t => t.TagImageAsync(
-                It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
-            .Returns((byte[] _, int w, int _, float _, CancellationToken _) => w switch
+        failing.Setup(t => t.TagImageAsync(It.IsAny<string>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
+            .Returns((string path, float _, CancellationToken _) =>
             {
-                // Fails before the context is touched at all.
-                2 => Task.FromException<ImageTagResult>(new InvalidOperationException("tagger exploded")),
-                // Duplicate tag names: the second assignment threw on a
-                // duplicate tracked key — AFTER the row had been staged.
-                // This is the exact composition that froze a file.
-                3 => Task.FromResult(ImageTagResult.Succeeded(
-                    new[] { new ImageTagScore("dog", 0.9f), new ImageTagScore("dog", 0.5f) }, "general", 0.9f, false)),
-                _ => Task.FromResult(ImageTagResult.Succeeded(
-                    new[] { new ImageTagScore($"tag{w}", 0.9f) }, "general", 0.9f, false)),
+                var w = Image.Identify(path).Width;
+                return w switch
+                {
+                    // Fails before the context is touched at all.
+                    2 => Task.FromException<ImageTagResult>(new InvalidOperationException("tagger exploded")),
+                    // Duplicate tag names: the second assignment threw on a
+                    // duplicate tracked key — AFTER the row had been staged.
+                    // This is the exact composition that froze a file.
+                    3 => Task.FromResult(ImageTagResult.Succeeded(
+                        new[] { new ImageTagScore("dog", 0.9f), new ImageTagScore("dog", 0.5f) }, "general", 0.9f, false)),
+                    _ => Task.FromResult(ImageTagResult.Succeeded(
+                        new[] { new ImageTagScore($"tag{w}", 0.9f) }, "general", 0.9f, false)),
+                };
             });
 
         var service = new TagIndexService(new SingleDbContextFactory(_options), failing.Object);
@@ -467,8 +471,7 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
         var path = CreateFakeImage("cancel.png");
         var tagging = new Mock<IImageTaggingService>();
         tagging.Setup(t => t.GetModelStatus()).Returns(ModelStatus.Ready);
-        tagging.Setup(t => t.TagImageAsync(
-                It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
+        tagging.Setup(t => t.TagImageAsync(It.IsAny<string>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
             .Returns(Task.FromException<ImageTagResult>(new OperationCanceledException()));
         var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
 
@@ -559,7 +562,7 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
         result.Indexed.Should().Be(1);
         result.Failed.Should().Be(0, "non-images were never eligible, so they are not failures");
         result.Skipped.Should().Be(0, "Skipped is reserved for images that were genuinely skipped");
-        tagging.Verify(t => t.TagImageAsync(It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()), Times.Once);
+        tagging.Verify(t => t.TagImageAsync(It.IsAny<string>(), It.IsAny<float>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ---- Fix 10: nothing to do means no 379 MB download ------------------
@@ -670,7 +673,7 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
         // KeyNotFoundException before this stub was added. Every other test
         // in this file sets this up explicitly; this one follows suit.
         tagging.Setup(t => t.GetModelStatus()).Returns(ModelStatus.Ready);
-        tagging.Setup(t => t.TagImageAsync(It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
+        tagging.Setup(t => t.TagImageAsync(It.IsAny<string>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(ImageTagResult.Succeeded(
                 new[] { new ImageTagScore("dog", 0.9f), new ImageTagScore("outdoor", 0.6f) },
                 "explicit", 0.7f, isNsfw: true));
@@ -842,7 +845,7 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
         tagging.Setup(t => t.GetModelStatus()).Returns(ModelStatus.NotDownloaded);
         tagging.Setup(t => t.DownloadModelAsync(It.IsAny<IProgress<ModelDownloadProgress>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
-        tagging.Setup(t => t.TagImageAsync(It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
+        tagging.Setup(t => t.TagImageAsync(It.IsAny<string>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(ImageTagResult.Succeeded(Array.Empty<ImageTagScore>(), "general", 0.9f, isNsfw: false));
         var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
 

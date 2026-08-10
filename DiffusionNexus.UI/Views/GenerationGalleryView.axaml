@@ -110,7 +110,7 @@
           </Button>
 
           <Border Name="TagStripHost" VerticalAlignment="Bottom" Margin="0,0,0,27" ZIndex="4"
-                  IsHitTestVisible="False">
+                  IsHitTestVisible="False" IsVisible="{Binding HasTopTags}">
             <ItemsControl ItemsSource="{Binding TopTags}" Margin="8,0,8,4">
               <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
@@ -349,11 +349,11 @@
           <TextBlock Text="🖼️" FontSize="64" HorizontalAlignment="Center" Opacity="0.4"/>
           <TextBlock Text="Generation Gallery Empty" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center"/>
           <TextBlock Text="{Binding NoMediaMessage}" Opacity="0.6" TextAlignment="Center"/>
-          <!-- Hidden while filters are active: NoMediaMessage then explains
-               the grid is empty because nothing matched, and "go configure
-               folders" would send the user somewhere that cannot help. -->
+          <!-- Hidden while a filter explains the empty grid — but always
+               shown when zero folders are enabled, because then Settings is
+               the only fix regardless of any leftover filter. -->
           <TextBlock Text="Open Settings → Generation Galleries to add and enable folders."
-                     IsVisible="{Binding !HasActiveTagFilters}"
+                     IsVisible="{Binding ShowConfigureFoldersHint}"
                      Opacity="0.6" TextAlignment="Center"/>
         </StackPanel>
       </Border>
