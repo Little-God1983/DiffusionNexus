@@ -123,6 +123,26 @@ public sealed class OnnxModelManager
     }
 
     /// <summary>
+    /// Checks if the WD14 tagger model file exists and is correctly sized.
+    /// </summary>
+    private bool IsWd14ModelFileValid()
+    {
+        if (!File.Exists(Wd14TaggerModelPath))
+            return false;
+        return new FileInfo(Wd14TaggerModelPath).Length >= 300_000_000;
+    }
+
+    /// <summary>
+    /// Checks if the WD14 tagger tags file exists and is correctly sized.
+    /// </summary>
+    private bool IsWd14TagsFileValid()
+    {
+        if (!File.Exists(Wd14TaggerTagsPath))
+            return false;
+        return new FileInfo(Wd14TaggerTagsPath).Length >= 100_000;
+    }
+
+    /// <summary>
     /// Gets the status of the WD14 tagger. Both the model and its tag list
     /// must be present and correctly sized — the tagger is unusable without
     /// its CSV, so a missing/corrupt CSV counts the whole entry as not ready.
@@ -138,12 +158,7 @@ public sealed class OnnxModelManager
         if (!File.Exists(Wd14TaggerModelPath) || !File.Exists(Wd14TaggerTagsPath))
             return ModelStatus.NotDownloaded;
 
-        var modelInfo = new FileInfo(Wd14TaggerModelPath);
-        if (modelInfo.Length < 300_000_000)
-            return ModelStatus.Corrupted;
-
-        var tagsInfo = new FileInfo(Wd14TaggerTagsPath);
-        if (tagsInfo.Length < 100_000)
+        if (!IsWd14ModelFileValid() || !IsWd14TagsFileValid())
             return ModelStatus.Corrupted;
 
         return ModelStatus.Ready;
@@ -249,7 +264,7 @@ public sealed class OnnxModelManager
 
     /// <summary>
     /// Downloads the WD14 ViT Tagger v3 model and its tag list from HuggingFace.
-    /// Two files, downloaded sequentially; both must succeed for the entry to be Ready.
+    /// Two files, downloaded sequentially; both must succeed and pass size validation for the entry to be Ready.
     /// Only downloads missing or corrupt files — if the model is already valid, skips re-downloading it.
     /// </summary>
     public async Task<bool> DownloadWd14TaggerModelAsync(
@@ -276,32 +291,41 @@ public sealed class OnnxModelManager
 
         try
         {
+            // Wrap progress to suppress "Download complete" until both files are done
+            var wrappedProgress = new Wd14ProgressWrapper(progress);
+
             // Check model file separately — if it's already valid, skip re-downloading
-            var modelNeedsDownload = !File.Exists(Wd14TaggerModelPath) ||
-                                     new FileInfo(Wd14TaggerModelPath).Length < 300_000_000;
+            var modelNeedsDownload = !IsWd14ModelFileValid();
 
             if (modelNeedsDownload)
             {
                 var modelOk = await DownloadModelInternalAsync(
                     Wd14TaggerModelUrl, Wd14TaggerModelPath, ExpectedWd14TaggerSizeBytes,
-                    "WD14 Tagger", progress, cancellationToken);
+                    "WD14 Tagger", wrappedProgress, cancellationToken);
 
                 if (!modelOk)
                     return false;
             }
 
             // Check tags file separately — if it's already valid, skip re-downloading
-            var tagsNeedsDownload = !File.Exists(Wd14TaggerTagsPath) ||
-                                    new FileInfo(Wd14TaggerTagsPath).Length < 100_000;
+            var tagsNeedsDownload = !IsWd14TagsFileValid();
 
             if (tagsNeedsDownload)
             {
+                wrappedProgress.SetFinalFile(); // Allow "Download complete" for the final file
                 var tagsOk = await DownloadModelInternalAsync(
                     Wd14TaggerTagsUrl, Wd14TaggerTagsPath, ExpectedWd14TaggerTagsSizeBytes,
-                    "WD14 Tagger tag list", progress, cancellationToken);
+                    "WD14 Tagger tag list", wrappedProgress, cancellationToken);
 
                 if (!tagsOk)
                     return false;
+            }
+
+            // Validate both files are correctly sized before returning success
+            if (!IsWd14ModelFileValid() || !IsWd14TagsFileValid())
+            {
+                Log.Error("WD14 tagger download reported success but files are corrupted or undersized");
+                return false;
             }
 
             return true;
@@ -312,6 +336,53 @@ public sealed class OnnxModelManager
             {
                 _isDownloadingWd14Tagger = false;
             }
+        }
+    }
+
+    /// <summary>
+    /// Wrapper around IProgress to weight combined progress across two files and suppress "Download complete" until final.
+    /// Maps the two sequential 0-100% downloads into a single continuous 0-100% progress report.
+    /// </summary>
+    private sealed class Wd14ProgressWrapper : IProgress<ModelDownloadProgress>
+    {
+        private readonly IProgress<ModelDownloadProgress>? _inner;
+        private bool _isFinalFile;
+
+        public Wd14ProgressWrapper(IProgress<ModelDownloadProgress>? inner) => _inner = inner;
+
+        public void SetFinalFile() => _isFinalFile = true;
+
+        public void Report(ModelDownloadProgress value)
+        {
+            // Weight progress: first file progress contributes to first ~99.9% (model is ~379MB, tags are ~308KB)
+            // Second file completes the remaining ~0.1%
+            var combinedTotal = ExpectedWd14TaggerSizeBytes + ExpectedWd14TaggerTagsSizeBytes;
+
+            long adjustedBytes;
+
+            if (!_isFinalFile)
+            {
+                // First file: map its 0-100% to 0-~99.9% of the combined total
+                // Progress = (downloaded / total) * modelSize, within the combined scale
+                adjustedBytes = (value.BytesDownloaded * ExpectedWd14TaggerSizeBytes) / value.TotalBytes;
+            }
+            else
+            {
+                // Second file: starts after model, so offset + scale tags progress
+                // Progress = modelSize + (downloaded / total) * tagsSize
+                adjustedBytes = ExpectedWd14TaggerSizeBytes +
+                               (value.BytesDownloaded * ExpectedWd14TaggerTagsSizeBytes) / value.TotalBytes;
+            }
+
+            // Suppress "Download complete" status until the final file
+            var status = value.Status;
+            if (!_isFinalFile && value.Status == "Download complete")
+            {
+                // Continue reporting progress without "complete" message
+                status = $"Downloading... {adjustedBytes / 1024 / 1024}MB / {combinedTotal / 1024 / 1024}MB";
+            }
+
+            _inner?.Report(new ModelDownloadProgress(adjustedBytes, combinedTotal, status));
         }
     }
 

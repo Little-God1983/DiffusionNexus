@@ -284,6 +284,48 @@ public class OnnxModelManagerTests : IDisposable
         File.Exists(mgr.Wd14TaggerTagsPath).Should().BeTrue();
     }
 
+    [Fact]
+    public async Task DownloadWd14TaggerModelAsync_ReturnsFalse_WhenDownloadedFilesAreUndersized()
+    {
+        // HTTP returns 200 OK with undersized payload — DownloadModelInternalAsync would return true,
+        // but the file should fail validation and the download should return false.
+        var handler = new FakeHttpHandler(_ => Ok(RandomBytes(400))); // tiny payload, not the real 379MB
+        var mgr = new OnnxModelManager(Models("m"), new HttpClient(handler));
+
+        var result = await mgr.DownloadWd14TaggerModelAsync();
+
+        result.Should().BeFalse("undersized files should fail validation even if HTTP succeeded");
+        mgr.GetWd14TaggerStatus().Should().Be(ModelStatus.Corrupted);
+    }
+
+    [Fact]
+    public async Task DownloadWd14TaggerModelAsync_ProgressDoesNotRegressBackward()
+    {
+        // When downloading two files sequentially, the progress percentage should not regress backward.
+        var handler = new FakeHttpHandler(_ => Ok(RandomBytes(4096)));
+        var mgr = new OnnxModelManager(Models("m"), new HttpClient(handler));
+        var progress = new RecordingProgress<ModelDownloadProgress>();
+
+        await mgr.DownloadWd14TaggerModelAsync(progress);
+
+        // Extract just the percentage values from progress reports
+        var percentages = progress.Items
+            .Where(p => p.TotalBytes > 0)
+            .Select(p => (int)p.Percentage)
+            .ToList();
+
+        // Percentages should be monotonically non-decreasing
+        for (int i = 1; i < percentages.Count; i++)
+        {
+            percentages[i].Should().BeGreaterThanOrEqualTo(percentages[i - 1],
+                $"progress should not regress backward; was {percentages[i - 1]}% then {percentages[i]}%");
+        }
+
+        // Should NOT report "Download complete" until both files are done
+        var completeReports = progress.Items.Where(p => p.Status == "Download complete").ToList();
+        completeReports.Should().HaveCount(1, "should only report complete once, at the very end");
+    }
+
     // ── Delete ──
 
     [Fact]
