@@ -490,6 +490,11 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
                     if (IndexedImageCount > 0)
                     {
                         await HydrateTagDataAsync(mediaItems);
+
+                        // The filter pass inside ApplyMediaItemsAsync ran
+                        // before hydration, over tagless items — re-run it so
+                        // the scoped chip counts see the tag data.
+                        ApplySortingAndGrouping();
                     }
                 }
                 catch (Exception ex)
@@ -940,6 +945,11 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             _allTagCloudEntries.Clear();
             _allTagCloudEntries.AddRange(
                 cloud.Select(t => new TagCloudEntryViewModel(t.Name, t.Count) { IsActive = activeNames.Contains(t.Name) }));
+            // Fresh entries default ScopedCount to the global count; bring
+            // them in line with the last completed filter pass so a chip
+            // never shows a global number the current view scope can't serve.
+            if (_lastScopedTagCounts is not null)
+                ApplyScopedTagCounts(_lastScopedTagCounts);
             ApplyTagCloudSearch();
             OnPropertyChanged(nameof(TagCloudHeader));
         }
@@ -1499,7 +1509,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         }
 
         // Run sorting, filtering, and group creation on a background thread
-        var (sortedList, groups, hiddenTagMatches) = await Task.Run(() =>
+        var (sortedList, groups, hiddenTagMatches, scopedCounts) = await Task.Run(() =>
         {
             IEnumerable<GenerationGalleryMediaItemViewModel> filtered = allItems;
 
@@ -1520,13 +1530,21 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
                 filtered = filtered.Where(item => item.IsFavorite);
             }
 
-            if (tagFilterFailed)
+            // Materialized checkpoint: everything the TOOLBAR filters
+            // (date/search/favorites) leave visible, before the drawer's
+            // tag/NSFW filters apply. This is the scope the tag-cloud chip
+            // counts are computed against below.
+            var toolbarScoped = filtered.ToList();
+            filtered = toolbarScoped;
+
+            // The drawer's own filters (tag chips + NSFW mode) as a reusable
+            // predicate: applied to the pipeline below AND evaluated against
+            // the unfiltered item list to detect matches that the TOOLBAR
+            // filters (date/search/favorites) are hiding.
+            Func<GenerationGalleryMediaItemViewModel, bool>? drawerFilter = null;
+            if (!tagFilterFailed && (tagMatchPaths is not null || knownNsfwPaths is not null))
             {
-                filtered = [];
-            }
-            else if (tagMatchPaths is not null || knownNsfwPaths is not null)
-            {
-                filtered = filtered.Where(item =>
+                drawerFilter = item =>
                 {
                     var fullPath = Path.GetFullPath(item.FilePath);
 
@@ -1543,7 +1561,16 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
                     }
 
                     return true;
-                });
+                };
+            }
+
+            if (tagFilterFailed)
+            {
+                filtered = [];
+            }
+            else if (drawerFilter is not null)
+            {
+                filtered = filtered.Where(drawerFilter);
             }
 
             IEnumerable<GenerationGalleryMediaItemViewModel> sorted = filtered;
@@ -1560,17 +1587,40 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
             var resultList = sorted.ToList();
 
-            // Debuggability for a real support case: the tag filter matched
-            // files, but the grid still came up empty because the OTHER
-            // filters (date/search/favorites) excluded every match — e.g. the
-            // default "Last 3 Months" date window hiding an index that so far
-            // only covers old files. Count the tag matches alone so the empty
-            // state can name the real culprit instead of a generic shrug.
+            // Field-diagnosed support case: the tag filter matched files, but
+            // the grid came up short (or empty) because the toolbar filters
+            // excluded matches — e.g. the default "Last 3 Months" date window
+            // hiding an index that so far only covers old files. Count the
+            // drawer-filter matches across the WHOLE gallery so the UI can
+            // say how many exist beyond the current view scope.
             var tagMatchesHiddenByOtherFilters = 0;
-            if (resultList.Count == 0 && !tagFilterFailed && tagMatchPaths is { Count: > 0 })
+            if (drawerFilter is not null)
             {
-                tagMatchesHiddenByOtherFilters =
-                    allItems.Count(item => tagMatchPaths.Contains(Path.GetFullPath(item.FilePath)));
+                var drawerOnlyMatches = allItems.Count(drawerFilter);
+                tagMatchesHiddenByOtherFilters = Math.Max(0, drawerOnlyMatches - resultList.Count);
+            }
+
+            // Scoped chip counts: how many toolbar-scoped items — further
+            // restricted by the NSFW mode, but NOT by the tag chips — carry
+            // each tag. This is exactly what clicking a single chip can
+            // surface, so the cloud shows "in scope / total" instead of a
+            // global count that clicks into an empty grid. Built from the
+            // per-tile tag data hydrated at load/build time; unindexed items
+            // carry no tags and naturally contribute nothing.
+            var scopedTagCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in toolbarScoped)
+            {
+                if (knownNsfwPaths is not null)
+                {
+                    var isKnownNsfw = knownNsfwPaths.Contains(Path.GetFullPath(item.FilePath));
+                    if (nsfwFilter == NsfwFilterMode.HideNsfw && isKnownNsfw)
+                        continue;
+                    if (nsfwFilter == NsfwFilterMode.NsfwOnly && !isKnownNsfw)
+                        continue;
+                }
+
+                foreach (var tag in item.Tags)
+                    scopedTagCounts[tag] = scopedTagCounts.GetValueOrDefault(tag) + 1;
             }
 
             // Build groups on background thread too
@@ -1588,7 +1638,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
                 }).ToList();
             }
 
-            return (resultList, resultGroups, tagMatchesHiddenByOtherFilters);
+            return (resultList, resultGroups, tagMatchesHiddenByOtherFilters, scopedTagCounts);
         });
 
         // A newer pass started while this one was querying/sorting — its
@@ -1598,18 +1648,57 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
         FilteredMatchCount = sortedList.Count;
         _tagMatchesHiddenByOtherFilters = hiddenTagMatches;
+        OnPropertyChanged(nameof(HasHiddenTagMatches));
+        OnPropertyChanged(nameof(HiddenTagMatchesText));
+
+        _lastScopedTagCounts = scopedCounts;
+        ApplyScopedTagCounts(scopedCounts);
 
         // Back on the original context (UI thread) — apply results directly
         ApplySortedResults(sortedList, groups);
     }
 
     /// <summary>
-    /// How many images matched the active tag filter but were excluded by the
-    /// date/search/favorites filters in the last pass that came up empty.
-    /// Only non-zero when the grid is empty for exactly that reason; feeds
-    /// the empty-state message.
+    /// How many images matched the drawer's tag/NSFW filters but were
+    /// excluded by the toolbar's date/search/favorites filters in the last
+    /// pass. Feeds the drawer's "N more hidden" indicator and the empty-state
+    /// message.
     /// </summary>
     private int _tagMatchesHiddenByOtherFilters;
+
+    /// <summary>
+    /// The scoped chip counts from the last completed filter pass, kept so a
+    /// tag-cloud refresh (which rebuilds the chip entries) can re-apply them
+    /// without waiting for the next pass.
+    /// </summary>
+    private Dictionary<string, int>? _lastScopedTagCounts;
+
+    /// <summary>True when the toolbar filters hide drawer-filter matches.</summary>
+    public bool HasHiddenTagMatches => _tagMatchesHiddenByOtherFilters > 0;
+
+    public string HiddenTagMatchesText =>
+        $"⚠ {_tagMatchesHiddenByOtherFilters:N0} more match but are outside the current view — " +
+        $"date filter ('{SelectedDateFilter}'), search box or favorites toggle.";
+
+    /// <summary>
+    /// One-click escape from the hidden-matches situation: widen the toolbar
+    /// filters that can hide drawer-filter matches. Deliberately leaves the
+    /// drawer's own filters (chips, NSFW mode) untouched — those are what the
+    /// user is actively composing.
+    /// </summary>
+    [RelayCommand]
+    private void RevealHiddenMatches()
+    {
+        SelectedDateFilter = "All Time";
+        SearchText = string.Empty;
+        ShowFavoritesOnly = false;
+    }
+
+    private void ApplyScopedTagCounts(Dictionary<string, int> scopedCounts)
+    {
+        foreach (var entry in _allTagCloudEntries)
+            entry.ScopedCount = scopedCounts.GetValueOrDefault(entry.Name);
+    }
 
     private void ApplySortedResults(
         List<GenerationGalleryMediaItemViewModel> sortedList,
