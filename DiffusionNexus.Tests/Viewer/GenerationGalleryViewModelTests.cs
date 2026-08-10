@@ -1473,6 +1473,57 @@ public class GenerationGalleryViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task TagFilter_AgainstTheRealService_ShowsTheIndexedMatches_AfterABuildWithTheFilterAlreadyActive()
+    {
+        // End-to-end repro of a field report: 55 images indexed with "1girl",
+        // chip active, rating on Show all — and the grid stayed empty. Runs
+        // the REAL TagIndexService against a real SQLite file, with ComfyUI
+        // style %placeholder% filenames like the live gallery had, in the
+        // exact order the user acted: filter first (index still empty), then
+        // the build.
+        var galleryPath = CreateTempDirectory();
+        var girlA = Path.Combine(galleryPath, "%batch_index%_%counter%_00001_.png");
+        var girlB = Path.Combine(galleryPath, "%seed%_00002_.png");
+        var other = Path.Combine(galleryPath, "landscape_00003_.png");
+        SaveTinyPng(girlA, width: 8);
+        SaveTinyPng(girlB, width: 8);
+        SaveTinyPng(other, width: 4);
+
+        var dbDir = CreateTempDirectory();
+        var options = DiffusionNexusCoreDbContext.CreateOptions(dbDir);
+        await using (var context = new DiffusionNexusCoreDbContext(options))
+        {
+            await context.Database.EnsureCreatedAsync();
+        }
+
+        var tagging = new Mock<IImageTaggingService>();
+        tagging.Setup(t => t.GetModelStatus()).Returns(ModelStatus.Ready);
+        tagging.Setup(t => t.TagImageAsync(It.IsAny<string>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string path, float _, CancellationToken _) =>
+                SixLabors.ImageSharp.Image.Identify(path).Width == 8
+                    ? ImageTagResult.Succeeded(new[] { new ImageTagScore("1girl", 0.95f) }, "sensitive", 0.9f, isNsfw: false)
+                    : ImageTagResult.Succeeded(new[] { new ImageTagScore("landscape", 0.9f) }, "general", 0.9f, isNsfw: false));
+        var tagIndex = new TagIndexService(new TestDbContextFactory(options), tagging.Object);
+
+        var viewModel = CreateGalleryViewModel(galleryPath, tagIndex);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+        viewModel.MediaItems.Should().HaveCount(3);
+
+        // Filter first — nothing indexed yet, so the grid legitimately empties.
+        viewModel.ToggleTagFilterCommand.Execute("1girl");
+        await viewModel.WaitForSortingAsync();
+        viewModel.MediaItems.Should().BeEmpty("nothing is indexed yet");
+
+        await viewModel.BuildTagIndexCommand.ExecuteAsync(null);
+        await viewModel.WaitForSortingAsync();
+
+        viewModel.IndexedImageCount.Should().Be(3);
+        viewModel.MediaItems.Select(i => i.FilePath).Should().BeEquivalentTo(
+            new[] { girlA, girlB },
+            "the freshly indexed 1girl matches must appear while the chip is active");
+    }
+
+    [Fact]
     public async Task DeleteImageCommand_PrunesTheDeletedFileFromTheTagIndex_AndCorrectsTheCounters()
     {
         // Nothing used to remove an index row when its file left the gallery,
@@ -1600,9 +1651,9 @@ public class GenerationGalleryViewModelTests : IDisposable
         return root;
     }
 
-    private static void SaveTinyPng(string path)
+    private static void SaveTinyPng(string path, int width = 4)
     {
-        using var image = new Image<Rgba32>(4, 4);
+        using var image = new Image<Rgba32>(width, 4);
         image.SaveAsPng(path);
     }
 
