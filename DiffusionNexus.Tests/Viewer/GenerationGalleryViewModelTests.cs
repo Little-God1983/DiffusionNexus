@@ -750,11 +750,7 @@ public class GenerationGalleryViewModelTests : IDisposable
 
         var settings = new AppSettings
         {
-            ImageGalleries = [new() { FolderPath = galleryPath, IsEnabled = true, Order = 0 }],
-            // Keep the AppSettings NSFW seed out of this test: SearchAsync
-            // below answers every query with the indexed set, so a seeded
-            // Hide NSFW would treat every indexed file as known-NSFW.
-            ShowNsfw = true,
+            ImageGalleries = [new() { FolderPath = galleryPath, IsEnabled = true, Order = 0 }]
         };
         var mockSettings = new Mock<IAppSettingsService>();
         mockSettings.Setup(service => service.GetSettingsAsync(It.IsAny<CancellationToken>()))
@@ -945,10 +941,6 @@ public class GenerationGalleryViewModelTests : IDisposable
         mockSettings.Setup(service => service.GetSettingsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(settings);
 
-        // The tile carries IsNsfw: true, so the AppSettings NSFW seed would
-        // hide it before the assertion could look at it.
-        settings.ShowNsfw = true;
-
         var mockTagIndex = new Mock<ITagIndexService>();
         mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(1);
         mockTagIndex.Setup(t => t.GetTagsForFilesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
@@ -995,58 +987,15 @@ public class GenerationGalleryViewModelTests : IDisposable
     }
 
     [Fact]
-    public async Task LoadMediaAsync_SeedsHideNsfwFromTheAppWideSetting_AndHidesKnownNsfwImages()
+    public async Task LoadMediaAsync_NeverSeedsAnNsfwModeFromSettings()
     {
-        // Issue #492: AppSettings.ShowNsfw (off by default) and the drawer's
-        // NSFW mode used to be two disconnected switches for one user intent —
-        // hiding NSFW app-wide did nothing here. The setting seeds the
-        // drawer's mode, so the filtering is visible (radio + filter strip)
-        // rather than an invisible standing gate.
-        var galleryPath = CreateTempDirectory();
-        var sfwImage = Path.Combine(galleryPath, "sfw.png");
-        var nsfwImage = Path.Combine(galleryPath, "nsfw.png");
-        File.WriteAllText(sfwImage, "test");
-        File.WriteAllText(nsfwImage, "test");
-
-        var settings = new AppSettings
-        {
-            ImageGalleries = [new() { FolderPath = galleryPath, IsEnabled = true, Order = 0 }],
-            ShowNsfw = false,
-        };
-        var mockSettings = new Mock<IAppSettingsService>();
-        mockSettings.Setup(service => service.GetSettingsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(settings);
-
-        var mockTagIndex = new Mock<ITagIndexService>();
-        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(2);
-        mockTagIndex.Setup(t => t.GetTagsForFilesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new Dictionary<string, ImageTagLookup>());
-        mockTagIndex.Setup(t => t.SearchAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<NsfwFilterMode>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { nsfwImage });
-
-        var viewModel = new GenerationGalleryViewModel(
-            mockSettings.Object,
-            new Mock<IDatasetEventAggregator>().Object,
-            new Mock<IDatasetState>().Object,
-            null,
-            tagIndexService: mockTagIndex.Object);
-
-        await viewModel.LoadMediaCommand.ExecuteAsync(null);
-        await viewModel.WaitForSortingAsync();
-
-        viewModel.NsfwFilter.Should().Be(NsfwFilterMode.HideNsfw,
-            "the app-wide setting seeds the drawer so the two switches agree");
-        viewModel.HasActiveTagFilters.Should().BeTrue(
-            "the seeded filter must be visible in the filter strip, not an invisible gate");
-        viewModel.MediaItems.Should().ContainSingle()
-            .Which.FilePath.Should().Be(sfwImage);
-    }
-
-    [Fact]
-    public async Task LoadMediaAsync_DoesNotReSeed_AfterTheUserExplicitlyChoseAMode()
-    {
-        // A reload (settings saved, folders changed) must never stomp a
-        // deliberate per-session choice with the seed.
+        // Regression guard for a removed behavior: an earlier iteration
+        // seeded the drawer's NSFW mode from AppSettings.ShowNsfw (off by
+        // default). In real use that silently opened every gallery in Hide
+        // NSFW mode, and because the tagger rates much ordinary content
+        // "sensitive", a tag filter matching thousands of images showed a
+        // fraction of them with nothing on screen explaining why. The NSFW
+        // mode is opt-in, per session, full stop.
         var galleryPath = CreateTempDirectory();
         File.WriteAllText(Path.Combine(galleryPath, "a.png"), "test");
 
@@ -1059,27 +1008,19 @@ public class GenerationGalleryViewModelTests : IDisposable
         mockSettings.Setup(service => service.GetSettingsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(settings);
 
-        var mockTagIndex = new Mock<ITagIndexService>();
-        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(0);
-        mockTagIndex.Setup(t => t.SearchAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<NsfwFilterMode>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<string>());
-
         var viewModel = new GenerationGalleryViewModel(
             mockSettings.Object,
             new Mock<IDatasetEventAggregator>().Object,
             new Mock<IDatasetState>().Object,
             null,
-            tagIndexService: mockTagIndex.Object);
+            tagIndexService: new Mock<ITagIndexService>().Object);
 
         await viewModel.LoadMediaCommand.ExecuteAsync(null);
-        viewModel.NsfwFilter.Should().Be(NsfwFilterMode.HideNsfw, "the first load seeds from the setting");
-
-        viewModel.SetNsfwFilterCommand.Execute(nameof(NsfwFilterMode.ShowAll));
         await viewModel.WaitForSortingAsync();
 
-        await viewModel.LoadMediaCommand.ExecuteAsync(null);
-        viewModel.NsfwFilter.Should().Be(NsfwFilterMode.ShowAll,
-            "the user's explicit choice survives the reload");
+        viewModel.NsfwFilter.Should().Be(NsfwFilterMode.ShowAll);
+        viewModel.HasActiveTagFilters.Should().BeFalse();
+        viewModel.MediaItems.Should().ContainSingle("no invisible filter may hide gallery content");
     }
 
     [Fact]
@@ -1624,12 +1565,7 @@ public class GenerationGalleryViewModelTests : IDisposable
     {
         var settings = new AppSettings
         {
-            ImageGalleries = [new() { FolderPath = galleryPath, IsEnabled = true, Order = 0 }],
-            // ShowNsfw=false (the AppSettings default) seeds the drawer's
-            // Hide NSFW mode on load, which makes every filter pass query the
-            // known-NSFW set — noise these tests don't set up. Tests covering
-            // the seeding itself build their own settings with ShowNsfw=false.
-            ShowNsfw = true,
+            ImageGalleries = [new() { FolderPath = galleryPath, IsEnabled = true, Order = 0 }]
         };
         var mockSettings = new Mock<IAppSettingsService>();
         mockSettings.Setup(service => service.GetSettingsAsync(It.IsAny<CancellationToken>()))

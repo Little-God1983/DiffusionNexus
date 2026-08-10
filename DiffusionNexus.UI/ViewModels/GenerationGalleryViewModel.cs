@@ -33,14 +33,6 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     private readonly ITaskTracker? _taskTracker;
     private readonly List<GenerationGalleryMediaItemViewModel> _allMediaItems = [];
 
-    /// <summary>
-    /// True once the user has explicitly chosen an NSFW mode (radio button or
-    /// "Clear filters") this session. Gates the seeding in
-    /// <see cref="LoadMediaAsync"/>: the app-wide <c>AppSettings.ShowNsfw</c>
-    /// setting seeds the drawer's filter so the two switches agree, but a
-    /// deliberate per-session choice is never stomped by a later reload.
-    /// </summary>
-    private bool _nsfwFilterTouched;
     private GenerationGalleryMediaItemViewModel? _lastClickedItem;
     private int _selectionCount;
     private bool _isUpdatingGroupingOptions;
@@ -452,23 +444,14 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             var enabledPaths = GetEnabledGalleryPaths(settings);
             var includeSubFolders = IncludeSubFolders;
 
-            // The app-wide setting (Settings → "Show NSFW", off by default)
-            // seeds the Advanced Search drawer's NSFW mode so the two switches
-            // agree — the persisted setting used to be silently ignored here,
-            // leaving NSFW tiles visible until the user found the second,
-            // per-session filter. Seeding (rather than an invisible standing
-            // gate) keeps the filtering visible in the UI: the radio shows
-            // "Hide NSFW", the filter strip appears, and "Clear filters"
-            // remains an escape hatch if the tag index is broken. An explicit
-            // per-session choice is never overridden, and flipping the setting
-            // takes effect through the OnSettingsSaved reload.
-            if (!_nsfwFilterTouched)
-            {
-                if (!settings.ShowNsfw && NsfwFilter == NsfwFilterMode.ShowAll)
-                    NsfwFilter = NsfwFilterMode.HideNsfw;
-                else if (settings.ShowNsfw && NsfwFilter == NsfwFilterMode.HideNsfw)
-                    NsfwFilter = NsfwFilterMode.ShowAll;
-            }
+            // NOTE: an earlier iteration seeded the drawer's NSFW mode from
+            // AppSettings.ShowNsfw here. Removed after real-world use: with
+            // the setting off (the default) the gallery silently opened in
+            // Hide NSFW mode, and because the tagger rates a large share of
+            // ordinary images "sensitive" (= NSFW under ContentRatingPolicy),
+            // a tag filter that should have matched thousands of images
+            // showed a fraction of them, with nothing obviously wrong. The
+            // NSFW mode is a per-session, opt-in filter only.
 
             // Offload the recursive folder scan (per-file IO syscalls + item creation)
             // to the thread pool so the UI thread stays responsive; with large auto-
@@ -884,11 +867,6 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         // its own, so leaving it set would hide the active-filter strip while
         // the gallery stayed filtered. Assigning it also refreshes the
         // Is*-flavored booleans behind the radio buttons (NotifyPropertyChangedFor).
-        // Clearing counts as an explicit choice: the AppSettings.ShowNsfw seed
-        // must not re-apply Hide NSFW on the next reload right after the user
-        // deliberately cleared it (it's also the escape hatch when the tag
-        // index itself is broken and the filter fails closed).
-        _nsfwFilterTouched = true;
         NsfwFilter = NsfwFilterMode.ShowAll;
 
         OnPropertyChanged(nameof(HasActiveTagFilters));
@@ -901,7 +879,6 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         // The Is*-flavored booleans are notified via [NotifyPropertyChangedFor]
         // on the NsfwFilter backing field, so they stay in sync however
         // NsfwFilter is set (not just through this command).
-        _nsfwFilterTouched = true;
         NsfwFilter = Enum.Parse<NsfwFilterMode>(mode);
         ApplySortingAndGrouping();
     }
