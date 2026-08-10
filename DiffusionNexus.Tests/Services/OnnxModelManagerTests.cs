@@ -2,6 +2,7 @@ using System.Net;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Service.Services;
 using FluentAssertions;
+using Xunit;
 
 namespace DiffusionNexus.Tests.Services;
 
@@ -68,6 +69,8 @@ public class OnnxModelManagerTests : IDisposable
 
         mgr.Rmbg14ModelPath.Should().Be(Path.Combine(basePath, "rmbg-1.4.onnx"));
         mgr.UltraSharp4xModelPath.Should().Be(Path.Combine(basePath, "4x-UltraSharp.onnx"));
+        mgr.Wd14TaggerModelPath.Should().Be(Path.Combine(basePath, "wd-vit-tagger-v3.onnx"));
+        mgr.Wd14TaggerTagsPath.Should().Be(Path.Combine(basePath, "wd-vit-tagger-v3-tags.csv"));
     }
 
     // ── Status thresholds ──
@@ -100,6 +103,37 @@ public class OnnxModelManagerTests : IDisposable
 
         WriteFileOfSize(mgr.UltraSharp4xModelPath, 60_000_000);
         mgr.GetUltraSharp4xStatus().Should().Be(ModelStatus.Ready);
+    }
+
+    [Fact]
+    public void GetWd14TaggerStatus_ReturnsNotDownloaded_WhenNeitherFileExists()
+    {
+        var basePath = Models("m");
+        var mgr = new OnnxModelManager(basePath, new HttpClient(new FakeHttpHandler(_ => Ok([]))));
+
+        mgr.GetWd14TaggerStatus().Should().Be(ModelStatus.NotDownloaded);
+    }
+
+    [Fact]
+    public void GetWd14TaggerStatus_ReturnsCorrupted_WhenModelFileIsUndersized()
+    {
+        var basePath = Models("m");
+        var mgr = new OnnxModelManager(basePath, new HttpClient(new FakeHttpHandler(_ => Ok([]))));
+
+        WriteFileOfSize(mgr.Wd14TaggerModelPath, 299_000_000); // just under the 300MB floor
+        WriteFileOfSize(mgr.Wd14TaggerTagsPath, 310_000); // tags are fine
+        mgr.GetWd14TaggerStatus().Should().Be(ModelStatus.Corrupted);
+    }
+
+    [Fact]
+    public void GetWd14TaggerStatus_ReturnsCorrupted_WhenTagsFileIsUndersized()
+    {
+        var basePath = Models("m");
+        var mgr = new OnnxModelManager(basePath, new HttpClient(new FakeHttpHandler(_ => Ok([]))));
+
+        WriteFileOfSize(mgr.Wd14TaggerModelPath, 350_000_000); // model is fine
+        WriteFileOfSize(mgr.Wd14TaggerTagsPath, 99_000); // just under the 100KB floor
+        mgr.GetWd14TaggerStatus().Should().Be(ModelStatus.Corrupted);
     }
 
     // ── Download state machine ──
@@ -195,6 +229,103 @@ public class OnnxModelManagerTests : IDisposable
         (await first).Should().BeTrue();
     }
 
+    [Fact]
+    public async Task DownloadWd14TaggerModelAsync_WritesDescriptiveFileNames_NotGenericHuggingFaceNames()
+    {
+        var handler = new FakeHttpHandler(_ => Ok(RandomBytes(400)));
+        var mgr = new OnnxModelManager(Models("m"), new HttpClient(handler));
+
+        await mgr.DownloadWd14TaggerModelAsync();
+
+        File.Exists(mgr.Wd14TaggerModelPath).Should().BeTrue("model saved with descriptive name");
+        File.Exists(mgr.Wd14TaggerTagsPath).Should().BeTrue("tags saved with descriptive name");
+        File.Exists(Path.Combine(Models("m"), "model.onnx")).Should().BeFalse("generic HF name not used");
+        File.Exists(Path.Combine(Models("m"), "selected_tags.csv")).Should().BeFalse("generic HF name not used");
+    }
+
+    [Fact]
+    public async Task DownloadWd14TaggerModelAsync_ReturnsTrue_WhenAlreadyDownloaded()
+    {
+        var handler = new FakeHttpHandler(_ => Ok(RandomBytes(4096)));
+        var mgr = new OnnxModelManager(Models("m"), new HttpClient(handler));
+        WriteFileOfSize(mgr.Wd14TaggerModelPath, 350_000_000);
+        WriteFileOfSize(mgr.Wd14TaggerTagsPath, 310_000);
+
+        var progress = new RecordingProgress<ModelDownloadProgress>();
+        var result = await mgr.DownloadWd14TaggerModelAsync(progress);
+
+        result.Should().BeTrue();
+        mgr.GetWd14TaggerStatus().Should().Be(ModelStatus.Ready);
+        handler.CallCount.Should().Be(0, "a ready model must not trigger a download");
+        progress.Items.Should().Contain(p => p.Status == "Model already downloaded");
+    }
+
+    [Fact]
+    public async Task DownloadWd14TaggerModelAsync_SkipsModelDownload_WhenModelAlreadyValidButTagsMissing()
+    {
+        // Model exists and is valid, tags are missing. Should only download tags, not re-fetch model.
+        var modelDownloadRequested = false;
+        var handler = new FakeHttpHandler(req =>
+        {
+            // Model URL should NOT be requested
+            if (req.RequestUri?.ToString().Contains("model.onnx") == true)
+                modelDownloadRequested = true;
+            return Ok(RandomBytes(310_000)); // for tags request
+        });
+        var mgr = new OnnxModelManager(Models("m"), new HttpClient(handler));
+        WriteFileOfSize(mgr.Wd14TaggerModelPath, 350_000_000); // valid model already exists
+
+        var result = await mgr.DownloadWd14TaggerModelAsync();
+
+        result.Should().BeTrue();
+        mgr.GetWd14TaggerStatus().Should().Be(ModelStatus.Ready);
+        handler.CallCount.Should().Be(1, "only tags file should be downloaded");
+        modelDownloadRequested.Should().BeFalse("model should not be re-downloaded when already valid");
+        File.Exists(mgr.Wd14TaggerTagsPath).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task DownloadWd14TaggerModelAsync_ReturnsFalse_WhenDownloadedFilesAreUndersized()
+    {
+        // HTTP returns 200 OK with undersized payload — DownloadModelInternalAsync would return true,
+        // but the file should fail validation and the download should return false.
+        var handler = new FakeHttpHandler(_ => Ok(RandomBytes(400))); // tiny payload, not the real 379MB
+        var mgr = new OnnxModelManager(Models("m"), new HttpClient(handler));
+
+        var result = await mgr.DownloadWd14TaggerModelAsync();
+
+        result.Should().BeFalse("undersized files should fail validation even if HTTP succeeded");
+        mgr.GetWd14TaggerStatus().Should().Be(ModelStatus.Corrupted);
+    }
+
+    [Fact]
+    public async Task DownloadWd14TaggerModelAsync_ProgressDoesNotRegressBackward()
+    {
+        // When downloading two files sequentially, the progress percentage should not regress backward.
+        var handler = new FakeHttpHandler(_ => Ok(RandomBytes(4096)));
+        var mgr = new OnnxModelManager(Models("m"), new HttpClient(handler));
+        var progress = new RecordingProgress<ModelDownloadProgress>();
+
+        await mgr.DownloadWd14TaggerModelAsync(progress);
+
+        // Extract just the percentage values from progress reports
+        var percentages = progress.Items
+            .Where(p => p.TotalBytes > 0)
+            .Select(p => (int)p.Percentage)
+            .ToList();
+
+        // Percentages should be monotonically non-decreasing
+        for (int i = 1; i < percentages.Count; i++)
+        {
+            percentages[i].Should().BeGreaterThanOrEqualTo(percentages[i - 1],
+                $"progress should not regress backward; was {percentages[i - 1]}% then {percentages[i]}%");
+        }
+
+        // Should NOT report "Download complete" until both files are done
+        var completeReports = progress.Items.Where(p => p.Status == "Download complete").ToList();
+        completeReports.Should().HaveCount(1, "should only report complete once, at the very end");
+    }
+
     // ── Delete ──
 
     [Fact]
@@ -208,6 +339,22 @@ public class OnnxModelManagerTests : IDisposable
         WriteFileOfSize(mgr.Rmbg14ModelPath, 1024);
         mgr.DeleteRmbg14Model();
         File.Exists(mgr.Rmbg14ModelPath).Should().BeFalse();
+    }
+
+    [Fact]
+    public void DeleteWd14TaggerModel_RemovesBothFiles()
+    {
+        var mgr = new OnnxModelManager(Models("m"), new HttpClient(new FakeHttpHandler(_ => Ok([]))));
+
+        // Deletion when files don't exist should be a no-op
+        var absent = () => mgr.DeleteWd14TaggerModel();
+        absent.Should().NotThrow();
+
+        WriteFileOfSize(mgr.Wd14TaggerModelPath, 1024);
+        WriteFileOfSize(mgr.Wd14TaggerTagsPath, 1024);
+        mgr.DeleteWd14TaggerModel();
+        File.Exists(mgr.Wd14TaggerModelPath).Should().BeFalse("model file deleted");
+        File.Exists(mgr.Wd14TaggerTagsPath).Should().BeFalse("tags file deleted");
     }
 
     // ── helpers ──

@@ -14,7 +14,8 @@
     <converters:AspectRatioToWidthConverter x:Key="AspectRatioToWidthConverter"/>
     <converters:BoolToStretchConverter x:Key="BoolToStretchConverter"/>
     <DataTemplate x:Key="MediaItemTemplate" x:DataType="vm:GenerationGalleryMediaItemViewModel">
-      <Border Height="{Binding $parent[ScrollViewer].((vm:GenerationGalleryViewModel)DataContext).TileHeight}"
+      <Border Classes="mediaCard"
+              Height="{Binding $parent[ScrollViewer].((vm:GenerationGalleryViewModel)DataContext).TileHeight}"
               Background="#2A2A2A"
               CornerRadius="8"
               ClipToBounds="True"
@@ -65,11 +66,17 @@
                        HorizontalAlignment="Center" VerticalAlignment="Center"/>
           </Border>
 
-          <!-- File Extension Label (Top Left) -->
-          <Border Background="#66000000" CornerRadius="4" Padding="6,2"
-                  HorizontalAlignment="Left" VerticalAlignment="Top" Margin="6" ZIndex="5">
-            <TextBlock Text="{Binding FileExtension}" Foreground="White" FontSize="11" FontWeight="SemiBold"/>
-          </Border>
+          <!-- File Extension Label + NSFW Badge (Top Left) -->
+          <StackPanel Orientation="Horizontal" Spacing="4"
+                      HorizontalAlignment="Left" VerticalAlignment="Top" Margin="6" ZIndex="5">
+            <Border Background="#33ffa726" BorderBrush="#ffa726" BorderThickness="1" CornerRadius="4"
+                    Padding="6,2" IsVisible="{Binding IsNsfw}">
+              <TextBlock Text="NSFW" Foreground="#ffa726" FontSize="10" FontWeight="Bold"/>
+            </Border>
+            <Border Background="#66000000" CornerRadius="4" Padding="6,2">
+              <TextBlock Text="{Binding FileExtension}" Foreground="White" FontSize="11" FontWeight="SemiBold"/>
+            </Border>
+          </StackPanel>
 
           <!-- Delete Button (Top Right) -->
           <Button Content="X"
@@ -102,6 +109,23 @@
             </Panel>
           </Button>
 
+          <Border Name="TagStripHost" VerticalAlignment="Bottom" Margin="0,0,0,27" ZIndex="4"
+                  IsHitTestVisible="False" IsVisible="{Binding HasTopTags}">
+            <ItemsControl ItemsSource="{Binding TopTags}" Margin="8,0,8,4">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="x:String">
+                  <Border Background="#38b388ff" BorderBrush="#66b388ff" BorderThickness="1" CornerRadius="100"
+                          Padding="6,2" Margin="0,0,4,0">
+                    <TextBlock Text="{Binding}" FontSize="9" Foreground="#e4d8ff"/>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </Border>
+
           <Border Background="#CC1A1A1A" VerticalAlignment="Bottom" Padding="8,6">
             <TextBlock Text="{Binding FullFileName}" FontSize="12" Opacity="0.8"
                        TextTrimming="CharacterEllipsis" MaxLines="1"/>
@@ -111,7 +135,51 @@
     </DataTemplate>
   </UserControl.Resources>
 
-  <Grid RowDefinitions="Auto,Auto,*" Background="#252526">
+  <UserControl.Styles>
+    <Style Selector="Button.tagchip">
+      <Setter Property="Background" Value="#202020"/>
+      <Setter Property="Foreground" Value="#9a9a9a"/>
+      <Setter Property="BorderBrush" Value="#3a3a3a"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="100"/>
+      <Setter Property="Padding" Value="10,5"/>
+      <Setter Property="Margin" Value="0,0,6,6"/>
+      <Setter Property="FontSize" Value="12"/>
+    </Style>
+    <Style Selector="Button.tagchip.active">
+      <Setter Property="Background" Value="#b388ff"/>
+      <Setter Property="Foreground" Value="#1a1030"/>
+      <Setter Property="BorderBrush" Value="#b388ff"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+    </Style>
+    <!-- The colors above are set on the Button and only reach the visuals
+         through the template's TemplateBindings. Fluent's own
+         "Button:pointerover /template/ ContentPresenter#PART_ContentPresenter"
+         rule paints the ContentPresenter directly at a higher-precedence
+         frame, so on hover an active (violet) chip would revert to the theme's
+         gray — killing the "this tag is active" signal exactly when the
+         pointer is on it. Re-assert both palettes on the element the theme
+         targets. The .active rule must stay last: same specificity, later
+         wins for a chip carrying both classes. -->
+    <Style Selector="Button.tagchip:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#2b2b2b"/>
+      <Setter Property="BorderBrush" Value="#4a4a4a"/>
+      <Setter Property="TextElement.Foreground" Value="#cfcfcf"/>
+    </Style>
+    <Style Selector="Button.tagchip.active:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#c9a6ff"/>
+      <Setter Property="BorderBrush" Value="#c9a6ff"/>
+      <Setter Property="TextElement.Foreground" Value="#1a1030"/>
+    </Style>
+    <Style Selector="Border#TagStripHost">
+      <Setter Property="Opacity" Value="0"/>
+    </Style>
+    <Style Selector="Border.mediaCard:pointerover Border#TagStripHost">
+      <Setter Property="Opacity" Value="1"/>
+    </Style>
+  </UserControl.Styles>
+
+  <Grid RowDefinitions="Auto,Auto,Auto,*" Background="#252526">
     <Border Background="#1E1E1E" Padding="16" BorderBrush="#333" BorderThickness="0,0,0,1">
       <WrapPanel Orientation="Horizontal">
         <TextBlock Text="Generation Gallery" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,4,16,4"/>
@@ -167,6 +235,32 @@
           <TextBlock Text="{Binding TileHeight, StringFormat='{}{0:0}px'}" VerticalAlignment="Center"/>
         </StackPanel>
 
+        <Button Content="🏷️ Build Tag Index"
+                Command="{Binding BuildTagIndexCommand}"
+                Padding="10,6" Margin="0,4,4,4"
+                ToolTip.Tip="Scan enabled gallery folders and tag new/changed images"/>
+        <!-- Only shown while a build is running. A first build starts with a
+             379 MB model download and then walks the whole gallery, so there
+             has to be a way out that is not "kill the app". -->
+        <Button Content="✕ Cancel"
+                Command="{Binding CancelTagIndexCommand}"
+                IsVisible="{Binding IsIndexingTagIndex}"
+                Padding="10,6" Margin="0,4,4,4"
+                ToolTip.Tip="Stop the running tag index build — images already indexed are kept"/>
+        <Border Background="#1c1c1c" BorderBrush="#3a3a3a" BorderThickness="1" CornerRadius="100"
+                Padding="8,2" Margin="0,4,12,4" VerticalAlignment="Center">
+          <TextBlock Text="{Binding IndexStatusText}" FontSize="11" Foreground="#9a9a9a"/>
+        </Border>
+        <TextBlock Text="{Binding StatusMessage}"
+                   IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                   FontSize="11" Foreground="#9a9a9a" TextWrapping="Wrap" MaxWidth="380"
+                   VerticalAlignment="Center" Margin="0,4,12,4"/>
+
+        <Button Content="🔎 Advanced Search"
+                Command="{Binding ToggleAdvancedSearchCommand}"
+                Padding="10,6" Margin="0,4,12,4"
+                ToolTip.Tip="Filter the gallery by tag and content rating"/>
+
         <Button Content="Open Folder"
                 Command="{Binding OpenFolderInExplorerCommand}"
                 Padding="10,6" Margin="0,4,8,4"
@@ -211,7 +305,36 @@
       </WrapPanel>
     </Border>
 
-    <Grid Grid.Row="2">
+    <Border Grid.Row="2" Background="#1E1E1E" Padding="12,8" BorderBrush="#333" BorderThickness="0,0,0,1"
+            IsVisible="{Binding HasActiveTagFilters}">
+      <WrapPanel Orientation="Horizontal">
+        <TextBlock Text="Filtered by:" Opacity="0.7" VerticalAlignment="Center" Margin="0,4,8,4"/>
+        <ItemsControl ItemsSource="{Binding ActiveTagFilters}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="x:String">
+              <Border Background="#2a2140" BorderBrush="#6a4fb3" BorderThickness="1" CornerRadius="100"
+                      Padding="10,4" Margin="0,4,8,4">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                  <TextBlock Text="{Binding}" FontSize="12" Foreground="#d9c7ff"/>
+                  <Button Content="✕" FontSize="10" Padding="0" Background="Transparent" BorderThickness="0"
+                          Foreground="#d9c7ff"
+                          Command="{Binding $parent[ItemsControl].((vm:GenerationGalleryViewModel)DataContext).ToggleTagFilterCommand}"
+                          CommandParameter="{Binding}"/>
+                </StackPanel>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+        <Button Content="Clear filters" Command="{Binding ClearTagFiltersCommand}"
+                Background="Transparent" BorderThickness="0" Foreground="#9a9a9a"
+                Padding="4" Margin="0,4,8,4"/>
+      </WrapPanel>
+    </Border>
+
+    <Grid Grid.Row="3">
       <Border IsVisible="{Binding IsBusy}" Background="#80000000" ZIndex="100">
         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
           <ProgressBar IsIndeterminate="True" Width="200"/>
@@ -226,7 +349,12 @@
           <TextBlock Text="🖼️" FontSize="64" HorizontalAlignment="Center" Opacity="0.4"/>
           <TextBlock Text="Generation Gallery Empty" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center"/>
           <TextBlock Text="{Binding NoMediaMessage}" Opacity="0.6" TextAlignment="Center"/>
-          <TextBlock Text="Open Settings → Generation Galleries to add and enable folders." Opacity="0.6" TextAlignment="Center"/>
+          <!-- Hidden while a filter explains the empty grid — but always
+               shown when zero folders are enabled, because then Settings is
+               the only fix regardless of any leftover filter. -->
+          <TextBlock Text="Open Settings → Generation Galleries to add and enable folders."
+                     IsVisible="{Binding ShowConfigureFoldersHint}"
+                     Opacity="0.6" TextAlignment="Center"/>
         </StackPanel>
       </Border>
 
@@ -270,6 +398,65 @@
           </ItemsControl>
         </Grid>
       </ScrollViewer>
+
+      <Border IsVisible="{Binding IsAdvancedSearchOpen}"
+              Background="#66000000" ZIndex="90"
+              Tapped="OnAdvancedSearchBackdropTapped"/>
+
+      <Border IsVisible="{Binding IsAdvancedSearchOpen}"
+              Width="340" HorizontalAlignment="Right"
+              Background="#1a1a1c" BorderBrush="#6a4fb3" BorderThickness="1,0,0,0"
+              ZIndex="95">
+        <Grid RowDefinitions="Auto,*,Auto">
+          <Border Grid.Row="0" Padding="16,14" BorderBrush="#333" BorderThickness="0,0,0,1">
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="Advanced Search" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
+              <Button Grid.Column="1" Content="✕" Command="{Binding ToggleAdvancedSearchCommand}"
+                      Background="Transparent" BorderThickness="0" Foreground="#9a9a9a"/>
+            </Grid>
+          </Border>
+
+          <ScrollViewer Grid.Row="1" Padding="16">
+            <StackPanel Spacing="18">
+              <StackPanel Spacing="8">
+                <TextBlock Text="CONTENT RATING" FontSize="11" Foreground="#6f6f6f" FontWeight="SemiBold"/>
+                <StackPanel Orientation="Horizontal" Spacing="4">
+                  <RadioButton Content="Show all" GroupName="NsfwFilter"
+                               IsChecked="{Binding IsNsfwFilterShowAll}"
+                               Command="{Binding SetNsfwFilterCommand}" CommandParameter="ShowAll"/>
+                  <RadioButton Content="Hide NSFW" GroupName="NsfwFilter"
+                               IsChecked="{Binding IsNsfwFilterHideNsfw}"
+                               Command="{Binding SetNsfwFilterCommand}" CommandParameter="HideNsfw"/>
+                  <RadioButton Content="NSFW only" GroupName="NsfwFilter"
+                               IsChecked="{Binding IsNsfwFilterNsfwOnly}"
+                               Command="{Binding SetNsfwFilterCommand}" CommandParameter="NsfwOnly"/>
+                </StackPanel>
+              </StackPanel>
+
+              <StackPanel Spacing="8">
+                <TextBlock Text="{Binding TagCloudHeader}" FontSize="11" Foreground="#6f6f6f" FontWeight="SemiBold"/>
+                <ItemsControl ItemsSource="{Binding TagCloud}">
+                  <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                  </ItemsControl.ItemsPanel>
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:TagCloudEntryViewModel">
+                      <Button Classes="tagchip" Classes.active="{Binding IsActive}"
+                              Content="{Binding DisplayText}"
+                              Command="{Binding $parent[ItemsControl].((vm:GenerationGalleryViewModel)DataContext).ToggleTagFilterCommand}"
+                              CommandParameter="{Binding Name}"/>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </StackPanel>
+            </StackPanel>
+          </ScrollViewer>
+
+          <Border Grid.Row="2" Padding="16" BorderBrush="#333" BorderThickness="0,1,0,0">
+            <TextBlock Text="{Binding FilteredMatchCountText}" FontSize="12" Foreground="#9a9a9a" HorizontalAlignment="Center"/>
+          </Border>
+        </Grid>
+      </Border>
     </Grid>
   </Grid>
 </UserControl>

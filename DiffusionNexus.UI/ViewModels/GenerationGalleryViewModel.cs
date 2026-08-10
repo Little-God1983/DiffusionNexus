@@ -28,12 +28,60 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     private readonly IVideoThumbnailService? _videoThumbnailService;
     private readonly IThumbnailOrchestrator? _thumbnailOrchestrator;
     private readonly IImageFavoritesService? _favoritesService;
+    private readonly ITagIndexService? _tagIndexService;
     private readonly List<GenerationGalleryMediaItemViewModel> _allMediaItems = [];
     private GenerationGalleryMediaItemViewModel? _lastClickedItem;
     private int _selectionCount;
     private bool _isUpdatingGroupingOptions;
     private Task _lastSortTask = Task.CompletedTask;
     private bool _isLoadingMore;
+
+    /// <summary>
+    /// Monotonic version stamp for filter/sort passes. Incremented at the
+    /// start of every <see cref="ApplySortingAndGroupingAsync"/>; a pass whose
+    /// stamp is no longer current discards its results instead of publishing
+    /// them. Needed because passes are fire-and-forget and — with a tag/NSFW
+    /// filter active — now contain a DB query of variable latency, so an older
+    /// pass can finish after a newer one and would otherwise paint stale
+    /// results for a filter set the chips no longer describe.
+    /// </summary>
+    private int _sortGeneration;
+
+    /// <summary>
+    /// Memoized tag-search results keyed by the (tag filters, NSFW mode)
+    /// combination that produced them. The filter pipeline re-runs on every
+    /// filename keystroke and every sort/date/favorites change — none of
+    /// which alter tag inputs — so without this each keystroke re-issued the
+    /// full correlated-EXISTS SQLite query. Invalidated whenever the
+    /// underlying index data changes (build, prune).
+    /// </summary>
+    private string? _tagSearchCacheKey;
+    private HashSet<string>? _cachedTagFilterMatches;
+    private HashSet<string>? _cachedKnownNsfwPaths;
+
+    /// <summary>
+    /// Cancels the running index build. Non-null only for the duration of one
+    /// <see cref="BuildTagIndexAsync"/> call; created and disposed there, and
+    /// only ever touched from the UI thread (the build's completion path and
+    /// <see cref="CancelTagIndex"/> both run there), so there is no window
+    /// where cancelling races the dispose.
+    /// </summary>
+    private CancellationTokenSource? _tagIndexCts;
+
+    /// <summary>
+    /// The chain of fire-and-forget index-prune calls started by
+    /// <see cref="RemoveMediaItem"/>. Chained rather than fanned out so a bulk
+    /// delete does not open one DB context per file simultaneously, and so
+    /// <see cref="WaitForTagIndexPruneAsync"/> can wait for all of them.
+    /// </summary>
+    private Task _lastTagIndexPruneTask = Task.CompletedTask;
+
+    /// <summary>
+    /// How many gallery folders were enabled at the last load. Kept so the
+    /// empty-state message can be recomputed on every filter pass, not only
+    /// when media is (re)loaded. See <see cref="UpdateNoMediaMessage"/>.
+    /// </summary>
+    private int _enabledSourceCount;
 
     /// <summary>
     /// Number of items to render in the first batch when the gallery opens.
@@ -62,7 +110,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         IDatasetState datasetState,
         IVideoThumbnailService? videoThumbnailService,
         IThumbnailOrchestrator? thumbnailOrchestrator = null,
-        IImageFavoritesService? favoritesService = null)
+        IImageFavoritesService? favoritesService = null,
+        ITagIndexService? tagIndexService = null)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
@@ -70,6 +119,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         _videoThumbnailService = videoThumbnailService;
         _thumbnailOrchestrator = thumbnailOrchestrator;
         _favoritesService = favoritesService;
+        _tagIndexService = tagIndexService;
 
         // Both toolbars are the SAME reusable component the workflow result strips use, so "Add
         // Selected To…" and "Send Selected To…" behave identically everywhere. They're split into two
@@ -125,8 +175,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     private void OnActionsFilesMoved(IReadOnlyList<string> movedPaths)
     {
         var moved = movedPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var item in MediaItems.Where(item => moved.Contains(item.FilePath)).ToList())
-            RemoveMediaItem(item);
+        RemoveMediaItems(MediaItems.Where(item => moved.Contains(item.FilePath)).ToList());
 
         ClearSelectionSilent();
         UpdateSelectionState();
@@ -199,6 +248,50 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     [ObservableProperty]
     private bool _showFavoritesOnly;
 
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IndexStatusText))]
+    private int _indexedImageCount;
+
+    /// <summary>
+    /// Derived, not stored: a hand-maintained counter here drifted the moment
+    /// any path mutated <see cref="_allMediaItems"/> without remembering to
+    /// adjust it. Change notifications ride along wherever the backing list
+    /// changes (<see cref="ApplyMediaItems"/>, <see cref="RemoveMediaItems"/>).
+    /// </summary>
+    public int TotalGalleryImageCount => _allMediaItems.Count(i => i.IsImage);
+
+    [ObservableProperty]
+    private bool _isAdvancedSearchOpen;
+
+    /// <summary>
+    /// True while a tag-index build is running. Reveals the toolbar's Cancel
+    /// button and gates <see cref="CancelTagIndexCommand"/>.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(CancelTagIndexCommand))]
+    private bool _isIndexingTagIndex;
+
+    /// <summary>
+    /// Transient feedback for the last tag-index operation — how a finished
+    /// build reports what it did, and the only place a build that failed
+    /// outright says so. Follows the convention the rest of the app uses for
+    /// this (see <c>ImageActionsViewModel</c> / <c>CivitaiBrowserViewModel</c>):
+    /// a nullable string the view shows only while it is non-empty.
+    /// </summary>
+    [ObservableProperty]
+    private string? _statusMessage;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsNsfwFilterShowAll))]
+    [NotifyPropertyChangedFor(nameof(IsNsfwFilterHideNsfw))]
+    [NotifyPropertyChangedFor(nameof(IsNsfwFilterNsfwOnly))]
+    [NotifyPropertyChangedFor(nameof(HasActiveTagFilters))]
+    private NsfwFilterMode _nsfwFilter = NsfwFilterMode.ShowAll;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(FilteredMatchCountText))]
+    private int _filteredMatchCount;
+
     private string _selectedLayoutMode = "Showcase";
 
     public string SelectedLayoutMode
@@ -255,6 +348,29 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
     public bool IsGroupingEnabled => !string.Equals(SelectedGroupingOption, "None", StringComparison.OrdinalIgnoreCase);
 
+    public string IndexStatusText => $"{IndexedImageCount:N0} / {TotalGalleryImageCount:N0} indexed";
+
+    public BatchObservableCollection<TagCloudEntryViewModel> TagCloud { get; } = [];
+
+    public ObservableCollection<string> ActiveTagFilters { get; } = [];
+
+    /// <summary>
+    /// True when anything in the Advanced Search drawer is narrowing the
+    /// gallery. The NSFW mode counts: it filters on its own, without any tag
+    /// being selected, so leaving it out would hide the active-filter strip —
+    /// and with it the only "Clear filters" affordance — while the gallery is
+    /// visibly filtered.
+    /// </summary>
+    public bool HasActiveTagFilters => ActiveTagFilters.Count > 0 || NsfwFilter != NsfwFilterMode.ShowAll;
+
+    public bool IsNsfwFilterShowAll => NsfwFilter == NsfwFilterMode.ShowAll;
+    public bool IsNsfwFilterHideNsfw => NsfwFilter == NsfwFilterMode.HideNsfw;
+    public bool IsNsfwFilterNsfwOnly => NsfwFilter == NsfwFilterMode.NsfwOnly;
+
+    public string FilteredMatchCountText => $"{FilteredMatchCount:N0} images match";
+
+    public string TagCloudHeader => $"TAG INDEX — {TotalGalleryImageCount:N0} images · {TagCloud.Count:N0} tags";
+
     #region IThumbnailAware
 
     /// <inheritdoc />
@@ -295,6 +411,44 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             // startup (issue #397). RunBusyAsync itself does not offload.
             var mediaItems = await Task.Run(() => CollectMediaItemsAsync(enabledPaths, includeSubFolders));
             await ApplyMediaItemsAsync(mediaItems, enabledPaths.Count);
+
+            if (_tagIndexService is not null)
+            {
+                // Both calls hit tables that can be missing entirely: if the
+                // DB was locked when DatabaseRecoveryService ran, it can stamp
+                // this feature's migrations as applied without creating the
+                // tables, and every later startup then sees nothing pending —
+                // permanently. That turns into "SQLite Error 1: no such table"
+                // here. RunBusyAsync does not catch, so an escape would be
+                // rethrown on the UI thread's synchronization context, i.e. an
+                // unhandled exception in Avalonia's dispatcher loop. A broken
+                // tag index must cost the user their tag data, not the gallery.
+                try
+                {
+                    // Offloaded like the folder scan above: Microsoft.Data.Sqlite
+                    // executes "async" queries synchronously on the calling
+                    // thread, so awaiting these inline would put the whole tag
+                    // lookup for a large indexed gallery back on the UI thread
+                    // (issue #397 territory). Scoped to this gallery's images so
+                    // the "N / M indexed" pill compares like with like — the
+                    // unscoped count kept counting rows for disabled folders.
+                    var imagePaths = mediaItems.Where(i => i.IsImage).Select(i => i.FilePath).ToList();
+                    IndexedImageCount = await Task.Run(() => _tagIndexService.GetIndexedCountAsync(imagePaths));
+
+                    // With an empty index the hydration lookup can only come back
+                    // empty, so skip the query outright: a user who has never run
+                    // "Build Tag Index" should pay nothing for this feature on
+                    // every single gallery load.
+                    if (IndexedImageCount > 0)
+                    {
+                        await HydrateTagDataAsync(mediaItems);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warning(ex, "Tag index unavailable; the gallery loaded without tag data");
+                }
+            }
 
             // Fire-and-forget: generate missing video thumbnails after gallery is displayed
             StartBackgroundVideoThumbnailGeneration(mediaItems);
@@ -451,6 +605,257 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     }
 
     [RelayCommand]
+    private void ToggleAdvancedSearch()
+    {
+        IsAdvancedSearchOpen = !IsAdvancedSearchOpen;
+        if (IsAdvancedSearchOpen)
+        {
+            _ = RefreshTagCloudAsync();
+        }
+    }
+
+    [RelayCommand]
+    private async Task BuildTagIndexAsync()
+    {
+        if (_tagIndexService is null) return;
+
+        _tagIndexCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _tagIndexCts = cts;
+        IsIndexingTagIndex = true;
+        StatusMessage = null;
+
+        try
+        {
+            await RunBusyAsync(async () =>
+            {
+                // BuildIndexAsync filters to image-only extensions internally (and
+                // documents this on its own XML doc) — pass the full mixed
+                // image/video list through rather than duplicating that filter here.
+                var paths = _allMediaItems.Select(i => i.FilePath).ToList();
+
+                // Constructed here, on the calling (UI) thread, so Progress<T>
+                // captures the UI SynchronizationContext and marshals every
+                // callback back to it even though the build below runs on the
+                // thread pool — no Dispatcher.UIThread.Post needed. Covered by
+                // BuildTagIndexCommand_RoutesProgressBackThroughTheCapturedSynchronizationContext.
+                var progress = new Progress<TagIndexBuildProgress>(p =>
+                {
+                    // StatusMessage is phase text ("Downloading tagger model…")
+                    // and wins outright: the download runs for minutes before a
+                    // single file is touched, and a handler that only asked
+                    // whether CurrentFile was null sat on "Indexing images… 0/N"
+                    // the whole time.
+                    BusyMessage = p.StatusMessage
+                        ?? (p.CurrentFile is not null
+                            ? $"Indexing images… {p.Completed:N0}/{p.Total:N0}"
+                            : "Finalizing index…");
+                });
+
+                TagIndexBuildResult? result = null;
+                var cancelled = false;
+                Exception? buildError = null;
+                try
+                {
+                    // Offloaded for exactly the reason the folder scan above is
+                    // (issue #397): BuildIndexAsync decodes every image, stats
+                    // files, and runs SQLite queries that complete synchronously
+                    // — none of it yields the UI thread.
+                    result = await Task.Run(() => _tagIndexService.BuildIndexAsync(paths, progress, cts.Token));
+                }
+                catch (OperationCanceledException)
+                {
+                    cancelled = true;
+                }
+                catch (Exception ex)
+                {
+                    // BuildIndexAsync's per-file failures are reported through
+                    // the result, but its up-front DB work (creating the
+                    // context, reading ImageTags) can still throw — e.g. the
+                    // stamped-but-missing-tables state described in
+                    // LoadMediaAsync. Nothing above RunBusyAsync catches, so
+                    // without this the click crashed the whole app.
+                    Logger.Error(ex, "Tag index build failed before indexing could start");
+                    buildError = ex;
+                }
+
+                // Runs after a cancelled build too: cancelling stops the loop but
+                // keeps every batch already flushed, so the counters and the tag
+                // cloud still have to catch up with what did get indexed.
+                await RefreshTagIndexStateAsync();
+
+                StatusMessage = cancelled
+                    ? "Tag indexing cancelled."
+                    : buildError is not null
+                        ? $"Tag indexing failed: {buildError.Message}"
+                        : DescribeBuildResult(result);
+
+                // Re-run the filter pipeline. Building the index is the usual way
+                // out of "I picked a filter before anything was indexed, so the
+                // gallery went empty" — the files that now satisfy that filter
+                // only appear if the pipeline runs again. Without this the grid
+                // stays empty after a successful build and the only escape is
+                // toggling some unrelated filter.
+                ApplySortingAndGrouping();
+            }, "Indexing images…");
+        }
+        finally
+        {
+            IsIndexingTagIndex = false;
+            _tagIndexCts = null;
+            cts.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Stops a running index build. Whatever batches already flushed stay in
+    /// the index, so the run is resumable: the next build skips them.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(IsIndexingTagIndex))]
+    private void CancelTagIndex() => _tagIndexCts?.Cancel();
+
+    /// <summary>
+    /// Pulls the indexed count, the tag cloud and the per-tile tag data back
+    /// into sync after a build. Guarded for the same reason the gallery-load
+    /// path is: these are DB calls on a table set that may not exist, and
+    /// nothing above <see cref="RunBusyAsync"/> catches.
+    /// </summary>
+    private async Task RefreshTagIndexStateAsync()
+    {
+        if (_tagIndexService is null) return;
+
+        // The index data just changed, so memoized search results are stale.
+        InvalidateTagSearchCache();
+
+        try
+        {
+            var imagePaths = _allMediaItems.Where(i => i.IsImage).Select(i => i.FilePath).ToList();
+            IndexedImageCount = await Task.Run(() => _tagIndexService.GetIndexedCountAsync(imagePaths));
+            await RefreshTagCloudAsync();
+            await HydrateTagDataAsync(_allMediaItems);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning(ex, "Failed to refresh tag-index state after a build");
+        }
+    }
+
+    /// <summary>
+    /// One-line summary of a finished build for <see cref="StatusMessage"/>.
+    /// "Everything failed" gets its own wording because that is what a failed
+    /// model download looks like from here — the whole run comes back as
+    /// Failed — and a bare "indexed 0 · failed 1,234" reads like a per-file
+    /// problem rather than "none of this worked, look at the log".
+    /// </summary>
+    private static string DescribeBuildResult(TagIndexBuildResult? result)
+    {
+        if (result is null)
+            return "Tag indexing finished.";
+
+        var total = result.Indexed + result.Skipped + result.Failed;
+        if (total == 0)
+            return "Nothing to index — no images in the enabled gallery folders.";
+
+        if (result.Indexed == 0 && result.Failed == total)
+            return $"Tag indexing failed — none of the {total:N0} image(s) could be indexed. Check the log for details.";
+
+        return $"Indexed {result.Indexed:N0} · skipped {result.Skipped:N0} · failed {result.Failed:N0}";
+    }
+
+    [RelayCommand]
+    private void ToggleTagFilter(string? tagName)
+    {
+        if (string.IsNullOrEmpty(tagName)) return;
+
+        if (!ActiveTagFilters.Remove(tagName))
+            ActiveTagFilters.Add(tagName);
+
+        foreach (var entry in TagCloud)
+            entry.IsActive = ActiveTagFilters.Contains(entry.Name);
+
+        OnPropertyChanged(nameof(HasActiveTagFilters));
+        ApplySortingAndGrouping();
+    }
+
+    [RelayCommand]
+    private void ClearTagFilters()
+    {
+        ActiveTagFilters.Clear();
+        foreach (var entry in TagCloud)
+            entry.IsActive = false;
+
+        // "Clear filters" has to clear all of them. The NSFW mode filters on
+        // its own, so leaving it set would hide the active-filter strip while
+        // the gallery stayed filtered. Assigning it also refreshes the
+        // Is*-flavored booleans behind the radio buttons (NotifyPropertyChangedFor).
+        NsfwFilter = NsfwFilterMode.ShowAll;
+
+        OnPropertyChanged(nameof(HasActiveTagFilters));
+        ApplySortingAndGrouping();
+    }
+
+    [RelayCommand]
+    private void SetNsfwFilter(string mode)
+    {
+        // The Is*-flavored booleans are notified via [NotifyPropertyChangedFor]
+        // on the NsfwFilter backing field, so they stay in sync however
+        // NsfwFilter is set (not just through this command).
+        NsfwFilter = Enum.Parse<NsfwFilterMode>(mode);
+        ApplySortingAndGrouping();
+    }
+
+    private async Task RefreshTagCloudAsync()
+    {
+        if (_tagIndexService is null) return;
+
+        // Guarded here (not only at call sites): ToggleAdvancedSearch invokes
+        // this fire-and-forget, so an escaping SqliteException would fault an
+        // unobserved task — the drawer then opens with an empty cloud that is
+        // indistinguishable from "no index yet" and nothing reaches the log
+        // until some later GC.
+        try
+        {
+            var cloud = await Task.Run(() => _tagIndexService.GetTagCloudAsync());
+            var activeNames = ActiveTagFilters.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            TagCloud.ReplaceAll(cloud.Select(t => new TagCloudEntryViewModel(t.Name, t.Count) { IsActive = activeNames.Contains(t.Name) }).ToList());
+            OnPropertyChanged(nameof(TagCloudHeader));
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning(ex, "Failed to load the tag cloud");
+            StatusMessage = "Tag cloud unavailable — the tag index could not be queried.";
+        }
+    }
+
+    private async Task HydrateTagDataAsync(IReadOnlyList<GenerationGalleryMediaItemViewModel> items)
+    {
+        if (_tagIndexService is null) return;
+
+        var paths = items.Where(i => i.IsImage).Select(i => i.FilePath).ToList();
+        if (paths.Count == 0) return;
+
+        // Fetch on the pool (SQLite's async is synchronous under the hood),
+        // apply on the calling (UI) context — item VM property changes must
+        // not fire from a background thread.
+        var lookup = await Task.Run(() => _tagIndexService.GetTagsForFilesAsync(paths));
+        foreach (var item in items)
+        {
+            if (lookup.TryGetValue(Path.GetFullPath(item.FilePath), out var info))
+            {
+                item.IsNsfw = info.IsNsfw;
+                item.Tags = info.Tags;
+            }
+        }
+    }
+
+    private void InvalidateTagSearchCache()
+    {
+        _tagSearchCacheKey = null;
+        _cachedTagFilterMatches = null;
+        _cachedKnownNsfwPaths = null;
+    }
+
+    [RelayCommand]
     private async Task DeleteSelectedAsync()
     {
         if (DialogService is null) return;
@@ -467,9 +872,9 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         foreach (var item in selectedItems)
         {
             DeleteFileIfExists(item.FilePath);
-            RemoveMediaItem(item);
         }
 
+        RemoveMediaItems(selectedItems);
         UpdateSelectionState();
     }
 
@@ -787,17 +1192,67 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         _allMediaItems.Clear();
         _allMediaItems.AddRange(items);
 
+        // TotalGalleryImageCount is computed from _allMediaItems.
+        OnPropertyChanged(nameof(TotalGalleryImageCount));
+        OnPropertyChanged(nameof(IndexStatusText));
+        OnPropertyChanged(nameof(TagCloudHeader));
+
+        // Recorded before the pipeline starts: ApplySortedResults recomputes
+        // the empty-state message on every run and needs this to distinguish
+        // "no folders configured" from "folders configured but empty".
+        _enabledSourceCount = enabledSourceCount;
+
         ApplySortingAndGrouping();
 
-        NoMediaMessage = enabledSourceCount == 0
-            ? "No generation gallery folders are enabled. Configure Generation Galleries in Settings to get started."
-            : "No media found in enabled generation gallery folders. Check your Generation Galleries in Settings.";
+        // The pipeline sets this again when it completes; doing it here too
+        // keeps a load that never reaches ApplySortedResults (a faulted filter
+        // pass) from leaving the empty state with no text at all.
+        UpdateNoMediaMessage();
 
         OnPropertyChanged(nameof(HasMedia));
         OnPropertyChanged(nameof(HasNoMedia));
         _lastClickedItem = null;
         UpdateSelectionState();
     }
+
+    /// <summary>
+    /// Picks the empty-state text for the current situation. An active
+    /// tag/NSFW filter takes priority: an empty grid then means "nothing
+    /// matched", which needs a completely different next step from the user
+    /// than "no folders configured". Notably, a HideNsfw/NsfwOnly filter only
+    /// matches files that are already in the tag index, so a gallery that has
+    /// never been indexed empties out entirely — without this message that
+    /// looks like the gallery itself broke.
+    /// </summary>
+    private void UpdateNoMediaMessage()
+    {
+        // Zero enabled folders wins over everything: telling that user to
+        // "clear filters or build the tag index" (the filter branch below)
+        // sends them chasing filters over a gallery that has no folders at
+        // all — the only useful next step is Settings.
+        if (_enabledSourceCount == 0)
+        {
+            NoMediaMessage = "No generation gallery folders are enabled. Configure Generation Galleries in Settings to get started.";
+        }
+        else if (HasActiveTagFilters && MediaItems.Count == 0)
+        {
+            NoMediaMessage = "No images match your current filters. Try clearing the filters, or build the tag index if you haven't done that yet.";
+        }
+        else
+        {
+            NoMediaMessage = "No media found in enabled generation gallery folders. Check your Generation Galleries in Settings.";
+        }
+
+        OnPropertyChanged(nameof(ShowConfigureFoldersHint));
+    }
+
+    /// <summary>
+    /// Gates the "Open Settings → Generation Galleries…" line under the
+    /// empty-state message: always shown when no folders are enabled (that IS
+    /// the fix), otherwise only when no filter is responsible for the grid
+    /// being empty.
+    /// </summary>
+    public bool ShowConfigureFoldersHint => _enabledSourceCount == 0 || !HasActiveTagFilters;
 
     /// <summary>
     /// Waits for any in-progress sort/filter/group operation to complete.
@@ -819,6 +1274,10 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     /// </summary>
     private async Task ApplySortingAndGroupingAsync()
     {
+        // Stamp this pass; any pass that is no longer the newest discards its
+        // results instead of publishing them (see _sortGeneration).
+        var generation = Interlocked.Increment(ref _sortGeneration);
+
         // Capture current filter/sort state for the background thread
         var allItems = _allMediaItems;
         var dateFilter = SelectedDateFilter;
@@ -827,6 +1286,70 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         var groupingOption = SelectedGroupingOption;
         var isGroupingEnabled = IsGroupingEnabled;
         var showFavoritesOnly = ShowFavoritesOnly;
+        var nsfwFilter = NsfwFilter;
+
+        // Tag/NSFW filtering needs the database, so it's resolved here (async,
+        // before the CPU-bound Task.Run below) rather than inside the closure.
+        // Skipped entirely when no tag filter is active, so the common case
+        // (typing in the filename search box) never touches the DB — and
+        // memoized per (filters, NSFW mode), so keystrokes and sort changes
+        // with an active filter don't re-query either.
+        //
+        // The two filters get different semantics on purpose:
+        //  * Tag chips: intersection with the match set. Only indexed files
+        //    can carry tags, so "must be in the set" is correct.
+        //  * NSFW mode: works on the KNOWN-NSFW set. An unindexed file is
+        //    "not known to be NSFW", not "excluded from the universe" —
+        //    intersecting with the SFW result set (the previous shape) made
+        //    Hide NSFW blank every unindexed image, i.e. the entire gallery
+        //    when the index was never built.
+        HashSet<string>? tagMatchPaths = null;
+        HashSet<string>? knownNsfwPaths = null;
+        var tagFilterFailed = false;
+        if (HasActiveTagFilters && _tagIndexService is not null)
+        {
+            try
+            {
+                var cacheKey = string.Join("\u0001", ActiveTagFilters) + "\u0002" + nsfwFilter;
+                if (!string.Equals(cacheKey, _tagSearchCacheKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    HashSet<string>? tagMatches = null;
+                    HashSet<string>? nsfwPaths = null;
+
+                    if (ActiveTagFilters.Count > 0)
+                    {
+                        var tags = ActiveTagFilters.ToList();
+                        var matches = await Task.Run(() => _tagIndexService.SearchAsync(tags, NsfwFilterMode.ShowAll));
+                        tagMatches = matches.Select(Path.GetFullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    }
+
+                    if (nsfwFilter != NsfwFilterMode.ShowAll)
+                    {
+                        var nsfw = await Task.Run(() => _tagIndexService.SearchAsync([], NsfwFilterMode.NsfwOnly));
+                        nsfwPaths = nsfw.Select(Path.GetFullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    }
+
+                    _cachedTagFilterMatches = tagMatches;
+                    _cachedKnownNsfwPaths = nsfwPaths;
+                    _tagSearchCacheKey = cacheKey;
+                }
+
+                tagMatchPaths = _cachedTagFilterMatches;
+                knownNsfwPaths = _cachedKnownNsfwPaths;
+            }
+            catch (Exception ex)
+            {
+                // Fail CLOSED. A content filter the user believes is active
+                // must not silently show everything: the previous fail-open
+                // shape re-rendered every NSFW image while the "Filtered by:"
+                // strip still claimed Hide NSFW was on. An empty grid plus a
+                // status message is recoverable; that is not.
+                Logger.Warning(ex, "Tag search failed; hiding results because a tag/NSFW filter is active");
+                StatusMessage = "Tag filter unavailable — the tag index could not be queried. Clear filters to show all images.";
+                tagFilterFailed = true;
+                InvalidateTagSearchCache();
+            }
+        }
 
         // Run sorting, filtering, and group creation on a background thread
         var (sortedList, groups) = await Task.Run(() =>
@@ -848,6 +1371,32 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             if (showFavoritesOnly)
             {
                 filtered = filtered.Where(item => item.IsFavorite);
+            }
+
+            if (tagFilterFailed)
+            {
+                filtered = [];
+            }
+            else if (tagMatchPaths is not null || knownNsfwPaths is not null)
+            {
+                filtered = filtered.Where(item =>
+                {
+                    var fullPath = Path.GetFullPath(item.FilePath);
+
+                    if (tagMatchPaths is not null && !tagMatchPaths.Contains(fullPath))
+                        return false;
+
+                    if (knownNsfwPaths is not null)
+                    {
+                        var isKnownNsfw = knownNsfwPaths.Contains(fullPath);
+                        if (nsfwFilter == NsfwFilterMode.HideNsfw && isKnownNsfw)
+                            return false;
+                        if (nsfwFilter == NsfwFilterMode.NsfwOnly && !isKnownNsfw)
+                            return false;
+                    }
+
+                    return true;
+                });
             }
 
             IEnumerable<GenerationGalleryMediaItemViewModel> sorted = filtered;
@@ -882,6 +1431,13 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             return (resultList, resultGroups);
         });
 
+        // A newer pass started while this one was querying/sorting — its
+        // results describe a filter state the UI has already moved past.
+        if (generation != Volatile.Read(ref _sortGeneration))
+            return;
+
+        FilteredMatchCount = sortedList.Count;
+
         // Back on the original context (UI thread) — apply results directly
         ApplySortedResults(sortedList, groups);
     }
@@ -906,6 +1462,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         {
             GroupedMediaItems.ReplaceAll([]);
         }
+
+        UpdateNoMediaMessage();
 
         OnPropertyChanged(nameof(HasMedia));
         OnPropertyChanged(nameof(HasNoMedia));
@@ -992,16 +1550,94 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         OnPropertyChanged(nameof(ToggleFavoritesButtonText));
     }
 
-    private void RemoveMediaItem(GenerationGalleryMediaItemViewModel item)
+    /// <summary>
+    /// The single exit from the gallery for media items — both delete
+    /// commands and <see cref="OnActionsFilesMoved"/> route through here, so
+    /// it is also where the tag index learns the files are gone. Takes a
+    /// batch so a bulk delete issues ONE index prune (one DB context, one
+    /// DELETE) instead of one chained task per file.
+    /// </summary>
+    private void RemoveMediaItems(IReadOnlyList<GenerationGalleryMediaItemViewModel> items)
     {
-        _allMediaItems.Remove(item);
-        MediaItems.Remove(item);
-        VisibleMediaItems.Remove(item);
+        if (items.Count == 0) return;
+
+        foreach (var item in items)
+        {
+            _allMediaItems.Remove(item);
+            MediaItems.Remove(item);
+            VisibleMediaItems.Remove(item);
+        }
+
         UpdateGroupedMediaItems(MediaItems.ToList());
+
+        // Keep the "N images match" footer honest — it is otherwise only
+        // written by the filter pipeline, which a removal does not re-run.
+        FilteredMatchCount = MediaItems.Count;
+
         OnPropertyChanged(nameof(HasMedia));
         OnPropertyChanged(nameof(HasNoMedia));
         OnPropertyChanged(nameof(HasMoreItems));
+
+        var imagePaths = items.Where(i => i.IsImage).Select(i => i.FilePath).ToList();
+        if (imagePaths.Count == 0) return;
+
+        // TotalGalleryImageCount is computed from _allMediaItems, which just
+        // changed — raise it and its dependents.
+        OnPropertyChanged(nameof(TotalGalleryImageCount));
+        OnPropertyChanged(nameof(IndexStatusText));
+        OnPropertyChanged(nameof(TagCloudHeader));
+
+        if (_tagIndexService is null) return;
+
+        // Fire-and-forget: pruning is best-effort consistency cleanup, not
+        // something a delete should block on. Chained onto the previous prune
+        // so overlapping bulk deletes run one at a time.
+        _lastTagIndexPruneTask = PruneTagIndexEntriesAsync(imagePaths, _lastTagIndexPruneTask);
     }
+
+    private void RemoveMediaItem(GenerationGalleryMediaItemViewModel item) => RemoveMediaItems([item]);
+
+    /// <summary>
+    /// Drops the index rows for files that just left the gallery and corrects
+    /// <see cref="IndexedImageCount"/> by however many rows actually went —
+    /// zero for files that were never indexed, so the counter stays honest
+    /// without a second query to find out.
+    /// </summary>
+    private async Task PruneTagIndexEntriesAsync(IReadOnlyList<string> filePaths, Task previous)
+    {
+        try
+        {
+            await previous;
+        }
+        catch
+        {
+            // Defensive: this method swallows its own failures, so `previous`
+            // should never be faulted. Catching anyway keeps one bad link from
+            // poisoning every prune that chains onto it afterwards.
+        }
+
+        if (_tagIndexService is null) return;
+
+        try
+        {
+            var removed = await _tagIndexService.RemoveIndexEntriesAsync(filePaths);
+            if (removed > 0)
+            {
+                IndexedImageCount = Math.Max(0, IndexedImageCount - removed);
+                InvalidateTagSearchCache();
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning(ex, "Failed to prune {Count} tag index entrie(s)", filePaths.Count);
+        }
+    }
+
+    /// <summary>
+    /// Waits for the index-prune calls started by <see cref="RemoveMediaItem"/>.
+    /// Intended for test support.
+    /// </summary>
+    public Task WaitForTagIndexPruneAsync() => _lastTagIndexPruneTask;
 
     private int GetDefaultViewerIndex()
     {
