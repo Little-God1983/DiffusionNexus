@@ -292,7 +292,8 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         IFeatureReadinessService? readinessService = null,
         Domain.Services.UnifiedLogging.IUnifiedLogger? unifiedLogger = null,
         IAppSettingsService? settingsService = null,
-        IVideoThumbnailService? videoThumbnailService = null)
+        IVideoThumbnailService? videoThumbnailService = null,
+        IDownloadCoordinator? downloadCoordinator = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
@@ -304,7 +305,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         _videoThumbnailService = videoThumbnailService;
 
         // Create the image editor with background removal service
-        ImageEditor = new ImageEditorViewModel(_eventAggregator, _backgroundRemovalService, _comfyUiService, readinessService: _readinessService, unifiedLogger: unifiedLogger);
+        ImageEditor = new ImageEditorViewModel(_eventAggregator, _backgroundRemovalService, _comfyUiService, readinessService: _readinessService, unifiedLogger: unifiedLogger, downloadCoordinator: downloadCoordinator);
 
         // Reusable Add/Send actions over the current edited image. "Image Editor" + "Comparer" are
         // hidden; enablement tracks whether an image is loaded.
