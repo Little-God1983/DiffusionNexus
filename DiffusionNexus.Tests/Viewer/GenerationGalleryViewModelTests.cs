@@ -1056,9 +1056,59 @@ public class GenerationGalleryViewModelTests : IDisposable
             .And.Contain("Last 3 Months")
             .And.Contain("All Time", "the message must hand the user the fix, not just the diagnosis");
 
-        viewModel.SelectedDateFilter = "All Time";
+        // The drawer's own indicator carries the same diagnosis…
+        viewModel.HasHiddenTagMatches.Should().BeTrue();
+        viewModel.HiddenTagMatchesText.Should().Contain("1").And.Contain("Last 3 Months");
+
+        // …and its one-click fix widens the toolbar filters.
+        viewModel.RevealHiddenMatchesCommand.Execute(null);
         await viewModel.WaitForSortingAsync();
         viewModel.MediaItems.Should().ContainSingle("widening the window reveals the match, proving the diagnosis");
+        viewModel.HasHiddenTagMatches.Should().BeFalse();
+        viewModel.ActiveTagFilters.Should().ContainSingle("the drawer's own filters must survive the reveal");
+    }
+
+    [Fact]
+    public async Task TagCloudChips_ShowScopedCounts_WhenTheDateFilterHidesCarriers()
+    {
+        // "1girl (55)" clicking into an empty grid was a lie: the chip count
+        // was gallery-global while the default date window hid every carrier.
+        // Chips now show "in scope / total" whenever the two differ.
+        var galleryPath = CreateTempDirectory();
+        var oldImage = Path.Combine(galleryPath, "old.png");
+        var newImage = Path.Combine(galleryPath, "new.png");
+        File.WriteAllText(oldImage, "test");
+        File.WriteAllText(newImage, "test");
+        File.SetCreationTimeUtc(oldImage, DateTime.UtcNow.AddYears(-1));
+
+        var mockTagIndex = BuildableTagIndex(new TagIndexBuildResult(2, 0, 0, 0));
+        mockTagIndex.Setup(t => t.GetTagCloudAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { new TagFrequency("dog", 2) });
+        mockTagIndex.Setup(t => t.GetTagsForFilesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, ImageTagLookup>(StringComparer.OrdinalIgnoreCase)
+            {
+                [Path.GetFullPath(oldImage)] = new ImageTagLookup(IsNsfw: false, Tags: ["dog"]),
+                [Path.GetFullPath(newImage)] = new ImageTagLookup(IsNsfw: false, Tags: ["dog"]),
+            });
+        mockTagIndex.Setup(t => t.SearchAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<NsfwFilterMode>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { oldImage, newImage });
+
+        var viewModel = CreateGalleryViewModel(galleryPath, mockTagIndex.Object);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+        await viewModel.BuildTagIndexCommand.ExecuteAsync(null);
+        await viewModel.WaitForSortingAsync();
+
+        viewModel.SelectedDateFilter.Should().Be("Last 3 Months", "precondition: the default window hides the old file");
+        var chip = viewModel.TagCloud.Single(t => t.Name == "dog");
+        chip.Count.Should().Be(2);
+        chip.ScopedCount.Should().Be(1, "only the recent file falls inside the date window");
+        chip.DisplayText.Should().Be("dog (1/2)");
+
+        viewModel.SelectedDateFilter = "All Time";
+        await viewModel.WaitForSortingAsync();
+
+        chip.ScopedCount.Should().Be(2);
+        chip.DisplayText.Should().Be("dog (2)", "the split disappears when it carries no information");
     }
 
     [Fact]
