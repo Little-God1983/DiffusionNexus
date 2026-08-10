@@ -20,6 +20,8 @@ public partial class GenerationGalleryMediaItemViewModel : ObservableObject
     private bool _isThumbnailLoading;
     private bool _isSelected;
     private bool _isFavorite;
+    private bool _isNsfw;
+    private IReadOnlyList<string> _tags = Array.Empty<string>();
     private double _aspectRatio = 1.0;
 
     public GenerationGalleryMediaItemViewModel(
@@ -105,6 +107,29 @@ public partial class GenerationGalleryMediaItemViewModel : ObservableObject
         get => _isFavorite;
         set => SetProperty(ref _isFavorite, value);
     }
+
+    /// <summary>Whether the tag index flagged this image as NSFW. False (default) until indexed.</summary>
+    public bool IsNsfw
+    {
+        get => _isNsfw;
+        set => SetProperty(ref _isNsfw, value);
+    }
+
+    /// <summary>Content tags from the tag index. Empty until indexed.</summary>
+    public IReadOnlyList<string> Tags
+    {
+        get => _tags;
+        set
+        {
+            if (SetProperty(ref _tags, value))
+            {
+                OnPropertyChanged(nameof(TopTags));
+            }
+        }
+    }
+
+    /// <summary>The first 3 tags, for the tile's hover strip — keeps the card readable.</summary>
+    public IReadOnlyList<string> TopTags => _tags.Count <= 3 ? _tags : _tags.Take(3).ToList();
 
     /// <summary>
     /// The loaded thumbnail bitmap. Loads asynchronously on first access.
