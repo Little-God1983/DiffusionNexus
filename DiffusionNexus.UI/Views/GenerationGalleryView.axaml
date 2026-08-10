@@ -152,6 +152,25 @@
       <Setter Property="BorderBrush" Value="#b388ff"/>
       <Setter Property="FontWeight" Value="SemiBold"/>
     </Style>
+    <!-- The colors above are set on the Button and only reach the visuals
+         through the template's TemplateBindings. Fluent's own
+         "Button:pointerover /template/ ContentPresenter#PART_ContentPresenter"
+         rule paints the ContentPresenter directly at a higher-precedence
+         frame, so on hover an active (violet) chip would revert to the theme's
+         gray — killing the "this tag is active" signal exactly when the
+         pointer is on it. Re-assert both palettes on the element the theme
+         targets. The .active rule must stay last: same specificity, later
+         wins for a chip carrying both classes. -->
+    <Style Selector="Button.tagchip:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#2b2b2b"/>
+      <Setter Property="BorderBrush" Value="#4a4a4a"/>
+      <Setter Property="TextElement.Foreground" Value="#cfcfcf"/>
+    </Style>
+    <Style Selector="Button.tagchip.active:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#c9a6ff"/>
+      <Setter Property="BorderBrush" Value="#c9a6ff"/>
+      <Setter Property="TextElement.Foreground" Value="#1a1030"/>
+    </Style>
     <Style Selector="Border#TagStripHost">
       <Setter Property="Opacity" Value="0"/>
     </Style>
@@ -318,7 +337,12 @@
           <TextBlock Text="🖼️" FontSize="64" HorizontalAlignment="Center" Opacity="0.4"/>
           <TextBlock Text="Generation Gallery Empty" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center"/>
           <TextBlock Text="{Binding NoMediaMessage}" Opacity="0.6" TextAlignment="Center"/>
-          <TextBlock Text="Open Settings → Generation Galleries to add and enable folders." Opacity="0.6" TextAlignment="Center"/>
+          <!-- Hidden while filters are active: NoMediaMessage then explains
+               the grid is empty because nothing matched, and "go configure
+               folders" would send the user somewhere that cannot help. -->
+          <TextBlock Text="Open Settings → Generation Galleries to add and enable folders."
+                     IsVisible="{Binding !HasActiveTagFilters}"
+                     Opacity="0.6" TextAlignment="Center"/>
         </StackPanel>
       </Border>
 

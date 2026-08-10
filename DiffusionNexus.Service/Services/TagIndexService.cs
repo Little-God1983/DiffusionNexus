@@ -376,14 +376,26 @@ public sealed class TagIndexService : ITagIndexService
 
         await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
 
+        // Untracked, and projected to exactly what a tile shows (an NSFW flag
+        // plus its tag names). The Include/ThenInclude version this replaces
+        // materialized a fully tracked graph — every ImageMediaTagIndex row,
+        // every assignment on it, and every ImageTag those reach — which for a
+        // fully indexed gallery is hundreds of thousands of entities, built on
+        // the gallery-load path that already caused a UI freeze once (#397).
         var rows = await context.ImageMediaTagIndexes
+            .AsNoTracking()
             .Where(e => normalizedPaths.Contains(e.FilePath))
-            .Include(e => e.TagAssignments).ThenInclude(a => a.ImageTag)
+            .Select(e => new
+            {
+                e.FilePath,
+                e.IsNsfw,
+                Tags = e.TagAssignments.Select(a => a.ImageTag!.Name).ToList(),
+            })
             .ToListAsync(cancellationToken);
 
         return rows.ToDictionary(
             e => e.FilePath,
-            e => new ImageTagLookup(e.IsNsfw, e.TagAssignments.Select(a => a.ImageTag!.Name).ToList()),
+            e => new ImageTagLookup(e.IsNsfw, e.Tags),
             StringComparer.OrdinalIgnoreCase);
     }
 

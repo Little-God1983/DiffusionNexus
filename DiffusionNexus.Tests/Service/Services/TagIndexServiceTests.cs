@@ -75,6 +75,53 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// Records how many entities the change tracker held at dispose time. The
+    /// service owns its contexts and disposes them before returning, so this
+    /// is the only place a test can observe what a read path tracked.
+    /// </summary>
+    private sealed class TrackingProbeDbContext : DiffusionNexusCoreDbContext
+    {
+        private readonly List<int> _trackedAtDispose;
+
+        public TrackingProbeDbContext(
+            DbContextOptions<DiffusionNexusCoreDbContext> options,
+            List<int> trackedAtDispose)
+            : base(options) => _trackedAtDispose = trackedAtDispose;
+
+        private void Record() => _trackedAtDispose.Add(ChangeTracker.Entries().Count());
+
+        public override void Dispose()
+        {
+            Record();
+            base.Dispose();
+        }
+
+        public override ValueTask DisposeAsync()
+        {
+            Record();
+            return base.DisposeAsync();
+        }
+    }
+
+    private sealed class TrackingProbeDbContextFactory : IDbContextFactory<DiffusionNexusCoreDbContext>
+    {
+        private readonly DbContextOptions<DiffusionNexusCoreDbContext> _options;
+        private readonly List<int> _trackedAtDispose;
+
+        public TrackingProbeDbContextFactory(
+            DbContextOptions<DiffusionNexusCoreDbContext> options,
+            List<int> trackedAtDispose)
+        {
+            _options = options;
+            _trackedAtDispose = trackedAtDispose;
+        }
+
+        public DiffusionNexusCoreDbContext CreateDbContext() => new TrackingProbeDbContext(_options, _trackedAtDispose);
+        public Task<DiffusionNexusCoreDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult(CreateDbContext());
+    }
+
+    /// <summary>
     /// Tagger stub keyed on image width, so each test file gets a
     /// deterministic result regardless of the order the service processes
     /// them in. <paramref name="perWidth"/> maps image width to the outcome.
@@ -645,5 +692,75 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
         var lookup = await service.GetTagsForFilesAsync(new[] { @"C:\never\indexed.png" });
 
         lookup.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetTagsForFilesAsync_KeepsEachFilesTagsSeparate_AcrossManyFilesAndSharedTags()
+    {
+        // Guards the projected (Select-per-row) form of the query. A collection
+        // projection is where a rewrite most plausibly goes wrong — a botched
+        // join can bleed one file's tags onto another, or drop the row for a
+        // file that carries no tags at all — and neither failure is visible in
+        // a single-file test.
+        var multi = CreateFakeImage("proj-multi.png", width: 1);
+        var shared = CreateFakeImage("proj-shared.png", width: 2);
+        var untagged = CreateFakeImage("proj-untagged.png", width: 3);
+        var unrequested = CreateFakeImage("proj-unrequested.png", width: 4);
+
+        var tagging = TaggerByWidth(w => w switch
+        {
+            1 => ImageTagResult.Succeeded(
+                new[] { new ImageTagScore("dog", 0.9f), new ImageTagScore("outdoor", 0.8f), new ImageTagScore("sunset", 0.7f) },
+                "general", 0.9f, isNsfw: false),
+            2 => ImageTagResult.Succeeded(
+                new[] { new ImageTagScore("dog", 0.6f) }, "explicit", 0.9f, isNsfw: true),
+            3 => ImageTagResult.Succeeded(Array.Empty<ImageTagScore>(), "general", 0.9f, isNsfw: false),
+            _ => ImageTagResult.Succeeded(
+                new[] { new ImageTagScore("cat", 0.9f) }, "general", 0.9f, isNsfw: false),
+        });
+        var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
+        await service.BuildIndexAsync(new[] { multi, shared, untagged, unrequested });
+
+        var lookup = await service.GetTagsForFilesAsync(
+            new[] { multi, shared, untagged, @"C:\never\indexed.png" });
+
+        lookup.Should().HaveCount(3, "the unrequested indexed file and the unindexed path are both absent");
+        lookup[Path.GetFullPath(multi)].IsNsfw.Should().BeFalse();
+        lookup[Path.GetFullPath(multi)].Tags.Should().BeEquivalentTo(new[] { "dog", "outdoor", "sunset" });
+        lookup[Path.GetFullPath(shared)].IsNsfw.Should().BeTrue();
+        lookup[Path.GetFullPath(shared)].Tags.Should().BeEquivalentTo(new[] { "dog" },
+            "sharing the 'dog' tag with another file must not pull that file's other tags across");
+        lookup[Path.GetFullPath(untagged)].Tags.Should().BeEmpty();
+        lookup[Path.GetFullPath(untagged)].IsNsfw.Should().BeFalse(
+            "an indexed file with no tags still has a row and still reports its rating — an inner join would have dropped it");
+        lookup.Should().NotContainKey(Path.GetFullPath(unrequested));
+    }
+
+    [Fact]
+    public async Task GetTagsForFilesAsync_DoesNotMaterializeATrackedEntityGraph()
+    {
+        // This lookup runs on the gallery-load path for every visible tile. The
+        // Include/ThenInclude version it replaced tracked every index row, every
+        // assignment and every tag it touched — hundreds of thousands of
+        // entities for a fully indexed gallery, on the same thread that once
+        // froze the window for ~20s (issue #397).
+        var pathA = CreateFakeImage("track-a.png", width: 1);
+        var pathB = CreateFakeImage("track-b.png", width: 2);
+        var tagging = TaggerByWidth(w => ImageTagResult.Succeeded(
+            new[] { new ImageTagScore($"tag{w}", 0.9f), new ImageTagScore("common", 0.5f) },
+            "general", 0.9f, isNsfw: false));
+        await new TagIndexService(new SingleDbContextFactory(_options), tagging.Object)
+            .BuildIndexAsync(new[] { pathA, pathB });
+
+        var trackedAtDispose = new List<int>();
+        var probed = new TagIndexService(
+            new TrackingProbeDbContextFactory(_options, trackedAtDispose), tagging.Object);
+
+        var lookup = await probed.GetTagsForFilesAsync(new[] { pathA, pathB });
+
+        lookup.Should().HaveCount(2, "the assertion below is only meaningful if the query actually returned rows");
+        lookup[Path.GetFullPath(pathA)].Tags.Should().BeEquivalentTo(new[] { "tag1", "common" });
+        trackedAtDispose.Should().ContainSingle().Which.Should().Be(0,
+            "the tile lookup projects to plain values and must leave the change tracker empty");
     }
 }

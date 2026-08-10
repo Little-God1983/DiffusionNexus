@@ -37,6 +37,13 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     private bool _isLoadingMore;
 
     /// <summary>
+    /// How many gallery folders were enabled at the last load. Kept so the
+    /// empty-state message can be recomputed on every filter pass, not only
+    /// when media is (re)loaded. See <see cref="UpdateNoMediaMessage"/>.
+    /// </summary>
+    private int _enabledSourceCount;
+
+    /// <summary>
     /// Number of items to render in the first batch when the gallery opens.
     /// Keeps the initial UI layout fast (&lt;100ms) regardless of total item count.
     /// </summary>
@@ -218,6 +225,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     [NotifyPropertyChangedFor(nameof(IsNsfwFilterShowAll))]
     [NotifyPropertyChangedFor(nameof(IsNsfwFilterHideNsfw))]
     [NotifyPropertyChangedFor(nameof(IsNsfwFilterNsfwOnly))]
+    [NotifyPropertyChangedFor(nameof(HasActiveTagFilters))]
     private NsfwFilterMode _nsfwFilter = NsfwFilterMode.ShowAll;
 
     [ObservableProperty]
@@ -286,7 +294,14 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
     public ObservableCollection<string> ActiveTagFilters { get; } = [];
 
-    public bool HasActiveTagFilters => ActiveTagFilters.Count > 0;
+    /// <summary>
+    /// True when anything in the Advanced Search drawer is narrowing the
+    /// gallery. The NSFW mode counts: it filters on its own, without any tag
+    /// being selected, so leaving it out would hide the active-filter strip —
+    /// and with it the only "Clear filters" affordance — while the gallery is
+    /// visibly filtered.
+    /// </summary>
+    public bool HasActiveTagFilters => ActiveTagFilters.Count > 0 || NsfwFilter != NsfwFilterMode.ShowAll;
 
     public bool IsNsfwFilterShowAll => NsfwFilter == NsfwFilterMode.ShowAll;
     public bool IsNsfwFilterHideNsfw => NsfwFilter == NsfwFilterMode.HideNsfw;
@@ -341,7 +356,15 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             if (_tagIndexService is not null)
             {
                 IndexedImageCount = await _tagIndexService.GetIndexedCountAsync();
-                await HydrateTagDataAsync(mediaItems);
+
+                // With an empty index the hydration lookup can only come back
+                // empty, so skip the query outright: a user who has never run
+                // "Build Tag Index" should pay nothing for this feature on
+                // every single gallery load (issue #397 territory).
+                if (IndexedImageCount > 0)
+                {
+                    await HydrateTagDataAsync(mediaItems);
+                }
             }
 
             // Fire-and-forget: generate missing video thumbnails after gallery is displayed
@@ -530,6 +553,14 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             IndexedImageCount = await _tagIndexService.GetIndexedCountAsync();
             await RefreshTagCloudAsync();
             await HydrateTagDataAsync(_allMediaItems);
+
+            // Re-run the filter pipeline. Building the index is the usual way
+            // out of "I picked a filter before anything was indexed, so the
+            // gallery went empty" — the files that now satisfy that filter
+            // only appear if the pipeline runs again. Without this the grid
+            // stays empty after a successful build and the only escape is
+            // toggling some unrelated filter.
+            ApplySortingAndGrouping();
         }, "Indexing images…");
     }
 
@@ -554,6 +585,12 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         ActiveTagFilters.Clear();
         foreach (var entry in TagCloud)
             entry.IsActive = false;
+
+        // "Clear filters" has to clear all of them. The NSFW mode filters on
+        // its own, so leaving it set would hide the active-filter strip while
+        // the gallery stayed filtered. Assigning it also refreshes the
+        // Is*-flavored booleans behind the radio buttons (NotifyPropertyChangedFor).
+        NsfwFilter = NsfwFilterMode.ShowAll;
 
         OnPropertyChanged(nameof(HasActiveTagFilters));
         ApplySortingAndGrouping();
@@ -934,16 +971,44 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         _allMediaItems.Clear();
         _allMediaItems.AddRange(items);
 
+        // Recorded before the pipeline starts: ApplySortedResults recomputes
+        // the empty-state message on every run and needs this to distinguish
+        // "no folders configured" from "folders configured but empty".
+        _enabledSourceCount = enabledSourceCount;
+
         ApplySortingAndGrouping();
 
-        NoMediaMessage = enabledSourceCount == 0
-            ? "No generation gallery folders are enabled. Configure Generation Galleries in Settings to get started."
-            : "No media found in enabled generation gallery folders. Check your Generation Galleries in Settings.";
+        // The pipeline sets this again when it completes; doing it here too
+        // keeps a load that never reaches ApplySortedResults (a faulted filter
+        // pass) from leaving the empty state with no text at all.
+        UpdateNoMediaMessage();
 
         OnPropertyChanged(nameof(HasMedia));
         OnPropertyChanged(nameof(HasNoMedia));
         _lastClickedItem = null;
         UpdateSelectionState();
+    }
+
+    /// <summary>
+    /// Picks the empty-state text for the current situation. An active
+    /// tag/NSFW filter takes priority: an empty grid then means "nothing
+    /// matched", which needs a completely different next step from the user
+    /// than "no folders configured". Notably, a HideNsfw/NsfwOnly filter only
+    /// matches files that are already in the tag index, so a gallery that has
+    /// never been indexed empties out entirely — without this message that
+    /// looks like the gallery itself broke.
+    /// </summary>
+    private void UpdateNoMediaMessage()
+    {
+        if (HasActiveTagFilters && MediaItems.Count == 0)
+        {
+            NoMediaMessage = "No images match your current filters. Try clearing the filters, or build the tag index if you haven't done that yet.";
+            return;
+        }
+
+        NoMediaMessage = _enabledSourceCount == 0
+            ? "No generation gallery folders are enabled. Configure Generation Galleries in Settings to get started."
+            : "No media found in enabled generation gallery folders. Check your Generation Galleries in Settings.";
     }
 
     /// <summary>
@@ -980,8 +1045,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         // Skipped entirely when no tag filter is active, so the common case
         // (typing in the filename search box) never touches the DB.
         HashSet<string>? tagMatchPaths = null;
-        var hasTagFilter = ActiveTagFilters.Count > 0 || NsfwFilter != NsfwFilterMode.ShowAll;
-        if (hasTagFilter && _tagIndexService is not null)
+        if (HasActiveTagFilters && _tagIndexService is not null)
         {
             var matches = await _tagIndexService.SearchAsync(ActiveTagFilters.ToList(), NsfwFilter);
             tagMatchPaths = matches.Select(Path.GetFullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -1072,6 +1136,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         {
             GroupedMediaItems.ReplaceAll([]);
         }
+
+        UpdateNoMediaMessage();
 
         OnPropertyChanged(nameof(HasMedia));
         OnPropertyChanged(nameof(HasNoMedia));
