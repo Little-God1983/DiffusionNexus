@@ -1,3 +1,4 @@
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Services;
@@ -369,9 +370,12 @@ public partial class BackgroundRemovalViewModel : ObservableObject
                     {
                         var fileProgress = new Progress<ModelDownloadProgress>(p =>
                         {
-                            if (p.Percentage >= 0)
-                                Progress = (int)p.Percentage;
-                            Status = p.Status;
+                            Dispatcher.UIThread.Post(() =>
+                            {
+                                if (p.Percentage >= 0)
+                                    Progress = (int)p.Percentage;
+                                Status = p.Status;
+                            });
 
                             var percent = p.TotalBytes > 0
                                 ? (int)((double)p.BytesDownloaded / p.TotalBytes * 100.0)
@@ -401,7 +405,7 @@ public partial class BackgroundRemovalViewModel : ObservableObject
             }
             else
             {
-                StatusMessageChanged?.Invoke(this, "Failed to download background removal model");
+                StatusMessageChanged?.Invoke(this, "Model download did not complete");
             }
         }
         catch (OperationCanceledException)
