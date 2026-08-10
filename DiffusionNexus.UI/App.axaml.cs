@@ -606,6 +606,12 @@ public partial class App : Application
         // Background removal service (singleton - maintains ONNX session)
         services.AddSingleton<IBackgroundRemovalService, BackgroundRemovalService>();
 
+        // Image tagging service (singleton - maintains ONNX session)
+        services.AddSingleton<IImageTaggingService, ImageTaggingService>();
+
+        // Tag index service (singleton - stateless, DbContext opened per operation)
+        services.AddSingleton<ITagIndexService, TagIndexService>();
+
         // Image upscaling service (singleton - maintains ONNX session)
         services.AddSingleton<IImageUpscalingService, ImageUpscalingService>();
 
