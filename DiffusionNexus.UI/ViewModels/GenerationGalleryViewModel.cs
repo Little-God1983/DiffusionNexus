@@ -1374,7 +1374,16 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         }
         else if (HasActiveTagFilters && MediaItems.Count == 0)
         {
-            NoMediaMessage = "No images match your current filters. Try clearing the filters, or build the tag index if you haven't done that yet.";
+            // Field-diagnosed trap: the tag filter DID match files, but the
+            // date filter (default "Last 3 Months"), the search box or the
+            // favorites toggle excluded every match — a partially built index
+            // tends to cover the oldest files first, which is exactly what a
+            // recent-only date window hides. Name the culprit and the fix.
+            NoMediaMessage = _tagMatchesHiddenByOtherFilters > 0
+                ? $"{_tagMatchesHiddenByOtherFilters:N0} image(s) match your tag filter, but the date filter " +
+                  $"('{SelectedDateFilter}'), the search box or the favorites toggle is hiding all of them. " +
+                  "Set the date filter to 'All Time' to see them."
+                : "No images match your current filters. Try clearing the filters, or build the tag index if you haven't done that yet.";
         }
         else
         {
@@ -1490,7 +1499,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         }
 
         // Run sorting, filtering, and group creation on a background thread
-        var (sortedList, groups) = await Task.Run(() =>
+        var (sortedList, groups, hiddenTagMatches) = await Task.Run(() =>
         {
             IEnumerable<GenerationGalleryMediaItemViewModel> filtered = allItems;
 
@@ -1551,6 +1560,19 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
             var resultList = sorted.ToList();
 
+            // Debuggability for a real support case: the tag filter matched
+            // files, but the grid still came up empty because the OTHER
+            // filters (date/search/favorites) excluded every match — e.g. the
+            // default "Last 3 Months" date window hiding an index that so far
+            // only covers old files. Count the tag matches alone so the empty
+            // state can name the real culprit instead of a generic shrug.
+            var tagMatchesHiddenByOtherFilters = 0;
+            if (resultList.Count == 0 && !tagFilterFailed && tagMatchPaths is { Count: > 0 })
+            {
+                tagMatchesHiddenByOtherFilters =
+                    allItems.Count(item => tagMatchPaths.Contains(Path.GetFullPath(item.FilePath)));
+            }
+
             // Build groups on background thread too
             List<GenerationGalleryGroupViewModel>? resultGroups = null;
             if (isGroupingEnabled)
@@ -1566,7 +1588,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
                 }).ToList();
             }
 
-            return (resultList, resultGroups);
+            return (resultList, resultGroups, tagMatchesHiddenByOtherFilters);
         });
 
         // A newer pass started while this one was querying/sorting — its
@@ -1575,10 +1597,19 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             return;
 
         FilteredMatchCount = sortedList.Count;
+        _tagMatchesHiddenByOtherFilters = hiddenTagMatches;
 
         // Back on the original context (UI thread) — apply results directly
         ApplySortedResults(sortedList, groups);
     }
+
+    /// <summary>
+    /// How many images matched the active tag filter but were excluded by the
+    /// date/search/favorites filters in the last pass that came up empty.
+    /// Only non-zero when the grid is empty for exactly that reason; feeds
+    /// the empty-state message.
+    /// </summary>
+    private int _tagMatchesHiddenByOtherFilters;
 
     private void ApplySortedResults(
         List<GenerationGalleryMediaItemViewModel> sortedList,
