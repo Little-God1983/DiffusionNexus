@@ -23,7 +23,13 @@ public class ImageMediaTagIndex : BaseEntity
 
     public float RatingScore { get; set; }
 
-    /// <summary>True when <see cref="RatingLabel"/> is not the model's safest ("general") label.</summary>
+    /// <summary>
+    /// True when <see cref="RatingLabel"/> was not the model's safest
+    /// ("general") label at index time. Written for diagnostics only — queries
+    /// must NOT read it: they derive NSFW from <see cref="RatingLabel"/> at
+    /// query time through <c>ContentRatingPolicy</c>, so a rating-policy
+    /// change never requires a full re-index to take effect.
+    /// </summary>
     public bool IsNsfw { get; set; }
 
     public DateTimeOffset IndexedAtUtc { get; set; }

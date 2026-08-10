@@ -235,8 +235,13 @@
           <TextBlock Text="{Binding TileHeight, StringFormat='{}{0:0}px'}" VerticalAlignment="Center"/>
         </StackPanel>
 
+        <!-- Every tagging affordance is gated on IsTaggingAvailable: without a
+             tag-index service (design time, tests, a future feature flag) the
+             UI shows nothing rather than fully clickable buttons that
+             silently do nothing. -->
         <Button Content="🏷️ Build Tag Index"
                 Command="{Binding BuildTagIndexCommand}"
+                IsVisible="{Binding IsTaggingAvailable}"
                 Padding="10,6" Margin="0,4,4,4"
                 ToolTip.Tip="Scan enabled gallery folders and tag new/changed images"/>
         <!-- Only shown while a build is running. A first build starts with a
@@ -248,6 +253,7 @@
                 Padding="10,6" Margin="0,4,4,4"
                 ToolTip.Tip="Stop the running tag index build — images already indexed are kept"/>
         <Border Background="#1c1c1c" BorderBrush="#3a3a3a" BorderThickness="1" CornerRadius="100"
+                IsVisible="{Binding IsTaggingAvailable}"
                 Padding="8,2" Margin="0,4,12,4" VerticalAlignment="Center">
           <TextBlock Text="{Binding IndexStatusText}" FontSize="11" Foreground="#9a9a9a"/>
         </Border>
@@ -258,6 +264,7 @@
 
         <Button Content="🔎 Advanced Search"
                 Command="{Binding ToggleAdvancedSearchCommand}"
+                IsVisible="{Binding IsTaggingAvailable}"
                 Padding="10,6" Margin="0,4,12,4"
                 ToolTip.Tip="Filter the gallery by tag and content rating"/>
 

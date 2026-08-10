@@ -177,6 +177,72 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task BuildIndexAsync_SerializesConcurrentBuilds_SoTheyCannotCorruptEachOther()
+    {
+        // Issue #491: two gallery scopes can start builds over the same shared
+        // singletons. Unserialized, both raced the tagger's single-flight gate
+        // (per-file "already processing" failures on a healthy install) and
+        // staged duplicate rows for the same FilePath (a UNIQUE violation that
+        // discarded whole flush chunks). The build gate makes the second build
+        // wait, then skip the first's rows as unchanged.
+        var paths = Enumerable.Range(0, 6).Select(i => CreateFakeImage($"conc{i}.png")).ToList();
+
+        var inFlight = 0;
+        var maxInFlight = 0;
+        var tagging = new Mock<IImageTaggingService>();
+        tagging.Setup(t => t.GetModelStatus()).Returns(ModelStatus.Ready);
+        tagging.Setup(t => t.TagImageAsync(It.IsAny<string>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
+            .Returns(async (string _, float _, CancellationToken ct) =>
+            {
+                var now = Interlocked.Increment(ref inFlight);
+                int seen;
+                while (now > (seen = Volatile.Read(ref maxInFlight)))
+                    Interlocked.CompareExchange(ref maxInFlight, now, seen);
+                await Task.Delay(10, ct);
+                Interlocked.Decrement(ref inFlight);
+                return ImageTagResult.Succeeded(Array.Empty<ImageTagScore>(), "general", 0.9f, isNsfw: false);
+            });
+        var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
+
+        var results = await Task.WhenAll(
+            Task.Run(() => service.BuildIndexAsync(paths)),
+            Task.Run(() => service.BuildIndexAsync(paths)));
+
+        maxInFlight.Should().Be(1, "the build gate must keep the shared tagger single-flight");
+        results.Sum(r => r.Failed).Should().Be(0, "a second build on a healthy install must not manufacture failures");
+        results.Sum(r => r.Indexed).Should().Be(6, "each file is tagged exactly once across both builds");
+        results.Sum(r => r.Skipped).Should().Be(6, "the waiting build sees the first one's rows and skips them");
+        (await service.GetIndexedCountAsync()).Should().Be(6, "no duplicate rows, no dropped chunks");
+    }
+
+    [Fact]
+    public async Task NsfwQueries_DeriveFromTheStoredRatingLabel_NotTheFrozenFlag()
+    {
+        // Issue #492: IsNsfw is written for diagnostics but must never be
+        // read — a rating-policy change has to take effect at query time
+        // without re-running the tagger over the whole gallery. This tagger
+        // stamps a contradictory frozen flag (isNsfw: false on a
+        // non-"general" rating); every query has to side with the rating.
+        var sfwPath = CreateFakeImage("rating-sfw.png");
+        var sensitivePath = CreateFakeImage("rating-sensitive.png", width: 8);
+        var tagging = TaggerByWidth(w => w == 8
+            ? ImageTagResult.Succeeded(Array.Empty<ImageTagScore>(), "sensitive", 0.9f, isNsfw: false)
+            : ImageTagResult.Succeeded(Array.Empty<ImageTagScore>(), "general", 0.9f, isNsfw: false));
+        var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
+        await service.BuildIndexAsync(new[] { sfwPath, sensitivePath });
+
+        var hidden = await service.SearchAsync(Array.Empty<string>(), NsfwFilterMode.HideNsfw);
+        hidden.Should().ContainSingle().Which.Should().Be(Path.GetFullPath(sfwPath));
+
+        var nsfwOnly = await service.SearchAsync(Array.Empty<string>(), NsfwFilterMode.NsfwOnly);
+        nsfwOnly.Should().ContainSingle().Which.Should().Be(Path.GetFullPath(sensitivePath));
+
+        var lookup = await service.GetTagsForFilesAsync(new[] { sfwPath, sensitivePath });
+        lookup[Path.GetFullPath(sensitivePath)].IsNsfw.Should().BeTrue("tile badges derive from the rating too");
+        lookup[Path.GetFullPath(sfwPath)].IsNsfw.Should().BeFalse();
+    }
+
+    [Fact]
     public async Task SearchAsync_ReturnsOnlyImagesWithAllRequiredTags()
     {
         var pathA = CreateFakeImage("dog-outdoor.png");

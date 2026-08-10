@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
 using Avalonia.Threading;
@@ -8,6 +8,7 @@ using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.UI.ViewModels.Controls;
@@ -29,7 +30,17 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     private readonly IThumbnailOrchestrator? _thumbnailOrchestrator;
     private readonly IImageFavoritesService? _favoritesService;
     private readonly ITagIndexService? _tagIndexService;
+    private readonly ITaskTracker? _taskTracker;
     private readonly List<GenerationGalleryMediaItemViewModel> _allMediaItems = [];
+
+    /// <summary>
+    /// True once the user has explicitly chosen an NSFW mode (radio button or
+    /// "Clear filters") this session. Gates the seeding in
+    /// <see cref="LoadMediaAsync"/>: the app-wide <c>AppSettings.ShowNsfw</c>
+    /// setting seeds the drawer's filter so the two switches agree, but a
+    /// deliberate per-session choice is never stomped by a later reload.
+    /// </summary>
+    private bool _nsfwFilterTouched;
     private GenerationGalleryMediaItemViewModel? _lastClickedItem;
     private int _selectionCount;
     private bool _isUpdatingGroupingOptions;
@@ -111,7 +122,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         IVideoThumbnailService? videoThumbnailService,
         IThumbnailOrchestrator? thumbnailOrchestrator = null,
         IImageFavoritesService? favoritesService = null,
-        ITagIndexService? tagIndexService = null)
+        ITagIndexService? tagIndexService = null,
+        ITaskTracker? taskTracker = null)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
@@ -120,6 +132,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         _thumbnailOrchestrator = thumbnailOrchestrator;
         _favoritesService = favoritesService;
         _tagIndexService = tagIndexService;
+        _taskTracker = taskTracker;
 
         // Both toolbars are the SAME reusable component the workflow result strips use, so "Add
         // Selected To…" and "Send Selected To…" behave identically everywhere. They're split into two
@@ -367,6 +380,17 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     public bool IsNsfwFilterHideNsfw => NsfwFilter == NsfwFilterMode.HideNsfw;
     public bool IsNsfwFilterNsfwOnly => NsfwFilter == NsfwFilterMode.NsfwOnly;
 
+    /// <summary>
+    /// The single availability gate for every tagging affordance (Build Tag
+    /// Index, the indexed-count pill, Advanced Search). The view binds this
+    /// for visibility so that a configuration without an
+    /// <see cref="ITagIndexService"/> (design time, tests, a future feature
+    /// flag) shows no tagging UI at all — instead of fully clickable buttons
+    /// that silently do nothing because each handler bailed on its own null
+    /// check. Fixed at construction, so no change notification is needed.
+    /// </summary>
+    public bool IsTaggingAvailable => _tagIndexService is not null;
+
     public string FilteredMatchCountText => $"{FilteredMatchCount:N0} images match";
 
     public string TagCloudHeader => $"TAG INDEX — {TotalGalleryImageCount:N0} images · {TagCloud.Count:N0} tags";
@@ -404,6 +428,24 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             var settings = await _settingsService.GetSettingsAsync();
             var enabledPaths = GetEnabledGalleryPaths(settings);
             var includeSubFolders = IncludeSubFolders;
+
+            // The app-wide setting (Settings → "Show NSFW", off by default)
+            // seeds the Advanced Search drawer's NSFW mode so the two switches
+            // agree — the persisted setting used to be silently ignored here,
+            // leaving NSFW tiles visible until the user found the second,
+            // per-session filter. Seeding (rather than an invisible standing
+            // gate) keeps the filtering visible in the UI: the radio shows
+            // "Hide NSFW", the filter strip appears, and "Clear filters"
+            // remains an escape hatch if the tag index is broken. An explicit
+            // per-session choice is never overridden, and flipping the setting
+            // takes effect through the OnSettingsSaved reload.
+            if (!_nsfwFilterTouched)
+            {
+                if (!settings.ShowNsfw && NsfwFilter == NsfwFilterMode.ShowAll)
+                    NsfwFilter = NsfwFilterMode.HideNsfw;
+                else if (settings.ShowNsfw && NsfwFilter == NsfwFilterMode.HideNsfw)
+                    NsfwFilter = NsfwFilterMode.ShowAll;
+            }
 
             // Offload the recursive folder scan (per-file IO syscalls + item creation)
             // to the thread pool so the UI thread stays responsive; with large auto-
@@ -625,6 +667,16 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         IsIndexingTagIndex = true;
         StatusMessage = null;
 
+        // Registered with the task tracker so the build is visible — and
+        // cancellable — in the Unified Console from anywhere in the app, not
+        // just this page: a first build is a 379 MB download plus a
+        // potentially very long walk of the whole gallery, and navigating away
+        // used to leave it running with no visible task anywhere. The tracker
+        // is handed the SAME CancellationTokenSource the toolbar Cancel button
+        // uses, so both cancel affordances converge on one token.
+        using var taskHandle = _taskTracker?.BeginTask("Building tag index", LogCategory.General, cts);
+        taskHandle?.ReportIndeterminate("Preparing…");
+
         try
         {
             await RunBusyAsync(async () =>
@@ -650,6 +702,14 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
                         ?? (p.CurrentFile is not null
                             ? $"Indexing images… {p.Completed:N0}/{p.Total:N0}"
                             : "Finalizing index…");
+
+                    // Mirror into the Unified Console task: phase text (the
+                    // download) has no per-file fraction yet, so it stays
+                    // indeterminate; the indexing phase reports a real 0..1.
+                    if (p.StatusMessage is not null)
+                        taskHandle?.ReportIndeterminate(p.StatusMessage);
+                    else if (p.Total > 0)
+                        taskHandle?.ReportProgress((double)p.Completed / p.Total, BusyMessage);
                 });
 
                 TagIndexBuildResult? result = null;
@@ -689,6 +749,17 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
                     : buildError is not null
                         ? $"Tag indexing failed: {buildError.Message}"
                         : DescribeBuildResult(result);
+
+                // Terminal state for the console task. A console-side cancel
+                // already marked it Cancelled (terminal), so these no-op then;
+                // Fail-on-cancel for the toolbar path matches the download
+                // tasks' idiom elsewhere in the app.
+                if (cancelled)
+                    taskHandle?.Fail(new OperationCanceledException(), StatusMessage);
+                else if (buildError is not null)
+                    taskHandle?.Fail(buildError, StatusMessage);
+                else
+                    taskHandle?.Complete(StatusMessage);
 
                 // Re-run the filter pipeline. Building the index is the usual way
                 // out of "I picked a filter before anything was indexed, so the
@@ -788,6 +859,11 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         // its own, so leaving it set would hide the active-filter strip while
         // the gallery stayed filtered. Assigning it also refreshes the
         // Is*-flavored booleans behind the radio buttons (NotifyPropertyChangedFor).
+        // Clearing counts as an explicit choice: the AppSettings.ShowNsfw seed
+        // must not re-apply Hide NSFW on the next reload right after the user
+        // deliberately cleared it (it's also the escape hatch when the tag
+        // index itself is broken and the filter fails closed).
+        _nsfwFilterTouched = true;
         NsfwFilter = NsfwFilterMode.ShowAll;
 
         OnPropertyChanged(nameof(HasActiveTagFilters));
@@ -800,6 +876,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         // The Is*-flavored booleans are notified via [NotifyPropertyChangedFor]
         // on the NsfwFilter backing field, so they stay in sync however
         // NsfwFilter is set (not just through this command).
+        _nsfwFilterTouched = true;
         NsfwFilter = Enum.Parse<NsfwFilterMode>(mode);
         ApplySortingAndGrouping();
     }
