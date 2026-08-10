@@ -1390,9 +1390,13 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             // tends to cover the oldest files first, which is exactly what a
             // recent-only date window hides. Name the culprit and the fix.
             NoMediaMessage = _tagMatchesHiddenByOtherFilters > 0
-                ? $"{_tagMatchesHiddenByOtherFilters:N0} image(s) match your tag filter, but the date filter " +
-                  $"('{SelectedDateFilter}'), the search box or the favorites toggle is hiding all of them. " +
-                  "Set the date filter to 'All Time' to see them."
+                ? ActiveTagFilters.Count > 0
+                    ? $"{_tagMatchesHiddenByOtherFilters:N0} image(s) match your tag filter, but the date filter " +
+                      $"('{SelectedDateFilter}'), the search box, the favorites toggle or the NSFW mode is hiding " +
+                      "all of them. Set the date filter to 'All Time' to see them."
+                    : $"All {_tagMatchesHiddenByOtherFilters:N0} image(s) are hidden by your current filters — " +
+                      $"the date filter ('{SelectedDateFilter}'), the search box, the favorites toggle or the NSFW mode. " +
+                      "Adjust them to see the gallery."
                 : "No images match your current filters. Try clearing the filters, or build the tag index if you haven't done that yet.";
         }
         else
@@ -1587,17 +1591,20 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
             var resultList = sorted.ToList();
 
-            // Field-diagnosed support case: the tag filter matched files, but
-            // the grid came up short (or empty) because the toolbar filters
-            // excluded matches — e.g. the default "Last 3 Months" date window
-            // hiding an index that so far only covers old files. Count the
-            // drawer-filter matches across the WHOLE gallery so the UI can
-            // say how many exist beyond the current view scope.
+            // "Warn whenever something is hidden" (user requirement, verbatim):
+            // the baseline is what the tag CHIPS alone would match gallery-wide
+            // — the whole gallery when no chip is active. Everything that the
+            // remaining filters (date window, search box, favorites toggle,
+            // NSFW mode) removed from that baseline counts as hidden. The
+            // chips themselves are exempt: narrowing to a tag is the search
+            // the user asked for, not something being withheld from it.
             var tagMatchesHiddenByOtherFilters = 0;
-            if (drawerFilter is not null)
+            if (!tagFilterFailed)
             {
-                var drawerOnlyMatches = allItems.Count(drawerFilter);
-                tagMatchesHiddenByOtherFilters = Math.Max(0, drawerOnlyMatches - resultList.Count);
+                var baseline = tagMatchPaths is null
+                    ? allItems.Count
+                    : allItems.Count(item => tagMatchPaths.Contains(Path.GetFullPath(item.FilePath)));
+                tagMatchesHiddenByOtherFilters = Math.Max(0, baseline - resultList.Count);
             }
 
             // Scoped chip counts: how many toolbar-scoped items — further
@@ -1673,12 +1680,13 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     /// </summary>
     private Dictionary<string, int>? _lastScopedTagCounts;
 
-    /// <summary>True when the toolbar filters hide drawer-filter matches.</summary>
+    /// <summary>True when any filter besides the tag chips hides images.</summary>
     public bool HasHiddenTagMatches => _tagMatchesHiddenByOtherFilters > 0;
 
-    public string HiddenTagMatchesText =>
-        $"⚠ {_tagMatchesHiddenByOtherFilters:N0} more match but are outside the current view — " +
-        $"date filter ('{SelectedDateFilter}'), search box or favorites toggle.";
+    public string HiddenTagMatchesText => (ActiveTagFilters.Count > 0
+            ? $"⚠ {_tagMatchesHiddenByOtherFilters:N0} more match your tags but are hidden by "
+            : $"⚠ {_tagMatchesHiddenByOtherFilters:N0} image(s) are hidden by ")
+        + $"the date filter ('{SelectedDateFilter}'), the search box, the favorites toggle or the NSFW mode.";
 
     /// <summary>
     /// One-click escape from the hidden-matches situation: widen the toolbar
