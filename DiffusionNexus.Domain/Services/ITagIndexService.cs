@@ -4,7 +4,26 @@ public enum NsfwFilterMode { ShowAll, HideNsfw, NsfwOnly }
 
 public sealed record TagFrequency(string Name, int Count);
 
-public sealed record TagIndexBuildProgress(int Completed, int Total, string? CurrentFile);
+/// <summary>
+/// Progress for a running index build.
+/// </summary>
+/// <param name="Completed">Files finished so far.</param>
+/// <param name="Total">Files eligible for tagging in this run.</param>
+/// <param name="CurrentFile">
+/// The file currently being tagged — an actual path, or <see langword="null"/>
+/// when no single file is in flight (the terminal report). Never a status
+/// phrase: overloading this field with human-readable text is how the UI ended
+/// up showing "Indexing images… 0/N" for the whole model download.
+/// </param>
+/// <param name="StatusMessage">
+/// Phase-level text for the UI to display verbatim (e.g. "Downloading tagger
+/// model…"), or <see langword="null"/> during ordinary per-file progress.
+/// </param>
+public sealed record TagIndexBuildProgress(
+    int Completed,
+    int Total,
+    string? CurrentFile,
+    string? StatusMessage = null);
 
 public sealed record TagIndexBuildResult(int Indexed, int Skipped, int Failed, int NsfwCount);
 
@@ -70,6 +89,26 @@ public interface ITagIndexService
     /// the result — callers should treat a missing key as "not yet tagged."
     /// </summary>
     Task<IReadOnlyDictionary<string, ImageTagLookup>> GetTagsForFilesAsync(
+        IReadOnlyList<string> filePaths,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Drops the index rows for files that have left the gallery (deleted, or
+    /// moved somewhere else). Nothing else prunes the index, so without this
+    /// the "N / M indexed" counter and the tag cloud drift permanently stale
+    /// after the first delete.
+    /// </summary>
+    /// <remarks>
+    /// Paths are normalized the same way <see cref="BuildIndexAsync"/>
+    /// normalizes them, and a path with no row is a no-op rather than an
+    /// error — callers are expected to fire this for every removed item
+    /// without first checking whether it was ever indexed.
+    /// </remarks>
+    /// <returns>
+    /// How many index rows were actually deleted, so callers can adjust an
+    /// indexed-count display without re-querying.
+    /// </returns>
+    Task<int> RemoveIndexEntriesAsync(
         IReadOnlyList<string> filePaths,
         CancellationToken cancellationToken = default);
 }

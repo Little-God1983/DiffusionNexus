@@ -763,4 +763,108 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
         trackedAtDispose.Should().ContainSingle().Which.Should().Be(0,
             "the tile lookup projects to plain values and must leave the change tracker empty");
     }
+
+    [Fact]
+    public async Task RemoveIndexEntriesAsync_DeletesTheRowsForTheGivenPaths_AndLeavesTheRest()
+    {
+        // Nothing else prunes the index, so a file deleted (or moved away)
+        // through the gallery would otherwise keep inflating "N / M indexed"
+        // and keep feeding the tag cloud forever.
+        var kept = CreateFakeImage("keep.png", width: 1);
+        var removed = CreateFakeImage("remove.png", width: 2);
+        var tagging = TaggerByWidth(w => ImageTagResult.Succeeded(
+            new[] { new ImageTagScore($"tag{w}", 0.9f) }, "general", 0.9f, isNsfw: false));
+        var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
+        await service.BuildIndexAsync(new[] { kept, removed });
+        (await service.GetIndexedCountAsync()).Should().Be(2);
+
+        var deleted = await service.RemoveIndexEntriesAsync(new[] { removed });
+
+        deleted.Should().Be(1, "the caller decrements its indexed counter by whatever this reports");
+        (await service.GetIndexedCountAsync()).Should().Be(1);
+        (await service.GetTagsForFilesAsync(new[] { removed })).Should().BeEmpty(
+            "the pruned file must look unindexed afterwards");
+        (await service.GetTagsForFilesAsync(new[] { kept })).Should().ContainKey(Path.GetFullPath(kept));
+    }
+
+    [Fact]
+    public async Task RemoveIndexEntriesAsync_AlsoRemovesTheTagAssignments()
+    {
+        // The prune deletes with ExecuteDeleteAsync, which does no client-side
+        // cascade — it leans entirely on the ON DELETE CASCADE the migration
+        // emits and SQLite enforcing foreign keys. Verify that empirically
+        // rather than trusting the configuration, because orphaned assignment
+        // rows would keep the deleted file's tags alive in the tag cloud.
+        var path = CreateFakeImage("cascade.png");
+        var tagging = TaggerByWidth(_ => ImageTagResult.Succeeded(
+            new[] { new ImageTagScore("lonelytag", 0.9f) }, "general", 0.9f, isNsfw: false));
+        var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
+        await service.BuildIndexAsync(new[] { path });
+
+        await using (var seeded = new DiffusionNexusCoreDbContext(_options))
+        {
+            (await seeded.ImageMediaTagAssignments.CountAsync()).Should().Be(1);
+        }
+
+        await service.RemoveIndexEntriesAsync(new[] { path });
+
+        await using var context = new DiffusionNexusCoreDbContext(_options);
+        (await context.ImageMediaTagAssignments.CountAsync()).Should().Be(0,
+            "the assignment rows must cascade away with their index row");
+        (await service.GetTagCloudAsync()).Should().BeEmpty(
+            "a tag with no surviving assignment must drop out of the cloud");
+    }
+
+    [Fact]
+    public async Task RemoveIndexEntriesAsync_IgnoresUnknownPaths_AndAnEmptyList()
+    {
+        // Callers fire this for every removed gallery tile without first
+        // checking whether the file was ever indexed, so "no such row" has to
+        // be a no-op rather than an error.
+        var tagging = TaggerByWidth(_ => ImageTagResult.Succeeded(
+            Array.Empty<ImageTagScore>(), "general", 0.9f, isNsfw: false));
+        var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
+
+        (await service.RemoveIndexEntriesAsync(Array.Empty<string>())).Should().Be(0);
+        (await service.RemoveIndexEntriesAsync(new[] { Path.Combine(_imagesDir, "never-indexed.png") }))
+            .Should().Be(0);
+    }
+
+    [Fact]
+    public async Task BuildIndexAsync_ReportsTheModelDownloadAsAStatusMessage_NotAsACurrentFile()
+    {
+        // The download is a phase, not a file. Reporting it through CurrentFile
+        // (which is what a UI treats as "we are chewing through files now")
+        // left the overlay frozen on "Indexing images… 0/N" for the whole
+        // multi-minute, 379 MB download.
+        var path = CreateFakeImage("download-phase.png");
+        var tagging = new Mock<IImageTaggingService>();
+        tagging.Setup(t => t.GetModelStatus()).Returns(ModelStatus.NotDownloaded);
+        tagging.Setup(t => t.DownloadModelAsync(It.IsAny<IProgress<ModelDownloadProgress>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        tagging.Setup(t => t.TagImageAsync(It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ImageTagResult.Succeeded(Array.Empty<ImageTagScore>(), "general", 0.9f, isNsfw: false));
+        var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
+
+        var reports = new List<TagIndexBuildProgress>();
+        await service.BuildIndexAsync(new[] { path }, new SynchronousProgress<TagIndexBuildProgress>(reports.Add));
+
+        var download = reports.Should().ContainSingle(r => r.StatusMessage != null).Subject;
+        download.StatusMessage.Should().Contain("Downloading");
+        download.CurrentFile.Should().BeNull("CurrentFile is reserved for real file paths");
+        reports.Should().Contain(r => r.CurrentFile == Path.GetFullPath(path),
+            "per-file progress still reports the path it is working on");
+    }
+
+    /// <summary>
+    /// <see cref="Progress{T}"/> hops to the captured synchronization context
+    /// (or the thread pool), which makes a report list racy to assert on.
+    /// This one invokes the handler inline, on the reporting thread.
+    /// </summary>
+    private sealed class SynchronousProgress<T> : IProgress<T>
+    {
+        private readonly Action<T> _handler;
+        public SynchronousProgress(Action<T> handler) => _handler = handler;
+        public void Report(T value) => _handler(value);
+    }
 }

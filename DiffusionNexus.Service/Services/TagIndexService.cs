@@ -80,7 +80,10 @@ public sealed class TagIndexService : ITagIndexService
         // every other model download (see the download-unification plan).
         if (_taggingService.GetModelStatus() != ModelStatus.Ready)
         {
-            progress?.Report(new TagIndexBuildProgress(0, total, "Downloading tagger model…"));
+            // Reported as StatusMessage, not CurrentFile: CurrentFile is a
+            // path, and a UI that only checks it for null showed
+            // "Indexing images… 0/N" for the entire multi-minute download.
+            progress?.Report(new TagIndexBuildProgress(0, total, null, "Downloading tagger model…"));
 
             bool downloaded;
             if (_downloadCoordinator is not null)
@@ -397,6 +400,35 @@ public sealed class TagIndexService : ITagIndexService
             e => e.FilePath,
             e => new ImageTagLookup(e.IsNsfw, e.Tags),
             StringComparer.OrdinalIgnoreCase);
+    }
+
+    public async Task<int> RemoveIndexEntriesAsync(
+        IReadOnlyList<string> filePaths,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(filePaths);
+        if (filePaths.Count == 0)
+            return 0;
+
+        // Same normalization as the write path, so a caller holding the
+        // gallery's own (possibly relative or differently-cased) path still
+        // matches the stored row.
+        var normalizedPaths = filePaths
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
+        // ExecuteDeleteAsync issues one DELETE instead of loading the rows to
+        // delete them. The assignment rows go with it: the FK is configured
+        // (and emitted into the migration) as ON DELETE CASCADE, which SQLite
+        // enforces because Microsoft.Data.Sqlite turns foreign keys on for
+        // every connection. Covered by
+        // RemoveIndexEntriesAsync_AlsoRemovesTheTagAssignments.
+        return await context.ImageMediaTagIndexes
+            .Where(e => normalizedPaths.Contains(e.FilePath))
+            .ExecuteDeleteAsync(cancellationToken);
     }
 
     private static (byte[] Data, int Width, int Height) LoadImagePixels(string path)
