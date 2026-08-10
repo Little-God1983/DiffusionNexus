@@ -229,6 +229,14 @@ public partial class GenerationGalleryView : UserControl
         _deferredSelectItem = null;
     }
 
+    private void OnAdvancedSearchBackdropTapped(object? sender, TappedEventArgs e)
+    {
+        if (DataContext is GenerationGalleryViewModel vm)
+        {
+            vm.ToggleAdvancedSearchCommand.Execute(null);
+        }
+    }
+
     private void OnMediaDoubleTapped(object? sender, TappedEventArgs e)
     {
         if (sender is not Border border) return;
