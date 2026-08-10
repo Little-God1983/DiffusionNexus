@@ -284,6 +284,10 @@ public sealed class ImageTaggingService : IImageTaggingService
                 {
                     return await Task.Run(() => ProcessImage(imageData, width, height, tagConfidenceThreshold, cancellationToken), cancellationToken);
                 }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
                 catch (Exception retryEx)
                 {
                     return ImageTagResult.Failed($"Tagging failed (CPU retry): {retryEx.Message}");
@@ -291,6 +295,15 @@ public sealed class ImageTaggingService : IImageTaggingService
             }
 
             return ImageTagResult.Failed($"Tagging failed (GPU error): {ex.Message}");
+        }
+        // One cancellation policy for the whole class: InitializeAsync lets
+        // OperationCanceledException propagate raw, so TagImageAsync must too.
+        // Without this the general catch below would quietly turn a cancelled
+        // batch into a stream of "Failed" results, which callers cannot tell
+        // apart from real tagging errors.
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -308,17 +321,9 @@ public sealed class ImageTaggingService : IImageTaggingService
     {
         cancellationToken.ThrowIfCancellationRequested();
         using var original = Image.LoadPixelData<Rgba32>(imageData, width, height);
+        using var prepared = ResizeAndPadToSquare(original, _inputSize);
 
-        // Pad to square (white background, matching WD14's own training
-        // preprocessing) before resizing to the model's expected input size —
-        // avoids distorting aspect ratio on non-square gallery images.
-        var side = Math.Max(original.Width, original.Height);
-        using var squared = new Image<Rgba32>(side, side, new Rgba32(255, 255, 255, 255));
-        squared.Mutate(ctx => ctx.DrawImage(original, new Point(
-            (side - original.Width) / 2, (side - original.Height) / 2), 1f));
-        using var resized = squared.Clone(ctx => ctx.Resize(_inputSize, _inputSize));
-
-        var inputTensor = PreprocessImage(resized);
+        var inputTensor = PreprocessImage(prepared);
 
         cancellationToken.ThrowIfCancellationRequested();
         var inputs = new List<NamedOnnxValue> { NamedOnnxValue.CreateFromTensor(_inputName!, inputTensor) };
@@ -332,6 +337,41 @@ public sealed class ImageTaggingService : IImageTaggingService
 
         var isNsfw = !string.Equals(ratingLabel, SfwRatingLabel, StringComparison.OrdinalIgnoreCase);
         return ImageTagResult.Succeeded(tags, ratingLabel, ratingScore, isNsfw);
+    }
+
+    /// <summary>
+    /// Produces the model's square input: the source scaled so its long edge
+    /// is exactly <paramref name="size"/>, centered on a white background
+    /// (matching WD14's own training preprocessing), aspect ratio preserved.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately resize-then-pad, not pad-then-resize. Both orderings yield
+    /// the same centered, white-matted <paramref name="size"/>² image, but
+    /// padding first allocates a max(width, height)² intermediate: a 6000×4000
+    /// upscaler output — ordinary content for this app's gallery — costs
+    /// ~144 MB for that one buffer, per image, in a loop over the whole
+    /// gallery. Scaling first caps the intermediate at the source itself.
+    /// </remarks>
+    internal static Image<Rgba32> ResizeAndPadToSquare(Image<Rgba32> source, int size)
+    {
+        var scale = (double)size / Math.Max(source.Width, source.Height);
+        var scaledWidth = Math.Clamp((int)Math.Round(source.Width * scale), 1, size);
+        var scaledHeight = Math.Clamp((int)Math.Round(source.Height * scale), 1, size);
+
+        using var scaled = source.Clone(ctx => ctx.Resize(scaledWidth, scaledHeight));
+
+        var padded = new Image<Rgba32>(source.Configuration, size, size, new Rgba32(255, 255, 255, 255));
+        try
+        {
+            padded.Mutate(ctx => ctx.DrawImage(scaled, new Point(
+                (size - scaled.Width) / 2, (size - scaled.Height) / 2), 1f));
+            return padded;
+        }
+        catch
+        {
+            padded.Dispose();
+            throw;
+        }
     }
 
     /// <summary>
