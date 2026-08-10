@@ -1152,6 +1152,50 @@ public class GenerationGalleryViewModelTests : IDisposable
         tracked.IsTerminal.Should().BeTrue();
     }
 
+    [Fact]
+    public async Task TagCloudSearchText_FiltersTheVisibleChips_WithoutTouchingActiveFilters()
+    {
+        // A fully indexed gallery fills the cloud's 200-chip budget with booru
+        // tags — the filter box narrows what is SHOWN, case-insensitively,
+        // and must never alter which filters are ACTIVE.
+        var galleryPath = CreateTempDirectory();
+        File.WriteAllText(Path.Combine(galleryPath, "a.png"), "test");
+
+        var mockTagIndex = BuildableTagIndex(new TagIndexBuildResult(1, 0, 0, 0));
+        mockTagIndex.Setup(t => t.GetTagCloudAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { new TagFrequency("dog", 3), new TagFrequency("door", 2), new TagFrequency("cat", 1) });
+        mockTagIndex.Setup(t => t.SearchAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<NsfwFilterMode>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<string>());
+
+        var viewModel = CreateGalleryViewModel(galleryPath, mockTagIndex.Object);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+        await viewModel.BuildTagIndexCommand.ExecuteAsync(null);
+
+        viewModel.TagCloud.Should().HaveCount(3, "no filter shows the whole cloud");
+
+        viewModel.ToggleTagFilterCommand.Execute("dog");
+        viewModel.TagCloudSearchText = "do";
+
+        viewModel.TagCloud.Select(t => t.Name).Should().BeEquivalentTo(new[] { "dog", "door" });
+        viewModel.ActiveTagFilters.Should().ContainSingle().Which.Should().Be("dog",
+            "the box filters the display, not the active filter set");
+        viewModel.TagCloudHeader.Should().Contain("3 tags",
+            "the header describes the index and must not shrink while typing");
+
+        viewModel.TagCloudSearchText = "DOOR";
+        viewModel.TagCloud.Select(t => t.Name).Should().BeEquivalentTo(new[] { "door" }, "matching is case-insensitive");
+
+        // Deactivate "dog" while the filter hides its chip, then clear the
+        // filter: the chip must come back with its CURRENT state, not the
+        // state it had when it was hidden.
+        viewModel.ToggleTagFilterCommand.Execute("dog");
+        viewModel.TagCloudSearchText = null;
+
+        viewModel.TagCloud.Should().HaveCount(3);
+        viewModel.TagCloud.Single(t => t.Name == "dog").IsActive.Should().BeFalse(
+            "chips hidden by the display filter stay in sync with the active filter set");
+    }
+
     // ---- Final-review fixes: threading, resilience, feedback, cancellation ----
 
     [Fact]

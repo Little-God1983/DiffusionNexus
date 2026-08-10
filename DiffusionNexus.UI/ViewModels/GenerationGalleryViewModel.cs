@@ -365,6 +365,26 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
     public BatchObservableCollection<TagCloudEntryViewModel> TagCloud { get; } = [];
 
+    /// <summary>
+    /// Every tag-cloud entry from the last refresh. <see cref="TagCloud"/> is
+    /// the filtered VIEW of this list (see <see cref="TagCloudSearchText"/>).
+    /// Chip active-state updates iterate this list, not the view, so chips
+    /// currently hidden by the filter stay in sync — both collections hold
+    /// the same entry instances.
+    /// </summary>
+    private readonly List<TagCloudEntryViewModel> _allTagCloudEntries = [];
+
+    /// <summary>
+    /// Live substring filter over the tag-cloud chips. A fully indexed
+    /// gallery easily fills the cloud's 200-chip budget with booru tags,
+    /// which makes eyeballing for one tag hopeless. Display-only: it narrows
+    /// which chips are shown, never which filters are active.
+    /// </summary>
+    [ObservableProperty]
+    private string? _tagCloudSearchText;
+
+    partial void OnTagCloudSearchTextChanged(string? value) => ApplyTagCloudSearch();
+
     public ObservableCollection<string> ActiveTagFilters { get; } = [];
 
     /// <summary>
@@ -393,7 +413,10 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
     public string FilteredMatchCountText => $"{FilteredMatchCount:N0} images match";
 
-    public string TagCloudHeader => $"TAG INDEX — {TotalGalleryImageCount:N0} images · {TagCloud.Count:N0} tags";
+    // Counts the full entry list, not the filtered TagCloud view — the header
+    // describes the index, and must not shrink while the user types in the
+    // tag filter box.
+    public string TagCloudHeader => $"TAG INDEX — {TotalGalleryImageCount:N0} images · {_allTagCloudEntries.Count:N0} tags";
 
     #region IThumbnailAware
 
@@ -841,7 +864,9 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         if (!ActiveTagFilters.Remove(tagName))
             ActiveTagFilters.Add(tagName);
 
-        foreach (var entry in TagCloud)
+        // The full list, not the filtered TagCloud view — a chip toggled and
+        // then hidden by the tag filter box must not come back stale.
+        foreach (var entry in _allTagCloudEntries)
             entry.IsActive = ActiveTagFilters.Contains(entry.Name);
 
         OnPropertyChanged(nameof(HasActiveTagFilters));
@@ -852,7 +877,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     private void ClearTagFilters()
     {
         ActiveTagFilters.Clear();
-        foreach (var entry in TagCloud)
+        foreach (var entry in _allTagCloudEntries)
             entry.IsActive = false;
 
         // "Clear filters" has to clear all of them. The NSFW mode filters on
@@ -894,7 +919,10 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         {
             var cloud = await Task.Run(() => _tagIndexService.GetTagCloudAsync());
             var activeNames = ActiveTagFilters.ToHashSet(StringComparer.OrdinalIgnoreCase);
-            TagCloud.ReplaceAll(cloud.Select(t => new TagCloudEntryViewModel(t.Name, t.Count) { IsActive = activeNames.Contains(t.Name) }).ToList());
+            _allTagCloudEntries.Clear();
+            _allTagCloudEntries.AddRange(
+                cloud.Select(t => new TagCloudEntryViewModel(t.Name, t.Count) { IsActive = activeNames.Contains(t.Name) }));
+            ApplyTagCloudSearch();
             OnPropertyChanged(nameof(TagCloudHeader));
         }
         catch (Exception ex)
@@ -923,6 +951,21 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
                 item.Tags = info.Tags;
             }
         }
+    }
+
+    /// <summary>
+    /// Publishes the (possibly filtered) tag-cloud view. Runs on every
+    /// keystroke in the filter box and after every cloud refresh — pure
+    /// in-memory list work over ≤200 entries, no DB involved.
+    /// </summary>
+    private void ApplyTagCloudSearch()
+    {
+        var search = TagCloudSearchText?.Trim();
+        TagCloud.ReplaceAll(string.IsNullOrEmpty(search)
+            ? _allTagCloudEntries.ToList()
+            : _allTagCloudEntries
+                .Where(e => e.Name.Contains(search, StringComparison.OrdinalIgnoreCase))
+                .ToList());
     }
 
     private void InvalidateTagSearchCache()

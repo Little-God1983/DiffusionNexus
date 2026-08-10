@@ -235,33 +235,11 @@
           <TextBlock Text="{Binding TileHeight, StringFormat='{}{0:0}px'}" VerticalAlignment="Center"/>
         </StackPanel>
 
-        <!-- Every tagging affordance is gated on IsTaggingAvailable: without a
-             tag-index service (design time, tests, a future feature flag) the
-             UI shows nothing rather than fully clickable buttons that
-             silently do nothing. -->
-        <Button Content="🏷️ Build Tag Index"
-                Command="{Binding BuildTagIndexCommand}"
-                IsVisible="{Binding IsTaggingAvailable}"
-                Padding="10,6" Margin="0,4,4,4"
-                ToolTip.Tip="Scan enabled gallery folders and tag new/changed images"/>
-        <!-- Only shown while a build is running. A first build starts with a
-             379 MB model download and then walks the whole gallery, so there
-             has to be a way out that is not "kill the app". -->
-        <Button Content="✕ Cancel"
-                Command="{Binding CancelTagIndexCommand}"
-                IsVisible="{Binding IsIndexingTagIndex}"
-                Padding="10,6" Margin="0,4,4,4"
-                ToolTip.Tip="Stop the running tag index build — images already indexed are kept"/>
-        <Border Background="#1c1c1c" BorderBrush="#3a3a3a" BorderThickness="1" CornerRadius="100"
-                IsVisible="{Binding IsTaggingAvailable}"
-                Padding="8,2" Margin="0,4,12,4" VerticalAlignment="Center">
-          <TextBlock Text="{Binding IndexStatusText}" FontSize="11" Foreground="#9a9a9a"/>
-        </Border>
-        <TextBlock Text="{Binding StatusMessage}"
-                   IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
-                   FontSize="11" Foreground="#9a9a9a" TextWrapping="Wrap" MaxWidth="380"
-                   VerticalAlignment="Center" Margin="0,4,12,4"/>
-
+        <!-- All index management (Build/Cancel/status) lives inside the
+             Advanced Search drawer — the toolbar carries only the way in.
+             Gated on IsTaggingAvailable: without a tag-index service (design
+             time, tests, a future feature flag) the UI shows nothing rather
+             than a clickable button that silently does nothing. -->
         <Button Content="🔎 Advanced Search"
                 Command="{Binding ToggleAdvancedSearchCommand}"
                 IsVisible="{Binding IsTaggingAvailable}"
@@ -410,10 +388,13 @@
               Background="#66000000" ZIndex="90"
               Tapped="OnAdvancedSearchBackdropTapped"/>
 
+      <!-- ZIndex above the busy overlay (100): the drawer now hosts the
+           build's Cancel button, which must stay clickable while the busy
+           dim is up — that is the only time it exists. -->
       <Border IsVisible="{Binding IsAdvancedSearchOpen}"
-              Width="340" HorizontalAlignment="Right"
+              Width="420" HorizontalAlignment="Right"
               Background="#1a1a1c" BorderBrush="#6a4fb3" BorderThickness="1,0,0,0"
-              ZIndex="95">
+              ZIndex="110">
         <Grid RowDefinitions="Auto,*,Auto">
           <Border Grid.Row="0" Padding="16,14" BorderBrush="#333" BorderThickness="0,0,0,1">
             <Grid ColumnDefinitions="*,Auto">
@@ -425,6 +406,32 @@
 
           <ScrollViewer Grid.Row="1" Padding="16">
             <StackPanel Spacing="18">
+              <StackPanel Spacing="8">
+                <TextBlock Text="INDEXING" FontSize="11" Foreground="#6f6f6f" FontWeight="SemiBold"/>
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <Button Content="🏷️ Build Tag Index"
+                          Command="{Binding BuildTagIndexCommand}"
+                          Padding="10,6"
+                          ToolTip.Tip="Scan enabled gallery folders and tag new/changed images"/>
+                  <!-- Only shown while a build is running. A first build starts
+                       with a 379 MB model download and then walks the whole
+                       gallery, so there has to be a way out that is not "kill
+                       the app". -->
+                  <Button Content="✕ Cancel"
+                          Command="{Binding CancelTagIndexCommand}"
+                          IsVisible="{Binding IsIndexingTagIndex}"
+                          Padding="10,6"
+                          ToolTip.Tip="Stop the running tag index build — images already indexed are kept"/>
+                  <Border Background="#1c1c1c" BorderBrush="#3a3a3a" BorderThickness="1" CornerRadius="100"
+                          Padding="8,2" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding IndexStatusText}" FontSize="11" Foreground="#9a9a9a"/>
+                  </Border>
+                </StackPanel>
+                <TextBlock Text="{Binding StatusMessage}"
+                           IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                           FontSize="11" Foreground="#9a9a9a" TextWrapping="Wrap"/>
+              </StackPanel>
+
               <StackPanel Spacing="8">
                 <TextBlock Text="CONTENT RATING" FontSize="11" Foreground="#6f6f6f" FontWeight="SemiBold"/>
                 <StackPanel Orientation="Horizontal" Spacing="4">
@@ -442,6 +449,12 @@
 
               <StackPanel Spacing="8">
                 <TextBlock Text="{Binding TagCloudHeader}" FontSize="11" Foreground="#6f6f6f" FontWeight="SemiBold"/>
+                <!-- Display-only substring filter over the chips below — a
+                     fully indexed gallery fills the 200-chip budget with
+                     booru tags, far too many to scan by eye. -->
+                <TextBox Watermark="Filter tags…"
+                         Text="{Binding TagCloudSearchText, Mode=TwoWay}"
+                         FontSize="12"/>
                 <ItemsControl ItemsSource="{Binding TagCloud}">
                   <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
