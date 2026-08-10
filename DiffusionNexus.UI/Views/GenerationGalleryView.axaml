@@ -110,7 +110,7 @@
           </Button>
 
           <Border Name="TagStripHost" VerticalAlignment="Bottom" Margin="0,0,0,27" ZIndex="4"
-                  Opacity="0" IsHitTestVisible="False">
+                  IsHitTestVisible="False">
             <ItemsControl ItemsSource="{Binding TopTags}" Margin="8,0,8,4">
               <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
@@ -151,6 +151,9 @@
       <Setter Property="Foreground" Value="#1a1030"/>
       <Setter Property="BorderBrush" Value="#b388ff"/>
       <Setter Property="FontWeight" Value="SemiBold"/>
+    </Style>
+    <Style Selector="Border#TagStripHost">
+      <Setter Property="Opacity" Value="0"/>
     </Style>
     <Style Selector="Border.mediaCard:pointerover Border#TagStripHost">
       <Setter Property="Opacity" Value="1"/>
