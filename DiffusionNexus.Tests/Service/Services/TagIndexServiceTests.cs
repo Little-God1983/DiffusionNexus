@@ -561,18 +561,32 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
         // then projects — reordering those steps reintroduces a real SQLite
         // translation failure. And a tag whose last assignment was dropped by
         // a re-index must vanish from the cloud rather than linger at zero.
+        //
+        // The fixture is built so that insertion order and count order
+        // DISAGREE. That matters: an unordered SQLite scan comes back in
+        // rowid (i.e. insertion) order, so a fixture whose most-used tag also
+        // happens to be its first-inserted one would pass with the
+        // OrderByDescending deleted from the query. Here "delta" is inserted
+        // last and used most, so only a real ORDER BY can produce the
+        // expected sequence.
+        //   insertion order : alpha(2), beta(1), gamma(0), delta(3)
+        //   expected order  : delta(3), alpha(2), beta(1)
         var twice = CreateFakeImage("cloud-a.png", width: 1);
         var once = CreateFakeImage("cloud-b.png", width: 2);
         var orphaned = CreateFakeImage("cloud-c.png", width: 3);
+        var thrice1 = CreateFakeImage("cloud-d.png", width: 4);
+        var thrice2 = CreateFakeImage("cloud-e.png", width: 5);
+        var thrice3 = CreateFakeImage("cloud-f.png", width: 6);
 
         var tagging = TaggerByWidth(w => w switch
         {
             1 => ImageTagResult.Succeeded(new[] { new ImageTagScore("alpha", 0.9f), new ImageTagScore("beta", 0.8f) }, "general", 0.9f, false),
             2 => ImageTagResult.Succeeded(new[] { new ImageTagScore("alpha", 0.7f) }, "general", 0.9f, false),
-            _ => ImageTagResult.Succeeded(new[] { new ImageTagScore("gamma", 0.6f) }, "general", 0.9f, false),
+            3 => ImageTagResult.Succeeded(new[] { new ImageTagScore("gamma", 0.6f) }, "general", 0.9f, false),
+            _ => ImageTagResult.Succeeded(new[] { new ImageTagScore("delta", 0.5f) }, "general", 0.9f, false),
         });
         var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
-        await service.BuildIndexAsync(new[] { twice, once, orphaned });
+        await service.BuildIndexAsync(new[] { twice, once, orphaned, thrice1, thrice2, thrice3 });
 
         (await service.GetTagCloudAsync()).Should().Contain(t => t.Name == "gamma");
 
@@ -585,10 +599,10 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
         var cloud = await service.GetTagCloudAsync();
 
         cloud.Select(t => t.Name).Should().BeEquivalentTo(
-            new[] { "alpha", "beta" },
+            new[] { "delta", "alpha", "beta" },
             options => options.WithStrictOrdering(),
-            "the cloud is ordered strictly by descending assignment count");
-        cloud.Select(t => t.Count).Should().BeEquivalentTo(new[] { 2, 1 }, options => options.WithStrictOrdering());
+            "the cloud is ordered strictly by descending assignment count, not by insertion order");
+        cloud.Select(t => t.Count).Should().BeEquivalentTo(new[] { 3, 2, 1 }, options => options.WithStrictOrdering());
         cloud.Should().NotContain(t => t.Name == "gamma", "a tag with zero assignments is excluded, not shown at zero");
     }
 }
