@@ -37,6 +37,23 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     private bool _isLoadingMore;
 
     /// <summary>
+    /// Cancels the running index build. Non-null only for the duration of one
+    /// <see cref="BuildTagIndexAsync"/> call; created and disposed there, and
+    /// only ever touched from the UI thread (the build's completion path and
+    /// <see cref="CancelTagIndex"/> both run there), so there is no window
+    /// where cancelling races the dispose.
+    /// </summary>
+    private CancellationTokenSource? _tagIndexCts;
+
+    /// <summary>
+    /// The chain of fire-and-forget index-prune calls started by
+    /// <see cref="RemoveMediaItem"/>. Chained rather than fanned out so a bulk
+    /// delete does not open one DB context per file simultaneously, and so
+    /// <see cref="WaitForTagIndexPruneAsync"/> can wait for all of them.
+    /// </summary>
+    private Task _lastTagIndexPruneTask = Task.CompletedTask;
+
+    /// <summary>
     /// How many gallery folders were enabled at the last load. Kept so the
     /// empty-state message can be recomputed on every filter pass, not only
     /// when media is (re)loaded. See <see cref="UpdateNoMediaMessage"/>.
@@ -221,6 +238,24 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     [ObservableProperty]
     private bool _isAdvancedSearchOpen;
 
+    /// <summary>
+    /// True while a tag-index build is running. Reveals the toolbar's Cancel
+    /// button and gates <see cref="CancelTagIndexCommand"/>.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(CancelTagIndexCommand))]
+    private bool _isIndexingTagIndex;
+
+    /// <summary>
+    /// Transient feedback for the last tag-index operation — how a finished
+    /// build reports what it did, and the only place a build that failed
+    /// outright says so. Follows the convention the rest of the app uses for
+    /// this (see <c>ImageActionsViewModel</c> / <c>CivitaiBrowserViewModel</c>):
+    /// a nullable string the view shows only while it is non-empty.
+    /// </summary>
+    [ObservableProperty]
+    private string? _statusMessage;
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsNsfwFilterShowAll))]
     [NotifyPropertyChangedFor(nameof(IsNsfwFilterHideNsfw))]
@@ -355,15 +390,31 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             TotalGalleryImageCount = mediaItems.Count(i => i.IsImage);
             if (_tagIndexService is not null)
             {
-                IndexedImageCount = await _tagIndexService.GetIndexedCountAsync();
-
-                // With an empty index the hydration lookup can only come back
-                // empty, so skip the query outright: a user who has never run
-                // "Build Tag Index" should pay nothing for this feature on
-                // every single gallery load (issue #397 territory).
-                if (IndexedImageCount > 0)
+                // Both calls hit tables that can be missing entirely: if the
+                // DB was locked when DatabaseRecoveryService ran, it can stamp
+                // this feature's migrations as applied without creating the
+                // tables, and every later startup then sees nothing pending —
+                // permanently. That turns into "SQLite Error 1: no such table"
+                // here. RunBusyAsync does not catch, so an escape would be
+                // rethrown on the UI thread's synchronization context, i.e. an
+                // unhandled exception in Avalonia's dispatcher loop. A broken
+                // tag index must cost the user their tag data, not the gallery.
+                try
                 {
-                    await HydrateTagDataAsync(mediaItems);
+                    IndexedImageCount = await _tagIndexService.GetIndexedCountAsync();
+
+                    // With an empty index the hydration lookup can only come back
+                    // empty, so skip the query outright: a user who has never run
+                    // "Build Tag Index" should pay nothing for this feature on
+                    // every single gallery load (issue #397 territory).
+                    if (IndexedImageCount > 0)
+                    {
+                        await HydrateTagDataAsync(mediaItems);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warning(ex, "Tag index unavailable; the gallery loaded without tag data");
                 }
             }
 
@@ -536,32 +587,130 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     {
         if (_tagIndexService is null) return;
 
-        await RunBusyAsync(async () =>
-        {
-            // BuildIndexAsync filters to image-only extensions internally (and
-            // documents this on its own XML doc) — pass the full mixed
-            // image/video list through rather than duplicating that filter here.
-            var paths = _allMediaItems.Select(i => i.FilePath).ToList();
-            var progress = new Progress<TagIndexBuildProgress>(p =>
-            {
-                BusyMessage = p.CurrentFile is not null
-                    ? $"Indexing images… {p.Completed}/{p.Total}"
-                    : "Finalizing index…";
-            });
+        _tagIndexCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _tagIndexCts = cts;
+        IsIndexingTagIndex = true;
+        StatusMessage = null;
 
-            await _tagIndexService.BuildIndexAsync(paths, progress);
+        try
+        {
+            await RunBusyAsync(async () =>
+            {
+                // BuildIndexAsync filters to image-only extensions internally (and
+                // documents this on its own XML doc) — pass the full mixed
+                // image/video list through rather than duplicating that filter here.
+                var paths = _allMediaItems.Select(i => i.FilePath).ToList();
+
+                // Constructed here, on the calling (UI) thread, so Progress<T>
+                // captures the UI SynchronizationContext and marshals every
+                // callback back to it even though the build below runs on the
+                // thread pool — no Dispatcher.UIThread.Post needed. Covered by
+                // BuildTagIndexCommand_RoutesProgressBackThroughTheCapturedSynchronizationContext.
+                var progress = new Progress<TagIndexBuildProgress>(p =>
+                {
+                    // StatusMessage is phase text ("Downloading tagger model…")
+                    // and wins outright: the download runs for minutes before a
+                    // single file is touched, and a handler that only asked
+                    // whether CurrentFile was null sat on "Indexing images… 0/N"
+                    // the whole time.
+                    BusyMessage = p.StatusMessage
+                        ?? (p.CurrentFile is not null
+                            ? $"Indexing images… {p.Completed:N0}/{p.Total:N0}"
+                            : "Finalizing index…");
+                });
+
+                TagIndexBuildResult? result = null;
+                var cancelled = false;
+                try
+                {
+                    // Offloaded for exactly the reason the folder scan above is
+                    // (issue #397): BuildIndexAsync decodes every image, allocates
+                    // a width*height*4 buffer per file, stats files, and runs
+                    // SQLite queries that complete synchronously — none of it
+                    // yields the UI thread.
+                    result = await Task.Run(() => _tagIndexService.BuildIndexAsync(paths, progress, cts.Token));
+                }
+                catch (OperationCanceledException)
+                {
+                    cancelled = true;
+                }
+
+                // Runs after a cancelled build too: cancelling stops the loop but
+                // keeps every batch already flushed, so the counters and the tag
+                // cloud still have to catch up with what did get indexed.
+                await RefreshTagIndexStateAsync();
+
+                StatusMessage = cancelled
+                    ? "Tag indexing cancelled."
+                    : DescribeBuildResult(result);
+
+                // Re-run the filter pipeline. Building the index is the usual way
+                // out of "I picked a filter before anything was indexed, so the
+                // gallery went empty" — the files that now satisfy that filter
+                // only appear if the pipeline runs again. Without this the grid
+                // stays empty after a successful build and the only escape is
+                // toggling some unrelated filter.
+                ApplySortingAndGrouping();
+            }, "Indexing images…");
+        }
+        finally
+        {
+            IsIndexingTagIndex = false;
+            _tagIndexCts = null;
+            cts.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Stops a running index build. Whatever batches already flushed stay in
+    /// the index, so the run is resumable: the next build skips them.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(IsIndexingTagIndex))]
+    private void CancelTagIndex() => _tagIndexCts?.Cancel();
+
+    /// <summary>
+    /// Pulls the indexed count, the tag cloud and the per-tile tag data back
+    /// into sync after a build. Guarded for the same reason the gallery-load
+    /// path is: these are DB calls on a table set that may not exist, and
+    /// nothing above <see cref="RunBusyAsync"/> catches.
+    /// </summary>
+    private async Task RefreshTagIndexStateAsync()
+    {
+        if (_tagIndexService is null) return;
+
+        try
+        {
             IndexedImageCount = await _tagIndexService.GetIndexedCountAsync();
             await RefreshTagCloudAsync();
             await HydrateTagDataAsync(_allMediaItems);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning(ex, "Failed to refresh tag-index state after a build");
+        }
+    }
 
-            // Re-run the filter pipeline. Building the index is the usual way
-            // out of "I picked a filter before anything was indexed, so the
-            // gallery went empty" — the files that now satisfy that filter
-            // only appear if the pipeline runs again. Without this the grid
-            // stays empty after a successful build and the only escape is
-            // toggling some unrelated filter.
-            ApplySortingAndGrouping();
-        }, "Indexing images…");
+    /// <summary>
+    /// One-line summary of a finished build for <see cref="StatusMessage"/>.
+    /// "Everything failed" gets its own wording because that is what a failed
+    /// model download looks like from here — the whole run comes back as
+    /// Failed — and a bare "indexed 0 · failed 1,234" reads like a per-file
+    /// problem rather than "none of this worked, look at the log".
+    /// </summary>
+    private static string DescribeBuildResult(TagIndexBuildResult? result)
+    {
+        if (result is null)
+            return "Tag indexing finished.";
+
+        var total = result.Indexed + result.Skipped + result.Failed;
+        if (total == 0)
+            return "Nothing to index — no images in the enabled gallery folders.";
+
+        if (result.Indexed == 0 && result.Failed == total)
+            return $"Tag indexing failed — none of the {total:N0} image(s) could be indexed. Check the log for details.";
+
+        return $"Indexed {result.Indexed:N0} · skipped {result.Skipped:N0} · failed {result.Failed:N0}";
     }
 
     [RelayCommand]
@@ -1047,8 +1196,20 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         HashSet<string>? tagMatchPaths = null;
         if (HasActiveTagFilters && _tagIndexService is not null)
         {
-            var matches = await _tagIndexService.SearchAsync(ActiveTagFilters.ToList(), NsfwFilter);
-            tagMatchPaths = matches.Select(Path.GetFullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                var matches = await _tagIndexService.SearchAsync(ActiveTagFilters.ToList(), NsfwFilter);
+                tagMatchPaths = matches.Select(Path.GetFullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            }
+            catch (Exception ex)
+            {
+                // A tag filter that cannot be resolved degrades to "no tag
+                // filter" rather than taking the gallery with it: this runs
+                // from property setters and fire-and-forget continuations, so
+                // an escape lands as an unhandled dispatcher exception.
+                Logger.Warning(ex, "Tag search failed; the gallery is showing results without the tag filter applied");
+                tagMatchPaths = null;
+            }
         }
 
         // Run sorting, filtering, and group creation on a background thread
@@ -1224,6 +1385,11 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         OnPropertyChanged(nameof(ToggleFavoritesButtonText));
     }
 
+    /// <summary>
+    /// The single exit from the gallery for a media item — both delete
+    /// commands and <see cref="OnActionsFilesMoved"/> route through here, so
+    /// it is also where the tag index learns the file is gone.
+    /// </summary>
     private void RemoveMediaItem(GenerationGalleryMediaItemViewModel item)
     {
         _allMediaItems.Remove(item);
@@ -1233,7 +1399,62 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         OnPropertyChanged(nameof(HasMedia));
         OnPropertyChanged(nameof(HasNoMedia));
         OnPropertyChanged(nameof(HasMoreItems));
+
+        if (!item.IsImage) return;
+
+        // The "N / M indexed" pill counts images, so M has to shrink with them
+        // — otherwise every delete leaves the counter permanently overstated.
+        TotalGalleryImageCount = Math.Max(0, TotalGalleryImageCount - 1);
+
+        if (_tagIndexService is null) return;
+
+        // Fire-and-forget: pruning is best-effort consistency cleanup, not
+        // something a delete should block on. Chained onto the previous prune
+        // so a bulk delete issues them one at a time instead of opening N DB
+        // contexts at once.
+        _lastTagIndexPruneTask = PruneTagIndexEntryAsync(item.FilePath, _lastTagIndexPruneTask);
     }
+
+    /// <summary>
+    /// Drops the index row for a file that just left the gallery and corrects
+    /// <see cref="IndexedImageCount"/> by however many rows actually went —
+    /// zero for a file that was never indexed, so the counter stays honest
+    /// without a second query to find out.
+    /// </summary>
+    private async Task PruneTagIndexEntryAsync(string filePath, Task previous)
+    {
+        try
+        {
+            await previous;
+        }
+        catch
+        {
+            // Defensive: this method swallows its own failures, so `previous`
+            // should never be faulted. Catching anyway keeps one bad link from
+            // poisoning every prune that chains onto it afterwards.
+        }
+
+        if (_tagIndexService is null) return;
+
+        try
+        {
+            var removed = await _tagIndexService.RemoveIndexEntriesAsync([filePath]);
+            if (removed > 0)
+            {
+                IndexedImageCount = Math.Max(0, IndexedImageCount - removed);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning(ex, "Failed to prune the tag index entry for {Path}", filePath);
+        }
+    }
+
+    /// <summary>
+    /// Waits for the index-prune calls started by <see cref="RemoveMediaItem"/>.
+    /// Intended for test support.
+    /// </summary>
+    public Task WaitForTagIndexPruneAsync() => _lastTagIndexPruneTask;
 
     private int GetDefaultViewerIndex()
     {

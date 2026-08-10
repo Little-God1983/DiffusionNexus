@@ -239,10 +239,22 @@
                 Command="{Binding BuildTagIndexCommand}"
                 Padding="10,6" Margin="0,4,4,4"
                 ToolTip.Tip="Scan enabled gallery folders and tag new/changed images"/>
+        <!-- Only shown while a build is running. A first build starts with a
+             379 MB model download and then walks the whole gallery, so there
+             has to be a way out that is not "kill the app". -->
+        <Button Content="✕ Cancel"
+                Command="{Binding CancelTagIndexCommand}"
+                IsVisible="{Binding IsIndexingTagIndex}"
+                Padding="10,6" Margin="0,4,4,4"
+                ToolTip.Tip="Stop the running tag index build — images already indexed are kept"/>
         <Border Background="#1c1c1c" BorderBrush="#3a3a3a" BorderThickness="1" CornerRadius="100"
                 Padding="8,2" Margin="0,4,12,4" VerticalAlignment="Center">
           <TextBlock Text="{Binding IndexStatusText}" FontSize="11" Foreground="#9a9a9a"/>
         </Border>
+        <TextBlock Text="{Binding StatusMessage}"
+                   IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                   FontSize="11" Foreground="#9a9a9a" TextWrapping="Wrap" MaxWidth="380"
+                   VerticalAlignment="Center" Margin="0,4,12,4"/>
 
         <Button Content="🔎 Advanced Search"
                 Command="{Binding ToggleAdvancedSearchCommand}"
