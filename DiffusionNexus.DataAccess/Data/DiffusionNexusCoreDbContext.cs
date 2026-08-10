@@ -64,6 +64,15 @@ public class DiffusionNexusCoreDbContext : DbContext
     /// <summary>Installed packages (ComfyUI, A1111, etc.).</summary>
     public DbSet<InstallerPackage> InstallerPackages => Set<InstallerPackage>();
 
+    /// <summary>Per-file rows in the local image-tagging index (Generation Gallery).</summary>
+    public DbSet<ImageMediaTagIndex> ImageMediaTagIndexes => Set<ImageMediaTagIndex>();
+
+    /// <summary>Distinct booru-style tag vocabulary for the image-tagging index.</summary>
+    public DbSet<ImageTag> ImageTags => Set<ImageTag>();
+
+    /// <summary>Image ↔ tag assignments with per-assignment confidence.</summary>
+    public DbSet<ImageMediaTagAssignment> ImageMediaTagAssignments => Set<ImageMediaTagAssignment>();
+
     #endregion
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
