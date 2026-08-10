@@ -53,7 +53,11 @@ public sealed class ImageTaggingServiceTests
 
         rating.Should().Be("sensitive");
         ratingScore.Should().Be(0.85f);
-        tags.Select(t => t.Name).Should().BeEquivalentTo(new[] { "1girl", "dog", "character_a" });
+        // Strict ordering: confirms tags are actually sorted descending by confidence
+        // (1girl .92 > character_a .60 > dog .40), not just present as a set.
+        tags.Select(t => t.Name).Should().BeEquivalentTo(
+            new[] { "1girl", "character_a", "dog" },
+            options => options.WithStrictOrdering());
     }
 
     [Fact]
@@ -65,5 +69,22 @@ public sealed class ImageTaggingServiceTests
         var act = () => ImageTaggingService.SelectTagsAndRating(tagList, scores, 0.35f);
 
         act.Should().Throw<InvalidOperationException>();
+    }
+
+    [Fact]
+    public void SelectTagsAndRating_ReturnsNullRating_WhenTagListHasNoRatingCategoryRows()
+    {
+        var tagList = new List<(string Name, string Category)>
+        {
+            ("1girl", "0"),
+            ("outdoor", "0"),
+            ("character_a", "4"),
+        };
+        var scores = new List<float> { 0.92f, 0.10f, 0.60f };
+
+        var (tags, rating, _) = ImageTaggingService.SelectTagsAndRating(tagList, scores, tagConfidenceThreshold: 0.35f);
+
+        rating.Should().BeNull();
+        tags.Select(t => t.Name).Should().BeEquivalentTo(new[] { "1girl", "character_a" });
     }
 }

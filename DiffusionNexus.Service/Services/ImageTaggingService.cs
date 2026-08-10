@@ -74,11 +74,24 @@ public sealed class ImageTaggingService : IImageTaggingService
             if (_session is not null)
                 return true;
 
-            _tagList = await Task.Run(() =>
+            try
             {
-                using var reader = new StreamReader(_modelManager.Wd14TaggerTagsPath);
-                return LoadTagList(reader);
-            }, cancellationToken);
+                _tagList = await Task.Run(() =>
+                {
+                    using var reader = new StreamReader(_modelManager.Wd14TaggerTagsPath);
+                    return LoadTagList(reader);
+                }, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Mirrors CreateSession()'s own defensive catch: a failure here (file
+                // deleted mid-race, permissions, or a CSV that parses to zero rows
+                // despite passing the coarse size check in GetWd14TaggerStatus) must
+                // surface as InitializeAsync returning false — not as an exception
+                // escaping past TagImageAsync's Task<ImageTagResult> contract.
+                Log.Error(ex, "Failed to load WD14 tagger tag list: {Path}", _modelManager.Wd14TaggerTagsPath);
+                return false;
+            }
 
             _session = await Task.Run(CreateSession, cancellationToken);
             return _session is not null;
