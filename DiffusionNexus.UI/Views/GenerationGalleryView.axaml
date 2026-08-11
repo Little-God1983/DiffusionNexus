@@ -428,10 +428,6 @@
                           IsVisible="{Binding !IsIndexingTagIndex}"
                           Padding="10,6"
                           ToolTip.Tip="Delete the tag index for this gallery and re-tag every image from scratch"/>
-                  <Border Background="#1c1c1c" BorderBrush="#3a3a3a" BorderThickness="1" CornerRadius="100"
-                          Padding="8,2" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding IndexStatusText}" FontSize="11" Foreground="#9a9a9a"/>
-                  </Border>
                 </StackPanel>
                 <TextBlock Text="{Binding StatusMessage}"
                            IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
@@ -480,7 +476,14 @@
 
           <Border Grid.Row="2" Padding="16" BorderBrush="#333" BorderThickness="0,1,0,0">
             <StackPanel Spacing="6">
-              <TextBlock Text="{Binding FilteredMatchCountText}" FontSize="12" Foreground="#9a9a9a" HorizontalAlignment="Center"/>
+              <!-- One home per number (user feedback — it used to appear three
+                   times): match count + indexed progress live here, the tag
+                   count lives in the TAG INDEX header. -->
+              <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                <TextBlock Text="{Binding FilteredMatchCountText}" FontSize="12" Foreground="#9a9a9a"/>
+                <TextBlock Text="·" FontSize="12" Foreground="#4a4a4a"/>
+                <TextBlock Text="{Binding IndexStatusText}" FontSize="12" Foreground="#6f6f6f"/>
+              </StackPanel>
               <!-- The toolbar's date/search/favorites filters can hide files
                    the drawer's filters matched (field case: the default
                    "Last 3 Months" window hid every indexed match). Say so
