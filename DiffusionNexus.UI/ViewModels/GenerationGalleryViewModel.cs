@@ -407,8 +407,10 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
     // Counts the full entry list, not the filtered TagCloud view — the header
     // describes the index, and must not shrink while the user types in the
-    // tag filter box.
-    public string TagCloudHeader => $"TAG INDEX — {TotalGalleryImageCount:N0} images · {_allTagCloudEntries.Count:N0} tags";
+    // tag filter box. Deliberately tags-only: the image counts live in the
+    // INDEXING row and the drawer footer, and repeating them here was the
+    // third copy of the same number (user feedback).
+    public string TagCloudHeader => $"TAG INDEX — {_allTagCloudEntries.Count:N0} tags";
 
     #region IThumbnailAware
 
@@ -1345,7 +1347,6 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         // TotalGalleryImageCount is computed from _allMediaItems.
         OnPropertyChanged(nameof(TotalGalleryImageCount));
         OnPropertyChanged(nameof(IndexStatusText));
-        OnPropertyChanged(nameof(TagCloudHeader));
 
         // Recorded before the pipeline starts: ApplySortedResults recomputes
         // the empty-state message on every run and needs this to distinguish
@@ -1906,7 +1907,6 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         // changed — raise it and its dependents.
         OnPropertyChanged(nameof(TotalGalleryImageCount));
         OnPropertyChanged(nameof(IndexStatusText));
-        OnPropertyChanged(nameof(TagCloudHeader));
 
         if (_tagIndexService is null) return;
 
