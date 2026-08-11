@@ -278,6 +278,41 @@
                                    Margin="0,4,0,0"/>
 
                     </StackPanel>
+
+                    <!-- Content tags + rating from the local tag index.
+                         Outside the HasData block on purpose: a JPG has no
+                         generation chunks but can still be indexed/tagged.
+                         Hidden entirely for unindexed images. -->
+                    <StackPanel Spacing="8" IsVisible="{Binding HasTagData}">
+                        <Separator Background="#333" Height="1"/>
+                        <DockPanel>
+                            <TextBlock Text="Content Tags" Classes="fieldLabel"
+                                       DockPanel.Dock="Left" VerticalAlignment="Center"/>
+                            <Border DockPanel.Dock="Right" HorizontalAlignment="Right"
+                                    Background="#2d5a3d" CornerRadius="100" Padding="10,3"
+                                    IsVisible="{Binding !IsNsfw}">
+                                <TextBlock Text="SFW" FontSize="11" FontWeight="SemiBold" Foreground="#b9e6c8"/>
+                            </Border>
+                            <Border DockPanel.Dock="Right" HorizontalAlignment="Right"
+                                    Background="#7a2d2d" CornerRadius="100" Padding="10,3"
+                                    IsVisible="{Binding IsNsfw}">
+                                <TextBlock Text="NSFW" FontSize="11" FontWeight="SemiBold" Foreground="#f0bcbc"/>
+                            </Border>
+                        </DockPanel>
+                        <ItemsControl ItemsSource="{Binding Tags}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="x:String">
+                                    <Border Background="#80222222" BorderBrush="#444" BorderThickness="1"
+                                            CornerRadius="100" Padding="8,3" Margin="0,0,6,6">
+                                        <TextBlock Text="{Binding}" FontSize="11" Foreground="#CCC"/>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
                 </StackPanel>
             </ScrollViewer>
         </Border>

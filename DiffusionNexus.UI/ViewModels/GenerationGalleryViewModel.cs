@@ -1109,7 +1109,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             showRatingControls: false,
             onToggleFavorite: toggleFavorite,
             isFavoriteCheck: isFavoriteCheck,
-            videoThumbnailService: _videoThumbnailService);
+            videoThumbnailService: _videoThumbnailService,
+            tagIndexService: _tagIndexService);
     }
 
     private static List<string> GetEnabledGalleryPaths(AppSettings settings)
