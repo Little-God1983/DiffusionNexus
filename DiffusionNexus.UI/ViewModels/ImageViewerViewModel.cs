@@ -162,9 +162,10 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
         Func<string, Task<bool>>? onToggleFavorite = null,
         Func<string, bool>? isFavoriteCheck = null,
         IVideoThumbnailService? videoThumbnailService = null,
-        ITagIndexService? tagIndexService = null)
+        ITagIndexService? tagIndexService = null,
+        Action<string, bool>? onNsfwRatingChanged = null)
     {
-        MetadataPanel = new ImageMetadataPanelViewModel(tagIndexService);
+        MetadataPanel = new ImageMetadataPanelViewModel(tagIndexService, onNsfwRatingChanged);
         _allImages = images ?? throw new ArgumentNullException(nameof(images));
         _eventAggregator = eventAggregator;
         _onSendToImageEditor = onSendToImageEditor;

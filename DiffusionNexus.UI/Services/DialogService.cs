@@ -260,10 +260,11 @@ public class DialogService : IDialogService
         Func<string, Task<bool>>? onToggleFavorite = null,
         Func<string, bool>? isFavoriteCheck = null,
         IVideoThumbnailService? videoThumbnailService = null,
-        ITagIndexService? tagIndexService = null)
+        ITagIndexService? tagIndexService = null,
+        Action<string, bool>? onNsfwRatingChanged = null)
     {
         var dialog = new ImageViewerDialog()
-            .WithImages(images, startIndex, eventAggregator, onSendToImageEditor, onSendToCaptioning, onDeleteRequested, showRatingControls, onToggleFavorite, isFavoriteCheck, videoThumbnailService, tagIndexService);
+            .WithImages(images, startIndex, eventAggregator, onSendToImageEditor, onSendToCaptioning, onDeleteRequested, showRatingControls, onToggleFavorite, isFavoriteCheck, videoThumbnailService, tagIndexService, onNsfwRatingChanged);
 
         await dialog.ShowDialog(_window);
     }

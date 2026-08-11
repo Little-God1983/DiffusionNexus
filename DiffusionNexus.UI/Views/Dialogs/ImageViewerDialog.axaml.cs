@@ -62,9 +62,10 @@ public partial class ImageViewerDialog : Window
         Func<string, Task<bool>>? onToggleFavorite = null,
         Func<string, bool>? isFavoriteCheck = null,
         IVideoThumbnailService? videoThumbnailService = null,
-        ITagIndexService? tagIndexService = null)
+        ITagIndexService? tagIndexService = null,
+        Action<string, bool>? onNsfwRatingChanged = null)
     {
-        _viewModel = new ImageViewerViewModel(images, startIndex, eventAggregator, onSendToImageEditor, onSendToCaptioning, onDeleteRequested, showRatingControls, onToggleFavorite, isFavoriteCheck, videoThumbnailService, tagIndexService);
+        _viewModel = new ImageViewerViewModel(images, startIndex, eventAggregator, onSendToImageEditor, onSendToCaptioning, onDeleteRequested, showRatingControls, onToggleFavorite, isFavoriteCheck, videoThumbnailService, tagIndexService, onNsfwRatingChanged);
         _viewModel.CloseRequested += (_, _) => Close();
         DataContext = _viewModel;
         return this;
