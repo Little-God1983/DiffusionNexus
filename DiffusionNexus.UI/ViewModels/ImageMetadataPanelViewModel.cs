@@ -189,17 +189,21 @@ public partial class ImageMetadataPanelViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Flips the current rating and records it as the user's manual verdict.
-    /// The override wins over the tagger everywhere (badge, gallery tiles,
-    /// Hide NSFW / NSFW only) and survives index rebuilds.
+    /// Records the clicked side of the SFW/NSFW segmented control as the
+    /// user's manual verdict. The override wins over the tagger everywhere
+    /// (badge, gallery tiles, Hide NSFW / NSFW only) and survives index
+    /// rebuilds. Clicking the already-active side is a no-op — it must not
+    /// quietly pin an override that changes nothing visible.
     /// </summary>
+    /// <param name="rating">"SFW" or "NSFW" (the button's CommandParameter).</param>
     [RelayCommand]
-    private async Task ToggleRatingAsync()
+    private async Task SetRatingAsync(string? rating)
     {
         var path = _currentImagePath;
         if (_tagIndexService is null || path is null || !HasTagData) return;
 
-        var newIsNsfw = !IsNsfw;
+        var newIsNsfw = string.Equals(rating, "NSFW", StringComparison.OrdinalIgnoreCase);
+        if (newIsNsfw == IsNsfw) return;
         try
         {
             await Task.Run(() => _tagIndexService.SetRatingOverrideAsync(path, newIsNsfw));

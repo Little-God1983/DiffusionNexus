@@ -49,6 +49,43 @@
         <Style Selector="Button.toggleBtn:pointerover /template/ ContentPresenter">
             <Setter Property="Background" Value="#CC333333"/>
         </Style>
+
+        <!-- SFW/NSFW segmented rating control: the active side carries its
+             color (green for SFW, the gallery's amber for NSFW — same #ffa726
+             as the tile badge, ONE color for NSFW app-wide), the inactive
+             side is grayed out and clickable to override the rating. -->
+        <Style Selector="Button.ratingSeg">
+            <Setter Property="Background" Value="#26262a"/>
+            <Setter Property="Foreground" Value="#666"/>
+            <Setter Property="BorderBrush" Value="#3a3a3a"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="12,3"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <Style Selector="Button.ratingSeg:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#333338"/>
+            <Setter Property="Foreground" Value="#999"/>
+        </Style>
+        <Style Selector="Button.ratingSeg.activeSfw">
+            <Setter Property="Background" Value="#2d5a3d"/>
+            <Setter Property="Foreground" Value="#b9e6c8"/>
+            <Setter Property="BorderBrush" Value="#3f7a54"/>
+        </Style>
+        <Style Selector="Button.ratingSeg.activeSfw:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#2d5a3d"/>
+            <Setter Property="Foreground" Value="#b9e6c8"/>
+        </Style>
+        <Style Selector="Button.ratingSeg.activeNsfw">
+            <Setter Property="Background" Value="#33ffa726"/>
+            <Setter Property="Foreground" Value="#ffa726"/>
+            <Setter Property="BorderBrush" Value="#ffa726"/>
+        </Style>
+        <Style Selector="Button.ratingSeg.activeNsfw:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#33ffa726"/>
+            <Setter Property="Foreground" Value="#ffa726"/>
+        </Style>
     </UserControl.Styles>
 
     <Panel>
@@ -300,25 +337,22 @@
                                         Padding="2,0" FontSize="10" Foreground="#888"
                                         VerticalAlignment="Center" Cursor="Hand"
                                         ToolTip.Tip="This rating was set by hand — click to return to the automatic rating"/>
-                                <!-- The badge itself is the override control:
-                                     one click flips SFW <-> NSFW and stores it
-                                     as a manual verdict that survives index
-                                     rebuilds. -->
-                                <Button Command="{Binding ToggleRatingCommand}"
-                                        Background="Transparent" BorderThickness="0" Padding="0"
-                                        Cursor="Hand"
-                                        ToolTip.Tip="Click to change the rating — your choice overrides the automatic one and survives index rebuilds">
-                                    <Panel>
-                                        <Border Background="#2d5a3d" CornerRadius="100" Padding="10,3"
-                                                IsVisible="{Binding !IsNsfw}">
-                                            <TextBlock Text="SFW" FontSize="11" FontWeight="SemiBold" Foreground="#b9e6c8"/>
-                                        </Border>
-                                        <Border Background="#7a2d2d" CornerRadius="100" Padding="10,3"
-                                                IsVisible="{Binding IsNsfw}">
-                                            <TextBlock Text="NSFW" FontSize="11" FontWeight="SemiBold" Foreground="#f0bcbc"/>
-                                        </Border>
-                                    </Panel>
-                                </Button>
+                                <!-- Segmented control: the active side shows
+                                     the current rating, clicking the inactive
+                                     side overrides it (and survives index
+                                     rebuilds). -->
+                                <StackPanel Orientation="Horizontal" Spacing="0">
+                                    <Button Content="SFW" Classes="ratingSeg"
+                                            Classes.activeSfw="{Binding !IsNsfw}"
+                                            CornerRadius="100,0,0,100"
+                                            Command="{Binding SetRatingCommand}" CommandParameter="SFW"
+                                            ToolTip.Tip="Mark this image SFW — your choice overrides the automatic rating"/>
+                                    <Button Content="NSFW" Classes="ratingSeg"
+                                            Classes.activeNsfw="{Binding IsNsfw}"
+                                            CornerRadius="0,100,100,0" Margin="-1,0,0,0"
+                                            Command="{Binding SetRatingCommand}" CommandParameter="NSFW"
+                                            ToolTip.Tip="Mark this image NSFW — your choice overrides the automatic rating"/>
+                                </StackPanel>
                             </StackPanel>
                         </DockPanel>
                         <ItemsControl ItemsSource="{Binding Tags}">
