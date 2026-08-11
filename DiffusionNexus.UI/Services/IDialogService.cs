@@ -186,7 +186,8 @@ public interface IDialogService
         Func<string, Task<bool>>? onToggleFavorite = null,
         Func<string, bool>? isFavoriteCheck = null,
         IVideoThumbnailService? videoThumbnailService = null,
-        ITagIndexService? tagIndexService = null);
+        ITagIndexService? tagIndexService = null,
+        Action<string, bool>? onNsfwRatingChanged = null);
 
     /// <summary>
     /// Shows the Save As dialog for saving an image with a new name and optional rating.

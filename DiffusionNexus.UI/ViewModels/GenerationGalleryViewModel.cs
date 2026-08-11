@@ -1103,6 +1103,21 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
                     ?.IsFavorite ?? false;
         }
 
+        // A manual SFW/NSFW override in the viewer must show on the tile
+        // badge and count for the NSFW filter. The tile updates immediately;
+        // filter/cache refresh waits until the modal closes — the gallery is
+        // invisible behind it anyway, and re-filtering under a dialog per
+        // click would be wasted work.
+        var nsfwRatingsChanged = false;
+        void OnNsfwRatingChanged(string filePath, bool isNsfw)
+        {
+            nsfwRatingsChanged = true;
+            var galleryItem = _allMediaItems.FirstOrDefault(
+                item => string.Equals(Path.GetFullPath(item.FilePath), Path.GetFullPath(filePath), StringComparison.OrdinalIgnoreCase));
+            if (galleryItem is not null)
+                galleryItem.IsNsfw = isNsfw;
+        }
+
         await DialogService.ShowImageViewerDialogAsync(
             viewerImages,
             index,
@@ -1110,7 +1125,14 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             onToggleFavorite: toggleFavorite,
             isFavoriteCheck: isFavoriteCheck,
             videoThumbnailService: _videoThumbnailService,
-            tagIndexService: _tagIndexService);
+            tagIndexService: _tagIndexService,
+            onNsfwRatingChanged: OnNsfwRatingChanged);
+
+        if (nsfwRatingsChanged)
+        {
+            InvalidateTagSearchCache();
+            ApplySortingAndGrouping();
+        }
     }
 
     private static List<string> GetEnabledGalleryPaths(AppSettings settings)

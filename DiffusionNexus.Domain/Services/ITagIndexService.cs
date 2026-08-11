@@ -27,7 +27,13 @@ public sealed record TagIndexBuildProgress(
 
 public sealed record TagIndexBuildResult(int Indexed, int Skipped, int Failed, int NsfwCount);
 
-public sealed record ImageTagLookup(bool IsNsfw, IReadOnlyList<string> Tags);
+/// <summary>
+/// Per-file lookup result. <paramref name="IsNsfw"/> is the EFFECTIVE rating:
+/// the user's manual override when one exists, the policy-derived automatic
+/// rating otherwise. <paramref name="IsRatingOverridden"/> tells the UI which
+/// of the two it is looking at.
+/// </summary>
+public sealed record ImageTagLookup(bool IsNsfw, IReadOnlyList<string> Tags, bool IsRatingOverridden = false);
 
 /// <summary>
 /// Builds and queries the searchable local tag index for the Generation
@@ -121,4 +127,21 @@ public interface ITagIndexService
     Task<int> RemoveIndexEntriesAsync(
         IReadOnlyList<string> filePaths,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Records the user's manual SFW/NSFW verdict for one file, replacing the
+    /// tagger's automatic rating in every query (search filters, tile badges,
+    /// viewer panel). Upserts: a second call for the same file replaces the
+    /// previous verdict. Overrides live in their own user-owned table and
+    /// survive incremental builds, Rebuild, and
+    /// <see cref="RemoveIndexEntriesAsync"/>.
+    /// </summary>
+    Task SetRatingOverrideAsync(string filePath, bool isNsfw, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Removes the manual verdict for one file, returning it to the automatic
+    /// policy-derived rating. A file with no override is a no-op.
+    /// </summary>
+    /// <returns>True when an override existed and was removed.</returns>
+    Task<bool> ClearRatingOverrideAsync(string filePath, CancellationToken cancellationToken = default);
 }

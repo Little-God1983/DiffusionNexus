@@ -15,7 +15,9 @@ public partial class ImageMetadataPanelViewModel : ObservableObject
 {
     private readonly Services.ImageMetadataParser _parser = new();
     private readonly ITagIndexService? _tagIndexService;
+    private readonly Action<string, bool>? _onNsfwRatingChanged;
     private Func<string, Task>? _copyToClipboard;
+    private string? _currentImagePath;
 
     /// <summary>
     /// Guards against out-of-order tag lookups: arrow-key navigation fires
@@ -32,9 +34,18 @@ public partial class ImageMetadataPanelViewModel : ObservableObject
     /// </summary>
     internal Task TagLookup { get; private set; } = Task.CompletedTask;
 
-    public ImageMetadataPanelViewModel(ITagIndexService? tagIndexService = null)
+    /// <param name="tagIndexService">Enables the Content Tags section when present.</param>
+    /// <param name="onNsfwRatingChanged">
+    /// Invoked with (path, effectiveIsNsfw) after the user overrides or resets
+    /// a rating, so the gallery behind the viewer can update its tile badge
+    /// and re-apply its NSFW filter without re-querying everything.
+    /// </param>
+    public ImageMetadataPanelViewModel(
+        ITagIndexService? tagIndexService = null,
+        Action<string, bool>? onNsfwRatingChanged = null)
     {
         _tagIndexService = tagIndexService;
+        _onNsfwRatingChanged = onNsfwRatingChanged;
     }
 
     [ObservableProperty]
@@ -69,6 +80,14 @@ public partial class ImageMetadataPanelViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _isNsfw;
+
+    /// <summary>
+    /// True when <see cref="IsNsfw"/> is the user's manual verdict rather
+    /// than the tagger's automatic rating — shows the "manual" marker and
+    /// the reset-to-auto affordance.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isRatingOverridden;
 
     /// <summary>Whether any LoRAs were found in the metadata.</summary>
     public bool HasLoras => Metadata?.Loras.Count > 0;
@@ -140,9 +159,11 @@ public partial class ImageMetadataPanelViewModel : ObservableObject
     private async Task LoadTagIndexDataAsync(string? imagePath)
     {
         var generation = ++_tagLookupGeneration;
+        _currentImagePath = imagePath;
         Tags = [];
         HasTagData = false;
         IsNsfw = false;
+        IsRatingOverridden = false;
 
         if (_tagIndexService is null || string.IsNullOrWhiteSpace(imagePath)) return;
 
@@ -157,6 +178,7 @@ public partial class ImageMetadataPanelViewModel : ObservableObject
             {
                 Tags = info.Tags;
                 IsNsfw = info.IsNsfw;
+                IsRatingOverridden = info.IsRatingOverridden;
                 HasTagData = true;
             }
         }
@@ -164,6 +186,58 @@ public partial class ImageMetadataPanelViewModel : ObservableObject
         {
             Log.Warning(ex, "[ImageViewer] Tag index lookup failed for {Path}", imagePath);
         }
+    }
+
+    /// <summary>
+    /// Flips the current rating and records it as the user's manual verdict.
+    /// The override wins over the tagger everywhere (badge, gallery tiles,
+    /// Hide NSFW / NSFW only) and survives index rebuilds.
+    /// </summary>
+    [RelayCommand]
+    private async Task ToggleRatingAsync()
+    {
+        var path = _currentImagePath;
+        if (_tagIndexService is null || path is null || !HasTagData) return;
+
+        var newIsNsfw = !IsNsfw;
+        try
+        {
+            await Task.Run(() => _tagIndexService.SetRatingOverrideAsync(path, newIsNsfw));
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[ImageViewer] Failed to save the rating override for {Path}", path);
+            return;
+        }
+
+        // Only reflect the change after the write actually landed — a DB
+        // failure must not leave the badge lying about what is stored.
+        IsNsfw = newIsNsfw;
+        IsRatingOverridden = true;
+        _onNsfwRatingChanged?.Invoke(path, newIsNsfw);
+    }
+
+    /// <summary>Discards the manual verdict and re-reads the automatic rating.</summary>
+    [RelayCommand]
+    private async Task ResetRatingAsync()
+    {
+        var path = _currentImagePath;
+        if (_tagIndexService is null || path is null || !IsRatingOverridden) return;
+
+        try
+        {
+            await Task.Run(() => _tagIndexService.ClearRatingOverrideAsync(path));
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[ImageViewer] Failed to clear the rating override for {Path}", path);
+            return;
+        }
+
+        // Re-query rather than guessing what the automatic rating was.
+        await (TagLookup = LoadTagIndexDataAsync(path));
+        if (HasTagData)
+            _onNsfwRatingChanged?.Invoke(path, IsNsfw);
     }
 
     [RelayCommand]

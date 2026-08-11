@@ -73,6 +73,9 @@ public class DiffusionNexusCoreDbContext : DbContext
     /// <summary>Image ↔ tag assignments with per-assignment confidence.</summary>
     public DbSet<ImageMediaTagAssignment> ImageMediaTagAssignments => Set<ImageMediaTagAssignment>();
 
+    /// <summary>User-owned manual SFW/NSFW overrides — survive index rebuilds.</summary>
+    public DbSet<ImageRatingOverride> ImageRatingOverrides => Set<ImageRatingOverride>();
+
     #endregion
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)

@@ -403,11 +403,19 @@ public sealed class TagIndexService : ITagIndexService
         // translates to an IN (...) that uses IX_ImageMediaTagIndexes_RatingLabel,
         // and any row whose label matches none of the safe buckets (different
         // casing, corrupt value) classifies as NSFW — filtering fails closed.
+        // A user-set ImageRatingOverride row beats the policy entirely: the
+        // two Any(...) branches translate to EXISTS subqueries over the
+        // override table's unique NOCASE FilePath index.
         var sfwLabels = ContentRatingPolicy.SfwRatingLabels;
+        var overrides = context.ImageRatingOverrides;
         query = nsfwFilter switch
         {
-            NsfwFilterMode.HideNsfw => query.Where(e => sfwLabels.Contains(e.RatingLabel)),
-            NsfwFilterMode.NsfwOnly => query.Where(e => !sfwLabels.Contains(e.RatingLabel)),
+            NsfwFilterMode.HideNsfw => query.Where(e =>
+                overrides.Any(o => o.FilePath == e.FilePath && !o.IsNsfw)
+                || (!overrides.Any(o => o.FilePath == e.FilePath) && sfwLabels.Contains(e.RatingLabel))),
+            NsfwFilterMode.NsfwOnly => query.Where(e =>
+                overrides.Any(o => o.FilePath == e.FilePath && o.IsNsfw)
+                || (!overrides.Any(o => o.FilePath == e.FilePath) && !sfwLabels.Contains(e.RatingLabel))),
             _ => query,
         };
 
@@ -476,10 +484,23 @@ public sealed class TagIndexService : ITagIndexService
             })
             .ToListAsync(cancellationToken);
 
+        // Manual overrides beat the policy-derived rating (see SearchAsync).
+        // Second small query instead of a join: the override table is tiny
+        // (one row per hand-corrected image), and keeping the main projection
+        // untouched keeps its no-tracking/no-graph guarantees obvious.
+        var userOverrides = await context.ImageRatingOverrides
+            .AsNoTracking()
+            .Where(o => normalizedPaths.Contains(o.FilePath))
+            .ToListAsync(cancellationToken);
+        var overrideByPath = userOverrides.ToDictionary(
+            o => o.FilePath, o => o.IsNsfw, StringComparer.OrdinalIgnoreCase);
+
         // NSFW derived at read time from the stored rating (see SearchAsync).
         return rows.ToDictionary(
             e => e.FilePath,
-            e => new ImageTagLookup(ContentRatingPolicy.IsNsfw(e.RatingLabel), e.Tags),
+            e => overrideByPath.TryGetValue(e.FilePath, out var userIsNsfw)
+                ? new ImageTagLookup(userIsNsfw, e.Tags, IsRatingOverridden: true)
+                : new ImageTagLookup(ContentRatingPolicy.IsNsfw(e.RatingLabel), e.Tags),
             StringComparer.OrdinalIgnoreCase);
     }
 
@@ -507,9 +528,54 @@ public sealed class TagIndexService : ITagIndexService
         // enforces because Microsoft.Data.Sqlite turns foreign keys on for
         // every connection. Covered by
         // RemoveIndexEntriesAsync_AlsoRemovesTheTagAssignments.
+        // Deliberately does NOT touch ImageRatingOverrides: this method serves
+        // both "file left the gallery" pruning and the Rebuild wipe, and a
+        // manual rating must survive a rebuild. An override for a truly gone
+        // file is a harmless orphan that re-applies if the file returns.
         return await context.ImageMediaTagIndexes
             .Where(e => normalizedPaths.Contains(e.FilePath))
             .ExecuteDeleteAsync(cancellationToken);
     }
 
+    public async Task SetRatingOverrideAsync(
+        string filePath,
+        bool isNsfw,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
+        var normalized = Path.GetFullPath(filePath);
+
+        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
+        var existing = await context.ImageRatingOverrides
+            .FirstOrDefaultAsync(o => o.FilePath == normalized, cancellationToken);
+        if (existing is null)
+        {
+            context.ImageRatingOverrides.Add(new ImageRatingOverride
+            {
+                FilePath = normalized,
+                IsNsfw = isNsfw,
+            });
+        }
+        else
+        {
+            existing.IsNsfw = isNsfw;
+        }
+
+        await context.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<bool> ClearRatingOverrideAsync(
+        string filePath,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
+        var normalized = Path.GetFullPath(filePath);
+
+        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        var removed = await context.ImageRatingOverrides
+            .Where(o => o.FilePath == normalized)
+            .ExecuteDeleteAsync(cancellationToken);
+        return removed > 0;
+    }
 }

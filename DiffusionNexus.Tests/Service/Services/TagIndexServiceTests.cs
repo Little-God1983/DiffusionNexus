@@ -939,4 +939,79 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
         public SynchronousProgress(Action<T> handler) => _handler = handler;
         public void Report(T value) => _handler(value);
     }
+
+    [Fact]
+    public async Task RatingOverride_BeatsTheAutomaticRating_InEveryQuery()
+    {
+        // The user marks a "questionable"-rated image as SFW (the Ellie case:
+        // the tagger was simply wrong). Search filters and tile lookups must
+        // all side with the user from that point on.
+        var path = CreateFakeImage("misrated.png");
+        var tagging = TaggerByWidth(_ =>
+            ImageTagResult.Succeeded(Array.Empty<ImageTagScore>(), "questionable", 0.9f, isNsfw: true));
+        var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
+        await service.BuildIndexAsync(new[] { path });
+
+        await service.SetRatingOverrideAsync(path, isNsfw: false);
+
+        var hidden = await service.SearchAsync(Array.Empty<string>(), NsfwFilterMode.HideNsfw);
+        hidden.Should().ContainSingle("the user said SFW, so Hide NSFW keeps it")
+            .Which.Should().Be(Path.GetFullPath(path));
+        var nsfwOnly = await service.SearchAsync(Array.Empty<string>(), NsfwFilterMode.NsfwOnly);
+        nsfwOnly.Should().BeEmpty();
+
+        var lookup = await service.GetTagsForFilesAsync(new[] { path });
+        lookup[Path.GetFullPath(path)].IsNsfw.Should().BeFalse();
+        lookup[Path.GetFullPath(path)].IsRatingOverridden.Should().BeTrue("the UI shows a 'manual' marker for it");
+
+        // And the opposite direction: flip an automatic-SFW image to NSFW.
+        await service.SetRatingOverrideAsync(path, isNsfw: true);
+        (await service.SearchAsync(Array.Empty<string>(), NsfwFilterMode.NsfwOnly))
+            .Should().ContainSingle("the upsert replaced the earlier verdict");
+    }
+
+    [Fact]
+    public async Task RatingOverride_SurvivesARebuild_AndClearingRestoresTheAutomaticRating()
+    {
+        // The whole reason overrides live in their own table: Rebuild wipes
+        // every index row (RemoveIndexEntriesAsync) and re-tags from scratch,
+        // and a hand-set rating must come out the other side intact.
+        var path = CreateFakeImage("corrected.png");
+        var tagging = TaggerByWidth(_ =>
+            ImageTagResult.Succeeded(Array.Empty<ImageTagScore>(), "questionable", 0.9f, isNsfw: true));
+        var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
+        await service.BuildIndexAsync(new[] { path });
+        await service.SetRatingOverrideAsync(path, isNsfw: false);
+
+        await service.RemoveIndexEntriesAsync(new[] { path });
+        await service.BuildIndexAsync(new[] { path });
+
+        var lookup = await service.GetTagsForFilesAsync(new[] { path });
+        lookup[Path.GetFullPath(path)].IsNsfw.Should().BeFalse("the manual SFW verdict survived the rebuild");
+        lookup[Path.GetFullPath(path)].IsRatingOverridden.Should().BeTrue();
+
+        var cleared = await service.ClearRatingOverrideAsync(path);
+        cleared.Should().BeTrue();
+        lookup = await service.GetTagsForFilesAsync(new[] { path });
+        lookup[Path.GetFullPath(path)].IsNsfw.Should().BeTrue("back to the automatic 'questionable' rating");
+        lookup[Path.GetFullPath(path)].IsRatingOverridden.Should().BeFalse();
+
+        (await service.ClearRatingOverrideAsync(path)).Should().BeFalse("clearing twice is a no-op, not an error");
+    }
+
+    [Fact]
+    public async Task RatingOverride_MatchesCaseInsensitively_LikeEveryOtherPathIdentity()
+    {
+        var path = CreateFakeImage("cased.png");
+        var tagging = TaggerByWidth(_ =>
+            ImageTagResult.Succeeded(Array.Empty<ImageTagScore>(), "general", 0.9f, isNsfw: false));
+        var service = new TagIndexService(new SingleDbContextFactory(_options), tagging.Object);
+        await service.BuildIndexAsync(new[] { path });
+
+        await service.SetRatingOverrideAsync(path.ToUpperInvariant(), isNsfw: true);
+
+        var lookup = await service.GetTagsForFilesAsync(new[] { path });
+        lookup[Path.GetFullPath(path)].IsNsfw.Should().BeTrue(
+            "Windows paths are case-insensitive, so the override must match regardless of casing");
+    }
 }

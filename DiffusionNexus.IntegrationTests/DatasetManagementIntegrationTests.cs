@@ -130,7 +130,8 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
             Func<string, Task<bool>>? onToggleFavorite = null,
             Func<string, bool>? isFavoriteCheck = null,
             IVideoThumbnailService? videoThumbnailService = null,
-            ITagIndexService? tagIndexService = null) =>
+            ITagIndexService? tagIndexService = null,
+            Action<string, bool>? onNsfwRatingChanged = null) =>
             Task.CompletedTask;
 
         public Task<SaveAsResult> ShowSaveAsDialogAsync(string originalFilePath, IEnumerable<DatasetCardViewModel> availableDatasets) =>
