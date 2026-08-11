@@ -42,7 +42,7 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
     public VideoPlayerViewModel VideoPlayer { get; } = new();
 
     /// <summary>ViewModel for the generation metadata side panel.</summary>
-    public ImageMetadataPanelViewModel MetadataPanel { get; } = new();
+    public ImageMetadataPanelViewModel MetadataPanel { get; }
 
     /// <summary>Event raised when the dialog should close.</summary>
     public event EventHandler? CloseRequested;
@@ -161,8 +161,10 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
         bool showRatingControls = true,
         Func<string, Task<bool>>? onToggleFavorite = null,
         Func<string, bool>? isFavoriteCheck = null,
-        IVideoThumbnailService? videoThumbnailService = null)
+        IVideoThumbnailService? videoThumbnailService = null,
+        ITagIndexService? tagIndexService = null)
     {
+        MetadataPanel = new ImageMetadataPanelViewModel(tagIndexService);
         _allImages = images ?? throw new ArgumentNullException(nameof(images));
         _eventAggregator = eventAggregator;
         _onSendToImageEditor = onSendToImageEditor;
