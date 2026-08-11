@@ -407,8 +407,14 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         await Task.WhenAll(tasks);
         RaiseCountsChanged();
         Persist();
-        _logger?.Info(LogCategory.Download, "CivitaiQueue",
-            $"Batch complete — {CompletedCount} done, {ErrorCount} failed, {ActiveCount} still active.");
+        var failedCount = ErrorCount;
+        var summary = $"Batch complete — {CompletedCount} done, {failedCount} failed, {ActiveCount} still active.";
+        // A batch with failures must not read as a routine Info line in the
+        // Unified Console — the per-job errors are elsewhere in the scrollback.
+        if (failedCount > 0)
+            _logger?.Warn(LogCategory.Download, "CivitaiQueue", summary);
+        else
+            _logger?.Info(LogCategory.Download, "CivitaiQueue", summary);
     }
 
     private async Task RunGatedAsync(CivitaiDownloadJob job, CancellationToken runCt)

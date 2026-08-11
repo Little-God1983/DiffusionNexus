@@ -22,6 +22,14 @@ public sealed class DownloadCoordinator : IDownloadCoordinator, IDisposable
     private string? _lastActivityLogName;
     private bool _disposed;
 
+    // Terminal outcomes since the last batch summary. Tasks are removed from
+    // _tasks the moment they finish, so without these counters the drain
+    // report has no memory of what happened — it used to hardcode success and
+    // showed a green "All downloads complete." over failed batches.
+    private int _batchSucceeded;
+    private int _batchFailed;
+    private int _batchCancelled;
+
     public DownloadCoordinator(IActivityLogService? activityLog = null)
     {
         _activityLog = activityLog;
@@ -148,18 +156,30 @@ public sealed class DownloadCoordinator : IDownloadCoordinator, IDisposable
 
             success = await downloadAction(progress, linkedCts.Token).ConfigureAwait(false);
 
-            lock (_lock) task.Status = success ? DownloadTaskStatus.Completed : DownloadTaskStatus.Failed;
+            lock (_lock)
+            {
+                task.Status = success ? DownloadTaskStatus.Completed : DownloadTaskStatus.Failed;
+                if (success) _batchSucceeded++; else _batchFailed++;
+            }
         }
         catch (OperationCanceledException)
         {
             // Distinguish user cancellation from a generic failure so the UI
             // shows the right colour and the activity log message reads
             // "cancelled" rather than "failed".
-            lock (_lock) task.Status = DownloadTaskStatus.Cancelled;
+            lock (_lock)
+            {
+                task.Status = DownloadTaskStatus.Cancelled;
+                _batchCancelled++;
+            }
         }
         catch (Exception ex)
         {
-            lock (_lock) task.Status = DownloadTaskStatus.Failed;
+            lock (_lock)
+            {
+                task.Status = DownloadTaskStatus.Failed;
+                _batchFailed++;
+            }
             Log.Error(ex, "Download {Name} failed inside coordinator", name);
         }
         finally
@@ -208,9 +228,23 @@ public sealed class DownloadCoordinator : IDownloadCoordinator, IDisposable
 
         if (snapshot.Count == 0)
         {
+            // Consume the batch counters even when no summary gets shown
+            // (e.g. a task cancelled while still queued, outside any visible
+            // batch) so stale outcomes never bleed into the next batch.
+            int succeeded, failed, cancelled;
+            lock (_lock)
+            {
+                succeeded = _batchSucceeded;
+                failed = _batchFailed;
+                cancelled = _batchCancelled;
+                _batchSucceeded = _batchFailed = _batchCancelled = 0;
+            }
+
             if (_activityLog.IsDownloadInProgress)
             {
-                _activityLog.CompleteDownloadProgress(true, "All downloads complete.");
+                _activityLog.CompleteDownloadProgress(
+                    failed == 0 && cancelled == 0,
+                    ComposeBatchSummary(succeeded, failed, cancelled));
             }
             _lastActivityLogName = null;
             return;
@@ -244,6 +278,25 @@ public sealed class DownloadCoordinator : IDownloadCoordinator, IDisposable
             _lastActivityLogName = name;
         }
         _activityLog.ReportDownloadProgress(percent, message);
+    }
+
+    /// <summary>
+    /// Human-readable batch verdict for the status bar. Failures lead the
+    /// sentence — the red ribbon's first words must say what went wrong.
+    /// </summary>
+    private static string ComposeBatchSummary(int succeeded, int failed, int cancelled)
+    {
+        var total = succeeded + failed + cancelled;
+        if (failed == 0 && cancelled == 0)
+        {
+            return total == 1 ? "Download complete." : $"All {total} downloads complete.";
+        }
+
+        var parts = new List<string>(3);
+        if (failed > 0) parts.Add($"{failed} failed");
+        if (cancelled > 0) parts.Add($"{cancelled} cancelled");
+        if (succeeded > 0) parts.Add($"{succeeded} completed");
+        return $"Downloads finished — {string.Join(", ", parts)} (of {total}).";
     }
 
     private static DownloadTask Snapshot(MutableTask t) =>
