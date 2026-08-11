@@ -48,18 +48,32 @@ public sealed record CivitaiModelVersion
     [JsonPropertyName("trainedWords")]
     public IReadOnlyList<string> TrainedWords { get; init; } = [];
 
-    /// <summary>Early access timeframe in days (legacy field, often 0 on newer responses).</summary>
+    /// <summary>Early access timeframe in days (legacy field, absent from current responses).</summary>
     [JsonPropertyName("earlyAccessTimeFrame")]
     public int EarlyAccessTimeFrame { get; init; }
 
     /// <summary>
-    /// Newer availability classifier. Common values: <c>"Public"</c>,
-    /// <c>"EarlyAccess"</c>, <c>"Private"</c>, <c>"Unsearchable"</c>. Civitai has
-    /// been migrating EA detection from <see cref="EarlyAccessTimeFrame"/> to this
-    /// field — check both when deciding whether a version is gated.
+    /// Availability classifier. Common values: <c>"Public"</c>, <c>"EarlyAccess"</c>,
+    /// <c>"Private"</c>, <c>"Unsearchable"</c>. Historically the EA signal after
+    /// <see cref="EarlyAccessTimeFrame"/>, but current responses say "Public" even
+    /// for gated versions — EA now lives in <see cref="EarlyAccessDeadline"/> /
+    /// <see cref="PaidAccess"/>. Never check any of these directly; use
+    /// <see cref="CivitaiEarlyAccessExtensions.IsEarlyAccessActive"/>, which honors
+    /// every signal generation.
     /// </summary>
     [JsonPropertyName("availability")]
     public string? Availability { get; init; }
+
+    /// <summary>
+    /// When the version's early-access period ends (mirrors
+    /// <c>paidAccess.endsAt</c>). A past deadline means the version is free again.
+    /// </summary>
+    [JsonPropertyName("earlyAccessDeadline")]
+    public DateTimeOffset? EarlyAccessDeadline { get; init; }
+
+    /// <summary>Paid/early-access gate descriptor; null on free versions.</summary>
+    [JsonPropertyName("paidAccess")]
+    public CivitaiPaidAccess? PaidAccess { get; init; }
 
     /// <summary>The download URL for this version's primary file.</summary>
     [JsonPropertyName("downloadUrl")]
@@ -80,6 +94,21 @@ public sealed record CivitaiModelVersion
     /// <summary>Model info when fetching version directly.</summary>
     [JsonPropertyName("model")]
     public CivitaiVersionModelInfo? Model { get; init; }
+}
+
+/// <summary>
+/// Early-access / paid gate on a model version (current-generation EA signal).
+/// <c>{"permanent": false, "endsAt": "2026-08-23T…"}</c> = early access until that
+/// date; <c>endsAt</c> null with <c>permanent</c> true = permanently paid. Fields
+/// are nullable defensively — the object's shape is new and still moving.
+/// </summary>
+public sealed record CivitaiPaidAccess
+{
+    [JsonPropertyName("permanent")]
+    public bool? Permanent { get; init; }
+
+    [JsonPropertyName("endsAt")]
+    public DateTimeOffset? EndsAt { get; init; }
 }
 
 /// <summary>

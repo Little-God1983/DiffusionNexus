@@ -269,7 +269,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         RaiseCountsChanged();
         _logger?.Info(LogCategory.Download, "CivitaiQueue",
             $"Enqueued: {result.Name} — {pick.Name} ({pick.BaseModel}, {pick.SizeDisplay}){(pick.IsEarlyAccess ? " [EA]" : "")}",
-            $"VersionId: {pick.Version.Id}\nFile: {fileName}\nUrl: {url}\nExpected SHA256: {primary?.Hashes?.SHA256 ?? "(none)"}\nEarly Access: {pick.IsEarlyAccess} (EarlyAccessTimeFrame={pick.Version.EarlyAccessTimeFrame}, availability={pick.Version.Availability ?? "(null)"})");
+            $"VersionId: {pick.Version.Id}\nFile: {fileName}\nUrl: {url}\nExpected SHA256: {primary?.Hashes?.SHA256 ?? "(none)"}\nEarly Access: {pick.IsEarlyAccess} (deadline={pick.Version.EarlyAccessDeadline?.ToString("u") ?? "(none)"}, paidAccess permanent={pick.Version.PaidAccess?.Permanent?.ToString() ?? "(null)"} endsAt={pick.Version.PaidAccess?.EndsAt?.ToString("u") ?? "(null)"}, availability={pick.Version.Availability ?? "(null)"})");
         return job;
     }
 
@@ -820,9 +820,10 @@ public partial class CivitaiDownloadJob : ObservableObject
     public long SizeBytes { get; init; }
 
     /// <summary>
-    /// True when the picked version is in Civitai Early Access (EarlyAccessTimeFrame &gt; 0
-    /// at enqueue time). Drives the EA badge on the tile and lets the download service
-    /// surface a precise cause when a 401 lands on this job.
+    /// True when the picked version was early-access gated at enqueue time (see
+    /// <see cref="DiffusionNexus.Civitai.Models.CivitaiEarlyAccessExtensions.IsEarlyAccessActive"/>).
+    /// Drives the EA badge on the tile and lets the download service surface a
+    /// precise cause when a 401 lands on this job.
     /// </summary>
     public bool IsEarlyAccess { get; init; }
     public string? ExpectedSha256 { get; init; }
