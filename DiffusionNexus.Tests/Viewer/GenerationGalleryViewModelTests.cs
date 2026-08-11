@@ -1058,7 +1058,7 @@ public class GenerationGalleryViewModelTests : IDisposable
 
         // The drawer's own indicator carries the same diagnosis…
         viewModel.HasHiddenTagMatches.Should().BeTrue();
-        viewModel.HiddenTagMatchesText.Should().Contain("1").And.Contain("Last 3 Months");
+        viewModel.HiddenTagMatchesText.Should().Contain("Last 3 Months").And.Contain("hidden");
 
         // …and its one-click fix widens the toolbar filters.
         viewModel.RevealHiddenMatchesCommand.Execute(null);
@@ -1099,7 +1099,14 @@ public class GenerationGalleryViewModelTests : IDisposable
 
         viewModel.MediaItems.Should().ContainSingle();
         viewModel.HasHiddenTagMatches.Should().BeTrue("Hide NSFW swallowed an image and must say so");
-        viewModel.HiddenTagMatchesText.Should().Contain("1").And.Contain("NSFW");
+        // Counter-less by design (user feedback: baseline-minus-shown counts
+        // read as nonsense — NSFW only showed a HIGHER number than Show all).
+        // The warning names only the filters actually narrowing the view.
+        viewModel.HiddenTagMatchesText.Should().Contain("NSFW mode")
+            .And.NotContain("date filter", "All Time is not narrowing anything")
+            .And.NotContainAny("0", "1", "2", "3", "4", "5", "6", "7", "8", "9");
+        viewModel.CanRevealHiddenMatches.Should().BeFalse(
+            "the widen-filters button never touches the NSFW mode, so it would be a no-op here");
     }
 
     [Fact]
@@ -1124,7 +1131,8 @@ public class GenerationGalleryViewModelTests : IDisposable
         viewModel.SelectedDateFilter.Should().Be("Last 3 Months");
         viewModel.MediaItems.Should().ContainSingle("the year-old file is outside the window");
         viewModel.HasHiddenTagMatches.Should().BeTrue();
-        viewModel.HiddenTagMatchesText.Should().Contain("1").And.Contain("Last 3 Months");
+        viewModel.HiddenTagMatchesText.Should().Contain("Last 3 Months");
+        viewModel.CanRevealHiddenMatches.Should().BeTrue("the date window is a toolbar filter the button can widen");
 
         viewModel.SelectedDateFilter = "All Time";
         await viewModel.WaitForSortingAsync();
@@ -1172,6 +1180,58 @@ public class GenerationGalleryViewModelTests : IDisposable
 
         chip.ScopedCount.Should().Be(2);
         chip.DisplayText.Should().Be("dog (2)", "the split disappears when it carries no information");
+    }
+
+    [Fact]
+    public async Task TagCloud_DropsChipsTheCurrentViewCannotServe_UnlessTheyAreActive()
+    {
+        // User request: a "tag (0/400)" chip only ever clicks into an empty
+        // grid — drop it from the cloud instead of displaying it. Active
+        // chips survive regardless, or a narrowed view would strand them
+        // with no way to deselect.
+        var galleryPath = CreateTempDirectory();
+        var oldImage = Path.Combine(galleryPath, "old.png");
+        var newImage = Path.Combine(galleryPath, "new.png");
+        File.WriteAllText(oldImage, "test");
+        File.WriteAllText(newImage, "test");
+        File.SetCreationTimeUtc(oldImage, DateTime.UtcNow.AddYears(-1));
+
+        var mockTagIndex = BuildableTagIndex(new TagIndexBuildResult(2, 0, 0, 0));
+        mockTagIndex.Setup(t => t.GetTagCloudAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { new TagFrequency("dog", 1), new TagFrequency("cat", 1) });
+        mockTagIndex.Setup(t => t.GetTagsForFilesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, ImageTagLookup>(StringComparer.OrdinalIgnoreCase)
+            {
+                [Path.GetFullPath(oldImage)] = new ImageTagLookup(IsNsfw: false, Tags: ["dog"]),
+                [Path.GetFullPath(newImage)] = new ImageTagLookup(IsNsfw: false, Tags: ["cat"]),
+            });
+        mockTagIndex.Setup(t => t.SearchAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<NsfwFilterMode>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { oldImage });
+
+        var viewModel = CreateGalleryViewModel(galleryPath, mockTagIndex.Object);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+        await viewModel.BuildTagIndexCommand.ExecuteAsync(null);
+        await viewModel.WaitForSortingAsync();
+
+        viewModel.SelectedDateFilter.Should().Be("Last 3 Months", "precondition: the default window hides the old file");
+        viewModel.TagCloud.Select(t => t.Name).Should().BeEquivalentTo(new[] { "cat" },
+            "'dog' lives only on the year-old file — zero in scope, so its chip is dropped");
+
+        // A chip can be active while zero-scoped (activated before the view
+        // narrowed) — it must stay visible so it can be deselected.
+        viewModel.ToggleTagFilterCommand.Execute("dog");
+        await viewModel.WaitForSortingAsync();
+        viewModel.TagCloud.Single(t => t.Name == "dog").DisplayText.Should().Be("dog (0/1)");
+
+        viewModel.ToggleTagFilterCommand.Execute("dog");
+        await viewModel.WaitForSortingAsync();
+        viewModel.TagCloud.Select(t => t.Name).Should().BeEquivalentTo(new[] { "cat" },
+            "deactivating the zero-scoped chip drops it again");
+
+        viewModel.SelectedDateFilter = "All Time";
+        await viewModel.WaitForSortingAsync();
+        viewModel.TagCloud.Select(t => t.Name).Should().BeEquivalentTo(new[] { "cat", "dog" },
+            "widening the window brings every chip back");
     }
 
     [Fact]
@@ -1315,7 +1375,11 @@ public class GenerationGalleryViewModelTests : IDisposable
 
         viewModel.TagCloud.Should().HaveCount(3, "no filter shows the whole cloud");
 
+        // Toggling a chip kicks off an async filter pass whose publish step
+        // re-emits the cloud — await it, or the assertions below enumerate
+        // TagCloud while the pass is replacing it.
         viewModel.ToggleTagFilterCommand.Execute("dog");
+        await viewModel.WaitForSortingAsync();
         viewModel.TagCloudSearchText = "do";
 
         viewModel.TagCloud.Select(t => t.Name).Should().BeEquivalentTo(new[] { "dog", "door" });
@@ -1331,6 +1395,7 @@ public class GenerationGalleryViewModelTests : IDisposable
         // filter: the chip must come back with its CURRENT state, not the
         // state it had when it was hidden.
         viewModel.ToggleTagFilterCommand.Execute("dog");
+        await viewModel.WaitForSortingAsync();
         viewModel.TagCloudSearchText = null;
 
         viewModel.TagCloud.Should().HaveCount(3);
