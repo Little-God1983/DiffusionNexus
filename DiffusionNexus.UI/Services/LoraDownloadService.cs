@@ -259,12 +259,29 @@ public sealed class LoraDownloadService
             using var scope = scopeFactory.CreateScope();
             var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
-            var existingPaths = await unitOfWork.ModelFiles.GetExistingLocalPathsAsync();
-            if (existingPaths.Contains(filePath))
+            // Path dedup must be VERSION-aware: Civitai file names are frequently
+            // generic ("V1.safetensors"), so this path can be claimed by a
+            // DIFFERENT model (whose on-disk file the download just replaced, or
+            // whose row is stale). Blindly skipping here made the new download
+            // invisible forever — 100% downloaded, never installed.
+            var pathOwners = await unitOfWork.ModelFiles.GetByLocalPathAsync(filePath);
+            if (pathOwners.Count > 0)
             {
-                _logger?.Debug(LogCategory.Download, "LoraDownload",
-                    $"File already in database: {filePath}");
-                return;
+                if (civitaiVersion.Id > 0 && pathOwners.Any(f => f.ModelVersion?.CivitaiId == civitaiVersion.Id))
+                {
+                    _logger?.Debug(LogCategory.Download, "LoraDownload",
+                        $"File already in database: {filePath}");
+                    return;
+                }
+
+                _logger?.Warn(LogCategory.Download, "LoraDownload",
+                    $"Path collision: {filePath} is registered to a different model — its bytes were just replaced by this download. Marking the old file record invalid and registering the new model.",
+                    $"Old owner version CivitaiId(s): {string.Join(", ", pathOwners.Select(f => f.ModelVersion?.CivitaiId?.ToString() ?? "(none)"))}\nNew version CivitaiId: {civitaiVersion.Id}");
+                foreach (var stale in pathOwners)
+                {
+                    stale.IsLocalFileValid = false;
+                    stale.LocalFileVerifiedAt = DateTimeOffset.UtcNow;
+                }
             }
 
             var fileInfo = new FileInfo(filePath);

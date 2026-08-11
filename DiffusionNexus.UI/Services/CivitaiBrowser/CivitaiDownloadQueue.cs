@@ -477,7 +477,13 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             targetDir = Path.Combine(folders[0], string.IsNullOrWhiteSpace(job.BaseModel) ? "Unsorted" : job.BaseModel);
         }
         Directory.CreateDirectory(targetDir);
-        var target = Path.Combine(targetDir, job.FileName);
+        var target = await ResolveCollisionFreeTargetPathAsync(
+            targetDir, job.FileName, job.VersionId, job.ExpectedSha256, ct);
+        if (!string.Equals(Path.GetFileName(target), job.FileName, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger?.Warn(LogCategory.Download, "CivitaiQueue",
+                $"File name collision in {targetDir}: '{job.FileName}' already belongs to a different download — saving as '{Path.GetFileName(target)}' instead.");
+        }
         job.TargetPath = target;
 
         try
@@ -621,6 +627,44 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         using var sha = SHA256.Create();
         var bytes = await sha.ComputeHashAsync(stream, ct);
         return Convert.ToHexString(bytes);
+    }
+
+    /// <summary>
+    /// Picks the on-disk target for a job, refusing to overwrite a different
+    /// model's file. Civitai file names are frequently generic ("V1.safetensors"),
+    /// so two unrelated models routed to the same BaseModel/Category folder
+    /// collide: the second download replaced the first model's weights on disk
+    /// and the path-based DB dedup then skipped registering it — downloaded to
+    /// 100% yet never installed. When the existing file's SHA256 matches the
+    /// job's expected hash it IS this download (re-download over self) and the
+    /// plain name is kept; otherwise the Civitai version id is appended — unique
+    /// per version and stable across retries, so a suffixed target that already
+    /// exists can only be this same version's earlier bytes and is safe to
+    /// overwrite.
+    /// </summary>
+    internal static async Task<string> ResolveCollisionFreeTargetPathAsync(
+        string targetDir, string fileName, int versionId, string? expectedSha256, CancellationToken ct)
+    {
+        var plain = Path.Combine(targetDir, fileName);
+        if (!File.Exists(plain)) return plain;
+
+        if (!string.IsNullOrWhiteSpace(expectedSha256))
+        {
+            try
+            {
+                var existingHash = await ComputeSha256Async(plain, ct).ConfigureAwait(false);
+                if (string.Equals(existingHash, expectedSha256, StringComparison.OrdinalIgnoreCase))
+                    return plain;
+            }
+            catch (IOException)
+            {
+                // Unreadable/locked — can't prove it's ours, so don't overwrite it.
+            }
+        }
+
+        var stem = Path.GetFileNameWithoutExtension(fileName);
+        var extension = Path.GetExtension(fileName);
+        return Path.Combine(targetDir, $"{stem}_{versionId}{extension}");
     }
 
     #region Persistence
