@@ -91,7 +91,7 @@ public class ImageMetadataPanelViewModelTests
     }
 
     [Fact]
-    public async Task ToggleRating_StoresTheOppositeVerdict_AndNotifiesTheGallery()
+    public async Task SetRating_StoresTheClickedVerdict_AndNotifiesTheGallery()
     {
         var path = ImagePath("misrated");
         var mockIndex = new Mock<ITagIndexService>();
@@ -106,16 +106,22 @@ public class ImageMetadataPanelViewModelTests
         panel.LoadMetadata(path);
         await panel.TagLookup;
 
-        await panel.ToggleRatingCommand.ExecuteAsync(null);
+        await panel.SetRatingCommand.ExecuteAsync("SFW");
 
         mockIndex.Verify(t => t.SetRatingOverrideAsync(path, false, It.IsAny<CancellationToken>()), Times.Once);
-        panel.IsNsfw.Should().BeFalse("the badge flips to the user's verdict");
+        panel.IsNsfw.Should().BeFalse("the active side switches to the user's verdict");
         panel.IsRatingOverridden.Should().BeTrue("the 'manual' marker appears");
         notified.Should().ContainSingle().Which.Should().Be((path, false));
+
+        // Clicking the side that is already active changes nothing and must
+        // not quietly pin another override.
+        await panel.SetRatingCommand.ExecuteAsync("SFW");
+        mockIndex.Verify(t => t.SetRatingOverrideAsync(It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
+        notified.Should().HaveCount(1);
     }
 
     [Fact]
-    public async Task ToggleRating_WhenTheWriteFails_KeepsShowingTheStoredRating()
+    public async Task SetRating_WhenTheWriteFails_KeepsShowingTheStoredRating()
     {
         var path = ImagePath("locked-db");
         var mockIndex = new Mock<ITagIndexService>();
@@ -132,7 +138,7 @@ public class ImageMetadataPanelViewModelTests
         panel.LoadMetadata(path);
         await panel.TagLookup;
 
-        await panel.ToggleRatingCommand.ExecuteAsync(null);
+        await panel.SetRatingCommand.ExecuteAsync("SFW");
 
         panel.IsNsfw.Should().BeTrue("the badge must not lie about what is actually stored");
         panel.IsRatingOverridden.Should().BeFalse();
