@@ -349,8 +349,36 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     [RelayCommand]
     private void ClearCompleted() => _queue.ClearCompleted();
 
+    /// <summary>
+    /// Dialog service for confirmations. Resolved lazily from the app container so
+    /// headless/design-time construction stays service-free; settable for tests.
+    /// </summary>
+    public IDialogService? DialogService { get; set; }
+
+    /// <summary>
+    /// Clears the download queue. When jobs are still queued or mid-download the user
+    /// must confirm first, because clearing cancels them. Without a dialog service
+    /// (headless) it proceeds, matching <see cref="EnqueueWithEarlyAccessPromptAsync"/>.
+    /// </summary>
     [RelayCommand]
-    private void ClearQueue() => _queue.ClearAll();
+    private async Task ClearQueueAsync()
+    {
+        var active = _queue.ActiveCount;
+        if (active > 0)
+        {
+            var dialogService = DialogService ??= App.Services?.GetService<IDialogService>();
+            if (dialogService is not null)
+            {
+                var confirmed = await dialogService.ShowConfirmAsync(
+                    "Clear download queue",
+                    active == 1
+                        ? "1 download is still queued or in progress.\n\nClearing the queue cancels it. Continue?"
+                        : $"{active} downloads are still queued or in progress.\n\nClearing the queue cancels them. Continue?");
+                if (!confirmed) return;
+            }
+        }
+        _queue.ClearAll();
+    }
 
     /// <summary>
     /// Stops every active download but keeps the queue intact. Hit Start to resume.
@@ -376,6 +404,17 @@ public partial class CivitaiBrowserViewModel : ObservableObject
 
     [RelayCommand]
     private async Task RefreshInstalledAsync() => await RefreshInstalledSetAsync();
+
+    /// <summary>
+    /// Full page refresh: re-reads the installed set (so installed badges reflect
+    /// what's on disk now), then re-runs the current query from page 1.
+    /// </summary>
+    [RelayCommand]
+    private async Task RefreshAsync()
+    {
+        await RefreshInstalledSetAsync();
+        await SearchAsync();
+    }
 
     private async Task DebouncedSearchAsync()
     {

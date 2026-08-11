@@ -26,6 +26,12 @@ public sealed class CivitaiDownloadQueue : ObservableObject
 {
     private const string PersistFileName = "civitai-download-queue.json";
 
+    /// <summary>
+    /// Overrides where the queue snapshot is persisted/restored. Tests use this so
+    /// they never read or clobber the real LocalAppData queue file.
+    /// </summary>
+    private readonly string? _persistPathOverride;
+
     private readonly LoraDownloadService? _downloadService;
     private readonly IUnifiedLogger? _logger;
     private readonly ICivitaiClient? _civitaiClient;
@@ -42,8 +48,10 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         LoraDownloadService? downloadService,
         IUnifiedLogger? logger,
         ICivitaiClient? civitaiClient,
-        DownloadDestinationViewModel? destination)
+        DownloadDestinationViewModel? destination,
+        string? persistPathOverride = null)
     {
+        _persistPathOverride = persistPathOverride;
         _downloadService = downloadService;
         _logger = logger;
         _civitaiClient = civitaiClient;
@@ -611,8 +619,10 @@ public sealed class CivitaiDownloadQueue : ObservableObject
 
     #region Persistence
 
-    private static string GetPersistPath()
+    private string GetPersistPath()
     {
+        if (_persistPathOverride is not null) return _persistPathOverride;
+
         var dir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "DiffusionNexus");

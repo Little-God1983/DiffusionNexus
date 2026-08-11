@@ -161,7 +161,7 @@
 
     <!-- Search + actions bar -->
     <Border Grid.Row="1" Background="#1A1A1A" Padding="12,8" BorderBrush="#2A2A2A" BorderThickness="0,0,0,1">
-      <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto">
+      <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto">
         <TextBox Grid.Column="0"
                  Text="{Binding SearchText, Mode=TwoWay}"
                  Watermark="Search Civitai (debounced)..."
@@ -190,18 +190,29 @@
         </StackPanel>
 
         <Button Grid.Column="2"
+                Command="{Binding RefreshCommand}"
+                IsEnabled="{Binding !IsBusy}"
+                ToolTip.Tip="Reload the installed state and re-run the current search"
+                Margin="0,0,8,0">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <TextBlock Text="&#x21BB;" FontSize="14" VerticalAlignment="Center"/>
+            <TextBlock Text="Refresh" VerticalAlignment="Center"/>
+          </StackPanel>
+        </Button>
+
+        <Button Grid.Column="3"
                 Content="Clear selection"
                 Command="{Binding ClearSelectionCommand}"
                 IsEnabled="{Binding HasSelection}"
                 Margin="0,0,8,0"/>
 
-        <Button Grid.Column="3"
+        <Button Grid.Column="4"
                 Content="Select all"
                 Command="{Binding SelectAllCommand}"
                 ToolTip.Tip="Select every currently-loaded result (hidden cards are skipped)"
                 Margin="0,0,8,0"/>
 
-        <Button Grid.Column="4"
+        <Button Grid.Column="5"
                 Content="Add selection to queue"
                 Classes="accent"
                 Command="{Binding AddSelectionToQueueCommand}"
