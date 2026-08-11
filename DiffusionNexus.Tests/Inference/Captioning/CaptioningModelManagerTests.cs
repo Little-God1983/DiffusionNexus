@@ -456,4 +456,92 @@ public sealed class CaptioningModelManagerTests : IDisposable
     }
 
     #endregion
+
+    #region Orphaned partials & disk space
+    // User-reported: C: filled up — a 3.7 GB Qwen3VL '.download' partial from a
+    // killed process sat orphaned for months (cleanup only ran on in-process
+    // failures), and nothing checked free space before pulling ~5 GB onto an
+    // almost-full system drive.
+
+    [Fact]
+    public void Ctor_SweepsOrphanedPartialDownloads()
+    {
+        var path = Path.Combine(_root, "sweep");
+        var orphan = Path.Combine(path, "Qwen3VL-8B-Instruct-Q4_K_M.gguf.download");
+        var keeper = Path.Combine(path, "keep.gguf");
+        CreateFile(orphan, length: 3);
+        CreateFile(keeper, length: 3);
+
+        _ = new CaptioningModelManager(path, httpClient: null);
+
+        File.Exists(orphan).Should().BeFalse(
+            "a leftover .download partial from a crashed/killed process is dead disk weight");
+        File.Exists(keeper).Should().BeTrue("completed model files must never be touched");
+    }
+
+    [Fact]
+    public async Task DownloadModelAsync_SweepsOrphanedPartialsInPickedDestination()
+    {
+        // Orphans in a user-picked (non-default) destination are swept when a
+        // download into that directory starts. The tiny freeSpaceProbe then
+        // blocks the actual download, so no network is involved.
+        var dest = Path.Combine(_root, "picked");
+        var orphan = Path.Combine(dest, "stale.gguf.download");
+        CreateFile(orphan, length: 3);
+
+        var manager = new CaptioningModelManager(_root, httpClient: null, freeSpaceProbe: _ => 1_000);
+
+        var ok = await manager.DownloadModelAsync(CaptioningModelType.Qwen3_VL_8B, dest);
+
+        ok.Should().BeFalse();
+        File.Exists(orphan).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task DownloadModelAsync_InsufficientDiskSpace_FailsFastWithoutTouchingNetwork()
+    {
+        var statuses = new List<ModelDownloadProgress>();
+        using var http = new HttpClient(new ThrowingHandler());
+        var manager = new CaptioningModelManager(
+            Path.Combine(_root, "space"), http, freeSpaceProbe: _ => 1_000);
+
+        var ok = await manager.DownloadModelAsync(
+            CaptioningModelType.Qwen3_VL_8B,
+            progress: new SyncProgress(statuses.Add),
+            cancellationToken: CancellationToken.None);
+
+        ok.Should().BeFalse();
+        statuses.Should().Contain(p => p.Status.Contains("disk space", StringComparison.OrdinalIgnoreCase),
+            "the user must learn WHY nothing was downloaded, not get a generic failure");
+    }
+
+    [Fact]
+    public async Task DownloadModelAsync_UnknownFreeSpace_StillAttemptsDownload()
+    {
+        // -1 = "could not determine free space" (UNC path, odd mount) — the
+        // check must not false-block; the download proceeds and hits the
+        // (deliberately throwing) network handler.
+        var statuses = new List<ModelDownloadProgress>();
+        using var http = new HttpClient(new ThrowingHandler());
+        var manager = new CaptioningModelManager(
+            Path.Combine(_root, "space-unknown"), http, freeSpaceProbe: _ => -1);
+
+        var ok = await manager.DownloadModelAsync(
+            CaptioningModelType.Qwen3_VL_8B,
+            progress: new SyncProgress(statuses.Add),
+            cancellationToken: CancellationToken.None);
+
+        ok.Should().BeFalse("the throwing handler fails the download after the preflight passes");
+        statuses.Should().NotContain(p => p.Status.Contains("disk space", StringComparison.OrdinalIgnoreCase));
+        statuses.Should().Contain(p => p.Status.Contains("Download failed"));
+    }
+
+    /// <summary>Fails the test if any HTTP request is actually issued.</summary>
+    private sealed class ThrowingHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => throw new InvalidOperationException("network must not be touched");
+    }
+
+    #endregion
 }
