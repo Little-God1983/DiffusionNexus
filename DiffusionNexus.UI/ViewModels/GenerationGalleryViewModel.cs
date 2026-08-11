@@ -989,11 +989,13 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     private void ApplyTagCloudSearch()
     {
         var search = TagCloudSearchText?.Trim();
-        TagCloud.ReplaceAll(string.IsNullOrEmpty(search)
-            ? _allTagCloudEntries.ToList()
-            : _allTagCloudEntries
-                .Where(e => e.Name.Contains(search, StringComparison.OrdinalIgnoreCase))
-                .ToList());
+        // Zero-scoped chips are dropped entirely (user request): a "tag
+        // (0/400)" chip can only click into an empty grid. Active chips stay
+        // regardless — hiding one would strand it with no way to deselect.
+        TagCloud.ReplaceAll(_allTagCloudEntries
+            .Where(e => e.ScopedCount > 0 || e.IsActive)
+            .Where(e => string.IsNullOrEmpty(search) || e.Name.Contains(search, StringComparison.OrdinalIgnoreCase))
+            .ToList());
     }
 
     private void InvalidateTagSearchCache()
@@ -1630,6 +1632,15 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
                     scopedTagCounts[tag] = scopedTagCounts.GetValueOrDefault(tag) + 1;
             }
 
+            // Zero-scoped chips are HIDDEN from the cloud, so all-zero counts
+            // must mean "nothing in scope carries this tag" — not "tag data
+            // simply isn't hydrated yet" (pre-hydration pass, or a cloud built
+            // from index rows for files outside this gallery). When no item
+            // gallery-wide carries any tag data, scope is unknown: report null
+            // and let the chips keep their global counts instead of emptying
+            // the whole cloud.
+            var hasHydratedTagData = allItems.Any(i => i.Tags.Count > 0);
+
             // Build groups on background thread too
             List<GenerationGalleryGroupViewModel>? resultGroups = null;
             if (isGroupingEnabled)
@@ -1645,7 +1656,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
                 }).ToList();
             }
 
-            return (resultList, resultGroups, tagMatchesHiddenByOtherFilters, scopedTagCounts);
+            return (resultList, resultGroups, tagMatchesHiddenByOtherFilters,
+                hasHydratedTagData ? scopedTagCounts : null);
         });
 
         // A newer pass started while this one was querying/sorting — its
@@ -1657,9 +1669,13 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         _tagMatchesHiddenByOtherFilters = hiddenTagMatches;
         OnPropertyChanged(nameof(HasHiddenTagMatches));
         OnPropertyChanged(nameof(HiddenTagMatchesText));
+        OnPropertyChanged(nameof(CanRevealHiddenMatches));
 
         _lastScopedTagCounts = scopedCounts;
         ApplyScopedTagCounts(scopedCounts);
+        // Scoped counts decide chip VISIBILITY now (zero-scoped chips are
+        // hidden), so the published cloud must be refreshed with them.
+        ApplyTagCloudSearch();
 
         // Back on the original context (UI thread) — apply results directly
         ApplySortedResults(sortedList, groups);
@@ -1683,10 +1699,46 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     /// <summary>True when any filter besides the tag chips hides images.</summary>
     public bool HasHiddenTagMatches => _tagMatchesHiddenByOtherFilters > 0;
 
-    public string HiddenTagMatchesText => (ActiveTagFilters.Count > 0
-            ? $"⚠ {_tagMatchesHiddenByOtherFilters:N0} more match your tags but are hidden by "
-            : $"⚠ {_tagMatchesHiddenByOtherFilters:N0} image(s) are hidden by ")
-        + $"the date filter ('{SelectedDateFilter}'), the search box, the favorites toggle or the NSFW mode.";
+    /// <summary>
+    /// The widen-filters button only helps when a TOOLBAR filter is
+    /// narrowing the view — it deliberately never touches the drawer's NSFW
+    /// mode, so when that is the sole culprit the button would be a no-op.
+    /// </summary>
+    public bool CanRevealHiddenMatches =>
+        !string.Equals(SelectedDateFilter, "All Time", StringComparison.OrdinalIgnoreCase)
+        || !string.IsNullOrWhiteSpace(SearchText)
+        || ShowFavoritesOnly;
+
+    /// <summary>
+    /// Deliberately counter-less (user feedback): the old "N hidden" number
+    /// was baseline-minus-shown, so switching Show all → NSFW only made the
+    /// count JUMP (fewer shown, same baseline) — arithmetically right,
+    /// humanly wrong. Now it just names the filters actually narrowing the
+    /// view.
+    /// </summary>
+    public string HiddenTagMatchesText
+    {
+        get
+        {
+            var culprits = new List<string>();
+            if (!string.Equals(SelectedDateFilter, "All Time", StringComparison.OrdinalIgnoreCase))
+                culprits.Add($"the date filter ('{SelectedDateFilter}')");
+            if (!string.IsNullOrWhiteSpace(SearchText))
+                culprits.Add("the search box");
+            if (ShowFavoritesOnly)
+                culprits.Add("the favorites toggle");
+            if (NsfwFilter != NsfwFilterMode.ShowAll)
+                culprits.Add("the NSFW mode");
+
+            var subject = culprits.Count switch
+            {
+                0 => "the current filters",
+                1 => culprits[0],
+                _ => string.Join(", ", culprits.Take(culprits.Count - 1)) + " and " + culprits[^1],
+            };
+            return $"⚠ Due to {subject}, images and tags may be hidden.";
+        }
+    }
 
     /// <summary>
     /// One-click escape from the hidden-matches situation: widen the toolbar
@@ -1702,10 +1754,13 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         ShowFavoritesOnly = false;
     }
 
-    private void ApplyScopedTagCounts(Dictionary<string, int> scopedCounts)
+    private void ApplyScopedTagCounts(Dictionary<string, int>? scopedCounts)
     {
+        // Null = scope unknown (no hydrated tag data anywhere) — fall back to
+        // the global count so DisplayText collapses to "name (N)" and the
+        // zero-scoped-chips-are-hidden rule can't empty the cloud.
         foreach (var entry in _allTagCloudEntries)
-            entry.ScopedCount = scopedCounts.GetValueOrDefault(entry.Name);
+            entry.ScopedCount = scopedCounts?.GetValueOrDefault(entry.Name) ?? entry.Count;
     }
 
     private void ApplySortedResults(
