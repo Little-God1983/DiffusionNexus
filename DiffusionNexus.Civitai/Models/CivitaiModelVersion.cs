@@ -104,22 +104,28 @@ public sealed record CivitaiVersionModelInfo
 }
 
 /// <summary>
-/// Version-specific statistics.
+/// Version-specific statistics. Counters are null on freshly published
+/// versions (stats not yet computed) — the tolerant converters read those as 0.
 /// </summary>
 public sealed record CivitaiVersionStats
 {
     [JsonPropertyName("downloadCount")]
+    [JsonConverter(typeof(TolerantInt32JsonConverter))]
     public int DownloadCount { get; init; }
 
     [JsonPropertyName("ratingCount")]
+    [JsonConverter(typeof(TolerantInt32JsonConverter))]
     public int RatingCount { get; init; }
 
     [JsonPropertyName("rating")]
+    [JsonConverter(typeof(TolerantDoubleJsonConverter))]
     public double Rating { get; init; }
 
     [JsonPropertyName("thumbsUpCount")]
+    [JsonConverter(typeof(TolerantInt32JsonConverter))]
     public int ThumbsUpCount { get; init; }
 
     [JsonPropertyName("thumbsDownCount")]
+    [JsonConverter(typeof(TolerantInt32JsonConverter))]
     public int ThumbsDownCount { get; init; }
 }
