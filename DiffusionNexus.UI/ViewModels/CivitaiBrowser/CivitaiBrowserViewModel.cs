@@ -654,6 +654,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                 foreach (var model in tagResponse.Items)
                 {
                     if (model.ModelVersions.Count == 0) continue;
+                    if (model.Mode is not null) continue; // skip archived/taken-down
                     if (!existingIds.Add(model.Id)) continue;
                     var vm = new CivitaiResultViewModel(model, ShowNsfwContent)
                     {
@@ -664,6 +665,12 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                     Results.Add(vm);
                 }
             });
+
+            // The merged cards default to visible — without a filter pass here,
+            // Hide Installed / Hide Early Access / Show-NSFW were silently ignored
+            // for every tag-fallback result (user-reported: named searches with
+            // those toggles active showed hidden categories anyway).
+            ApplyClientSideFilters();
 
             var addedFromTag = Results.Count - preCount;
             _logger?.Info(LogCategory.Network, "CivitaiBrowser",
@@ -741,12 +748,25 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         _ = SearchAsync();
     }
 
+    /// <summary>
+    /// Selection state that outlives mirror rebuilds. The source collection is
+    /// cleared-then-refilled by the owning LoRA viewer during its own rebuilds
+    /// (a Reset followed by per-item Adds, each landing in
+    /// <see cref="RebuildBaseModelMirror"/>) — a per-rebuild snapshot would see
+    /// the empty intermediate state and wipe the user's selections here.
+    /// </summary>
+    private readonly HashSet<string> _stickyBaseModelSelections = new(StringComparer.OrdinalIgnoreCase);
+
     private void RebuildBaseModelMirror()
     {
-        // Preserve current selection by raw name.
-        var previouslySelected = new HashSet<string>(
-            AvailableBaseModels.Where(b => b.IsSelected).Select(b => b.BaseModelRaw),
-            StringComparer.OrdinalIgnoreCase);
+        // Fold the live item states into the sticky set: names currently listed
+        // follow their checkbox; names absent from the current mirror keep their
+        // remembered state until they rematerialize.
+        foreach (var b in AvailableBaseModels)
+        {
+            if (b.IsSelected) _stickyBaseModelSelections.Add(b.BaseModelRaw);
+            else _stickyBaseModelSelections.Remove(b.BaseModelRaw);
+        }
 
         foreach (var existing in AvailableBaseModels)
         {
@@ -760,7 +780,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         {
             var item = new BaseModelFilterItem(src.BaseModelRaw)
             {
-                IsSelected = previouslySelected.Contains(src.BaseModelRaw)
+                IsSelected = _stickyBaseModelSelections.Contains(src.BaseModelRaw)
             };
             item.SelectionChanged += OnBaseModelFilterToggled;
             AvailableBaseModels.Add(item);

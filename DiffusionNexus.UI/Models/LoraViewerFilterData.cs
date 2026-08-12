@@ -15,4 +15,14 @@ public sealed class LoraViewerFilterData
 
     /// <summary>Whether the "only models I have installed" narrowing was on.</summary>
     public bool OnlyInstalled { get; set; }
+
+    /// <summary>
+    /// Sort field of the Installed tab (a <c>LoraSortField</c> enum name).
+    /// Null on filters saved before sort became part of the filter — restoring
+    /// those leaves the current sort untouched.
+    /// </summary>
+    public string? SortField { get; set; }
+
+    /// <summary>Sort direction; null on pre-sort saved filters (see <see cref="SortField"/>).</summary>
+    public bool? SortDescending { get; set; }
 }
