@@ -389,6 +389,11 @@ public partial class App : Application
                     case Civitai.CivitaiBaseModelCatalogEventKind.UsedBundledFallback:
                         logger?.Warn(category, source, e.Message ?? $"Using bundled fallback ({e.Count} base models).", detail);
                         break;
+                    case Civitai.CivitaiBaseModelCatalogEventKind.SourceYieldedNoModels:
+                        // Warn, not Info: the refresh may still "succeed" off an older file,
+                        // so this is the only signal that the list is going stale.
+                        logger?.Warn(category, source, e.Message ?? "A base model source returned nothing parseable.", detail);
+                        break;
                     case Civitai.CivitaiBaseModelCatalogEventKind.FetchFailed:
                         logger?.Warn(category, source, e.Message ?? "Base model fetch failed.", detail);
                         if (e.Exception is not null)
