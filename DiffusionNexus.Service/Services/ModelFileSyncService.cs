@@ -128,7 +128,18 @@ public class ModelFileSyncService : IModelSyncService
                     if (!file.IsLocalFileValid && file.LocalFileVerifiedAt != null) continue;
                     var root = MatchEnabledRoot(file.LocalPath, normalizedRoots);
                     if (root is null) continue;
-                    seen.TryAdd(file.LocalPath, new InstalledModelFile(model, version, file, root));
+                    // When several rows survive for one path (a generic-filename
+                    // collision mid-resolution), the most recently verified row is
+                    // the one whose model actually owns the bytes on disk — the
+                    // contested-path arbitration in VerifyAndSyncFilesAsync stamps
+                    // it last. First-come-wins hid freshly downloaded models behind
+                    // the stale row of the model they overwrote.
+                    if (!seen.TryGetValue(file.LocalPath, out var existing)
+                        || (file.LocalFileVerifiedAt ?? DateTimeOffset.MinValue)
+                           > (existing.File.LocalFileVerifiedAt ?? DateTimeOffset.MinValue))
+                    {
+                        seen[file.LocalPath] = new InstalledModelFile(model, version, file, root);
+                    }
                 }
             }
         }
@@ -349,44 +360,91 @@ public class ModelFileSyncService : IModelSyncService
             TotalCount = files.Count
         });
 
-        foreach (var file in files)
+        // Group rows claiming the same path: existence alone can't verify a contested
+        // path (a generic-filename collision means the bytes belong to only ONE of the
+        // claimants), so those need hash arbitration instead of the fast path.
+        var byPath = files
+            .Where(f => !string.IsNullOrEmpty(f.LocalPath))
+            .GroupBy(f => f.LocalPath!, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var claim in byPath)
         {
             cancellationToken.ThrowIfCancellationRequested();
+
+            var claimants = claim.ToList();
 
             progress?.Report(new SyncProgress
             {
                 Phase = "Verifying files",
-                CurrentItem = file.FileName,
+                CurrentItem = claimants[0].FileName,
                 ProcessedCount = processedCount,
                 TotalCount = files.Count
             });
 
-            if (File.Exists(file.LocalPath))
+            if (!File.Exists(claim.Key))
             {
+                foreach (var file in claimants)
+                {
+                    // File is missing - try to find by hash
+                    var newPath = await TryFindMovedFileAsync(file, cancellationToken);
+                    if (newPath is not null)
+                    {
+                        file.LocalPath = newPath;
+                        file.IsLocalFileValid = true;
+                        file.LocalFileVerifiedAt = DateTimeOffset.UtcNow;
+                        moved++;
+                    }
+                    else
+                    {
+                        file.IsLocalFileValid = false;
+                        file.LocalFileVerifiedAt = DateTimeOffset.UtcNow;
+                        missing++;
+                    }
+                }
+            }
+            else if (claimants.Count == 1)
+            {
+                var file = claimants[0];
                 file.IsLocalFileValid = true;
                 file.LocalFileVerifiedAt = DateTimeOffset.UtcNow;
                 verified++;
             }
             else
             {
-                // File is missing - try to find by hash
-                var newPath = await TryFindMovedFileAsync(file, cancellationToken);
-                if (newPath is not null)
+                // Contested: hash the file once and validate only the claimant whose
+                // recorded SHA256 matches the actual bytes. Blind existence checks here
+                // used to resurrect the overwritten model's row, which then shadowed the
+                // real owner in the Installed tab ("downloaded but never shows up").
+                string? actualHash = null;
+                try
                 {
-                    file.LocalPath = newPath;
-                    file.IsLocalFileValid = true;
-                    file.LocalFileVerifiedAt = DateTimeOffset.UtcNow;
-                    moved++;
+                    actualHash = await ComputeFullSha256Async(claim.Key, cancellationToken)
+                        .ConfigureAwait(false);
                 }
-                else
+                catch (IOException)
                 {
-                    file.IsLocalFileValid = false;
-                    file.LocalFileVerifiedAt = DateTimeOffset.UtcNow;
-                    missing++;
+                    // Locked/unreadable right now — leave the rows as they are and let a
+                    // later pass arbitrate rather than guessing ownership.
+                    processedCount += claimants.Count;
+                    continue;
                 }
+
+                foreach (var file in claimants)
+                {
+                    var owns = !string.IsNullOrWhiteSpace(file.HashSHA256)
+                        && string.Equals(file.HashSHA256, actualHash, StringComparison.OrdinalIgnoreCase);
+                    file.IsLocalFileValid = owns;
+                    file.LocalFileVerifiedAt = DateTimeOffset.UtcNow;
+                    if (owns) verified++; else missing++;
+                }
+
+                Serilog.Log.Warning(
+                    "Contested path {Path}: {Count} database rows claim it; bytes match SHA256 {Hash} — validated {Owners} owner(s), invalidated the rest",
+                    claim.Key, claimants.Count, actualHash,
+                    claimants.Count(f => f.IsLocalFileValid));
             }
 
-            processedCount++;
+            processedCount += claimants.Count;
         }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -434,6 +492,21 @@ public class ModelFileSyncService : IModelSyncService
         // Combine and return all models
         var allModels = cachedModels.Concat(newModels).ToList();
         return allModels;
+    }
+
+    /// <summary>
+    /// Full-file SHA256, uppercase hex — comparable to the Civitai-recorded
+    /// <see cref="ModelFile.HashSHA256"/>. Unlike <see cref="ComputeFileHashAsync"/>
+    /// (a first-10MB partial for cheap moved-file candidate checks), ownership
+    /// arbitration of a contested path must hash the whole file: partial hashes
+    /// never equal a stored full-file SHA256.
+    /// </summary>
+    private static async Task<string> ComputeFullSha256Async(string filePath, CancellationToken cancellationToken)
+    {
+        using var sha256 = SHA256.Create();
+        await using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true);
+        var hash = await sha256.ComputeHashAsync(stream, cancellationToken).ConfigureAwait(false);
+        return Convert.ToHexString(hash);
     }
 
     /// <inheritdoc />
