@@ -58,6 +58,59 @@ public sealed class OnnxModelManager
         _httpClient.Timeout = TimeSpan.FromMinutes(30); // Large file download timeout
 
         Directory.CreateDirectory(_modelsBasePath);
+        SweepOrphanedPartials(_modelsBasePath);
+    }
+
+    /// <summary>
+    /// Safety margin the free-space preflight demands on top of a file's
+    /// expected size, so a download can't grind the volume to zero bytes free.
+    /// </summary>
+    private const long FreeSpaceMarginBytes = 256L * 1024 * 1024;
+
+    /// <summary>
+    /// Free bytes on the volume holding <paramref name="path"/>, or -1 when it
+    /// can't be determined — -1 means "unknown, don't block".
+    /// </summary>
+    private static long ProbeFreeBytes(string path)
+    {
+        try
+        {
+            var root = Path.GetPathRoot(Path.GetFullPath(path));
+            if (string.IsNullOrWhiteSpace(root)) return -1;
+            var drive = new DriveInfo(root);
+            return drive.IsReady ? drive.AvailableFreeSpace : -1;
+        }
+        catch
+        {
+            return -1;
+        }
+    }
+
+    /// <summary>
+    /// Deletes leftover <c>*.download</c> partials. The in-download cleanup
+    /// only runs for in-process failures — a crashed or killed app orphans its
+    /// partial forever. An actively-written partial holds an exclusive handle,
+    /// so deleting it throws and the sweep skips it.
+    /// </summary>
+    private static void SweepOrphanedPartials(string directory)
+    {
+        try
+        {
+            foreach (var partial in Directory.EnumerateFiles(directory, "*.download", SearchOption.TopDirectoryOnly))
+            {
+                try
+                {
+                    File.Delete(partial);
+                    Log.Information("Removed orphaned partial download: {Path}", partial);
+                }
+                catch (IOException) { /* actively written right now — leave it */ }
+                catch (UnauthorizedAccessException) { /* not ours to delete */ }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Orphaned-partial sweep failed for {Directory}", directory);
+        }
     }
 
     /// <summary>
@@ -410,6 +463,19 @@ public sealed class OnnxModelManager
         try
         {
             progress?.Report(new ModelDownloadProgress(0, expectedSize, "Starting download..."));
+
+            // Free-space preflight: refuse to start a download the volume
+            // can't hold instead of grinding it to zero and failing mid-stream.
+            var freeBytes = ProbeFreeBytes(destinationPath);
+            if (freeBytes >= 0 && expectedSize > 0 && freeBytes < expectedSize + FreeSpaceMarginBytes)
+            {
+                var message =
+                    $"Not enough free disk space for {modelName}: needs ~{(expectedSize + FreeSpaceMarginBytes) / (1024 * 1024):N0} MB, " +
+                    $"volume has {freeBytes / (1024 * 1024):N0} MB free.";
+                Log.Error("Download blocked — {Message} (target: {Path})", message, destinationPath);
+                progress?.Report(new ModelDownloadProgress(0, expectedSize, message));
+                return false;
+            }
 
             var tempPath = destinationPath + ".download";
 

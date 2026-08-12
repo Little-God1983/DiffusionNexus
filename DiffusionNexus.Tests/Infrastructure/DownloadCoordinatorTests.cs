@@ -382,4 +382,117 @@ public class DownloadCoordinatorTests
         log.IsDownloadInProgress.Should().BeFalse();
         log.DownloadOperationName.Should().BeNull();
     }
+
+    // ── Batch outcome honesty ──
+    // The coordinator suppresses per-download activity-log reporting (single-slot
+    // shim), so its drain summary is the ONLY status-bar verdict a batch gets.
+    // It used to hardcode success — a failed EA download (or any failure) ended
+    // with a green "All downloads complete." ribbon (user-reported).
+
+    [Fact]
+    public async Task ActivityLog_FailedDownload_ReportsBatchAsError()
+    {
+        var log = new ActivityLogService();
+        using var coordinator = new DownloadCoordinator(log);
+
+        await coordinator.EnqueueAsync("Model-A", (_, _) => Task.FromResult(false)).WaitAsync(Timeout);
+
+        log.CurrentStatusSeverity.Should().Be(ActivitySeverity.Error,
+            "a batch whose only download failed must not show the green success ribbon");
+        log.CurrentStatus.Should().Contain("1 failed");
+    }
+
+    [Fact]
+    public async Task ActivityLog_ThrowingDownload_ReportsBatchAsError()
+    {
+        var log = new ActivityLogService();
+        using var coordinator = new DownloadCoordinator(log);
+
+        await coordinator.EnqueueAsync("Model-A",
+            (_, _) => throw new InvalidOperationException("boom")).WaitAsync(Timeout);
+
+        log.CurrentStatusSeverity.Should().Be(ActivitySeverity.Error);
+        log.CurrentStatus.Should().Contain("1 failed");
+    }
+
+    [Fact]
+    public async Task ActivityLog_AllSuccessfulBatch_ReportsSuccess()
+    {
+        var log = new ActivityLogService();
+        using var coordinator = new DownloadCoordinator(log) { MaxConcurrent = 2 };
+        var startedA = new TaskCompletionSource();
+        var releaseA = new TaskCompletionSource();
+        var startedB = new TaskCompletionSource();
+        var releaseB = new TaskCompletionSource();
+
+        var a = coordinator.EnqueueAsync("A", Gated(startedA, releaseA.Task));
+        var b = coordinator.EnqueueAsync("B", Gated(startedB, releaseB.Task));
+        await Task.WhenAll(startedA.Task, startedB.Task).WaitAsync(Timeout);
+
+        releaseA.SetResult();
+        await a.WaitAsync(Timeout);
+        releaseB.SetResult();
+        await b.WaitAsync(Timeout);
+
+        log.CurrentStatusSeverity.Should().Be(ActivitySeverity.Success);
+        log.CurrentStatus.Should().Contain("2 downloads complete");
+    }
+
+    [Fact]
+    public async Task ActivityLog_MixedBatch_ReportsFailureAndSuccessCounts()
+    {
+        var log = new ActivityLogService();
+        using var coordinator = new DownloadCoordinator(log) { MaxConcurrent = 2 };
+        var startedA = new TaskCompletionSource();
+        var releaseA = new TaskCompletionSource();
+        var startedB = new TaskCompletionSource();
+        var releaseB = new TaskCompletionSource();
+
+        var a = coordinator.EnqueueAsync("A", Gated(startedA, releaseA.Task, result: true));
+        var b = coordinator.EnqueueAsync("B", Gated(startedB, releaseB.Task, result: false));
+        await Task.WhenAll(startedA.Task, startedB.Task).WaitAsync(Timeout);
+
+        releaseA.SetResult();
+        await a.WaitAsync(Timeout);
+        releaseB.SetResult();
+        await b.WaitAsync(Timeout);
+
+        log.CurrentStatusSeverity.Should().Be(ActivitySeverity.Error,
+            "one of the two downloads failed — the batch is not a success");
+        log.CurrentStatus.Should().Contain("1 failed").And.Contain("1 completed");
+    }
+
+    [Fact]
+    public async Task ActivityLog_CancelledDownload_DoesNotReportSuccess()
+    {
+        var log = new ActivityLogService();
+        using var coordinator = new DownloadCoordinator(log);
+        var started = new TaskCompletionSource();
+        var release = new TaskCompletionSource();
+
+        var task = coordinator.EnqueueAsync("Model-A", GatedCancellable(started, release.Task));
+        await started.Task.WaitAsync(Timeout);
+
+        coordinator.Cancel(coordinator.All.Single().Id);
+        (await task.WaitAsync(Timeout)).Should().BeFalse();
+
+        log.CurrentStatusSeverity.Should().NotBe(ActivitySeverity.Success);
+        log.CurrentStatus.Should().Contain("cancelled");
+    }
+
+    [Fact]
+    public async Task ActivityLog_BatchCounters_ResetBetweenBatches()
+    {
+        var log = new ActivityLogService();
+        using var coordinator = new DownloadCoordinator(log);
+
+        await coordinator.EnqueueAsync("Model-A", (_, _) => Task.FromResult(false)).WaitAsync(Timeout);
+        log.CurrentStatusSeverity.Should().Be(ActivitySeverity.Error);
+
+        await coordinator.EnqueueAsync("Model-B", (_, _) => Task.FromResult(true)).WaitAsync(Timeout);
+
+        log.CurrentStatusSeverity.Should().Be(ActivitySeverity.Success,
+            "the first batch's failure must not bleed into the second batch's summary");
+        log.CurrentStatus.Should().NotContain("failed");
+    }
 }

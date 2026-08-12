@@ -207,11 +207,17 @@ public sealed class CaptioningModelManager
     /// <see cref="FileInfo.Length"/> on the real filesystem. Exposed purely as
     /// a test seam — production callers should never need to pass this.
     /// </param>
+    /// <param name="freeSpaceProbe">
+    /// Optional override for reading the free bytes on a path's volume
+    /// (-1 = unknown, which skips the preflight). Defaults to
+    /// <see cref="DriveInfo.AvailableFreeSpace"/>. Test seam only.
+    /// </param>
     public CaptioningModelManager(
         string? modelsBasePath,
         HttpClient? httpClient,
         Func<IReadOnlyList<string>>? extraSearchPathsProvider = null,
-        Func<string, long>? fileSizeProbe = null)
+        Func<string, long>? fileSizeProbe = null,
+        Func<string, long>? freeSpaceProbe = null)
     {
         _modelsBasePath = modelsBasePath ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -222,10 +228,70 @@ public sealed class CaptioningModelManager
         _httpClient.Timeout = TimeSpan.FromHours(2); // Large model download timeout
 
         Directory.CreateDirectory(_modelsBasePath);
+        SweepOrphanedPartials(_modelsBasePath);
 
         _staticSearchPaths = BuildStaticSearchPaths(_modelsBasePath);
         _extraSearchPathsProvider = extraSearchPathsProvider;
         _fileSizeProbe = fileSizeProbe ?? (static path => new FileInfo(path).Length);
+        _freeSpaceProbe = freeSpaceProbe ?? ProbeFreeBytes;
+    }
+
+    /// <summary>
+    /// Safety margin the free-space preflight demands on top of a file's
+    /// expected size, so a download can't grind the volume to zero bytes free
+    /// (which destabilizes Windows when the volume is C:).
+    /// </summary>
+    private const long FreeSpaceMarginBytes = 256L * 1024 * 1024;
+
+    private readonly Func<string, long> _freeSpaceProbe;
+
+    /// <summary>
+    /// Free bytes on the volume holding <paramref name="path"/>, or -1 when it
+    /// can't be determined (UNC path, unready drive) — callers must treat -1
+    /// as "unknown, don't block", NOT as "no space".
+    /// </summary>
+    private static long ProbeFreeBytes(string path)
+    {
+        try
+        {
+            var root = Path.GetPathRoot(Path.GetFullPath(path));
+            if (string.IsNullOrWhiteSpace(root)) return -1;
+            var drive = new DriveInfo(root);
+            return drive.IsReady ? drive.AvailableFreeSpace : -1;
+        }
+        catch
+        {
+            return -1;
+        }
+    }
+
+    /// <summary>
+    /// Deletes leftover <c>*.download</c> partials in <paramref name="directory"/>.
+    /// The in-download cleanup only runs for in-process failures — a crashed or
+    /// killed app orphans its partial forever (seen in the field: a 3.7 GB GGUF
+    /// partial sat in LocalAppData for months). An actively-written partial is
+    /// protected by its exclusive <see cref="FileShare.None"/> handle: deleting
+    /// it throws and the sweep skips it.
+    /// </summary>
+    private static void SweepOrphanedPartials(string directory)
+    {
+        try
+        {
+            foreach (var partial in Directory.EnumerateFiles(directory, "*.download", SearchOption.TopDirectoryOnly))
+            {
+                try
+                {
+                    File.Delete(partial);
+                    Log.Information("Removed orphaned partial download: {Path}", partial);
+                }
+                catch (IOException) { /* actively written right now — leave it */ }
+                catch (UnauthorizedAccessException) { /* not ours to delete */ }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Orphaned-partial sweep failed for {Directory}", directory);
+        }
     }
 
     /// <summary>
@@ -781,6 +847,7 @@ public sealed class CaptioningModelManager
         }
 
         Directory.CreateDirectory(destinationDirectory);
+        SweepOrphanedPartials(destinationDirectory);
 
         var (modelFileName, modelUrl, modelSize) = modelType switch
         {
@@ -919,6 +986,7 @@ public sealed class CaptioningModelManager
 
         ArgumentException.ThrowIfNullOrWhiteSpace(destinationDirectory);
         Directory.CreateDirectory(destinationDirectory);
+        SweepOrphanedPartials(destinationDirectory);
 
         var tier = PickFittingTier(modelType, vramGb)
             ?? throw new ArgumentOutOfRangeException(nameof(vramGb),
@@ -1013,6 +1081,19 @@ public sealed class CaptioningModelManager
         try
         {
             progress?.Report(new ModelDownloadProgress(0, expectedSize, "Starting download..."));
+
+            // Free-space preflight: refuse to start a multi-GB pull the volume
+            // can't hold instead of grinding it to zero and failing mid-stream.
+            var freeBytes = _freeSpaceProbe(destinationPath);
+            if (freeBytes >= 0 && expectedSize > 0 && freeBytes < expectedSize + FreeSpaceMarginBytes)
+            {
+                var message =
+                    $"Not enough free disk space for {modelName}: needs ~{(expectedSize + FreeSpaceMarginBytes) / (1024 * 1024):N0} MB, " +
+                    $"volume has {freeBytes / (1024 * 1024):N0} MB free. Free up space or pick another destination.";
+                Log.Error("Download blocked — {Message} (target: {Path})", message, destinationPath);
+                progress?.Report(new ModelDownloadProgress(0, expectedSize, message));
+                return false;
+            }
 
             var tempPath = destinationPath + ".download";
 

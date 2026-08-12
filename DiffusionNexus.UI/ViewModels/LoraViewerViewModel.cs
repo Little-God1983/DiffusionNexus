@@ -2796,10 +2796,22 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             consumedPending |= restorePending;
             var item = new BaseModelFilterItem(raw)
             {
-                IsSelected = previouslySelected.Contains(raw) || restorePending,
+                IsSelected = previouslySelected.Remove(raw) || restorePending,
             };
             item.SelectionChanged += OnBaseModelFilterChanged;
             AvailableBaseModels.Add(item);
+        }
+
+        // Selected names the new source doesn't contain must SURVIVE the rebuild.
+        // Dropping them permanently lost saved-filter selections whenever the source
+        // transiently shrank (catalog swap-in before tiles loaded, tile reloads on
+        // tab switches/refreshes) — the classic victim being an installed-only label
+        // like "Krea 2" that the Civitai catalog doesn't list. Parking them in
+        // _pendingRestoredSelections re-selects them the moment they rematerialize.
+        if (previouslySelected.Count > 0)
+        {
+            (_pendingRestoredSelections ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase))
+                .UnionWith(previouslySelected);
         }
         if (_pendingRestoredSelections is { Count: 0 })
             _pendingRestoredSelections = null;
@@ -2878,6 +2890,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             .ToList(),
         IncludeUnknown = UnknownBaseModelItem.IsSelected,
         OnlyInstalled = OnlyInstalledBaseModels,
+        SortField = SelectedSortOption.Field.ToString(),
+        SortDescending = SortDescending,
     };
 
     /// <summary>
@@ -2901,6 +2915,19 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
             UnknownBaseModelItem.IsSelected = data.IncludeUnknown;
             OnlyInstalledBaseModels = data.OnlyInstalled;
+
+            // Sort is part of the saved filter since it gained SortField/SortDescending;
+            // older saved JSON carries neither — leave the current sort untouched then.
+            if (!string.IsNullOrWhiteSpace(data.SortField)
+                && Enum.TryParse<LoraSortField>(data.SortField, out var field)
+                && SortOptions.FirstOrDefault(o => o.Field == field) is { } option)
+            {
+                SelectedSortOption = option;
+            }
+            if (data.SortDescending is { } descending)
+            {
+                SortDescending = descending;
+            }
         }
         finally
         {

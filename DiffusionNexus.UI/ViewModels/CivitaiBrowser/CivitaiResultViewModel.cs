@@ -48,11 +48,7 @@ public partial class CivitaiResultViewModel : ObservableObject
         VersionCount = model.ModelVersions.Count;
         // Only flag the model as EA when the *latest* version is in early access;
         // older non-EA versions are still freely available even if newer ones aren't.
-        // Check both signals — Civitai is migrating from EarlyAccessTimeFrame (int days)
-        // to availability="EarlyAccess".
-        IsEarlyAccess = first is not null
-            && (first.EarlyAccessTimeFrame > 0
-                || string.Equals(first.Availability, "EarlyAccess", StringComparison.OrdinalIgnoreCase));
+        IsEarlyAccess = first.IsEarlyAccessActive();
 
         foreach (var v in model.ModelVersions)
         {

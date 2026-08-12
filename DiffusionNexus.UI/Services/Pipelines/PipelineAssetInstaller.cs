@@ -392,8 +392,7 @@ public sealed class PipelineAssetInstaller : IPipelineAssetInstaller, IDisposabl
             return;
         }
 
-        var earlyAccess = version.EarlyAccessTimeFrame > 0
-            || string.Equals(version.Availability, "EarlyAccess", StringComparison.OrdinalIgnoreCase);
+        var earlyAccess = version.IsEarlyAccessActive();
 
         var taskName = $"{asset.Name} — {fileName}";
         string? lastError = null;
