@@ -10,21 +10,18 @@ namespace DiffusionNexus.Service.Services;
 
 /// <summary>
 /// Service for removing backgrounds from images using the RMBG-1.4 ONNX model.
-/// Performs inference locally using GPU acceleration when available, with CPU fallback.
+/// Session lifecycle (DirectML/CPU selection, GPU demotion, disposal) lives in
+/// <see cref="OnnxSessionHost"/>; this class owns only the RMBG-specific
+/// pre/post-processing.
 /// </summary>
 public sealed class BackgroundRemovalService : IBackgroundRemovalService
 {
     private const int ModelInputSize = 1024;
 
     private readonly OnnxModelManager _modelManager;
-    private readonly SemaphoreSlim _sessionLock = new(1, 1);
-    private InferenceSession? _session;
+    private readonly OnnxSessionHost _host = new("RMBG-1.4");
     private string? _inputName;
     private string? _outputName;
-    private bool _isGpuAvailable;
-    private bool _isProcessing;
-    private bool _disposed;
-    private bool _disableGpu;
 
     /// <summary>
     /// Creates a new BackgroundRemovalService.
@@ -41,10 +38,10 @@ public sealed class BackgroundRemovalService : IBackgroundRemovalService
     }
 
     /// <inheritdoc />
-    public bool IsGpuAvailable => _isGpuAvailable;
+    public bool IsGpuAvailable => _host.IsGpuAvailable;
 
     /// <inheritdoc />
-    public bool IsProcessing => _isProcessing;
+    public bool IsProcessing => _host.IsProcessing;
 
     /// <inheritdoc />
     public ModelStatus GetModelStatus() => _modelManager.GetRmbg14Status();
@@ -63,7 +60,7 @@ public sealed class BackgroundRemovalService : IBackgroundRemovalService
     /// <inheritdoc />
     public async Task<bool> InitializeAsync(CancellationToken cancellationToken = default)
     {
-        if (_session is not null)
+        if (_host.IsInitialized)
             return true;
 
         var status = GetModelStatus();
@@ -73,91 +70,7 @@ public sealed class BackgroundRemovalService : IBackgroundRemovalService
             return false;
         }
 
-        await _sessionLock.WaitAsync(cancellationToken);
-        try
-        {
-            if (_session is not null)
-                return true;
-
-            _session = await Task.Run(() => CreateSession(), cancellationToken);
-            return _session is not null;
-        }
-        finally
-        {
-            _sessionLock.Release();
-        }
-    }
-
-    private InferenceSession? CreateSession()
-    {
-        var modelPath = _modelManager.Rmbg14ModelPath;
-        if (!File.Exists(modelPath))
-        {
-            Log.Error("RMBG-1.4 model file not found: {Path}", modelPath);
-            return null;
-        }
-
-        // Try DirectML first (only if not disabled)
-        if (!_disableGpu)
-        {
-            try
-            {
-                var dmlOptions = new SessionOptions();
-                
-                // Compatibility parameters for DirectML on RMBG-1.4
-                // These settings prioritize stability over performance to fix the "Resize node" invalid parameter error.
-                dmlOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_BASIC;
-                dmlOptions.ExecutionMode = ExecutionMode.ORT_SEQUENTIAL;
-                
-                dmlOptions.EnableMemoryPattern = false;
-                dmlOptions.EnableCpuMemArena = false;
-                
-                dmlOptions.AddSessionConfigEntry("session.disable_prepacking", "1");
-                dmlOptions.AddSessionConfigEntry("ep.dml.enable_graph_capture", "0");
-                
-                // Add DirectML as primary execution provider
-                dmlOptions.AppendExecutionProvider_DML(0);
-                
-                // Add CPU as fallback for operations DirectML doesn't support
-                dmlOptions.AppendExecutionProvider_CPU(0);
-
-                var session = new InferenceSession(modelPath, dmlOptions);
-                _isGpuAvailable = true;
-                
-                // Discover input/output names from model metadata
-                DiscoverTensorNames(session);
-                
-                Log.Information("RMBG-1.4 ONNX session created with GPU (DirectML) acceleration");
-                return session;
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "DirectML not available or failed to initialize, falling back to CPU");
-            }
-        }
-
-        // Fall back to CPU
-        try
-        {
-            var cpuOptions = new SessionOptions();
-            cpuOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
-            cpuOptions.EnableMemoryPattern = true;
-            cpuOptions.EnableCpuMemArena = true;
-
-            var session = new InferenceSession(modelPath, cpuOptions);
-            _isGpuAvailable = false;
-            
-            // Discover input/output names from model metadata
-            DiscoverTensorNames(session);
-            
-            Log.Information("RMBG-1.4 ONNX session created with CPU execution");
-            return session;
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Failed to create ONNX session");
-            return null;
-        }
+        return await _host.InitializeAsync(_modelManager.Rmbg14ModelPath, DiscoverTensorNames, cancellationToken);
     }
 
     /// <summary>
@@ -165,18 +78,17 @@ public sealed class BackgroundRemovalService : IBackgroundRemovalService
     /// </summary>
     private void DiscoverTensorNames(InferenceSession session)
     {
-        // Get input name from model metadata
         _inputName = session.InputMetadata.Keys.FirstOrDefault();
         _outputName = session.OutputMetadata.Keys.FirstOrDefault();
-        
-        Log.Debug("RMBG-1.4 model input name: {InputName}, output name: {OutputName}", 
+
+        Log.Debug("RMBG-1.4 model input name: {InputName}, output name: {OutputName}",
             _inputName, _outputName);
-        
+
         if (string.IsNullOrEmpty(_inputName))
         {
             throw new InvalidOperationException("Could not determine input tensor name from model metadata");
         }
-        
+
         if (string.IsNullOrEmpty(_outputName))
         {
             throw new InvalidOperationException("Could not determine output tensor name from model metadata");
@@ -194,61 +106,53 @@ public sealed class BackgroundRemovalService : IBackgroundRemovalService
         if (width <= 0 || height <= 0)
             return BackgroundRemovalResult.Failed("Invalid image dimensions");
 
-        if (_isProcessing)
+        if (_host.IsDisposed)
+            return BackgroundRemovalResult.Failed("Service is disposed");
+
+        if (!_host.TryBeginProcessing())
             return BackgroundRemovalResult.Failed("Service is already processing an image");
 
-        // Ensure session is initialized
-        if (!await InitializeAsync(cancellationToken))
-            return BackgroundRemovalResult.Failed("Failed to initialize ONNX session. Please ensure the model is downloaded.");
-
-        _isProcessing = true;
         try
         {
-            return await Task.Run(() => ProcessImage(imageData, width, height, cancellationToken), cancellationToken);
-        }
-        catch (OnnxRuntimeException ex) when (_isGpuAvailable && !_disableGpu)
-        {
-            Log.Warning("GPU inference failed (likely driver/model incompatibility). Disabling GPU and retrying on CPU. Error: {Error}", ex.Message);
+            if (!await InitializeAsync(cancellationToken))
+                return BackgroundRemovalResult.Failed("Failed to initialize ONNX session. Please ensure the model is downloaded.");
 
-            // Reset session
-            await _sessionLock.WaitAsync(cancellationToken);
             try
             {
-                _session?.Dispose();
-                _session = null;
-                _disableGpu = true;
-                _isGpuAvailable = false;
+                return await Task.Run(() => ProcessImage(imageData, width, height, cancellationToken), cancellationToken);
             }
-            finally
+            catch (OnnxRuntimeException ex) when (_host.CanRetryOnCpu)
             {
-                _sessionLock.Release();
-            }
+                Log.Warning("GPU inference failed (likely driver/model incompatibility). Disabling GPU and retrying on CPU. Error: {Error}", ex.Message);
 
-            // Retry initialization (will force CPU)
-            if (await InitializeAsync(cancellationToken))
+                await _host.DemoteToCpuAsync(cancellationToken);
+
+                // Retry initialization (will force CPU)
+                if (await InitializeAsync(cancellationToken))
+                {
+                    try
+                    {
+                        Log.Information("Retrying background removal on CPU...");
+                        return await Task.Run(() => ProcessImage(imageData, width, height, cancellationToken), cancellationToken);
+                    }
+                    catch (Exception retryEx)
+                    {
+                        Log.Error(retryEx, "Retry on CPU failed");
+                        return BackgroundRemovalResult.Failed($"Background removal failed (CPU retry): {retryEx.Message}");
+                    }
+                }
+
+                return BackgroundRemovalResult.Failed($"Background removal failed (GPU Error: {ex.Message})");
+            }
+            catch (Exception ex)
             {
-                try
-                {
-                    Log.Information("Retrying background removal on CPU...");
-                    return await Task.Run(() => ProcessImage(imageData, width, height, cancellationToken), cancellationToken);
-                }
-                catch (Exception retryEx)
-                {
-                    Log.Error(retryEx, "Retry on CPU failed");
-                    return BackgroundRemovalResult.Failed($"Background removal failed (CPU retry): {retryEx.Message}");
-                }
+                Log.Error(ex, "Background removal failed");
+                return BackgroundRemovalResult.Failed($"Background removal failed: {ex.Message}");
             }
-
-            return BackgroundRemovalResult.Failed($"Background removal failed (GPU Error: {ex.Message})");
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Background removal failed");
-            return BackgroundRemovalResult.Failed($"Background removal failed: {ex.Message}");
         }
         finally
         {
-            _isProcessing = false;
+            _host.EndProcessing();
         }
     }
 
@@ -275,12 +179,14 @@ public sealed class BackgroundRemovalService : IBackgroundRemovalService
             NamedOnnxValue.CreateFromTensor(_inputName!, inputTensor)
         };
 
-        using var results = _session!.Run(inputs);
-        var outputTensor = results.First().AsTensor<float>();
-
-        // Step 5: Postprocess - convert output to mask and resize
-        cancellationToken.ThrowIfCancellationRequested();
-        var maskData = PostprocessOutput(outputTensor, width, height);
+        // Step 5: Postprocess - convert output to mask and resize. Runs inside
+        // the host's Run scope because the output tensor is native memory owned
+        // by the result set.
+        var maskData = _host.Run(inputs, results =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return PostprocessOutput(results.First().AsTensor<float>(), width, height);
+        });
 
         return BackgroundRemovalResult.Succeeded(maskData, width, height);
     }
@@ -375,22 +281,5 @@ public sealed class BackgroundRemovalService : IBackgroundRemovalService
     }
 
     /// <inheritdoc />
-    public void Dispose()
-    {
-        if (_disposed) return;
-
-        _sessionLock.Wait();
-        try
-        {
-            _session?.Dispose();
-            _session = null;
-        }
-        finally
-        {
-            _sessionLock.Release();
-        }
-
-        _sessionLock.Dispose();
-        _disposed = true;
-    }
+    public void Dispose() => _host.Dispose();
 }

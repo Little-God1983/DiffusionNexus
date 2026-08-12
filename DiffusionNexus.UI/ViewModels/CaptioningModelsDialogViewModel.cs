@@ -181,12 +181,7 @@ public sealed partial class CaptioningModelRowViewModel : ObservableObject
                 await _downloadCoordinator.EnqueueAsync(operationName, async (taskProgress, ct) =>
                 {
                     var fileProgress = new Progress<ModelDownloadProgress>(p =>
-                    {
-                        var percent = p.TotalBytes > 0
-                            ? (int)((double)p.BytesDownloaded / p.TotalBytes * 100.0)
-                            : 0;
-                        taskProgress.Report(new DownloadTaskProgress(percent, p.Status));
-                    });
+                        taskProgress.Report(p.ToDownloadTaskProgress()));
                     return await RunDownload(fileProgress, ct);
                 });
             }

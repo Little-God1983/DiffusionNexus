@@ -1,3 +1,4 @@
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Services;
@@ -13,6 +14,7 @@ public partial class BackgroundRemovalViewModel : ObservableObject
     private readonly Func<bool> _hasImage;
     private readonly Action<string> _deactivateOtherTools;
     private readonly IBackgroundRemovalService? _service;
+    private readonly IDownloadCoordinator? _downloadCoordinator;
 
     private bool _isPanelOpen;
     private bool _isBusy;
@@ -22,13 +24,15 @@ public partial class BackgroundRemovalViewModel : ObservableObject
     public BackgroundRemovalViewModel(
         Func<bool> hasImage,
         Action<string> deactivateOtherTools,
-        IBackgroundRemovalService? service)
+        IBackgroundRemovalService? service,
+        IDownloadCoordinator? downloadCoordinator = null)
     {
         ArgumentNullException.ThrowIfNull(hasImage);
         ArgumentNullException.ThrowIfNull(deactivateOtherTools);
         _hasImage = hasImage;
         _deactivateOtherTools = deactivateOtherTools;
         _service = service;
+        _downloadCoordinator = downloadCoordinator;
 
         RemoveBackgroundCommand = new AsyncRelayCommand(ExecuteRemoveBackgroundAsync, CanExecuteRemoveBackground);
         RemoveBackgroundToLayerCommand = new AsyncRelayCommand(ExecuteRemoveBackgroundToLayerAsync, CanExecuteRemoveBackground);
@@ -356,14 +360,45 @@ public partial class BackgroundRemovalViewModel : ObservableObject
 
         try
         {
-            var progress = new Progress<ModelDownloadProgress>(p =>
-            {
-                if (p.Percentage >= 0)
-                    Progress = (int)p.Percentage;
-                Status = p.Status;
-            });
+            bool success;
 
-            var success = await _service.DownloadModelAsync(progress);
+            // The coordinator catches every exception inside EnqueueAsync and
+            // surfaces only a bool (its contract: "exceptions are caught and
+            // surfaced as a failed task"), so the catches below never fire on
+            // this path. Capture the cause ourselves — otherwise disk-full,
+            // network failure and a deliberate cancel all collapse into one
+            // indistinguishable "did not complete".
+            Exception? downloadError = null;
+
+            if (_downloadCoordinator is not null)
+            {
+                success = await _downloadCoordinator.EnqueueAsync(
+                    "RMBG-1.4 background removal model",
+                    async (taskProgress, ct) =>
+                    {
+                        var fileProgress = new Progress<ModelDownloadProgress>(p =>
+                        {
+                            ReportPanelProgress(p);
+                            taskProgress.Report(p.ToDownloadTaskProgress());
+                        });
+
+                        try
+                        {
+                            return await _service.DownloadModelAsync(fileProgress, ct);
+                        }
+                        catch (Exception ex)
+                        {
+                            downloadError = ex;
+                            throw;
+                        }
+                    });
+            }
+            else
+            {
+                var progress = new Progress<ModelDownloadProgress>(ReportPanelProgress);
+
+                success = await _service.DownloadModelAsync(progress);
+            }
 
             if (success)
             {
@@ -372,7 +407,12 @@ public partial class BackgroundRemovalViewModel : ObservableObject
             }
             else
             {
-                StatusMessageChanged?.Invoke(this, "Failed to download background removal model");
+                StatusMessageChanged?.Invoke(this, downloadError switch
+                {
+                    OperationCanceledException => "Model download cancelled",
+                    not null => $"Model download failed: {downloadError.Message}",
+                    _ => "Model download did not complete",
+                });
             }
         }
         catch (OperationCanceledException)
@@ -389,6 +429,33 @@ public partial class BackgroundRemovalViewModel : ObservableObject
             Progress = 0;
             IsBusy = false;
         }
+    }
+
+    /// <summary>
+    /// Pushes download progress into the panel's own bar. Guarded the same
+    /// way GenerationGalleryViewModel guards its dispatcher use: with no
+    /// Avalonia application (unit tests) the static dispatcher has no pump,
+    /// so a Post would silently never run — execute inline instead.
+    /// </summary>
+    private void ReportPanelProgress(ModelDownloadProgress p)
+    {
+        if (Avalonia.Application.Current is null || Dispatcher.UIThread.CheckAccess())
+        {
+            ApplyPanelProgress(p);
+        }
+        else
+        {
+            Dispatcher.UIThread.Post(() => ApplyPanelProgress(p));
+        }
+    }
+
+    private void ApplyPanelProgress(ModelDownloadProgress p)
+    {
+        // Percentage is -1 when the server sent no usable size — leave the
+        // bar where it was rather than snapping it to 0.
+        if (p.Percentage >= 0)
+            Progress = (int)p.Percentage;
+        Status = p.Status;
     }
 
     #endregion

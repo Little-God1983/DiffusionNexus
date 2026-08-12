@@ -138,25 +138,32 @@ public sealed record CivitaiImageResource
 }
 
 /// <summary>
-/// Image reaction statistics.
+/// Image reaction statistics. Counters are null on freshly posted images
+/// (stats not yet computed) — the tolerant converter reads those as 0.
 /// </summary>
 public sealed record CivitaiImageStats
 {
     [JsonPropertyName("cryCount")]
+    [JsonConverter(typeof(TolerantInt32JsonConverter))]
     public int CryCount { get; init; }
 
     [JsonPropertyName("laughCount")]
+    [JsonConverter(typeof(TolerantInt32JsonConverter))]
     public int LaughCount { get; init; }
 
     [JsonPropertyName("likeCount")]
+    [JsonConverter(typeof(TolerantInt32JsonConverter))]
     public int LikeCount { get; init; }
 
     [JsonPropertyName("dislikeCount")]
+    [JsonConverter(typeof(TolerantInt32JsonConverter))]
     public int DislikeCount { get; init; }
 
     [JsonPropertyName("heartCount")]
+    [JsonConverter(typeof(TolerantInt32JsonConverter))]
     public int HeartCount { get; init; }
 
     [JsonPropertyName("commentCount")]
+    [JsonConverter(typeof(TolerantInt32JsonConverter))]
     public int CommentCount { get; init; }
 }

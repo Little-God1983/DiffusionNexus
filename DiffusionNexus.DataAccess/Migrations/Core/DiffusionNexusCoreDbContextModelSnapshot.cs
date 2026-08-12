@@ -87,6 +87,9 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                     b.Property<int>("LoraUpdateCheckStalenessDays")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("LoraViewerFilterJson")
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("MaxBackups")
                         .HasColumnType("INTEGER");
 
@@ -290,6 +293,127 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                         .IsUnique();
 
                     b.ToTable("ImageGalleries", (string)null);
+                });
+
+            modelBuilder.Entity("DiffusionNexus.Domain.Entities.ImageMediaTagAssignment", b =>
+                {
+                    b.Property<int>("ImageMediaTagIndexId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ImageTagId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<float>("Confidence")
+                        .HasColumnType("REAL");
+
+                    b.HasKey("ImageMediaTagIndexId", "ImageTagId");
+
+                    b.HasIndex("ImageTagId");
+
+                    b.ToTable("ImageMediaTagAssignments", (string)null);
+                });
+
+            modelBuilder.Entity("DiffusionNexus.Domain.Entities.ImageMediaTagIndex", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("FileLastWriteTimeUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FilePath")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT")
+                        .UseCollation("NOCASE");
+
+                    b.Property<long>("FileSizeBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset>("IndexedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsNsfw")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("RatingLabel")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<float>("RatingScore")
+                        .HasColumnType("REAL");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FilePath")
+                        .IsUnique();
+
+                    b.HasIndex("RatingLabel");
+
+                    b.ToTable("ImageMediaTagIndexes", (string)null);
+                });
+
+            modelBuilder.Entity("DiffusionNexus.Domain.Entities.ImageRatingOverride", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FilePath")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT")
+                        .UseCollation("NOCASE");
+
+                    b.Property<bool>("IsNsfw")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FilePath")
+                        .IsUnique();
+
+                    b.ToTable("ImageRatingOverrides", (string)null);
+                });
+
+            modelBuilder.Entity("DiffusionNexus.Domain.Entities.ImageTag", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT")
+                        .UseCollation("NOCASE");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Name")
+                        .IsUnique();
+
+                    b.ToTable("ImageTags", (string)null);
                 });
 
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.InstallerPackage", b =>
@@ -902,6 +1026,25 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                     b.Navigation("InstallerPackage");
                 });
 
+            modelBuilder.Entity("DiffusionNexus.Domain.Entities.ImageMediaTagAssignment", b =>
+                {
+                    b.HasOne("DiffusionNexus.Domain.Entities.ImageMediaTagIndex", "ImageMediaTagIndex")
+                        .WithMany("TagAssignments")
+                        .HasForeignKey("ImageMediaTagIndexId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("DiffusionNexus.Domain.Entities.ImageTag", "ImageTag")
+                        .WithMany("Assignments")
+                        .HasForeignKey("ImageTagId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ImageMediaTagIndex");
+
+                    b.Navigation("ImageTag");
+                });
+
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.LoraSource", b =>
                 {
                     b.HasOne("DiffusionNexus.Domain.Entities.AppSettings", "AppSettings")
@@ -1000,6 +1143,16 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.Creator", b =>
                 {
                     b.Navigation("Models");
+                });
+
+            modelBuilder.Entity("DiffusionNexus.Domain.Entities.ImageMediaTagIndex", b =>
+                {
+                    b.Navigation("TagAssignments");
+                });
+
+            modelBuilder.Entity("DiffusionNexus.Domain.Entities.ImageTag", b =>
+                {
+                    b.Navigation("Assignments");
                 });
 
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.InstallerPackage", b =>

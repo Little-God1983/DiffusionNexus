@@ -98,11 +98,22 @@ public partial class GenerationGalleryView : UserControl
             if (_galleryScrollViewer is not null)
             {
                 _galleryScrollViewer.ScrollChanged += OnGalleryScrollChanged;
+                // ScrollChanged alone is not enough: when the current page
+                // fits inside the viewport there is no scrollbar, no scroll
+                // event ever fires, and the gallery would sit on the first 50
+                // items forever (easily reached on a wide monitor with small
+                // tiles, or after a filter). LayoutUpdated keeps topping the
+                // page up until the content actually overflows the viewport.
+                _galleryScrollViewer.LayoutUpdated += OnGalleryLayoutUpdated;
             }
         }
     }
 
-    private void OnGalleryScrollChanged(object? sender, ScrollChangedEventArgs e)
+    private void OnGalleryScrollChanged(object? sender, ScrollChangedEventArgs e) => LoadMoreIfNearBottom();
+
+    private void OnGalleryLayoutUpdated(object? sender, EventArgs e) => LoadMoreIfNearBottom();
+
+    private void LoadMoreIfNearBottom()
     {
         if (_galleryScrollViewer is null || DataContext is not GenerationGalleryViewModel vm)
             return;
@@ -110,7 +121,11 @@ public partial class GenerationGalleryView : UserControl
         if (!vm.HasMoreItems)
             return;
 
-        // Load more when within 200px of the bottom
+        // Load more when within 200px of the bottom. When content does not
+        // overflow the viewport at all, this distance is <= 0 — i.e. the
+        // no-scrollbar case loads more too, and the LayoutUpdated that
+        // follows each batch re-checks until the viewport is overfilled or
+        // the items run out.
         var distanceToBottom = _galleryScrollViewer.Extent.Height
                              - _galleryScrollViewer.Viewport.Height
                              - _galleryScrollViewer.Offset.Y;

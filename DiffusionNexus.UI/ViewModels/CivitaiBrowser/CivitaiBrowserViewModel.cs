@@ -11,6 +11,7 @@ using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.CivitaiBrowser;
+using DiffusionNexus.UI.Utilities;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace DiffusionNexus.UI.ViewModels.CivitaiBrowser;
@@ -148,8 +149,49 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     /// </summary>
     public ObservableCollection<BaseModelFilterItem> AvailableBaseModels { get; }
 
+    /// <summary>
+    /// Search text typed inside the base-model flyout. Narrows the visible option list
+    /// (<see cref="FlyoutBaseModels"/>) only — selections are untouched.
+    /// </summary>
+    [ObservableProperty]
+    private string? _baseModelFilterSearchText;
+
+    /// <summary>
+    /// The option list the flyout renders: the mirror items narrowed by
+    /// <see cref="BaseModelFilterSearchText"/>, with selected items pinned visible so an
+    /// active filter can always be untoggled. Holds the SAME item instances as
+    /// <see cref="AvailableBaseModels"/>, so selection state stays single-sourced.
+    /// </summary>
+    public BatchObservableCollection<BaseModelFilterItem> FlyoutBaseModels { get; } = [];
+
     public bool IsBaseModelFilterActive => AvailableBaseModels.Any(f => f.IsSelected);
     public int ActiveBaseModelFilterCount => AvailableBaseModels.Count(f => f.IsSelected);
+
+    partial void OnBaseModelFilterSearchTextChanged(string? value) => RebuildFlyoutBaseModels();
+
+    /// <summary>
+    /// Recomputes <see cref="FlyoutBaseModels"/> from the mirror + the flyout search.
+    /// Single Reset notification — the flyout's ItemsControl is not virtualized.
+    /// </summary>
+    private void RebuildFlyoutBaseModels()
+    {
+        var search = BaseModelFilterSearchText?.Trim();
+        var hasSearch = !string.IsNullOrWhiteSpace(search);
+
+        var items = new List<BaseModelFilterItem>();
+        foreach (var item in AvailableBaseModels)
+        {
+            if (!item.IsSelected
+                && hasSearch
+                && !item.BaseModelRaw.Contains(search!, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            items.Add(item);
+        }
+
+        FlyoutBaseModels.ReplaceAll(items);
+    }
 
     #endregion
 
@@ -307,8 +349,36 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     [RelayCommand]
     private void ClearCompleted() => _queue.ClearCompleted();
 
+    /// <summary>
+    /// Dialog service for confirmations. Resolved lazily from the app container so
+    /// headless/design-time construction stays service-free; settable for tests.
+    /// </summary>
+    public IDialogService? DialogService { get; set; }
+
+    /// <summary>
+    /// Clears the download queue. When jobs are still queued or mid-download the user
+    /// must confirm first, because clearing cancels them. Without a dialog service
+    /// (headless) it proceeds, matching <see cref="EnqueueWithEarlyAccessPromptAsync"/>.
+    /// </summary>
     [RelayCommand]
-    private void ClearQueue() => _queue.ClearAll();
+    private async Task ClearQueueAsync()
+    {
+        var active = _queue.ActiveCount;
+        if (active > 0)
+        {
+            var dialogService = DialogService ??= App.Services?.GetService<IDialogService>();
+            if (dialogService is not null)
+            {
+                var confirmed = await dialogService.ShowConfirmAsync(
+                    "Clear download queue",
+                    active == 1
+                        ? "1 download is still queued or in progress.\n\nClearing the queue cancels it. Continue?"
+                        : $"{active} downloads are still queued or in progress.\n\nClearing the queue cancels them. Continue?");
+                if (!confirmed) return;
+            }
+        }
+        _queue.ClearAll();
+    }
 
     /// <summary>
     /// Stops every active download but keeps the queue intact. Hit Start to resume.
@@ -334,6 +404,17 @@ public partial class CivitaiBrowserViewModel : ObservableObject
 
     [RelayCommand]
     private async Task RefreshInstalledAsync() => await RefreshInstalledSetAsync();
+
+    /// <summary>
+    /// Full page refresh: re-reads the installed set (so installed badges reflect
+    /// what's on disk now), then re-runs the current query from page 1.
+    /// </summary>
+    [RelayCommand]
+    private async Task RefreshAsync()
+    {
+        await RefreshInstalledSetAsync();
+        await SearchAsync();
+    }
 
     private async Task DebouncedSearchAsync()
     {
@@ -573,6 +654,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                 foreach (var model in tagResponse.Items)
                 {
                     if (model.ModelVersions.Count == 0) continue;
+                    if (model.Mode is not null) continue; // skip archived/taken-down
                     if (!existingIds.Add(model.Id)) continue;
                     var vm = new CivitaiResultViewModel(model, ShowNsfwContent)
                     {
@@ -583,6 +665,12 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                     Results.Add(vm);
                 }
             });
+
+            // The merged cards default to visible — without a filter pass here,
+            // Hide Installed / Hide Early Access / Show-NSFW were silently ignored
+            // for every tag-fallback result (user-reported: named searches with
+            // those toggles active showed hidden categories anyway).
+            ApplyClientSideFilters();
 
             var addedFromTag = Results.Count - preCount;
             _logger?.Info(LogCategory.Network, "CivitaiBrowser",
@@ -655,15 +743,30 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         foreach (var item in AvailableBaseModels) item.IsSelected = false;
         OnPropertyChanged(nameof(IsBaseModelFilterActive));
         OnPropertyChanged(nameof(ActiveBaseModelFilterCount));
+        if (!string.IsNullOrWhiteSpace(BaseModelFilterSearchText))
+            RebuildFlyoutBaseModels();
         _ = SearchAsync();
     }
 
+    /// <summary>
+    /// Selection state that outlives mirror rebuilds. The source collection is
+    /// cleared-then-refilled by the owning LoRA viewer during its own rebuilds
+    /// (a Reset followed by per-item Adds, each landing in
+    /// <see cref="RebuildBaseModelMirror"/>) — a per-rebuild snapshot would see
+    /// the empty intermediate state and wipe the user's selections here.
+    /// </summary>
+    private readonly HashSet<string> _stickyBaseModelSelections = new(StringComparer.OrdinalIgnoreCase);
+
     private void RebuildBaseModelMirror()
     {
-        // Preserve current selection by raw name.
-        var previouslySelected = new HashSet<string>(
-            AvailableBaseModels.Where(b => b.IsSelected).Select(b => b.BaseModelRaw),
-            StringComparer.OrdinalIgnoreCase);
+        // Fold the live item states into the sticky set: names currently listed
+        // follow their checkbox; names absent from the current mirror keep their
+        // remembered state until they rematerialize.
+        foreach (var b in AvailableBaseModels)
+        {
+            if (b.IsSelected) _stickyBaseModelSelections.Add(b.BaseModelRaw);
+            else _stickyBaseModelSelections.Remove(b.BaseModelRaw);
+        }
 
         foreach (var existing in AvailableBaseModels)
         {
@@ -677,13 +780,14 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         {
             var item = new BaseModelFilterItem(src.BaseModelRaw)
             {
-                IsSelected = previouslySelected.Contains(src.BaseModelRaw)
+                IsSelected = _stickyBaseModelSelections.Contains(src.BaseModelRaw)
             };
             item.SelectionChanged += OnBaseModelFilterToggled;
             AvailableBaseModels.Add(item);
         }
         OnPropertyChanged(nameof(IsBaseModelFilterActive));
         OnPropertyChanged(nameof(ActiveBaseModelFilterCount));
+        RebuildFlyoutBaseModels();
     }
 
     private void OnBaseModelSourceChanged(object? sender, NotifyCollectionChangedEventArgs e)
@@ -695,6 +799,12 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(IsBaseModelFilterActive));
         OnPropertyChanged(nameof(ActiveBaseModelFilterCount));
+
+        // A toggle can change which items the narrowed flyout shows (selected items
+        // are pinned visible), so refresh the composed view while a search is active.
+        if (!string.IsNullOrWhiteSpace(BaseModelFilterSearchText))
+            RebuildFlyoutBaseModels();
+
         if (_initialized) _ = SearchAsync();
     }
 

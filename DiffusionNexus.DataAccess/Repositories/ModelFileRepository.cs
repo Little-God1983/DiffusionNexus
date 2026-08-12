@@ -36,6 +36,21 @@ internal sealed class ModelFileRepository : RepositoryBase<ModelFile>, IModelFil
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<ModelFile>> GetByLocalPathAsync(
+        string localPath,
+        CancellationToken cancellationToken = default)
+    {
+        // ToLower() (→ SQL LOWER()) rather than a collation so the comparison is
+        // provider-portable; ASCII-only folding is fine for Windows drive paths.
+        var normalized = localPath.ToLowerInvariant();
+        return await DbSet
+            .Include(f => f.ModelVersion)
+            .Where(f => f.LocalPath != null && f.LocalPath.ToLower() == normalized)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
     public async Task<IReadOnlyList<ModelFile>> FindBySizeWithInvalidPathAsync(
         long fileSize,
         CancellationToken cancellationToken = default)

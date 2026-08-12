@@ -26,6 +26,12 @@ public sealed class CivitaiDownloadQueue : ObservableObject
 {
     private const string PersistFileName = "civitai-download-queue.json";
 
+    /// <summary>
+    /// Overrides where the queue snapshot is persisted/restored. Tests use this so
+    /// they never read or clobber the real LocalAppData queue file.
+    /// </summary>
+    private readonly string? _persistPathOverride;
+
     private readonly LoraDownloadService? _downloadService;
     private readonly IUnifiedLogger? _logger;
     private readonly ICivitaiClient? _civitaiClient;
@@ -42,8 +48,10 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         LoraDownloadService? downloadService,
         IUnifiedLogger? logger,
         ICivitaiClient? civitaiClient,
-        DownloadDestinationViewModel? destination)
+        DownloadDestinationViewModel? destination,
+        string? persistPathOverride = null)
     {
+        _persistPathOverride = persistPathOverride;
         _downloadService = downloadService;
         _logger = logger;
         _civitaiClient = civitaiClient;
@@ -261,7 +269,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         RaiseCountsChanged();
         _logger?.Info(LogCategory.Download, "CivitaiQueue",
             $"Enqueued: {result.Name} — {pick.Name} ({pick.BaseModel}, {pick.SizeDisplay}){(pick.IsEarlyAccess ? " [EA]" : "")}",
-            $"VersionId: {pick.Version.Id}\nFile: {fileName}\nUrl: {url}\nExpected SHA256: {primary?.Hashes?.SHA256 ?? "(none)"}\nEarly Access: {pick.IsEarlyAccess} (EarlyAccessTimeFrame={pick.Version.EarlyAccessTimeFrame}, availability={pick.Version.Availability ?? "(null)"})");
+            $"VersionId: {pick.Version.Id}\nFile: {fileName}\nUrl: {url}\nExpected SHA256: {primary?.Hashes?.SHA256 ?? "(none)"}\nEarly Access: {pick.IsEarlyAccess} (deadline={pick.Version.EarlyAccessDeadline?.ToString("u") ?? "(none)"}, paidAccess permanent={pick.Version.PaidAccess?.Permanent?.ToString() ?? "(null)"} endsAt={pick.Version.PaidAccess?.EndsAt?.ToString("u") ?? "(null)"}, availability={pick.Version.Availability ?? "(null)"})");
         return job;
     }
 
@@ -399,8 +407,14 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         await Task.WhenAll(tasks);
         RaiseCountsChanged();
         Persist();
-        _logger?.Info(LogCategory.Download, "CivitaiQueue",
-            $"Batch complete — {CompletedCount} done, {ErrorCount} failed, {ActiveCount} still active.");
+        var failedCount = ErrorCount;
+        var summary = $"Batch complete — {CompletedCount} done, {failedCount} failed, {ActiveCount} still active.";
+        // A batch with failures must not read as a routine Info line in the
+        // Unified Console — the per-job errors are elsewhere in the scrollback.
+        if (failedCount > 0)
+            _logger?.Warn(LogCategory.Download, "CivitaiQueue", summary);
+        else
+            _logger?.Info(LogCategory.Download, "CivitaiQueue", summary);
     }
 
     private async Task RunGatedAsync(CivitaiDownloadJob job, CancellationToken runCt)
@@ -463,7 +477,13 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             targetDir = Path.Combine(folders[0], string.IsNullOrWhiteSpace(job.BaseModel) ? "Unsorted" : job.BaseModel);
         }
         Directory.CreateDirectory(targetDir);
-        var target = Path.Combine(targetDir, job.FileName);
+        var target = await ResolveCollisionFreeTargetPathAsync(
+            targetDir, job.FileName, job.VersionId, job.ExpectedSha256, ct);
+        if (!string.Equals(Path.GetFileName(target), job.FileName, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger?.Warn(LogCategory.Download, "CivitaiQueue",
+                $"File name collision in {targetDir}: '{job.FileName}' already belongs to a different download — saving as '{Path.GetFileName(target)}' instead.");
+        }
         job.TargetPath = target;
 
         try
@@ -609,10 +629,50 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         return Convert.ToHexString(bytes);
     }
 
+    /// <summary>
+    /// Picks the on-disk target for a job, refusing to overwrite a different
+    /// model's file. Civitai file names are frequently generic ("V1.safetensors"),
+    /// so two unrelated models routed to the same BaseModel/Category folder
+    /// collide: the second download replaced the first model's weights on disk
+    /// and the path-based DB dedup then skipped registering it — downloaded to
+    /// 100% yet never installed. When the existing file's SHA256 matches the
+    /// job's expected hash it IS this download (re-download over self) and the
+    /// plain name is kept; otherwise the Civitai version id is appended — unique
+    /// per version and stable across retries, so a suffixed target that already
+    /// exists can only be this same version's earlier bytes and is safe to
+    /// overwrite.
+    /// </summary>
+    internal static async Task<string> ResolveCollisionFreeTargetPathAsync(
+        string targetDir, string fileName, int versionId, string? expectedSha256, CancellationToken ct)
+    {
+        var plain = Path.Combine(targetDir, fileName);
+        if (!File.Exists(plain)) return plain;
+
+        if (!string.IsNullOrWhiteSpace(expectedSha256))
+        {
+            try
+            {
+                var existingHash = await ComputeSha256Async(plain, ct).ConfigureAwait(false);
+                if (string.Equals(existingHash, expectedSha256, StringComparison.OrdinalIgnoreCase))
+                    return plain;
+            }
+            catch (IOException)
+            {
+                // Unreadable/locked — can't prove it's ours, so don't overwrite it.
+            }
+        }
+
+        var stem = Path.GetFileNameWithoutExtension(fileName);
+        var extension = Path.GetExtension(fileName);
+        return Path.Combine(targetDir, $"{stem}_{versionId}{extension}");
+    }
+
     #region Persistence
 
-    private static string GetPersistPath()
+    private string GetPersistPath()
     {
+        if (_persistPathOverride is not null) return _persistPathOverride;
+
         var dir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "DiffusionNexus");
@@ -810,9 +870,10 @@ public partial class CivitaiDownloadJob : ObservableObject
     public long SizeBytes { get; init; }
 
     /// <summary>
-    /// True when the picked version is in Civitai Early Access (EarlyAccessTimeFrame &gt; 0
-    /// at enqueue time). Drives the EA badge on the tile and lets the download service
-    /// surface a precise cause when a 401 lands on this job.
+    /// True when the picked version was early-access gated at enqueue time (see
+    /// <see cref="DiffusionNexus.Civitai.Models.CivitaiEarlyAccessExtensions.IsEarlyAccessActive"/>).
+    /// Drives the EA badge on the tile and lets the download service surface a
+    /// precise cause when a 401 lands on this job.
     /// </summary>
     public bool IsEarlyAccess { get; init; }
     public string? ExpectedSha256 { get; init; }

@@ -122,4 +122,10 @@ public interface IAppSettingsService
 
     /// <summary>Stores the feedback-reporter e-mail; whitespace/empty clears it to null.</summary>
     Task SetFeedbackReporterEmailAsync(string? email, CancellationToken cancellationToken = default);
+
+    /// <summary>Gets the LoRA Viewer's saved base-model filter JSON, or null if never saved.</summary>
+    Task<string?> GetLoraViewerFilterJsonAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Stores the LoRA Viewer's base-model filter JSON; whitespace/empty clears it to null.</summary>
+    Task SetLoraViewerFilterJsonAsync(string? json, CancellationToken cancellationToken = default);
 }

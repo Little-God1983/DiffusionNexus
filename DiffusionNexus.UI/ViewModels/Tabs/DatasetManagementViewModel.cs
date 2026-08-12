@@ -50,7 +50,7 @@ namespace DiffusionNexus.UI.ViewModels.Tabs;
 /// Implements <see cref="IDisposable"/> to properly unsubscribe from events.
 /// </para>
 /// </summary>
-public partial class DatasetManagementViewModel : ObservableObject, IDialogServiceAware, IThumbnailAware, IDisposable
+public partial class DatasetManagementViewModel : ObservableObject, IDialogServiceAware, IThumbnailAware, IRefreshableTab, IDisposable
 {
     private readonly IAppSettingsService _settingsService;
     private readonly IDatasetStorageService _datasetStorageService;
@@ -3073,6 +3073,26 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     #endregion
 
     #region Public Methods
+
+    /// <inheritdoc />
+    public bool CanRefresh => !IsLoading;
+
+    /// <inheritdoc />
+    public async Task RefreshAsync()
+    {
+        if (!CanRefresh) return;
+
+        if (IsViewingDataset)
+        {
+            _activityLog?.LogInfo("Dataset", $"Refreshing dataset '{ActiveDataset?.Name}'");
+            await RefreshActiveDatasetAsync();
+        }
+        else
+        {
+            _activityLog?.LogInfo("Dataset", "Refreshing dataset list from storage");
+            await CheckStorageConfigurationAsync();
+        }
+    }
 
     /// <summary>
     /// Refreshes the active dataset.

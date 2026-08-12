@@ -49,6 +49,7 @@ public partial class ImageViewerDialog : Window
     /// <param name="onToggleFavorite">Optional callback to toggle favorite state.</param>
     /// <param name="isFavoriteCheck">Optional callback to check if a file is favorited.</param>
     /// <param name="videoThumbnailService">Optional video thumbnail service for on-demand thumbnail generation.</param>
+    /// <param name="tagIndexService">Optional tag index service — enables the content-tags/rating section in the metadata panel.</param>
     /// <returns>The dialog instance for fluent chaining.</returns>
     public ImageViewerDialog WithImages(
         ObservableCollection<DatasetImageViewModel> images,
@@ -60,9 +61,11 @@ public partial class ImageViewerDialog : Window
         bool showRatingControls = true,
         Func<string, Task<bool>>? onToggleFavorite = null,
         Func<string, bool>? isFavoriteCheck = null,
-        IVideoThumbnailService? videoThumbnailService = null)
+        IVideoThumbnailService? videoThumbnailService = null,
+        ITagIndexService? tagIndexService = null,
+        Action<string, bool>? onNsfwRatingChanged = null)
     {
-        _viewModel = new ImageViewerViewModel(images, startIndex, eventAggregator, onSendToImageEditor, onSendToCaptioning, onDeleteRequested, showRatingControls, onToggleFavorite, isFavoriteCheck, videoThumbnailService);
+        _viewModel = new ImageViewerViewModel(images, startIndex, eventAggregator, onSendToImageEditor, onSendToCaptioning, onDeleteRequested, showRatingControls, onToggleFavorite, isFavoriteCheck, videoThumbnailService, tagIndexService, onNsfwRatingChanged);
         _viewModel.CloseRequested += (_, _) => Close();
         DataContext = _viewModel;
         return this;

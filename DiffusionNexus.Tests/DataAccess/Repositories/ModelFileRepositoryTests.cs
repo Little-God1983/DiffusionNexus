@@ -242,6 +242,56 @@ public class ModelFileRepositoryTests : IDisposable
 
     #endregion
 
+    #region GetByLocalPathAsync
+
+    [Fact]
+    public async Task WhenPathOwnerQueriedThenItsVersionIsLoaded()
+    {
+        // PersistDownloadedModelAsync decides "same version → skip" vs "different
+        // model → register anyway" from the owner's ModelVersion.CivitaiId, so the
+        // navigation must come back loaded.
+        var model = CreateModel("Gimp", NewFile("V1.safetensors", @"D:\Models\Lora\Krea 2\Concept\V1.safetensors"));
+        model.Versions.First().CivitaiId = 3131454;
+        await SeedAsync(model);
+
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var owners = await uow.ModelFiles.GetByLocalPathAsync(@"D:\Models\Lora\Krea 2\Concept\V1.safetensors");
+
+        var owner = owners.Should().ContainSingle().Subject;
+        owner.ModelVersion.Should().NotBeNull();
+        owner.ModelVersion!.CivitaiId.Should().Be(3131454);
+    }
+
+    [Fact]
+    public async Task WhenPathCasingDiffersThenOwnerIsStillFound()
+    {
+        await SeedAsync(CreateModel("Alpha", NewFile("a.safetensors", @"D:\Models\Lora\Alpha.safetensors")));
+
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var owners = await uow.ModelFiles.GetByLocalPathAsync(@"d:\models\lora\ALPHA.safetensors");
+
+        owners.Should().ContainSingle("Windows paths differing only by casing are the same file");
+    }
+
+    [Fact]
+    public async Task WhenPathIsUnknownThenNoOwnersAreReturned()
+    {
+        await SeedAsync(CreateModel("Alpha", NewFile("a.safetensors", @"D:\Models\Lora\Alpha.safetensors")));
+
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var owners = await uow.ModelFiles.GetByLocalPathAsync(@"D:\Models\Lora\Other.safetensors");
+
+        owners.Should().BeEmpty();
+    }
+
+    #endregion
+
     private async Task SeedAsync(params Model[] models)
     {
         using var scope = _serviceProvider.CreateScope();

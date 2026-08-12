@@ -129,13 +129,12 @@ public sealed class LoraDownloadService
                         // If the version is flagged Early Access on Civitai, that's
                         // almost certainly *the* cause — surface it first instead of
                         // making the user guess between several possibilities.
-                        var isEa = civitaiVersion.EarlyAccessTimeFrame > 0
-                            || string.Equals(civitaiVersion.Availability, "EarlyAccess", StringComparison.OrdinalIgnoreCase);
+                        var isEa = civitaiVersion.IsEarlyAccessActive();
                         var hint = (response.StatusCode, isEa) switch
                         {
                             (System.Net.HttpStatusCode.Unauthorized, true) or
                             (System.Net.HttpStatusCode.Forbidden, true) =>
-                                $"This version is Early Access on Civitai (EarlyAccessTimeFrame={civitaiVersion.EarlyAccessTimeFrame}, availability={civitaiVersion.Availability ?? "(null)"}). EA content requires a Civitai Supporter / membership subscription on the account whose API key is in use. Either wait for EA to expire, or use a key from an account that has the entitlement.",
+                                $"This version is Early Access on Civitai (deadline={civitaiVersion.EarlyAccessDeadline?.ToString("u") ?? "(none)"}, paidAccess permanent={civitaiVersion.PaidAccess?.Permanent?.ToString() ?? "(null)"} endsAt={civitaiVersion.PaidAccess?.EndsAt?.ToString("u") ?? "(null)"}, availability={civitaiVersion.Availability ?? "(null)"}). EA content requires a Civitai Supporter / membership subscription on the account whose API key is in use. Either wait for EA to expire, or use a key from an account that has the entitlement.",
                             (System.Net.HttpStatusCode.Unauthorized, false) =>
                                 "Civitai rejected the API key. Likely causes: (a) the key is invalid or expired — regenerate it on civitai.com under Account Settings → API Keys; (b) the account doesn't have NSFW enabled but the model is NSFW-tagged.",
                             (System.Net.HttpStatusCode.Forbidden, false) =>
@@ -260,12 +259,29 @@ public sealed class LoraDownloadService
             using var scope = scopeFactory.CreateScope();
             var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
-            var existingPaths = await unitOfWork.ModelFiles.GetExistingLocalPathsAsync();
-            if (existingPaths.Contains(filePath))
+            // Path dedup must be VERSION-aware: Civitai file names are frequently
+            // generic ("V1.safetensors"), so this path can be claimed by a
+            // DIFFERENT model (whose on-disk file the download just replaced, or
+            // whose row is stale). Blindly skipping here made the new download
+            // invisible forever — 100% downloaded, never installed.
+            var pathOwners = await unitOfWork.ModelFiles.GetByLocalPathAsync(filePath);
+            if (pathOwners.Count > 0)
             {
-                _logger?.Debug(LogCategory.Download, "LoraDownload",
-                    $"File already in database: {filePath}");
-                return;
+                if (civitaiVersion.Id > 0 && pathOwners.Any(f => f.ModelVersion?.CivitaiId == civitaiVersion.Id))
+                {
+                    _logger?.Debug(LogCategory.Download, "LoraDownload",
+                        $"File already in database: {filePath}");
+                    return;
+                }
+
+                _logger?.Warn(LogCategory.Download, "LoraDownload",
+                    $"Path collision: {filePath} is registered to a different model — its bytes were just replaced by this download. Marking the old file record invalid and registering the new model.",
+                    $"Old owner version CivitaiId(s): {string.Join(", ", pathOwners.Select(f => f.ModelVersion?.CivitaiId?.ToString() ?? "(none)"))}\nNew version CivitaiId: {civitaiVersion.Id}");
+                foreach (var stale in pathOwners)
+                {
+                    stale.IsLocalFileValid = false;
+                    stale.LocalFileVerifiedAt = DateTimeOffset.UtcNow;
+                }
             }
 
             var fileInfo = new FileInfo(filePath);

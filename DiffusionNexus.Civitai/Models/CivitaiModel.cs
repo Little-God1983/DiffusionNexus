@@ -67,10 +67,12 @@ public sealed record CivitaiModel
     public bool AllowNoCredit { get; init; }
 
     /// <summary>
-    /// Commercial use permissions. Civitai returns this as a set-notation string
-    /// (e.g. "{Image,RentCivit,Rent,Sell}") rather than a single enum value.
+    /// Commercial use permissions. Historically a set-notation string
+    /// (e.g. "{Image,RentCivit,Rent,Sell}"); the API now returns an array of
+    /// strings, which the converter comma-joins (empty array → null).
     /// </summary>
     [JsonPropertyName("allowCommercialUse")]
+    [JsonConverter(typeof(AllowCommercialUseJsonConverter))]
     public string? AllowCommercialUse { get; init; }
 
     [JsonPropertyName("allowDerivatives")]
@@ -93,28 +95,36 @@ public sealed record CivitaiCreator
 }
 
 /// <summary>
-/// Model statistics.
+/// Model statistics. Counters are null on freshly published models (stats not
+/// yet computed) — the tolerant converters read those as 0.
 /// </summary>
 public sealed record CivitaiModelStats
 {
     [JsonPropertyName("downloadCount")]
+    [JsonConverter(typeof(TolerantInt32JsonConverter))]
     public int DownloadCount { get; init; }
 
     [JsonPropertyName("favoriteCount")]
+    [JsonConverter(typeof(TolerantInt32JsonConverter))]
     public int FavoriteCount { get; init; }
 
     [JsonPropertyName("commentCount")]
+    [JsonConverter(typeof(TolerantInt32JsonConverter))]
     public int CommentCount { get; init; }
 
     [JsonPropertyName("ratingCount")]
+    [JsonConverter(typeof(TolerantInt32JsonConverter))]
     public int RatingCount { get; init; }
 
     [JsonPropertyName("rating")]
+    [JsonConverter(typeof(TolerantDoubleJsonConverter))]
     public double Rating { get; init; }
 
     [JsonPropertyName("thumbsUpCount")]
+    [JsonConverter(typeof(TolerantInt32JsonConverter))]
     public int ThumbsUpCount { get; init; }
 
     [JsonPropertyName("thumbsDownCount")]
+    [JsonConverter(typeof(TolerantInt32JsonConverter))]
     public int ThumbsDownCount { get; init; }
 }

@@ -1,5 +1,6 @@
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Civitai;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Service.Services.DatasetQuality;
@@ -45,6 +46,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     private bool _disposed;
 
     private int _selectedTabIndex;
+    private bool _isRefreshing;
 
     /// <summary>
     /// Gets or sets the dialog service for showing dialogs.
@@ -116,6 +118,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             {
                 _state.SelectedTabIndex = value;
                 NotifyActiveTab(value);
+                RefreshCurrentTabCommand.NotifyCanExecuteChanged();
             }
         }
     }
@@ -124,6 +127,56 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// Status message to display to the user.
     /// </summary>
     public string? StatusMessage => _state.StatusMessage;
+
+    #endregion
+
+    #region Refresh
+
+    /// <summary>
+    /// Refreshes the currently active tab, if it supports refreshing.
+    /// </summary>
+    public IAsyncRelayCommand RefreshCurrentTabCommand { get; }
+
+    /// <summary>
+    /// The active tab ViewModel, if it supports refreshing.
+    /// Tabs adopt the module-level refresh button by implementing <see cref="IRefreshableTab"/>.
+    /// </summary>
+    private IRefreshableTab? ActiveRefreshableTab => _selectedTabIndex switch
+    {
+        0 => DatasetManagement as IRefreshableTab,
+        1 => ImageEdit as IRefreshableTab,
+        2 => Captioning as IRefreshableTab,
+        3 => BatchCropScale as IRefreshableTab,
+        4 => BatchUpscale as IRefreshableTab,
+        _ => null
+    };
+
+    private bool CanRefreshCurrentTab() => !_isRefreshing && ActiveRefreshableTab?.CanRefresh == true;
+
+    private async Task RefreshCurrentTabAsync()
+    {
+        var tab = ActiveRefreshableTab;
+        if (tab is null || !tab.CanRefresh) return;
+
+        _isRefreshing = true;
+        RefreshCurrentTabCommand.NotifyCanExecuteChanged();
+        _state.StatusMessage = "Refreshing…";
+        try
+        {
+            await tab.RefreshAsync();
+            _state.StatusMessage = "Refreshed.";
+        }
+        catch (Exception ex)
+        {
+            _activityLog?.LogError("Refresh", "Failed to refresh the current tab", ex);
+            _state.StatusMessage = $"Refresh failed: {ex.Message}";
+        }
+        finally
+        {
+            _isRefreshing = false;
+            RefreshCurrentTabCommand.NotifyCanExecuteChanged();
+        }
+    }
 
     #endregion
 
@@ -210,10 +263,12 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             duplicateDetector,
             colorDistributionAnalyzer,
             baseModelCatalog);
-        ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, comfyUiService, thumbnailOrchestrator, readinessService, unifiedLogger, settingsService, videoThumbnailService);
+        ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, comfyUiService, thumbnailOrchestrator, readinessService, unifiedLogger, settingsService, videoThumbnailService, downloadCoordinator);
         BatchCropScale = new BatchCropScaleTabViewModel(state, eventAggregator, settingsService);
         Captioning = new CaptioningTabViewModel(eventAggregator, state, captioningService, captioningBackends, settingsService, readinessService, downloadCoordinator);
         BatchUpscale = new BatchUpscaleTabViewModel(eventAggregator, state, comfyUiService, settingsService, readinessService);
+
+        RefreshCurrentTabCommand = new AsyncRelayCommand(RefreshCurrentTabAsync, CanRefreshCurrentTab);
 
         // Subscribe to state changes for property forwarding
         _state.StateChanged += OnStateChanged;
@@ -248,7 +303,11 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
                 {
                     _selectedTabIndex = _state.SelectedTabIndex;
                     OnPropertyChanged(nameof(SelectedTabIndex));
+                    RefreshCurrentTabCommand.NotifyCanExecuteChanged();
                 }
+                break;
+            case nameof(IDatasetState.IsLoading):
+                RefreshCurrentTabCommand.NotifyCanExecuteChanged();
                 break;
         }
     }

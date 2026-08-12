@@ -20,6 +20,7 @@
             public bool AllowNoCredit { get; set; }
 
             [JsonPropertyName("allowCommercialUse")]
+            [JsonConverter(typeof(DiffusionNexus.Civitai.Models.AllowCommercialUseJsonConverter))]
             public string? AllowCommercialUse { get; set; }
 
             [JsonPropertyName("allowDerivatives")]

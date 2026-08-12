@@ -359,7 +359,8 @@ public partial class ImageEditorViewModel : ObservableObject
         IComfyUIWrapperService? comfyUiService = null,
         EditorServices? services = null,
         IFeatureReadinessService? readinessService = null,
-        Domain.Services.UnifiedLogging.IUnifiedLogger? unifiedLogger = null)
+        Domain.Services.UnifiedLogging.IUnifiedLogger? unifiedLogger = null,
+        IDownloadCoordinator? downloadCoordinator = null)
     {
         _eventAggregator = eventAggregator;
         _unifiedLogger = unifiedLogger;
@@ -370,7 +371,7 @@ public partial class ImageEditorViewModel : ObservableObject
         ColorTools = new ColorToolsViewModel(() => HasImage, DeactivateOtherTools);
         DrawingTools = new DrawingToolsViewModel(() => HasImage, DeactivateOtherTools);
         TextTools = new TextToolViewModel(() => HasImage, DeactivateOtherTools);
-        BackgroundRemoval = new BackgroundRemovalViewModel(() => HasImage, DeactivateOtherTools, backgroundRemovalService);
+        BackgroundRemoval = new BackgroundRemovalViewModel(() => HasImage, DeactivateOtherTools, backgroundRemovalService, downloadCoordinator);
         BackgroundFill = new BackgroundFillViewModel(() => HasImage, DeactivateOtherTools);
         Inpainting = new InpaintingViewModel(() => HasImage, DeactivateOtherTools, comfyUiService, eventAggregator, readinessService);
         Outpainting = new OutpaintingViewModel(() => HasImage, () => ImageWidth, () => ImageHeight, DeactivateOtherTools, comfyUiService, readinessService, unifiedLogger);

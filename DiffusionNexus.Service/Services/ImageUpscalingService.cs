@@ -5,14 +5,15 @@ using Serilog;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
-using SixLabors.ImageSharp.Processing.Processors.Transforms;
 
 namespace DiffusionNexus.Service.Services;
 
 /// <summary>
 /// Service for upscaling images using the 4x-UltraSharp ONNX model.
-/// Performs inference locally using GPU acceleration when available, with CPU fallback.
 /// Uses tile-based processing to handle large images within memory constraints.
+/// Session lifecycle (DirectML/CPU selection, GPU demotion, disposal) lives in
+/// <see cref="OnnxSessionHost"/>; this class owns only the tiling and
+/// pre/post-processing.
 /// </summary>
 public sealed class ImageUpscalingService : IImageUpscalingService
 {
@@ -23,14 +24,9 @@ public sealed class ImageUpscalingService : IImageUpscalingService
     private const int TileParseSize = TileSize - 2 * TilePadding; // The actual valid content size per tile
 
     private readonly OnnxModelManager _modelManager;
-    private readonly SemaphoreSlim _sessionLock = new(1, 1);
-    private InferenceSession? _session;
+    private readonly OnnxSessionHost _host = new("4x-UltraSharp");
     private string? _inputName;
     private string? _outputName;
-    private bool _isGpuAvailable;
-    private bool _isProcessing;
-    private bool _disposed;
-    private bool _disableGpu;
 
     /// <summary>
     /// Creates a new ImageUpscalingService.
@@ -47,10 +43,10 @@ public sealed class ImageUpscalingService : IImageUpscalingService
     }
 
     /// <inheritdoc />
-    public bool IsGpuAvailable => _isGpuAvailable;
+    public bool IsGpuAvailable => _host.IsGpuAvailable;
 
     /// <inheritdoc />
-    public bool IsProcessing => _isProcessing;
+    public bool IsProcessing => _host.IsProcessing;
 
     /// <inheritdoc />
     public ModelStatus GetModelStatus() => _modelManager.GetUltraSharp4xStatus();
@@ -69,7 +65,7 @@ public sealed class ImageUpscalingService : IImageUpscalingService
     /// <inheritdoc />
     public async Task<bool> InitializeAsync(CancellationToken cancellationToken = default)
     {
-        if (_session is not null)
+        if (_host.IsInitialized)
             return true;
 
         var status = GetModelStatus();
@@ -79,93 +75,7 @@ public sealed class ImageUpscalingService : IImageUpscalingService
             return false;
         }
 
-        await _sessionLock.WaitAsync(cancellationToken);
-        try
-        {
-            if (_session is not null)
-                return true;
-
-            _session = await Task.Run(() => CreateSession(), cancellationToken);
-            return _session is not null;
-        }
-        finally
-        {
-            _sessionLock.Release();
-        }
-    }
-
-    private InferenceSession? CreateSession()
-    {
-        var modelPath = _modelManager.UltraSharp4xModelPath;
-        if (!File.Exists(modelPath))
-        {
-            Log.Error("4x-UltraSharp model file not found: {Path}", modelPath);
-            return null;
-        }
-
-        // Try DirectML first (only if not disabled)
-        if (!_disableGpu)
-        {
-            try
-            {
-                var dmlOptions = new SessionOptions();
-                
-                // Compatibility parameters for DirectML on 4x-UltraSharp
-                // These settings prioritize stability over performance to prevent known DirectML issues.
-                dmlOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_BASIC;
-                dmlOptions.ExecutionMode = ExecutionMode.ORT_SEQUENTIAL;
-                
-                dmlOptions.EnableMemoryPattern = false;
-                dmlOptions.EnableCpuMemArena = false;
-                
-                dmlOptions.AddSessionConfigEntry("session.disable_prepacking", "1");
-                dmlOptions.AddSessionConfigEntry("ep.dml.enable_graph_capture", "0");
-                
-                // Add DirectML as primary execution provider
-                dmlOptions.AppendExecutionProvider_DML(0);
-                
-                // Add CPU as fallback for operations DirectML doesn't support
-                dmlOptions.AppendExecutionProvider_CPU(0);
-
-                var session = new InferenceSession(modelPath, dmlOptions);
-                _isGpuAvailable = true;
-
-                // Discover input/output names from model metadata
-                DiscoverTensorNames(session);
-
-                Log.Information("4x-UltraSharp ONNX session created with GPU (DirectML) acceleration");
-                return session;
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "DirectML not available or failed to initialize, falling back to CPU");
-            }
-        }
-
-        // Fall back to CPU
-        try
-        {
-            var cpuOptions = new SessionOptions();
-            cpuOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
-            cpuOptions.EnableMemoryPattern = true;
-            cpuOptions.EnableCpuMemArena = true;
-            cpuOptions.IntraOpNumThreads = Environment.ProcessorCount;
-
-            var session = new InferenceSession(modelPath, cpuOptions);
-            _isGpuAvailable = false;
-
-            // Discover input/output names from model metadata
-            DiscoverTensorNames(session);
-
-            Log.Information("4x-UltraSharp ONNX session created with CPU execution ({Threads} threads)",
-                Environment.ProcessorCount);
-            return session;
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Failed to create ONNX session for upscaling");
-            return null;
-        }
+        return await _host.InitializeAsync(_modelManager.UltraSharp4xModelPath, DiscoverTensorNames, cancellationToken);
     }
 
     /// <summary>
@@ -173,7 +83,6 @@ public sealed class ImageUpscalingService : IImageUpscalingService
     /// </summary>
     private void DiscoverTensorNames(InferenceSession session)
     {
-        // Get input name from model metadata
         _inputName = session.InputMetadata.Keys.FirstOrDefault();
         _outputName = session.OutputMetadata.Keys.FirstOrDefault();
 
@@ -207,65 +116,57 @@ public sealed class ImageUpscalingService : IImageUpscalingService
         if (targetScale < 1.1f || targetScale > 4.0f)
             return ImageUpscalingResult.Failed("Target scale must be between 1.1 and 4.0");
 
-        if (_isProcessing)
+        if (_host.IsDisposed)
+            return ImageUpscalingResult.Failed("Service is disposed");
+
+        if (!_host.TryBeginProcessing())
             return ImageUpscalingResult.Failed("Service is already processing an image");
 
-        // Ensure session is initialized
-        if (!await InitializeAsync(cancellationToken))
-            return ImageUpscalingResult.Failed("Failed to initialize ONNX session. Please ensure the model is downloaded.");
-
-        _isProcessing = true;
         try
         {
-            return await Task.Run(() =>
-                ProcessImage(imageData, width, height, targetScale, progress, cancellationToken),
-                cancellationToken);
-        }
-        catch (OnnxRuntimeException ex) when (_isGpuAvailable && !_disableGpu)
-        {
-            Log.Warning(ex, "GPU inference failed. Disabling GPU and retrying on CPU.");
+            if (!await InitializeAsync(cancellationToken))
+                return ImageUpscalingResult.Failed("Failed to initialize ONNX session. Please ensure the model is downloaded.");
 
-            // Reset session
-            await _sessionLock.WaitAsync(cancellationToken);
             try
             {
-                _session?.Dispose();
-                _session = null;
-                _disableGpu = true;
-                _isGpuAvailable = false;
+                return await Task.Run(() =>
+                    ProcessImage(imageData, width, height, targetScale, progress, cancellationToken),
+                    cancellationToken);
             }
-            finally
+            catch (OnnxRuntimeException ex) when (_host.CanRetryOnCpu)
             {
-                _sessionLock.Release();
-            }
+                Log.Warning(ex, "GPU inference failed. Disabling GPU and retrying on CPU.");
 
-            // Retry initialization (will force CPU)
-            if (await InitializeAsync(cancellationToken))
+                await _host.DemoteToCpuAsync(cancellationToken);
+
+                // Retry initialization (will force CPU)
+                if (await InitializeAsync(cancellationToken))
+                {
+                    try
+                    {
+                        Log.Information("Retrying upscaling on CPU...");
+                        return await Task.Run(() =>
+                            ProcessImage(imageData, width, height, targetScale, progress, cancellationToken),
+                            cancellationToken);
+                    }
+                    catch (Exception retryEx)
+                    {
+                        Log.Error(retryEx, "Retry on CPU failed");
+                        return ImageUpscalingResult.Failed($"Upscaling failed (CPU retry): {retryEx.Message}");
+                    }
+                }
+
+                return ImageUpscalingResult.Failed($"Upscaling failed (GPU Error: {ex.Message})");
+            }
+            catch (Exception ex)
             {
-                try
-                {
-                    Log.Information("Retrying upscaling on CPU...");
-                    return await Task.Run(() =>
-                        ProcessImage(imageData, width, height, targetScale, progress, cancellationToken),
-                        cancellationToken);
-                }
-                catch (Exception retryEx)
-                {
-                    Log.Error(retryEx, "Retry on CPU failed");
-                    return ImageUpscalingResult.Failed($"Upscaling failed (CPU retry): {retryEx.Message}");
-                }
+                Log.Error(ex, "Image upscaling failed");
+                return ImageUpscalingResult.Failed($"Upscaling failed: {ex.Message}");
             }
-
-            return ImageUpscalingResult.Failed($"Upscaling failed (GPU Error: {ex.Message})");
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Image upscaling failed");
-            return ImageUpscalingResult.Failed($"Upscaling failed: {ex.Message}");
         }
         finally
         {
-            _isProcessing = false;
+            _host.EndProcessing();
         }
     }
 
@@ -383,10 +284,10 @@ public sealed class ImageUpscalingService : IImageUpscalingService
                 // We discard 'TilePadding' from all sides of the upscaled result to remove edge artifacts
                 var destX = inputStartX * ScaleFactor;
                 var destY = inputStartY * ScaleFactor;
-                
+
                 var srcCropX = TilePadding * ScaleFactor;
                 var srcCropY = TilePadding * ScaleFactor;
-                
+
                 var validWidth = TileParseSize * ScaleFactor;
                 var validHeight = TileParseSize * ScaleFactor;
 
@@ -433,7 +334,9 @@ public sealed class ImageUpscalingService : IImageUpscalingService
     }
 
     /// <summary>
-    /// Processes a single tile through the ONNX model.
+    /// Processes a single tile through the ONNX model. Each tile is one
+    /// inference inside the host's Run scope, so disposal can interleave
+    /// between tiles (yielding a managed failure) but never under one.
     /// </summary>
     private Image<Rgba32> ProcessSingleTile(Image<Rgba32> tile)
     {
@@ -461,29 +364,37 @@ public sealed class ImageUpscalingService : IImageUpscalingService
             NamedOnnxValue.CreateFromTensor(_inputName!, tensor)
         };
 
-        using var results = _session!.Run(inputs);
-        var outputTensor = results.First().AsTensor<float>();
-
-        // Convert output tensor to image
-        var outputSize = TileSize * ScaleFactor;
-        var output = new Image<Rgba32>(outputSize, outputSize);
-
-        output.ProcessPixelRows(accessor =>
+        return _host.Run(inputs, results =>
         {
-            for (var y = 0; y < outputSize; y++)
+            var outputTensor = results.First().AsTensor<float>();
+
+            // Convert output tensor to image
+            var outputSize = TileSize * ScaleFactor;
+            var output = new Image<Rgba32>(outputSize, outputSize);
+            try
             {
-                var row = accessor.GetRowSpan(y);
-                for (var x = 0; x < outputSize; x++)
+                output.ProcessPixelRows(accessor =>
                 {
-                    var r = (byte)Math.Clamp(outputTensor[0, 0, y, x] * 255.0f, 0, 255);
-                    var g = (byte)Math.Clamp(outputTensor[0, 1, y, x] * 255.0f, 0, 255);
-                    var b = (byte)Math.Clamp(outputTensor[0, 2, y, x] * 255.0f, 0, 255);
-                    row[x] = new Rgba32(r, g, b, 255);
-                }
+                    for (var y = 0; y < outputSize; y++)
+                    {
+                        var row = accessor.GetRowSpan(y);
+                        for (var x = 0; x < outputSize; x++)
+                        {
+                            var r = (byte)Math.Clamp(outputTensor[0, 0, y, x] * 255.0f, 0, 255);
+                            var g = (byte)Math.Clamp(outputTensor[0, 1, y, x] * 255.0f, 0, 255);
+                            var b = (byte)Math.Clamp(outputTensor[0, 2, y, x] * 255.0f, 0, 255);
+                            row[x] = new Rgba32(r, g, b, 255);
+                        }
+                    }
+                });
+                return output;
+            }
+            catch
+            {
+                output.Dispose();
+                throw;
             }
         });
-
-        return output;
     }
 
     /// <summary>
@@ -519,22 +430,5 @@ public sealed class ImageUpscalingService : IImageUpscalingService
     }
 
     /// <inheritdoc />
-    public void Dispose()
-    {
-        if (_disposed) return;
-
-        _sessionLock.Wait();
-        try
-        {
-            _session?.Dispose();
-            _session = null;
-        }
-        finally
-        {
-            _sessionLock.Release();
-        }
-
-        _sessionLock.Dispose();
-        _disposed = true;
-    }
+    public void Dispose() => _host.Dispose();
 }
