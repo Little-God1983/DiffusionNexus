@@ -26,6 +26,8 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     private readonly IAppSettingsService? _settingsService;
     private readonly IUnifiedLogger? _logger;
     private readonly CivitaiDownloadQueue _queue;
+    private readonly CivitaiWaitlist _waitlist;
+    private Avalonia.Threading.DispatcherTimer? _waitlistCountdownTimer;
 
     private CancellationTokenSource? _searchCts;
     private CancellationTokenSource? _debounceCts;
@@ -37,7 +39,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     private CivitaiResultViewModel? _lastClickedItem;
 
     public CivitaiBrowserViewModel()
-        : this(null, null, null, new CivitaiDownloadQueue(null), null)
+        : this(null, null, null, new CivitaiDownloadQueue(null), new CivitaiWaitlist(null, null), null)
     {
         // Design-time only
         Results.Add(CivitaiResultViewModel.CreateDesignSample());
@@ -48,12 +50,15 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         IAppSettingsService? settingsService,
         IUnifiedLogger? logger,
         CivitaiDownloadQueue queue,
+        CivitaiWaitlist waitlist,
         ObservableCollection<BaseModelFilterItem>? sharedBaseModelSource)
     {
         _civitaiClient = civitaiClient;
         _settingsService = settingsService;
         _logger = logger;
         _queue = queue;
+        _waitlist = waitlist;
+        StartWaitlistCountdownTimer();
 
         SortOptions = new ObservableCollection<string>
         {
@@ -200,6 +205,8 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     public ObservableCollection<CivitaiResultViewModel> Results { get; } = [];
 
     public CivitaiDownloadQueue Queue => _queue;
+
+    public CivitaiWaitlist Waitlist => _waitlist;
 
     public int SelectedCount => Results.Count(r => r.IsSelected);
 
@@ -401,6 +408,77 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     [RelayCommand]
     private Task RetryJobAsync(CivitaiDownloadJob? job)
         => job is null ? Task.CompletedTask : _queue.RetryJobAsync(job);
+
+    /// <summary>
+    /// Launches URLs in the default browser. Swappable so tests can capture the
+    /// URL instead of actually spawning a browser window.
+    /// </summary>
+    public Action<string> UrlOpener { get; set; } = url =>
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+
+    private void OpenUrl(string url)
+    {
+        try
+        {
+            UrlOpener(url);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Warn(LogCategory.General, "CivitaiWaitlist", $"Failed to launch browser for {url}: {ex.Message}");
+        }
+    }
+
+    [RelayCommand]
+    private void RemoveWaitlistEntry(CivitaiWaitlistEntry? entry)
+    {
+        if (entry is not null) _waitlist.Remove(entry);
+    }
+
+    [RelayCommand]
+    private void OpenWaitlistEntryOnCivitai(CivitaiWaitlistEntry? entry)
+    {
+        if (entry is null) return;
+        // civitai.com hides NSFW from unauthenticated visitors; route those to the mirror.
+        var host = entry.IsNsfw ? "civitai.red" : "civitai.com";
+        OpenUrl($"https://{host}/models/{entry.ModelId}?modelVersionId={entry.VersionId}");
+    }
+
+    /// <summary>"Update" button on the Waitlist tab — re-checks every entry against the API.</summary>
+    [RelayCommand]
+    private async Task UpdateWaitlistAsync()
+    {
+        StatusMessage = "Checking waitlist against Civitai…";
+        var apiKey = await GetApiKeyAsync();
+        await _waitlist.RefreshAllAsync(apiKey);
+        StatusMessage = $"Waitlist updated — {_waitlist.AvailableCount} of {_waitlist.Entries.Count} available.";
+    }
+
+    /// <summary>"Move ready to queue" button — re-verifies ready entries, enqueues the free ones.</summary>
+    [RelayCommand]
+    private async Task MoveReadyWaitlistToQueueAsync()
+    {
+        var apiKey = await GetApiKeyAsync();
+        var moved = await _waitlist.MoveReadyToQueueAsync(_queue, apiKey);
+        StatusMessage = moved == 0
+            ? "No waitlist entries are ready to download yet."
+            : $"Moved {moved} LoRA{(moved == 1 ? "" : "s")} from the waitlist to the download queue.";
+    }
+
+    /// <summary>
+    /// Local 1-minute tick keeping countdowns and the tab badge fresh without any
+    /// API traffic. Skipped headless (unit tests / no Avalonia app) — DispatcherTimer
+    /// needs a running Avalonia dispatcher.
+    /// </summary>
+    private void StartWaitlistCountdownTimer()
+    {
+        if (Avalonia.Application.Current is null) return;
+        _waitlistCountdownTimer = new Avalonia.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromMinutes(1)
+        };
+        _waitlistCountdownTimer.Tick += (_, _) => _waitlist.RefreshAvailability();
+        _waitlistCountdownTimer.Start();
+    }
 
     [RelayCommand]
     private async Task RefreshInstalledAsync() => await RefreshInstalledSetAsync();
