@@ -18,7 +18,7 @@ public sealed class EarlyAccessDialogCopyTests
         text.Should().Be(
             "1 version in your selection is permanently paid — the creator has paywalled it on Civitai "
             + "indefinitely, with no end date. It will never become free, so the waitlist can't help: "
-            + "buying it on Civitai is the only way to download it.");
+            + "manually buying and downloading it on Civitai is the only way.");
         text.Should().NotContain("limited time");
         text.Should().NotContain("Early Access");
     }

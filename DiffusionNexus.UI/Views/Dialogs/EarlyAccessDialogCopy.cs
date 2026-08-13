@@ -44,8 +44,8 @@ internal static class EarlyAccessDialogCopy
 
     /// <summary>Explanation that follows the highlighted "permanently paid" phrase.</summary>
     public static string PermanentTail(int count) => count == 1
-        ? " — the creator has paywalled it on Civitai indefinitely, with no end date. It will never become free, so the waitlist can't help: buying it on Civitai is the only way to download it."
-        : " — the creator has paywalled them on Civitai indefinitely, with no end date. They will never become free, so the waitlist can't help: buying them on Civitai is the only way to download them.";
+        ? " — the creator has paywalled it on Civitai indefinitely, with no end date. It will never become free, so the waitlist can't help: manually buying and downloading it on Civitai is the only way."
+        : " — the creator has paywalled them on Civitai indefinitely, with no end date. They will never become free, so the waitlist can't help: manually buying and downloading them on Civitai is the only way.";
 
     /// <summary>
     /// Label for the skip button. Only shown when the selection actually holds
