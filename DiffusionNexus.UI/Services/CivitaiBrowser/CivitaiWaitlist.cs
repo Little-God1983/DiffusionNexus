@@ -1,0 +1,240 @@
+using System.Collections.ObjectModel;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using CommunityToolkit.Mvvm.ComponentModel;
+using DiffusionNexus.Civitai;
+using DiffusionNexus.Civitai.Models;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.UI.ViewModels.CivitaiBrowser;
+
+namespace DiffusionNexus.UI.Services.CivitaiBrowser;
+
+/// <summary>
+/// Early-access waitlist: versions the user wants once their paywall lapses.
+/// Deadlines are captured from browse data at add time ("check once") and only
+/// re-fetched on the explicit Update / Move-to-queue actions; the countdown and
+/// tab badge are computed locally. Mirrors <see cref="CivitaiDownloadQueue"/>:
+/// ObservableObject (not DI-registered), JSON snapshot in LocalAppData, and a
+/// persist-path override so tests never touch the real file.
+/// </summary>
+public sealed class CivitaiWaitlist : ObservableObject
+{
+    private const string PersistFileName = "civitai-waitlist.json";
+
+    private readonly string? _persistPathOverride;
+    private readonly ICivitaiClient? _civitaiClient;
+    private readonly IUnifiedLogger? _logger;
+
+    public CivitaiWaitlist(
+        ICivitaiClient? civitaiClient,
+        IUnifiedLogger? logger,
+        string? persistPathOverride = null)
+    {
+        _civitaiClient = civitaiClient;
+        _logger = logger;
+        _persistPathOverride = persistPathOverride;
+        Entries.CollectionChanged += (_, _) => RaiseCounts();
+        TryRestore();
+        RefreshAvailability();
+    }
+
+    public ObservableCollection<CivitaiWaitlistEntry> Entries { get; } = [];
+
+    /// <summary>Number of entries currently downloadable — drives the tab badge.</summary>
+    public int AvailableCount => Entries.Count(e => e.IsAvailable);
+
+    public bool HasAvailable => AvailableCount > 0;
+
+    private void RaiseCounts()
+    {
+        OnPropertyChanged(nameof(AvailableCount));
+        OnPropertyChanged(nameof(HasAvailable));
+    }
+
+    /// <summary>
+    /// Adds a browse-result version to the waitlist. Rejects duplicates (by
+    /// version id, same rule as the queue) and permanently paid versions —
+    /// those never become free, so waiting is pointless. The deadline comes
+    /// from the version data already loaded in the browser; no API call.
+    /// </summary>
+    public bool TryAdd(CivitaiResultViewModel result, CivitaiVersionPickItemViewModel pick, DateTimeOffset? utcNow = null)
+    {
+        if (result.Model is null) return false;
+
+        if (pick.Version.IsPermanentlyPaid())
+        {
+            _logger?.Info(LogCategory.Download, "CivitaiWaitlist",
+                $"Not waitlisted (permanently paid): {result.Name} — {pick.Name}");
+            return false;
+        }
+
+        if (Entries.Any(e => e.VersionId == pick.Version.Id))
+        {
+            _logger?.Debug(LogCategory.Download, "CivitaiWaitlist",
+                $"Duplicate waitlist add skipped: {result.Name} ({pick.Name}) — version {pick.Version.Id} already listed");
+            return false;
+        }
+
+        var primary = pick.Version.Files.FirstOrDefault(f => f.Primary == true) ?? pick.Version.Files.FirstOrDefault();
+        var entry = new CivitaiWaitlistEntry
+        {
+            ModelId = result.Model.Id,
+            VersionId = pick.Version.Id,
+            ModelName = result.Name,
+            VersionName = pick.Name,
+            BaseModel = pick.BaseModel,
+            Category = result.Category,
+            FileName = primary?.Name ?? $"{result.Name}_{pick.Version.Id}.safetensors",
+            DownloadUrl = primary?.DownloadUrl ?? pick.Version.DownloadUrl ?? string.Empty,
+            SizeBytes = pick.SizeBytes,
+            SizeDisplay = pick.SizeDisplay,
+            ExpectedSha256 = primary?.Hashes?.SHA256,
+            PreviewImageUrl = pick.Version.Images.FirstOrDefault(i => !string.IsNullOrWhiteSpace(i.Url))?.Url,
+            IsNsfw = result.IsNsfw,
+            AddedAt = utcNow ?? DateTimeOffset.UtcNow,
+            EarlyAccessDeadline = pick.Version.EarlyAccessDeadline ?? pick.Version.PaidAccess?.EndsAt
+        };
+        entry.RefreshAvailability(utcNow);
+        Entries.Add(entry);
+        Persist();
+        _logger?.Info(LogCategory.Download, "CivitaiWaitlist",
+            $"Waitlisted: {result.Name} — {pick.Name} (free {entry.EarlyAccessDeadline?.ToString("u") ?? "at unknown date"})",
+            $"VersionId: {pick.Version.Id}\nDeadline: {entry.EarlyAccessDeadline?.ToString("u") ?? "(none)"}\nFile: {entry.FileName}");
+        return true;
+    }
+
+    public void Remove(CivitaiWaitlistEntry entry)
+    {
+        Entries.Remove(entry);
+        Persist();
+        _logger?.Info(LogCategory.Download, "CivitaiWaitlist",
+            $"Removed from waitlist: {entry.ModelName} — {entry.VersionName}");
+    }
+
+    /// <summary>
+    /// Local-only tick: recomputes every entry's countdown/availability and the
+    /// badge counts from stored deadlines. Called by the UI timer — zero API calls.
+    /// </summary>
+    public void RefreshAvailability(DateTimeOffset? utcNow = null)
+    {
+        foreach (var e in Entries) e.RefreshAvailability(utcNow);
+        RaiseCounts();
+    }
+
+    #region Persistence
+
+    private string GetPersistPath()
+    {
+        if (_persistPathOverride is not null) return _persistPathOverride;
+
+        var dir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "DiffusionNexus");
+        Directory.CreateDirectory(dir);
+        return Path.Combine(dir, PersistFileName);
+    }
+
+    private void Persist()
+    {
+        try
+        {
+            var snapshot = Entries.Select(e => new PersistedEntry
+            {
+                ModelId = e.ModelId,
+                VersionId = e.VersionId,
+                ModelName = e.ModelName,
+                VersionName = e.VersionName,
+                BaseModel = e.BaseModel,
+                Category = e.Category,
+                FileName = e.FileName,
+                DownloadUrl = e.DownloadUrl,
+                SizeDisplay = e.SizeDisplay,
+                SizeBytes = e.SizeBytes,
+                ExpectedSha256 = e.ExpectedSha256,
+                PreviewImageUrl = e.PreviewImageUrl,
+                IsNsfw = e.IsNsfw,
+                AddedAt = e.AddedAt,
+                EarlyAccessDeadline = e.EarlyAccessDeadline,
+                LastCheckedAt = e.LastCheckedAt,
+                Status = e.Status,
+                StatusDetail = e.StatusDetail
+            }).ToList();
+            File.WriteAllText(GetPersistPath(), JsonSerializer.Serialize(snapshot));
+        }
+        catch (Exception ex)
+        {
+            _logger?.Debug(LogCategory.Download, "CivitaiWaitlist", $"Persist failed: {ex.Message}");
+        }
+    }
+
+    private void TryRestore()
+    {
+        try
+        {
+            var path = GetPersistPath();
+            if (!File.Exists(path)) return;
+            var json = File.ReadAllText(path);
+            if (string.IsNullOrWhiteSpace(json)) return;
+            var snapshot = JsonSerializer.Deserialize<List<PersistedEntry>>(json);
+            if (snapshot is null) return;
+            foreach (var p in snapshot)
+            {
+                var entry = new CivitaiWaitlistEntry
+                {
+                    ModelId = p.ModelId,
+                    VersionId = p.VersionId,
+                    ModelName = p.ModelName,
+                    VersionName = p.VersionName,
+                    BaseModel = p.BaseModel,
+                    Category = p.Category,
+                    FileName = p.FileName,
+                    DownloadUrl = p.DownloadUrl,
+                    SizeDisplay = p.SizeDisplay,
+                    SizeBytes = p.SizeBytes,
+                    ExpectedSha256 = p.ExpectedSha256,
+                    PreviewImageUrl = p.PreviewImageUrl,
+                    IsNsfw = p.IsNsfw,
+                    AddedAt = p.AddedAt,
+                    EarlyAccessDeadline = p.EarlyAccessDeadline,
+                    LastCheckedAt = p.LastCheckedAt,
+                    Status = p.Status,
+                    StatusDetail = p.StatusDetail
+                };
+                Entries.Add(entry);
+            }
+            _logger?.Info(LogCategory.Download, "CivitaiWaitlist",
+                $"Restored {Entries.Count} waitlist entr{(Entries.Count == 1 ? "y" : "ies")} from disk.");
+        }
+        catch (Exception ex)
+        {
+            _logger?.Debug(LogCategory.Download, "CivitaiWaitlist", $"Restore failed: {ex.Message}");
+        }
+    }
+
+    private sealed class PersistedEntry
+    {
+        public int ModelId { get; set; }
+        public int VersionId { get; set; }
+        public string ModelName { get; set; } = string.Empty;
+        public string VersionName { get; set; } = string.Empty;
+        public string BaseModel { get; set; } = string.Empty;
+        public string Category { get; set; } = string.Empty;
+        public string FileName { get; set; } = string.Empty;
+        public string DownloadUrl { get; set; } = string.Empty;
+        public string SizeDisplay { get; set; } = string.Empty;
+        public long SizeBytes { get; set; }
+        public string? ExpectedSha256 { get; set; }
+        public string? PreviewImageUrl { get; set; }
+        public bool IsNsfw { get; set; }
+        public DateTimeOffset AddedAt { get; set; }
+        public DateTimeOffset? EarlyAccessDeadline { get; set; }
+        public DateTimeOffset? LastCheckedAt { get; set; }
+
+        [JsonConverter(typeof(JsonStringEnumConverter))]
+        public WaitlistEntryStatus Status { get; set; }
+
+        public string? StatusDetail { get; set; }
+    }
+
+    #endregion
+}
