@@ -138,13 +138,13 @@ public sealed class CivitaiWaitlist : ObservableObject
         if (_civitaiClient is null) return null;
         var now = utcNow ?? DateTimeOffset.UtcNow;
 
-        await s_refreshGate.WaitAsync(ct).ConfigureAwait(false);
+        await s_refreshGate.WaitAsync(ct);
         CivitaiModelVersion? version = null;
         try
         {
             _logger?.Debug(LogCategory.Download, "CivitaiWaitlist",
                 $"Re-checking: {entry.ModelName} — {entry.VersionName} (version {entry.VersionId})");
-            version = await _civitaiClient.GetModelVersionAsync(entry.VersionId, apiKey, ct).ConfigureAwait(false);
+            version = await _civitaiClient.GetModelVersionAsync(entry.VersionId, apiKey, ct);
 
             if (version is null)
             {
