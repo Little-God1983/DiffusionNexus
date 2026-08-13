@@ -53,7 +53,9 @@ public partial class CivitaiResultViewModel : ObservableObject
 
         foreach (var v in model.ModelVersions)
         {
-            Versions.Add(new CivitaiVersionPickItemViewModel(v));
+            var pick = new CivitaiVersionPickItemViewModel(v);
+            pick.PropertyChanged += OnVersionPropertyChanged;
+            Versions.Add(pick);
         }
 
         // Pre-select latest by default for cards' simple "select card → enqueue latest" flow.
@@ -230,6 +232,31 @@ public partial class CivitaiResultViewModel : ObservableObject
 
     [RelayCommand]
     private void EnqueueAllVersions() => EnqueueAllVersionsHandler?.Invoke(this);
+
+    /// <summary>True while at least one version row is ticked.</summary>
+    public bool HasSelectedVersions => Versions.Any(v => v.IsSelected);
+
+    /// <summary>
+    /// Enqueues only the ticked version rows of this card. Wired by the browser VM
+    /// alongside <see cref="EnqueueAllVersionsHandler"/>.
+    /// </summary>
+    public Action<CivitaiResultViewModel>? EnqueueSelectedVersionsHandler { get; set; }
+
+    [RelayCommand(CanExecute = nameof(HasSelectedVersions))]
+    private void EnqueueSelectedVersions() => EnqueueSelectedVersionsHandler?.Invoke(this);
+
+    /// <summary>
+    /// Keeps the card in step with its version rows: ticking a checkbox in the picker
+    /// must refresh the summary line and re-evaluate whether "Add selected to queue"
+    /// has anything to add.
+    /// </summary>
+    private void OnVersionPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(CivitaiVersionPickItemViewModel.IsSelected)) return;
+        OnPropertyChanged(nameof(SelectedVersionSummary));
+        OnPropertyChanged(nameof(HasSelectedVersions));
+        EnqueueSelectedVersionsCommand.NotifyCanExecuteChanged();
+    }
 
     /// <summary>
     /// Opens the model's Civitai page in the default web browser. The browser always

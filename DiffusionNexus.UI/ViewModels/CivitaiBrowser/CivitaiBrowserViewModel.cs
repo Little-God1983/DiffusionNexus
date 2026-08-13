@@ -738,7 +738,8 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                     if (!existingIds.Add(model.Id)) continue;
                     var vm = new CivitaiResultViewModel(model, ShowNsfwContent)
                     {
-                        EnqueueAllVersionsHandler = EnqueueAllVersionsForCard
+                        EnqueueAllVersionsHandler = EnqueueAllVersionsForCard,
+                        EnqueueSelectedVersionsHandler = EnqueueSelectedVersionsForCard
                     };
                     vm.ApplyInstalledIndex(_installed);
                     vm.SelectionChanged += OnResultSelectionChanged;
@@ -941,6 +942,18 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     private void EnqueueAllVersionsForCard(CivitaiResultViewModel card)
     {
         var pairs = card.Versions.Select(v => (card, v)).ToList();
+        _ = EnqueueWithPreflightPromptAsync(pairs);
+    }
+
+    /// <summary>
+    /// Enqueues only the ticked rows of one card's version picker. Unlike the grid-wide
+    /// "Add selection to queue" this ignores whether the card itself is selected — the
+    /// user is acting on the picker in front of them.
+    /// </summary>
+    private void EnqueueSelectedVersionsForCard(CivitaiResultViewModel card)
+    {
+        var pairs = card.Versions.Where(v => v.IsSelected).Select(v => (card, v)).ToList();
+        if (pairs.Count == 0) return;
         _ = EnqueueWithPreflightPromptAsync(pairs);
     }
 

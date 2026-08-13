@@ -360,7 +360,7 @@
                                            Text="Pick versions to download"
                                            FontWeight="SemiBold"
                                            Margin="0,0,0,8"/>
-                                <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6" Margin="0,0,0,8">
+                                <WrapPanel Grid.Row="1" ItemSpacing="6" LineSpacing="6" Margin="0,0,0,8">
                                   <Button Content="Select all"
                                           Padding="6,2"
                                           FontSize="11"
@@ -369,13 +369,18 @@
                                           Padding="6,2"
                                           FontSize="11"
                                           Command="{Binding LatestVersionOnlyCommand}"/>
-                                  <Button Content="Add all to queue"
+                                  <Button Content="Add selected to queue"
                                           Padding="6,2"
                                           FontSize="11"
                                           Classes="accent"
+                                          Command="{Binding EnqueueSelectedVersionsCommand}"
+                                          ToolTip.Tip="Enqueue only the ticked versions of this model"/>
+                                  <Button Content="Add all to queue"
+                                          Padding="6,2"
+                                          FontSize="11"
                                           Command="{Binding EnqueueAllVersionsCommand}"
                                           ToolTip.Tip="Enqueue every version of this model immediately"/>
-                                </StackPanel>
+                                </WrapPanel>
                                 <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
                                   <ItemsControl ItemsSource="{Binding Versions}">
                                     <ItemsControl.ItemTemplate>
