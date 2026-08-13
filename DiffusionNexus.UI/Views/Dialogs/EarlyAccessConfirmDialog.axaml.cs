@@ -5,9 +5,13 @@ using Avalonia.Markup.Xaml;
 namespace DiffusionNexus.UI.Views.Dialogs;
 
 /// <summary>
-/// Three-option confirmation dialog shown when the user tries to enqueue Civitai
-/// versions flagged as Early Access. Lists the affected titles and lets the user
-/// pick between dropping the EA items, downloading them anyway, or cancelling.
+/// Five-option confirmation dialog shown when the user tries to enqueue Civitai
+/// versions flagged as Early Access: cancel, skip the Early Access items and
+/// download the rest, add them anyway, add them to the waitlist, or open the
+/// model's Civitai page. Lists the affected titles split into two groups —
+/// <see cref="EarlyAccessTitles"/> (temporary, waitlistable) and
+/// <see cref="PermanentTitles"/> (permanently paid, never free, excluded from the
+/// waitlist) — so the dialog can explain why only some titles are waitlistable.
 /// </summary>
 public enum EarlyAccessConfirmResult
 {

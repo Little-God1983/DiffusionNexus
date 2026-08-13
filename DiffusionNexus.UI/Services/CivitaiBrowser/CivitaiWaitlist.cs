@@ -233,7 +233,7 @@ public sealed class CivitaiWaitlist : ObservableObject
             if (_civitaiClient is not null)
             {
                 version = await RefreshEntryAsync(entry, apiKey, ct, utcNow);
-                if (entry.Status != WaitlistEntryStatus.Available)
+                if (version is null || entry.Status != WaitlistEntryStatus.Available)
                 {
                     _logger?.Info(LogCategory.Download, "CivitaiWaitlist",
                         $"Kept on waitlist after re-check: {entry.ModelName} — {entry.VersionName} ({entry.Status})");

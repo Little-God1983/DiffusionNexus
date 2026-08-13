@@ -457,11 +457,14 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     [RelayCommand]
     private async Task MoveReadyWaitlistToQueueAsync()
     {
+        var readyBefore = _waitlist.AvailableCount;
         var apiKey = await GetApiKeyAsync();
         var moved = await _waitlist.MoveReadyToQueueAsync(_queue, apiKey);
-        StatusMessage = moved == 0
+        StatusMessage = readyBefore == 0
             ? "No waitlist entries are ready to download yet."
-            : $"Moved {moved} LoRA{(moved == 1 ? "" : "s")} from the waitlist to the download queue.";
+            : moved == 0
+                ? $"Re-checked {readyBefore} ready entr{(readyBefore == 1 ? "y" : "ies")} — still paywalled or unverifiable; kept on the waitlist."
+                : $"Moved {moved} LoRA{(moved == 1 ? "" : "s")} from the waitlist to the download queue.";
     }
 
     /// <summary>
@@ -944,8 +947,9 @@ public partial class CivitaiBrowserViewModel : ObservableObject
 
     /// <summary>
     /// Filters out any (result, pick) pairs flagged Early Access and shows a
-    /// confirmation dialog when any are present, letting the user choose to add
-    /// them anyway, drop them and download the rest, or cancel.
+    /// confirmation dialog when any are present, letting the user choose among five
+    /// outcomes: cancel, skip the Early Access items and download the rest, add them
+    /// anyway, add them to the waitlist, or open the model's Civitai page.
     /// </summary>
     private async Task EnqueueWithEarlyAccessPromptAsync(
         List<(CivitaiResultViewModel Result, CivitaiVersionPickItemViewModel Pick)> pairs)

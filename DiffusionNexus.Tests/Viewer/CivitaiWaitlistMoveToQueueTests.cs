@@ -112,6 +112,28 @@ public sealed class CivitaiWaitlistMoveToQueueTests : IDisposable
     }
 
     [Fact]
+    public async Task ReadyEntry_ApiThrowsDuringReVerify_StaysOnWaitlistUnenqueued()
+    {
+        var wl = Waitlist(_client.Object);
+        var (r, p) = CivitaiWaitlistTests.Card(CivitaiWaitlistTests.Version(605, Now.AddMinutes(-5)));
+        wl.TryAdd(r, p, Now);
+        _client.Setup(c => c.GetModelVersionAsync(605, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+               .ThrowsAsync(new HttpRequestException("network down"));
+        var queue = Queue();
+
+        var moved = await wl.MoveReadyToQueueAsync(queue, apiKey: null, utcNow: Now);
+
+        moved.Should().Be(0, "a failed re-check must never enqueue an unverified entry");
+        queue.Jobs.Should().BeEmpty();
+        var entry = wl.Entries.Single();
+        // Status itself reverts to Available here — CheckFailedEntry_WithPassedDeadline_StillBecomesAvailable
+        // (CivitaiWaitlistEntryTests) documents that as deliberate: a stale network failure must not pin the
+        // entry, since move-to-queue always re-verifies. StatusDetail is what proves the re-check actually
+        // failed and that the guard above kept it off the queue via the returned version, not via Status.
+        entry.StatusDetail.Should().Be("network down", "the failed re-check's diagnostic must survive");
+    }
+
+    [Fact]
     public async Task NoClient_MovesFromStoredDataOnly()
     {
         // Headless/design-time: no API to verify against — trust the local countdown.

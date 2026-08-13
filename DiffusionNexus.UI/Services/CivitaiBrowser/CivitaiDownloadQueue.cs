@@ -302,7 +302,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             DownloadUrl = primary?.DownloadUrl ?? freshVersion?.DownloadUrl ?? entry.DownloadUrl,
             SizeDisplay = entry.SizeDisplay,
             SizeBytes = entry.SizeBytes,
-            IsEarlyAccess = false, // just verified as no longer gated
+            IsEarlyAccess = false, // verified free, or trusted local countdown (no client to verify with)
             ExpectedSha256 = primary?.Hashes?.SHA256 ?? entry.ExpectedSha256,
             PreviewImageUrl = entry.PreviewImageUrl,
             CivitaiVersion = freshVersion
