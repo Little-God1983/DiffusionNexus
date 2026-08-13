@@ -185,6 +185,22 @@ public partial class CivitaiResultViewModel : ObservableObject
     /// </summary>
     public void NotifyVersionSummaryChanged() => OnPropertyChanged(nameof(SelectedVersionSummary));
 
+    /// <summary>
+    /// Applies an installed-library snapshot to this card and to every version row:
+    /// the card badge lights when ANY version is present locally, each row's badge
+    /// only for its own version.
+    /// </summary>
+    public void ApplyInstalledIndex(CivitaiInstalledIndex index)
+    {
+        var any = false;
+        foreach (var v in Versions)
+        {
+            v.IsInstalled = index.IsInstalled(v.Version);
+            any |= v.IsInstalled;
+        }
+        IsInstalled = any;
+    }
+
     [RelayCommand]
     private void SelectAllVersions()
     {

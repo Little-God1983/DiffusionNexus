@@ -31,8 +31,21 @@ public partial class CivitaiVersionPickItemViewModel : ObservableObject
     /// <summary>True when the version is paywalled forever — waitlisting is pointless.</summary>
     public bool IsPermanentlyPaid { get; }
 
+    /// <summary>
+    /// Purple "EA" only for a gate that actually expires; permanently paid versions
+    /// get the red "PAID" badge instead. Mirrors the card badge rule.
+    /// </summary>
+    public bool ShowEarlyAccessBadge => IsEarlyAccess && !IsPermanentlyPaid;
+
     [ObservableProperty]
     private bool _isSelected;
+
+    /// <summary>
+    /// True when this exact version is already in the local library. Observable because
+    /// the installed snapshot is rebuilt after downloads finish, while cards stay on screen.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isInstalled;
 
     private static string FormatSize(long bytes)
     {

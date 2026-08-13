@@ -7,11 +7,12 @@ using FluentAssertions;
 namespace DiffusionNexus.Tests.Viewer;
 
 /// <summary>
-/// Covers the dialog-choice handling for early-access selections: waitlisting
-/// temporary-EA picks (permanent ones are skipped — they never become free),
-/// opening the Civitai pages, and the pre-existing skip/add-anyway paths.
+/// Covers the pre-download dialog-choice handling: waitlisting temporary-EA picks
+/// (permanent ones are skipped — they never become free), opening the Civitai pages,
+/// skip/download-anyway, and the already-installed group that shares the same single
+/// prompt so a mixed selection never produces two dialogs.
 /// </summary>
-public sealed class EarlyAccessChoiceTests : IDisposable
+public sealed class DownloadPreflightChoiceTests : IDisposable
 {
     private static readonly DateTimeOffset Now = new(2026, 8, 13, 10, 0, 0, TimeSpan.Zero);
     private readonly string _tempDir = Directory.CreateTempSubdirectory("dn-ea-choice").FullName;
@@ -46,7 +47,7 @@ public sealed class EarlyAccessChoiceTests : IDisposable
     {
         var (vm, waitlist, queue, _) = Create();
 
-        vm.ApplyEarlyAccessChoice(EarlyAccessConfirmResult.AddToWaitlist, MixedPairs());
+        vm.ApplyPreflightChoice(DownloadPreflightResult.AddToWaitlist, MixedPairs());
 
         queue.Jobs.Should().ContainSingle(j => j.VersionId == 1, "non-EA picks download immediately");
         waitlist.Entries.Should().ContainSingle(e => e.VersionId == 2, "temporary EA is waitlistable");
@@ -59,7 +60,7 @@ public sealed class EarlyAccessChoiceTests : IDisposable
     {
         var (vm, _, queue, opened) = Create();
 
-        vm.ApplyEarlyAccessChoice(EarlyAccessConfirmResult.OpenWebsite, MixedPairs());
+        vm.ApplyPreflightChoice(DownloadPreflightResult.OpenWebsite, MixedPairs());
 
         queue.Jobs.Should().ContainSingle(j => j.VersionId == 1);
         opened.Should().BeEquivalentTo(
@@ -88,7 +89,7 @@ public sealed class EarlyAccessChoiceTests : IDisposable
         List<(CivitaiResultViewModel Result, CivitaiVersionPickItemViewModel Pick)> pairs =
             [.. result.Versions.Select(pick => (result, pick))];
 
-        vm.ApplyEarlyAccessChoice(EarlyAccessConfirmResult.OpenWebsite, pairs);
+        vm.ApplyPreflightChoice(DownloadPreflightResult.OpenWebsite, pairs);
 
         opened.Should().ContainSingle().Which.Should().Be("https://civitai.com/models/202");
     }
@@ -110,28 +111,28 @@ public sealed class EarlyAccessChoiceTests : IDisposable
         List<(CivitaiResultViewModel Result, CivitaiVersionPickItemViewModel Pick)> pairs =
             [(result, result.Versions[0])];
 
-        vm.ApplyEarlyAccessChoice(EarlyAccessConfirmResult.OpenWebsite, pairs);
+        vm.ApplyPreflightChoice(DownloadPreflightResult.OpenWebsite, pairs);
 
         opened.Should().ContainSingle().Which.Should().StartWith("https://civitai.red/");
     }
 
     [Fact]
-    public void SkipEarlyAccess_QueuesOnlyNonEa()
+    public void SkipFlagged_QueuesOnlyUnflagged()
     {
         var (vm, waitlist, queue, _) = Create();
 
-        vm.ApplyEarlyAccessChoice(EarlyAccessConfirmResult.SkipEarlyAccess, MixedPairs());
+        vm.ApplyPreflightChoice(DownloadPreflightResult.SkipFlagged, MixedPairs());
 
         queue.Jobs.Should().ContainSingle(j => j.VersionId == 1);
         waitlist.Entries.Should().BeEmpty();
     }
 
     [Fact]
-    public void AddAnyway_QueuesEverything()
+    public void DownloadAnyway_QueuesEverything()
     {
         var (vm, _, queue, _) = Create();
 
-        vm.ApplyEarlyAccessChoice(EarlyAccessConfirmResult.AddAnyway, MixedPairs());
+        vm.ApplyPreflightChoice(DownloadPreflightResult.DownloadAnyway, MixedPairs());
 
         queue.Jobs.Should().HaveCount(3);
     }
@@ -141,7 +142,7 @@ public sealed class EarlyAccessChoiceTests : IDisposable
     {
         var (vm, waitlist, queue, opened) = Create();
 
-        vm.ApplyEarlyAccessChoice(EarlyAccessConfirmResult.Cancel, MixedPairs());
+        vm.ApplyPreflightChoice(DownloadPreflightResult.Cancel, MixedPairs());
 
         queue.Jobs.Should().BeEmpty();
         waitlist.Entries.Should().BeEmpty();
@@ -156,5 +157,77 @@ public sealed class EarlyAccessChoiceTests : IDisposable
 
         var (_, tempPick) = CivitaiWaitlistTests.Card(CivitaiWaitlistTests.Version(10, Now.AddDays(7)));
         tempPick.IsPermanentlyPaid.Should().BeFalse();
+    }
+
+    /// <summary>Free version 1, temporary-EA version 2, and free-but-already-owned version 4.</summary>
+    private static List<(CivitaiResultViewModel Result, CivitaiVersionPickItemViewModel Pick)> WithInstalledPairs()
+    {
+        var free = CivitaiWaitlistTests.Card(CivitaiWaitlistTests.Version(1, deadline: null), modelId: 101, name: "Free LoRA");
+        var tempEa = CivitaiWaitlistTests.Card(CivitaiWaitlistTests.Version(2, Now.AddDays(7)), modelId: 102, name: "EA LoRA");
+        var installed = CivitaiWaitlistTests.Card(CivitaiWaitlistTests.Version(4, deadline: null), modelId: 104, name: "Owned LoRA");
+        installed.Pick.IsInstalled = true;
+        return [free, tempEa, installed];
+    }
+
+    [Fact]
+    public void SkipFlagged_SkipsAlreadyInstalledAlongsideEa()
+    {
+        var (vm, _, queue, _) = Create();
+
+        vm.ApplyPreflightChoice(DownloadPreflightResult.SkipFlagged, WithInstalledPairs());
+
+        queue.Jobs.Should().ContainSingle(j => j.VersionId == 1, "only the unflagged version downloads");
+        vm.StatusMessage.Should().Contain("already installed");
+    }
+
+    [Fact]
+    public void DownloadAnyway_ReDownloadsInstalledVersions()
+    {
+        var (vm, _, queue, _) = Create();
+
+        vm.ApplyPreflightChoice(DownloadPreflightResult.DownloadAnyway, WithInstalledPairs());
+
+        queue.Jobs.Should().HaveCount(3, "the user explicitly chose to fetch everything again");
+        queue.Jobs.Should().Contain(j => j.VersionId == 4);
+    }
+
+    [Fact]
+    public void AddToWaitlist_LeavesInstalledVersionsAlone()
+    {
+        var (vm, waitlist, queue, _) = Create();
+
+        vm.ApplyPreflightChoice(DownloadPreflightResult.AddToWaitlist, WithInstalledPairs());
+
+        waitlist.Entries.Should().ContainSingle(e => e.VersionId == 2);
+        queue.Jobs.Should().ContainSingle(j => j.VersionId == 1,
+            "the cautious branch must not re-fetch a file the user already owns");
+        vm.StatusMessage.Should().Contain("already-installed");
+    }
+
+    [Fact]
+    public void OpenWebsite_DoesNotReDownloadInstalledVersions()
+    {
+        var (vm, _, queue, opened) = Create();
+
+        vm.ApplyPreflightChoice(DownloadPreflightResult.OpenWebsite, WithInstalledPairs());
+
+        opened.Should().ContainSingle().Which.Should().Be("https://civitai.com/models/102");
+        queue.Jobs.Should().ContainSingle(j => j.VersionId == 1);
+    }
+
+    [Fact]
+    public void PickBothPaidAndInstalled_IsTreatedAsPaidOnly()
+    {
+        // A version can be early access AND already owned. It must land in exactly one
+        // group, or the dialog double-counts it and "add the rest" loses an item.
+        var (vm, waitlist, queue, _) = Create();
+
+        var pair = CivitaiWaitlistTests.Card(CivitaiWaitlistTests.Version(5, Now.AddDays(4)), modelId: 105, name: "Owned EA LoRA");
+        pair.Pick.IsInstalled = true;
+
+        vm.ApplyPreflightChoice(DownloadPreflightResult.AddToWaitlist, [pair]);
+
+        waitlist.Entries.Should().ContainSingle(e => e.VersionId == 5, "the paywall is the decisive flag");
+        queue.Jobs.Should().BeEmpty();
     }
 }

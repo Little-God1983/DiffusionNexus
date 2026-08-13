@@ -394,14 +394,32 @@
                                                 <TextBlock Text="{Binding SizeDisplay}" Opacity="0.6" FontSize="11"/>
                                               </StackPanel>
                                             </StackPanel>
-                                            <Border Grid.Column="2"
-                                                    IsVisible="{Binding IsEarlyAccess}"
-                                                    Background="#669333EA"
-                                                    CornerRadius="3"
-                                                    Padding="4,1"
-                                                    VerticalAlignment="Center">
-                                              <TextBlock Text="EA" FontSize="9" Foreground="White"/>
-                                            </Border>
+                                            <StackPanel Grid.Column="2"
+                                                        Orientation="Horizontal"
+                                                        Spacing="4"
+                                                        VerticalAlignment="Center">
+                                              <Border IsVisible="{Binding IsInstalled}"
+                                                      Background="#6622C55E"
+                                                      CornerRadius="3"
+                                                      Padding="4,1"
+                                                      ToolTip.Tip="You already have this version in your library">
+                                                <TextBlock Text="INSTALLED" FontSize="9" Foreground="White"/>
+                                              </Border>
+                                              <Border IsVisible="{Binding IsPermanentlyPaid}"
+                                                      Background="#66DC2626"
+                                                      CornerRadius="3"
+                                                      Padding="4,1"
+                                                      ToolTip.Tip="Paywalled indefinitely — buy and download it on Civitai">
+                                                <TextBlock Text="PAID" FontSize="9" Foreground="White"/>
+                                              </Border>
+                                              <Border IsVisible="{Binding ShowEarlyAccessBadge}"
+                                                      Background="#669333EA"
+                                                      CornerRadius="3"
+                                                      Padding="4,1"
+                                                      ToolTip.Tip="Early Access — free once the creator's window ends">
+                                                <TextBlock Text="EA" FontSize="9" Foreground="White"/>
+                                              </Border>
+                                            </StackPanel>
                                           </Grid>
                                         </Border>
                                       </DataTemplate>

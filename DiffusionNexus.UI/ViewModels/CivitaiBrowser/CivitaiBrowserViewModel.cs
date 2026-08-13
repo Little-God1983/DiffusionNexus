@@ -34,8 +34,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     private string? _nextCursor;
     private bool _isLoading;
     private bool _initialized;
-    private HashSet<int> _installedVersionIds = [];
-    private HashSet<string> _installedFileHashes = new(StringComparer.OrdinalIgnoreCase);
+    private CivitaiInstalledIndex _installed = CivitaiInstalledIndex.Empty;
     private CivitaiResultViewModel? _lastClickedItem;
 
     public CivitaiBrowserViewModel()
@@ -347,7 +346,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                 pairs.Add((result, pick));
             }
         }
-        return EnqueueWithEarlyAccessPromptAsync(pairs);
+        return EnqueueWithPreflightPromptAsync(pairs);
     }
 
     [RelayCommand]
@@ -365,7 +364,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     /// <summary>
     /// Clears the download queue. When jobs are still queued or mid-download the user
     /// must confirm first, because clearing cancels them. Without a dialog service
-    /// (headless) it proceeds, matching <see cref="EnqueueWithEarlyAccessPromptAsync"/>.
+    /// (headless) it proceeds, matching <see cref="EnqueueWithPreflightPromptAsync"/>.
     /// </summary>
     [RelayCommand]
     private async Task ClearQueueAsync()
@@ -601,9 +600,9 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                         if (!existingIds.Add(model.Id)) continue;
                         var vm = new CivitaiResultViewModel(model, ShowNsfwContent)
                         {
-                            IsInstalled = IsModelInstalled(model),
                             EnqueueAllVersionsHandler = EnqueueAllVersionsForCard
                         };
+                        vm.ApplyInstalledIndex(_installed);
                         vm.SelectionChanged += OnResultSelectionChanged;
                         Results.Add(vm);
                     }
@@ -739,9 +738,9 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                     if (!existingIds.Add(model.Id)) continue;
                     var vm = new CivitaiResultViewModel(model, ShowNsfwContent)
                     {
-                        IsInstalled = IsModelInstalled(model),
                         EnqueueAllVersionsHandler = EnqueueAllVersionsForCard
                     };
+                    vm.ApplyInstalledIndex(_installed);
                     vm.SelectionChanged += OnResultSelectionChanged;
                     Results.Add(vm);
                 }
@@ -942,16 +941,16 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     private void EnqueueAllVersionsForCard(CivitaiResultViewModel card)
     {
         var pairs = card.Versions.Select(v => (card, v)).ToList();
-        _ = EnqueueWithEarlyAccessPromptAsync(pairs);
+        _ = EnqueueWithPreflightPromptAsync(pairs);
     }
 
     /// <summary>
-    /// Filters out any (result, pick) pairs flagged Early Access and shows a
-    /// confirmation dialog when any are present, letting the user choose among five
-    /// outcomes: cancel, skip the Early Access items and download the rest, add them
-    /// anyway, add them to the waitlist, or open the model's Civitai page.
+    /// Enqueues the (result, pick) pairs, first showing ONE confirmation dialog when any
+    /// of them is paywalled or already installed. Every flagged kind goes into that single
+    /// prompt on purpose — a selection holding both an Early Access and an already-owned
+    /// version must not produce two dialogs in a row.
     /// </summary>
-    private async Task EnqueueWithEarlyAccessPromptAsync(
+    private async Task EnqueueWithPreflightPromptAsync(
         List<(CivitaiResultViewModel Result, CivitaiVersionPickItemViewModel Pick)> pairs)
     {
         if (pairs.Count == 0) return;
@@ -969,14 +968,15 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         }
 
         var eaPairs = pairs.Where(p => p.Pick.IsEarlyAccess).ToList();
-        if (eaPairs.Count == 0)
+        var installedPairs = pairs.Where(IsInstalledOnly).ToList();
+        if (eaPairs.Count == 0 && installedPairs.Count == 0)
         {
-            // No EA items — straight through.
+            // Nothing to warn about — straight through.
             foreach (var (r, p) in pairs) _queue.Enqueue(r, p);
             return;
         }
 
-        // Show the prompt with the EA list. The dialog needs a Window owner.
+        // Show the prompt with the flagged lists. The dialog needs a Window owner.
         var owner = (Avalonia.Application.Current?.ApplicationLifetime
             as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.MainWindow;
         if (owner is null)
@@ -986,57 +986,68 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             return;
         }
 
-        var tempTitles = eaPairs
-            .Where(p => !p.Pick.IsPermanentlyPaid)
-            .Select(p => $"{p.Result.Name} — {p.Pick.Name}")
-            .Distinct()
-            .ToList();
-        var permanentTitles = eaPairs
-            .Where(p => p.Pick.IsPermanentlyPaid)
-            .Select(p => $"{p.Result.Name} — {p.Pick.Name}")
-            .Distinct()
-            .ToList();
+        static List<string> Titles(
+            IEnumerable<(CivitaiResultViewModel Result, CivitaiVersionPickItemViewModel Pick)> source)
+            => source.Select(p => $"{p.Result.Name} — {p.Pick.Name}").Distinct().ToList();
 
-        // The ungated count drives the "add the rest" button: with nothing else in the
+        var tempTitles = Titles(eaPairs.Where(p => !p.Pick.IsPermanentlyPaid));
+        var permanentTitles = Titles(eaPairs.Where(p => p.Pick.IsPermanentlyPaid));
+        var installedTitles = Titles(installedPairs);
+
+        // The unflagged count drives the "add the rest" button: with nothing else in the
         // selection there is no rest to add, so the dialog hides that option entirely.
-        var dialog = new Views.Dialogs.EarlyAccessConfirmDialog(
-            tempTitles, permanentTitles, otherCount: pairs.Count - eaPairs.Count);
+        var dialog = new Views.Dialogs.DownloadPreflightDialog(
+            tempTitles, permanentTitles, installedTitles,
+            otherCount: pairs.Count - eaPairs.Count - installedPairs.Count);
         await dialog.ShowDialog(owner);
-        ApplyEarlyAccessChoice(dialog.Result, pairs);
+        ApplyPreflightChoice(dialog.Result, pairs);
     }
 
     /// <summary>
-    /// Applies the user's early-access dialog choice to the pending (result, pick)
-    /// pairs. Public (not shown-dialog-coupled) so every branch is unit-testable.
+    /// Already-installed picks that aren't ALSO paywalled. A version can be both; the
+    /// paywall is the more consequential warning, so it wins the classification and each
+    /// pick appears in exactly one group of the dialog.
     /// </summary>
-    public void ApplyEarlyAccessChoice(
-        Views.Dialogs.EarlyAccessConfirmResult choice,
+    private static bool IsInstalledOnly(
+        (CivitaiResultViewModel Result, CivitaiVersionPickItemViewModel Pick) pair)
+        => !pair.Pick.IsEarlyAccess && pair.Pick.IsInstalled;
+
+    /// <summary>
+    /// Applies the user's pre-download dialog choice to the pending (result, pick) pairs.
+    /// Public (not shown-dialog-coupled) so every branch is unit-testable.
+    /// </summary>
+    public void ApplyPreflightChoice(
+        Views.Dialogs.DownloadPreflightResult choice,
         List<(CivitaiResultViewModel Result, CivitaiVersionPickItemViewModel Pick)> pairs)
     {
         var eaPairs = pairs.Where(p => p.Pick.IsEarlyAccess).ToList();
-        var nonEa = pairs.Where(p => !p.Pick.IsEarlyAccess).ToList();
+        var installedPairs = pairs.Where(IsInstalledOnly).ToList();
+        var unflagged = pairs.Where(p => !p.Pick.IsEarlyAccess && !p.Pick.IsInstalled).ToList();
 
         switch (choice)
         {
-            case Views.Dialogs.EarlyAccessConfirmResult.Cancel:
+            case Views.Dialogs.DownloadPreflightResult.Cancel:
                 _logger?.Info(LogCategory.Download, "CivitaiQueue",
-                    $"Enqueue cancelled by user — {pairs.Count} version(s) NOT added ({eaPairs.Count} were EA).");
+                    $"Enqueue cancelled by user — {pairs.Count} version(s) NOT added ({eaPairs.Count} paid, {installedPairs.Count} already installed).");
                 return;
 
-            case Views.Dialogs.EarlyAccessConfirmResult.SkipEarlyAccess:
-                foreach (var (r, p) in nonEa) _queue.Enqueue(r, p);
+            case Views.Dialogs.DownloadPreflightResult.SkipFlagged:
+                foreach (var (r, p) in unflagged) _queue.Enqueue(r, p);
+                StatusMessage = DescribeSkip(eaPairs.Count, installedPairs.Count, unflagged.Count);
                 _logger?.Info(LogCategory.Download, "CivitaiQueue",
-                    $"Skipped {eaPairs.Count} Early Access version(s); enqueued {nonEa.Count} non-EA.");
+                    $"Skipped {eaPairs.Count} paid and {installedPairs.Count} already-installed version(s); enqueued {unflagged.Count}.");
                 return;
 
-            case Views.Dialogs.EarlyAccessConfirmResult.AddAnyway:
+            case Views.Dialogs.DownloadPreflightResult.DownloadAnyway:
                 foreach (var (r, p) in pairs) _queue.Enqueue(r, p);
                 _logger?.Info(LogCategory.Download, "CivitaiQueue",
-                    $"User confirmed Early Access enqueue; {pairs.Count} version(s) added ({eaPairs.Count} are EA and will likely 401).");
+                    $"User confirmed download anyway; {pairs.Count} version(s) added ({eaPairs.Count} are paid and will likely 401, {installedPairs.Count} re-downloaded).");
                 return;
 
-            case Views.Dialogs.EarlyAccessConfirmResult.AddToWaitlist:
-                foreach (var (r, p) in nonEa) _queue.Enqueue(r, p);
+            case Views.Dialogs.DownloadPreflightResult.AddToWaitlist:
+                // Installed picks are deliberately NOT enqueued here: the user chose the
+                // cautious branch, so re-fetching a file they already own is not implied.
+                foreach (var (r, p) in unflagged) _queue.Enqueue(r, p);
                 var added = 0;
                 var skippedPermanent = 0;
                 foreach (var (r, p) in eaPairs)
@@ -1044,15 +1055,15 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                     if (p.IsPermanentlyPaid) { skippedPermanent++; continue; }
                     if (_waitlist.TryAdd(r, p)) added++;
                 }
-                StatusMessage = skippedPermanent == 0
-                    ? $"Added {added} LoRA{(added == 1 ? "" : "s")} to the waitlist."
-                    : $"Added {added} LoRA{(added == 1 ? "" : "s")} to the waitlist — {skippedPermanent} permanently paid item{(skippedPermanent == 1 ? "" : "s")} skipped (never becomes free).";
+                StatusMessage = $"Added {added} LoRA{(added == 1 ? "" : "s")} to the waitlist."
+                    + (skippedPermanent == 0 ? "" : $" {skippedPermanent} permanently paid item{(skippedPermanent == 1 ? "" : "s")} skipped (never becomes free).")
+                    + (installedPairs.Count == 0 ? "" : $" {installedPairs.Count} already-installed version{(installedPairs.Count == 1 ? "" : "s")} skipped.");
                 _logger?.Info(LogCategory.Download, "CivitaiWaitlist",
-                    $"Dialog choice AddToWaitlist: {added} waitlisted, {skippedPermanent} permanent skipped, {nonEa.Count} non-EA enqueued.");
+                    $"Dialog choice AddToWaitlist: {added} waitlisted, {skippedPermanent} permanent skipped, {installedPairs.Count} installed skipped, {unflagged.Count} enqueued.");
                 return;
 
-            case Views.Dialogs.EarlyAccessConfirmResult.OpenWebsite:
-                foreach (var (r, p) in nonEa) _queue.Enqueue(r, p);
+            case Views.Dialogs.DownloadPreflightResult.OpenWebsite:
+                foreach (var (r, p) in unflagged) _queue.Enqueue(r, p);
                 foreach (var result in eaPairs.Select(p => p.Result).Distinct())
                 {
                     if (result.Model is null) continue;
@@ -1060,9 +1071,17 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                     OpenUrl($"https://{host}/models/{result.Model.Id}");
                 }
                 _logger?.Info(LogCategory.Download, "CivitaiWaitlist",
-                    $"Dialog choice OpenWebsite: opened {eaPairs.Select(p => p.Result).Distinct().Count()} model page(s), {nonEa.Count} non-EA enqueued.");
+                    $"Dialog choice OpenWebsite: opened {eaPairs.Select(p => p.Result).Distinct().Count()} model page(s), {unflagged.Count} enqueued, {installedPairs.Count} installed skipped.");
                 return;
         }
+    }
+
+    private static string DescribeSkip(int paid, int installed, int enqueued)
+    {
+        var skipped = new List<string>();
+        if (paid > 0) skipped.Add($"{paid} paid");
+        if (installed > 0) skipped.Add($"{installed} already installed");
+        return $"Skipped {string.Join(" and ", skipped)}; queued {enqueued} download{(enqueued == 1 ? "" : "s")}.";
     }
 
     private void OnSelectionChanged()
@@ -1091,21 +1110,14 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             }
 
             var set = await uow.Models.GetInstalledCivitaiVersionIdsAsync(enabledRoots);
-            // Hash fallback: covers orphan DB rows where ModelVersion.CivitaiId is
-            // missing (legacy indexing bugs created duplicate Models without a
-            // CivitaiId — see "Cyberpunk Edgerunners" report) but the file's
-            // SHA256 still matches the Civitai API response.
             var hashes = await uow.Models.GetInstalledFileHashesAsync(enabledRoots);
-            _installedVersionIds = set;
-            _installedFileHashes = hashes;
+            _installed = new CivitaiInstalledIndex(set, hashes);
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                foreach (var r in Results)
-                {
-                    if (r.Model is null) continue;
-                    r.IsInstalled = IsModelInstalled(r.Model);
-                }
+                // Refreshes the card badge AND every version row — a download that just
+                // finished must light up the row it landed in, not only the card.
+                foreach (var r in Results) r.ApplyInstalledIndex(_installed);
                 ApplyClientSideFilters();
             });
         }
@@ -1113,20 +1125,6 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         {
             _logger?.Debug(LogCategory.Network, "CivitaiBrowser", $"Installed-set refresh failed: {ex.Message}");
         }
-    }
-
-    private bool IsModelInstalled(CivitaiModel model)
-    {
-        foreach (var version in model.ModelVersions)
-        {
-            if (_installedVersionIds.Contains(version.Id)) return true;
-            foreach (var file in version.Files)
-            {
-                var sha = file.Hashes?.SHA256;
-                if (!string.IsNullOrEmpty(sha) && _installedFileHashes.Contains(sha)) return true;
-            }
-        }
-        return false;
     }
 
     private async Task<string?> GetApiKeyAsync()
