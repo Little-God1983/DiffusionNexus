@@ -211,6 +211,50 @@ public sealed class CivitaiWaitlist : ObservableObject
         RefreshAvailability(utcNow);
     }
 
+    /// <summary>
+    /// "Move ready to queue": takes entries whose countdown has ended, re-verifies
+    /// each against the API (stored deadlines go stale — creators extend early
+    /// access or flip it to permanent), enqueues the confirmed-free ones, and keeps
+    /// the rest on the waitlist with their corrected state. Returns number moved.
+    /// </summary>
+    public async Task<int> MoveReadyToQueueAsync(
+        CivitaiDownloadQueue queue, string? apiKey, CancellationToken ct = default, DateTimeOffset? utcNow = null)
+    {
+        var ready = Entries.Where(e => e.IsAvailable).ToList();
+        if (ready.Count == 0) return 0;
+
+        _logger?.Info(LogCategory.Download, "CivitaiWaitlist",
+            $"Move to queue: verifying {ready.Count} ready entr{(ready.Count == 1 ? "y" : "ies")}…");
+
+        var moved = 0;
+        foreach (var entry in ready)
+        {
+            CivitaiModelVersion? version = null;
+            if (_civitaiClient is not null)
+            {
+                version = await RefreshEntryAsync(entry, apiKey, ct, utcNow);
+                if (entry.Status != WaitlistEntryStatus.Available)
+                {
+                    _logger?.Info(LogCategory.Download, "CivitaiWaitlist",
+                        $"Kept on waitlist after re-check: {entry.ModelName} — {entry.VersionName} ({entry.Status})");
+                    continue;
+                }
+            }
+
+            // A null job means the version is already queued — the entry's goal is
+            // met either way, so it leaves the waitlist in both cases.
+            queue.EnqueueFromWaitlist(entry, version);
+            Entries.Remove(entry);
+            moved++;
+        }
+
+        Persist();
+        RefreshAvailability(utcNow);
+        _logger?.Info(LogCategory.Download, "CivitaiWaitlist",
+            $"Move to queue complete: {moved} of {ready.Count} moved.");
+        return moved;
+    }
+
     #region Persistence
 
     private string GetPersistPath()

@@ -273,6 +273,50 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         return job;
     }
 
+    /// <summary>
+    /// Enqueues a waitlist entry whose early-access gate has lapsed. Prefers file
+    /// metadata from <paramref name="freshVersion"/> (the just-re-verified API
+    /// response) and falls back to the data captured at waitlist-add time —
+    /// <paramref name="freshVersion"/> is null only in headless/no-client runs.
+    /// Returns null when the version is already queued (same dedup as Enqueue).
+    /// </summary>
+    public CivitaiDownloadJob? EnqueueFromWaitlist(CivitaiWaitlistEntry entry, CivitaiModelVersion? freshVersion)
+    {
+        if (Jobs.Any(j => j.VersionId == entry.VersionId))
+        {
+            _logger?.Debug(LogCategory.Download, "CivitaiQueue",
+                $"Waitlist move skipped duplicate: {entry.ModelName} ({entry.VersionName}) — version {entry.VersionId} already in queue");
+            return null;
+        }
+
+        var primary = freshVersion?.Files.FirstOrDefault(f => f.Primary == true) ?? freshVersion?.Files.FirstOrDefault();
+        var job = new CivitaiDownloadJob
+        {
+            ModelId = entry.ModelId,
+            VersionId = entry.VersionId,
+            ModelName = entry.ModelName,
+            VersionName = entry.VersionName,
+            BaseModel = entry.BaseModel,
+            Category = entry.Category,
+            FileName = primary?.Name ?? entry.FileName,
+            DownloadUrl = primary?.DownloadUrl ?? freshVersion?.DownloadUrl ?? entry.DownloadUrl,
+            SizeDisplay = entry.SizeDisplay,
+            SizeBytes = entry.SizeBytes,
+            IsEarlyAccess = false, // just verified as no longer gated
+            ExpectedSha256 = primary?.Hashes?.SHA256 ?? entry.ExpectedSha256,
+            PreviewImageUrl = entry.PreviewImageUrl,
+            CivitaiVersion = freshVersion
+        };
+        job.ExpectedTargetDir = Destination.BuildTargetDirectory(job.BaseModel, job.Category);
+        Jobs.Add(job);
+        Persist();
+        RaiseCountsChanged();
+        _logger?.Info(LogCategory.Download, "CivitaiQueue",
+            $"Enqueued from waitlist: {entry.ModelName} — {entry.VersionName} ({entry.BaseModel}, {entry.SizeDisplay})",
+            $"VersionId: {entry.VersionId}\nFile: {job.FileName}\nUrl: {job.DownloadUrl}");
+        return job;
+    }
+
     public void Remove(CivitaiDownloadJob job)
     {
         // If the tile is removed mid-download, cancel the in-flight transfer first
