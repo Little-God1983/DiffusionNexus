@@ -18,6 +18,7 @@ public partial class CivitaiVersionPickItemViewModel : ObservableObject
         SizeBytes = (long)((primaryFile?.SizeKB ?? 0) * 1024);
         SizeDisplay = FormatSize(SizeBytes);
         IsEarlyAccess = version.IsEarlyAccessActive();
+        IsPermanentlyPaid = version.IsPermanentlyPaid();
     }
 
     public CivitaiModelVersion Version { get; }
@@ -26,6 +27,9 @@ public partial class CivitaiVersionPickItemViewModel : ObservableObject
     public long SizeBytes { get; }
     public string SizeDisplay { get; }
     public bool IsEarlyAccess { get; }
+
+    /// <summary>True when the version is paywalled forever — waitlisting is pointless.</summary>
+    public bool IsPermanentlyPaid { get; }
 
     [ObservableProperty]
     private bool _isSelected;

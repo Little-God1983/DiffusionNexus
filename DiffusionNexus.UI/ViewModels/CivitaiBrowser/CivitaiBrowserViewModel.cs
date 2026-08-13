@@ -982,15 +982,34 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             return;
         }
 
-        var titles = eaPairs
+        var tempTitles = eaPairs
+            .Where(p => !p.Pick.IsPermanentlyPaid)
+            .Select(p => $"{p.Result.Name} — {p.Pick.Name}")
+            .Distinct()
+            .ToList();
+        var permanentTitles = eaPairs
+            .Where(p => p.Pick.IsPermanentlyPaid)
             .Select(p => $"{p.Result.Name} — {p.Pick.Name}")
             .Distinct()
             .ToList();
 
-        var dialog = new Views.Dialogs.EarlyAccessConfirmDialog(titles);
+        var dialog = new Views.Dialogs.EarlyAccessConfirmDialog(tempTitles, permanentTitles);
         await dialog.ShowDialog(owner);
+        ApplyEarlyAccessChoice(dialog.Result, pairs);
+    }
 
-        switch (dialog.Result)
+    /// <summary>
+    /// Applies the user's early-access dialog choice to the pending (result, pick)
+    /// pairs. Public (not shown-dialog-coupled) so every branch is unit-testable.
+    /// </summary>
+    public void ApplyEarlyAccessChoice(
+        Views.Dialogs.EarlyAccessConfirmResult choice,
+        List<(CivitaiResultViewModel Result, CivitaiVersionPickItemViewModel Pick)> pairs)
+    {
+        var eaPairs = pairs.Where(p => p.Pick.IsEarlyAccess).ToList();
+        var nonEa = pairs.Where(p => !p.Pick.IsEarlyAccess).ToList();
+
+        switch (choice)
         {
             case Views.Dialogs.EarlyAccessConfirmResult.Cancel:
                 _logger?.Info(LogCategory.Download, "CivitaiQueue",
@@ -998,7 +1017,6 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                 return;
 
             case Views.Dialogs.EarlyAccessConfirmResult.SkipEarlyAccess:
-                var nonEa = pairs.Where(p => !p.Pick.IsEarlyAccess).ToList();
                 foreach (var (r, p) in nonEa) _queue.Enqueue(r, p);
                 _logger?.Info(LogCategory.Download, "CivitaiQueue",
                     $"Skipped {eaPairs.Count} Early Access version(s); enqueued {nonEa.Count} non-EA.");
@@ -1008,6 +1026,34 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                 foreach (var (r, p) in pairs) _queue.Enqueue(r, p);
                 _logger?.Info(LogCategory.Download, "CivitaiQueue",
                     $"User confirmed Early Access enqueue; {pairs.Count} version(s) added ({eaPairs.Count} are EA and will likely 401).");
+                return;
+
+            case Views.Dialogs.EarlyAccessConfirmResult.AddToWaitlist:
+                foreach (var (r, p) in nonEa) _queue.Enqueue(r, p);
+                var added = 0;
+                var skippedPermanent = 0;
+                foreach (var (r, p) in eaPairs)
+                {
+                    if (p.IsPermanentlyPaid) { skippedPermanent++; continue; }
+                    if (_waitlist.TryAdd(r, p)) added++;
+                }
+                StatusMessage = skippedPermanent == 0
+                    ? $"Added {added} LoRA{(added == 1 ? "" : "s")} to the waitlist."
+                    : $"Added {added} LoRA{(added == 1 ? "" : "s")} to the waitlist — {skippedPermanent} permanently paid item{(skippedPermanent == 1 ? "" : "s")} skipped (never becomes free).";
+                _logger?.Info(LogCategory.Download, "CivitaiWaitlist",
+                    $"Dialog choice AddToWaitlist: {added} waitlisted, {skippedPermanent} permanent skipped, {nonEa.Count} non-EA enqueued.");
+                return;
+
+            case Views.Dialogs.EarlyAccessConfirmResult.OpenWebsite:
+                foreach (var (r, p) in nonEa) _queue.Enqueue(r, p);
+                foreach (var result in eaPairs.Select(p => p.Result).Distinct())
+                {
+                    if (result.Model is null) continue;
+                    var host = result.IsNsfw ? "civitai.red" : "civitai.com";
+                    OpenUrl($"https://{host}/models/{result.Model.Id}");
+                }
+                _logger?.Info(LogCategory.Download, "CivitaiWaitlist",
+                    $"Dialog choice OpenWebsite: opened {eaPairs.Select(p => p.Result).Distinct().Count()} model page(s), {nonEa.Count} non-EA enqueued.");
                 return;
         }
     }
