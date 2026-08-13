@@ -553,6 +553,11 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             var taskName = $"Download {job.ModelName} ({job.VersionName})";
             var coordinator = App.Services?.GetService<IDownloadCoordinator>();
 
+            // The file can land perfectly while its Civitai metadata fetch fails. That
+            // used to finish as a plain "Done", leaving the LoRA with no description,
+            // tags or preview and no hint of why.
+            var metadataComplete = true;
+
             // Local function — the actual download. The Coordinator wraps this and
             // pushes the aggregated "N downloads in progress" view to the activity log,
             // so we explicitly tell the download service NOT to also publish progress
@@ -597,7 +602,8 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                         tcs.TrySetResult(false);
                     }),
                     externalCancellationToken: coordCt,
-                    reportToActivityLog: coordinator is null);
+                    reportToActivityLog: coordinator is null,
+                    metadataIncomplete: () => metadataComplete = false);
 
                 // The completed/failed callbacks above set the TCS. Wait on it for
                 // the boolean result that the coordinator wants.
@@ -651,7 +657,18 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             // would be redundant and nothing in the app reads them back.
 
             job.Status = JobStatus.Completed;
-            job.StatusMessage = "Done";
+            if (metadataComplete)
+            {
+                job.StatusMessage = "Done";
+            }
+            else
+            {
+                job.StatusMessage = "Done — no metadata";
+                _logger?.Warn(LogCategory.Download, "CivitaiQueue",
+                    $"{job.ModelName} — {job.VersionName} downloaded, but its Civitai metadata could not be fetched. "
+                    + "Use Download Metadata on the model in the Installed tab to fill it in.",
+                    $"VersionId: {job.VersionId}\nFile: {job.TargetPath}");
+            }
         }
         catch (OperationCanceledException)
         {

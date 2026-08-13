@@ -196,6 +196,31 @@ public sealed class CivitaiClient : ICivitaiClient, IDisposable
 
     #region HTTP Helpers
 
+    /// <summary>
+    /// Test seam: replaces the retry backoff so tests exercise the retry loop without
+    /// sleeping. Receives the zero-based attempt number.
+    /// </summary>
+    internal Func<int, TimeSpan>? RetryDelayOverride { get; set; }
+
+    /// <summary>
+    /// Backoff before re-issuing a request that failed for a reason the next attempt
+    /// might not hit: 1s, 2s, 4s. Deliberately shorter than the rate-limit backoff —
+    /// a 502 from the CDN is not a quota, and callers are often waiting on a download.
+    /// </summary>
+    private TimeSpan TransientDelay(int attempt)
+        => RetryDelayOverride?.Invoke(attempt) ?? TimeSpan.FromSeconds(Math.Pow(2, attempt));
+
+    private TimeSpan RateLimitDelay(int attempt, TimeSpan? retryAfter)
+        => RetryDelayOverride?.Invoke(attempt) ?? retryAfter ?? TimeSpan.FromSeconds(Math.Pow(2, attempt + 1) * 5);
+
+    /// <summary>
+    /// 5xx responses are the server having a moment, not an answer about the resource —
+    /// Civitai fronts its API with a CDN that emits 502/503/504 under load. Everything
+    /// else in the 4xx range is a real answer and is never retried.
+    /// </summary>
+    private static bool IsTransientStatus(System.Net.HttpStatusCode status)
+        => (int)status >= 500;
+
     private async Task<T?> GetAsync<T>(string endpoint, string? apiKey, CancellationToken cancellationToken)
         where T : class
     {
@@ -203,77 +228,77 @@ public sealed class CivitaiClient : ICivitaiClient, IDisposable
 
         for (var attempt = 0; attempt <= maxRetries; attempt++)
         {
-            // Build an absolute URL so we work regardless of whether BaseAddress
-            // was successfully assigned (see TryConfigureBaseAddress).
-            var requestUri = _httpClient.BaseAddress is null
-                ? new Uri(BaseUrl + endpoint)
-                : new Uri(_httpClient.BaseAddress, endpoint);
-            using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
-
-            if (!string.IsNullOrWhiteSpace(apiKey))
-            {
-                // Civitai expects the "ApiKey" scheme, not "Bearer"
-                request.Headers.TryAddWithoutValidation("Authorization", $"ApiKey {apiKey}");
-            }
-
-            using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-
-            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
-            {
-                return null;
-            }
-
-            // Handle rate limiting with automatic retry
-            if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
-            {
-                if (attempt == maxRetries) break;
-
-                // Respect Retry-After header, or use exponential backoff
-                var retryAfter = response.Headers.RetryAfter?.Delta
-                    ?? TimeSpan.FromSeconds(Math.Pow(2, attempt + 1) * 5);
-
-                await Task.Delay(retryAfter, cancellationToken);
-                continue;
-            }
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
-                throw new HttpRequestException(
-                    $"Civitai API {(int)response.StatusCode} for {endpoint}: {errorBody}",
-                    null,
-                    response.StatusCode);
-            }
-
-            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            HttpResponseMessage? response = null;
             try
             {
-                return JsonSerializer.Deserialize<T>(responseBody, JsonOptions);
+                // Build an absolute URL so we work regardless of whether BaseAddress
+                // was successfully assigned (see TryConfigureBaseAddress).
+                var requestUri = _httpClient.BaseAddress is null
+                    ? new Uri(BaseUrl + endpoint)
+                    : new Uri(_httpClient.BaseAddress, endpoint);
+                using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
+
+                if (!string.IsNullOrWhiteSpace(apiKey))
+                {
+                    // Civitai expects the "ApiKey" scheme, not "Bearer"
+                    request.Headers.TryAddWithoutValidation("Authorization", $"ApiKey {apiKey}");
+                }
+
+                response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+
+                if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                {
+                    return null;
+                }
+
+                // Handle rate limiting with automatic retry
+                if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+                {
+                    if (attempt == maxRetries) break;
+
+                    // Respect Retry-After header, or use exponential backoff
+                    var retryAfter = RateLimitDelay(attempt, response.Headers.RetryAfter?.Delta);
+
+                    await Task.Delay(retryAfter, cancellationToken);
+                    continue;
+                }
+
+                // Transient server-side failure: retry before giving up. Callers persist
+                // freshly downloaded metadata off the back of this call, and a single 502
+                // used to cost that model its entire metadata record.
+                if (IsTransientStatus(response.StatusCode) && attempt < maxRetries)
+                {
+                    await Task.Delay(TransientDelay(attempt), cancellationToken);
+                    continue;
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+                    throw new HttpRequestException(
+                        $"Civitai API {(int)response.StatusCode} for {endpoint}: {errorBody}",
+                        null,
+                        response.StatusCode);
+                }
+
+                var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+                return DeserializeOrThrow<T>(responseBody, endpoint);
             }
-            catch (JsonException ex)
+            // Connection reset / DNS blip / TLS failure: HttpRequestException with no
+            // StatusCode. The ones this method throws itself always carry a status, so
+            // this filter cannot swallow a real API error.
+            catch (HttpRequestException ex) when (ex.StatusCode is null && attempt < maxRetries)
             {
-                // Civitai periodically changes response shapes (see TolerantEnumConverterFactory
-                // above); when that breaks deserialization of a field this client isn't tolerant
-                // of yet, keep the offending payload so the failure is diagnosable from logs alone.
-                const int maxBodyLength = 4000;
-                string snippet;
-                if (responseBody.Length > maxBodyLength)
-                {
-                    // Back off one char when the cut would land between a surrogate pair —
-                    // model names/descriptions carry emoji, and slicing a pair in half leaves
-                    // a lone surrogate (an ill-formed string) in the diagnostic message.
-                    var cut = char.IsHighSurrogate(responseBody[maxBodyLength - 1])
-                        ? maxBodyLength - 1
-                        : maxBodyLength;
-                    snippet = responseBody[..cut] + "... (truncated)";
-                }
-                else
-                {
-                    snippet = responseBody;
-                }
-                throw new JsonException(
-                    $"Failed to deserialize Civitai response for {endpoint} as {typeof(T).Name}: {ex.Message} Raw response: {snippet}",
-                    ex);
+                await Task.Delay(TransientDelay(attempt), cancellationToken);
+            }
+            // HttpClient's own timeout surfaces as a cancellation with OUR token untouched.
+            catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested && attempt < maxRetries)
+            {
+                await Task.Delay(TransientDelay(attempt), cancellationToken);
+            }
+            finally
+            {
+                response?.Dispose();
             }
         }
 
@@ -282,6 +307,44 @@ public sealed class CivitaiClient : ICivitaiClient, IDisposable
             $"Civitai API rate limited after {maxRetries} retries for {endpoint}",
             null,
             System.Net.HttpStatusCode.TooManyRequests);
+    }
+
+    /// <summary>
+    /// Deserializes a successful response, or throws a <see cref="JsonException"/> carrying
+    /// the offending payload. Never retried — a shape change does not fix itself.
+    /// </summary>
+    private static T? DeserializeOrThrow<T>(string responseBody, string endpoint)
+        where T : class
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<T>(responseBody, JsonOptions);
+        }
+        catch (JsonException ex)
+        {
+            // Civitai periodically changes response shapes (see TolerantEnumConverterFactory
+            // above); when that breaks deserialization of a field this client isn't tolerant
+            // of yet, keep the offending payload so the failure is diagnosable from logs alone.
+            const int maxBodyLength = 4000;
+            string snippet;
+            if (responseBody.Length > maxBodyLength)
+            {
+                // Back off one char when the cut would land between a surrogate pair —
+                // model names/descriptions carry emoji, and slicing a pair in half leaves
+                // a lone surrogate (an ill-formed string) in the diagnostic message.
+                var cut = char.IsHighSurrogate(responseBody[maxBodyLength - 1])
+                    ? maxBodyLength - 1
+                    : maxBodyLength;
+                snippet = responseBody[..cut] + "... (truncated)";
+            }
+            else
+            {
+                snippet = responseBody;
+            }
+            throw new JsonException(
+                $"Failed to deserialize Civitai response for {endpoint} as {typeof(T).Name}: {ex.Message} Raw response: {snippet}",
+                ex);
+        }
     }
 
     #endregion

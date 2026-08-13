@@ -11,6 +11,18 @@ using Microsoft.Extensions.DependencyInjection;
 namespace DiffusionNexus.UI.Services;
 
 /// <summary>
+/// How much metadata a download managed to record. <see cref="Partial"/> means the row
+/// exists but the model-page fetch came back empty, so description/tags/licence are
+/// missing; <see cref="Failed"/> means nothing was written at all.
+/// </summary>
+public enum MetadataPersistOutcome
+{
+    Complete,
+    Partial,
+    Failed
+}
+
+/// <summary>
 /// Downloads LoRA files from Civitai and persists their metadata to the local database.
 /// </summary>
 public sealed class LoraDownloadService
@@ -43,7 +55,8 @@ public sealed class LoraDownloadService
         Action? failed = null,
         int? existingModelId = null,
         CancellationToken externalCancellationToken = default,
-        bool reportToActivityLog = true)
+        bool reportToActivityLog = true,
+        Action? metadataIncomplete = null)
     {
         var taskTracker = App.Services?.GetService<ITaskTracker>();
         // When the caller is the Civitai download queue, the IDownloadCoordinator
@@ -204,11 +217,33 @@ public sealed class LoraDownloadService
                     ? $"{finalMb:F1} / {totalBytes.Value / (1024.0 * 1024.0):F1} MB"
                     : $"{finalMb:F1} MB";
 
-                await PersistDownloadedModelAsync(targetPath, civitaiVersion, existingModelId);
+                var outcome = await PersistDownloadedModelAsync(targetPath, civitaiVersion, existingModelId);
+                var persisted = outcome != MetadataPersistOutcome.Failed;
+                if (!persisted)
+                {
+                    // The bytes are on disk, so the file itself can answer the question the
+                    // API call just failed to: look the version up by its own hash — the
+                    // same route the Installed tab's "Download Metadata" button takes.
+                    persisted = await TryRepairMetadataByHashAsync(targetPath, existingModelId, ct);
+                }
 
-                taskHandle?.Complete($"{Path.GetFileName(targetPath)} downloaded successfully — {sizeText}");
-                activityLog?.CompleteDownloadProgress(true,
-                    $"{Path.GetFileName(targetPath)} downloaded successfully — {sizeText}");
+                if (persisted)
+                {
+                    taskHandle?.Complete($"{Path.GetFileName(targetPath)} downloaded successfully — {sizeText}");
+                    activityLog?.CompleteDownloadProgress(true,
+                        $"{Path.GetFileName(targetPath)} downloaded successfully — {sizeText}");
+                }
+                else
+                {
+                    // Never report plain success here: the file is usable but has no
+                    // metadata, and silence is what sent users hunting for the
+                    // "Download Metadata" button in the Installed tab.
+                    var warning = $"{Path.GetFileName(targetPath)} downloaded — metadata unavailable, use Download Metadata in the Installed tab";
+                    taskHandle?.Complete(warning);
+                    activityLog?.CompleteDownloadProgress(true, warning);
+                    metadataIncomplete?.Invoke();
+                }
+
                 completed?.Invoke();
             }
         }
@@ -243,8 +278,10 @@ public sealed class LoraDownloadService
 
     /// <summary>
     /// Persists the downloaded model to <c>Diffusion_Nexus-core.db</c> with full Civitai metadata.
+    /// Returns <c>false</c> when the metadata could not be written — the caller must not
+    /// report the download as fully successful in that case.
     /// </summary>
-    public async Task PersistDownloadedModelAsync(string filePath, CivitaiModelVersion civitaiVersion, int? existingModelId = null)
+    public async Task<MetadataPersistOutcome> PersistDownloadedModelAsync(string filePath, CivitaiModelVersion civitaiVersion, int? existingModelId = null)
     {
         try
         {
@@ -253,7 +290,7 @@ public sealed class LoraDownloadService
             {
                 _logger?.Warn(LogCategory.Download, "LoraDownload",
                     "Cannot persist to database: IServiceScopeFactory not available");
-                return;
+                return MetadataPersistOutcome.Failed;
             }
 
             using var scope = scopeFactory.CreateScope();
@@ -271,7 +308,7 @@ public sealed class LoraDownloadService
                 {
                     _logger?.Debug(LogCategory.Download, "LoraDownload",
                         $"File already in database: {filePath}");
-                    return;
+                    return MetadataPersistOutcome.Complete;
                 }
 
                 _logger?.Warn(LogCategory.Download, "LoraDownload",
@@ -588,12 +625,71 @@ public sealed class LoraDownloadService
             _logger?.Info(LogCategory.Download, "LoraDownload",
                 $"Persisted '{model.Name}' v'{version.Name}' to database ({(isExistingModel ? "added to existing" : "new model")})",
                 $"ModelId={model.Id}, VersionId={version.Id}, CivitaiPageId={modelPageId}");
+
+            if (civitaiModel is null)
+            {
+                _logger?.Warn(LogCategory.Download, "LoraDownload",
+                    $"Saved '{model.Name}' without model-page metadata (description, tags, licence) — the Civitai model lookup returned nothing.",
+                    $"ModelId={effectiveVersion.ModelId}, VersionId={civitaiVersion.Id}, Path: {filePath}");
+                return MetadataPersistOutcome.Partial;
+            }
+
+            return MetadataPersistOutcome.Complete;
         }
         catch (Exception ex)
         {
-            _logger?.Warn(LogCategory.Download, "LoraDownload",
-                $"Failed to persist model to database: {ex.Message}");
+            // Error, not Warn: nothing was written, so this download has NO metadata at
+            // all. Reported to the caller so it can attempt the hash-based repair rather
+            // than announcing a clean success.
+            _logger?.Error(LogCategory.Download, "LoraDownload",
+                $"Failed to persist model metadata for '{Path.GetFileName(filePath)}': {ex.Message}", ex);
+            return MetadataPersistOutcome.Failed;
         }
+    }
+
+    /// <summary>
+    /// Last-resort metadata fetch after <see cref="PersistDownloadedModelAsync"/> failed:
+    /// hashes the file that was just written and looks the version up by hash — the same
+    /// route the Installed tab's "Download Metadata" button uses, and the one users found
+    /// themselves when a download landed without metadata.
+    /// </summary>
+    private async Task<bool> TryRepairMetadataByHashAsync(string filePath, int? existingModelId, CancellationToken ct)
+    {
+        if (_civitaiClient is null) return false;
+
+        try
+        {
+            var hash = await Task.Run(() => ComputeSha256(filePath), ct);
+            var apiKey = await GetApiKeyAsync();
+
+            _logger?.Info(LogCategory.Download, "LoraDownload",
+                $"Retrying metadata for '{Path.GetFileName(filePath)}' by file hash",
+                $"SHA256: {hash}");
+
+            var version = await _civitaiClient.GetModelVersionByHashAsync(hash, apiKey, ct);
+            if (version is null)
+            {
+                _logger?.Warn(LogCategory.Download, "LoraDownload",
+                    $"No Civitai match by hash for '{Path.GetFileName(filePath)}' — the file stays without metadata.");
+                return false;
+            }
+
+            var outcome = await PersistDownloadedModelAsync(filePath, version, existingModelId);
+            return outcome != MetadataPersistOutcome.Failed;
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error(LogCategory.Download, "LoraDownload",
+                $"Hash-based metadata retry failed for '{Path.GetFileName(filePath)}': {ex.Message}", ex);
+            return false;
+        }
+    }
+
+    private static string ComputeSha256(string path)
+    {
+        using var stream = File.OpenRead(path);
+        using var sha = System.Security.Cryptography.SHA256.Create();
+        return Convert.ToHexString(sha.ComputeHash(stream));
     }
 
     private async Task<string?> GetApiKeyAsync()
