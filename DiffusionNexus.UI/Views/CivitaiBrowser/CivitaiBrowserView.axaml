@@ -283,11 +283,18 @@
                                   Padding="6,2">
                             <TextBlock Text="Installed" FontSize="10" Foreground="White"/>
                           </Border>
-                          <Border IsVisible="{Binding IsEarlyAccess}"
+                          <Border IsVisible="{Binding ShowEarlyAccessBadge}"
                                   Background="#AA9333EA"
                                   CornerRadius="4"
                                   Padding="6,2">
                             <TextBlock Text="Early Access" FontSize="10" Foreground="White"/>
+                          </Border>
+                          <Border IsVisible="{Binding IsPermanentlyPaid}"
+                                  Background="#AADC2626"
+                                  CornerRadius="4"
+                                  Padding="6,2"
+                                  ToolTip.Tip="Permanently paid — this model never becomes free; it can only be bought on Civitai">
+                            <TextBlock Text="Paywalled" FontSize="10" Foreground="White"/>
                           </Border>
                         </StackPanel>
                         <Border Background="#AA000000"

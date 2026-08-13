@@ -49,6 +49,7 @@ public partial class CivitaiResultViewModel : ObservableObject
         // Only flag the model as EA when the *latest* version is in early access;
         // older non-EA versions are still freely available even if newer ones aren't.
         IsEarlyAccess = first.IsEarlyAccessActive();
+        IsPermanentlyPaid = first.IsPermanentlyPaid();
 
         foreach (var v in model.ModelVersions)
         {
@@ -133,6 +134,15 @@ public partial class CivitaiResultViewModel : ObservableObject
     public int DownloadCount { get; private init; }
     public int ThumbsUp { get; private init; }
     public bool IsEarlyAccess { get; private init; }
+
+    /// <summary>Latest version is paywalled forever (paidAccess.permanent) — same
+    /// latest-version-only semantic as <see cref="IsEarlyAccess"/>.</summary>
+    public bool IsPermanentlyPaid { get; private init; }
+
+    /// <summary>"Early Access" badge visibility — suppressed when the stronger
+    /// "Paywalled" badge applies, so the two never stack.</summary>
+    public bool ShowEarlyAccessBadge => IsEarlyAccess && !IsPermanentlyPaid;
+
     public bool IsNsfw { get; private init; }
     public string Category { get; private init; } = string.Empty;
     private bool _isVideoPreview;
