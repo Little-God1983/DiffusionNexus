@@ -121,6 +121,96 @@ public sealed class CivitaiWaitlist : ObservableObject
         RaiseCounts();
     }
 
+    // CivitaiClient retries 429s but has NO client-side throttle — cap concurrent
+    // re-checks the same way CivitaiResultViewModel gates video extraction.
+    private static readonly SemaphoreSlim s_refreshGate = new(3, 3);
+
+    /// <summary>
+    /// Re-checks one entry against the API and applies the outcome matrix:
+    /// still gated → deadline updated (creators extend early access); free →
+    /// Available; permanent → flagged (never auto-removed); 404 → Unavailable;
+    /// network error → CheckFailed with old data kept. Returns the fetched
+    /// version so move-to-queue can reuse it without a second fetch.
+    /// </summary>
+    public async Task<CivitaiModelVersion?> RefreshEntryAsync(
+        CivitaiWaitlistEntry entry, string? apiKey, CancellationToken ct = default, DateTimeOffset? utcNow = null)
+    {
+        if (_civitaiClient is null) return null;
+        var now = utcNow ?? DateTimeOffset.UtcNow;
+
+        await s_refreshGate.WaitAsync(ct).ConfigureAwait(false);
+        CivitaiModelVersion? version = null;
+        try
+        {
+            _logger?.Debug(LogCategory.Download, "CivitaiWaitlist",
+                $"Re-checking: {entry.ModelName} — {entry.VersionName} (version {entry.VersionId})");
+            version = await _civitaiClient.GetModelVersionAsync(entry.VersionId, apiKey, ct).ConfigureAwait(false);
+
+            if (version is null)
+            {
+                entry.Status = WaitlistEntryStatus.Unavailable;
+                entry.StatusDetail = "The model version no longer exists on Civitai.";
+            }
+            else if (version.IsPermanentlyPaid())
+            {
+                entry.Status = WaitlistEntryStatus.PermanentlyPaid;
+                entry.StatusDetail = null;
+            }
+            else if (version.IsEarlyAccessActive(now))
+            {
+                entry.EarlyAccessDeadline = version.EarlyAccessDeadline ?? version.PaidAccess?.EndsAt;
+                entry.Status = WaitlistEntryStatus.Waiting;
+                entry.StatusDetail = null;
+            }
+            else
+            {
+                entry.EarlyAccessDeadline = version.EarlyAccessDeadline;
+                entry.Status = WaitlistEntryStatus.Available;
+                entry.StatusDetail = null;
+            }
+            entry.LastCheckedAt = now;
+            _logger?.Info(LogCategory.Download, "CivitaiWaitlist",
+                $"Re-check result: {entry.ModelName} — {entry.VersionName} → {entry.Status}" +
+                (entry.EarlyAccessDeadline is { } d ? $" (deadline {d:u})" : ""));
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Old deadline and LastCheckedAt survive — a flaky connection must
+            // not wipe a countdown the user is relying on.
+            entry.Status = WaitlistEntryStatus.CheckFailed;
+            entry.StatusDetail = ex.Message;
+            _logger?.Warn(LogCategory.Download, "CivitaiWaitlist",
+                $"Re-check failed for {entry.ModelName} — {entry.VersionName}: {ex.Message}");
+        }
+        finally
+        {
+            s_refreshGate.Release();
+        }
+
+        entry.RefreshAvailability(utcNow);
+        return version;
+    }
+
+    /// <summary>"Update all" — re-checks every entry (gated to 3 concurrent), then persists.</summary>
+    public async Task RefreshAllAsync(string? apiKey, CancellationToken ct = default, DateTimeOffset? utcNow = null)
+    {
+        if (_civitaiClient is null)
+        {
+            RefreshAvailability(utcNow);
+            return;
+        }
+        var entries = Entries.ToList();
+        _logger?.Info(LogCategory.Download, "CivitaiWaitlist",
+            $"Updating waitlist: re-checking {entries.Count} entr{(entries.Count == 1 ? "y" : "ies")} against Civitai…");
+        await Task.WhenAll(entries.Select(e => RefreshEntryAsync(e, apiKey, ct, utcNow)));
+        Persist();
+        RefreshAvailability(utcNow);
+    }
+
     #region Persistence
 
     private string GetPersistPath()
