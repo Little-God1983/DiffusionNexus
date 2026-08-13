@@ -32,19 +32,33 @@ public partial class EarlyAccessConfirmDialog : Window
     /// <summary>Permanently paid titles — never free, excluded from the waitlist.</summary>
     public IReadOnlyList<string> PermanentTitles { get; }
 
-    public int EarlyAccessCount => EarlyAccessTitles.Count + PermanentTitles.Count;
+    /// <summary>Ungated versions in the same selection — what "add the rest" refers to.</summary>
+    public int OtherCount { get; }
+
     public bool HasWaitlistable => EarlyAccessTitles.Count > 0;
     public bool HasPermanent => PermanentTitles.Count > 0;
+    public bool HasOthers => OtherCount > 0;
+
+    public string WindowTitle => EarlyAccessDialogCopy.WindowTitle(EarlyAccessTitles.Count, PermanentTitles.Count);
+    public string HeaderText => EarlyAccessDialogCopy.Header(EarlyAccessTitles.Count, PermanentTitles.Count);
+    public string TemporaryLead => EarlyAccessDialogCopy.SelectionLead(EarlyAccessTitles.Count);
+    public string TemporaryTail => EarlyAccessDialogCopy.TemporaryTail(EarlyAccessTitles.Count);
+    public string PermanentLead => EarlyAccessDialogCopy.SelectionLead(PermanentTitles.Count);
+    public string PermanentTail => EarlyAccessDialogCopy.PermanentTail(PermanentTitles.Count);
+    public string SkipButtonText => EarlyAccessDialogCopy.SkipButtonText(EarlyAccessTitles.Count, PermanentTitles.Count);
+    public string WaitlistButtonTooltip => EarlyAccessDialogCopy.WaitlistButtonTooltip(OtherCount);
 
     /// <summary>Design-time / XAML loader constructor.</summary>
     public EarlyAccessConfirmDialog() : this([], []) { }
 
     public EarlyAccessConfirmDialog(
         IReadOnlyList<string> earlyAccessTitles,
-        IReadOnlyList<string>? permanentTitles = null)
+        IReadOnlyList<string>? permanentTitles = null,
+        int otherCount = 0)
     {
         EarlyAccessTitles = earlyAccessTitles;
         PermanentTitles = permanentTitles ?? [];
+        OtherCount = otherCount;
         DataContext = this;
         InitializeComponent();
     }

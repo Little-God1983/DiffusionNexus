@@ -997,7 +997,10 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             .Distinct()
             .ToList();
 
-        var dialog = new Views.Dialogs.EarlyAccessConfirmDialog(tempTitles, permanentTitles);
+        // The ungated count drives the "add the rest" button: with nothing else in the
+        // selection there is no rest to add, so the dialog hides that option entirely.
+        var dialog = new Views.Dialogs.EarlyAccessConfirmDialog(
+            tempTitles, permanentTitles, otherCount: pairs.Count - eaPairs.Count);
         await dialog.ShowDialog(owner);
         ApplyEarlyAccessChoice(dialog.Result, pairs);
     }
