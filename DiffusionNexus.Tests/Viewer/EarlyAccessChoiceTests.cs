@@ -1,3 +1,4 @@
+using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.UI.Services.CivitaiBrowser;
 using DiffusionNexus.UI.ViewModels.CivitaiBrowser;
 using DiffusionNexus.UI.Views.Dialogs;
@@ -64,6 +65,54 @@ public sealed class EarlyAccessChoiceTests : IDisposable
         opened.Should().BeEquivalentTo(
             "https://civitai.com/models/102",
             "https://civitai.com/models/103");
+    }
+
+    [Fact]
+    public void OpenWebsite_TwoEaVersionsOfSameModel_OpensOnlyOnePage()
+    {
+        // Same model, two EA versions selected — mirrors how AddSelectionToQueueAsync
+        // reuses one CivitaiResultViewModel reference across multiple picks.
+        var (vm, _, _, opened) = Create();
+
+        var model = new CivitaiModel
+        {
+            Id = 202,
+            Name = "Multi-version LoRA",
+            ModelVersions =
+            [
+                CivitaiWaitlistTests.Version(20, Now.AddDays(3)),
+                CivitaiWaitlistTests.Version(21, Now.AddDays(5))
+            ]
+        };
+        var result = new CivitaiResultViewModel(model, showNsfwPreviews: false);
+        List<(CivitaiResultViewModel Result, CivitaiVersionPickItemViewModel Pick)> pairs =
+            [.. result.Versions.Select(pick => (result, pick))];
+
+        vm.ApplyEarlyAccessChoice(EarlyAccessConfirmResult.OpenWebsite, pairs);
+
+        opened.Should().ContainSingle().Which.Should().Be("https://civitai.com/models/202");
+    }
+
+    [Fact]
+    public void OpenWebsite_NsfwModel_OpensCivitaiRedHost()
+    {
+        var (vm, _, _, opened) = Create();
+
+        var model = new CivitaiModel
+        {
+            Id = 303,
+            Name = "NSFW LoRA",
+            Nsfw = true,
+            ModelVersions = [CivitaiWaitlistTests.Version(30, Now.AddDays(2))]
+        };
+        var result = new CivitaiResultViewModel(model, showNsfwPreviews: false);
+        result.IsNsfw.Should().BeTrue("model.Nsfw=true should flag the card as NSFW under CivitaiNsfwPolicy");
+        List<(CivitaiResultViewModel Result, CivitaiVersionPickItemViewModel Pick)> pairs =
+            [(result, result.Versions[0])];
+
+        vm.ApplyEarlyAccessChoice(EarlyAccessConfirmResult.OpenWebsite, pairs);
+
+        opened.Should().ContainSingle().Which.Should().StartWith("https://civitai.red/");
     }
 
     [Fact]
