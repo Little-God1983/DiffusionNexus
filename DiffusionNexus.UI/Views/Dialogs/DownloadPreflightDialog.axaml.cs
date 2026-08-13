@@ -49,6 +49,20 @@ public partial class DownloadPreflightDialog : Window
     /// <summary>True when anything in the selection is paywalled — drives the Civitai buttons.</summary>
     public bool HasPaywalled => HasWaitlistable || HasPermanent;
 
+    /// <summary>
+    /// Skipping is offered whenever it changes the outcome: either there is something
+    /// else to download, or there are paywalled versions to leave behind.
+    /// </summary>
+    public bool ShowSkip => HasOthers || HasPaywalled;
+
+    /// <summary>
+    /// Downloading regardless is offered ONLY for already-installed files. Civitai serves
+    /// paid files through the website alone — the app appends the API key on a 401 retry
+    /// and still gets refused — so a "download anyway" for paywalled versions would be an
+    /// option that cannot work.
+    /// </summary>
+    public bool ShowDownloadAnyway => !HasPaywalled;
+
     public string WindowTitle => DownloadPreflightCopy.WindowTitle(EarlyAccessTitles.Count, PermanentTitles.Count, InstalledTitles.Count);
     public string HeaderText => DownloadPreflightCopy.Header(EarlyAccessTitles.Count, PermanentTitles.Count, InstalledTitles.Count);
     public string TemporaryLead => DownloadPreflightCopy.SelectionLead(EarlyAccessTitles.Count);
@@ -57,8 +71,7 @@ public partial class DownloadPreflightDialog : Window
     public string PermanentTail => DownloadPreflightCopy.PermanentTail(PermanentTitles.Count);
     public string InstalledLead => DownloadPreflightCopy.SelectionLead(InstalledTitles.Count);
     public string InstalledTail => DownloadPreflightCopy.InstalledTail(InstalledTitles.Count);
-    public string SkipButtonText => DownloadPreflightCopy.SkipButtonText(EarlyAccessTitles.Count, PermanentTitles.Count, InstalledTitles.Count);
-    public string DownloadAnywayButtonText => DownloadPreflightCopy.DownloadAnywayButtonText(EarlyAccessTitles.Count, PermanentTitles.Count, InstalledTitles.Count);
+    public string SkipButtonText => DownloadPreflightCopy.SkipButtonText(EarlyAccessTitles.Count, PermanentTitles.Count, InstalledTitles.Count, OtherCount);
     public string WaitlistButtonTooltip => DownloadPreflightCopy.WaitlistButtonTooltip(OtherCount);
 
     /// <summary>Design-time / XAML loader constructor.</summary>

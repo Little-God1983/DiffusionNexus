@@ -1081,7 +1081,9 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         var skipped = new List<string>();
         if (paid > 0) skipped.Add($"{paid} paid");
         if (installed > 0) skipped.Add($"{installed} already installed");
-        return $"Skipped {string.Join(" and ", skipped)}; queued {enqueued} download{(enqueued == 1 ? "" : "s")}.";
+        return enqueued == 0
+            ? $"Skipped {string.Join(" and ", skipped)}; nothing left to download."
+            : $"Skipped {string.Join(" and ", skipped)}; queued {enqueued} download{(enqueued == 1 ? "" : "s")}.";
     }
 
     private void OnSelectionChanged()

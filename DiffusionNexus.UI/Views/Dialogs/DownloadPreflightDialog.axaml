@@ -96,7 +96,7 @@
       <Button Content="{Binding SkipButtonText}"
               MinWidth="150"
               Click="OnSkipClick"
-              IsVisible="{Binding HasOthers}"/>
+              IsVisible="{Binding ShowSkip}"/>
       <Button Content="Open on Civitai"
               MinWidth="130"
               Click="OnOpenWebsiteClick"
@@ -111,13 +111,14 @@
               Foreground="White"
               FontWeight="SemiBold"
               ToolTip.Tip="{Binding WaitlistButtonTooltip}"/>
-      <Button Content="{Binding DownloadAnywayButtonText}"
+      <Button Content="Download again"
               MinWidth="110"
               Click="OnDownloadAnywayClick"
+              IsVisible="{Binding ShowDownloadAnyway}"
               Background="#9333EA"
               Foreground="White"
               FontWeight="SemiBold"
-              ToolTip.Tip="Download everything selected — paid versions will fail unless your Civitai account already has access, and installed files are fetched again"/>
+              ToolTip.Tip="Fetch these files a second time, overwriting the copies already in your library"/>
     </WrapPanel>
 
   </StackPanel>

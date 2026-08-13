@@ -32,6 +32,19 @@ public sealed class DownloadPreflightCopyTests
     }
 
     [Fact]
+    public void TemporaryTail_NeverImpliesBuyingAccessMakesTheAppDownloadWork()
+    {
+        // Civitai serves paid files through the website only — the app appends the API
+        // key on a 401 retry and is still refused, so promising a download to account
+        // holders is a promise the app cannot keep.
+        foreach (var text in new[] { DownloadPreflightCopy.TemporaryTail(1), DownloadPreflightCopy.TemporaryTail(4) })
+        {
+            text.Should().Contain("cannot download").And.Contain("even with your API key set");
+            text.Should().NotContain("unless your Civitai account");
+        }
+    }
+
+    [Fact]
     public void InstalledTail_ExplainsTheRepeatDownload()
     {
         DownloadPreflightCopy.InstalledTail(1).Should().Contain("already in your library")
@@ -73,17 +86,17 @@ public sealed class DownloadPreflightCopyTests
     [Fact]
     public void SkipButtonText_MatchesWhatWouldBeSkipped()
     {
-        DownloadPreflightCopy.SkipButtonText(1, 0, 0).Should().Be("Skip Early Access, add the rest");
-        DownloadPreflightCopy.SkipButtonText(0, 1, 0).Should().Be("Skip paywalled, add the rest");
-        DownloadPreflightCopy.SkipButtonText(0, 0, 1).Should().Be("Skip installed, add the rest");
-        DownloadPreflightCopy.SkipButtonText(1, 0, 1).Should().Be("Skip flagged, add the rest");
+        DownloadPreflightCopy.SkipButtonText(1, 0, 0, otherCount: 2).Should().Be("Skip Early Access, add the rest");
+        DownloadPreflightCopy.SkipButtonText(0, 1, 0, otherCount: 2).Should().Be("Skip paywalled, add the rest");
+        DownloadPreflightCopy.SkipButtonText(0, 0, 1, otherCount: 2).Should().Be("Skip installed, add the rest");
+        DownloadPreflightCopy.SkipButtonText(1, 0, 1, otherCount: 2).Should().Be("Skip flagged, add the rest");
     }
 
     [Fact]
-    public void DownloadAnywayButton_ReadsAsARepeatWhenNothingIsPaywalled()
+    public void SkipButtonText_DropsTheRestPromiseWhenThereIsNoRest()
     {
-        DownloadPreflightCopy.DownloadAnywayButtonText(0, 0, 2).Should().Be("Download again");
-        DownloadPreflightCopy.DownloadAnywayButtonText(1, 0, 2).Should().Be("Download anyway");
+        DownloadPreflightCopy.SkipButtonText(0, 1, 0, otherCount: 0).Should().Be("Skip paywalled");
+        DownloadPreflightCopy.SkipButtonText(1, 0, 0, otherCount: 0).Should().Be("Skip Early Access");
     }
 
     [Fact]

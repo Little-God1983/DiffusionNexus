@@ -46,8 +46,8 @@ internal static class DownloadPreflightCopy
 
     /// <summary>Explanation that follows the highlighted "Early Access" phrase.</summary>
     public static string TemporaryTail(int count) => count == 1
-        ? " — the creator has paywalled it on Civitai for a limited time. Until that period ends, downloading requires buying access on the website (the app's download would fail with HTTP 401). When early access ends, it becomes free for everyone."
-        : " — the creator has paywalled them on Civitai for a limited time. Until that period ends, downloading requires buying access on the website (the app's download would fail with HTTP 401). When early access ends, they become free for everyone.";
+        ? " — the creator has paywalled it on Civitai for a limited time. The app cannot download it during that window, even after you buy access and even with your API key set: Civitai only serves paid files through the website. When early access ends, it becomes free for everyone and downloads normally."
+        : " — the creator has paywalled them on Civitai for a limited time. The app cannot download them during that window, even after you buy access and even with your API key set: Civitai only serves paid files through the website. When early access ends, they become free for everyone and download normally.";
 
     /// <summary>Explanation that follows the highlighted "permanently paid" phrase.</summary>
     public static string PermanentTail(int count) => count == 1
@@ -60,20 +60,18 @@ internal static class DownloadPreflightCopy
         : " — the files are already in your library, so downloading them again just fetches the same bytes a second time.";
 
     /// <summary>
-    /// Label for the skip button. Only shown when the selection actually holds
-    /// unflagged versions — with nothing else to add, "add the rest" names nothing.
+    /// Label for the skip button. It only promises "the rest" when the selection holds
+    /// unflagged versions — otherwise skipping is the whole outcome.
     /// </summary>
-    public static string SkipButtonText(int temporary, int permanent, int installed)
+    public static string SkipButtonText(int temporary, int permanent, int installed, int otherCount)
     {
-        if (MoreThanOneKind(temporary, permanent, installed)) return "Skip flagged, add the rest";
-        if (permanent > 0) return "Skip paywalled, add the rest";
-        if (installed > 0) return "Skip installed, add the rest";
-        return "Skip Early Access, add the rest";
+        var what =
+            MoreThanOneKind(temporary, permanent, installed) ? "Skip flagged"
+            : permanent > 0 ? "Skip paywalled"
+            : installed > 0 ? "Skip installed"
+            : "Skip Early Access";
+        return otherCount > 0 ? what + ", add the rest" : what;
     }
-
-    /// <summary>Label for the proceed-regardless button — a re-download is not an "add".</summary>
-    public static string DownloadAnywayButtonText(int temporary, int permanent, int installed)
-        => temporary == 0 && permanent == 0 && installed > 0 ? "Download again" : "Download anyway";
 
     /// <summary>Waitlist button tooltip; only promises the immediate download when there is one.</summary>
     public static string WaitlistButtonTooltip(int otherCount) => otherCount > 0
