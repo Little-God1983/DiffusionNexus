@@ -28,7 +28,8 @@ public sealed class CivitaiBrowserClearQueueTests : IDisposable
         // the real LocalAppData queue snapshot.
         var queue = new CivitaiDownloadQueue(null, null, null, null,
             persistPathOverride: Path.Combine(_tempDir, "queue.json"));
-        var vm = new CivitaiBrowserViewModel(null, null, null, queue, null)
+        var vm = new CivitaiBrowserViewModel(null, null, null, queue,
+            new CivitaiWaitlist(null, null, persistPathOverride: Path.Combine(_tempDir, "waitlist.json")), null)
         {
             DialogService = _dialog.Object
         };
@@ -91,7 +92,8 @@ public sealed class CivitaiBrowserClearQueueTests : IDisposable
         // or silently do nothing — it clears, matching the early-access prompt's fallback.
         var queue = new CivitaiDownloadQueue(null, null, null, null,
             persistPathOverride: Path.Combine(_tempDir, "queue-headless.json"));
-        var vm = new CivitaiBrowserViewModel(null, null, null, queue, null);
+        var vm = new CivitaiBrowserViewModel(null, null, null, queue,
+            new CivitaiWaitlist(null, null, persistPathOverride: Path.Combine(_tempDir, "waitlist-headless.json")), null);
         queue.Jobs.Add(Job(JobStatus.Downloading));
 
         await vm.ClearQueueCommand.ExecuteAsync(null);

@@ -105,6 +105,7 @@ public sealed class LoraViewerFilterPersistenceTests
             settingsService: null,
             logger: null,
             queue: new CivitaiDownloadQueue(null, null, null, null, persistPathOverride: queuePersist),
+            waitlist: new CivitaiWaitlist(null, null, persistPathOverride: Path.Combine(Path.GetTempPath(), $"dn-waitlist-{Guid.NewGuid():N}.json")),
             sharedBaseModelSource: source);
 
         browser.AvailableBaseModels.Single(i => i.BaseModelRaw == "Krea 2").IsSelected = true;

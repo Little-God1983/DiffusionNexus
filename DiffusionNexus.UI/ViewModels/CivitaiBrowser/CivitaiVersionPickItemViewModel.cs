@@ -18,6 +18,7 @@ public partial class CivitaiVersionPickItemViewModel : ObservableObject
         SizeBytes = (long)((primaryFile?.SizeKB ?? 0) * 1024);
         SizeDisplay = FormatSize(SizeBytes);
         IsEarlyAccess = version.IsEarlyAccessActive();
+        IsPermanentlyPaid = version.IsPermanentlyPaid();
     }
 
     public CivitaiModelVersion Version { get; }
@@ -27,8 +28,24 @@ public partial class CivitaiVersionPickItemViewModel : ObservableObject
     public string SizeDisplay { get; }
     public bool IsEarlyAccess { get; }
 
+    /// <summary>True when the version is paywalled forever — waitlisting is pointless.</summary>
+    public bool IsPermanentlyPaid { get; }
+
+    /// <summary>
+    /// Purple "EA" only for a gate that actually expires; permanently paid versions
+    /// get the red "PAID" badge instead. Mirrors the card badge rule.
+    /// </summary>
+    public bool ShowEarlyAccessBadge => IsEarlyAccess && !IsPermanentlyPaid;
+
     [ObservableProperty]
     private bool _isSelected;
+
+    /// <summary>
+    /// True when this exact version is already in the local library. Observable because
+    /// the installed snapshot is rebuilt after downloads finish, while cards stay on screen.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isInstalled;
 
     private static string FormatSize(long bytes)
     {

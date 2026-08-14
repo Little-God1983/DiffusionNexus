@@ -283,11 +283,18 @@
                                   Padding="6,2">
                             <TextBlock Text="Installed" FontSize="10" Foreground="White"/>
                           </Border>
-                          <Border IsVisible="{Binding IsEarlyAccess}"
+                          <Border IsVisible="{Binding ShowEarlyAccessBadge}"
                                   Background="#AA9333EA"
                                   CornerRadius="4"
                                   Padding="6,2">
                             <TextBlock Text="Early Access" FontSize="10" Foreground="White"/>
+                          </Border>
+                          <Border IsVisible="{Binding IsPermanentlyPaid}"
+                                  Background="#AADC2626"
+                                  CornerRadius="4"
+                                  Padding="6,2"
+                                  ToolTip.Tip="Permanently paid — this model never becomes free; it can only be bought on Civitai">
+                            <TextBlock Text="Paywalled" FontSize="10" Foreground="White"/>
                           </Border>
                         </StackPanel>
                         <Border Background="#AA000000"
@@ -353,7 +360,7 @@
                                            Text="Pick versions to download"
                                            FontWeight="SemiBold"
                                            Margin="0,0,0,8"/>
-                                <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6" Margin="0,0,0,8">
+                                <WrapPanel Grid.Row="1" ItemSpacing="6" LineSpacing="6" Margin="0,0,0,8">
                                   <Button Content="Select all"
                                           Padding="6,2"
                                           FontSize="11"
@@ -362,13 +369,18 @@
                                           Padding="6,2"
                                           FontSize="11"
                                           Command="{Binding LatestVersionOnlyCommand}"/>
-                                  <Button Content="Add all to queue"
+                                  <Button Content="Add selected to queue"
                                           Padding="6,2"
                                           FontSize="11"
                                           Classes="accent"
+                                          Command="{Binding EnqueueSelectedVersionsCommand}"
+                                          ToolTip.Tip="Enqueue only the ticked versions of this model"/>
+                                  <Button Content="Add all to queue"
+                                          Padding="6,2"
+                                          FontSize="11"
                                           Command="{Binding EnqueueAllVersionsCommand}"
                                           ToolTip.Tip="Enqueue every version of this model immediately"/>
-                                </StackPanel>
+                                </WrapPanel>
                                 <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
                                   <ItemsControl ItemsSource="{Binding Versions}">
                                     <ItemsControl.ItemTemplate>
@@ -387,14 +399,32 @@
                                                 <TextBlock Text="{Binding SizeDisplay}" Opacity="0.6" FontSize="11"/>
                                               </StackPanel>
                                             </StackPanel>
-                                            <Border Grid.Column="2"
-                                                    IsVisible="{Binding IsEarlyAccess}"
-                                                    Background="#669333EA"
-                                                    CornerRadius="3"
-                                                    Padding="4,1"
-                                                    VerticalAlignment="Center">
-                                              <TextBlock Text="EA" FontSize="9" Foreground="White"/>
-                                            </Border>
+                                            <StackPanel Grid.Column="2"
+                                                        Orientation="Horizontal"
+                                                        Spacing="4"
+                                                        VerticalAlignment="Center">
+                                              <Border IsVisible="{Binding IsInstalled}"
+                                                      Background="#6622C55E"
+                                                      CornerRadius="3"
+                                                      Padding="4,1"
+                                                      ToolTip.Tip="You already have this version in your library">
+                                                <TextBlock Text="INSTALLED" FontSize="9" Foreground="White"/>
+                                              </Border>
+                                              <Border IsVisible="{Binding IsPermanentlyPaid}"
+                                                      Background="#66DC2626"
+                                                      CornerRadius="3"
+                                                      Padding="4,1"
+                                                      ToolTip.Tip="Paywalled indefinitely — buy and download it on Civitai">
+                                                <TextBlock Text="PAID" FontSize="9" Foreground="White"/>
+                                              </Border>
+                                              <Border IsVisible="{Binding ShowEarlyAccessBadge}"
+                                                      Background="#669333EA"
+                                                      CornerRadius="3"
+                                                      Padding="4,1"
+                                                      ToolTip.Tip="Early Access — free once the creator's window ends">
+                                                <TextBlock Text="EA" FontSize="9" Foreground="White"/>
+                                              </Border>
+                                            </StackPanel>
                                           </Grid>
                                         </Border>
                                       </DataTemplate>
@@ -448,166 +478,277 @@
               Background="#161616"
               BorderBrush="#2A2A2A"
               BorderThickness="1,0,0,0">
-        <Grid RowDefinitions="Auto,Auto,*,Auto">
+        <TabControl Padding="0">
+          <TabItem Header="Queue" FontSize="13">
+            <Grid RowDefinitions="Auto,Auto,*,Auto">
 
-          <Border Grid.Row="0" Padding="12,10" BorderBrush="#2A2A2A" BorderThickness="0,0,0,1">
-            <StackPanel Spacing="8">
-              <Grid ColumnDefinitions="*,Auto">
-                <TextBlock Grid.Column="0" Text="Download Queue" FontWeight="SemiBold"/>
-                <TextBlock Grid.Column="1"
-                           Text="{Binding Queue.TotalQueuedBytesDisplay}"
-                           Opacity="0.6"
-                           FontSize="11"
-                           VerticalAlignment="Center"
-                           ToolTip.Tip="Total bytes pending in the queue"/>
-              </Grid>
-              <StackPanel Orientation="Horizontal" Spacing="6">
-                <Button Content="Start"
-                        Command="{Binding StartQueueCommand}"
-                        IsEnabled="{Binding !Queue.HasSpaceWarning}"
-                        Padding="8,4"
-                        Classes="accent"/>
-                <Button Content="Abort"
-                        Command="{Binding AbortQueueCommand}"
-                        Padding="8,4"
-                        Foreground="#FBBF24"
-                        ToolTip.Tip="Stop all active downloads but keep the queue. Hit Start to resume."/>
-                <Button Content="Clear done"
-                        Command="{Binding ClearCompletedCommand}"
-                        Padding="8,4"
-                        ToolTip.Tip="Remove completed jobs from the list"/>
-                <Button Content="Clear all"
-                        Command="{Binding ClearQueueCommand}"
-                        Padding="8,4"
-                        Foreground="#F87171"
-                        ToolTip.Tip="Remove every job (in-progress downloads are cancelled)"/>
-              </StackPanel>
+              <Border Grid.Row="0" Padding="12,10" BorderBrush="#2A2A2A" BorderThickness="0,0,0,1">
+                <StackPanel Spacing="8">
+                  <Grid ColumnDefinitions="*,Auto">
+                    <TextBlock Grid.Column="0" Text="Download Queue" FontWeight="SemiBold"/>
+                    <TextBlock Grid.Column="1"
+                               Text="{Binding Queue.TotalQueuedBytesDisplay}"
+                               Opacity="0.6"
+                               FontSize="11"
+                               VerticalAlignment="Center"
+                               ToolTip.Tip="Total bytes pending in the queue"/>
+                  </Grid>
+                  <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Button Content="Start"
+                            Command="{Binding StartQueueCommand}"
+                            IsEnabled="{Binding !Queue.HasSpaceWarning}"
+                            Padding="8,4"
+                            Classes="accent"/>
+                    <Button Content="Abort"
+                            Command="{Binding AbortQueueCommand}"
+                            Padding="8,4"
+                            Foreground="#FBBF24"
+                            ToolTip.Tip="Stop all active downloads but keep the queue. Hit Start to resume."/>
+                    <Button Content="Clear done"
+                            Command="{Binding ClearCompletedCommand}"
+                            Padding="8,4"
+                            ToolTip.Tip="Remove completed jobs from the list"/>
+                    <Button Content="Clear all"
+                            Command="{Binding ClearQueueCommand}"
+                            Padding="8,4"
+                            Foreground="#F87171"
+                            ToolTip.Tip="Remove every job (in-progress downloads are cancelled)"/>
+                  </StackPanel>
 
-              <!-- Disk-space warning. Disables Start until the user clears jobs or
-                   points the destination at a drive with enough free space. -->
-              <Border IsVisible="{Binding Queue.HasSpaceWarning}"
-                      Background="#4A1818"
-                      BorderBrush="#F87171"
-                      BorderThickness="1"
-                      CornerRadius="4"
-                      Padding="8,6">
-                <StackPanel Orientation="Horizontal" Spacing="6">
-                  <TextBlock Text="&#x26A0;"
-                             Foreground="#F87171"
-                             FontSize="14"
-                             VerticalAlignment="Top"/>
-                  <TextBlock Text="{Binding Queue.SpaceWarning}"
-                             Foreground="#FCA5A5"
-                             FontSize="11"
-                             TextWrapping="Wrap"/>
+                  <!-- Disk-space warning. Disables Start until the user clears jobs or
+                       points the destination at a drive with enough free space. -->
+                  <Border IsVisible="{Binding Queue.HasSpaceWarning}"
+                          Background="#4A1818"
+                          BorderBrush="#F87171"
+                          BorderThickness="1"
+                          CornerRadius="4"
+                          Padding="8,6">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                      <TextBlock Text="&#x26A0;"
+                                 Foreground="#F87171"
+                                 FontSize="14"
+                                 VerticalAlignment="Top"/>
+                      <TextBlock Text="{Binding Queue.SpaceWarning}"
+                                 Foreground="#FCA5A5"
+                                 FontSize="11"
+                                 TextWrapping="Wrap"/>
+                    </StackPanel>
+                  </Border>
                 </StackPanel>
               </Border>
-            </StackPanel>
-          </Border>
 
-          <!-- Shared destination picker. Drives where every queued job lands. -->
-          <Expander Grid.Row="1"
-                    Header="Destination"
-                    IsExpanded="True"
-                    Padding="8,4">
-            <views:DownloadDestinationView DataContext="{Binding Queue.Destination}"/>
-          </Expander>
+              <!-- Shared destination picker. Drives where every queued job lands. -->
+              <Expander Grid.Row="1"
+                        Header="Destination"
+                        IsExpanded="True"
+                        Padding="8,4">
+                <views:DownloadDestinationView DataContext="{Binding Queue.Destination}"/>
+              </Expander>
 
-          <ScrollViewer Grid.Row="2" Padding="8">
-            <ItemsControl ItemsSource="{Binding Queue.Jobs}">
-              <ItemsControl.ItemTemplate>
-                <DataTemplate x:DataType="svc:CivitaiDownloadJob">
-                  <Border Margin="2" Padding="8" Background="#1E1E1E" CornerRadius="4">
-                    <Grid RowDefinitions="Auto,Auto,Auto,Auto" ColumnDefinitions="*,Auto">
-                      <TextBlock Grid.Row="0" Grid.Column="0"
-                                 Text="{Binding ModelName}"
-                                 FontWeight="SemiBold"
-                                 TextTrimming="CharacterEllipsis"
-                                 VerticalAlignment="Center"/>
-                      <!-- Per-job action buttons. Cancel only while downloading, Retry
-                           only after a failure/cancel, X removes the tile (and aborts
-                           any in-flight download). -->
-                      <StackPanel Grid.Row="0" Grid.Column="1"
-                                  Orientation="Horizontal"
-                                  Spacing="2"
-                                  VerticalAlignment="Center">
-                        <Button Content="&#x23F9;"
-                                FontSize="11"
-                                Padding="6,2"
-                                ToolTip.Tip="Cancel this download"
-                                IsVisible="{Binding CanCancel}"
-                                Command="{Binding $parent[UserControl].((vm:CivitaiBrowserViewModel)DataContext).CancelJobCommand}"
-                                CommandParameter="{Binding}"/>
-                        <Button Content="&#x21BB;"
-                                FontSize="11"
-                                Padding="6,2"
-                                ToolTip.Tip="Retry this download"
-                                IsVisible="{Binding CanRetry}"
-                                Command="{Binding $parent[UserControl].((vm:CivitaiBrowserViewModel)DataContext).RetryJobCommand}"
-                                CommandParameter="{Binding}"/>
-                        <Button Content="&#x2715;"
-                                FontSize="10"
-                                Padding="6,2"
-                                ToolTip.Tip="Remove from queue"
-                                Command="{Binding $parent[UserControl].((vm:CivitaiBrowserViewModel)DataContext).RemoveJobCommand}"
-                                CommandParameter="{Binding}"/>
-                      </StackPanel>
-                      <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="6">
-                        <TextBlock Text="{Binding VersionName}" Opacity="0.6" FontSize="11"/>
-                        <TextBlock Text="·" Opacity="0.4" FontSize="11"/>
-                        <TextBlock Text="{Binding BaseModel}" Opacity="0.6" FontSize="11"/>
-                        <TextBlock Text="·" Opacity="0.4" FontSize="11"/>
-                        <TextBlock Text="{Binding SizeDisplay}" Opacity="0.6" FontSize="11"/>
-                        <!-- Early Access badge — flags that this version is paywalled
-                             on Civitai and the download will 401 without a token from
-                             an account that has access. -->
-                        <Border IsVisible="{Binding IsEarlyAccess}"
-                                Background="#669333EA"
-                                CornerRadius="3"
-                                Padding="4,1"
-                                ToolTip.Tip="Early Access — requires a Civitai membership or special access; downloads will fail without it.">
-                          <TextBlock Text="EA" FontSize="9" Foreground="White" FontWeight="SemiBold"/>
-                        </Border>
-                      </StackPanel>
-                      <TextBlock Grid.Row="2"
-                                 Grid.Column="0"
-                                 Grid.ColumnSpan="2"
-                                 Text="{Binding DisplayPath}"
-                                 IsVisible="{Binding DisplayPath, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
-                                 Foreground="#FFCC00"
-                                 FontSize="10"
-                                 TextTrimming="CharacterEllipsis"
-                                 Margin="0,4,0,0"
-                                 ToolTip.Tip="{Binding DisplayPath}"/>
-                      <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Spacing="2" Margin="0,4,0,0">
-                        <ProgressBar Value="{Binding ProgressPercent}" Maximum="100" Height="6"/>
-                        <!-- Margin.Right keeps the text clear of the scroll viewer's
-                             overlay scrollbar, which would otherwise eat the last char
-                             of right-aligned status text ("Don" instead of "Done"). -->
-                        <TextBlock Text="{Binding StatusMessage}"
-                                   Foreground="{Binding StatusForeground}"
-                                   FontSize="10"
-                                   FontWeight="SemiBold"
-                                   TextWrapping="NoWrap"
-                                   HorizontalAlignment="Right"
-                                   Margin="0,0,16,0"
-                                   IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
-                      </StackPanel>
-                    </Grid>
-                  </Border>
-                </DataTemplate>
-              </ItemsControl.ItemTemplate>
-            </ItemsControl>
-          </ScrollViewer>
+              <ScrollViewer Grid.Row="2" Padding="8">
+                <ItemsControl ItemsSource="{Binding Queue.Jobs}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="svc:CivitaiDownloadJob">
+                      <Border Margin="2" Padding="8" Background="#1E1E1E" CornerRadius="4">
+                        <Grid RowDefinitions="Auto,Auto,Auto,Auto" ColumnDefinitions="*,Auto">
+                          <TextBlock Grid.Row="0" Grid.Column="0"
+                                     Text="{Binding ModelName}"
+                                     FontWeight="SemiBold"
+                                     TextTrimming="CharacterEllipsis"
+                                     VerticalAlignment="Center"/>
+                          <!-- Per-job action buttons. Cancel only while downloading, Retry
+                               only after a failure/cancel, X removes the tile (and aborts
+                               any in-flight download). -->
+                          <StackPanel Grid.Row="0" Grid.Column="1"
+                                      Orientation="Horizontal"
+                                      Spacing="2"
+                                      VerticalAlignment="Center">
+                            <Button Content="&#x23F9;"
+                                    FontSize="11"
+                                    Padding="6,2"
+                                    ToolTip.Tip="Cancel this download"
+                                    IsVisible="{Binding CanCancel}"
+                                    Command="{Binding $parent[UserControl].((vm:CivitaiBrowserViewModel)DataContext).CancelJobCommand}"
+                                    CommandParameter="{Binding}"/>
+                            <Button Content="&#x21BB;"
+                                    FontSize="11"
+                                    Padding="6,2"
+                                    ToolTip.Tip="Retry this download"
+                                    IsVisible="{Binding CanRetry}"
+                                    Command="{Binding $parent[UserControl].((vm:CivitaiBrowserViewModel)DataContext).RetryJobCommand}"
+                                    CommandParameter="{Binding}"/>
+                            <Button Content="&#x2715;"
+                                    FontSize="10"
+                                    Padding="6,2"
+                                    ToolTip.Tip="Remove from queue"
+                                    Command="{Binding $parent[UserControl].((vm:CivitaiBrowserViewModel)DataContext).RemoveJobCommand}"
+                                    CommandParameter="{Binding}"/>
+                          </StackPanel>
+                          <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="6">
+                            <TextBlock Text="{Binding VersionName}" Opacity="0.6" FontSize="11"/>
+                            <TextBlock Text="·" Opacity="0.4" FontSize="11"/>
+                            <TextBlock Text="{Binding BaseModel}" Opacity="0.6" FontSize="11"/>
+                            <TextBlock Text="·" Opacity="0.4" FontSize="11"/>
+                            <TextBlock Text="{Binding SizeDisplay}" Opacity="0.6" FontSize="11"/>
+                            <!-- Early Access badge — flags that this version is paywalled
+                                 on Civitai and the download will 401 without a token from
+                                 an account that has access. -->
+                            <Border IsVisible="{Binding IsEarlyAccess}"
+                                    Background="#669333EA"
+                                    CornerRadius="3"
+                                    Padding="4,1"
+                                    ToolTip.Tip="Early Access — requires a Civitai membership or special access; downloads will fail without it.">
+                              <TextBlock Text="EA" FontSize="9" Foreground="White" FontWeight="SemiBold"/>
+                            </Border>
+                          </StackPanel>
+                          <TextBlock Grid.Row="2"
+                                     Grid.Column="0"
+                                     Grid.ColumnSpan="2"
+                                     Text="{Binding DisplayPath}"
+                                     IsVisible="{Binding DisplayPath, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                     Foreground="#FFCC00"
+                                     FontSize="10"
+                                     TextTrimming="CharacterEllipsis"
+                                     Margin="0,4,0,0"
+                                     ToolTip.Tip="{Binding DisplayPath}"/>
+                          <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Spacing="2" Margin="0,4,0,0">
+                            <ProgressBar Value="{Binding ProgressPercent}" Maximum="100" Height="6"/>
+                            <!-- Margin.Right keeps the text clear of the scroll viewer's
+                                 overlay scrollbar, which would otherwise eat the last char
+                                 of right-aligned status text ("Don" instead of "Done"). -->
+                            <TextBlock Text="{Binding StatusMessage}"
+                                       Foreground="{Binding StatusForeground}"
+                                       FontSize="10"
+                                       FontWeight="SemiBold"
+                                       TextWrapping="NoWrap"
+                                       HorizontalAlignment="Right"
+                                       Margin="0,0,16,0"
+                                       IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                          </StackPanel>
+                        </Grid>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </ScrollViewer>
 
-          <Border Grid.Row="3" Padding="12,8" BorderBrush="#2A2A2A" BorderThickness="0,1,0,0">
-            <TextBlock Opacity="0.7" FontSize="11">
-              <Run Text="Queued: "/><Run Text="{Binding Queue.ActiveCount}"/>
-              <Run Text=" · Done: "/><Run Text="{Binding Queue.CompletedCount}"/>
-              <Run Text=" · Errors: "/><Run Text="{Binding Queue.ErrorCount}"/>
-            </TextBlock>
-          </Border>
-        </Grid>
+              <Border Grid.Row="3" Padding="12,8" BorderBrush="#2A2A2A" BorderThickness="0,1,0,0">
+                <TextBlock Opacity="0.7" FontSize="11">
+                  <Run Text="Queued: "/><Run Text="{Binding Queue.ActiveCount}"/>
+                  <Run Text=" · Done: "/><Run Text="{Binding Queue.CompletedCount}"/>
+                  <Run Text=" · Errors: "/><Run Text="{Binding Queue.ErrorCount}"/>
+                </TextBlock>
+              </Border>
+            </Grid>
+          </TabItem>
+          <TabItem FontSize="13">
+            <TabItem.Header>
+              <StackPanel Orientation="Horizontal" Spacing="5">
+                <TextBlock Text="Waitlist" VerticalAlignment="Center"/>
+                <!-- Upper-right count badge: number of entries whose early access
+                     has lapsed. Hidden while nothing is ready. -->
+                <Border IsVisible="{Binding $parent[UserControl].((vm:CivitaiBrowserViewModel)DataContext).Waitlist.HasAvailable}"
+                        Background="#22C55E"
+                        CornerRadius="8"
+                        MinWidth="16"
+                        Padding="4,0"
+                        VerticalAlignment="Top">
+                  <TextBlock Text="{Binding $parent[UserControl].((vm:CivitaiBrowserViewModel)DataContext).Waitlist.AvailableCount}"
+                             FontSize="10"
+                             FontWeight="Bold"
+                             Foreground="White"
+                             HorizontalAlignment="Center"/>
+                </Border>
+              </StackPanel>
+            </TabItem.Header>
+            <Grid RowDefinitions="Auto,*,Auto">
+
+              <Border Grid.Row="0" Padding="12,10" BorderBrush="#2A2A2A" BorderThickness="0,0,0,1">
+                <StackPanel Spacing="8">
+                  <TextBlock Text="Early Access Waitlist" FontWeight="SemiBold"/>
+                  <TextBlock Text="These LoRAs are paywalled until their early-access period ends. Countdowns tick locally; Update re-checks Civitai for changed dates."
+                             Opacity="0.6"
+                             FontSize="11"
+                             TextWrapping="Wrap"/>
+                  <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Button Content="Update"
+                            Command="{Binding UpdateWaitlistCommand}"
+                            Padding="8,4"
+                            ToolTip.Tip="Re-check every entry against the Civitai API (deadlines can be extended or removed by the creator)"/>
+                    <Button Content="Move ready to queue"
+                            Command="{Binding MoveReadyWaitlistToQueueCommand}"
+                            Padding="8,4"
+                            Classes="accent"
+                            ToolTip.Tip="Re-verify entries whose countdown has ended and add the confirmed-free ones to the download queue"/>
+                  </StackPanel>
+                </StackPanel>
+              </Border>
+
+              <ScrollViewer Grid.Row="1" Padding="8">
+                <ItemsControl ItemsSource="{Binding Waitlist.Entries}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="svc:CivitaiWaitlistEntry">
+                      <Border Margin="2" Padding="8" Background="#1E1E1E" CornerRadius="4">
+                        <Grid RowDefinitions="Auto,Auto,Auto,Auto" ColumnDefinitions="*,Auto">
+                          <TextBlock Grid.Row="0" Grid.Column="0"
+                                     Text="{Binding ModelName}"
+                                     FontWeight="SemiBold"
+                                     TextTrimming="CharacterEllipsis"
+                                     VerticalAlignment="Center"/>
+                          <StackPanel Grid.Row="0" Grid.Column="1"
+                                      Orientation="Horizontal"
+                                      Spacing="2"
+                                      VerticalAlignment="Center">
+                            <Button Content="&#x1F310;"
+                                    FontSize="11"
+                                    Padding="6,2"
+                                    ToolTip.Tip="Open on Civitai (buy early access there if you don't want to wait)"
+                                    Command="{Binding $parent[UserControl].((vm:CivitaiBrowserViewModel)DataContext).OpenWaitlistEntryOnCivitaiCommand}"
+                                    CommandParameter="{Binding}"/>
+                            <Button Content="&#x2715;"
+                                    FontSize="10"
+                                    Padding="6,2"
+                                    ToolTip.Tip="Remove from waitlist"
+                                    Command="{Binding $parent[UserControl].((vm:CivitaiBrowserViewModel)DataContext).RemoveWaitlistEntryCommand}"
+                                    CommandParameter="{Binding}"/>
+                          </StackPanel>
+                          <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="6">
+                            <TextBlock Text="{Binding VersionName}" Opacity="0.6" FontSize="11"/>
+                            <TextBlock Text="·" Opacity="0.4" FontSize="11"/>
+                            <TextBlock Text="{Binding BaseModel}" Opacity="0.6" FontSize="11"/>
+                            <TextBlock Text="·" Opacity="0.4" FontSize="11"/>
+                            <TextBlock Text="{Binding SizeDisplay}" Opacity="0.6" FontSize="11"/>
+                          </StackPanel>
+                          <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2"
+                                     Text="{Binding CountdownDisplay}"
+                                     Foreground="{Binding StatusForeground}"
+                                     FontSize="11"
+                                     FontWeight="SemiBold"
+                                     Margin="0,4,0,0"/>
+                          <TextBlock Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2"
+                                     Text="{Binding StatusDetail}"
+                                     IsVisible="{Binding StatusDetail, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                     Opacity="0.6"
+                                     FontSize="10"
+                                     TextWrapping="Wrap"
+                                     Margin="0,2,0,0"/>
+                        </Grid>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </ScrollViewer>
+
+              <Border Grid.Row="2" Padding="12,8" BorderBrush="#2A2A2A" BorderThickness="0,1,0,0">
+                <TextBlock Opacity="0.7" FontSize="11">
+                  <Run Text="Entries: "/><Run Text="{Binding Waitlist.Entries.Count}"/>
+                  <Run Text=" · Available: "/><Run Text="{Binding Waitlist.AvailableCount}"/>
+                </TextBlock>
+              </Border>
+
+            </Grid>
+          </TabItem>
+        </TabControl>
       </Border>
     </Grid>
 

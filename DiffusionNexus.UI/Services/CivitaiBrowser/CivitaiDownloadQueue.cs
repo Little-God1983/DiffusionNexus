@@ -273,6 +273,50 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         return job;
     }
 
+    /// <summary>
+    /// Enqueues a waitlist entry whose early-access gate has lapsed. Prefers file
+    /// metadata from <paramref name="freshVersion"/> (the just-re-verified API
+    /// response) and falls back to the data captured at waitlist-add time —
+    /// <paramref name="freshVersion"/> is null only in headless/no-client runs.
+    /// Returns null when the version is already queued (same dedup as Enqueue).
+    /// </summary>
+    public CivitaiDownloadJob? EnqueueFromWaitlist(CivitaiWaitlistEntry entry, CivitaiModelVersion? freshVersion)
+    {
+        if (Jobs.Any(j => j.VersionId == entry.VersionId))
+        {
+            _logger?.Debug(LogCategory.Download, "CivitaiQueue",
+                $"Waitlist move skipped duplicate: {entry.ModelName} ({entry.VersionName}) — version {entry.VersionId} already in queue");
+            return null;
+        }
+
+        var primary = freshVersion?.Files.FirstOrDefault(f => f.Primary == true) ?? freshVersion?.Files.FirstOrDefault();
+        var job = new CivitaiDownloadJob
+        {
+            ModelId = entry.ModelId,
+            VersionId = entry.VersionId,
+            ModelName = entry.ModelName,
+            VersionName = entry.VersionName,
+            BaseModel = entry.BaseModel,
+            Category = entry.Category,
+            FileName = primary?.Name ?? entry.FileName,
+            DownloadUrl = primary?.DownloadUrl ?? freshVersion?.DownloadUrl ?? entry.DownloadUrl,
+            SizeDisplay = entry.SizeDisplay,
+            SizeBytes = entry.SizeBytes,
+            IsEarlyAccess = false, // verified free, or trusted local countdown (no client to verify with)
+            ExpectedSha256 = primary?.Hashes?.SHA256 ?? entry.ExpectedSha256,
+            PreviewImageUrl = entry.PreviewImageUrl,
+            CivitaiVersion = freshVersion
+        };
+        job.ExpectedTargetDir = Destination.BuildTargetDirectory(job.BaseModel, job.Category);
+        Jobs.Add(job);
+        Persist();
+        RaiseCountsChanged();
+        _logger?.Info(LogCategory.Download, "CivitaiQueue",
+            $"Enqueued from waitlist: {entry.ModelName} — {entry.VersionName} ({entry.BaseModel}, {entry.SizeDisplay})",
+            $"VersionId: {entry.VersionId}\nFile: {job.FileName}\nUrl: {job.DownloadUrl}");
+        return job;
+    }
+
     public void Remove(CivitaiDownloadJob job)
     {
         // If the tile is removed mid-download, cancel the in-flight transfer first
@@ -509,6 +553,11 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             var taskName = $"Download {job.ModelName} ({job.VersionName})";
             var coordinator = App.Services?.GetService<IDownloadCoordinator>();
 
+            // The file can land perfectly while its Civitai metadata fetch fails. That
+            // used to finish as a plain "Done", leaving the LoRA with no description,
+            // tags or preview and no hint of why.
+            var metadataComplete = true;
+
             // Local function — the actual download. The Coordinator wraps this and
             // pushes the aggregated "N downloads in progress" view to the activity log,
             // so we explicitly tell the download service NOT to also publish progress
@@ -553,7 +602,8 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                         tcs.TrySetResult(false);
                     }),
                     externalCancellationToken: coordCt,
-                    reportToActivityLog: coordinator is null);
+                    reportToActivityLog: coordinator is null,
+                    metadataIncomplete: () => metadataComplete = false);
 
                 // The completed/failed callbacks above set the TCS. Wait on it for
                 // the boolean result that the coordinator wants.
@@ -607,7 +657,18 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             // would be redundant and nothing in the app reads them back.
 
             job.Status = JobStatus.Completed;
-            job.StatusMessage = "Done";
+            if (metadataComplete)
+            {
+                job.StatusMessage = "Done";
+            }
+            else
+            {
+                job.StatusMessage = "Done — no metadata";
+                _logger?.Warn(LogCategory.Download, "CivitaiQueue",
+                    $"{job.ModelName} — {job.VersionName} downloaded, but its Civitai metadata could not be fetched. "
+                    + "Use Download Metadata on the model in the Installed tab to fill it in.",
+                    $"VersionId: {job.VersionId}\nFile: {job.TargetPath}");
+            }
         }
         catch (OperationCanceledException)
         {

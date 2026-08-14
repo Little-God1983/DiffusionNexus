@@ -17,7 +17,9 @@ public class CivitaiClientTests
     {
         var handler = new FakeHttpHandler(responder);
         var http = new HttpClient(handler);
-        return (new CivitaiClient(http, disposeHttpClient: true), handler);
+        // Exercise the retry loop without sleeping through its real backoff.
+        var client = new CivitaiClient(http, disposeHttpClient: true) { RetryDelayOverride = _ => TimeSpan.Zero };
+        return (client, handler);
     }
 
     private static HttpResponseMessage Json(HttpStatusCode status, object body) =>
@@ -74,7 +76,7 @@ public class CivitaiClientTests
     [Fact]
     public async Task GetModelAsync_ThrowsHttpRequestException_OnError()
     {
-        var (client, _) = CreateClient(_ => new HttpResponseMessage(HttpStatusCode.InternalServerError)
+        var (client, handler) = CreateClient(_ => new HttpResponseMessage(HttpStatusCode.InternalServerError)
         {
             Content = new StringContent("{\"error\":\"oops\"}")
         });
@@ -86,6 +88,89 @@ public class CivitaiClientTests
             var ex = await act.Should().ThrowAsync<HttpRequestException>();
             ex.Which.StatusCode.Should().Be(HttpStatusCode.InternalServerError);
         }
+
+        // Initial attempt + 3 retries: a persistent 500 still ends in a throw.
+        handler.Requests.Should().HaveCount(4);
+    }
+
+    [Fact]
+    public async Task GetModelAsync_RetriesTransientServerError_ThenSucceeds()
+    {
+        // A single 502 from Civitai's CDN used to cost a freshly downloaded LoRA its
+        // entire metadata record — the caller swallowed the throw and reported success.
+        var responses = new Queue<HttpResponseMessage>(
+        [
+            new HttpResponseMessage(HttpStatusCode.BadGateway),
+            new HttpResponseMessage(HttpStatusCode.ServiceUnavailable),
+            Json(HttpStatusCode.OK, new { id = 7, name = "recovered" })
+        ]);
+
+        var (client, handler) = CreateClient(_ => responses.Dequeue());
+
+        using (client)
+        {
+            var model = await client.GetModelAsync(7);
+            model.Should().NotBeNull();
+            model!.Name.Should().Be("recovered");
+        }
+
+        handler.Requests.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public async Task GetModelVersionByHashAsync_RetriesTransportFailure_ThenSucceeds()
+    {
+        // Connection resets surface as HttpRequestException with no StatusCode.
+        var attempts = 0;
+        var (client, handler) = CreateClient(_ =>
+        {
+            if (++attempts == 1) throw new HttpRequestException("The connection was closed unexpectedly.");
+            return Json(HttpStatusCode.OK, new { id = 11, name = "v1" });
+        });
+
+        using (client)
+        {
+            var version = await client.GetModelVersionByHashAsync("ABC123");
+            version.Should().NotBeNull();
+            version!.Id.Should().Be(11);
+        }
+
+        handler.Requests.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task GetModelAsync_DoesNotRetry_OnClientError()
+    {
+        // 401/403/404 are answers, not outages — retrying only delays the failure.
+        var (client, handler) = CreateClient(_ => new HttpResponseMessage(HttpStatusCode.Forbidden)
+        {
+            Content = new StringContent("forbidden")
+        });
+
+        using (client)
+        {
+            var act = async () => await client.GetModelAsync(1);
+            await act.Should().ThrowAsync<HttpRequestException>();
+        }
+
+        handler.Requests.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task GetModelAsync_DoesNotRetry_OnMalformedJson()
+    {
+        var (client, handler) = CreateClient(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{ not json", Encoding.UTF8, "application/json")
+        });
+
+        using (client)
+        {
+            var act = async () => await client.GetModelAsync(1);
+            await act.Should().ThrowAsync<JsonException>("a changed response shape does not fix itself");
+        }
+
+        handler.Requests.Should().ContainSingle();
     }
 
     [Fact]

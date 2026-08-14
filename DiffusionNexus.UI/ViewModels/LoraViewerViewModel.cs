@@ -322,7 +322,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         var dialogService = App.Services?.GetService<IDialogService>();
         var destination = new DownloadDestinationViewModel(dialogService);
         var queue = new CivitaiDownloadQueue(downloadService, _logger, _civitaiClient, destination);
-        BrowserViewModel = new CivitaiBrowserViewModel(_civitaiClient, _settingsService, _logger, queue, AvailableBaseModels);
+        var waitlist = new CivitaiWaitlist(_civitaiClient, _logger);
+        BrowserViewModel = new CivitaiBrowserViewModel(_civitaiClient, _settingsService, _logger, queue, waitlist, AvailableBaseModels);
 
         _ = InitializeBaseModelFilterAsync();
         _ = LoadDestinationFoldersAsync(destination);

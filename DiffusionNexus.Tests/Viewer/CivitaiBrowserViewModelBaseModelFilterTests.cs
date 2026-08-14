@@ -24,7 +24,8 @@ public class CivitaiBrowserViewModelBaseModelFilterTests
             new("Illustrious"),
             new("Krea 2"),
         };
-        var vm = new CivitaiBrowserViewModel(null, null, null, new CivitaiDownloadQueue(null), source);
+        var vm = new CivitaiBrowserViewModel(null, null, null, new CivitaiDownloadQueue(null),
+            new CivitaiWaitlist(null, null, persistPathOverride: Path.Combine(Path.GetTempPath(), $"dn-waitlist-{Guid.NewGuid():N}.json")), source);
         return (vm, source);
     }
 
