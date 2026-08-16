@@ -74,6 +74,19 @@ public partial class InstallerManagerViewModel : ViewModelBase
     /// </summary>
     public bool IsEmpty => InstallerCards.Count == 0 && !IsLoading;
 
+    /// <summary>
+    /// Whether the Diffusion Nexus Engine tile is shown. Bound at startup to the same
+    /// hamburger switch that reveals the Diffusion Canvas, so both surfaces stay hidden
+    /// together while the feature is unfinished.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isEngineTileVisible;
+
+    partial void OnIsEngineTileVisibleChanged(bool value)
+    {
+        _ = LoadInstallationsAsync();
+    }
+
     public InstallerManagerViewModel(
         IDialogService dialogService,
         IUnitOfWork unitOfWork,
@@ -135,7 +148,17 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
             var packages = await _unitOfWork.InstallerPackages.GetAllAsync();
 
-            foreach (var package in packages)
+            // The app-owned engine is an ordinary ComfyUI row flagged IsAppManaged. It is
+            // rendered as the static engine tile and must not also appear as a normal card.
+            // The tile itself is gated behind IsEngineTileVisible — while the switch is off
+            // it is omitted from the list entirely rather than hidden in the view.
+            if (IsEngineTileVisible)
+            {
+                var enginePackage = packages.FirstOrDefault(p => p.IsAppManaged);
+                InstallerCards.Add(CreateEngineCard(enginePackage));
+            }
+
+            foreach (var package in packages.Where(p => !p.IsAppManaged))
             {
                 InstallerCards.Add(CreateCard(package));
             }
@@ -798,6 +821,25 @@ public partial class InstallerManagerViewModel : ViewModelBase
         var card = InstallerPackageCardViewModel.CreateCoreCard();
         card.WorkloadsRequested += OnWorkloadsRequestedAsync;
         return card;
+    }
+
+    /// <summary>
+    /// Builds the static "Diffusion Nexus Engine" tile. Wires the install handler and, once
+    /// the engine exists, the workloads handler. Visibility is controlled by
+    /// <see cref="IsEngineTileVisible"/>, which follows the same switch as the Diffusion Canvas.
+    /// </summary>
+    private InstallerPackageCardViewModel CreateEngineCard(InstallerPackage? enginePackage)
+    {
+        var card = InstallerPackageCardViewModel.CreateEngineCard(enginePackage);
+        card.EngineInstallRequested += OnEngineInstallRequestedAsync;
+        card.WorkloadsRequested += OnWorkloadsRequestedAsync;
+        return card;
+    }
+
+    private Task OnEngineInstallRequestedAsync(InstallerPackageCardViewModel card)
+    {
+        // Implemented in the engine-install task.
+        return Task.CompletedTask;
     }
 
     private void OnOpenFolderRequested(InstallerPackageCardViewModel card)
