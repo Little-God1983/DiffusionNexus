@@ -232,10 +232,15 @@ public class ManagedEngineInstallerTests
             logSink, new Progress<InstallationProgress>(), CancellationToken.None);
 
         outcome.IsSuccess.Should().BeTrue();
-        logSink.Reports.Should().HaveCount(levels.Length);
+        // Scoped to the "level " entries this test itself injects via the mocked coordinator
+        // callback — InstallBaseEngineAsync also logs its own resolved-torch entry before the
+        // gate even runs (see InstallBaseEngine_LogsTheResolvedTorchAndCudaVersions), which is
+        // not part of what this test is pinning down.
+        var levelReports = logSink.Reports.Where(e => e.Message.StartsWith("level ", StringComparison.Ordinal)).ToList();
+        levelReports.Should().HaveCount(levels.Length);
         foreach (var (source, expected) in levels)
         {
-            logSink.Reports.Should().ContainSingle(e => e.Message == $"level {source}" && e.Level == expected,
+            levelReports.Should().ContainSingle(e => e.Message == $"level {source}" && e.Level == expected,
                 $"a {source} log entry must map to {nameof(SdkLogLevel)}.{expected}");
         }
     }
@@ -253,6 +258,29 @@ public class ManagedEngineInstallerTests
 
         outcome.IsSuccess.Should().BeFalse();
         outcome.Message.Should().Contain(ManagedEngineInstaller.BaseConfigurationId);
+    }
+
+    [Fact]
+    public async Task InstallBaseEngine_LogsTheResolvedTorchAndCudaVersions()
+    {
+        // Review finding: the class doc asserted the engine "inherits" a specific CUDA/torch
+        // pairing from the Krea-2-Turbo configuration, but that pairing is catalog data the
+        // installer does not control and has already drifted from an earlier assumption once.
+        // Rather than restate a pairing as guaranteed, the resolved configuration.Torch values
+        // must be logged at install start so the truth is readable at runtime.
+        var config = BuildKreaConfiguration();
+        config.Torch = new TorchSettings { TorchVersion = "2.8.0", CudaVersion = "12.8" };
+        var (coordinator, repo) = Mocks(config);
+        var logSink = new CapturingProgress<InstallLogEntry>();
+
+        var outcome = await Create(coordinator, repo).InstallBaseEngineAsync(
+            new EngineInstallRequest(@"C:\Engine\ComfyUI", []),
+            logSink, new Progress<InstallationProgress>(), CancellationToken.None);
+
+        outcome.IsSuccess.Should().BeTrue();
+        logSink.Reports.Should().Contain(e =>
+                e.Message.Contains("2.8.0") && e.Message.Contains("12.8"),
+            "the actually-resolved torch/CUDA pairing must be visible in the install log, not just assumed from a comment");
     }
 
     [Fact]

@@ -11,9 +11,13 @@ namespace DiffusionNexus.UI.Services.Engine;
 /// Drives the SDK's installation coordinator to produce a bare, app-owned ComfyUI.
 ///
 /// The base engine is built from the Krea-2-Turbo configuration with every model, custom node
-/// and workflow excluded. That configuration is what pins the engine to CUDA 13.0 + torch
-/// 2.11.0 — the pairing the project standardized on — so no torch settings are authored here.
-/// Content arrives afterwards through the app's ordinary workload installer.
+/// and workflow excluded. No torch settings are authored here — the engine simply inherits
+/// whatever <c>configuration.Torch</c> declares for that catalog entry, whatever it happens to be
+/// pinned to at install time. Do not restate a specific CUDA/torch pairing here as guaranteed: it
+/// is catalog data, not something this class controls, and it has already drifted from an earlier
+/// assumption once (the catalog currently declares CUDA 12.8 + torch 2.8.0). The actual resolved
+/// values are logged at install start below so the truth is readable at runtime instead of
+/// inferred from a comment that can go stale again.
 /// </summary>
 public sealed class ManagedEngineInstaller : IManagedEngineInstaller
 {
@@ -70,6 +74,19 @@ public sealed class ManagedEngineInstaller : IManagedEngineInstaller
                 $"The engine base configuration {BaseConfigurationId} was not found in the catalog database. " +
                 "The shipped catalog may be out of date.", null);
         }
+
+        // The engine authors no torch settings of its own (see this class's doc comment) — log
+        // what the base configuration actually resolved to so it's readable at runtime instead of
+        // assumed from a comment that can go stale. Empty TorchVersion means "latest" (see
+        // TorchSettings.TorchVersion's own doc), so name that explicitly rather than logging a
+        // blank value that reads like a bug.
+        var torchVersionDisplay = string.IsNullOrWhiteSpace(configuration.Torch.TorchVersion)
+            ? "latest"
+            : configuration.Torch.TorchVersion;
+        LogAction(
+            $"Base engine configuration '{configuration.Name}' resolved torch {torchVersionDisplay} " +
+            $"+ CUDA {configuration.Torch.CudaVersion}.",
+            LogEntryLevel.Info);
 
         var gate = await _coordinator
             .EvaluateGpuGateAsync(configuration, _promptService, LogAction, cancellationToken)
