@@ -24,9 +24,26 @@ public static class ManagedEngineLocator
         if (string.IsNullOrWhiteSpace(installRoot) || !Directory.Exists(installRoot))
             return false;
 
+        return ResolveMainPy(installRoot) is not null;
+    }
+
+    /// <summary>
+    /// Resolves the ComfyUI entry point (main.py) under <paramref name="installRoot"/>, or null
+    /// when neither supported layout has one. The single source of truth for "where is main.py" —
+    /// both <see cref="LooksInstalled"/> and <c>ManagedComfyUiEngine</c> (which needs the actual
+    /// path to launch, not just a bool) go through this rather than each re-checking the two
+    /// layouts themselves.
+    /// </summary>
+    public static string? ResolveMainPy(string? installRoot)
+    {
+        if (string.IsNullOrWhiteSpace(installRoot)) return null;
+
         // The SDK clones ComfyUI either directly into the root or into a ComfyUI/ subfolder,
-        // depending on the resolved layout — accept both.
-        return File.Exists(Path.Combine(installRoot, "main.py"))
-            || File.Exists(Path.Combine(installRoot, "ComfyUI", "main.py"));
+        // depending on the resolved layout — accept both, direct taking priority.
+        var direct = Path.Combine(installRoot, "main.py");
+        if (File.Exists(direct)) return direct;
+
+        var nested = Path.Combine(installRoot, "ComfyUI", "main.py");
+        return File.Exists(nested) ? nested : null;
     }
 }

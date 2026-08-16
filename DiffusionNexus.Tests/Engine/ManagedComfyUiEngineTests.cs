@@ -60,4 +60,36 @@ public class ManagedComfyUiEngineTests
         result.BaseUrl.Should().BeNull();
         result.FailureReason.Should().NotBeNullOrWhiteSpace();
     }
+
+    [Fact]
+    public async Task StopAsync_IsSafeToCallRepeatedlyWhenNothingIsRunning()
+    {
+        await using var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+
+        await engine.StopAsync();
+        await engine.StopAsync();
+    }
+
+    [Fact]
+    public async Task EnsureRunningAndStopAsync_ShareTheStartLockWithoutDeadlocking()
+    {
+        // Regression for the review finding: StopAsync used to touch _process without taking
+        // _startLock at all, so a stop landing while a start was in flight (anywhere in the up-to-
+        // ~120s readiness poll) could dispose the process/HttpClient out from under it. Now both
+        // serialize on the same lock. This doesn't exercise the readiness poll itself (that needs
+        // a real spawned process, which unit tests here deliberately avoid) — it proves the two
+        // entry points can run concurrently, contending for the same lock, without deadlocking.
+        await using var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+        var notInstalledRoot = Path.Combine(Path.GetTempPath(), "definitely-not-here-" + Guid.NewGuid());
+
+        var ensureTask = engine.EnsureRunningAsync(notInstalledRoot, CancellationToken.None);
+        var stopTask = engine.StopAsync();
+        var both = Task.WhenAll(ensureTask, stopTask);
+
+        var completed = await Task.WhenAny(both, Task.Delay(TimeSpan.FromSeconds(10)));
+        completed.Should().BeSameAs(both, "concurrent start/stop must not deadlock");
+
+        var result = await ensureTask;
+        result.IsRunning.Should().BeFalse("the install root doesn't exist");
+    }
 }

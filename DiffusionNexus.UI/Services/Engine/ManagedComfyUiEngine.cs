@@ -25,6 +25,11 @@ public sealed class ManagedComfyUiEngine : IAsyncDisposable
     private Process? _process;
     private string? _baseUrl;
 
+    // Set for the duration of an in-flight EnsureRunningAsync call (under _startLock) so a
+    // concurrent StopAsync can ask the readiness poll to wind down within a couple of seconds
+    // instead of blocking on the lock for up to the full ~120 s poll window.
+    private volatile bool _stopRequested;
+
     public ManagedComfyUiEngine(IUnifiedLogger? unifiedLogger)
     {
         _unifiedLogger = unifiedLogger;
@@ -48,7 +53,7 @@ public sealed class ManagedComfyUiEngine : IAsyncDisposable
             if (_process is { HasExited: false } && _baseUrl is not null)
                 return new EngineStartResult(true, _baseUrl, null);
 
-            var mainPy = ResolveMainPy(installRoot);
+            var mainPy = ManagedEngineLocator.ResolveMainPy(installRoot);
             if (mainPy is null)
                 return new EngineStartResult(false, null,
                     $"No ComfyUI entry point (main.py) was found under '{installRoot}'. Install the engine first.");
@@ -81,25 +86,40 @@ public sealed class ManagedComfyUiEngine : IAsyncDisposable
                 _process.BeginErrorReadLine();
 
                 var baseUrl = $"http://127.0.0.1:{port}";
-                var ready = await WaitForReadyAsync(baseUrl, _process, ct).ConfigureAwait(false);
-                if (!ready)
+                var outcome = await WaitForReadyAsync(baseUrl, _process, ct).ConfigureAwait(false);
+                switch (outcome.Kind)
                 {
-                    await StopAsync().ConfigureAwait(false);
-                    return new EngineStartResult(false, null,
-                        "The engine started but never became ready (no answer from /system_stats). " +
-                        "See the Unified Console for its output.");
-                }
+                    case ReadinessKind.Ready:
+                        _baseUrl = baseUrl;
+                        Log($"Engine ready at {baseUrl}.");
+                        return new EngineStartResult(true, baseUrl, null);
 
-                _baseUrl = baseUrl;
-                Log($"Engine ready at {baseUrl}.");
-                return new EngineStartResult(true, baseUrl, null);
+                    case ReadinessKind.ProcessExited:
+                        await StopCoreAsync().ConfigureAwait(false);
+                        return new EngineStartResult(false, null,
+                            $"The engine process exited on its own during startup (exit code {outcome.ExitCode}). " +
+                            "See the Unified Console for its output.");
+
+                    case ReadinessKind.StopRequested:
+                        await StopCoreAsync().ConfigureAwait(false);
+                        return new EngineStartResult(false, null, "The engine was stopped while it was starting.");
+
+                    default: // TimedOut
+                        await StopCoreAsync().ConfigureAwait(false);
+                        return new EngineStartResult(false, null,
+                            "The engine started but never became ready (no answer from /system_stats) within " +
+                            "120 seconds. See the Unified Console for its output.");
+                }
             }
             catch
             {
                 // The process is already spawned at this point. Whatever went wrong — including
                 // caller cancellation — must not leave it dangling in _process for the next
-                // EnsureRunningAsync call to silently overwrite and orphan.
-                await StopAsync().ConfigureAwait(false);
+                // EnsureRunningAsync call to silently overwrite and orphan. Note this calls the
+                // lock-free core, not the public StopAsync(): _startLock is already held here, and
+                // StopAsync() also takes it (see its own doc comment), so calling it here would
+                // deadlock against ourselves.
+                await StopCoreAsync().ConfigureAwait(false);
                 throw;
             }
         }
@@ -114,23 +134,61 @@ public sealed class ManagedComfyUiEngine : IAsyncDisposable
         }
     }
 
-    /// <summary>Polls /system_stats until the engine answers, the process dies, or ~120 s elapse.</summary>
-    private async Task<bool> WaitForReadyAsync(string baseUrl, Process process, CancellationToken ct)
+    /// <summary>Why the readiness poll in <see cref="WaitForReadyAsync"/> stopped.</summary>
+    private enum ReadinessKind
     {
-        for (var attempt = 0; attempt < 60; attempt++)
+        Ready,
+        ProcessExited,
+        StopRequested,
+        TimedOut
+    }
+
+    /// <summary>
+    /// Outcome of a readiness poll. Kept distinct from a plain bool so
+    /// <see cref="EnsureRunningAsync"/> can give the caller a specific, human-readable reason
+    /// (died vs. never answered vs. was stopped) instead of one generic "not ready" message.
+    /// </summary>
+    private readonly record struct ReadinessOutcome(ReadinessKind Kind, int ExitCode = 0)
+    {
+        public static readonly ReadinessOutcome Ready = new(ReadinessKind.Ready);
+        public static readonly ReadinessOutcome StopRequested = new(ReadinessKind.StopRequested);
+        public static readonly ReadinessOutcome TimedOut = new(ReadinessKind.TimedOut);
+        public static ReadinessOutcome ProcessExited(int exitCode) => new(ReadinessKind.ProcessExited, exitCode);
+    }
+
+    /// <summary>
+    /// Polls /system_stats until the engine answers, the process dies, a stop is requested, or
+    /// ~120 s elapse. Logs progress every 10 attempts so a stall shows how far it got, per this
+    /// project's standing rule that a hang must show its last successful step.
+    /// </summary>
+    private async Task<ReadinessOutcome> WaitForReadyAsync(string baseUrl, Process process, CancellationToken ct)
+    {
+        const int maxAttempts = 60;
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
         {
             ct.ThrowIfCancellationRequested();
+
+            // Checked every iteration (at most a couple of seconds apart — see StopAsync) so a
+            // concurrent stop request doesn't have to wait out the full ~120 s poll window.
+            if (_stopRequested)
+            {
+                Log("Engine start aborted: a stop was requested while it was still becoming ready.");
+                return ReadinessOutcome.StopRequested;
+            }
 
             if (process.HasExited)
             {
                 Log($"Engine process exited during startup with code {process.ExitCode}.");
-                return false;
+                return ReadinessOutcome.ProcessExited(process.ExitCode);
             }
+
+            if (attempt > 0 && attempt % 10 == 0)
+                Log($"Still waiting for the engine to become ready (attempt {attempt}/{maxAttempts})...");
 
             try
             {
                 using var response = await _httpClient.GetAsync($"{baseUrl}/system_stats", ct).ConfigureAwait(false);
-                if (response.IsSuccessStatusCode) return true;
+                if (response.IsSuccessStatusCode) return ReadinessOutcome.Ready;
             }
             catch (HttpRequestException)
             {
@@ -144,11 +202,46 @@ public sealed class ManagedComfyUiEngine : IAsyncDisposable
             await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
         }
 
-        return false;
+        return ReadinessOutcome.TimedOut;
     }
 
-    /// <summary>Stops the engine if it is running. Safe to call repeatedly.</summary>
+    /// <summary>
+    /// Stops the engine if it is running. Safe to call repeatedly, and safe to call while a start
+    /// is in flight: it signals <see cref="_stopRequested"/> so the readiness poll in
+    /// <see cref="WaitForReadyAsync"/> winds down within its next iteration (at most a couple of
+    /// seconds) rather than running to the full ~120 s timeout, then serializes on the same
+    /// <see cref="_startLock"/> as <see cref="EnsureRunningAsync"/> before touching the process —
+    /// without that, a stop landing mid-start could dispose the <see cref="Process"/> or the
+    /// shared <see cref="HttpClient"/> out from under the in-flight poll.
+    /// </summary>
     public async Task StopAsync()
+    {
+        _stopRequested = true;
+        try
+        {
+            await _startLock.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                await StopCoreAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                _startLock.Release();
+            }
+        }
+        finally
+        {
+            _stopRequested = false;
+        }
+    }
+
+    /// <summary>
+    /// The actual kill-and-clear logic, without taking <see cref="_startLock"/>. Callers that
+    /// already hold the lock (paths inside <see cref="EnsureRunningAsync"/> cleaning up after a
+    /// failed start) must call this directly — calling the public <see cref="StopAsync"/> from
+    /// there would deadlock waiting on a lock they themselves are holding.
+    /// </summary>
+    private async Task StopCoreAsync()
     {
         var process = _process;
         _process = null;
@@ -178,6 +271,15 @@ public sealed class ManagedComfyUiEngine : IAsyncDisposable
     /// Allocates a free TCP port on loopback. Never 8188: that belongs to the user's own ComfyUI,
     /// and colliding with it is the one failure mode this engine must never cause.
     /// </summary>
+    /// <remarks>
+    /// Open-check-close-then-hand-to-child is an inherent TOCTOU race: another process could
+    /// claim the port in the gap between <see cref="TcpListener.Stop"/> here and the child
+    /// binding it. There is no race-free way to reserve a port for a process you don't yet
+    /// control on Windows, and this is the same technique .NET's own <c>WebApplication</c>
+    /// "dynamic port" helpers use — acceptable because a same-machine collision is rare and, if
+    /// it ever happens, the engine simply fails to bind and <see cref="EnsureRunningAsync"/>
+    /// reports it as a plain startup failure rather than silently misbehaving.
+    /// </remarks>
     public static int AllocateFreePort()
     {
         for (var attempt = 0; attempt < 10; attempt++)
@@ -205,17 +307,6 @@ public sealed class ManagedComfyUiEngine : IAsyncDisposable
         // TODO: Linux Implementation - venv/bin/python
         var windows = Path.Combine(installRoot, "venv", "Scripts", "python.exe");
         return File.Exists(windows) ? windows : null;
-    }
-
-    private static string? ResolveMainPy(string installRoot)
-    {
-        if (string.IsNullOrWhiteSpace(installRoot)) return null;
-
-        var direct = Path.Combine(installRoot, "main.py");
-        if (File.Exists(direct)) return direct;
-
-        var nested = Path.Combine(installRoot, "ComfyUI", "main.py");
-        return File.Exists(nested) ? nested : null;
     }
 
     private void Log(string message)
