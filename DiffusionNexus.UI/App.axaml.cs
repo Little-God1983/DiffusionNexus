@@ -659,8 +659,27 @@ public partial class App : Application
         services.AddSingleton<IResourceMonitorService, ResourceMonitorService>();
         services.AddTransient<ResourceMonitorViewModel>();
 
+        // The Canvas's second backend: the app-owned ComfyUI engine. No IWorkflowTemplateSource is
+        // registered yet (that lands with the workflow-submission task), so this backend honestly
+        // reports "no workflow configured" until then rather than pretending to generate.
+        services.AddSingleton<Services.Diffusion.ManagedComfyUiBackend>(sp =>
+            new Services.Diffusion.ManagedComfyUiBackend(
+                sp.GetRequiredService<Services.Engine.ManagedComfyUiEngine>(),
+                async () =>
+                {
+                    using var scope = sp.CreateScope();
+                    var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+                    var packages = await uow.InstallerPackages.GetAllAsync();
+                    return packages.FirstOrDefault(p => p.IsAppManaged)?.InstallationPath;
+                },
+                sp.GetService<Services.Diffusion.IWorkflowTemplateSource>()));
+
         // Diffusion Canvas view model (singleton — frames persist across navigation in v1).
-        services.AddSingleton<DiffusionNexus.UI.ViewModels.DiffusionCanvas.DiffusionCanvasViewModel>();
+        services.AddSingleton<DiffusionNexus.UI.ViewModels.DiffusionCanvas.DiffusionCanvasViewModel>(sp =>
+            new DiffusionNexus.UI.ViewModels.DiffusionCanvas.DiffusionCanvasViewModel(
+                sp.GetRequiredService<Services.Diffusion.LocalDiffusionBackendProvider>(),
+                sp.GetService<ViewModels.ResourceMonitorViewModel>(),
+                sp.GetRequiredService<Services.Diffusion.ManagedComfyUiBackend>()));
 
 
         // ?? Installer SDK services ??
