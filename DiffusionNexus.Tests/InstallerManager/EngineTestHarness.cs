@@ -24,7 +24,9 @@ internal static class EngineTestHarness
         Action<InstallerPackage>? onPackageAdded = null,
         IReadOnlyList<BaseModelFolder>? baseModelFolders = null,
         Mock<IDialogService>? dialogMock = null,
-        Mock<IConfigurationRepository>? configurationRepositoryMock = null)
+        Mock<IConfigurationRepository>? configurationRepositoryMock = null,
+        Action<InstallerPackage>? onPackageUpdated = null,
+        Action<InstallerPackage>? onPackageRemoved = null)
     {
         var repo = new Mock<IInstallerPackageRepository>();
         repo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>()))
@@ -32,6 +34,10 @@ internal static class EngineTestHarness
         repo.Setup(r => r.AddAsync(It.IsAny<InstallerPackage>(), It.IsAny<CancellationToken>()))
             .Callback<InstallerPackage, CancellationToken>((p, _) => onPackageAdded?.Invoke(p))
             .Returns(Task.CompletedTask);
+        repo.Setup(r => r.Update(It.IsAny<InstallerPackage>()))
+            .Callback<InstallerPackage>(p => onPackageUpdated?.Invoke(p));
+        repo.Setup(r => r.Remove(It.IsAny<InstallerPackage>()))
+            .Callback<InstallerPackage>(p => onPackageRemoved?.Invoke(p));
 
         var uow = new Mock<IUnitOfWork>();
         uow.Setup(u => u.InstallerPackages).Returns(repo.Object);
@@ -48,8 +54,13 @@ internal static class EngineTestHarness
             uow.Setup(u => u.AppSettings).Returns(appSettingsRepo.Object);
         }
 
+        // Only apply the default chosenFolder stub when the caller didn't bring their own dialog
+        // mock — a caller-supplied mock configures ShowOpenFolderDialogAsync itself (e.g. to throw
+        // on the first call), and this default setup would otherwise be applied afterwards and
+        // silently win over theirs (last Setup on the same matcher takes precedence in Moq).
         var dialog = dialogMock ?? new Mock<IDialogService>();
-        dialog.Setup(d => d.ShowOpenFolderDialogAsync(It.IsAny<string>())).ReturnsAsync(chosenFolder);
+        if (dialogMock is null)
+            dialog.Setup(d => d.ShowOpenFolderDialogAsync(It.IsAny<string>())).ReturnsAsync(chosenFolder);
 
         return new InstallerManagerViewModel(
             dialog.Object, uow.Object, new PackageProcessManager(),

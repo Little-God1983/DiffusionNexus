@@ -2,6 +2,7 @@ using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.Installer.SDK.Shared;
+using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.Engine;
 using FluentAssertions;
 using Moq;
@@ -172,5 +173,101 @@ public class EngineInstallFlowTests
         originalCard.IsEngineInstalled.Should().BeTrue("the install completed on the same card it started on");
         vm.InstallerCards.Any(c => c.IsEngine).Should().BeFalse(
             "the switch ended up off, and the deferred reload must have caught up to that once the install finished");
+    }
+
+    [Fact]
+    public async Task SuccessfulInstall_WithExistingStaleAppManagedRow_ReusesItInPlaceInsteadOfDuplicating()
+    {
+        // Regression for the review finding: a stale app-managed row (folder gone) is exactly
+        // what puts the tile back in front of the user with an Install button. Reinstalling used
+        // to unconditionally AddAsync a second IsAppManaged row, so the DB ended up with two —
+        // and since both the tile's own load path and the Canvas engine-root resolver in
+        // App.axaml.cs resolve via a plain FirstOrDefault(p => p.IsAppManaged), the older stale
+        // row kept winning: the tile still looked broken and the Canvas backend still resolved
+        // to the dead path after a *successful* reinstall.
+        var staleRow = new InstallerPackage
+        {
+            Id = 7,
+            Name = "Diffusion Nexus Engine",
+            InstallationPath = @"C:\Old\Dead\Engine",
+            ExecutablePath = null,
+            Type = InstallerType.ComfyUI,
+            IsAppManaged = true
+        };
+
+        InstallerPackage? added = null;
+        var updated = new List<InstallerPackage>();
+        var removed = new List<InstallerPackage>();
+
+        var installer = new Mock<IManagedEngineInstaller>();
+        installer.Setup(i => i.InstallBaseEngineAsync(
+                It.IsAny<EngineInstallRequest>(), It.IsAny<IProgress<InstallLogEntry>>(),
+                It.IsAny<IProgress<InstallationProgress>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new EngineInstallOutcome(true, false, "done", @"C:\Engine\New"));
+
+        var vm = EngineTestHarness.CreateInstallerManagerViewModel(
+            packages: [staleRow],
+            engineInstaller: installer.Object,
+            chosenFolder: @"C:\Engine\New",
+            onPackageAdded: p => added = p,
+            onPackageUpdated: p => updated.Add(p),
+            onPackageRemoved: p => removed.Add(p));
+
+        vm.IsEngineTileVisible = true;
+        await vm.LoadInstallationsCommand.ExecuteAsync(null);
+        await vm.InstallEngineAsync();
+
+        added.Should().BeNull("reusing the existing app-managed row must not also insert a new one");
+        updated.Should().ContainSingle().Which.Should().BeSameAs(staleRow,
+            "the existing row should be updated in place, keeping its Id (and any FK-linked settings)");
+        removed.Should().BeEmpty("there was only ever one stale row to reconcile");
+
+        staleRow.InstallationPath.Should().Be(@"C:\Engine\New");
+        staleRow.IsAppManaged.Should().BeTrue();
+        vm.InstallerCards.Single(c => c.IsEngine).IsEngineInstalled.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task FolderPickerThrows_ClearsInFlightFlag_SoALaterCallCanStillInstall()
+    {
+        // Regression: _isEngineInstallInFlight used to be set before awaiting
+        // ShowOpenFolderDialogAsync, outside any try/finally. If the dialog threw, the flag was
+        // never cleared, so every later Install click silently no-opped for the rest of the
+        // session (and the Canvas visibility toggle stopped reloading the card list).
+        var callCount = 0;
+        var dialog = new Mock<IDialogService>();
+        dialog.Setup(d => d.ShowOpenFolderDialogAsync(It.IsAny<string>()))
+            .Returns(() =>
+            {
+                callCount++;
+                if (callCount == 1)
+                    throw new InvalidOperationException("folder picker boom");
+                return Task.FromResult<string?>(@"C:\Engine\ComfyUI");
+            });
+
+        var installer = new Mock<IManagedEngineInstaller>();
+        installer.Setup(i => i.InstallBaseEngineAsync(
+                It.IsAny<EngineInstallRequest>(), It.IsAny<IProgress<InstallLogEntry>>(),
+                It.IsAny<IProgress<InstallationProgress>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new EngineInstallOutcome(true, false, "done", @"C:\Engine\ComfyUI"));
+
+        var vm = EngineTestHarness.CreateInstallerManagerViewModel(
+            packages: [], engineInstaller: installer.Object,
+            chosenFolder: null, onPackageAdded: _ => { },
+            dialogMock: dialog);
+
+        vm.IsEngineTileVisible = true;
+        await vm.LoadInstallationsCommand.ExecuteAsync(null);
+
+        var firstAttempt = () => vm.InstallEngineAsync();
+        await firstAttempt.Should().ThrowAsync<InvalidOperationException>(
+            "the folder picker's exception is not swallowed, only the in-flight flag is reset");
+
+        await vm.InstallEngineAsync();
+
+        installer.Verify(i => i.InstallBaseEngineAsync(
+            It.IsAny<EngineInstallRequest>(), It.IsAny<IProgress<InstallLogEntry>>(),
+            It.IsAny<IProgress<InstallationProgress>>(), It.IsAny<CancellationToken>()), Times.Once,
+            "the second call must actually reach the installer instead of being silently skipped by a stuck flag");
     }
 }
