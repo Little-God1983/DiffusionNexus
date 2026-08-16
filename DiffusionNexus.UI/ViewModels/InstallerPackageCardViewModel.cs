@@ -8,6 +8,7 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.Engine;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -295,8 +296,14 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
 
     /// <summary>
     /// Creates the singleton "Diffusion Nexus Engine" tile. Pass the app-managed
-    /// <see cref="InstallerPackage"/> when the engine is installed, or <c>null</c> when it
-    /// is not — the tile then offers Install instead of Workloads.
+    /// <see cref="InstallerPackage"/> when a database row exists, or <c>null</c> when it does
+    /// not — either way, "installed" is grounded in <see cref="ManagedEngineLocator.LooksInstalled"/>
+    /// rather than the row's mere existence: an install can fail after writing the row, or the
+    /// user can delete the folder directly, and a database row alone must never claim the tile is
+    /// installed when the folder backing it is gone. When that happens the tile falls back to
+    /// offering Install again (with the "Installation folder not found" banner via
+    /// <see cref="IsMissing"/>) instead of showing "App-managed" with a Workloads button that runs
+    /// the checker against a path that no longer exists — and no way back.
     /// </summary>
     public static InstallerPackageCardViewModel CreateEngineCard(InstallerPackage? installed)
     {
@@ -304,11 +311,16 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
             ? new InstallerPackageCardViewModel(forCore: true)
             : new InstallerPackageCardViewModel(installed);
 
+        var looksInstalled = ManagedEngineLocator.LooksInstalled(installed?.InstallationPath);
+
         card.Name = "Diffusion Nexus Engine";
         card.Type = InstallerType.ComfyUI;
         card.IsEngine = true;
-        card.IsEngineInstalled = installed is not null;
-        card.VersionDisplay = installed is null ? "Not installed" : "App-managed";
+        card.IsEngineInstalled = looksInstalled;
+        card.IsMissing = installed is not null && !looksInstalled;
+        card.VersionDisplay = looksInstalled
+            ? "App-managed"
+            : installed is null ? "Not installed" : "Installation folder not found";
         card.InstallationPath = installed?.InstallationPath ?? string.Empty;
 
         return card;

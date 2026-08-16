@@ -52,10 +52,12 @@ public class EngineWorkloadsRequestTests
     }
 
     [Fact]
-    public async Task EngineInstalledWithBlankInstallationPath_StillShowsRefusalMessage()
+    public async Task EngineRowWithBlankInstallationPath_StillShowsRefusalMessage()
     {
-        // Belt-and-braces: the refusal guard also fires on a blank InstallationPath even if
-        // IsEngineInstalled were somehow true, so a dialog is never opened against an empty path.
+        // Belt-and-braces: a blank InstallationPath can never "look installed" (LooksInstalled
+        // short-circuits on a blank path), so IsEngineInstalled is false here too — but the
+        // refusal guard also checks InstallationPath directly, so a dialog is never opened
+        // against an empty path even if IsEngineInstalled were somehow true.
         var dialog = new Mock<IDialogService>();
         var configRepo = new Mock<IConfigurationRepository>();
 
@@ -81,7 +83,7 @@ public class EngineWorkloadsRequestTests
         await vm.LoadInstallationsCommand.ExecuteAsync(null);
 
         var engineCard = vm.InstallerCards.Single(c => c.IsEngine);
-        engineCard.IsEngineInstalled.Should().BeTrue("a saved app-managed row marks the card installed");
+        engineCard.IsEngineInstalled.Should().BeFalse("a blank path can never look installed on disk");
         engineCard.InstallationPath.Should().BeEmpty();
 
         await engineCard.ShowWorkloadsCommand.ExecuteAsync(null);
