@@ -212,7 +212,13 @@ public sealed class ManagedComfyUiEngine : IAsyncDisposable
     /// seconds) rather than running to the full ~120 s timeout, then serializes on the same
     /// <see cref="_startLock"/> as <see cref="EnsureRunningAsync"/> before touching the process —
     /// without that, a stop landing mid-start could dispose the <see cref="Process"/> or the
-    /// shared <see cref="HttpClient"/> out from under the in-flight poll.
+    /// shared <see cref="HttpClient"/> out from under the in-flight poll. The reset back to false
+    /// happens under the same lock acquisition that did the stop, immediately before releasing
+    /// it — not after — so the flag and the lock are handed over together. Resetting it outside
+    /// the lock (even in an outer <c>finally</c> a few instructions later) would leave a window
+    /// where the lock is free but the flag is still true, letting a completely unrelated,
+    /// freshly-invoked <see cref="EnsureRunningAsync"/> that acquires the lock in that gap read a
+    /// stale "stop requested" and abort a start that has nothing to do with this stop.
     /// </summary>
     public async Task StopAsync()
     {
@@ -220,18 +226,24 @@ public sealed class ManagedComfyUiEngine : IAsyncDisposable
         try
         {
             await _startLock.WaitAsync().ConfigureAwait(false);
-            try
-            {
-                await StopCoreAsync().ConfigureAwait(false);
-            }
-            finally
-            {
-                _startLock.Release();
-            }
+        }
+        catch
+        {
+            // The lock was never acquired, so there's nothing to hand over — reset immediately.
+            _stopRequested = false;
+            throw;
+        }
+
+        try
+        {
+            await StopCoreAsync().ConfigureAwait(false);
         }
         finally
         {
+            // Reset before releasing, in the same finally, so the flag and the lock are handed
+            // over together — never a free lock with a still-true flag for another start to see.
             _stopRequested = false;
+            _startLock.Release();
         }
     }
 
