@@ -106,8 +106,10 @@ public sealed class InstallationSettingsCleanupTests
             foldersUsedByOthers: [@"E:\AI\comfy_output"]);
 
         plan.Galleries.Should().ContainSingle().Which.Should().BeSameAs(own);
-        plan.SharedFolders.Should().ContainSingle().Which.Should().Be(@"E:\AI\comfy_output\",
+        plan.SharedGalleryFolders.Should().ContainSingle().Which.Should().Be(@"E:\AI\comfy_output\",
             "the dialog has to say why the folder is being kept instead of claiming none was linked");
+        plan.SharedLoraSourceFolders.Should().BeEmpty("the held-back path belongs to the gallery row only");
+        plan.SharedBaseModelFolders.Should().BeEmpty();
     }
 
     [Fact]
@@ -149,11 +151,13 @@ public sealed class InstallationSettingsCleanupTests
 
         plan.LoraSources.Should().ContainSingle().Which.Should().BeSameAs(ownLora);
         plan.BaseModelFolders.Should().BeEmpty();
+        plan.SharedLoraSourceFolders.Should().BeEquivalentTo(new[] { @"C:\AI\ComfyUI\nested\models\loras" });
+        plan.SharedBaseModelFolders.Should().BeEquivalentTo(new[] { @"C:\AI\ComfyUI\nested\models" });
         plan.SharedFolders.Should().BeEquivalentTo(new[]
         {
             @"C:\AI\ComfyUI\nested\models\loras",
             @"C:\AI\ComfyUI\nested\models"
-        }, o => o.WithoutStrictOrdering());
+        }, o => o.WithoutStrictOrdering(), "the note lists every held-back path across the three kinds");
     }
 
     [Fact]

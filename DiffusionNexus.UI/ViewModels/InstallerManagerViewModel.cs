@@ -487,7 +487,9 @@ public partial class InstallerManagerViewModel : ViewModelBase
                 plan.Galleries.Select(g => g.FolderPath).ToList(),
                 plan.LoraSources.Select(s => s.FolderPath).ToList(),
                 plan.BaseModelFolders.Select(f => f.FolderPath).ToList(),
-                plan.SharedFolders));
+                plan.SharedGalleryFolders,
+                plan.SharedLoraSourceFolders,
+                plan.SharedBaseModelFolders));
 
             if (!choice.Confirmed) return;
 

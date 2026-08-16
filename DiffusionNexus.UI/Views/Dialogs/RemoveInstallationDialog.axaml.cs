@@ -1,3 +1,4 @@
+using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
@@ -141,17 +142,17 @@ public partial class RemoveInstallationDialog : Window
     {
         Message = $"Remove \"{prompt.InstallationName}\" from the Installer Manager?\n\nThis will NOT delete any files on disk.";
 
-        GalleryLabel = ComposeLabel("Gallery", prompt.GalleryFolders);
-        LoraSourceLabel = ComposeLabel("LoRA Source", prompt.LoraSourceFolders);
-        BaseModelFolderLabel = ComposeLabel("Base Model Folder", prompt.BaseModelFolders);
+        var sharedGalleries = prompt.SharedGalleryFolders ?? [];
+        var sharedLoraSources = prompt.SharedLoraSourceFolders ?? [];
+        var sharedBaseModelFolders = prompt.SharedBaseModelFolders ?? [];
 
-        var sharedFolders = prompt.SharedFolders ?? [];
-        HasSharedFolders = sharedFolders.Count > 0;
-        SharedFolderNote = HasSharedFolders
-            ? "Kept because another installation still uses "
-              + (sharedFolders.Count == 1 ? "it:\n" : "them:\n")
-              + string.Join("\n", sharedFolders)
-            : string.Empty;
+        GalleryLabel = RemoveInstallationLabels.ComposeCheckbox("Gallery", prompt.GalleryFolders, sharedGalleries);
+        LoraSourceLabel = RemoveInstallationLabels.ComposeCheckbox("LoRA Source", prompt.LoraSourceFolders, sharedLoraSources);
+        BaseModelFolderLabel = RemoveInstallationLabels.ComposeCheckbox("Base Model Folder", prompt.BaseModelFolders, sharedBaseModelFolders);
+
+        SharedFolderNote = RemoveInstallationLabels.ComposeSharedNote(
+            sharedGalleries.Concat(sharedLoraSources).Concat(sharedBaseModelFolders));
+        HasSharedFolders = SharedFolderNote.Length > 0;
 
         HasGalleries = prompt.GalleryFolders.Count > 0;
         HasLoraSources = prompt.LoraSourceFolders.Count > 0;
@@ -161,11 +162,6 @@ public partial class RemoveInstallationDialog : Window
         RemoveLoraSources = HasLoraSources;
         RemoveBaseModelFolders = HasBaseModelFolders;
     }
-
-    private static string ComposeLabel(string what, System.Collections.Generic.IReadOnlyList<string> folders) =>
-        folders.Count == 0
-            ? $"{what} — none linked"
-            : $"{what}\n{string.Join("\n", folders)}";
 
     private void OnYesClick(object? sender, RoutedEventArgs e)
     {

@@ -428,7 +428,7 @@ public class InstallerManagerViewModelTests
 
             prompt.Should().NotBeNull();
             prompt!.GalleryFolders.Should().BeEmpty("the folder is still written to by installation 6");
-            prompt.SharedFolders.Should().BeEquivalentTo(sharedOutput);
+            prompt.SharedGalleryFolders.Should().BeEquivalentTo(sharedOutput);
             harness.AppSettingsRepo.Verify(r => r.RemoveImageGallery(It.IsAny<ImageGallery>()), Times.Never);
             harness.PackageRepo.Verify(r => r.Remove(harness.Package), Times.Once,
                 "the installation itself is still removed — only its shared folder survives");

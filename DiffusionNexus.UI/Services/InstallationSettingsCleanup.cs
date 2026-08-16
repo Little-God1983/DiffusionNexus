@@ -27,15 +27,31 @@ namespace DiffusionNexus.UI.Services;
 /// </summary>
 public static class InstallationSettingsCleanup
 {
-    /// <summary>The settings rows associated with one installation.</summary>
+    /// <summary>
+    /// The settings rows associated with one installation: the three removable sets, plus
+    /// the paths held back per kind because another installation still uses them. The
+    /// held-back paths are tracked per kind, not as one flat list, so the dialog can label
+    /// each row correctly — a gallery that exists but is shared must not read "none linked".
+    /// </summary>
     public sealed record Plan(
         IReadOnlyList<ImageGallery> Galleries,
         IReadOnlyList<LoraSource> LoraSources,
         IReadOnlyList<BaseModelFolder> BaseModelFolders,
-        IReadOnlyList<string> SharedFolders)
+        IReadOnlyList<string> SharedGalleryFolders,
+        IReadOnlyList<string> SharedLoraSourceFolders,
+        IReadOnlyList<string> SharedBaseModelFolders)
     {
         /// <summary>True when the installation has no removable settings rows at all.</summary>
         public bool IsEmpty => Galleries.Count == 0 && LoraSources.Count == 0 && BaseModelFolders.Count == 0;
+
+        /// <summary>Every held-back path across the three kinds, de-duplicated.</summary>
+        public IReadOnlyList<string> SharedFolders =>
+        [
+            .. SharedGalleryFolders
+                .Concat(SharedLoraSourceFolders)
+                .Concat(SharedBaseModelFolders)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+        ];
     }
 
     /// <summary>Resolves the rows tied to <paramref name="package"/>.</summary>
@@ -73,10 +89,13 @@ public static class InstallationSettingsCleanup
             .Where(p => !string.IsNullOrWhiteSpace(p))
             .ToList();
 
-        var shared = new List<string>();
+        var sharedGalleries = new List<string>();
+        var sharedLoraSources = new List<string>();
+        var sharedBaseModelFolders = new List<string>();
 
-        // True when the row may be swept; records the path as shared when it may not.
-        bool IsRemovable(string? folderPath)
+        // True when the row may be swept; records the path in <paramref name="shared"/>
+        // when another installation's continued use means it has to stay.
+        bool IsRemovable(string? folderPath, List<string> shared)
         {
             if (!otherUsage.Any(used => IsUnderInstallation(folderPath, used)))
             {
@@ -89,12 +108,12 @@ public static class InstallationSettingsCleanup
 
         var galleries = settings.ImageGalleries
             .Where(g => g.InstallerPackageId == package.Id)
-            .Where(g => IsRemovable(g.FolderPath))
+            .Where(g => IsRemovable(g.FolderPath, sharedGalleries))
             .ToList();
 
         var loraSources = settings.LoraSources
             .Where(s => IsUnderInstallation(s.FolderPath, package.InstallationPath))
-            .Where(s => IsRemovable(s.FolderPath))
+            .Where(s => IsRemovable(s.FolderPath, sharedLoraSources))
             .ToList();
 
         var baseModelFolders = settings.BaseModelFolders
@@ -103,14 +122,19 @@ public static class InstallationSettingsCleanup
                             && IsUnderInstallation(f.FolderPath, package.InstallationPath)))
             .Where(f => NormalizePath(f.FolderPath) is not { } normalized
                         || !protectedNormalized.Contains(normalized))
-            .Where(f => IsRemovable(f.FolderPath))
+            .Where(f => IsRemovable(f.FolderPath, sharedBaseModelFolders))
             .ToList();
 
         return new Plan(
             galleries,
             loraSources,
             baseModelFolders,
-            shared.Distinct(StringComparer.OrdinalIgnoreCase).ToList());
+            Distinct(sharedGalleries),
+            Distinct(sharedLoraSources),
+            Distinct(sharedBaseModelFolders));
+
+        static IReadOnlyList<string> Distinct(List<string> paths) =>
+            [.. paths.Distinct(StringComparer.OrdinalIgnoreCase)];
     }
 
     /// <summary>Full, trailing-separator-free form of a path; null when invalid.</summary>
