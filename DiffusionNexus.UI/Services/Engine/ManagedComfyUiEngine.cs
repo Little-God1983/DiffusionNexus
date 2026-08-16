@@ -73,24 +73,35 @@ public sealed class ManagedComfyUiEngine : IAsyncDisposable
             if (_process is null)
                 return new EngineStartResult(false, null, "The engine process could not be started.");
 
-            _process.OutputDataReceived += (_, e) => { if (e.Data is not null) Log(e.Data); };
-            _process.ErrorDataReceived += (_, e) => { if (e.Data is not null) Log(e.Data); };
-            _process.BeginOutputReadLine();
-            _process.BeginErrorReadLine();
-
-            var baseUrl = $"http://127.0.0.1:{port}";
-            var ready = await WaitForReadyAsync(baseUrl, _process, ct).ConfigureAwait(false);
-            if (!ready)
+            try
             {
-                await StopAsync().ConfigureAwait(false);
-                return new EngineStartResult(false, null,
-                    "The engine started but never became ready (no answer from /system_stats). " +
-                    "See the Unified Console for its output.");
-            }
+                _process.OutputDataReceived += (_, e) => { if (e.Data is not null) Log(e.Data); };
+                _process.ErrorDataReceived += (_, e) => { if (e.Data is not null) Log(e.Data); };
+                _process.BeginOutputReadLine();
+                _process.BeginErrorReadLine();
 
-            _baseUrl = baseUrl;
-            Log($"Engine ready at {baseUrl}.");
-            return new EngineStartResult(true, baseUrl, null);
+                var baseUrl = $"http://127.0.0.1:{port}";
+                var ready = await WaitForReadyAsync(baseUrl, _process, ct).ConfigureAwait(false);
+                if (!ready)
+                {
+                    await StopAsync().ConfigureAwait(false);
+                    return new EngineStartResult(false, null,
+                        "The engine started but never became ready (no answer from /system_stats). " +
+                        "See the Unified Console for its output.");
+                }
+
+                _baseUrl = baseUrl;
+                Log($"Engine ready at {baseUrl}.");
+                return new EngineStartResult(true, baseUrl, null);
+            }
+            catch
+            {
+                // The process is already spawned at this point. Whatever went wrong — including
+                // caller cancellation — must not leave it dangling in _process for the next
+                // EnsureRunningAsync call to silently overwrite and orphan.
+                await StopAsync().ConfigureAwait(false);
+                throw;
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
