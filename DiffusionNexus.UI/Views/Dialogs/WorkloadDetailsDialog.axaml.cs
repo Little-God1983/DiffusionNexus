@@ -96,6 +96,14 @@ public partial class WorkloadDetailsDialog : Window
     public int[] ConfiguredVramProfiles { get; set; } = [];
 
     /// <summary>
+    /// The VRAM tier (in GB) detected on the local machine, used to preselect the closest
+    /// match in the VRAM selection dialog. <c>null</c> when no detector is available, in which
+    /// case the VRAM selection dialog keeps its own default (the smallest configured tier).
+    /// Set before calling ShowDialog.
+    /// </summary>
+    public int? SuggestedVramGb { get; set; }
+
+    /// <summary>
     /// Callback that performs the actual installation. Set by the caller before ShowDialog.
     /// Parameters: selected items, VRAM GB, install progress, download progress, skip token provider, cancellation token.
     /// Returns a summary string.
@@ -140,7 +148,7 @@ public partial class WorkloadDetailsDialog : Window
 
         if (hasVramModels)
         {
-            var vramDialog = new VramSelectionDialog(ConfiguredVramProfiles);
+            var vramDialog = new VramSelectionDialog(ConfiguredVramProfiles, SuggestedVramGb);
             await vramDialog.ShowDialog(this);
 
             if (vramDialog.SelectedVramGb is null)

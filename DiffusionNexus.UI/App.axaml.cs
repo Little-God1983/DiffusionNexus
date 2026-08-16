@@ -938,7 +938,8 @@ public partial class App : Application
             // one destructive operation (remove / delete-from-disk), so those flows
             // never act on — or poison — the VM's long-lived shared context.
             unitOfWorkFactory: () => sp.GetRequiredService<IUnitOfWork>(),
-            engineInstaller: sp.GetRequiredService<Services.Engine.IManagedEngineInstaller>()));
+            engineInstaller: sp.GetRequiredService<Services.Engine.IManagedEngineInstaller>(),
+            resourceMonitor: sp.GetRequiredService<IResourceMonitorService>()));
         services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),

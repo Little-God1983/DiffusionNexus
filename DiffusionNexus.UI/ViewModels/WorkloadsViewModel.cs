@@ -10,6 +10,7 @@ using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.ConfigurationChecker;
 using DiffusionNexus.UI.Services.ConfigurationChecker.Models;
+using DiffusionNexus.UI.Services.Engine;
 using DiffusionNexus.UI.Views.Dialogs;
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -24,6 +25,13 @@ public partial class WorkloadsViewModel : ViewModelBase
     private readonly IConfigurationCheckerService _checkerService;
     private readonly IWorkloadInstallService _installService;
     private readonly string _comfyUIRootPath;
+    private readonly IReadOnlyList<Guid>? _allowedConfigurationIds;
+
+    /// <summary>
+    /// Optional VRAM detector used to preselect the best-fitting tier in the details dialog.
+    /// Null in the ordinary Workloads dialog and in tests that don't exercise the suggestion.
+    /// </summary>
+    private readonly IResourceMonitorService? _resourceMonitor;
 
     /// <summary>
     /// Cached configurations so we can pass them to the install service.
@@ -50,7 +58,9 @@ public partial class WorkloadsViewModel : ViewModelBase
         IConfigurationRepository configurationRepository,
         IConfigurationCheckerService checkerService,
         IWorkloadInstallService installService,
-        string comfyUIRootPath)
+        string comfyUIRootPath,
+        IReadOnlyList<Guid>? allowedConfigurationIds = null,
+        IResourceMonitorService? resourceMonitor = null)
     {
         ArgumentNullException.ThrowIfNull(configurationRepository);
         ArgumentNullException.ThrowIfNull(checkerService);
@@ -61,6 +71,8 @@ public partial class WorkloadsViewModel : ViewModelBase
         _checkerService = checkerService;
         _installService = installService;
         _comfyUIRootPath = comfyUIRootPath;
+        _allowedConfigurationIds = allowedConfigurationIds;
+        _resourceMonitor = resourceMonitor;
     }
 
     /// <summary>
@@ -82,6 +94,7 @@ public partial class WorkloadsViewModel : ViewModelBase
 
             var comfyConfigurations = configurations
                 .Where(c => c.Repository.Type == RepositoryType.ComfyUI)
+                .Where(c => _allowedConfigurationIds is null || _allowedConfigurationIds.Contains(c.Id))
                 .ToList();
 
             _loadedConfigurations = comfyConfigurations;
@@ -198,6 +211,11 @@ public partial class WorkloadsViewModel : ViewModelBase
             DetailItems = detailItems,
             Summary = item.CheckResult.Summary,
             ConfiguredVramProfiles = item.ConfiguredVramProfiles,
+            SuggestedVramGb = _resourceMonitor is null
+                ? null
+                : EngineWorkloadCatalog.SuggestVramTier(
+                    (await _resourceMonitor.GetSnapshotAsync()).VramTotalMB,
+                    item.ConfiguredVramProfiles),
             InstallCallback = CreateInstallCallback(item),
             RepairCallback = CreateRepairCallback(item)
         };

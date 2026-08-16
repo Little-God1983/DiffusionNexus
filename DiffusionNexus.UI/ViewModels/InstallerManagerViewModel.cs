@@ -48,6 +48,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
     private readonly IDownloadCoordinator? _downloadCoordinator;
     private readonly Services.Diffusion.BaseModelFolderRegistrar? _baseModelFolderRegistrar;
     private readonly Services.Engine.IManagedEngineInstaller? _engineInstaller;
+    private readonly IResourceMonitorService? _resourceMonitor;
 
     /// <summary>
     /// Raised when the unified console panel should be opened (e.g., during an update).
@@ -105,7 +106,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         IDownloadCoordinator? downloadCoordinator = null,
         Services.Diffusion.BaseModelFolderRegistrar? baseModelFolderRegistrar = null,
         Func<IUnitOfWork>? unitOfWorkFactory = null,
-        Services.Engine.IManagedEngineInstaller? engineInstaller = null)
+        Services.Engine.IManagedEngineInstaller? engineInstaller = null,
+        IResourceMonitorService? resourceMonitor = null)
     {
         _dialogService = dialogService;
         _unitOfWork = unitOfWork;
@@ -123,6 +125,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         _downloadCoordinator = downloadCoordinator;
         _baseModelFolderRegistrar = baseModelFolderRegistrar;
         _engineInstaller = engineInstaller;
+        _resourceMonitor = resourceMonitor;
 
         InstallerCards.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
 
@@ -686,17 +689,37 @@ public partial class InstallerManagerViewModel : ViewModelBase
             return;
         }
 
+        if (card.IsEngine)
+        {
+            if (!card.IsEngineInstalled || string.IsNullOrWhiteSpace(card.InstallationPath))
+            {
+                await _dialogService.ShowMessageAsync("Diffusion Nexus Engine",
+                    "Install the engine first — workloads are installed into it.");
+                return;
+            }
+
+            await ShowWorkloadsDialogAsync(card.InstallationPath,
+                Services.Engine.EngineWorkloadCatalog.WorkloadIds);
+            return;
+        }
+
+        await ShowWorkloadsDialogAsync(card.InstallationPath, null);
+    }
+
+    /// <summary>
+    /// Opens the workloads dialog against a ComfyUI root. <paramref name="allowedConfigurationIds"/>
+    /// narrows the list to the curated engine workloads; null shows every ComfyUI workload.
+    /// </summary>
+    private async Task ShowWorkloadsDialogAsync(string comfyUiRoot, IReadOnlyList<Guid>? allowedConfigurationIds)
+    {
         try
         {
             var vm = new WorkloadsViewModel(
                 _configurationRepository, _checkerService, _installService,
-                card.InstallationPath);
+                comfyUiRoot, allowedConfigurationIds, _resourceMonitor);
             await vm.LoadWorkloadsCommand.ExecuteAsync(null);
 
-            var dialog = new Views.Dialogs.WorkloadsDialog
-            {
-                DataContext = vm
-            };
+            var dialog = new Views.Dialogs.WorkloadsDialog { DataContext = vm };
 
             var parentWindow = (Avalonia.Application.Current?.ApplicationLifetime
                 as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.MainWindow;
@@ -706,7 +729,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            Serilog.Log.Error(ex, "Failed to open workloads dialog for {Name}", card.Name);
+            Serilog.Log.Error(ex, "Failed to open workloads dialog for {Path}", comfyUiRoot);
             await _dialogService.ShowMessageAsync("Error", $"Failed to load workloads: {ex.Message}");
         }
     }
