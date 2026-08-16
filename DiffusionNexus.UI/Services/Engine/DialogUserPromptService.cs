@@ -18,6 +18,11 @@ public sealed class DialogUserPromptService : IUserPromptService
         _dialogService = dialogService;
     }
 
+    /// <summary>
+    /// <c>IDialogService.ShowConfirmAsync</c> has no custom button captions, so the SDK's
+    /// <paramref name="yesButtonText"/> and <paramref name="noButtonText"/> are advisory only
+    /// and intentionally dropped here.
+    /// </summary>
     public Task<bool> ConfirmAsync(string title, string message,
         string yesButtonText = "Yes", string noButtonText = "No")
         => _dialogService.ShowConfirmAsync(title, message);
