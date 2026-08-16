@@ -84,7 +84,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
     partial void OnIsEngineTileVisibleChanged(bool value)
     {
-        _ = LoadInstallationsAsync();
+        _ = LoadInstallationsCommand.ExecuteAsync(null);
     }
 
     public InstallerManagerViewModel(
