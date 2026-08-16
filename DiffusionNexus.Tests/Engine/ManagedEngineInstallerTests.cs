@@ -7,11 +7,23 @@ using DiffusionNexus.Installer.SDK.Shared.Services;
 using DiffusionNexus.UI.Services.Engine;
 using FluentAssertions;
 using Moq;
+using SdkLogLevel = DiffusionNexus.Installer.SDK.Models.Enums.LogLevel;
 
 namespace DiffusionNexus.Tests.Engine;
 
 public class ManagedEngineInstallerTests
 {
+    /// <summary>
+    /// Captures reports synchronously, unlike <see cref="Progress{T}"/> which marshals onto a
+    /// captured <see cref="System.Threading.SynchronizationContext"/> (or the thread pool) and so
+    /// cannot be asserted against deterministically in a unit test.
+    /// </summary>
+    private sealed class CapturingProgress<T> : IProgress<T>
+    {
+        public List<T> Reports { get; } = [];
+        public void Report(T value) => Reports.Add(value);
+    }
+
     private static InstallationConfiguration BuildKreaConfiguration()
     {
         var config = new InstallationConfiguration
@@ -183,6 +195,49 @@ public class ManagedEngineInstallerTests
             It.IsAny<IProgress<InstallLogEntry>>(), It.IsAny<IProgress<InstallationProgress>>(),
             It.IsAny<IProgress<DownloadProgress>>(), It.IsAny<Func<CancellationToken>?>(),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task InstallBaseEngine_MapsEveryCoordinatorLogLevelToTheSdkLogEntry()
+    {
+        // Exercises the LogEntryLevel -> Models.Enums.LogLevel bridge in ManagedEngineInstaller's
+        // LogAction: the two enums live in separate SDK assemblies with no shared source of
+        // truth, so this pins the mapping runs and lands correctly instead of being dead code.
+        var config = BuildKreaConfiguration();
+        var (coordinator, repo) = Mocks(config);
+        var logSink = new CapturingProgress<InstallLogEntry>();
+
+        (LogEntryLevel Source, SdkLogLevel Expected)[] levels =
+        [
+            (LogEntryLevel.Debug, SdkLogLevel.Debug),
+            (LogEntryLevel.Info, SdkLogLevel.Info),
+            (LogEntryLevel.Success, SdkLogLevel.Success),
+            (LogEntryLevel.Warning, SdkLogLevel.Warning),
+            (LogEntryLevel.Error, SdkLogLevel.Error)
+        ];
+
+        coordinator.Setup(c => c.EvaluateGpuGateAsync(
+                It.IsAny<InstallationConfiguration>(), It.IsAny<IUserPromptService>(),
+                It.IsAny<Action<string, LogEntryLevel>>(), It.IsAny<CancellationToken>()))
+            .Callback<InstallationConfiguration, IUserPromptService, Action<string, LogEntryLevel>, CancellationToken>(
+                (_, _, logAction, _) =>
+                {
+                    foreach (var (source, _) in levels)
+                        logAction($"level {source}", source);
+                })
+            .ReturnsAsync(GpuGateOutcome.Proceed);
+
+        var outcome = await Create(coordinator, repo).InstallBaseEngineAsync(
+            new EngineInstallRequest(@"C:\Engine\ComfyUI", []),
+            logSink, new Progress<InstallationProgress>(), CancellationToken.None);
+
+        outcome.IsSuccess.Should().BeTrue();
+        logSink.Reports.Should().HaveCount(levels.Length);
+        foreach (var (source, expected) in levels)
+        {
+            logSink.Reports.Should().ContainSingle(e => e.Message == $"level {source}" && e.Level == expected,
+                $"a {source} log entry must map to {nameof(SdkLogLevel)}.{expected}");
+        }
     }
 
     [Fact]

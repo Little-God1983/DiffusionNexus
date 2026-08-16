@@ -3,6 +3,7 @@ using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.Installer.SDK.Shared;
 using DiffusionNexus.Installer.SDK.Shared.Services;
 using Serilog;
+using SdkLogLevel = DiffusionNexus.Installer.SDK.Models.Enums.LogLevel;
 
 namespace DiffusionNexus.UI.Services.Engine;
 
@@ -52,13 +53,10 @@ public sealed class ManagedEngineInstaller : IManagedEngineInstaller
         void LogAction(string message, LogEntryLevel level)
         {
             Logger.Information("Engine install: {Message}", message);
-            // InstallLogEntry.Level is Models.Enums.LogLevel, distinct from the Shared.LogEntryLevel
-            // the coordinator's logAction callback uses. Both enums share the same member names
-            // for every level the callback can report, so a name-based parse is a safe bridge.
             logProgress.Report(new InstallLogEntry
             {
                 Message = message,
-                Level = Enum.Parse<DiffusionNexus.Installer.SDK.Models.Enums.LogLevel>(level.ToString())
+                Level = ToSdkLogLevel(level)
             });
         }
 
@@ -106,6 +104,24 @@ public sealed class ManagedEngineInstaller : IManagedEngineInstaller
         return new EngineInstallOutcome(
             result.IsSuccess, result.IsCancelled, result.Message, result.RepositoryPath);
     }
+
+    /// <summary>
+    /// Maps the coordinator's <see cref="LogEntryLevel"/> (used by its <c>logAction</c> callback)
+    /// onto <see cref="InstallLogEntry.Level"/>'s <c>Models.Enums.LogLevel</c>. The two enums live
+    /// in separate SDK assemblies with no shared source of truth and are maintained independently
+    /// — an <c>Enum.Parse</c> name bridge would compile today and throw a <see cref="FormatException"/>
+    /// from inside the coordinator's own log callback, mid-install, the moment either enum's member
+    /// names drift. An explicit, total switch instead fails to compile on drift and can never throw.
+    /// </summary>
+    private static SdkLogLevel ToSdkLogLevel(LogEntryLevel level) => level switch
+    {
+        LogEntryLevel.Debug => SdkLogLevel.Debug,
+        LogEntryLevel.Info => SdkLogLevel.Info,
+        LogEntryLevel.Success => SdkLogLevel.Success,
+        LogEntryLevel.Warning => SdkLogLevel.Warning,
+        LogEntryLevel.Error => SdkLogLevel.Error,
+        _ => SdkLogLevel.Info
+    };
 
     /// <summary>
     /// Builds options that install the environment only: every declared model, custom node and
