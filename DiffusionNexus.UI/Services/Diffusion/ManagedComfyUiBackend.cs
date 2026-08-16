@@ -150,6 +150,25 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
             return false;
         }
 
+        // The base engine install deliberately excludes every custom node (see
+        // ManagedEngineInstaller) — only the Krea 2 Turbo workload installs the ones this
+        // template hard-requires. "Engine installed + running" alone does not mean "ready to
+        // generate": install engine, select it, press Generate is the most likely first-run
+        // sequence for a user who hasn't installed the workload yet, and without this check it
+        // would fail with whatever raw text ComfyUI returns instead of a fixable message.
+        using var wrapper = new ComfyUIWrapperService(_engine.BaseUrl!);
+        var missingNodes = await wrapper
+            .CheckRequiredNodesAsync(Krea2WorkflowPatcher.RequiredCustomNodeTypes, ct)
+            .ConfigureAwait(false);
+        if (missingNodes.Count > 0)
+        {
+            _missingRequirements.Add(
+                "The Krea 2 Turbo workload is not installed in the engine (missing: " +
+                string.Join(", ", missingNodes) +
+                "). Install the Krea 2 Turbo workload from the Diffusion Nexus Engine tile.");
+            return false;
+        }
+
         return true;
     }
 

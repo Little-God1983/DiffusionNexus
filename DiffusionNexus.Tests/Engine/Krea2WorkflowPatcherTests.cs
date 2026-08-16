@@ -121,4 +121,39 @@ public class Krea2WorkflowPatcherTests
         act.Should().Throw<InvalidOperationException>()
             .WithMessage("*17*", "a silently unpatched workflow would generate somebody else's prompt");
     }
+
+    [Fact]
+    public void RequiredCustomNodeTypes_ListsExactlyTheThreeWorkloadOnlyNodes()
+    {
+        // ManagedComfyUiBackend's readiness check (review item: IsAvailableAsync reported ready
+        // without the Krea 2 Turbo workload actually installed) reads this list to ask ComfyUI's
+        // /object_info whether these node types are registered. Pin its exact contents so a future
+        // edit can't silently drop one — a missing entry here would let IsAvailableAsync report
+        // ready when a required custom node genuinely isn't installed.
+        Krea2WorkflowPatcher.RequiredCustomNodeTypes.Should().BeEquivalentTo(
+        [
+            "LoaderGGUF",
+            "Power Lora Loader (rgthree)",
+            "AI2GoResolutionSelector"
+        ]);
+    }
+
+    [Fact]
+    public void RequiredCustomNodeTypes_MatchesTheClassTypesOfNodes62_55_65InTheShippedTemplate()
+    {
+        // Cross-checks against the actual shipped asset (not the scoped-down Template constant
+        // above) so a future template edit that renames one of these class_type strings — without
+        // updating RequiredCustomNodeTypes to match — fails a test instead of silently breaking
+        // the readiness check (it would then either always claim the workload is missing, or,
+        // worse, never notice a genuinely missing one).
+        var path = Path.Combine(AppContext.BaseDirectory, "TestData", "Krea2-Text2Image-API.json");
+        File.Exists(path).Should().BeTrue($"the shipped template should be copied to the test output at {path}");
+
+        var graph = JsonDocument.Parse(File.ReadAllText(path)).RootElement;
+        string ClassTypeOf(string nodeId) => graph.GetProperty(nodeId).GetProperty("class_type").GetString()!;
+
+        var actual = new[] { ClassTypeOf("62"), ClassTypeOf("55"), ClassTypeOf("65") };
+
+        actual.Should().BeEquivalentTo(Krea2WorkflowPatcher.RequiredCustomNodeTypes);
+    }
 }

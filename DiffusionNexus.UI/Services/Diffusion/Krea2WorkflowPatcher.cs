@@ -35,6 +35,24 @@ public static class Krea2WorkflowPatcher
     /// <summary>Output prefix used for canvas generations inside the engine's output folder.</summary>
     private const string CanvasFilenamePrefix = "DiffusionNexus/Canvas";
 
+    /// <summary>
+    /// Custom node class types this template requires that the base engine install deliberately
+    /// excludes (see <c>ManagedEngineInstaller</c>) — only the Krea 2 Turbo workload installs
+    /// them. Kept next to the node-id constants above so a future template edit updates both
+    /// together instead of drifting apart. Consumed by
+    /// <see cref="ManagedComfyUiBackend"/>'s readiness check via
+    /// <c>IComfyUIWrapperService.CheckRequiredNodesAsync</c> to catch the "installed the engine,
+    /// selected it, pressed Generate" sequence before it fails with a raw ComfyUI error: without
+    /// this check, that is the most likely first-run path for a user who has not yet installed
+    /// the workload.
+    /// </summary>
+    public static readonly IReadOnlyList<string> RequiredCustomNodeTypes =
+    [
+        "LoaderGGUF",                   // node 62 — calcuis/gguf UNet loader
+        "Power Lora Loader (rgthree)",  // node 55 — rgthree-comfy
+        "AI2GoResolutionSelector",      // node 65 — AI2Go custom node
+    ];
+
     /// <param name="templateJson">The unpatched API-format workflow JSON.</param>
     /// <param name="request">The canvas generation request supplying prompt, size, and overrides.</param>
     /// <param name="seed">The seed to submit (the caller resolves random-vs-fixed, not this patcher).</param>
