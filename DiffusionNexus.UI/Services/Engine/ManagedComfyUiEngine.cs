@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.UI.Services; // ChildProcessJobObject — same assembly, sibling namespace
 using Serilog;
 
 namespace DiffusionNexus.UI.Services.Engine;
@@ -25,6 +26,16 @@ public sealed class ManagedComfyUiEngine : IAsyncDisposable
     private Process? _process;
     private string? _baseUrl;
 
+    // Assigns the spawned process to a Windows Job Object configured with
+    // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, exactly like PackageProcessManager does for the
+    // installers it launches. Without this, the only thing keeping the engine from outliving
+    // the app is App.axaml.cs's ShutdownRequested handler calling StopAsync() — any exit that
+    // skips it (crash, Environment.FailFast, Task Manager kill on the parent) leaves a Python
+    // process resident with multi-GB model weights in VRAM, invisible to the user. Held here
+    // (not disposed alongside _process) because a *new* job object is created per engine start —
+    // see StopCoreAsync, which terminates and disposes it together with the process.
+    private ChildProcessJobObject? _jobObject;
+
     // Set for the duration of an in-flight EnsureRunningAsync call (under _startLock) so a
     // concurrent StopAsync can ask the readiness poll to wind down within a couple of seconds
     // instead of blocking on the lock for up to the full ~120 s poll window.
@@ -44,13 +55,15 @@ public sealed class ManagedComfyUiEngine : IAsyncDisposable
     /// </summary>
     public async Task<EngineStartResult> EnsureRunningAsync(string installRoot, CancellationToken ct)
     {
-        if (_process is { HasExited: false } && _baseUrl is not null)
-            return new EngineStartResult(true, _baseUrl, null);
-
         await _startLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            if (_process is { HasExited: false } && _baseUrl is not null)
+            // Captured into a local and checked only inside the lock/try: a concurrent
+            // StopAsync disposes _process, and reading .HasExited on a disposed Process throws
+            // InvalidOperationException — this used to run as an unguarded fast path before the
+            // lock was even taken, so that exception could escape this method uncaught.
+            var current = _process;
+            if (current is { HasExited: false } && _baseUrl is not null)
                 return new EngineStartResult(true, _baseUrl, null);
 
             var mainPy = ManagedEngineLocator.ResolveMainPy(installRoot);
@@ -77,6 +90,30 @@ public sealed class ManagedComfyUiEngine : IAsyncDisposable
             _process = Process.Start(startInfo);
             if (_process is null)
                 return new EngineStartResult(false, null, "The engine process could not be started.");
+
+            // Assign to a Job Object with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, same as
+            // PackageProcessManager does for every installer process it launches. This is what
+            // actually protects against an orphaned engine — the ShutdownRequested handler in
+            // App.axaml.cs is only reached on a clean exit, and this makes cleanup unconditional:
+            // the OS kernel kills the process (and its tree) the moment the job handle closes,
+            // even on a crash, Environment.FailFast, or a Task Manager kill of the app itself.
+            // Best-effort: a failure here still leaves the process running under the normal
+            // ShutdownRequested/StopAsync path, so it must never fail the start.
+            if (OperatingSystem.IsWindows())
+            {
+                try
+                {
+                    _jobObject = new ChildProcessJobObject(name: null);
+                    if (!_jobObject.AssignProcess(_process))
+                    {
+                        Logger.Warning("Failed to assign the engine process (PID {Pid}) to its Job Object.", _process.Id);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warning(ex, "Failed to create a Job Object for the engine process; orphan protection disabled for this run.");
+                }
+            }
 
             try
             {
@@ -256,10 +293,16 @@ public sealed class ManagedComfyUiEngine : IAsyncDisposable
     private async Task StopCoreAsync()
     {
         var process = _process;
+        var jobObject = _jobObject;
         _process = null;
+        _jobObject = null;
         _baseUrl = null;
 
-        if (process is null) return;
+        if (process is null)
+        {
+            if (OperatingSystem.IsWindows()) jobObject?.Dispose();
+            return;
+        }
 
         try
         {
@@ -276,6 +319,10 @@ public sealed class ManagedComfyUiEngine : IAsyncDisposable
         finally
         {
             process.Dispose();
+            // Disposing closes the job handle, which (per JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE)
+            // also kills anything still assigned to it — belt-and-suspenders alongside the
+            // explicit Kill above for the case where Kill itself failed.
+            if (OperatingSystem.IsWindows()) jobObject?.Dispose();
         }
     }
 

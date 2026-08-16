@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Reflection;
 using DiffusionNexus.UI.Services.Engine;
 using FluentAssertions;
 
@@ -91,5 +93,28 @@ public class ManagedComfyUiEngineTests
 
         var result = await ensureTask;
         result.IsRunning.Should().BeFalse("the install root doesn't exist");
+    }
+
+    [Fact]
+    public async Task EnsureRunningAsync_DoesNotThrow_WhenTheProcessFieldIsInAnUnusableState()
+    {
+        // Regression for the review finding: the fast path used to read _process.HasExited
+        // outside both the lock and any try/catch. A concurrent StopAsync disposing the Process
+        // in that window turns that read into an uncaught InvalidOperationException. A Process
+        // that was never Process.Start()-ed throws the exact same exception from .HasExited,
+        // which lets this test reproduce the crash without needing a real spawned engine.
+        await using var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+
+        using var unusableProcess = new Process();
+        var processField = typeof(ManagedComfyUiEngine)
+            .GetField("_process", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        processField.SetValue(engine, unusableProcess);
+
+        var act = async () => await engine.EnsureRunningAsync(
+            Path.Combine(Path.GetTempPath(), "definitely-not-here-" + Guid.NewGuid()),
+            CancellationToken.None);
+
+        // Must fail gracefully (a false EngineStartResult), not throw past the caller.
+        await act.Should().NotThrowAsync();
     }
 }
