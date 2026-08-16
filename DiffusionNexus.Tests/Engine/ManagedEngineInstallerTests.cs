@@ -96,6 +96,7 @@ public class ManagedEngineInstallerTests
         captured!.ExcludedModelIds.Should().BeEquivalentTo(config.ModelDownloads.Select(m => m.Id));
         captured.ExcludedNodeIds.Should().BeEquivalentTo(config.GitRepositories.Select(g => g.Id));
         captured.ExcludedWorkflowIds.Should().BeEquivalentTo(config.Workflows.Select(w => w.Id));
+        captured.CpuTorch.Should().BeFalse("a GPU-gate Proceed means a usable NVIDIA GPU was found");
     }
 
     [Fact]
@@ -146,6 +147,42 @@ public class ManagedEngineInstallerTests
             It.IsAny<IProgress<InstallLogEntry>>(), It.IsAny<IProgress<InstallationProgress>>(),
             It.IsAny<IProgress<DownloadProgress>>(), It.IsAny<Func<CancellationToken>?>(),
             It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task InstallBaseEngine_SetsCpuTorchWhenTheUserAcceptsTheCpuOnlyOffer()
+    {
+        var config = BuildKreaConfiguration();
+        var (coordinator, repo) = Mocks(config);
+        InstallationOptions? captured = null;
+
+        coordinator.Setup(c => c.EvaluateGpuGateAsync(
+                It.IsAny<InstallationConfiguration>(), It.IsAny<IUserPromptService>(),
+                It.IsAny<Action<string, LogEntryLevel>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(GpuGateOutcome.ProceedCpuOnly);
+        coordinator.Setup(c => c.InstallAsync(
+                It.IsAny<InstallationConfiguration>(), It.IsAny<string>(), It.IsAny<InstallationOptions>(),
+                It.IsAny<IProgress<InstallLogEntry>>(), It.IsAny<IProgress<InstallationProgress>>(),
+                It.IsAny<IProgress<DownloadProgress>>(), It.IsAny<Func<CancellationToken>?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<InstallationConfiguration, string, InstallationOptions, IProgress<InstallLogEntry>,
+                IProgress<InstallationProgress>, IProgress<DownloadProgress>, Func<CancellationToken>?,
+                CancellationToken>((_, _, o, _, _, _, _, _) => captured = o)
+            .ReturnsAsync(InstallationResult.Success("done", @"C:\Engine\ComfyUI"));
+
+        var outcome = await Create(coordinator, repo).InstallBaseEngineAsync(
+            new EngineInstallRequest(@"C:\Engine\ComfyUI", []),
+            new Progress<InstallLogEntry>(), new Progress<InstallationProgress>(), CancellationToken.None);
+
+        outcome.IsSuccess.Should().BeTrue("accepting the CPU-only offer must still proceed, not block");
+        captured.Should().NotBeNull();
+        captured!.CpuTorch.Should().BeTrue(
+            "the user accepted a CPU-only install; the SDK skips CUDA verification only when told");
+        coordinator.Verify(c => c.InstallAsync(
+            It.IsAny<InstallationConfiguration>(), It.IsAny<string>(), It.IsAny<InstallationOptions>(),
+            It.IsAny<IProgress<InstallLogEntry>>(), It.IsAny<IProgress<InstallationProgress>>(),
+            It.IsAny<IProgress<DownloadProgress>>(), It.IsAny<Func<CancellationToken>?>(),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

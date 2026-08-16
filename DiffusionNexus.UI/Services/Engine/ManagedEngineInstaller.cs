@@ -95,7 +95,7 @@ public sealed class ManagedEngineInstaller : IManagedEngineInstaller
                 $"Pre-installation checks did not pass: {preChecks.Result}.", null);
         }
 
-        var options = BuildBaseOnlyOptions(configuration, request);
+        var options = BuildBaseOnlyOptions(configuration, request, gate);
 
         var result = await _coordinator.InstallAsync(
                 configuration, request.InstallRoot, options,
@@ -112,9 +112,19 @@ public sealed class ManagedEngineInstaller : IManagedEngineInstaller
     /// workflow is excluded, shortcuts are off (the engine is not a user-launchable app), and
     /// extra_model_paths.yaml is generated so the engine reads the shared model library.
     /// </summary>
+    /// <param name="gate">
+    /// The GPU gate's outcome. <see cref="InstallationOptions.CpuTorch"/> is documented as
+    /// caller-set: "installs the CPU-only PyTorch build and skips CUDA verification... Set when
+    /// the user accepted the CPU-only fallback." The gate is what learns whether the user
+    /// accepted that offer, so it — not the configuration — is the only place this flag can
+    /// correctly come from. Without this, a no-GPU user who accepts the CPU-only offer would get
+    /// the CUDA torch wheel from the Krea-2-Turbo configuration and fail CUDA verification later,
+    /// well past the point where they answered the question meant to prevent exactly that.
+    /// </param>
     private static InstallationOptions BuildBaseOnlyOptions(
         DiffusionNexus.Installer.SDK.Models.Configuration.InstallationConfiguration configuration,
-        EngineInstallRequest request)
+        EngineInstallRequest request,
+        GpuGateOutcome gate)
     {
         return InstallationOptions.Default with
         {
@@ -126,7 +136,8 @@ public sealed class ManagedEngineInstaller : IManagedEngineInstaller
             GenerateExtraModelPaths = true,
             OverwriteExtraModelPaths = true,
             ModelBaseFolder = request.SharedModelRoots.FirstOrDefault(),
-            VerboseLogging = true
+            VerboseLogging = true,
+            CpuTorch = gate == GpuGateOutcome.ProceedCpuOnly
         };
     }
 }
