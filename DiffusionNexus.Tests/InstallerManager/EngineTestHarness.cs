@@ -21,7 +21,8 @@ internal static class EngineTestHarness
         IReadOnlyList<InstallerPackage> packages,
         IManagedEngineInstaller? engineInstaller = null,
         string? chosenFolder = null,
-        Action<InstallerPackage>? onPackageAdded = null)
+        Action<InstallerPackage>? onPackageAdded = null,
+        IReadOnlyList<BaseModelFolder>? baseModelFolders = null)
     {
         var repo = new Mock<IInstallerPackageRepository>();
         repo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>()))
@@ -33,6 +34,17 @@ internal static class EngineTestHarness
         var uow = new Mock<IUnitOfWork>();
         uow.Setup(u => u.InstallerPackages).Returns(repo.Object);
         uow.Setup(u => u.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
+
+        // Only wired when a test actually supplies folders — otherwise _unitOfWork.AppSettings
+        // stays null, and ResolveSharedModelRootsAsync's catch → [] path (relied on by the other
+        // engine-install tests) keeps working exactly as before.
+        if (baseModelFolders is not null)
+        {
+            var appSettingsRepo = new Mock<IAppSettingsRepository>();
+            appSettingsRepo.Setup(r => r.GetSettingsWithIncludesAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new AppSettings { BaseModelFolders = baseModelFolders.ToList() });
+            uow.Setup(u => u.AppSettings).Returns(appSettingsRepo.Object);
+        }
 
         var dialog = new Mock<IDialogService>();
         dialog.Setup(d => d.ShowOpenFolderDialogAsync(It.IsAny<string>())).ReturnsAsync(chosenFolder);
