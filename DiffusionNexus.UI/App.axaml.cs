@@ -148,6 +148,14 @@ public partial class App : Application
                     }
                     // Kill all managed child processes before scope disposal
                     Services?.GetService<PackageProcessManager>()?.Dispose();
+                    // Stop the app-owned ComfyUI engine, if it was ever started, so it never
+                    // outlives the app.
+                    var managedEngine = Services?.GetService<Services.Engine.ManagedComfyUiEngine>();
+                    if (managedEngine is not null)
+                    {
+                        try { managedEngine.StopAsync().GetAwaiter().GetResult(); }
+                        catch (Exception ex) { Serilog.Log.Warning(ex, "Managed ComfyUI engine stop failed."); }
+                    }
                     _appScope?.Dispose();
                 };
 
@@ -739,6 +747,9 @@ public partial class App : Application
                 sp.GetRequiredService<IInstallationCoordinator>(),
                 sp.GetRequiredService<IConfigurationRepository>(),
                 sp.GetRequiredService<DiffusionNexus.Installer.SDK.Shared.Services.IUserPromptService>()));
+        services.AddSingleton<Services.Engine.ManagedComfyUiEngine>(sp =>
+            new Services.Engine.ManagedComfyUiEngine(
+                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
 
         // ComfyUI workflow execution service (singleton - maintains HttpClient)
         services.AddSingleton<IComfyUIWrapperService>(sp =>
