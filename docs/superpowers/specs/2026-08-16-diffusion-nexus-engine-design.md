@@ -41,7 +41,7 @@ to the same switch.
 | # | Decision | Rationale |
 |---|---|---|
 | 1 | Engine is a **two-stage** system: base engine install, then per-workload installs | Extensible — each further workload is a catalog entry, not another full install |
-| 2 | Engine base pins **CUDA 13.0 + torch 2.11.0** | Confirmed by the maintainer as the most compatible current pairing; matches the `Krea-2-Turbo` config |
+| 2 | Engine base **inherits whatever torch/CUDA the base configuration declares** | The maintainer named CUDA 13.0 + torch 2.11.0 as the preferred pairing, but see the correction below — the shipped catalog declares 12.8 + 2.8.0 |
 | 3 | Install target is a **user-chosen folder**, default `%LocalAppData%\DiffusionNexus\Engine\ComfyUI` | ~5–8 GB with torch; forcing C: has burned us before |
 | 4 | Engine is stored as an `InstallerPackage` row with `Type = ComfyUI` plus a new `IsAppManaged` flag, hidden from the ordinary card list | Reuses model-root resolution, `extra_model_paths.yaml` discovery and the Base Model Folder registrar for free, without a duplicate card or a user-facing Remove/Edit path |
 | 5 | Workload models **reuse the shared model library**; only missing files download, into the starred default Base Model Folder | No second copy of the Krea GGUF / text encoder / VAE |
@@ -86,7 +86,7 @@ Flow: resolve the base configuration → `EvaluateGpuGateAsync` → `RunPreCheck
 
 The base configuration is the **`Krea-2-Turbo` configuration** (`E79C079A-2FD7-4FE7-8086-23731092555D`)
 run with `InstallationOptions.ExcludedModelIds`, `ExcludedNodeIds` and `ExcludedWorkflowIds`
-filled with every id it declares. That yields ComfyUI + venv + torch 2.11.0/cu13.0 + Triton +
+filled with every id it declares. That yields ComfyUI + venv + the configuration's torch + Triton +
 SageAttention and no content — the decision-2 pairing without authoring a new catalog entry.
 Shortcuts are forced off (`CreateDesktopShortcut = false`, `CreateStartMenuShortcut = false`):
 the engine is not a user-launchable app.
@@ -204,6 +204,16 @@ Canvas.
 ## Open items
 
 - The text2image workflow template (maintainer-supplied).
-- Torch policy if a future workload disagrees with cu13.0 + torch 2.11.0.
+- **The engine's actual torch/CUDA pairing.** Decision 2 was written as "CUDA 13.0 + torch 2.11.0",
+  the pairing the maintainer named. The final whole-branch review caught that the `Krea-2-Turbo`
+  configuration does not declare it: both the SDK's shipped database (1.2.39) and the live
+  `%LocalAppData%\diffusion_nexus.db` declare **CUDA 12.8 + torch 2.8.0**. The live database's copy of
+  that row read 13.0 + 2.11.0 at the start of this work and read 12.8 + 2.8.0 afterwards, stamped
+  `DbVersion 1.2.41` — consistent with the embedded-DB auto-deploy overwriting a hand-edited row.
+  The code is correct either way: it authors no torch settings and inherits whatever the configuration
+  declares, and it now logs the resolved values at install start. What remains open is a data decision
+  for the maintainer: update the catalog row to 13.0 + 2.11.0, or accept 12.8 + 2.8.0 deliberately.
+  The spec's own note that this is effectively a one-way door still stands.
+- Torch policy if a future workload disagrees with whatever pairing is settled on.
 - Whether the backend selection should later persist to AppSettings and replace
   `DiffusionFeatureFlags.UseLocalDiffusionBackend` (its own `TODO(v2-backend-dropdown)`).

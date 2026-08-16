@@ -4,7 +4,7 @@
 
 **Goal:** Give Diffusion Nexus an app-owned embedded ComfyUI ("Diffusion Nexus Engine") that the user installs from the Installation Manager, loads curated workloads into (Krea 2 Turbo first), and generates through from the Diffusion Canvas.
 
-**Architecture:** A static tile in the Installation Manager drives a two-stage install — stage 1 runs the Installer SDK's `IInstallationCoordinator` against the `Krea-2-Turbo` configuration with all content excluded (yielding bare ComfyUI + venv + torch 2.11.0/cu13.0), stage 2 installs workload content through the app's existing `WorkloadInstallService`. A `ManagedComfyUiEngine` hosts the ComfyUI process on a private loopback port, and a `ManagedComfyUiBackend` implements the existing `IDiffusionBackend` seam so the Canvas can select it from a dropdown.
+**Architecture:** A static tile in the Installation Manager drives a two-stage install — stage 1 runs the Installer SDK's `IInstallationCoordinator` against the `Krea-2-Turbo` configuration with all content excluded (yielding bare ComfyUI + venv + whatever torch the configuration declares), stage 2 installs workload content through the app's existing `WorkloadInstallService`. A `ManagedComfyUiEngine` hosts the ComfyUI process on a private loopback port, and a `ManagedComfyUiBackend` implements the existing `IDiffusionBackend` seam so the Canvas can select it from a dropdown.
 
 **Tech Stack:** .NET 10, Avalonia 11.3, CommunityToolkit.Mvvm, EF Core 10 (SQLite), Serilog, Installer SDK 1.2.39 (NuGet), xUnit + FluentAssertions + Moq.
 
@@ -15,7 +15,7 @@
 ## Global Constraints
 
 - **SDK packages must be exactly `1.2.39`** for all five references (`Models`, `Services`, `DataAccess`, `Shared`, `Database`). Do not bump further; 1.2.40 does not exist.
-- **Engine torch/CUDA is CUDA 13.0 + torch 2.11.0**, inherited from the `Krea-2-Turbo` configuration. Never hardcode torch settings in app code — they come from the configuration.
+- **Engine torch/CUDA is inherited from the `Krea-2-Turbo` configuration, never authored in app code.** This plan originally asserted CUDA 13.0 + torch 2.11.0; the shipped catalog actually declares 12.8 + 2.8.0 — see the spec's Open items. The constraint that matters is the inheritance, not a specific pairing.
 - **Base configuration GUID:** `E79C079A-2FD7-4FE7-8086-23731092555D` (`Krea-2-Turbo`). The first workload uses the same GUID.
 - **Never use port 8188.** The engine binds `127.0.0.1` on a dynamically allocated free port; a user's own ComfyUI must never be collided with.
 - **Test command:** `dotnet test DiffusionNexus.Tests/DiffusionNexus.Tests.csproj` from the repo root. Add `--filter "FullyQualifiedName~<ClassName>"` to run a single test class.
@@ -1050,7 +1050,8 @@ namespace DiffusionNexus.UI.Services.Engine;
 ///
 /// The base engine is built from the Krea-2-Turbo configuration with every model, custom node
 /// and workflow excluded. That configuration is what pins the engine to CUDA 13.0 + torch
-/// 2.11.0 — the pairing the project standardized on — so no torch settings are authored here.
+/// whatever pairing it declares — so no torch settings are authored here. (The shipped code's
+/// comment was corrected after review: the catalog declares 12.8 + 2.8.0, not 13.0 + 2.11.0.)
 /// Content arrives afterwards through <see cref="IWorkloadInstallService"/>.
 /// </summary>
 public sealed class ManagedEngineInstaller : IManagedEngineInstaller
@@ -3196,7 +3197,7 @@ git commit -m "feat: generate Krea 2 images through the Diffusion Nexus Engine"
 
 These cannot be proven by the test suite. Run them before the branch is considered done, and report what actually happened — not what should happen.
 
-- [ ] **Base engine install:** enable the Canvas switch in the hamburger menu, confirm the engine tile appears, press Install, choose a folder on a drive with 20+ GB free. Expect the Unified Console to stream steps and the tile to end with the Workloads button. Verify `venv/Scripts/python.exe` and `main.py` exist, and that `python -c "import torch; print(torch.__version__, torch.version.cuda)"` in that venv reports **2.11.0** and **13.0**.
+- [ ] **Base engine install:** enable the Canvas switch in the hamburger menu, confirm the engine tile appears, press Install, choose a folder on a drive with 20+ GB free. Expect the Unified Console to stream steps and the tile to end with the Workloads button. Verify `venv/Scripts/python.exe` and `main.py` exist, and that `python -c "import torch; print(torch.__version__, torch.version.cuda)"` in that venv reports whatever the base configuration declared — read it back rather than assuming, and compare it against the "Engine torch settings" line the installer now logs at install start.
 - [ ] **Engine hidden when switched off:** turn the hamburger switch off, reopen the Installation Manager, confirm the tile is gone and no duplicate ComfyUI card appeared.
 - [ ] **Workload install:** open Workloads on the engine tile, confirm only Krea 2 Turbo is listed, confirm the preselected VRAM tier matches the machine's card, install it. Verify models the shared library already had were **not** re-downloaded (check the download log and the folder sizes).
 - [ ] **Engine start:** select the engine in the Canvas backend dropdown and generate. Confirm from the Unified Console that ComfyUI started on a port that is **not** 8188, and that a user-owned ComfyUI (if running) was unaffected.
@@ -3206,5 +3207,5 @@ These cannot be proven by the test suite. Run them before the branch is consider
 ## Open items carried from the spec
 
 - Wiring `DiffusionRequest.Loras` into the workflow's `Power Lora Loader (rgthree)` node (`55`), and deciding whether the disabled `Jinx_Arcane_Season_1` entry it ships should be stripped.
-- Torch policy if a future engine workload disagrees with cu13.0 + torch 2.11.0.
+- Torch policy if a future engine workload disagrees with the pairing the base configuration declares.
 - Whether backend selection should later persist to `AppSettings` and replace `DiffusionFeatureFlags.UseLocalDiffusionBackend`.
