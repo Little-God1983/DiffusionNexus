@@ -91,6 +91,85 @@ public sealed class InstallationSettingsCleanupTests
     }
 
     [Fact]
+    public void Resolve_KeepsGallery_AnotherInstallationStillWritesTo()
+    {
+        // The real case: several ComfyUI installs share one --output-directory while only
+        // one of them owns the gallery row's FK. Removing that one must not offer to drop
+        // a folder the surviving installs keep filling with images.
+        var shared = new ImageGallery { Id = 1, FolderPath = @"E:\AI\comfy_output\", InstallerPackageId = 5 };
+        var own = new ImageGallery { Id = 2, FolderPath = @"C:\AI\ComfyUI\output", InstallerPackageId = 5 };
+        var settings = new AppSettings { Id = 1, ImageGalleries = [shared, own] };
+
+        var plan = InstallationSettingsCleanup.Resolve(
+            settings,
+            Package(),
+            foldersUsedByOthers: [@"E:\AI\comfy_output"]);
+
+        plan.Galleries.Should().ContainSingle().Which.Should().BeSameAs(own);
+        plan.SharedFolders.Should().ContainSingle().Which.Should().Be(@"E:\AI\comfy_output\",
+            "the dialog has to say why the folder is being kept instead of claiming none was linked");
+    }
+
+    [Fact]
+    public void Resolve_KeepsGallery_InASubfolderOfAnotherInstallationsOutputDirectory()
+    {
+        // ComfyUI writes into dated/prefixed subfolders of its output directory, so a row
+        // one level down is just as actively used as the root itself.
+        var nested = new ImageGallery { Id = 1, FolderPath = @"E:\AI\comfy_output\2026-08", InstallerPackageId = 5 };
+        var settings = new AppSettings { Id = 1, ImageGalleries = [nested] };
+
+        var plan = InstallationSettingsCleanup.Resolve(
+            settings,
+            Package(),
+            foldersUsedByOthers: [@"E:\AI\comfy_output"]);
+
+        plan.Galleries.Should().BeEmpty();
+        plan.IsEmpty.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Resolve_KeepsLoraSourcesAndBaseFolders_UsedByAnotherInstallation()
+    {
+        // A nested installation: B lives inside A's tree, so A's removal must not sweep
+        // rows that are really B's.
+        var lora = new LoraSource { Id = 1, FolderPath = @"C:\AI\ComfyUI\nested\models\loras" };
+        var ownLora = new LoraSource { Id = 2, FolderPath = @"C:\AI\ComfyUI\models\loras" };
+        var baseFolder = new BaseModelFolder { Id = 1, FolderPath = @"C:\AI\ComfyUI\nested\models", InstallerPackageId = 5 };
+        var settings = new AppSettings
+        {
+            Id = 1,
+            LoraSources = [lora, ownLora],
+            BaseModelFolders = [baseFolder]
+        };
+
+        var plan = InstallationSettingsCleanup.Resolve(
+            settings,
+            Package(),
+            foldersUsedByOthers: [@"C:\AI\ComfyUI\nested"]);
+
+        plan.LoraSources.Should().ContainSingle().Which.Should().BeSameAs(ownLora);
+        plan.BaseModelFolders.Should().BeEmpty();
+        plan.SharedFolders.Should().BeEquivalentTo(new[]
+        {
+            @"C:\AI\ComfyUI\nested\models\loras",
+            @"C:\AI\ComfyUI\nested\models"
+        }, o => o.WithoutStrictOrdering());
+    }
+
+    [Fact]
+    public void Resolve_WithoutOtherInstallations_OffersEverythingLinked()
+    {
+        var gallery = new ImageGallery { Id = 1, FolderPath = @"E:\AI\comfy_output\", InstallerPackageId = 5 };
+        var settings = new AppSettings { Id = 1, ImageGalleries = [gallery] };
+
+        var plan = InstallationSettingsCleanup.Resolve(settings, Package());
+
+        plan.Galleries.Should().ContainSingle().Which.Should().BeSameAs(gallery,
+            "sole ownership is the normal case and must stay offered");
+        plan.SharedFolders.Should().BeEmpty();
+    }
+
+    [Fact]
     public void Resolve_EmptySettings_YieldsEmptyPlan()
     {
         var plan = InstallationSettingsCleanup.Resolve(new AppSettings { Id = 1 }, Package());
@@ -98,6 +177,7 @@ public sealed class InstallationSettingsCleanupTests
         plan.Galleries.Should().BeEmpty();
         plan.LoraSources.Should().BeEmpty();
         plan.BaseModelFolders.Should().BeEmpty();
+        plan.SharedFolders.Should().BeEmpty();
         plan.IsEmpty.Should().BeTrue();
     }
 
