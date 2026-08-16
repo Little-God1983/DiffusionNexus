@@ -6,6 +6,7 @@ using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Installer.SDK.DataAccess;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.ConfigurationChecker;
+using DiffusionNexus.UI.Services.Engine;
 using DiffusionNexus.UI.ViewModels;
 using Moq;
 
@@ -17,25 +18,32 @@ namespace DiffusionNexus.Tests.InstallerManager;
 internal static class EngineTestHarness
 {
     public static InstallerManagerViewModel CreateInstallerManagerViewModel(
-        IReadOnlyList<InstallerPackage> packages)
+        IReadOnlyList<InstallerPackage> packages,
+        IManagedEngineInstaller? engineInstaller = null,
+        string? chosenFolder = null,
+        Action<InstallerPackage>? onPackageAdded = null)
     {
         var repo = new Mock<IInstallerPackageRepository>();
         repo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(packages.ToList());
+        repo.Setup(r => r.AddAsync(It.IsAny<InstallerPackage>(), It.IsAny<CancellationToken>()))
+            .Callback<InstallerPackage, CancellationToken>((p, _) => onPackageAdded?.Invoke(p))
+            .Returns(Task.CompletedTask);
 
         var uow = new Mock<IUnitOfWork>();
         uow.Setup(u => u.InstallerPackages).Returns(repo.Object);
         uow.Setup(u => u.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
 
+        var dialog = new Mock<IDialogService>();
+        dialog.Setup(d => d.ShowOpenFolderDialogAsync(It.IsAny<string>())).ReturnsAsync(chosenFolder);
+
         return new InstallerManagerViewModel(
-            new Mock<IDialogService>().Object,
-            uow.Object,
-            new PackageProcessManager(),
+            dialog.Object, uow.Object, new PackageProcessManager(),
             new Mock<IDatasetEventAggregator>().Object,
             new Mock<IConfigurationRepository>().Object,
             new Mock<IConfigurationCheckerService>().Object,
             new Mock<IWorkloadInstallService>().Object,
-            [],
-            new Mock<IUnifiedLogger>().Object);
+            [], new Mock<IUnifiedLogger>().Object,
+            engineInstaller: engineInstaller);
     }
 }

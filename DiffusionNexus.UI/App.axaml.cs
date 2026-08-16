@@ -937,7 +937,8 @@ public partial class App : Application
             // IUnitOfWork is transient: each factory call yields a fresh context for
             // one destructive operation (remove / delete-from-disk), so those flows
             // never act on — or poison — the VM's long-lived shared context.
-            unitOfWorkFactory: () => sp.GetRequiredService<IUnitOfWork>()));
+            unitOfWorkFactory: () => sp.GetRequiredService<IUnitOfWork>(),
+            engineInstaller: sp.GetRequiredService<Services.Engine.IManagedEngineInstaller>()));
         services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),

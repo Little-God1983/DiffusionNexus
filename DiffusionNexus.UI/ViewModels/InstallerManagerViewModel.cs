@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Installer.SDK.DataAccess;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.ConfigurationChecker;
@@ -46,6 +47,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
     private readonly IActivityLogService? _activityLogService;
     private readonly IDownloadCoordinator? _downloadCoordinator;
     private readonly Services.Diffusion.BaseModelFolderRegistrar? _baseModelFolderRegistrar;
+    private readonly Services.Engine.IManagedEngineInstaller? _engineInstaller;
 
     /// <summary>
     /// Raised when the unified console panel should be opened (e.g., during an update).
@@ -102,7 +104,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         IActivityLogService? activityLogService = null,
         IDownloadCoordinator? downloadCoordinator = null,
         Services.Diffusion.BaseModelFolderRegistrar? baseModelFolderRegistrar = null,
-        Func<IUnitOfWork>? unitOfWorkFactory = null)
+        Func<IUnitOfWork>? unitOfWorkFactory = null,
+        Services.Engine.IManagedEngineInstaller? engineInstaller = null)
     {
         _dialogService = dialogService;
         _unitOfWork = unitOfWork;
@@ -119,6 +122,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         _activityLogService = activityLogService;
         _downloadCoordinator = downloadCoordinator;
         _baseModelFolderRegistrar = baseModelFolderRegistrar;
+        _engineInstaller = engineInstaller;
 
         InstallerCards.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
 
@@ -836,10 +840,131 @@ public partial class InstallerManagerViewModel : ViewModelBase
         return card;
     }
 
-    private Task OnEngineInstallRequestedAsync(InstallerPackageCardViewModel card)
+    private Task OnEngineInstallRequestedAsync(InstallerPackageCardViewModel card) => InstallEngineAsync();
+
+    /// <summary>
+    /// Installs the base engine: asks for a target folder, runs the SDK install with all content
+    /// excluded, and on success records it as an app-managed ComfyUI installation. Progress goes
+    /// to the Unified Console so a stalled install shows its last successful step.
+    /// </summary>
+    public async Task InstallEngineAsync()
     {
-        // Implemented in the engine-install task.
-        return Task.CompletedTask;
+        var card = InstallerCards.FirstOrDefault(c => c.IsEngine);
+        if (card is null || _engineInstaller is null) return;
+
+        var folder = await _dialogService.ShowOpenFolderDialogAsync(
+            $"Choose where to install the Diffusion Nexus Engine (default: {Services.Engine.ManagedEngineLocator.DefaultInstallRoot})");
+
+        if (string.IsNullOrWhiteSpace(folder)) return;
+
+        UnifiedConsolePanelRequested?.Invoke(this, EventArgs.Empty);
+
+        card.IsEngineInstalling = true;
+        card.EngineProgressPercent = 0;
+        card.EngineStatusMessage = "Starting engine install...";
+        _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
+            $"Starting base engine install into {folder}.");
+
+        var logProgress = new Progress<DiffusionNexus.Installer.SDK.Services.InstallLogEntry>(entry =>
+        {
+            card.EngineStatusMessage = entry.Message;
+            _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine", entry.Message);
+        });
+
+        var stepProgress = new Progress<DiffusionNexus.Installer.SDK.Services.InstallationProgress>(p =>
+        {
+            card.EngineProgressPercent = p.ProgressPercentage;
+            card.EngineStatusMessage = $"[{p.StepIndex + 1}/{p.TotalSteps}] {p.Message}";
+        });
+
+        try
+        {
+            var sharedRoots = await ResolveSharedModelRootsAsync();
+
+            var outcome = await _engineInstaller.InstallBaseEngineAsync(
+                new Services.Engine.EngineInstallRequest(folder, sharedRoots),
+                logProgress, stepProgress, CancellationToken.None);
+
+            if (outcome.IsSuccess)
+            {
+                var package = new InstallerPackage
+                {
+                    Name = "Diffusion Nexus Engine",
+                    InstallationPath = outcome.RepositoryPath ?? folder,
+                    Type = InstallerType.ComfyUI,
+                    ExecutablePath = null,
+                    Arguments = string.Empty,
+                    IsAppManaged = true,
+                    CreatedAt = DateTimeOffset.UtcNow
+                };
+
+                await _unitOfWork.InstallerPackages.AddAsync(package);
+                await _unitOfWork.SaveChangesAsync();
+
+                card.InstallationPath = package.InstallationPath;
+                card.IsEngineInstalled = true;
+                card.VersionDisplay = "App-managed";
+
+                _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
+                    $"Engine installed at {package.InstallationPath}.");
+                _eventAggregator.PublishInstallerPackagesChanged(new InstallerPackagesChangedEventArgs());
+            }
+            else if (outcome.IsCancelled)
+            {
+                _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
+                    "Engine install cancelled by the user. Nothing was registered.");
+            }
+            else
+            {
+                _unifiedLogger.Error(LogCategory.Installation, "Diffusion Nexus Engine",
+                    $"Engine install failed: {outcome.Message}");
+
+                // A genuine failure (not a cancel) is worth reporting — offer the existing
+                // feedback dialog instead of leaving the user with a dead end.
+                var report = await _dialogService.ShowConfirmAsync("Engine install failed",
+                    $"{outcome.Message}\n\nSend a report so this can be fixed?");
+                if (report)
+                    await _dialogService.ShowFeedbackDialogAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Diffusion Nexus Engine install failed");
+            _unifiedLogger.Error(LogCategory.Installation, "Diffusion Nexus Engine",
+                $"Engine install failed: {ex.Message}", ex);
+            await _dialogService.ShowMessageAsync("Engine install failed", ex.Message);
+        }
+        finally
+        {
+            card.IsEngineInstalling = false;
+            card.EngineStatusMessage = null;
+            card.EngineProgressPercent = 0;
+        }
+    }
+
+    /// <summary>
+    /// Model libraries the engine should read instead of duplicating. Uses the registered base
+    /// model folders when available; an empty list simply means the engine keeps models locally.
+    /// The starred default folder (if any) is ordered first, since the SDK installer feeds
+    /// <c>SharedModelRoots.FirstOrDefault()</c> into the engine's model base folder.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> ResolveSharedModelRootsAsync()
+    {
+        try
+        {
+            var settings = await _unitOfWork.AppSettings.GetSettingsWithIncludesAsync();
+            return settings?.BaseModelFolders
+                .Where(f => f.IsEnabled && !string.IsNullOrWhiteSpace(f.FolderPath))
+                .OrderByDescending(f => f.IsDefault)
+                .ThenBy(f => f.Order)
+                .Select(f => f.FolderPath)
+                .ToList() ?? [];
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Could not resolve shared model roots for the engine install.");
+            return [];
+        }
     }
 
     private void OnOpenFolderRequested(InstallerPackageCardViewModel card)
