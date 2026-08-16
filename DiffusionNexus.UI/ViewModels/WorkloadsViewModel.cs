@@ -170,6 +170,27 @@ public partial class WorkloadsViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// Computes the VRAM tier to preselect in the details dialog, or <c>null</c> when no
+    /// resource monitor is available (the dialog then keeps its own pre-existing default: the
+    /// smallest configured tier).
+    /// </summary>
+    /// <remarks>
+    /// Split out of <see cref="ShowDetailsAsync"/> so the computation is testable on its own —
+    /// <see cref="ShowDetailsAsync"/> constructs a real <see cref="WorkloadDetailsDialog"/>
+    /// (an Avalonia <c>Window</c>) immediately afterwards, which cannot be exercised in tests.
+    /// </remarks>
+    internal async Task<int?> ComputeSuggestedVramGbAsync(int[] configuredVramProfiles)
+    {
+        if (_resourceMonitor is null)
+        {
+            return null;
+        }
+
+        var snapshot = await _resourceMonitor.GetSnapshotAsync();
+        return EngineWorkloadCatalog.SuggestVramTier(snapshot.VramTotalMB, configuredVramProfiles);
+    }
+
+    /// <summary>
     /// Shows the detail dialog for a specific workload item.
     /// </summary>
     [RelayCommand]
@@ -211,11 +232,7 @@ public partial class WorkloadsViewModel : ViewModelBase
             DetailItems = detailItems,
             Summary = item.CheckResult.Summary,
             ConfiguredVramProfiles = item.ConfiguredVramProfiles,
-            SuggestedVramGb = _resourceMonitor is null
-                ? null
-                : EngineWorkloadCatalog.SuggestVramTier(
-                    (await _resourceMonitor.GetSnapshotAsync()).VramTotalMB,
-                    item.ConfiguredVramProfiles),
+            SuggestedVramGb = await ComputeSuggestedVramGbAsync(item.ConfiguredVramProfiles),
             InstallCallback = CreateInstallCallback(item),
             RepairCallback = CreateRepairCallback(item)
         };

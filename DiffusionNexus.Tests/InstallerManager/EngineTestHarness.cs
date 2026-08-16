@@ -22,7 +22,9 @@ internal static class EngineTestHarness
         IManagedEngineInstaller? engineInstaller = null,
         string? chosenFolder = null,
         Action<InstallerPackage>? onPackageAdded = null,
-        IReadOnlyList<BaseModelFolder>? baseModelFolders = null)
+        IReadOnlyList<BaseModelFolder>? baseModelFolders = null,
+        Mock<IDialogService>? dialogMock = null,
+        Mock<IConfigurationRepository>? configurationRepositoryMock = null)
     {
         var repo = new Mock<IInstallerPackageRepository>();
         repo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>()))
@@ -46,13 +48,13 @@ internal static class EngineTestHarness
             uow.Setup(u => u.AppSettings).Returns(appSettingsRepo.Object);
         }
 
-        var dialog = new Mock<IDialogService>();
+        var dialog = dialogMock ?? new Mock<IDialogService>();
         dialog.Setup(d => d.ShowOpenFolderDialogAsync(It.IsAny<string>())).ReturnsAsync(chosenFolder);
 
         return new InstallerManagerViewModel(
             dialog.Object, uow.Object, new PackageProcessManager(),
             new Mock<IDatasetEventAggregator>().Object,
-            new Mock<IConfigurationRepository>().Object,
+            (configurationRepositoryMock ?? new Mock<IConfigurationRepository>()).Object,
             new Mock<IConfigurationCheckerService>().Object,
             new Mock<IWorkloadInstallService>().Object,
             [], new Mock<IUnifiedLogger>().Object,
