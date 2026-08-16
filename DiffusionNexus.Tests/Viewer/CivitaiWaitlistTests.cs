@@ -11,7 +11,19 @@ namespace DiffusionNexus.Tests.Viewer;
 /// </summary>
 public sealed class CivitaiWaitlistTests : IDisposable
 {
-    private static readonly DateTimeOffset Now = new(2026, 8, 13, 10, 0, 0, TimeSpan.Zero);
+    /// <summary>
+    /// The fixtures' "now", anchored to today's date rather than a fixed calendar day.
+    ///
+    /// These tests describe deadlines relative to <c>Now</c> ("three days out", "one day ago"),
+    /// but the service recomputes availability against the real <see cref="DateTimeOffset.UtcNow"/>
+    /// when it restores persisted entries. A pinned date therefore rots: once the real clock passes
+    /// it, every "future deadline" in the fixtures silently becomes a past one and entries restore
+    /// as Available instead of Waiting. Anchoring to today keeps the relative intent true forever.
+    ///
+    /// Whole seconds, so a JSON persist/restore round-trip compares exactly.
+    /// </summary>
+    private static readonly DateTimeOffset Now =
+        new(DateTime.UtcNow.Date.AddHours(10), TimeSpan.Zero);
     private readonly string _tempDir = Directory.CreateTempSubdirectory("dn-waitlist-tests").FullName;
 
     public void Dispose()
