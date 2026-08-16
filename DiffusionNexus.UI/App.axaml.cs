@@ -726,6 +726,20 @@ public partial class App : Application
             return new InstallationEngine(orchestrator);
         });
 
+        // Installation coordinator — the same facade the standalone Installer and Wizard use.
+        // AddInstallationServices() registers the pipeline but not this facade.
+        services.AddSingleton<IInstallationCoordinator>(sp =>
+            new InstallationCoordinator(sp.GetRequiredService<InstallationEngine>()));
+
+        // App-owned ComfyUI engine (Diffusion Nexus Engine).
+        services.AddSingleton<DiffusionNexus.Installer.SDK.Shared.Services.IUserPromptService>(sp =>
+            new Services.Engine.DialogUserPromptService(sp.GetRequiredService<IDialogService>()));
+        services.AddSingleton<Services.Engine.IManagedEngineInstaller>(sp =>
+            new Services.Engine.ManagedEngineInstaller(
+                sp.GetRequiredService<IInstallationCoordinator>(),
+                sp.GetRequiredService<IConfigurationRepository>(),
+                sp.GetRequiredService<DiffusionNexus.Installer.SDK.Shared.Services.IUserPromptService>()));
+
         // ComfyUI workflow execution service (singleton - maintains HttpClient)
         services.AddSingleton<IComfyUIWrapperService>(sp =>
         {
