@@ -1,7 +1,11 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Text.Json.Nodes;
+using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Inference.Abstractions;
 using DiffusionNexus.Inference.Models;
 using DiffusionNexus.Inference.StableDiffusionCpp;
+using DiffusionNexus.Service.Services;
 using DiffusionNexus.UI.Services.Engine;
 using Serilog;
 // ComfyUiPathDiscovery lives in DiffusionNexus.UI.Services (not .Diffusion or .Engine) — it is
@@ -44,6 +48,46 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
         public ModelDescriptor? TryGet(string key) => null;
     }
 
+    /// <summary>
+    /// The one model the shipped workflow (<see cref="Krea2WorkflowPatcher"/>) can currently
+    /// generate. It carries no on-disk file paths because the engine backend never loads it the
+    /// way <c>StableDiffusionCppLoader</c> loads a local model — ComfyUI resolves its own files
+    /// from the graph. Width/height mirror the workflow's own default aspect ratio node.
+    /// </summary>
+    public static readonly ModelDescriptor Krea2Model = new()
+    {
+        Key = "krea2",
+        DisplayName = "Krea 2 Turbo",
+        Kind = ModelKind.Krea2,
+        DefaultSteps = 8,
+        DefaultCfg = 1.0f,
+        DefaultSampler = "euler",
+        DefaultScheduler = "simple",
+        DefaultWidth = 1024,
+        DefaultHeight = 1024,
+    };
+
+    /// <summary>
+    /// Unions the fixed <see cref="Krea2Model"/> descriptor with whatever the generic
+    /// <see cref="ComfyUiModelCatalog"/> disk scan finds under the engine's install root.
+    ///
+    /// This exists to close a gap the Canvas would otherwise hit silently: <c>ComfyUiModelCatalog</c>
+    /// (see <c>Discover()</c>) only recognizes the four models the local stable-diffusion.cpp backend
+    /// can load — it has no notion of Krea 2 at all, since Krea 2 only runs through this engine's
+    /// ComfyUI workflow. Without this wrapper, <c>Catalog.TryGet("krea2")</c> would always return
+    /// null even on a fully installed engine, and generation could never resolve its own model.
+    /// </summary>
+    private sealed class EngineModelCatalog(ModelDescriptor fixedDescriptor, IModelCatalog discovered) : IModelCatalog
+    {
+        public IReadOnlyList<ModelDescriptor> ListAvailable() =>
+            new[] { fixedDescriptor }.Concat(discovered.ListAvailable()).ToList();
+
+        public ModelDescriptor? TryGet(string key) =>
+            string.Equals(key, fixedDescriptor.Key, StringComparison.Ordinal)
+                ? fixedDescriptor
+                : discovered.TryGet(key);
+    }
+
     private readonly ManagedComfyUiEngine _engine;
     private readonly Func<Task<string?>> _resolveInstallRootAsync;
     private readonly IWorkflowTemplateSource? _templateSource;
@@ -65,10 +109,11 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
     public string DisplayName => "Diffusion Nexus Engine";
 
     /// <summary>
-    /// Models discovered under the engine's install root. Empty until the engine is installed —
-    /// the catalog walks the ComfyUI folder layout, which does not exist before then.
+    /// Models this backend can generate. Always includes <see cref="Krea2Model"/> — the workflow
+    /// is fixed regardless of install state — plus whatever else is discovered under the engine's
+    /// install root once known (empty before the engine is installed).
     /// </summary>
-    public IModelCatalog Catalog { get; private set; } = EmptyModelCatalog.Instance;
+    public IModelCatalog Catalog { get; private set; } = new EngineModelCatalog(Krea2Model, EmptyModelCatalog.Instance);
 
     public IReadOnlyList<string> MissingRequirements => _missingRequirements;
 
@@ -88,7 +133,8 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
         }
 
         var searchPaths = ComfyUiPathDiscovery.EnumerateModelSearchPaths(installRoot!);
-        Catalog = searchPaths.Count > 0 ? new ComfyUiModelCatalog(searchPaths) : EmptyModelCatalog.Instance;
+        var discovered = searchPaths.Count > 0 ? (IModelCatalog)new ComfyUiModelCatalog(searchPaths) : EmptyModelCatalog.Instance;
+        Catalog = new EngineModelCatalog(Krea2Model, discovered);
 
         if (_templateSource is null || !_templateSource.HasTemplate)
         {
@@ -131,12 +177,108 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
             yield break;
         }
 
-        // Submission is added with the workflow template (see the workflow task). Until then this
-        // point is unreachable: IsAvailableAsync returns false without a template.
+        var seed = request.Seed ?? Random.Shared.NextInt64(0, int.MaxValue);
+        var startedAt = Stopwatch.GetTimestamp();
+
         yield return new DiffusionStreamItem(new DiffusionProgress
         {
-            Phase = DiffusionPhase.Completed,
-            Message = "The engine is ready but workflow submission is not wired up yet."
+            Phase = DiffusionPhase.Loading,
+            Message = "Submitting to the Diffusion Nexus Engine…"
         });
+
+        using var wrapper = new ComfyUIWrapperService(_engine.BaseUrl!);
+
+        // NOTE(progress): IComfyUIWrapperService.WaitForCompletionAsync reports raw WebSocket event
+        // text ("Executing node 62...", "Progress: 3/8") via IProgress<string>, not a typed
+        // step/total pair. Parsing that string to synthesize DiffusionPhase.Sampling items would be
+        // guessing at a stable format the wrapper doesn't promise, so v1 leaves the stream at
+        // Loading -> Completed for the engine path, same as the seam's other honesty rules.
+        // TODO(v2-engine-progress): revisit if/when the wrapper exposes structured step progress.
+
+        DiffusionResult? result = null;
+        string? failure = null;
+        try
+        {
+            var gguf = await ResolveInstalledKreaGgufAsync(wrapper, cancellationToken).ConfigureAwait(false);
+            var templateJson = _templateSource!.LoadTemplateJson()
+                ?? throw new InvalidOperationException("The Krea 2 workflow template could not be loaded.");
+            var workflowJson = Krea2WorkflowPatcher.Patch(templateJson, request, seed, gguf);
+
+            // QueueWorkflowAsync loads its workflow from a file path and applies per-node modifiers
+            // itself (it's shared with the inpaint/outpaint/caption flows, which patch node-by-node).
+            // Krea2WorkflowPatcher already produced the fully patched graph in memory, so hand it a
+            // scratch file and no modifiers instead of re-deriving per-node patches here.
+            var scratchWorkflowPath = Path.Combine(Path.GetTempPath(), $"dn-engine-krea2-{Guid.NewGuid():N}.json");
+            string promptId;
+            try
+            {
+                await File.WriteAllTextAsync(scratchWorkflowPath, workflowJson, cancellationToken).ConfigureAwait(false);
+                promptId = await wrapper.QueueWorkflowAsync(
+                    scratchWorkflowPath, new Dictionary<string, Action<JsonNode>>(), cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                try { File.Delete(scratchWorkflowPath); }
+                catch (IOException) { /* best-effort scratch cleanup */ }
+                catch (UnauthorizedAccessException) { /* best-effort scratch cleanup */ }
+            }
+
+            await wrapper.WaitForCompletionAsync(promptId, ct: cancellationToken).ConfigureAwait(false);
+
+            var comfyResult = await wrapper.GetResultAsync(promptId, cancellationToken).ConfigureAwait(false);
+            var image = comfyResult.Images.FirstOrDefault();
+            if (image is null)
+            {
+                failure = "The engine finished but returned no image.";
+            }
+            else
+            {
+                var bytes = await wrapper.DownloadImageAsync(image, cancellationToken).ConfigureAwait(false);
+                result = new DiffusionResult(bytes, request.Width, request.Height, seed,
+                    Stopwatch.GetElapsedTime(startedAt));
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "Engine generation failed.");
+            failure = ex.Message;
+        }
+
+        yield return new DiffusionStreamItem(
+            new DiffusionProgress { Phase = DiffusionPhase.Completed, Message = failure },
+            result);
+    }
+
+    /// <summary>
+    /// The Krea 2 GGUF present on this machine. The template names the Q8_0 quant, but the
+    /// workload downloads whichever quant matches the card's VRAM tier, so submitting the
+    /// template unchanged fails on every machine below the top tier. Returns null when the
+    /// engine cannot be asked, in which case the template's own name is kept.
+    /// </summary>
+    /// <remarks>
+    /// The folder key <c>"diffusion_models"</c> is ComfyUI's conventional UNet/DiT folder name but
+    /// is not independently confirmed against a running engine here — flagged for the manual
+    /// engine-generation smoke. If it's wrong, <c>GetModelsInFolderAsync</c> returns an empty list
+    /// (logged, not thrown) and this falls back to the template's own Q8_0 name.
+    /// </remarks>
+    private static async Task<string?> ResolveInstalledKreaGgufAsync(
+        ComfyUIWrapperService wrapper, CancellationToken ct)
+    {
+        try
+        {
+            var models = await wrapper.GetModelsInFolderAsync("diffusion_models", ct).ConfigureAwait(false);
+            return models.FirstOrDefault(m =>
+                m.Contains("krea2", StringComparison.OrdinalIgnoreCase) &&
+                m.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.Warning(ex, "Could not resolve the installed Krea 2 GGUF; keeping the template's name.");
+            return null;
+        }
     }
 }

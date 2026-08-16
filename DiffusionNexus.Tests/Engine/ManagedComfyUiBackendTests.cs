@@ -78,6 +78,24 @@ public class ManagedComfyUiBackendTests
     }
 
     [Fact]
+    public void Catalog_AlwaysResolvesTheKrea2ModelEvenBeforeTheEngineIsInstalled()
+    {
+        // Regression guard for a gap flagged in review: the Canvas looks up
+        // SelectedModel.Key against backend.Catalog.TryGet(...) before ever calling
+        // GenerateAsync. ComfyUiModelCatalog's disk scan has no notion of Krea 2 (it only
+        // recognizes the sd.cpp-loadable models), so without the Krea2Model/EngineModelCatalog
+        // union, this lookup would return null on every engine install and generation could
+        // never resolve its own model.
+        var backend = Create(installRoot: null, hasTemplate: true);
+
+        var descriptor = backend.Catalog.TryGet("krea2");
+
+        descriptor.Should().NotBeNull("the engine backend always knows Krea 2, independent of install state");
+        descriptor!.DisplayName.Should().Be("Krea 2 Turbo");
+        backend.Catalog.ListAvailable().Should().Contain(d => d.Key == "krea2");
+    }
+
+    [Fact]
     public async Task Generate_PropagatesCallerCancellation()
     {
         var backend = Create(null, hasTemplate: false);

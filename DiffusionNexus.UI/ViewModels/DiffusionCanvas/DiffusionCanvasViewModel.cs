@@ -110,6 +110,30 @@ public partial class DiffusionCanvasViewModel : ObservableObject
     [ObservableProperty]
     private CanvasBackendOption? _selectedBackend;
 
+    /// <summary>
+    /// Switches <see cref="AvailableModels"/> to match the newly selected backend.
+    ///
+    /// <see cref="AvailableModels"/> is otherwise populated only by <see cref="LoadModelsAsync"/>,
+    /// which reads the LOCAL backend's disk-scanned catalog. Without this hook, picking the engine
+    /// backend would leave <see cref="SelectedModel"/> pointing at a local-only key (e.g.
+    /// "flux2-klein") that the engine's <c>Catalog.TryGet</c> can never resolve — Generate would
+    /// fail with "files were not found" despite the engine being fully installed and ready.
+    /// </summary>
+    partial void OnSelectedBackendChanged(CanvasBackendOption? value)
+    {
+        if (value?.Key == CanvasBackendKeys.Engine && _engineBackend is not null)
+        {
+            AvailableModels.Clear();
+            foreach (var descriptor in _engineBackend.Catalog.ListAvailable())
+                AvailableModels.Add(new CanvasModelOption(descriptor.Key, descriptor.DisplayName));
+            SelectedModel = AvailableModels.FirstOrDefault();
+        }
+        else if (value?.Key == CanvasBackendKeys.Local)
+        {
+            _ = LoadModelsAsync();
+        }
+    }
+
     #endregion
 
     #region v2 Placeholder commands (wired to disabled UI controls)

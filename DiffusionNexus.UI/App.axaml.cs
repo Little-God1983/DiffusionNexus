@@ -659,9 +659,12 @@ public partial class App : Application
         services.AddSingleton<IResourceMonitorService, ResourceMonitorService>();
         services.AddTransient<ResourceMonitorViewModel>();
 
-        // The Canvas's second backend: the app-owned ComfyUI engine. No IWorkflowTemplateSource is
-        // registered yet (that lands with the workflow-submission task), so this backend honestly
-        // reports "no workflow configured" until then rather than pretending to generate.
+        // The Krea 2 text2image workflow template, shipped as an AvaloniaResource under
+        // Assets/Pipelines/. Registered before ManagedComfyUiBackend so it can be injected there.
+        services.AddSingleton<Services.Diffusion.IWorkflowTemplateSource>(_ =>
+            new Services.Diffusion.AvaresWorkflowTemplateSource("Krea2-Text2Image-API.json"));
+
+        // The Canvas's second backend: the app-owned ComfyUI engine.
         services.AddSingleton<Services.Diffusion.ManagedComfyUiBackend>(sp =>
             new Services.Diffusion.ManagedComfyUiBackend(
                 sp.GetRequiredService<Services.Engine.ManagedComfyUiEngine>(),
