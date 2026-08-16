@@ -85,8 +85,24 @@ public partial class InstallerManagerViewModel : ViewModelBase
     [ObservableProperty]
     private bool _isEngineTileVisible;
 
+    /// <summary>
+    /// True for the duration of <see cref="InstallEngineAsync"/>. Guards against two hazards
+    /// flagged in review: (1) <see cref="OnIsEngineTileVisibleChanged"/> reloading the whole
+    /// <see cref="InstallerCards"/> list mid-install, which would detach the live card the
+    /// install's progress callbacks and final <c>IsEngineInstalled = true</c> are writing to —
+    /// the callbacks would then land on an orphaned VM while a freshly-built card shows the
+    /// Install button, one click from a second concurrent SDK install into the same folder; and
+    /// (2) that reload running <see cref="LoadInstallationsAsync"/> concurrently with itself over
+    /// the VM's single shared <c>IUnitOfWork</c> — the same hazard documented in App.axaml.cs as
+    /// the reason startup loading was serialized.
+    /// </summary>
+    private bool _isEngineInstallInFlight;
+
     partial void OnIsEngineTileVisibleChanged(bool value)
     {
+        // Skip the reload while an install is running — see _isEngineInstallInFlight's doc.
+        // InstallEngineAsync catches up once it's done, if the switch actually moved meanwhile.
+        if (_isEngineInstallInFlight) return;
         _ = LoadInstallationsCommand.ExecuteAsync(null);
     }
 
@@ -875,10 +891,24 @@ public partial class InstallerManagerViewModel : ViewModelBase
         var card = InstallerCards.FirstOrDefault(c => c.IsEngine);
         if (card is null || _engineInstaller is null) return;
 
+        // Guards re-entrancy: a second Install click routed through a stale card reference (or a
+        // freshly-built one, if the reload guard in OnIsEngineTileVisibleChanged were ever
+        // bypassed) must never start a second SDK install writing into the same folder while one
+        // is already running. Set before the folder dialog so it also covers the window while
+        // that's up, and cleared in this method's finally below (reached from every path once the
+        // folder is chosen) or right here on a cancelled pick.
+        if (_isEngineInstallInFlight) return;
+        _isEngineInstallInFlight = true;
+        var visibilityAtStart = IsEngineTileVisible;
+
         var folder = await _dialogService.ShowOpenFolderDialogAsync(
             $"Choose where to install the Diffusion Nexus Engine (default: {Services.Engine.ManagedEngineLocator.DefaultInstallRoot})");
 
-        if (string.IsNullOrWhiteSpace(folder)) return;
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            _isEngineInstallInFlight = false;
+            return;
+        }
 
         UnifiedConsolePanelRequested?.Invoke(this, EventArgs.Empty);
 
@@ -962,6 +992,13 @@ public partial class InstallerManagerViewModel : ViewModelBase
             card.IsEngineInstalling = false;
             card.EngineStatusMessage = null;
             card.EngineProgressPercent = 0;
+            _isEngineInstallInFlight = false;
+
+            // The visibility switch may have moved while we were installing — its own reload was
+            // suppressed in OnIsEngineTileVisibleChanged to avoid detaching `card` mid-install.
+            // Catch up now: the install has finished, so a reload can no longer orphan it.
+            if (IsEngineTileVisible != visibilityAtStart)
+                _ = LoadInstallationsCommand.ExecuteAsync(null);
         }
     }
 

@@ -116,4 +116,61 @@ public class EngineInstallFlowTests
         capturedRequest.Should().NotBeNull();
         capturedRequest!.SharedModelRoots.Should().Equal(@"E:\ModelsDefault", @"D:\ModelsA");
     }
+
+    [Fact]
+    public async Task ToggleEngineVisibility_DuringInstall_DoesNotDetachTheInFlightCardOrDuplicateTheInstall()
+    {
+        // Regression for the review finding: OnIsEngineTileVisibleChanged used to reload the
+        // whole InstallerCards list unconditionally, which would detach the card InstallEngineAsync
+        // captured at the top — its progress callbacks and final IsEngineInstalled = true would then
+        // land on an orphaned VM, while a freshly-built card's Install button was one click from a
+        // second concurrent SDK install into the same folder.
+        var installGate = new TaskCompletionSource<EngineInstallOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var installer = new Mock<IManagedEngineInstaller>();
+        installer.Setup(i => i.InstallBaseEngineAsync(
+                It.IsAny<EngineInstallRequest>(), It.IsAny<IProgress<InstallLogEntry>>(),
+                It.IsAny<IProgress<InstallationProgress>>(), It.IsAny<CancellationToken>()))
+            .Returns(installGate.Task);
+
+        var vm = EngineTestHarness.CreateInstallerManagerViewModel(
+            packages: [], engineInstaller: installer.Object,
+            chosenFolder: @"C:\Engine\ComfyUI", onPackageAdded: _ => { });
+
+        vm.IsEngineTileVisible = true;
+        await vm.LoadInstallationsCommand.ExecuteAsync(null);
+
+        var originalCard = vm.InstallerCards.Single(c => c.IsEngine);
+
+        // Not awaited: InstallEngineAsync runs synchronously (all mocked awaits are already-
+        // completed tasks) up to the gated InstallBaseEngineAsync call, then suspends there and
+        // hands back a pending Task — by this point card.IsEngineInstalling is already true.
+        var installTask = vm.InstallEngineAsync();
+
+        originalCard.IsEngineInstalling.Should().BeTrue("the install is now in flight on this card");
+
+        // Toggling the switch mid-install must not reload the list out from under it.
+        vm.IsEngineTileVisible = false;
+
+        vm.InstallerCards.Single(c => c.IsEngine).Should().BeSameAs(originalCard,
+            "a reload here would detach the card the in-flight install is writing progress to");
+
+        // A second Install call while the first is still running must be a no-op, not a second
+        // concurrent SDK install into the same folder.
+        await vm.InstallEngineAsync();
+        installer.Verify(i => i.InstallBaseEngineAsync(
+            It.IsAny<EngineInstallRequest>(), It.IsAny<IProgress<InstallLogEntry>>(),
+            It.IsAny<IProgress<InstallationProgress>>(), It.IsAny<CancellationToken>()), Times.Once);
+
+        installGate.SetResult(new EngineInstallOutcome(true, false, "done", @"C:\Engine\ComfyUI"));
+        await installTask;
+
+        // The deferred reload (suppressed while installing) fires in InstallEngineAsync's finally
+        // once the switch is found to have moved — wait for it to actually finish before asserting.
+        await (vm.LoadInstallationsCommand.ExecutionTask ?? Task.CompletedTask);
+
+        originalCard.IsEngineInstalled.Should().BeTrue("the install completed on the same card it started on");
+        vm.InstallerCards.Any(c => c.IsEngine).Should().BeFalse(
+            "the switch ended up off, and the deferred reload must have caught up to that once the install finished");
+    }
 }
