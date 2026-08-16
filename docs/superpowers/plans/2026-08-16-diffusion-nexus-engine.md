@@ -2744,37 +2744,41 @@ git commit -m "feat: let the Canvas choose between the local backend and the eng
 
 ---
 
-### Task 10: Workflow template + real generation
+### Task 10: Workflow submission and real generation
 
-**BLOCKED until the maintainer supplies the text2image workflow.** Do not invent one. When it arrives, save it to `DiffusionNexus.Service/Assets/Workflows/Krea2-Turbo-Text2Image.json` and complete the steps below. Confirm first that it is **API format** (flat object keyed by node id, each value having `class_type` and `inputs`) — if it is a UI-format export (`{"nodes": [...], "links": [...]}`), stop and ask for an API-format export ("Workflow → Export (API)" in ComfyUI); converting UI format in C# is explicitly out of scope.
+The workflow is **already supplied** and verified API-format: `DiffusionNexus.UI/Assets/Pipelines/Krea2-Text2Image-API.json`, 11 nodes. It ships as an **AvaloniaResource** (`<AvaloniaResource Include="Assets\**\*.*" />` in `DiffusionNexus.UI.csproj:27`, with `Assets\Workflows\**` excluded — the Pipelines folder is included), so it is loaded through `AssetLoader` from an `avares://` URI, not from disk.
+
+**The real graph** (verified, do not re-derive):
+
+| Node | class_type | What the patcher does with it |
+|---|---|---|
+| `17` | `CLIPTextEncode` | **positive** prompt (`KSampler.positive` → `["17", 0]`) — write `inputs.text` |
+| `35` | `CLIPTextEncode` | negative prompt — write `inputs.text` from `request.NegativePrompt` (empty string when null) |
+| `36` | `EmptySD3LatentImage` | `width`/`height` are **links** to node `65`, not literals — replace with literal ints |
+| `37` | `KSampler` | `seed`, `steps` (8), `cfg` (1), `sampler_name` (euler), `scheduler` (simple) |
+| `62` | `LoaderGGUF` | `gguf_name` is hardcoded to `krea2_turbo-Q8_0.gguf` — must be repointed at whichever quant is actually installed |
+| `21` | `SaveImage` | `filename_prefix` is hardcoded to a dated folder — repoint at a stable prefix |
+| `55` | `Power Lora Loader (rgthree)` | Leave as authored. Carries a **disabled** `Jinx_Arcane_Season_1_LoRA_Z_Image_Turbo.safetensors` entry (`on: false`), which is harmless but means the graph needs rgthree — installed by the Krea 2 workload. Wiring `DiffusionRequest.Loras` here is a later step, not this one. |
+
+Three of these are load-bearing and easy to get wrong:
+
+1. **Width/height come from a custom node.** `36.inputs.width` is `["65", 0]` — a link to `AI2GoResolutionSelector`. Writing a literal int replaces the link, which is what we want (the Canvas dictates the size); node `65` then becomes unreachable and ComfyUI simply never executes it.
+2. **The GGUF quant is machine-specific.** The template names `krea2_turbo-Q8_0.gguf` (the 32 GB tier). A user whose workload install picked `Q5_K_S` would get a "file not found" from ComfyUI. Resolve the installed file from the engine at submit time.
+3. `SaveImage` writes into the engine's own output folder. That is fine — the backend fetches the image over `/view` regardless — but the prefix should not pretend to be a dated batch.
 
 **Files:**
-- Create: `DiffusionNexus.Service/Assets/Workflows/Krea2-Turbo-Text2Image.json` (maintainer-supplied)
-- Create: `DiffusionNexus.UI/Services/Diffusion/AssetWorkflowTemplateSource.cs`
+- Create: `DiffusionNexus.UI/Services/Diffusion/AvaresWorkflowTemplateSource.cs`
 - Create: `DiffusionNexus.UI/Services/Diffusion/Krea2WorkflowPatcher.cs`
 - Modify: `DiffusionNexus.UI/Services/Diffusion/ManagedComfyUiBackend.cs` (`GenerateAsync`)
 - Test: `DiffusionNexus.Tests/Engine/Krea2WorkflowPatcherTests.cs` (create)
 
 **Interfaces:**
-- Consumes: `IWorkflowTemplateSource` (Task 9), `IComfyUIWrapperService` (`QueueWorkflowAsync`, `WaitForCompletionAsync`, `GetResultAsync`, `DownloadImageAsync`).
-- Produces: `static string Krea2WorkflowPatcher.Patch(string templateJson, DiffusionRequest request, long seed)`.
+- Consumes: `IWorkflowTemplateSource` (Task 9), `IComfyUIWrapperService` (`QueueWorkflowAsync`, `WaitForCompletionAsync`, `GetResultAsync`, `DownloadImageAsync`, `GetModelsInFolderAsync`).
+- Produces: `static string Krea2WorkflowPatcher.Patch(string templateJson, DiffusionRequest request, long seed, string? ggufFileName)`.
 
-- [ ] **Step 1: Record the template's node ids**
+- [ ] **Step 1: Write the failing tests**
 
-```bash
-python -c "
-import json
-d = json.load(open('DiffusionNexus.Service/Assets/Workflows/Krea2-Turbo-Text2Image.json', encoding='utf-8'))
-for node_id, node in d.items():
-    print(node_id, node.get('class_type'), list(node.get('inputs', {}).keys()))
-"
-```
-
-Write down the node ids for: the positive `CLIPTextEncode`, the sampler (`KSampler` — holds `seed`, `steps`, `cfg`), and the latent (`EmptySD3LatentImage` — holds `width`, `height`). These become the constants in the patcher. Mirror how `ComfyUIWrapperService` documents its own node-id constants (`LoadImageNodeId`, `Qwen3VqaNodeId` at the top of that file).
-
-- [ ] **Step 2: Write the failing tests**
-
-Create `DiffusionNexus.Tests/Engine/Krea2WorkflowPatcherTests.cs`. Replace `"6"`, `"3"`, `"5"` with the ids recorded in step 1:
+Create `DiffusionNexus.Tests/Engine/Krea2WorkflowPatcherTests.cs`. The template literal below mirrors the real graph's shape, including the link-valued width/height:
 
 ```csharp
 using System.Text.Json;
@@ -2788,83 +2792,129 @@ public class Krea2WorkflowPatcherTests
 {
     private const string Template = """
     {
-      "6": { "class_type": "CLIPTextEncode", "inputs": { "text": "PLACEHOLDER", "clip": ["11", 0] } },
-      "3": { "class_type": "KSampler", "inputs": { "seed": 0, "steps": 8, "cfg": 1.0 } },
-      "5": { "class_type": "EmptySD3LatentImage", "inputs": { "width": 1024, "height": 1024, "batch_size": 1 } }
+      "9":  { "class_type": "VAEDecode", "inputs": { "samples": ["37", 0], "vae": ["57", 0] } },
+      "17": { "class_type": "CLIPTextEncode", "inputs": { "text": "OLD POSITIVE", "clip": ["55", 1] } },
+      "21": { "class_type": "SaveImage", "inputs": { "filename_prefix": "2026-08-16/Krea-Turbo", "images": ["9", 0] } },
+      "35": { "class_type": "CLIPTextEncode", "inputs": { "text": "OLD NEGATIVE", "clip": ["55", 1] } },
+      "36": { "class_type": "EmptySD3LatentImage", "inputs": { "width": ["65", 0], "height": ["65", 1], "batch_size": 1 } },
+      "37": { "class_type": "KSampler", "inputs": { "seed": 637067905137781, "steps": 8, "cfg": 1, "sampler_name": "euler", "scheduler": "simple", "denoise": 1, "model": ["55", 0], "positive": ["17", 0], "negative": ["35", 0], "latent_image": ["36", 0] } },
+      "62": { "class_type": "LoaderGGUF", "inputs": { "gguf_name": "krea2_turbo-Q8_0.gguf" } },
+      "65": { "class_type": "AI2GoResolutionSelector", "inputs": { "width": 1000, "height": 1000 } }
     }
     """;
 
-    private static DiffusionRequest Request(int width = 1216, int height = 832, int? steps = null)
+    private static DiffusionRequest Request(
+        int width = 1216, int height = 832, int? steps = null, string? negative = null)
         => new()
         {
             ModelKey = "krea2",
             Prompt = "a lighthouse at dusk",
             Width = width,
             Height = height,
-            Steps = steps
+            Steps = steps,
+            NegativePrompt = negative
         };
 
+    private static JsonElement Inputs(string json, string nodeId)
+        => JsonDocument.Parse(json).RootElement.GetProperty(nodeId).GetProperty("inputs").Clone();
+
     [Fact]
-    public void Patch_WritesPromptSeedAndDimensions()
+    public void Patch_WritesThePositivePromptIntoNode17()
     {
-        var patched = Krea2WorkflowPatcher.Patch(Template, Request(), seed: 4242);
+        var patched = Krea2WorkflowPatcher.Patch(Template, Request(), seed: 4242, ggufFileName: null);
 
-        using var doc = JsonDocument.Parse(patched);
-        var root = doc.RootElement;
-
-        root.GetProperty("6").GetProperty("inputs").GetProperty("text").GetString()
-            .Should().Be("a lighthouse at dusk");
-        root.GetProperty("3").GetProperty("inputs").GetProperty("seed").GetInt64()
-            .Should().Be(4242);
-        root.GetProperty("5").GetProperty("inputs").GetProperty("width").GetInt32()
-            .Should().Be(1216);
-        root.GetProperty("5").GetProperty("inputs").GetProperty("height").GetInt32()
-            .Should().Be(832);
+        Inputs(patched, "17").GetProperty("text").GetString().Should().Be("a lighthouse at dusk");
     }
 
     [Fact]
-    public void Patch_LeavesStepsAloneWhenTheRequestDoesNotAskForThem()
+    public void Patch_WritesTheNegativePromptIntoNode35_EmptyWhenUnset()
     {
-        var patched = Krea2WorkflowPatcher.Patch(Template, Request(), seed: 1);
+        Inputs(Krea2WorkflowPatcher.Patch(Template, Request(), 1, null), "35")
+            .GetProperty("text").GetString().Should().BeEmpty();
 
-        using var doc = JsonDocument.Parse(patched);
-        doc.RootElement.GetProperty("3").GetProperty("inputs").GetProperty("steps").GetInt32()
-            .Should().Be(8, "the workflow's own tuned step count is the default");
+        Inputs(Krea2WorkflowPatcher.Patch(Template, Request(negative: "blurry"), 1, null), "35")
+            .GetProperty("text").GetString().Should().Be("blurry");
     }
 
     [Fact]
-    public void Patch_OverridesStepsWhenTheRequestSuppliesThem()
+    public void Patch_ReplacesTheLinkedResolutionWithLiteralCanvasDimensions()
     {
-        var patched = Krea2WorkflowPatcher.Patch(Template, Request(steps: 20), seed: 1);
+        var patched = Krea2WorkflowPatcher.Patch(Template, Request(1216, 832), seed: 1, ggufFileName: null);
+        var latent = Inputs(patched, "36");
 
-        using var doc = JsonDocument.Parse(patched);
-        doc.RootElement.GetProperty("3").GetProperty("inputs").GetProperty("steps").GetInt32()
-            .Should().Be(20);
+        latent.GetProperty("width").ValueKind.Should().Be(JsonValueKind.Number,
+            "the AI2GoResolutionSelector link must be replaced, or the canvas size is ignored");
+        latent.GetProperty("width").GetInt32().Should().Be(1216);
+        latent.GetProperty("height").GetInt32().Should().Be(832);
+    }
+
+    [Fact]
+    public void Patch_SetsTheSeedAndKeepsTheWorkflowsTunedSamplerSettings()
+    {
+        var sampler = Inputs(Krea2WorkflowPatcher.Patch(Template, Request(), seed: 4242, ggufFileName: null), "37");
+
+        sampler.GetProperty("seed").GetInt64().Should().Be(4242);
+        sampler.GetProperty("steps").GetInt32().Should().Be(8, "8 steps is the turbo model's tuned default");
+        sampler.GetProperty("cfg").GetDouble().Should().Be(1);
+        sampler.GetProperty("sampler_name").GetString().Should().Be("euler");
+    }
+
+    [Fact]
+    public void Patch_OverridesStepsAndCfgOnlyWhenTheRequestSuppliesThem()
+    {
+        var sampler = Inputs(Krea2WorkflowPatcher.Patch(Template, Request(steps: 20), seed: 1, ggufFileName: null), "37");
+
+        sampler.GetProperty("steps").GetInt32().Should().Be(20);
+    }
+
+    [Fact]
+    public void Patch_RepointsTheGgufLoaderAtTheInstalledQuant()
+    {
+        var patched = Krea2WorkflowPatcher.Patch(
+            Template, Request(), seed: 1, ggufFileName: "krea2_turbo-Q5_K_S.gguf");
+
+        Inputs(patched, "62").GetProperty("gguf_name").GetString()
+            .Should().Be("krea2_turbo-Q5_K_S.gguf",
+                "a machine that installed a smaller quant has no Q8_0 file");
+    }
+
+    [Fact]
+    public void Patch_LeavesTheGgufNameAloneWhenNoInstalledQuantWasResolved()
+    {
+        var patched = Krea2WorkflowPatcher.Patch(Template, Request(), seed: 1, ggufFileName: null);
+
+        Inputs(patched, "62").GetProperty("gguf_name").GetString().Should().Be("krea2_turbo-Q8_0.gguf");
+    }
+
+    [Fact]
+    public void Patch_ReplacesTheHardcodedDatedSavePrefix()
+    {
+        var patched = Krea2WorkflowPatcher.Patch(Template, Request(), seed: 1, ggufFileName: null);
+
+        Inputs(patched, "21").GetProperty("filename_prefix").GetString()
+            .Should().Be("DiffusionNexus/Canvas");
     }
 
     [Fact]
     public void Patch_FailsLoudlyWhenTheTemplateLosesAnExpectedNode()
     {
-        var act = () => Krea2WorkflowPatcher.Patch("""{"99":{"class_type":"KSampler","inputs":{}}}""",
-            Request(), seed: 1);
+        var act = () => Krea2WorkflowPatcher.Patch(
+            """{"99":{"class_type":"KSampler","inputs":{}}}""", Request(), seed: 1, ggufFileName: null);
 
         act.Should().Throw<InvalidOperationException>()
-            .WithMessage("*node*", "a silently unpatched workflow would generate the wrong image");
+            .WithMessage("*17*", "a silently unpatched workflow would generate somebody else's prompt");
     }
 }
 ```
 
-- [ ] **Step 3: Run to verify failure**
+- [ ] **Step 2: Run to verify failure**
 
-```bash
-dotnet test DiffusionNexus.Tests/DiffusionNexus.Tests.csproj --filter "FullyQualifiedName~Krea2WorkflowPatcherTests" 2>&1 | tail -10
-```
-
+Run: `dotnet test DiffusionNexus.Tests/DiffusionNexus.Tests.csproj --filter "FullyQualifiedName~Krea2WorkflowPatcherTests"`
 Expected: compile error — `Krea2WorkflowPatcher` not found.
 
-- [ ] **Step 4: Implement the patcher**
+- [ ] **Step 3: Implement the patcher**
 
-Create `DiffusionNexus.UI/Services/Diffusion/Krea2WorkflowPatcher.cs` (substitute the real node ids):
+Create `DiffusionNexus.UI/Services/Diffusion/Krea2WorkflowPatcher.cs`:
 
 ```csharp
 using System.Text.Json;
@@ -2874,23 +2924,42 @@ using DiffusionNexus.Inference.Abstractions;
 namespace DiffusionNexus.UI.Services.Diffusion;
 
 /// <summary>
-/// Writes a canvas request's parameters into the shipped API-format Krea 2 text2image workflow.
+/// Writes a canvas request into the shipped API-format Krea 2 text2image workflow
+/// (<c>Assets/Pipelines/Krea2-Text2Image-API.json</c>).
+///
 /// Node ids are constants because the template is an app asset we control — the same approach
-/// the inpaint/outpaint flows already use. A missing node throws rather than silently producing
+/// the inpaint/outpaint flows already take. A missing node throws instead of silently producing
 /// an image that ignores the user's prompt or size.
 /// </summary>
 public static class Krea2WorkflowPatcher
 {
-    /// <summary>Positive prompt node (CLIPTextEncode).</summary>
-    private const string PromptNodeId = "6";
+    /// <summary>Positive prompt (KSampler.positive points here).</summary>
+    private const string PositivePromptNodeId = "17";
 
-    /// <summary>Sampler node (KSampler) — seed, steps, cfg.</summary>
-    private const string SamplerNodeId = "3";
+    /// <summary>Negative prompt.</summary>
+    private const string NegativePromptNodeId = "35";
 
-    /// <summary>Empty latent node — width and height.</summary>
-    private const string LatentNodeId = "5";
+    /// <summary>Empty latent. Its width/height ship as links to the AI2Go resolution selector.</summary>
+    private const string LatentNodeId = "36";
 
-    public static string Patch(string templateJson, DiffusionRequest request, long seed)
+    /// <summary>Sampler: seed, steps, cfg.</summary>
+    private const string SamplerNodeId = "37";
+
+    /// <summary>GGUF UNet loader (calcuis/gguf). Its quant is machine-specific.</summary>
+    private const string GgufLoaderNodeId = "62";
+
+    /// <summary>SaveImage — ships with a hardcoded dated prefix.</summary>
+    private const string SaveImageNodeId = "21";
+
+    /// <summary>Output prefix used for canvas generations inside the engine's output folder.</summary>
+    private const string CanvasFilenamePrefix = "DiffusionNexus/Canvas";
+
+    /// <param name="ggufFileName">
+    /// The Krea 2 GGUF actually present on this machine, or null to keep whatever the template
+    /// names. The template ships the Q8_0 quant, which only exists on a 32 GB-tier install.
+    /// </param>
+    public static string Patch(
+        string templateJson, DiffusionRequest request, long seed, string? ggufFileName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(templateJson);
         ArgumentNullException.ThrowIfNull(request);
@@ -2898,16 +2967,25 @@ public static class Krea2WorkflowPatcher
         var graph = JsonNode.Parse(templateJson)?.AsObject()
             ?? throw new InvalidOperationException("The workflow template is not a JSON object.");
 
-        Inputs(graph, PromptNodeId)["text"] = request.Prompt;
+        Inputs(graph, PositivePromptNodeId)["text"] = request.Prompt;
+        Inputs(graph, NegativePromptNodeId)["text"] = request.NegativePrompt ?? string.Empty;
+
+        // The template drives the latent size from an AI2GoResolutionSelector link. The canvas
+        // owns the frame size, so replace the links with literals; node 65 then becomes
+        // unreachable and ComfyUI never executes it.
+        var latent = Inputs(graph, LatentNodeId);
+        latent["width"] = request.Width;
+        latent["height"] = request.Height;
 
         var sampler = Inputs(graph, SamplerNodeId);
         sampler["seed"] = seed;
         if (request.Steps is { } steps) sampler["steps"] = steps;
         if (request.Cfg is { } cfg) sampler["cfg"] = cfg;
 
-        var latent = Inputs(graph, LatentNodeId);
-        latent["width"] = request.Width;
-        latent["height"] = request.Height;
+        if (!string.IsNullOrWhiteSpace(ggufFileName))
+            Inputs(graph, GgufLoaderNodeId)["gguf_name"] = ggufFileName;
+
+        Inputs(graph, SaveImageNodeId)["filename_prefix"] = CanvasFilenamePrefix;
 
         return graph.ToJsonString(new JsonSerializerOptions { WriteIndented = false });
     }
@@ -2926,54 +3004,110 @@ public static class Krea2WorkflowPatcher
 }
 ```
 
-- [ ] **Step 5: Run to verify pass**
+- [ ] **Step 4: Run to verify pass**
 
-```bash
-dotnet test DiffusionNexus.Tests/DiffusionNexus.Tests.csproj --filter "FullyQualifiedName~Krea2WorkflowPatcherTests" 2>&1 | tail -5
-```
+Run: `dotnet test DiffusionNexus.Tests/DiffusionNexus.Tests.csproj --filter "FullyQualifiedName~Krea2WorkflowPatcherTests"`
+Expected: 9 passed.
 
-Expected: 4 passed.
+- [ ] **Step 5: Implement the template source**
 
-- [ ] **Step 6: Implement the template source**
-
-Create `DiffusionNexus.UI/Services/Diffusion/AssetWorkflowTemplateSource.cs`:
+Create `DiffusionNexus.UI/Services/Diffusion/AvaresWorkflowTemplateSource.cs`:
 
 ```csharp
+using Avalonia.Platform;
+
 namespace DiffusionNexus.UI.Services.Diffusion;
 
 /// <summary>
-/// Loads the API-format workflow template shipped as an app asset, next to the inpaint/outpaint
-/// workflows the rest of the app already submits.
+/// Loads the API-format workflow template embedded as an Avalonia resource under
+/// <c>Assets/Pipelines/</c> — the same mechanism <c>PipelineManifestProvider</c> uses for its
+/// manifests. Not unit-tested: it is a thin adapter over <see cref="AssetLoader"/>, which needs
+/// an initialized Avalonia runtime. Consumers depend on <see cref="IWorkflowTemplateSource"/>
+/// and are tested against a stub.
 /// </summary>
-public sealed class AssetWorkflowTemplateSource : IWorkflowTemplateSource
+public sealed class AvaresWorkflowTemplateSource : IWorkflowTemplateSource
 {
-    private readonly string _path;
+    private readonly Uri _uri;
 
-    public AssetWorkflowTemplateSource(string relativeAssetPath)
+    public AvaresWorkflowTemplateSource(string assetFileName)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(relativeAssetPath);
-        _path = Path.Combine(AppContext.BaseDirectory, relativeAssetPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(assetFileName);
+        _uri = new Uri($"avares://DiffusionNexus.UI/Assets/Pipelines/{assetFileName}");
     }
 
-    public bool HasTemplate => File.Exists(_path);
+    public bool HasTemplate
+    {
+        get
+        {
+            try { return AssetLoader.Exists(_uri); }
+            catch { return false; }
+        }
+    }
 
-    public string? LoadTemplateJson() => HasTemplate ? File.ReadAllText(_path) : null;
+    public string? LoadTemplateJson()
+    {
+        if (!HasTemplate) return null;
+
+        using var stream = AssetLoader.Open(_uri);
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
 }
 ```
 
-Register it in `App.axaml.cs` before the `ManagedComfyUiBackend` registration:
+Register it in `App.axaml.cs` **before** the `ManagedComfyUiBackend` registration, replacing the placeholder registration from Task 9 if one was added:
 
 ```csharp
         services.AddSingleton<Services.Diffusion.IWorkflowTemplateSource>(_ =>
-            new Services.Diffusion.AssetWorkflowTemplateSource(
-                Path.Combine("Assets", "Workflows", "Krea2-Turbo-Text2Image.json")));
+            new Services.Diffusion.AvaresWorkflowTemplateSource("Krea2-Text2Image-API.json"));
 ```
 
-Confirm the asset is copied to the output directory — check how the existing workflow JSONs are declared in `DiffusionNexus.Service/DiffusionNexus.Service.csproj` and add the new file the same way (they are almost certainly covered by a wildcard `Content`/`None` item with `CopyToOutputDirectory`).
+Confirm the resource is really embedded before moving on:
 
-- [ ] **Step 7: Submit the workflow from the backend**
+```bash
+grep -n "AvaloniaResource" DiffusionNexus.UI/DiffusionNexus.UI.csproj
+```
 
-In `ManagedComfyUiBackend.GenerateAsync`, replace the "not wired up yet" placeholder with the real submission. Add `using DiffusionNexus.Service.Services;` and a `ComfyUIWrapperService` built against the engine's URL:
+Expected: `<AvaloniaResource Include="Assets\**\*.*" />` with only `Assets\Workflows\**` removed — the Pipelines folder is covered, so no csproj change is needed.
+
+- [ ] **Step 6: Resolve the installed GGUF quant**
+
+Add to `ManagedComfyUiBackend` a helper that asks the running engine which Krea 2 GGUF it actually has. `IComfyUIWrapperService.GetModelsInFolderAsync` already exists for this; check its exact signature first:
+
+```bash
+sed -n '509,555p' DiffusionNexus.Service/Services/ComfyUIWrapperService.cs
+```
+
+```csharp
+    /// <summary>
+    /// The Krea 2 GGUF present on this machine. The template names the Q8_0 quant, but the
+    /// workload downloads whichever quant matches the card's VRAM tier, so submitting the
+    /// template unchanged fails on every machine below the top tier. Returns null when the
+    /// engine cannot be asked, in which case the template's own name is kept.
+    /// </summary>
+    private static async Task<string?> ResolveInstalledKreaGgufAsync(
+        ComfyUIWrapperService wrapper, CancellationToken ct)
+    {
+        try
+        {
+            var models = await wrapper.GetModelsInFolderAsync("diffusion_models", ct).ConfigureAwait(false);
+            return models.FirstOrDefault(m =>
+                m.Contains("krea2", StringComparison.OrdinalIgnoreCase) &&
+                m.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.Warning(ex, "Could not resolve the installed Krea 2 GGUF; keeping the template's name.");
+            return null;
+        }
+    }
+```
+
+If `GetModelsInFolderAsync` takes a different folder key than `"diffusion_models"`, use the one the real ComfyUI `/object_info` reports — check by curling the running engine during the manual smoke rather than guessing.
+
+- [ ] **Step 7: Submit the workflow**
+
+In `ManagedComfyUiBackend.GenerateAsync`, replace the "workflow submission is not wired up yet" placeholder with the real submission. Add `using System.Diagnostics;` and `using DiffusionNexus.Service.Services;`:
 
 ```csharp
         var seed = request.Seed ?? Random.Shared.NextInt64(0, int.MaxValue);
@@ -2982,11 +3116,8 @@ In `ManagedComfyUiBackend.GenerateAsync`, replace the "not wired up yet" placeho
         yield return new DiffusionStreamItem(new DiffusionProgress
         {
             Phase = DiffusionPhase.Loading,
-            Message = "Submitting to the Diffusion Nexus Engine..."
+            Message = "Submitting to the Diffusion Nexus Engine…"
         });
-
-        var template = _templateSource!.LoadTemplateJson()!;
-        var workflowJson = Krea2WorkflowPatcher.Patch(template, request, seed);
 
         using var wrapper = new ComfyUIWrapperService(_engine.BaseUrl!);
 
@@ -2994,6 +3125,10 @@ In `ManagedComfyUiBackend.GenerateAsync`, replace the "not wired up yet" placeho
         string? failure = null;
         try
         {
+            var gguf = await ResolveInstalledKreaGgufAsync(wrapper, cancellationToken).ConfigureAwait(false);
+            var workflowJson = Krea2WorkflowPatcher.Patch(
+                _templateSource!.LoadTemplateJson()!, request, seed, gguf);
+
             var promptId = await wrapper.QueueWorkflowAsync(workflowJson, cancellationToken).ConfigureAwait(false);
             await wrapper.WaitForCompletionAsync(promptId, ct: cancellationToken).ConfigureAwait(false);
 
@@ -3021,37 +3156,41 @@ In `ManagedComfyUiBackend.GenerateAsync`, replace the "not wired up yet" placeho
         }
 
         yield return new DiffusionStreamItem(
-            new DiffusionProgress
-            {
-                Phase = DiffusionPhase.Completed,
-                Message = failure
-            },
+            new DiffusionProgress { Phase = DiffusionPhase.Completed, Message = failure },
             result);
 ```
 
-`yield return` cannot appear inside a `try` with a `catch`, which is why the result is captured first and yielded after — keep that shape. Check `QueueWorkflowAsync` and `WaitForCompletionAsync`'s real parameter lists before wiring:
+`yield return` cannot sit inside a `try` that has a `catch`, which is why the result is captured first and yielded afterwards — keep that shape.
+
+Check the real signatures before wiring, and adapt the calls (not the behaviour) if they differ:
 
 ```bash
 sed -n '139,200p' DiffusionNexus.Service/Services/ComfyUIWrapperService.cs
+sed -n '358,412p' DiffusionNexus.Service/Services/ComfyUIWrapperService.cs
 ```
 
-`WaitForCompletionAsync` takes a progress callback in some form — route it into `DiffusionPhase.Sampling` items if the signature allows a synchronous callback; if it does not, leave progress at Loading→Completed and note it in the commit message rather than faking step counts.
+`WaitForCompletionAsync` accepts a progress callback in some form. If it exposes per-step progress, map it onto `DiffusionPhase.Sampling` items with `Step`/`TotalSteps`; if it does not, leave the stream at Loading → Completed and say so in the commit message rather than fabricating step counts.
 
-- [ ] **Step 8: Run the full suite**
+- [ ] **Step 8: Verify the Canvas can reach the new path**
+
+`ManagedComfyUiBackend.IsAvailableAsync` (Task 9) refuses to run without a template. With the asset registered it now proceeds to `EnsureRunningAsync`, so re-run the Task 9 tests to confirm nothing regressed:
+
+Run: `dotnet test DiffusionNexus.Tests/DiffusionNexus.Tests.csproj --filter "FullyQualifiedName~ManagedComfyUiBackendTests"`
+Expected: 5 passed (the stub template source still drives those tests).
+
+- [ ] **Step 9: Build and run the full suite**
 
 ```bash
 dotnet build DiffusionNexus.sln -c Debug 2>&1 | tail -5
 dotnet test DiffusionNexus.Tests/DiffusionNexus.Tests.csproj 2>&1 | tail -5
 ```
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add -A
 git commit -m "feat: generate Krea 2 images through the Diffusion Nexus Engine"
 ```
-
----
 
 ## Manual verification (human gates)
 
@@ -3066,6 +3205,6 @@ These cannot be proven by the test suite. Run them before the branch is consider
 
 ## Open items carried from the spec
 
-- The maintainer-supplied text2image workflow (Task 10 is blocked on it).
+- Wiring `DiffusionRequest.Loras` into the workflow's `Power Lora Loader (rgthree)` node (`55`), and deciding whether the disabled `Jinx_Arcane_Season_1` entry it ships should be stripped.
 - Torch policy if a future engine workload disagrees with cu13.0 + torch 2.11.0.
 - Whether backend selection should later persist to `AppSettings` and replace `DiffusionFeatureFlags.UseLocalDiffusionBackend`.
