@@ -381,30 +381,40 @@ public partial class WorkloadDetailsDialog : Window
     /// <summary>
     /// Toggles the UI between browsing and installing states.
     /// </summary>
+    /// <remarks>
+    /// The decision itself lives in <see cref="WorkloadDetailsButtonState"/> so it can be tested
+    /// without initialising Avalonia; this only applies it to the controls. Called with
+    /// <c>installing: false</c> after a run precisely so the button stops reading "Installing..."
+    /// and becomes clickable again when items are still missing (a skipped or failed download).
+    /// </remarks>
     private void SetInstallingUiState(bool installing)
     {
+        var state = WorkloadDetailsButtonState.Resolve(
+            isBusy: installing,
+            hasRun: DidInstall,
+            hasMissingItems: _detailItems.Any(i => i.IsMissing));
+
         var progressPanel = this.FindControl<Border>("ProgressPanel");
         var installButton = this.FindControl<Button>("InstallButton");
+        var repairButton = this.FindControl<Button>("RepairButton");
         var closeButton = this.FindControl<Button>("CloseButton");
         var grid = this.FindControl<DataGrid>("DetailsGrid");
 
-        if (progressPanel is not null) progressPanel.IsVisible = installing || DidInstall;
-        if (installButton is not null) installButton.IsEnabled = !installing && !DidInstall;
-        if (closeButton is not null) closeButton.Content = DidInstall ? "Done" : "Close";
-        if (grid is not null) grid.IsEnabled = !installing;
+        if (progressPanel is not null) progressPanel.IsVisible = state.IsProgressVisible;
+        if (grid is not null) grid.IsEnabled = state.IsGridEnabled;
+        if (repairButton is not null) repairButton.IsEnabled = state.IsRepairEnabled;
+        if (closeButton is not null) closeButton.Content = state.CloseContent;
 
-        if (installing)
+        if (installButton is not null)
         {
-            if (installButton is not null) installButton.Content = "Installing...";
+            installButton.IsEnabled = state.IsInstallEnabled;
+            installButton.Content = state.InstallContent;
         }
     }
 
-    private void UpdateInstallButtonState()
-    {
-        var btn = this.FindControl<Button>("InstallButton");
-        if (btn is not null)
-        {
-            btn.IsEnabled = _detailItems.Any(i => i.IsMissing);
-        }
-    }
+    /// <summary>
+    /// Brings the footer in line with the current rows — used when the item list is first set, and
+    /// after progress reports flip rows to installed.
+    /// </summary>
+    private void UpdateInstallButtonState() => SetInstallingUiState(installing: false);
 }
