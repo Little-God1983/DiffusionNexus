@@ -51,6 +51,14 @@ public partial class InstallerManagerViewModel : ViewModelBase
     private readonly IResourceMonitorService? _resourceMonitor;
 
     /// <summary>
+    /// Rewrites the engine's <c>extra_model_paths.yaml</c> from the registered Base Model Folders.
+    /// Used right after an engine install, and again before the engine's Workloads dialog runs its
+    /// disk check — that check reads the engine's own configuration, so a stale file would make it
+    /// report models missing that the user does in fact have.
+    /// </summary>
+    private readonly Services.Engine.EngineModelPathsSynchronizer? _engineModelPaths;
+
+    /// <summary>
     /// Raised when the unified console panel should be opened (e.g., during an update).
     /// </summary>
     public event EventHandler? UnifiedConsolePanelRequested;
@@ -123,7 +131,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         Services.Diffusion.BaseModelFolderRegistrar? baseModelFolderRegistrar = null,
         Func<IUnitOfWork>? unitOfWorkFactory = null,
         Services.Engine.IManagedEngineInstaller? engineInstaller = null,
-        IResourceMonitorService? resourceMonitor = null)
+        IResourceMonitorService? resourceMonitor = null,
+        Services.Engine.EngineModelPathsSynchronizer? engineModelPaths = null)
     {
         _dialogService = dialogService;
         _unitOfWork = unitOfWork;
@@ -142,6 +151,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         _baseModelFolderRegistrar = baseModelFolderRegistrar;
         _engineInstaller = engineInstaller;
         _resourceMonitor = resourceMonitor;
+        _engineModelPaths = engineModelPaths;
 
         InstallerCards.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
 
@@ -760,6 +770,16 @@ public partial class InstallerManagerViewModel : ViewModelBase
                 return;
             }
 
+            // The disk check behind this dialog resolves its search paths from the engine's own
+            // extra_model_paths.yaml, so sync it first. Without this, a model folder added in
+            // Settings after the engine was installed is invisible here and every model in it is
+            // reported missing — which is exactly what the engine itself would do at generate time,
+            // so widening only the check would have traded an honest "None" for a green lie.
+            if (_engineModelPaths is not null)
+            {
+                await _engineModelPaths.SyncAsync(card.InstallationPath);
+            }
+
             await ShowWorkloadsDialogAsync(card.InstallationPath,
                 Services.Engine.EngineWorkloadCatalog.WorkloadIds);
             return;
@@ -1048,6 +1068,20 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
                     _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
                         $"Engine installed at {package.InstallationPath}.");
+
+                    // The SDK's installer can only declare one shared library (its ModelBaseFolder
+                    // option holds a single path), so rewrite the engine's extra_model_paths.yaml
+                    // with every registered folder now that the install is on disk.
+                    if (_engineModelPaths is not null)
+                    {
+                        var sync = await _engineModelPaths.SyncAsync(package.InstallationPath);
+                        _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
+                            sync.Roots.Count > 0
+                                ? $"Engine reads {sync.Roots.Count} model folder(s): {string.Join(" | ", sync.Roots)}"
+                                : $"No shared model folders were wired into the engine ({sync.SkipReason ?? "none registered"}); " +
+                                  "it will only use its own models folder.");
+                    }
+
                     _eventAggregator.PublishInstallerPackagesChanged(new InstallerPackagesChangedEventArgs());
                 }
                 else if (outcome.IsCancelled)
