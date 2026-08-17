@@ -4,73 +4,72 @@ using FluentAssertions;
 namespace DiffusionNexus.Tests.InstallerManager;
 
 /// <summary>
-/// Covers the remove-installation dialog's wording. The checkbox label and the
-/// held-back-folders note are rendered side by side, so they have to agree: a row
-/// reading "none linked" directly above a note naming a kept gallery is a contradiction.
+/// Covers the remove-installation dialog's wording. Each folder kind gets exactly one row,
+/// and it has to be self-contained: a row reading "none linked" while a folder of that kind
+/// is being kept is a contradiction, and an explanation collected at the bottom of the
+/// dialog cannot say which row it belongs to. The kept half is returned separately so the
+/// view can tint it — it describes what the checkbox will NOT do.
 /// </summary>
 public sealed class RemoveInstallationLabelsTests
 {
     [Fact]
-    public void ComposeCheckbox_ListsRemovableFolders()
+    public void Compose_ListsRemovableFolders()
     {
-        RemoveInstallationLabels.ComposeCheckbox("Gallery", [@"D:\Output"])
-            .Should().Be("Gallery\nD:\\Output");
+        var label = RemoveInstallationLabels.Compose("Gallery", [@"D:\Output"]);
+
+        label.Text.Should().Be("Gallery\nD:\\Output");
+        label.KeptText.Should().BeEmpty();
+        label.HasKept.Should().BeFalse();
     }
 
     [Fact]
-    public void ComposeCheckbox_NoFoldersAtAll_SaysNoneLinked()
+    public void Compose_NoFoldersAtAll_SaysNoneLinked()
     {
-        RemoveInstallationLabels.ComposeCheckbox("LoRA Source", [])
-            .Should().Be("LoRA Source — none linked");
+        var label = RemoveInstallationLabels.Compose("LoRA Source", []);
+
+        label.Text.Should().Be("LoRA Source — none linked");
+        label.HasKept.Should().BeFalse();
     }
 
     [Fact]
-    public void ComposeCheckbox_OnlySharedFolders_SaysKeptNotNoneLinked()
+    public void Compose_OnlyKeptFolders_NamesThemInTheRowAndNeverSaysNoneLinked()
     {
-        // The bug: the installation's one gallery was held back for another install, and
-        // the row still claimed nothing was linked — contradicting the note right below it.
-        var label = RemoveInstallationLabels.ComposeCheckbox("Gallery", [], [@"E:\AI\comfy_output\"]);
+        // The bug this covers, in two rounds: the row first claimed "none linked" while a
+        // gallery was being kept, then explained itself in a note at the very bottom of the
+        // dialog, too far from the row to say which folder kind it meant.
+        var label = RemoveInstallationLabels.Compose("Gallery", [], [@"E:\AI\comfy_output\"]);
 
-        label.Should().NotContain("none linked");
-        label.Should().Be("Gallery — kept, still used by another installation");
+        label.Text.Should().Be("Gallery");
+        label.Text.Should().NotContain("none linked");
+        label.KeptText.Should().Be(
+            "kept — another installation still uses it:\nE:\\AI\\comfy_output\\");
+        label.HasKept.Should().BeTrue();
     }
 
     [Fact]
-    public void ComposeCheckbox_MixOfRemovableAndShared_ListsOnlyTheRemovableOnes()
+    public void Compose_SeveralKeptFolders_AgreesInNumber()
     {
-        var label = RemoveInstallationLabels.ComposeCheckbox(
+        var label = RemoveInstallationLabels.Compose(
+            "Base Model Folder", [], [@"D:\Models", @"E:\Models"]);
+
+        label.KeptText.Should().StartWith("kept — another installation still uses them:");
+        label.KeptText.Should().Contain(@"D:\Models").And.Contain(@"E:\Models");
+    }
+
+    [Fact]
+    public void Compose_MixOfRemovableAndKept_SplitsThemIntoTheTwoHalves()
+    {
+        var label = RemoveInstallationLabels.Compose(
             "Gallery", [@"D:\Output"], [@"E:\AI\comfy_output\"]);
 
-        label.Should().Be("Gallery\nD:\\Output", "the kept path is named by the note instead");
+        label.Text.Should().Be("Gallery\nD:\\Output", "only these are removed by the checkbox");
+        label.KeptText.Should().Contain(@"E:\AI\comfy_output\");
     }
 
     [Fact]
-    public void ComposeSharedNote_SingleFolder_UsesSingularWording()
+    public void Compose_DeduplicatesKeptPathsCaseInsensitively()
     {
-        RemoveInstallationLabels.ComposeSharedNote([@"E:\AI\comfy_output\"])
-            .Should().Be("Kept because another installation still uses it:\nE:\\AI\\comfy_output\\");
-    }
-
-    [Fact]
-    public void ComposeSharedNote_SeveralFolders_UsesPluralWordingAndListsAll()
-    {
-        var note = RemoveInstallationLabels.ComposeSharedNote([@"E:\out", @"D:\models"]);
-
-        note.Should().StartWith("Kept because another installation still uses them:");
-        note.Should().Contain(@"E:\out").And.Contain(@"D:\models");
-    }
-
-    [Fact]
-    public void ComposeSharedNote_DeduplicatesCaseInsensitively()
-    {
-        RemoveInstallationLabels.ComposeSharedNote([@"E:\Out", @"e:\out"])
-            .Should().Be("Kept because another installation still uses it:\nE:\\Out");
-    }
-
-    [Fact]
-    public void ComposeSharedNote_NothingHeldBack_IsEmpty()
-    {
-        RemoveInstallationLabels.ComposeSharedNote([]).Should().BeEmpty(
-            "the note's border is shown only when this is non-empty");
+        RemoveInstallationLabels.Compose("Gallery", [], [@"E:\Out", @"e:\out"])
+            .KeptText.Should().Be("kept — another installation still uses it:\nE:\\Out");
     }
 }

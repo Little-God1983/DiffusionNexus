@@ -27,11 +27,23 @@ public partial class RemoveInstallationDialog : Window
     public static readonly StyledProperty<string> BaseModelFolderLabelProperty =
         AvaloniaProperty.Register<RemoveInstallationDialog, string>(nameof(BaseModelFolderLabel), defaultValue: string.Empty);
 
-    public static readonly StyledProperty<string> SharedFolderNoteProperty =
-        AvaloniaProperty.Register<RemoveInstallationDialog, string>(nameof(SharedFolderNote), defaultValue: string.Empty);
+    public static readonly StyledProperty<string> GalleryKeptLabelProperty =
+        AvaloniaProperty.Register<RemoveInstallationDialog, string>(nameof(GalleryKeptLabel), defaultValue: string.Empty);
 
-    public static readonly StyledProperty<bool> HasSharedFoldersProperty =
-        AvaloniaProperty.Register<RemoveInstallationDialog, bool>(nameof(HasSharedFolders));
+    public static readonly StyledProperty<string> LoraSourceKeptLabelProperty =
+        AvaloniaProperty.Register<RemoveInstallationDialog, string>(nameof(LoraSourceKeptLabel), defaultValue: string.Empty);
+
+    public static readonly StyledProperty<string> BaseModelFolderKeptLabelProperty =
+        AvaloniaProperty.Register<RemoveInstallationDialog, string>(nameof(BaseModelFolderKeptLabel), defaultValue: string.Empty);
+
+    public static readonly StyledProperty<bool> HasGalleryKeptProperty =
+        AvaloniaProperty.Register<RemoveInstallationDialog, bool>(nameof(HasGalleryKept));
+
+    public static readonly StyledProperty<bool> HasLoraSourceKeptProperty =
+        AvaloniaProperty.Register<RemoveInstallationDialog, bool>(nameof(HasLoraSourceKept));
+
+    public static readonly StyledProperty<bool> HasBaseModelFolderKeptProperty =
+        AvaloniaProperty.Register<RemoveInstallationDialog, bool>(nameof(HasBaseModelFolderKept));
 
     public static readonly StyledProperty<bool> HasGalleriesProperty =
         AvaloniaProperty.Register<RemoveInstallationDialog, bool>(nameof(HasGalleries));
@@ -86,16 +98,40 @@ public partial class RemoveInstallationDialog : Window
         set => SetValue(BaseModelFolderLabelProperty, value);
     }
 
-    public string SharedFolderNote
+    public string GalleryKeptLabel
     {
-        get => GetValue(SharedFolderNoteProperty);
-        set => SetValue(SharedFolderNoteProperty, value);
+        get => GetValue(GalleryKeptLabelProperty);
+        set => SetValue(GalleryKeptLabelProperty, value);
     }
 
-    public bool HasSharedFolders
+    public string LoraSourceKeptLabel
     {
-        get => GetValue(HasSharedFoldersProperty);
-        set => SetValue(HasSharedFoldersProperty, value);
+        get => GetValue(LoraSourceKeptLabelProperty);
+        set => SetValue(LoraSourceKeptLabelProperty, value);
+    }
+
+    public string BaseModelFolderKeptLabel
+    {
+        get => GetValue(BaseModelFolderKeptLabelProperty);
+        set => SetValue(BaseModelFolderKeptLabelProperty, value);
+    }
+
+    public bool HasGalleryKept
+    {
+        get => GetValue(HasGalleryKeptProperty);
+        set => SetValue(HasGalleryKeptProperty, value);
+    }
+
+    public bool HasLoraSourceKept
+    {
+        get => GetValue(HasLoraSourceKeptProperty);
+        set => SetValue(HasLoraSourceKeptProperty, value);
+    }
+
+    public bool HasBaseModelFolderKept
+    {
+        get => GetValue(HasBaseModelFolderKeptProperty);
+        set => SetValue(HasBaseModelFolderKeptProperty, value);
     }
 
     public bool HasGalleries
@@ -142,17 +178,24 @@ public partial class RemoveInstallationDialog : Window
     {
         Message = $"Remove \"{prompt.InstallationName}\" from the Installer Manager?\n\nThis will NOT delete any files on disk.";
 
-        var sharedGalleries = prompt.SharedGalleryFolders ?? [];
-        var sharedLoraSources = prompt.SharedLoraSourceFolders ?? [];
-        var sharedBaseModelFolders = prompt.SharedBaseModelFolders ?? [];
+        var gallery = RemoveInstallationLabels.Compose(
+            "Gallery", prompt.GalleryFolders, prompt.SharedGalleryFolders);
+        var loraSource = RemoveInstallationLabels.Compose(
+            "LoRA Source", prompt.LoraSourceFolders, prompt.SharedLoraSourceFolders);
+        var baseModelFolder = RemoveInstallationLabels.Compose(
+            "Base Model Folder", prompt.BaseModelFolders, prompt.SharedBaseModelFolders);
 
-        GalleryLabel = RemoveInstallationLabels.ComposeCheckbox("Gallery", prompt.GalleryFolders, sharedGalleries);
-        LoraSourceLabel = RemoveInstallationLabels.ComposeCheckbox("LoRA Source", prompt.LoraSourceFolders, sharedLoraSources);
-        BaseModelFolderLabel = RemoveInstallationLabels.ComposeCheckbox("Base Model Folder", prompt.BaseModelFolders, sharedBaseModelFolders);
+        GalleryLabel = gallery.Text;
+        GalleryKeptLabel = gallery.KeptText;
+        HasGalleryKept = gallery.HasKept;
 
-        SharedFolderNote = RemoveInstallationLabels.ComposeSharedNote(
-            sharedGalleries.Concat(sharedLoraSources).Concat(sharedBaseModelFolders));
-        HasSharedFolders = SharedFolderNote.Length > 0;
+        LoraSourceLabel = loraSource.Text;
+        LoraSourceKeptLabel = loraSource.KeptText;
+        HasLoraSourceKept = loraSource.HasKept;
+
+        BaseModelFolderLabel = baseModelFolder.Text;
+        BaseModelFolderKeptLabel = baseModelFolder.KeptText;
+        HasBaseModelFolderKept = baseModelFolder.HasKept;
 
         HasGalleries = prompt.GalleryFolders.Count > 0;
         HasLoraSources = prompt.LoraSourceFolders.Count > 0;

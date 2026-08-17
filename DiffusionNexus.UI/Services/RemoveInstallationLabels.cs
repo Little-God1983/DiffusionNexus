@@ -7,45 +7,55 @@ namespace DiffusionNexus.UI.Services;
 /// <summary>
 /// Builds the text shown on the remove-installation dialog. Lives outside the window so
 /// the wording can be tested without standing up Avalonia — the phrasing carries real
-/// meaning here: "none linked" next to a note naming a kept folder is a contradiction the
-/// user will (rightly) read as a bug.
+/// meaning here: "none linked" next to a kept folder is a contradiction the user will
+/// (rightly) read as a bug.
+///
+/// Everything about one folder kind stays inside that kind's own row, including the folders
+/// being kept and why: an explanation collected at the bottom of the dialog cannot say
+/// which row it belongs to. The two halves are returned separately so the view can tint the
+/// kept half — it reports something the checkbox will NOT do, and should not read as part
+/// of the list of folders it will remove.
 /// </summary>
 public static class RemoveInstallationLabels
 {
+    /// <summary>One checkbox's text, split so the view can style the two halves.</summary>
+    /// <param name="Text">The kind and the folders it can unregister.</param>
+    /// <param name="KeptText">
+    /// The folders kept for another installation, with the reason; empty when none were.
+    /// </param>
+    public sealed record FolderKindLabel(string Text, string KeptText)
+    {
+        /// <summary>True when this kind has folders that are being kept.</summary>
+        public bool HasKept => KeptText.Length > 0;
+    }
+
     /// <summary>
-    /// Labels one cleanup checkbox. Removable folders are listed outright; when the only
-    /// folders of that kind are being kept for another installation, the row says so;
-    /// "none linked" is reserved for a kind this installation genuinely has none of.
+    /// Labels one cleanup checkbox: the folders this installation can unregister, plus any
+    /// it cannot because another installation still uses them. "none linked" is reserved
+    /// for a kind this installation genuinely has none of.
     /// </summary>
-    public static string ComposeCheckbox(
+    public static FolderKindLabel Compose(
         string what,
         IReadOnlyList<string> folders,
         IReadOnlyList<string>? shared = null)
     {
-        if (folders.Count > 0)
+        var kept = Distinct(shared ?? []);
+
+        var text = folders.Count > 0
+            ? $"{what}\n{string.Join("\n", folders)}"
+            : kept.Count > 0
+                ? what
+                : $"{what} — none linked";
+
+        if (kept.Count == 0)
         {
-            return $"{what}\n{string.Join("\n", folders)}";
+            return new FolderKindLabel(text, string.Empty);
         }
 
-        return shared is { Count: > 0 }
-            ? $"{what} — kept, still used by another installation"
-            : $"{what} — none linked";
-    }
-
-    /// <summary>
-    /// The note naming every folder held back, or an empty string when none were.
-    /// Callers show it only when non-empty.
-    /// </summary>
-    public static string ComposeSharedNote(IEnumerable<string> sharedFolders)
-    {
-        var folders = Distinct(sharedFolders);
-        if (folders.Count == 0)
-        {
-            return string.Empty;
-        }
-
-        var subject = folders.Count == 1 ? "it" : "them";
-        return $"Kept because another installation still uses {subject}:\n{string.Join("\n", folders)}";
+        var subject = kept.Count == 1 ? "it" : "them";
+        return new FolderKindLabel(
+            text,
+            $"kept — another installation still uses {subject}:\n{string.Join("\n", kept)}");
     }
 
     /// <summary>De-duplicates paths case-insensitively, preserving order.</summary>

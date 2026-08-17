@@ -274,16 +274,23 @@ public partial class InstallerManagerViewModel : ViewModelBase
     /// or creates a new one if none exists.
     /// If the matching gallery is already linked to another installer, the FK is updated
     /// to point to this package (an ImageGallery can only belong to one installer).
+    ///
+    /// The match is by folder identity, not by string: stored paths and paths parsed out of
+    /// a startup script disagree about the trailing separator
+    /// (<c>E:\AI\comfy_output\</c> vs <c>E:\AI\comfy_output</c>). Comparing the raw strings
+    /// missed the existing row and added a second one for the same folder, which then
+    /// scanned it twice and left the gallery "linked" to whichever row the caller happened
+    /// to look at.
     /// </summary>
     private async Task LinkOutputFolderAsync(InstallerPackage package, string outputFolderPath)
     {
         var settings = await _unitOfWork.AppSettings.GetSettingsAsync();
         var appSettingsId = settings?.Id ?? 1;
 
-        // Check if a gallery with this path already exists
+        // Check if a gallery for this folder already exists
         var allSettings = await _unitOfWork.AppSettings.GetSettingsWithIncludesAsync();
         var existing = allSettings.ImageGalleries
-            .FirstOrDefault(g => string.Equals(g.FolderPath, outputFolderPath, StringComparison.OrdinalIgnoreCase));
+            .FirstOrDefault(g => FolderPathMatch.AreSame(g.FolderPath, outputFolderPath));
 
         if (existing is not null)
         {
@@ -432,11 +439,11 @@ public partial class InstallerManagerViewModel : ViewModelBase
     /// Both resolvers touch the file system (extra_model_paths.yaml, startup scripts), so the
     /// whole scan runs off the UI thread.
     /// </summary>
-    private static async Task<(List<string> ProtectedRoots, List<string> FoldersUsedByOthers)>
-        ResolveSurvivingInstallationFoldersAsync(IUnitOfWork unitOfWork, int excludedPackageId)
+    private static async Task<(List<string> ProtectedRoots, List<string> FoldersUsedByOthers, List<string> OwnOutputFolders)>
+        ResolveSurvivingInstallationFoldersAsync(IUnitOfWork unitOfWork, InstallerPackage package)
     {
         var allPackages = await unitOfWork.InstallerPackages.GetAllAsync();
-        var otherPackages = allPackages.Where(p => p.Id != excludedPackageId).ToList();
+        var otherPackages = allPackages.Where(p => p.Id != package.Id).ToList();
 
         return await Task.Run(() =>
         {
@@ -450,7 +457,9 @@ public partial class InstallerManagerViewModel : ViewModelBase
                 .Concat(otherPackages.SelectMany(InstallationOutputFolderResolver.Resolve))
                 .ToList();
 
-            return (protectedRoots, used);
+            var own = InstallationOutputFolderResolver.Resolve(package).ToList();
+
+            return (protectedRoots, used, own);
         });
     }
 
@@ -477,10 +486,10 @@ public partial class InstallerManagerViewModel : ViewModelBase
             // offer to remove them too (galleries/base folders by FK, LoRA sources by path),
             // minus everything the surviving installations still use.
             var settings = await unitOfWork.AppSettings.GetSettingsWithIncludesAsync();
-            var (protectedRoots, foldersUsedByOthers) =
-                await ResolveSurvivingInstallationFoldersAsync(unitOfWork, entity.Id);
+            var (protectedRoots, foldersUsedByOthers, ownOutputFolders) =
+                await ResolveSurvivingInstallationFoldersAsync(unitOfWork, entity);
             var plan = InstallationSettingsCleanup.Resolve(
-                settings, entity, protectedRoots, foldersUsedByOthers);
+                settings, entity, protectedRoots, foldersUsedByOthers, ownOutputFolders);
 
             var choice = await _dialogService.ShowRemoveInstallationDialogAsync(new RemoveInstallationPrompt(
                 card.Name,
@@ -642,10 +651,10 @@ public partial class InstallerManagerViewModel : ViewModelBase
             if (entity is not null)
             {
                 var settings = await unitOfWork.AppSettings.GetSettingsWithIncludesAsync();
-                var (protectedRoots, foldersUsedByOthers) =
-                    await ResolveSurvivingInstallationFoldersAsync(unitOfWork, entity.Id);
+                var (protectedRoots, foldersUsedByOthers, ownOutputFolders) =
+                    await ResolveSurvivingInstallationFoldersAsync(unitOfWork, entity);
                 var plan = InstallationSettingsCleanup.Resolve(
-                    settings, entity, protectedRoots, foldersUsedByOthers);
+                    settings, entity, protectedRoots, foldersUsedByOthers, ownOutputFolders);
 
                 foreach (var gallery in plan.Galleries)
                 {

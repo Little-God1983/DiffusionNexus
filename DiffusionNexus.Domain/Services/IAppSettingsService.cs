@@ -117,6 +117,24 @@ public interface IAppSettingsService
     /// <returns><c>true</c> when a new row was inserted; <c>false</c> when the path already existed.</returns>
     Task<bool> AddBaseModelFolderAsync(string folderPath, int? installerPackageId = null, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Gets every Base Model Folder row, disabled ones included, ordered by <c>Order</c>.
+    /// Unlike <see cref="GetEnabledBaseModelFoldersAsync"/> this is for maintenance work
+    /// that has to see the whole registry rather than what is currently scanned.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<IReadOnlyList<BaseModelFolder>> GetAllBaseModelFoldersAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Removes Base Model Folder rows by id. The ⭐ default row is never removed, whatever
+    /// the caller asks: losing the default download target silently would be worse than
+    /// keeping one redundant row.
+    /// </summary>
+    /// <param name="ids">Row ids to remove; unknown ids are ignored.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>How many rows were actually removed.</returns>
+    Task<int> RemoveBaseModelFoldersAsync(IReadOnlyCollection<int> ids, CancellationToken cancellationToken = default);
+
     /// <summary>Gets the remembered feedback-reporter e-mail, or null if not set.</summary>
     Task<string?> GetFeedbackReporterEmailAsync(CancellationToken cancellationToken = default);
 

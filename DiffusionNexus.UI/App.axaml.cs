@@ -285,10 +285,17 @@ public partial class App : Application
                         var packages = await uow.InstallerPackages.GetAllAsync();
                         var added = await folderRegistrar.EnsureRegisteredAsync(packages);
 
+                        // Drop the per-category rows the pre-fix registrar created — it fed
+                        // model SEARCH paths into the root registry, so one
+                        // extra_model_paths.yaml became twenty rows. Only app-registered rows
+                        // nested inside a current root are removed; see
+                        // RedundantBaseModelFolders for the full set of guards.
+                        var pruned = await folderRegistrar.PruneRedundantFoldersAsync(packages);
+
                         // The Settings page preloads its data before this backfill runs.
                         // Announce the change so an already-loaded Settings VM reloads its
                         // Base Model Folders list (same mechanism the gallery link uses).
-                        if (added > 0)
+                        if (added > 0 || pruned > 0)
                         {
                             Services!.GetService<IDatasetEventAggregator>()
                                 ?.PublishSettingsSaved(new SettingsSavedEventArgs());

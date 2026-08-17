@@ -186,12 +186,35 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
 
     /// <summary>
     /// Reads the <c>extra_model_paths.yaml</c> from the repository root and extracts
-    /// all <c>base_path</c> values plus paths listed under model type keys.
+    /// all <c>base_path</c> values plus paths listed under model type keys — every
+    /// directory a model file might sit in, which is what searching needs.
+    ///
+    /// This is NOT a list of model <em>roots</em>: a <c>loras: Lora/</c> entry resolves to
+    /// a single category folder, not a directory that holds the ComfyUI category
+    /// subfolders. Use <see cref="ParseExtraModelPathRoots"/> when you need roots.
     /// Uses simple line-by-line parsing to avoid adding a YAML library dependency.
     /// </summary>
     public static List<string> ParseExtraModelPathsYaml(string repositoryPath)
+        => [.. EnumerateExtraModelPathEntries(repositoryPath).Select(entry => entry.Path)];
+
+    /// <summary>
+    /// The <c>base_path</c> values only — the shared model libraries an installation
+    /// points at, each of which holds the per-category subfolders. These are model roots
+    /// in the sense <see cref="Domain.Entities.BaseModelFolder"/> means it; the per-category
+    /// entries that <see cref="ParseExtraModelPathsYaml"/> also returns are not.
+    /// </summary>
+    public static List<string> ParseExtraModelPathRoots(string repositoryPath)
+        => [.. EnumerateExtraModelPathEntries(repositoryPath)
+                .Where(entry => entry.IsBasePath)
+                .Select(entry => entry.Path)];
+
+    /// <summary>
+    /// Every path the YAML resolves to, each flagged with whether it came from a
+    /// <c>base_path</c> key (a root) or from a model-type key (a category folder).
+    /// </summary>
+    private static List<(bool IsBasePath, string Path)> EnumerateExtraModelPathEntries(string repositoryPath)
     {
-        var results = new List<string>();
+        var results = new List<(bool IsBasePath, string Path)>();
 
         var yamlPath = Path.Combine(repositoryPath, ExtraModelPathsFileName);
         if (!File.Exists(yamlPath))
@@ -228,7 +251,7 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
                     currentBasePath = NormalizeYamlPath(value);
                     if (Path.IsPathRooted(currentBasePath) && Directory.Exists(currentBasePath))
                     {
-                        results.Add(currentBasePath);
+                        results.Add((IsBasePath: true, Path: currentBasePath));
                     }
                 }
                 else if (!string.IsNullOrWhiteSpace(value) && !key.Contains('#'))
@@ -239,7 +262,7 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
                     {
                         if (Directory.Exists(resolvedPath))
                         {
-                            results.Add(resolvedPath);
+                            results.Add((IsBasePath: false, Path: resolvedPath));
                         }
                     }
                     else if (currentBasePath is not null)
@@ -247,7 +270,7 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
                         var fullPath = Path.Combine(currentBasePath, resolvedPath);
                         if (Directory.Exists(fullPath))
                         {
-                            results.Add(fullPath);
+                            results.Add((IsBasePath: false, Path: fullPath));
                         }
                     }
                 }

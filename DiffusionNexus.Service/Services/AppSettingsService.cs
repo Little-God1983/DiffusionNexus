@@ -509,6 +509,48 @@ public sealed class AppSettingsService : IAppSettingsService
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<BaseModelFolder>> GetAllBaseModelFoldersAsync(CancellationToken cancellationToken = default)
+    {
+        var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+        return settings.BaseModelFolders
+            .OrderBy(f => f.Order)
+            .ToList();
+    }
+
+    /// <inheritdoc />
+    public async Task<int> RemoveBaseModelFoldersAsync(IReadOnlyCollection<int> ids, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+
+        if (ids.Count == 0)
+        {
+            return 0;
+        }
+
+        var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+
+        // The default row is protected here rather than only at the call site: this is the
+        // last place before the delete, and a lost download target is a silent failure.
+        var doomed = settings.BaseModelFolders
+            .Where(f => ids.Contains(f.Id) && !f.IsDefault)
+            .ToList();
+
+        if (doomed.Count == 0)
+        {
+            return 0;
+        }
+
+        foreach (var folder in doomed)
+        {
+            settings.BaseModelFolders.Remove(folder);
+            _unitOfWork.AppSettings.RemoveBaseModelFolder(folder);
+        }
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return doomed.Count;
+    }
+
+    /// <inheritdoc />
     public async Task<bool> AddBaseModelFolderAsync(string folderPath, int? installerPackageId = null, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);

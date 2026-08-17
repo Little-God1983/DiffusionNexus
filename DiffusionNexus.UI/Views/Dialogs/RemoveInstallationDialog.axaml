@@ -30,33 +30,45 @@
 
       <ScrollViewer MaxHeight="260" VerticalScrollBarVisibility="Auto">
         <StackPanel Spacing="6">
+          <!-- Each row carries its own "kept" note, tinted because it reports what the
+               checkbox will NOT do — it must not read as part of the removal list. -->
           <CheckBox IsChecked="{Binding RemoveGalleries, Mode=TwoWay}"
                     IsEnabled="{Binding HasGalleries}">
-            <TextBlock Text="{Binding GalleryLabel}" TextWrapping="Wrap"/>
+            <StackPanel Spacing="2">
+              <TextBlock Text="{Binding GalleryLabel}" TextWrapping="Wrap"/>
+              <TextBlock Text="{Binding GalleryKeptLabel}"
+                         TextWrapping="Wrap"
+                         FontSize="12"
+                         Foreground="#93C5FD"
+                         IsVisible="{Binding HasGalleryKept}"/>
+            </StackPanel>
           </CheckBox>
 
           <CheckBox IsChecked="{Binding RemoveLoraSources, Mode=TwoWay}"
                     IsEnabled="{Binding HasLoraSources}">
-            <TextBlock Text="{Binding LoraSourceLabel}" TextWrapping="Wrap"/>
+            <StackPanel Spacing="2">
+              <TextBlock Text="{Binding LoraSourceLabel}" TextWrapping="Wrap"/>
+              <TextBlock Text="{Binding LoraSourceKeptLabel}"
+                         TextWrapping="Wrap"
+                         FontSize="12"
+                         Foreground="#93C5FD"
+                         IsVisible="{Binding HasLoraSourceKept}"/>
+            </StackPanel>
           </CheckBox>
 
           <CheckBox IsChecked="{Binding RemoveBaseModelFolders, Mode=TwoWay}"
                     IsEnabled="{Binding HasBaseModelFolders}">
-            <TextBlock Text="{Binding BaseModelFolderLabel}" TextWrapping="Wrap"/>
+            <StackPanel Spacing="2">
+              <TextBlock Text="{Binding BaseModelFolderLabel}" TextWrapping="Wrap"/>
+              <TextBlock Text="{Binding BaseModelFolderKeptLabel}"
+                         TextWrapping="Wrap"
+                         FontSize="12"
+                         Foreground="#93C5FD"
+                         IsVisible="{Binding HasBaseModelFolderKept}"/>
+            </StackPanel>
           </CheckBox>
         </StackPanel>
       </ScrollViewer>
-
-      <!-- Folders held back because a surviving installation still writes to them -->
-      <Border Background="#1F2A37"
-              CornerRadius="4"
-              Padding="10"
-              IsVisible="{Binding HasSharedFolders}">
-        <TextBlock Text="{Binding SharedFolderNote}"
-                   TextWrapping="Wrap"
-                   FontSize="12"
-                   Foreground="#93C5FD"/>
-      </Border>
     </StackPanel>
 
     <!-- Consequence info -->
