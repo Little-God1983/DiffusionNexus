@@ -174,6 +174,53 @@ public sealed class InstallationSettingsCleanupTests
     }
 
     [Fact]
+    public void Resolve_ReportsOwnOutputFolderClaimedByAnotherPackage_AsKeptNotAbsent()
+    {
+        // Re-adding an installation leaves the gallery row's FK behind on the old package id.
+        // The folder is still this installation's output directory and the user still uses it,
+        // so reporting "none linked" is simply false — it is reported as kept instead.
+        var claimedElsewhere = new ImageGallery { Id = 1, FolderPath = @"E:\AI\comfy_output\", InstallerPackageId = 34 };
+        var settings = new AppSettings { Id = 1, ImageGalleries = [claimedElsewhere] };
+
+        var plan = InstallationSettingsCleanup.Resolve(
+            settings,
+            Package(),
+            ownOutputFolders: [@"E:\AI\comfy_output"]);
+
+        plan.Galleries.Should().BeEmpty("the FK names its owner — this installation must not sweep it");
+        plan.SharedGalleryFolders.Should().BeEquivalentTo(new[] { @"E:\AI\comfy_output\" });
+    }
+
+    [Fact]
+    public void Resolve_ClaimsAnUnownedGalleryForItsOwnOutputFolder()
+    {
+        // No FK at all: nobody else claims the folder, so the installation that writes
+        // there may unregister it.
+        var unclaimed = new ImageGallery { Id = 1, FolderPath = @"E:\AI\comfy_output\" };
+        var settings = new AppSettings { Id = 1, ImageGalleries = [unclaimed] };
+
+        var plan = InstallationSettingsCleanup.Resolve(
+            settings,
+            Package(),
+            ownOutputFolders: [@"E:\AI\comfy_output"]);
+
+        plan.Galleries.Should().ContainSingle().Which.Should().BeSameAs(unclaimed);
+        plan.SharedGalleryFolders.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Resolve_OwnOutputFolderMatching_IgnoresTheTrailingSeparator()
+    {
+        // The stored row keeps the trailing separator; the path parsed from the startup
+        // script does not. Matching them as strings is what hid the link in the first place.
+        var stored = new ImageGallery { Id = 1, FolderPath = @"E:\AI\comfy_output\" };
+        var settings = new AppSettings { Id = 1, ImageGalleries = [stored] };
+
+        InstallationSettingsCleanup.Resolve(settings, Package(), ownOutputFolders: [@"E:\AI\comfy_output"])
+            .Galleries.Should().ContainSingle();
+    }
+
+    [Fact]
     public void Resolve_EmptySettings_YieldsEmptyPlan()
     {
         var plan = InstallationSettingsCleanup.Resolve(new AppSettings { Id = 1 }, Package());

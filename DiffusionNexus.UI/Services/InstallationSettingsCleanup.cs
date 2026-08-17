@@ -71,11 +71,19 @@ public static class InstallationSettingsCleanup
     /// directories. Matched by containment (a row at or below such a folder is kept),
     /// since ComfyUI writes into dated subfolders of its output directory.
     /// </param>
+    /// <param name="ownOutputFolders">
+    /// This installation's own resolved output folders. A gallery row for one of them
+    /// belongs to this installation even when the FK says otherwise — re-adding an
+    /// installation leaves the row's FK behind on the old package id, and reporting
+    /// "none linked" for a gallery the user actively uses is simply false. Such a row is
+    /// only ever reported as kept, never swept, because the FK names its owner.
+    /// </param>
     public static Plan Resolve(
         AppSettings settings,
         InstallerPackage package,
         IReadOnlyCollection<string>? protectedRoots = null,
-        IReadOnlyCollection<string>? foldersUsedByOthers = null)
+        IReadOnlyCollection<string>? foldersUsedByOthers = null,
+        IReadOnlyCollection<string>? ownOutputFolders = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(package);
@@ -106,10 +114,27 @@ public static class InstallationSettingsCleanup
             return false;
         }
 
+        var ownOutputs = (ownOutputFolders ?? [])
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .ToList();
+
+        // A gallery for one of this installation's own output folders that carries a
+        // DIFFERENT package's FK: really this installation's, but owned on paper by
+        // another one, so it is reported as kept rather than offered or denied.
+        var claimedElsewhere = settings.ImageGalleries
+            .Where(g => g.InstallerPackageId is not null && g.InstallerPackageId != package.Id)
+            .Where(g => ownOutputs.Any(own => IsUnderInstallation(g.FolderPath, own)))
+            .Select(g => g.FolderPath)
+            .ToList();
+
         var galleries = settings.ImageGalleries
-            .Where(g => g.InstallerPackageId == package.Id)
+            .Where(g => g.InstallerPackageId == package.Id
+                        || (g.InstallerPackageId is null
+                            && ownOutputs.Any(own => IsUnderInstallation(g.FolderPath, own))))
             .Where(g => IsRemovable(g.FolderPath, sharedGalleries))
             .ToList();
+
+        sharedGalleries.AddRange(claimedElsewhere);
 
         var loraSources = settings.LoraSources
             .Where(s => IsUnderInstallation(s.FolderPath, package.InstallationPath))
@@ -138,49 +163,13 @@ public static class InstallationSettingsCleanup
     }
 
     /// <summary>Full, trailing-separator-free form of a path; null when invalid.</summary>
-    private static string? NormalizePath(string? path)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            return null;
-        }
-
-        try
-        {
-            return Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
-        }
-        catch (Exception)
-        {
-            return null;
-        }
-    }
+    private static string? NormalizePath(string? path) => FolderPathMatch.Normalize(path);
 
     /// <summary>
     /// True when <paramref name="folderPath"/> equals or lies underneath
     /// <paramref name="installationPath"/> (case-insensitive, separator-tolerant).
     /// Invalid paths never match.
     /// </summary>
-    internal static bool IsUnderInstallation(string? folderPath, string? installationPath)
-    {
-        if (string.IsNullOrWhiteSpace(folderPath) || string.IsNullOrWhiteSpace(installationPath))
-        {
-            return false;
-        }
-
-        string candidate;
-        string root;
-        try
-        {
-            candidate = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folderPath));
-            root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(installationPath));
-        }
-        catch (Exception)
-        {
-            return false;
-        }
-
-        return candidate.Equals(root, StringComparison.OrdinalIgnoreCase)
-               || candidate.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
-               || candidate.StartsWith(root + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
-    }
+    internal static bool IsUnderInstallation(string? folderPath, string? installationPath) =>
+        FolderPathMatch.Contains(installationPath, folderPath);
 }
