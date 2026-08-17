@@ -7,45 +7,64 @@ namespace DiffusionNexus.UI.Services;
 /// <summary>
 /// Builds the text shown on the remove-installation dialog. Lives outside the window so
 /// the wording can be tested without standing up Avalonia — the phrasing carries real
-/// meaning here: "none linked" next to a note naming a kept folder is a contradiction the
-/// user will (rightly) read as a bug.
+/// meaning here: "none linked" next to a kept folder is a contradiction the user will
+/// (rightly) read as a bug.
+///
+/// Everything about one folder kind stays inside that kind's own label, including the
+/// folders being kept and why. A note collected at the bottom of the dialog cannot say
+/// which row it belongs to.
 /// </summary>
 public static class RemoveInstallationLabels
 {
     /// <summary>
-    /// Labels one cleanup checkbox. Removable folders are listed outright; when the only
-    /// folders of that kind are being kept for another installation, the row says so;
-    /// "none linked" is reserved for a kind this installation genuinely has none of.
+    /// Labels one cleanup checkbox: the folders this installation can unregister, plus any
+    /// it cannot because another installation still uses them, named right there in the
+    /// row. "none linked" is reserved for a kind this installation genuinely has none of.
     /// </summary>
     public static string ComposeCheckbox(
         string what,
         IReadOnlyList<string> folders,
         IReadOnlyList<string>? shared = null)
     {
-        if (folders.Count > 0)
+        var kept = Distinct(shared ?? []);
+
+        if (folders.Count == 0 && kept.Count == 0)
         {
-            return $"{what}\n{string.Join("\n", folders)}";
+            return $"{what} — none linked";
         }
 
-        return shared is { Count: > 0 }
-            ? $"{what} — kept, still used by another installation"
-            : $"{what} — none linked";
+        var lines = new List<string>();
+
+        if (folders.Count > 0)
+        {
+            lines.Add(what);
+            lines.AddRange(folders);
+
+            if (kept.Count > 0)
+            {
+                lines.Add(KeptHeader(kept.Count, leadingBlankLine: true));
+                lines.AddRange(kept);
+            }
+        }
+        else
+        {
+            // Nothing removable: the heading itself carries the explanation, so the row
+            // never reads as though this installation had no folder of this kind.
+            lines.Add($"{what} — {KeptHeader(kept.Count, leadingBlankLine: false)}");
+            lines.AddRange(kept);
+        }
+
+        return string.Join("\n", lines);
     }
 
     /// <summary>
-    /// The note naming every folder held back, or an empty string when none were.
-    /// Callers show it only when non-empty.
+    /// The "kept" explanation, agreeing in number with how many folders it introduces.
     /// </summary>
-    public static string ComposeSharedNote(IEnumerable<string> sharedFolders)
+    private static string KeptHeader(int keptCount, bool leadingBlankLine)
     {
-        var folders = Distinct(sharedFolders);
-        if (folders.Count == 0)
-        {
-            return string.Empty;
-        }
-
-        var subject = folders.Count == 1 ? "it" : "them";
-        return $"Kept because another installation still uses {subject}:\n{string.Join("\n", folders)}";
+        var subject = keptCount == 1 ? "it" : "them";
+        var prefix = leadingBlankLine ? "\n" : string.Empty;
+        return $"{prefix}kept, another installation still uses {subject}:";
     }
 
     /// <summary>De-duplicates paths case-insensitively, preserving order.</summary>

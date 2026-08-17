@@ -4,9 +4,10 @@ using FluentAssertions;
 namespace DiffusionNexus.Tests.InstallerManager;
 
 /// <summary>
-/// Covers the remove-installation dialog's wording. The checkbox label and the
-/// held-back-folders note are rendered side by side, so they have to agree: a row
-/// reading "none linked" directly above a note naming a kept gallery is a contradiction.
+/// Covers the remove-installation dialog's wording. Each folder kind gets exactly one
+/// label, and it has to be self-contained: a row reading "none linked" while a folder of
+/// that kind is being kept is a contradiction, and an explanation collected at the bottom
+/// of the dialog cannot say which row it belongs to.
 /// </summary>
 public sealed class RemoveInstallationLabelsTests
 {
@@ -25,52 +26,43 @@ public sealed class RemoveInstallationLabelsTests
     }
 
     [Fact]
-    public void ComposeCheckbox_OnlySharedFolders_SaysKeptNotNoneLinked()
+    public void ComposeCheckbox_OnlyKeptFolders_NamesThemInTheRowItself()
     {
-        // The bug: the installation's one gallery was held back for another install, and
-        // the row still claimed nothing was linked — contradicting the note right below it.
+        // The bug this covers, in two rounds: the row first claimed "none linked" while a
+        // gallery was being kept, and then explained itself in a note at the very bottom of
+        // the dialog, too far from the row to say what was kept.
         var label = RemoveInstallationLabels.ComposeCheckbox("Gallery", [], [@"E:\AI\comfy_output\"]);
 
         label.Should().NotContain("none linked");
-        label.Should().Be("Gallery — kept, still used by another installation");
+        label.Should().Be(
+            "Gallery — kept, another installation still uses it:\nE:\\AI\\comfy_output\\");
     }
 
     [Fact]
-    public void ComposeCheckbox_MixOfRemovableAndShared_ListsOnlyTheRemovableOnes()
+    public void ComposeCheckbox_SeveralKeptFolders_AgreeInNumber()
+    {
+        var label = RemoveInstallationLabels.ComposeCheckbox(
+            "Base Model Folder", [], [@"D:\Models", @"E:\Models"]);
+
+        label.Should().StartWith("Base Model Folder — kept, another installation still uses them:");
+        label.Should().Contain(@"D:\Models").And.Contain(@"E:\Models");
+    }
+
+    [Fact]
+    public void ComposeCheckbox_MixOfRemovableAndKept_ShowsBothGroupsInOneRow()
     {
         var label = RemoveInstallationLabels.ComposeCheckbox(
             "Gallery", [@"D:\Output"], [@"E:\AI\comfy_output\"]);
 
-        label.Should().Be("Gallery\nD:\\Output", "the kept path is named by the note instead");
+        label.Should().Be(
+            "Gallery\nD:\\Output\n\nkept, another installation still uses it:\nE:\\AI\\comfy_output\\",
+            "the checkbox removes the first path and keeps the second — both belong in its own label");
     }
 
     [Fact]
-    public void ComposeSharedNote_SingleFolder_UsesSingularWording()
+    public void ComposeCheckbox_DeduplicatesKeptPathsCaseInsensitively()
     {
-        RemoveInstallationLabels.ComposeSharedNote([@"E:\AI\comfy_output\"])
-            .Should().Be("Kept because another installation still uses it:\nE:\\AI\\comfy_output\\");
-    }
-
-    [Fact]
-    public void ComposeSharedNote_SeveralFolders_UsesPluralWordingAndListsAll()
-    {
-        var note = RemoveInstallationLabels.ComposeSharedNote([@"E:\out", @"D:\models"]);
-
-        note.Should().StartWith("Kept because another installation still uses them:");
-        note.Should().Contain(@"E:\out").And.Contain(@"D:\models");
-    }
-
-    [Fact]
-    public void ComposeSharedNote_DeduplicatesCaseInsensitively()
-    {
-        RemoveInstallationLabels.ComposeSharedNote([@"E:\Out", @"e:\out"])
-            .Should().Be("Kept because another installation still uses it:\nE:\\Out");
-    }
-
-    [Fact]
-    public void ComposeSharedNote_NothingHeldBack_IsEmpty()
-    {
-        RemoveInstallationLabels.ComposeSharedNote([]).Should().BeEmpty(
-            "the note's border is shown only when this is non-empty");
+        RemoveInstallationLabels.ComposeCheckbox("Gallery", [], [@"E:\Out", @"e:\out"])
+            .Should().Be("Gallery — kept, another installation still uses it:\nE:\\Out");
     }
 }

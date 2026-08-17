@@ -46,17 +46,6 @@
           </CheckBox>
         </StackPanel>
       </ScrollViewer>
-
-      <!-- Folders held back because a surviving installation still writes to them -->
-      <Border Background="#1F2A37"
-              CornerRadius="4"
-              Padding="10"
-              IsVisible="{Binding HasSharedFolders}">
-        <TextBlock Text="{Binding SharedFolderNote}"
-                   TextWrapping="Wrap"
-                   FontSize="12"
-                   Foreground="#93C5FD"/>
-      </Border>
     </StackPanel>
 
     <!-- Consequence info -->
