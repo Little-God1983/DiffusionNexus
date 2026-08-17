@@ -144,6 +144,15 @@ public sealed class ManagedEngineInstaller : IManagedEngineInstaller
     /// Builds options that install the environment only: every declared model, custom node and
     /// workflow is excluded, shortcuts are off (the engine is not a user-launchable app), and
     /// extra_model_paths.yaml is generated so the engine reads the shared model library.
+    ///
+    /// <para>
+    /// The SDK's generator is <em>not</em> the authority on that file. Its
+    /// <see cref="InstallationOptions.ModelBaseFolder"/> holds a single path, so it can only ever
+    /// declare the first registered library — which left every other one invisible to the engine.
+    /// <see cref="EngineModelPathsSynchronizer"/> rewrites the file with all of them once the
+    /// install lands, and again before each engine start. Generation stays enabled here so a
+    /// failure in that rewrite still leaves a working single-library file behind rather than none.
+    /// </para>
     /// </summary>
     /// <param name="gate">
     /// The GPU gate's outcome. <see cref="InstallationOptions.CpuTorch"/> is documented as

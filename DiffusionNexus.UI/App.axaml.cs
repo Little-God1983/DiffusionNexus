@@ -300,6 +300,14 @@ public partial class App : Application
                             Services!.GetService<IDatasetEventAggregator>()
                                 ?.PublishSettingsSaved(new SettingsSavedEventArgs());
                         }
+
+                        // Now that the folder list is settled, wire all of it into the app-owned
+                        // engine. Runs here as well as before each engine start so an engine
+                        // installed by an older build — which could only ever see the first folder
+                        // — is corrected without the user reinstalling it.
+                        await scope.ServiceProvider
+                            .GetRequiredService<Services.Engine.EngineModelPathsSynchronizer>()
+                            .SyncAsync();
                     }
                     catch (Exception ex)
                     {
@@ -662,6 +670,11 @@ public partial class App : Application
         // as Base Model Folders — on package add and as startup backfill.
         services.AddTransient<DiffusionNexus.UI.Services.Diffusion.BaseModelFolderRegistrar>();
 
+        // Writes the app-owned engine's extra_model_paths.yaml from those Base Model Folders, so
+        // the engine reads every registered library instead of only the first one the SDK's
+        // single-valued ModelBaseFolder option could carry. Scoped: depends on IUnitOfWork.
+        services.AddScoped<Services.Engine.EngineModelPathsSynchronizer>();
+
         // GPU VRAM + system RAM monitor (reusable widget shown in the canvas and the Pipelines view).
         services.AddSingleton<IResourceMonitorService, ResourceMonitorService>();
         services.AddTransient<ResourceMonitorViewModel>();
@@ -680,7 +693,20 @@ public partial class App : Application
                     using var scope = sp.CreateScope();
                     var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
                     var packages = await uow.InstallerPackages.GetAllAsync();
-                    return packages.FirstOrDefault(p => p.IsAppManaged)?.InstallationPath;
+                    var installRoot = packages.FirstOrDefault(p => p.IsAppManaged)?.InstallationPath;
+
+                    // The engine reads extra_model_paths.yaml once, at process start. This resolver
+                    // runs on every availability check — immediately before EnsureRunningAsync — so
+                    // it is the one point where "the folder list in Settings changed" can still be
+                    // acted on. Never fails the resolve: the synchronizer swallows its own errors.
+                    if (!string.IsNullOrWhiteSpace(installRoot))
+                    {
+                        await scope.ServiceProvider
+                            .GetRequiredService<Services.Engine.EngineModelPathsSynchronizer>()
+                            .SyncAsync(installRoot);
+                    }
+
+                    return installRoot;
                 },
                 sp.GetService<Services.Diffusion.IWorkflowTemplateSource>()));
 
@@ -979,7 +1005,8 @@ public partial class App : Application
             // never act on — or poison — the VM's long-lived shared context.
             unitOfWorkFactory: () => sp.GetRequiredService<IUnitOfWork>(),
             engineInstaller: sp.GetRequiredService<Services.Engine.IManagedEngineInstaller>(),
-            resourceMonitor: sp.GetRequiredService<IResourceMonitorService>()));
+            resourceMonitor: sp.GetRequiredService<IResourceMonitorService>(),
+            engineModelPaths: sp.GetRequiredService<Services.Engine.EngineModelPathsSynchronizer>()));
         services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),
