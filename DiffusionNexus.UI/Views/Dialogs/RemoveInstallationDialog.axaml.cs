@@ -1,3 +1,4 @@
+using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
@@ -25,6 +26,12 @@ public partial class RemoveInstallationDialog : Window
 
     public static readonly StyledProperty<string> BaseModelFolderLabelProperty =
         AvaloniaProperty.Register<RemoveInstallationDialog, string>(nameof(BaseModelFolderLabel), defaultValue: string.Empty);
+
+    public static readonly StyledProperty<string> SharedFolderNoteProperty =
+        AvaloniaProperty.Register<RemoveInstallationDialog, string>(nameof(SharedFolderNote), defaultValue: string.Empty);
+
+    public static readonly StyledProperty<bool> HasSharedFoldersProperty =
+        AvaloniaProperty.Register<RemoveInstallationDialog, bool>(nameof(HasSharedFolders));
 
     public static readonly StyledProperty<bool> HasGalleriesProperty =
         AvaloniaProperty.Register<RemoveInstallationDialog, bool>(nameof(HasGalleries));
@@ -79,6 +86,18 @@ public partial class RemoveInstallationDialog : Window
         set => SetValue(BaseModelFolderLabelProperty, value);
     }
 
+    public string SharedFolderNote
+    {
+        get => GetValue(SharedFolderNoteProperty);
+        set => SetValue(SharedFolderNoteProperty, value);
+    }
+
+    public bool HasSharedFolders
+    {
+        get => GetValue(HasSharedFoldersProperty);
+        set => SetValue(HasSharedFoldersProperty, value);
+    }
+
     public bool HasGalleries
     {
         get => GetValue(HasGalleriesProperty);
@@ -123,9 +142,17 @@ public partial class RemoveInstallationDialog : Window
     {
         Message = $"Remove \"{prompt.InstallationName}\" from the Installer Manager?\n\nThis will NOT delete any files on disk.";
 
-        GalleryLabel = ComposeLabel("Gallery", prompt.GalleryFolders);
-        LoraSourceLabel = ComposeLabel("LoRA Source", prompt.LoraSourceFolders);
-        BaseModelFolderLabel = ComposeLabel("Base Model Folder", prompt.BaseModelFolders);
+        var sharedGalleries = prompt.SharedGalleryFolders ?? [];
+        var sharedLoraSources = prompt.SharedLoraSourceFolders ?? [];
+        var sharedBaseModelFolders = prompt.SharedBaseModelFolders ?? [];
+
+        GalleryLabel = RemoveInstallationLabels.ComposeCheckbox("Gallery", prompt.GalleryFolders, sharedGalleries);
+        LoraSourceLabel = RemoveInstallationLabels.ComposeCheckbox("LoRA Source", prompt.LoraSourceFolders, sharedLoraSources);
+        BaseModelFolderLabel = RemoveInstallationLabels.ComposeCheckbox("Base Model Folder", prompt.BaseModelFolders, sharedBaseModelFolders);
+
+        SharedFolderNote = RemoveInstallationLabels.ComposeSharedNote(
+            sharedGalleries.Concat(sharedLoraSources).Concat(sharedBaseModelFolders));
+        HasSharedFolders = SharedFolderNote.Length > 0;
 
         HasGalleries = prompt.GalleryFolders.Count > 0;
         HasLoraSources = prompt.LoraSourceFolders.Count > 0;
@@ -135,11 +162,6 @@ public partial class RemoveInstallationDialog : Window
         RemoveLoraSources = HasLoraSources;
         RemoveBaseModelFolders = HasBaseModelFolders;
     }
-
-    private static string ComposeLabel(string what, System.Collections.Generic.IReadOnlyList<string> folders) =>
-        folders.Count == 0
-            ? $"{what} — none linked"
-            : $"{what}\n{string.Join("\n", folders)}";
 
     private void OnYesClick(object? sender, RoutedEventArgs e)
     {

@@ -14,20 +14,44 @@ namespace DiffusionNexus.UI.Services;
 /// have no FK and are matched by living underneath the installation path; Base Model
 /// Folders match by this package's FK <em>or</em> by unclaimed path (FK null) — rows
 /// registered for a DIFFERENT installation are never swept, and neither are
-/// <paramref name="protectedRoots"/>: model roots another registered installation
+/// <c>protectedRoots</c>: model roots another registered installation
 /// still discovers (their startup backfill would silently resurrect the row,
 /// contradicting the dialog's "no longer scanned" promise).
+///
+/// Rows are likewise held back when they sit in a folder another surviving installation
+/// still uses (<c>foldersUsedByOthers</c>) — several ComfyUI installations routinely share
+/// one <c>--output-directory</c> while only one of them owns the gallery row's FK, so
+/// ownership by FK is not the same as exclusive use. Those held-back paths are reported in
+/// <see cref="Plan.SharedFolders"/> so the dialog can say why they are being kept instead
+/// of silently claiming nothing was linked.
 /// </summary>
 public static class InstallationSettingsCleanup
 {
-    /// <summary>The settings rows associated with one installation.</summary>
+    /// <summary>
+    /// The settings rows associated with one installation: the three removable sets, plus
+    /// the paths held back per kind because another installation still uses them. The
+    /// held-back paths are tracked per kind, not as one flat list, so the dialog can label
+    /// each row correctly — a gallery that exists but is shared must not read "none linked".
+    /// </summary>
     public sealed record Plan(
         IReadOnlyList<ImageGallery> Galleries,
         IReadOnlyList<LoraSource> LoraSources,
-        IReadOnlyList<BaseModelFolder> BaseModelFolders)
+        IReadOnlyList<BaseModelFolder> BaseModelFolders,
+        IReadOnlyList<string> SharedGalleryFolders,
+        IReadOnlyList<string> SharedLoraSourceFolders,
+        IReadOnlyList<string> SharedBaseModelFolders)
     {
-        /// <summary>True when the installation has no linked settings rows at all.</summary>
+        /// <summary>True when the installation has no removable settings rows at all.</summary>
         public bool IsEmpty => Galleries.Count == 0 && LoraSources.Count == 0 && BaseModelFolders.Count == 0;
+
+        /// <summary>Every held-back path across the three kinds, de-duplicated.</summary>
+        public IReadOnlyList<string> SharedFolders =>
+        [
+            .. SharedGalleryFolders
+                .Concat(SharedLoraSourceFolders)
+                .Concat(SharedBaseModelFolders)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+        ];
     }
 
     /// <summary>Resolves the rows tied to <paramref name="package"/>.</summary>
@@ -36,12 +60,22 @@ public static class InstallationSettingsCleanup
     /// <param name="protectedRoots">
     /// Model roots still discoverable from OTHER registered installations
     /// (<see cref="Diffusion.BaseModelFolderRegistrar.ResolveModelRoots"/> over the
-    /// remaining packages); base folder rows on these paths are kept.
+    /// remaining packages); base folder rows on exactly these paths are kept, because
+    /// the other installation's startup backfill would re-add them anyway. Matched
+    /// exactly, not by containment: a row nested inside a discovered root is a root of
+    /// its own that no backfill would resurrect.
+    /// </param>
+    /// <param name="foldersUsedByOthers">
+    /// Folders the surviving installations still read or write — their installation
+    /// paths and their resolved <see cref="InstallationOutputFolderResolver"/> output
+    /// directories. Matched by containment (a row at or below such a folder is kept),
+    /// since ComfyUI writes into dated subfolders of its output directory.
     /// </param>
     public static Plan Resolve(
         AppSettings settings,
         InstallerPackage package,
-        IReadOnlyCollection<string>? protectedRoots = null)
+        IReadOnlyCollection<string>? protectedRoots = null,
+        IReadOnlyCollection<string>? foldersUsedByOthers = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(package);
@@ -51,12 +85,35 @@ public static class InstallationSettingsCleanup
             .Where(p => p is not null)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+        var otherUsage = (foldersUsedByOthers ?? [])
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .ToList();
+
+        var sharedGalleries = new List<string>();
+        var sharedLoraSources = new List<string>();
+        var sharedBaseModelFolders = new List<string>();
+
+        // True when the row may be swept; records the path in <paramref name="shared"/>
+        // when another installation's continued use means it has to stay.
+        bool IsRemovable(string? folderPath, List<string> shared)
+        {
+            if (!otherUsage.Any(used => IsUnderInstallation(folderPath, used)))
+            {
+                return true;
+            }
+
+            shared.Add(folderPath!);
+            return false;
+        }
+
         var galleries = settings.ImageGalleries
             .Where(g => g.InstallerPackageId == package.Id)
+            .Where(g => IsRemovable(g.FolderPath, sharedGalleries))
             .ToList();
 
         var loraSources = settings.LoraSources
             .Where(s => IsUnderInstallation(s.FolderPath, package.InstallationPath))
+            .Where(s => IsRemovable(s.FolderPath, sharedLoraSources))
             .ToList();
 
         var baseModelFolders = settings.BaseModelFolders
@@ -65,9 +122,19 @@ public static class InstallationSettingsCleanup
                             && IsUnderInstallation(f.FolderPath, package.InstallationPath)))
             .Where(f => NormalizePath(f.FolderPath) is not { } normalized
                         || !protectedNormalized.Contains(normalized))
+            .Where(f => IsRemovable(f.FolderPath, sharedBaseModelFolders))
             .ToList();
 
-        return new Plan(galleries, loraSources, baseModelFolders);
+        return new Plan(
+            galleries,
+            loraSources,
+            baseModelFolders,
+            Distinct(sharedGalleries),
+            Distinct(sharedLoraSources),
+            Distinct(sharedBaseModelFolders));
+
+        static IReadOnlyList<string> Distinct(List<string> paths) =>
+            [.. paths.Distinct(StringComparer.OrdinalIgnoreCase)];
     }
 
     /// <summary>Full, trailing-separator-free form of a path; null when invalid.</summary>

@@ -7,12 +7,20 @@ namespace DiffusionNexus.UI.Services;
 /// settings folders linked to it (resolved via
 /// <see cref="InstallationSettingsCleanup.Resolve"/>). Empty lists disable the
 /// corresponding cleanup checkbox.
+///
+/// The <c>Shared*</c> lists carry the folders that belong to this installation but are
+/// still used by another one, so they are kept rather than offered. They are per kind
+/// because each drives its own checkbox label — a gallery that exists but is shared has
+/// to read "kept", never "none linked".
 /// </summary>
 public sealed record RemoveInstallationPrompt(
     string InstallationName,
     IReadOnlyList<string> GalleryFolders,
     IReadOnlyList<string> LoraSourceFolders,
-    IReadOnlyList<string> BaseModelFolders);
+    IReadOnlyList<string> BaseModelFolders,
+    IReadOnlyList<string>? SharedGalleryFolders = null,
+    IReadOnlyList<string>? SharedLoraSourceFolders = null,
+    IReadOnlyList<string>? SharedBaseModelFolders = null);
 
 /// <summary>
 /// Result of the remove-installation dialog: whether the user confirmed the removal

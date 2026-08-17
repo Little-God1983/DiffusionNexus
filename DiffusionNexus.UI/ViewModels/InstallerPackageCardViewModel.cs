@@ -65,6 +65,7 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(ShowUpdateButton))]
     [NotifyPropertyChangedFor(nameof(ShowWorkloadsButton))]
     [NotifyPropertyChangedFor(nameof(ShowActionsPanel))]
+    [NotifyPropertyChangedFor(nameof(ShowDeleteFromDiskMenuItem))]
     private bool _isMissing;
 
     // ── Process state ──
@@ -149,6 +150,14 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     /// <see cref="ShowEngineWorkloadsButton"/> instead.
     /// </summary>
     public bool ShowWorkloadsButton => !IsEngine && (IsCore || (IsComfyUi && !IsMissing));
+
+    /// <summary>
+    /// True when the kebab menu should offer "Delete from Disk". Hidden once the
+    /// installation folder is gone: there is nothing left on disk to delete, so the
+    /// only honest action for a stale row is the plain "Remove", which drops the
+    /// database row and the settings folders that pointed into it.
+    /// </summary>
+    public bool ShowDeleteFromDiskMenuItem => !IsMissing;
 
     /// <summary>Install button: engine tile, not yet installed, not currently installing.</summary>
     public bool ShowEngineInstallButton => IsEngine && !IsEngineInstalled && !IsEngineInstalling;

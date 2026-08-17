@@ -420,6 +420,40 @@ public partial class InstallerManagerViewModel : ViewModelBase
     private (IUnitOfWork UnitOfWork, bool Owned) RentUnitOfWork() =>
         _unitOfWorkFactory is null ? (_unitOfWork, false) : (_unitOfWorkFactory(), true);
 
+    /// <summary>
+    /// Folders that must survive the removal of <paramref name="excludedPackageId"/> because
+    /// another registered installation still uses them: model roots the others discover (their
+    /// startup backfill would re-add those rows anyway), their own installation trees, and the
+    /// output directories their launch scripts write to.
+    ///
+    /// That last one is the reason this exists at all. Several ComfyUI installations commonly
+    /// share one <c>--output-directory</c> while only one of them holds the gallery row's FK, so
+    /// removing that one would otherwise offer to unregister a folder the others keep filling.
+    /// Both resolvers touch the file system (extra_model_paths.yaml, startup scripts), so the
+    /// whole scan runs off the UI thread.
+    /// </summary>
+    private static async Task<(List<string> ProtectedRoots, List<string> FoldersUsedByOthers)>
+        ResolveSurvivingInstallationFoldersAsync(IUnitOfWork unitOfWork, int excludedPackageId)
+    {
+        var allPackages = await unitOfWork.InstallerPackages.GetAllAsync();
+        var otherPackages = allPackages.Where(p => p.Id != excludedPackageId).ToList();
+
+        return await Task.Run(() =>
+        {
+            var protectedRoots = otherPackages
+                .SelectMany(Services.Diffusion.BaseModelFolderRegistrar.ResolveModelRoots)
+                .ToList();
+
+            var used = otherPackages
+                .Select(p => p.InstallationPath)
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .Concat(otherPackages.SelectMany(InstallationOutputFolderResolver.Resolve))
+                .ToList();
+
+            return (protectedRoots, used);
+        });
+    }
+
     private async Task OnRemoveRequestedAsync(InstallerPackageCardViewModel card)
     {
         if (_processManager.IsRunning(card.Id))
@@ -439,25 +473,23 @@ public partial class InstallerManagerViewModel : ViewModelBase
                 return;
             }
 
-            // Model roots other registered installations still discover must never be
-            // offered for removal — their startup backfill would silently re-add them.
-            // ResolveModelRoots reads extra_model_paths.yaml files: keep it off the UI thread.
-            var allPackages = await unitOfWork.InstallerPackages.GetAllAsync();
-            var otherPackages = allPackages.Where(p => p.Id != entity.Id).ToList();
-            var protectedRoots = await Task.Run(() => otherPackages
-                .SelectMany(Services.Diffusion.BaseModelFolderRegistrar.ResolveModelRoots)
-                .ToList());
-
             // Resolve the settings folders tied to this installation so the dialog can
-            // offer to remove them too (galleries/base folders by FK, LoRA sources by path).
+            // offer to remove them too (galleries/base folders by FK, LoRA sources by path),
+            // minus everything the surviving installations still use.
             var settings = await unitOfWork.AppSettings.GetSettingsWithIncludesAsync();
-            var plan = InstallationSettingsCleanup.Resolve(settings, entity, protectedRoots);
+            var (protectedRoots, foldersUsedByOthers) =
+                await ResolveSurvivingInstallationFoldersAsync(unitOfWork, entity.Id);
+            var plan = InstallationSettingsCleanup.Resolve(
+                settings, entity, protectedRoots, foldersUsedByOthers);
 
             var choice = await _dialogService.ShowRemoveInstallationDialogAsync(new RemoveInstallationPrompt(
                 card.Name,
                 plan.Galleries.Select(g => g.FolderPath).ToList(),
                 plan.LoraSources.Select(s => s.FolderPath).ToList(),
-                plan.BaseModelFolders.Select(f => f.FolderPath).ToList()));
+                plan.BaseModelFolders.Select(f => f.FolderPath).ToList(),
+                plan.SharedGalleryFolders,
+                plan.SharedLoraSourceFolders,
+                plan.SharedBaseModelFolders));
 
             if (!choice.Confirmed) return;
 
@@ -602,13 +634,18 @@ public partial class InstallerManagerViewModel : ViewModelBase
             // Remove from database first — including the settings rows tied to this
             // installation: their folders cease to exist, so unlike the plain remove
             // flow there is no choice to offer (dead rows would only linger as ⚠
-            // badges and dangling scan/download targets).
+            // badges and dangling scan/download targets). Folders a surviving
+            // installation still uses are the exception: an output directory shared
+            // with another install outlives this folder and must keep its row.
             var removedFolders = 0;
             var entity = await unitOfWork.InstallerPackages.GetByIdAsync(card.Id);
             if (entity is not null)
             {
                 var settings = await unitOfWork.AppSettings.GetSettingsWithIncludesAsync();
-                var plan = InstallationSettingsCleanup.Resolve(settings, entity);
+                var (protectedRoots, foldersUsedByOthers) =
+                    await ResolveSurvivingInstallationFoldersAsync(unitOfWork, entity.Id);
+                var plan = InstallationSettingsCleanup.Resolve(
+                    settings, entity, protectedRoots, foldersUsedByOthers);
 
                 foreach (var gallery in plan.Galleries)
                 {

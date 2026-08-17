@@ -242,6 +242,7 @@
                                                                   Command="{Binding RemoveCommand}"/>
                                                         <MenuItem Header="Delete from Disk"
                                                                   Command="{Binding DeleteFromDiskCommand}"
+                                                                  IsVisible="{Binding ShowDeleteFromDiskMenuItem}"
                                                                   Foreground="#DC3545"/>
                                                     </MenuFlyout>
                                                 </Button.Flyout>
