@@ -15,6 +15,19 @@ namespace DiffusionNexus.UI.ViewModels.DiffusionCanvas;
 /// <summary>A selectable local model in the canvas toolbar (e.g. "Local (FLUX.2-klein)").</summary>
 public sealed record CanvasModelOption(string Key, string DisplayName);
 
+/// <summary>Stable keys for the canvas backend dropdown.</summary>
+public static class CanvasBackendKeys
+{
+    /// <summary>In-process stable-diffusion.cpp backend (the original canvas engine).</summary>
+    public const string Local = "local";
+
+    /// <summary>The app-owned ComfyUI engine.</summary>
+    public const string Engine = "engine";
+}
+
+/// <summary>A selectable generation backend in the canvas toolbar.</summary>
+public sealed record CanvasBackendOption(string Key, string DisplayName);
+
 /// <summary>
 /// ViewModel for the Diffusion Canvas module. Owns the collection of generation frames
 /// the user has placed on the infinite canvas, the global prompt textbox, and the
@@ -24,6 +37,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject
 {
     private static readonly ILogger Logger = Log.ForContext<DiffusionCanvasViewModel>();
     private readonly LocalDiffusionBackendProvider? _backendProvider;
+    private readonly IDiffusionBackend? _engineBackend;
     private int _nextFrameOffset;
 
     /// <summary>All frames currently on the canvas, in z-order (last = top).</summary>
@@ -82,6 +96,44 @@ public partial class DiffusionCanvasViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(GenerateCommand))]
     private CanvasModelOption? _selectedModel;
 
+    /// <summary>Backends the canvas can generate with.</summary>
+    public ObservableCollection<CanvasBackendOption> AvailableBackends { get; } =
+    [
+        new(CanvasBackendKeys.Local, "Diffusion Nexus Core (local)"),
+        new(CanvasBackendKeys.Engine, "Diffusion Nexus Engine (ComfyUI)")
+    ];
+
+    /// <summary>
+    /// The selected backend. In-memory only for now — the canvas is still behind its switch, so
+    /// there is nothing worth persisting yet.
+    /// </summary>
+    [ObservableProperty]
+    private CanvasBackendOption? _selectedBackend;
+
+    /// <summary>
+    /// Switches <see cref="AvailableModels"/> to match the newly selected backend.
+    ///
+    /// <see cref="AvailableModels"/> is otherwise populated only by <see cref="LoadModelsAsync"/>,
+    /// which reads the LOCAL backend's disk-scanned catalog. Without this hook, picking the engine
+    /// backend would leave <see cref="SelectedModel"/> pointing at a local-only key (e.g.
+    /// "flux2-klein") that the engine's <c>Catalog.TryGet</c> can never resolve — Generate would
+    /// fail with "files were not found" despite the engine being fully installed and ready.
+    /// </summary>
+    partial void OnSelectedBackendChanged(CanvasBackendOption? value)
+    {
+        if (value?.Key == CanvasBackendKeys.Engine && _engineBackend is not null)
+        {
+            AvailableModels.Clear();
+            foreach (var descriptor in _engineBackend.Catalog.ListAvailable())
+                AvailableModels.Add(new CanvasModelOption(descriptor.Key, descriptor.DisplayName));
+            SelectedModel = AvailableModels.FirstOrDefault();
+        }
+        else if (value?.Key == CanvasBackendKeys.Local)
+        {
+            _ = LoadModelsAsync();
+        }
+    }
+
     #endregion
 
     #region v2 Placeholder commands (wired to disabled UI controls)
@@ -131,6 +183,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject
     {
         // Design-time ctor: no backend, leave a friendly placeholder frame so the designer renders.
         _backendProvider = null;
+        _selectedBackend = AvailableBackends[0];
         Frames.Add(new GenerationFrameViewModel
         {
             CanvasX = 200,
@@ -143,10 +196,15 @@ public partial class DiffusionCanvasViewModel : ObservableObject
     /// <summary>GPU/RAM monitor widget shown in the canvas toolbar (null at design time).</summary>
     public ResourceMonitorViewModel? ResourceMonitor { get; }
 
-    public DiffusionCanvasViewModel(LocalDiffusionBackendProvider backendProvider, ResourceMonitorViewModel? resourceMonitor = null)
+    public DiffusionCanvasViewModel(
+        LocalDiffusionBackendProvider backendProvider,
+        ResourceMonitorViewModel? resourceMonitor = null,
+        IDiffusionBackend? engineBackend = null)
     {
         _backendProvider = backendProvider ?? throw new ArgumentNullException(nameof(backendProvider));
         ResourceMonitor = resourceMonitor;
+        _engineBackend = engineBackend;
+        _selectedBackend = AvailableBackends[0];
         DeleteFrameCommand = new RelayCommand<GenerationFrameViewModel?>(DeleteFrame);
 
         // Populate the model dropdown in the background. Uses a lightweight catalog built directly
@@ -276,15 +334,36 @@ public partial class DiffusionCanvasViewModel : ObservableObject
 
         try
         {
-            var backend = await _backendProvider.TryGetAsync().ConfigureAwait(true);
-            if (backend is null)
+            IDiffusionBackend? backend;
+            if (SelectedBackend?.Key == CanvasBackendKeys.Engine)
             {
-                BackendUnavailableMessage =
-                    "Cannot locate the models folder. The local backend generates entirely on your GPU (no ComfyUI process), " +
-                    "but it expects a ComfyUI-layout models folder (DiffusionModels/, TextEncoders/, VAE/). " +
-                    "Check the Unified Logger for details, or ensure at least one installation is registered as 'ComfyUI' type in the Installer Manager.";
-                StatusText = "Backend unavailable";
-                return;
+                backend = _engineBackend;
+                if (backend is null)
+                {
+                    BackendUnavailableMessage = "The Diffusion Nexus Engine is not available in this session.";
+                    StatusText = "Backend unavailable";
+                    return;
+                }
+
+                if (!await backend.IsAvailableAsync().ConfigureAwait(true))
+                {
+                    BackendUnavailableMessage = string.Join(" ", backend.MissingRequirements);
+                    StatusText = "Backend unavailable";
+                    return;
+                }
+            }
+            else
+            {
+                backend = await _backendProvider.TryGetAsync().ConfigureAwait(true);
+                if (backend is null)
+                {
+                    BackendUnavailableMessage =
+                        "Cannot locate the models folder. The local backend generates entirely on your GPU (no ComfyUI process), " +
+                        "but it expects a ComfyUI-layout models folder (DiffusionModels/, TextEncoders/, VAE/). " +
+                        "Check the Unified Logger for details, or ensure at least one installation is registered as 'ComfyUI' type in the Installer Manager.";
+                    StatusText = "Backend unavailable";
+                    return;
+                }
             }
 
             var modelKey = SelectedModel?.Key;

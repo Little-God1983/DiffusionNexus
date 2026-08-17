@@ -52,6 +52,9 @@
     <None Include="..\DiffusionNexus.UI\Assets\Pipelines\batch-metadata-distiller.json" Link="TestData\batch-metadata-distiller.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Include="..\DiffusionNexus.UI\Assets\Pipelines\Krea2-Text2Image-API.json" Link="TestData\Krea2-Text2Image-API.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

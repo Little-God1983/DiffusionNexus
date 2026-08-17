@@ -148,6 +148,14 @@ public partial class App : Application
                     }
                     // Kill all managed child processes before scope disposal
                     Services?.GetService<PackageProcessManager>()?.Dispose();
+                    // Stop the app-owned ComfyUI engine, if it was ever started, so it never
+                    // outlives the app.
+                    var managedEngine = Services?.GetService<Services.Engine.ManagedComfyUiEngine>();
+                    if (managedEngine is not null)
+                    {
+                        try { managedEngine.StopAsync().GetAwaiter().GetResult(); }
+                        catch (Exception ex) { Serilog.Log.Warning(ex, "Managed ComfyUI engine stop failed."); }
+                    }
                     _appScope?.Dispose();
                 };
 
@@ -651,8 +659,30 @@ public partial class App : Application
         services.AddSingleton<IResourceMonitorService, ResourceMonitorService>();
         services.AddTransient<ResourceMonitorViewModel>();
 
+        // The Krea 2 text2image workflow template, shipped as an AvaloniaResource under
+        // Assets/Pipelines/. Registered before ManagedComfyUiBackend so it can be injected there.
+        services.AddSingleton<Services.Diffusion.IWorkflowTemplateSource>(_ =>
+            new Services.Diffusion.AvaresWorkflowTemplateSource("Krea2-Text2Image-API.json"));
+
+        // The Canvas's second backend: the app-owned ComfyUI engine.
+        services.AddSingleton<Services.Diffusion.ManagedComfyUiBackend>(sp =>
+            new Services.Diffusion.ManagedComfyUiBackend(
+                sp.GetRequiredService<Services.Engine.ManagedComfyUiEngine>(),
+                async () =>
+                {
+                    using var scope = sp.CreateScope();
+                    var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+                    var packages = await uow.InstallerPackages.GetAllAsync();
+                    return packages.FirstOrDefault(p => p.IsAppManaged)?.InstallationPath;
+                },
+                sp.GetService<Services.Diffusion.IWorkflowTemplateSource>()));
+
         // Diffusion Canvas view model (singleton — frames persist across navigation in v1).
-        services.AddSingleton<DiffusionNexus.UI.ViewModels.DiffusionCanvas.DiffusionCanvasViewModel>();
+        services.AddSingleton<DiffusionNexus.UI.ViewModels.DiffusionCanvas.DiffusionCanvasViewModel>(sp =>
+            new DiffusionNexus.UI.ViewModels.DiffusionCanvas.DiffusionCanvasViewModel(
+                sp.GetRequiredService<Services.Diffusion.LocalDiffusionBackendProvider>(),
+                sp.GetService<ViewModels.ResourceMonitorViewModel>(),
+                sp.GetRequiredService<Services.Diffusion.ManagedComfyUiBackend>()));
 
 
         // ?? Installer SDK services ??
@@ -725,6 +755,23 @@ public partial class App : Application
             var orchestrator = sp.GetRequiredService<IInstallationOrchestrator>();
             return new InstallationEngine(orchestrator);
         });
+
+        // Installation coordinator — the same facade the standalone Installer and Wizard use.
+        // AddInstallationServices() registers the pipeline but not this facade.
+        services.AddSingleton<IInstallationCoordinator>(sp =>
+            new InstallationCoordinator(sp.GetRequiredService<InstallationEngine>()));
+
+        // App-owned ComfyUI engine (Diffusion Nexus Engine).
+        services.AddSingleton<DiffusionNexus.Installer.SDK.Shared.Services.IUserPromptService>(sp =>
+            new Services.Engine.DialogUserPromptService(sp.GetRequiredService<IDialogService>()));
+        services.AddSingleton<Services.Engine.IManagedEngineInstaller>(sp =>
+            new Services.Engine.ManagedEngineInstaller(
+                sp.GetRequiredService<IInstallationCoordinator>(),
+                sp.GetRequiredService<IConfigurationRepository>(),
+                sp.GetRequiredService<DiffusionNexus.Installer.SDK.Shared.Services.IUserPromptService>()));
+        services.AddSingleton<Services.Engine.ManagedComfyUiEngine>(sp =>
+            new Services.Engine.ManagedComfyUiEngine(
+                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
 
         // ComfyUI workflow execution service (singleton - maintains HttpClient)
         services.AddSingleton<IComfyUIWrapperService>(sp =>
@@ -923,7 +970,9 @@ public partial class App : Application
             // IUnitOfWork is transient: each factory call yields a fresh context for
             // one destructive operation (remove / delete-from-disk), so those flows
             // never act on — or poison — the VM's long-lived shared context.
-            unitOfWorkFactory: () => sp.GetRequiredService<IUnitOfWork>()));
+            unitOfWorkFactory: () => sp.GetRequiredService<IUnitOfWork>(),
+            engineInstaller: sp.GetRequiredService<Services.Engine.IManagedEngineInstaller>(),
+            resourceMonitor: sp.GetRequiredService<IResourceMonitorService>()));
         services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),
@@ -1180,6 +1229,21 @@ public partial class App : Application
 
                 mainViewModel.RegisterModule(diffusionCanvasModule);
                 mainViewModel.SetDiffusionCanvasModule(diffusionCanvasModule);
+
+                // The engine tile follows the same switch as the Canvas — both surfaces are
+                // unfinished and must appear or disappear together. Reuses the same
+                // InstallerManagerViewModel instance resolved earlier (AddScoped, single
+                // root scope) rather than re-resolving it.
+                if (installerManagerVm is not null)
+                {
+                    installerManagerVm.IsEngineTileVisible = mainViewModel.IsDiffusionCanvasEnabled;
+                    mainViewModel.PropertyChanged += (_, e) =>
+                    {
+                        if (e.PropertyName == nameof(mainViewModel.IsDiffusionCanvasEnabled))
+                            installerManagerVm.IsEngineTileVisible = mainViewModel.IsDiffusionCanvasEnabled;
+                    };
+                }
+
                 startupProgress.Complete("diffusion-canvas");
             }
             catch (Exception ex)

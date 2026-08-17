@@ -33,5 +33,14 @@ public enum ModelKind
     /// </summary>
     QwenImageEdit2511,
 
+    /// <summary>
+    /// Krea 2 Turbo, served only through the Diffusion Nexus Engine's (ComfyUI) hardcoded
+    /// text2image workflow — see <c>Krea2WorkflowPatcher</c> in DiffusionNexus.UI. There is no
+    /// <c>stable-diffusion.cpp</c> loader for this kind; a descriptor carrying it must never reach
+    /// <c>StableDiffusionCppLoader</c>, which throws <see cref="NotSupportedException"/> for it by
+    /// design (it falls through the default arm alongside every other unhandled kind).
+    /// </summary>
+    Krea2,
+
     // TODO(v2-models): Add SDXL, SD15, etc. as we extend the catalog.
 }

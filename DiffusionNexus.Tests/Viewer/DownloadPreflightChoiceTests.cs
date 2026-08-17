@@ -14,7 +14,14 @@ namespace DiffusionNexus.Tests.Viewer;
 /// </summary>
 public sealed class DownloadPreflightChoiceTests : IDisposable
 {
-    private static readonly DateTimeOffset Now = new(2026, 8, 13, 10, 0, 0, TimeSpan.Zero);
+    /// <summary>
+    /// The fixtures' "now", anchored to today's date rather than a fixed calendar day — see the
+    /// same field on <see cref="CivitaiWaitlistTests"/> for why. Here the rot shows up differently:
+    /// an expired deadline stops a version counting as early-access, so it is enqueued instead of
+    /// opened, and the assertion fails on an empty collection rather than a wrong value.
+    /// </summary>
+    private static readonly DateTimeOffset Now =
+        new(DateTime.UtcNow.Date.AddHours(10), TimeSpan.Zero);
     private readonly string _tempDir = Directory.CreateTempSubdirectory("dn-ea-choice").FullName;
 
     public void Dispose()

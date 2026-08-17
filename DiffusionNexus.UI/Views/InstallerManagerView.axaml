@@ -365,6 +365,35 @@
                                             <TextBlock Text="Workloads" FontSize="14" VerticalAlignment="Center"/>
                                         </StackPanel>
                                     </Button>
+
+                                    <!-- Diffusion Nexus Engine tile actions -->
+                                    <StackPanel Orientation="Vertical" Spacing="6"
+                                                IsVisible="{Binding IsEngine}">
+                                        <Button Classes="launch-btn"
+                                                Command="{Binding InstallEngineCommand}"
+                                                IsVisible="{Binding ShowEngineInstallButton}">
+                                            <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                                                <TextBlock Text="&#x1F680;" FontSize="14" VerticalAlignment="Center"/>
+                                                <TextBlock Text="Install" FontSize="14" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </Button>
+                                        <Button Classes="workloads-btn"
+                                                Command="{Binding ShowWorkloadsCommand}"
+                                                IsVisible="{Binding ShowEngineWorkloadsButton}">
+                                            <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                                                <TextBlock Text="&#x1F9F0;" FontSize="14" VerticalAlignment="Center"/>
+                                                <TextBlock Text="Workloads" FontSize="14" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </Button>
+                                        <TextBlock Text="{Binding EngineStatusMessage}"
+                                                   FontSize="11"
+                                                   TextWrapping="Wrap"
+                                                   IsVisible="{Binding IsEngineInstalling}"/>
+                                        <ProgressBar Minimum="0" Maximum="100"
+                                                     Value="{Binding EngineProgressPercent}"
+                                                     Height="4"
+                                                     IsVisible="{Binding IsEngineInstalling}"/>
+                                    </StackPanel>
                                 </StackPanel>
 
                                 <!-- Console + Open Web UI (when running) -->

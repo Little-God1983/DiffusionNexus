@@ -19,6 +19,16 @@
 
         <StackPanel Orientation="Horizontal" Spacing="4">
         <ComboBox MinWidth="220"
+                  ItemsSource="{Binding AvailableBackends}"
+                  SelectedItem="{Binding SelectedBackend}"
+                  ToolTip.Tip="Which engine generates the image">
+          <ComboBox.ItemTemplate>
+            <DataTemplate x:DataType="vm:CanvasBackendOption">
+              <TextBlock Text="{Binding DisplayName}" />
+            </DataTemplate>
+          </ComboBox.ItemTemplate>
+        </ComboBox>
+        <ComboBox MinWidth="220"
                   ItemsSource="{Binding AvailableModels}"
                   SelectedItem="{Binding SelectedModel}"
                   ToolTip.Tip="Local model rendered by the Diffusion Nexus core.">

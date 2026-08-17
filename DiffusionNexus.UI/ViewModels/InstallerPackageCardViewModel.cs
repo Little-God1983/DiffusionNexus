@@ -8,6 +8,7 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.Engine;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -79,10 +80,44 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     private string? _detectedWebUrl;
 
     /// <summary>
-    /// True when not running, not missing, AND this is not a non-launchable
-    /// pseudo-installer (e.g. Diffusion Nexus Core) — show the Launch button.
+    /// True when this card represents the built-in Diffusion Nexus Engine (the
+    /// app-owned ComfyUI). Not derived from <see cref="Type"/>: the backing row is an
+    /// ordinary <see cref="InstallerType.ComfyUI"/> installation so the rest of the app
+    /// (model roots, extra_model_paths discovery) treats it normally.
     /// </summary>
-    public bool ShowLaunchButton => !IsRunning && !IsMissing && !IsCore;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowLaunchButton))]
+    [NotifyPropertyChangedFor(nameof(ShowUpdateButton))]
+    [NotifyPropertyChangedFor(nameof(ShowWorkloadsButton))]
+    [NotifyPropertyChangedFor(nameof(ShowActionsPanel))]
+    [NotifyPropertyChangedFor(nameof(ShowEngineInstallButton))]
+    [NotifyPropertyChangedFor(nameof(ShowEngineWorkloadsButton))]
+    private bool _isEngine;
+
+    /// <summary>True when the engine has been installed (a backing row exists on disk).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowEngineInstallButton))]
+    [NotifyPropertyChangedFor(nameof(ShowEngineWorkloadsButton))]
+    private bool _isEngineInstalled;
+
+    /// <summary>True while the engine install is running.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowEngineInstallButton))]
+    private bool _isEngineInstalling;
+
+    /// <summary>Live status line shown on the engine tile during install.</summary>
+    [ObservableProperty]
+    private string? _engineStatusMessage;
+
+    /// <summary>Install progress 0-100; 0 when idle.</summary>
+    [ObservableProperty]
+    private double _engineProgressPercent;
+
+    /// <summary>
+    /// True when not running, not missing, AND this is not a non-launchable
+    /// pseudo-installer (e.g. Diffusion Nexus Core or the Engine) — show the Launch button.
+    /// </summary>
+    public bool ShowLaunchButton => !IsRunning && !IsMissing && !IsCore && !IsEngine;
 
     /// <summary>
     /// True when running — show Stop/Restart/Console buttons.
@@ -91,9 +126,9 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
 
     /// <summary>
     /// True when an update is available, not currently updating, not running,
-    /// not missing, and not a Core pseudo-card.
+    /// not missing, and not a Core or Engine pseudo-card.
     /// </summary>
-    public bool ShowUpdateButton => IsUpdateAvailable && !IsUpdating && !IsRunning && !IsMissing && !IsCore;
+    public bool ShowUpdateButton => IsUpdateAvailable && !IsUpdating && !IsRunning && !IsMissing && !IsCore && !IsEngine;
 
     /// <summary>
     /// True when this installation is a ComfyUI installation.
@@ -110,17 +145,26 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     /// True when the Workloads button should be visible. ComfyUI installations
     /// have curated model bundles, but only when the install still exists on
     /// disk; Core always offers its captioning/embedding workloads regardless
-    /// of disk state.
+    /// of disk state. The Engine tile uses its own dedicated
+    /// <see cref="ShowEngineWorkloadsButton"/> instead.
     /// </summary>
-    public bool ShowWorkloadsButton => IsCore || (IsComfyUi && !IsMissing);
+    public bool ShowWorkloadsButton => !IsEngine && (IsCore || (IsComfyUi && !IsMissing));
+
+    /// <summary>Install button: engine tile, not yet installed, not currently installing.</summary>
+    public bool ShowEngineInstallButton => IsEngine && !IsEngineInstalled && !IsEngineInstalling;
+
+    /// <summary>Workloads button on the engine tile: only once the engine exists.</summary>
+    public bool ShowEngineWorkloadsButton => IsEngine && IsEngineInstalled;
 
     /// <summary>
     /// True when the bottom action panel (Launch + Workloads container) should
     /// be visible at all. The container is hidden when neither action applies
     /// — e.g. when the install is currently running, missing on disk, and not
-    /// Core. Used by the view to avoid leaving an empty gap on the card.
+    /// Core. Always true for the Engine tile, whose own Install/Workloads
+    /// buttons live inside this same panel. Used by the view to avoid leaving
+    /// an empty gap on the card.
     /// </summary>
-    public bool ShowActionsPanel => ShowLaunchButton || ShowWorkloadsButton;
+    public bool ShowActionsPanel => ShowLaunchButton || ShowWorkloadsButton || IsEngine;
 
     /// <summary>
     /// Console output lines captured from the process.
@@ -185,6 +229,11 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     public event Func<InstallerPackageCardViewModel, Task>? UpdateRequested;
 
     /// <summary>
+    /// Raised when the user presses Install on the engine tile.
+    /// </summary>
+    public event Func<InstallerPackageCardViewModel, Task>? EngineInstallRequested;
+
+    /// <summary>
     /// Logo image resolved from the installer type.
     /// </summary>
     public Bitmap? LogoImage { get; }
@@ -243,6 +292,38 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
         _versionDisplay = "Built-in";
 
         LogoImage = LoadLogo(InstallerType.DiffusionNexusCore);
+    }
+
+    /// <summary>
+    /// Creates the singleton "Diffusion Nexus Engine" tile. Pass the app-managed
+    /// <see cref="InstallerPackage"/> when a database row exists, or <c>null</c> when it does
+    /// not — either way, "installed" is grounded in <see cref="ManagedEngineLocator.LooksInstalled"/>
+    /// rather than the row's mere existence: an install can fail after writing the row, or the
+    /// user can delete the folder directly, and a database row alone must never claim the tile is
+    /// installed when the folder backing it is gone. When that happens the tile falls back to
+    /// offering Install again (with the "Installation folder not found" banner via
+    /// <see cref="IsMissing"/>) instead of showing "App-managed" with a Workloads button that runs
+    /// the checker against a path that no longer exists — and no way back.
+    /// </summary>
+    public static InstallerPackageCardViewModel CreateEngineCard(InstallerPackage? installed)
+    {
+        var card = installed is null
+            ? new InstallerPackageCardViewModel(forCore: true)
+            : new InstallerPackageCardViewModel(installed);
+
+        var looksInstalled = ManagedEngineLocator.LooksInstalled(installed?.InstallationPath);
+
+        card.Name = "Diffusion Nexus Engine";
+        card.Type = InstallerType.ComfyUI;
+        card.IsEngine = true;
+        card.IsEngineInstalled = looksInstalled;
+        card.IsMissing = installed is not null && !looksInstalled;
+        card.VersionDisplay = looksInstalled
+            ? "App-managed"
+            : installed is null ? "Not installed" : "Installation folder not found";
+        card.InstallationPath = installed?.InstallationPath ?? string.Empty;
+
+        return card;
     }
 
     /// <summary>
@@ -361,5 +442,12 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     {
         if (UpdateRequested is not null)
             await UpdateRequested.Invoke(this);
+    }
+
+    [RelayCommand]
+    private async Task InstallEngineAsync()
+    {
+        if (EngineInstallRequested is not null)
+            await EngineInstallRequested.Invoke(this);
     }
 }

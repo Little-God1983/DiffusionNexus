@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Installer.SDK.DataAccess;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.ConfigurationChecker;
@@ -46,6 +47,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
     private readonly IActivityLogService? _activityLogService;
     private readonly IDownloadCoordinator? _downloadCoordinator;
     private readonly Services.Diffusion.BaseModelFolderRegistrar? _baseModelFolderRegistrar;
+    private readonly Services.Engine.IManagedEngineInstaller? _engineInstaller;
+    private readonly IResourceMonitorService? _resourceMonitor;
 
     /// <summary>
     /// Raised when the unified console panel should be opened (e.g., during an update).
@@ -74,6 +77,35 @@ public partial class InstallerManagerViewModel : ViewModelBase
     /// </summary>
     public bool IsEmpty => InstallerCards.Count == 0 && !IsLoading;
 
+    /// <summary>
+    /// Whether the Diffusion Nexus Engine tile is shown. Bound at startup to the same
+    /// hamburger switch that reveals the Diffusion Canvas, so both surfaces stay hidden
+    /// together while the feature is unfinished.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isEngineTileVisible;
+
+    /// <summary>
+    /// True for the duration of <see cref="InstallEngineAsync"/>. Guards against two hazards
+    /// flagged in review: (1) <see cref="OnIsEngineTileVisibleChanged"/> reloading the whole
+    /// <see cref="InstallerCards"/> list mid-install, which would detach the live card the
+    /// install's progress callbacks and final <c>IsEngineInstalled = true</c> are writing to —
+    /// the callbacks would then land on an orphaned VM while a freshly-built card shows the
+    /// Install button, one click from a second concurrent SDK install into the same folder; and
+    /// (2) that reload running <see cref="LoadInstallationsAsync"/> concurrently with itself over
+    /// the VM's single shared <c>IUnitOfWork</c> — the same hazard documented in App.axaml.cs as
+    /// the reason startup loading was serialized.
+    /// </summary>
+    private bool _isEngineInstallInFlight;
+
+    partial void OnIsEngineTileVisibleChanged(bool value)
+    {
+        // Skip the reload while an install is running — see _isEngineInstallInFlight's doc.
+        // InstallEngineAsync catches up once it's done, if the switch actually moved meanwhile.
+        if (_isEngineInstallInFlight) return;
+        _ = LoadInstallationsCommand.ExecuteAsync(null);
+    }
+
     public InstallerManagerViewModel(
         IDialogService dialogService,
         IUnitOfWork unitOfWork,
@@ -89,7 +121,9 @@ public partial class InstallerManagerViewModel : ViewModelBase
         IActivityLogService? activityLogService = null,
         IDownloadCoordinator? downloadCoordinator = null,
         Services.Diffusion.BaseModelFolderRegistrar? baseModelFolderRegistrar = null,
-        Func<IUnitOfWork>? unitOfWorkFactory = null)
+        Func<IUnitOfWork>? unitOfWorkFactory = null,
+        Services.Engine.IManagedEngineInstaller? engineInstaller = null,
+        IResourceMonitorService? resourceMonitor = null)
     {
         _dialogService = dialogService;
         _unitOfWork = unitOfWork;
@@ -106,6 +140,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         _activityLogService = activityLogService;
         _downloadCoordinator = downloadCoordinator;
         _baseModelFolderRegistrar = baseModelFolderRegistrar;
+        _engineInstaller = engineInstaller;
+        _resourceMonitor = resourceMonitor;
 
         InstallerCards.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
 
@@ -135,7 +171,17 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
             var packages = await _unitOfWork.InstallerPackages.GetAllAsync();
 
-            foreach (var package in packages)
+            // The app-owned engine is an ordinary ComfyUI row flagged IsAppManaged. It is
+            // rendered as the static engine tile and must not also appear as a normal card.
+            // The tile itself is gated behind IsEngineTileVisible — while the switch is off
+            // it is omitted from the list entirely rather than hidden in the view.
+            if (IsEngineTileVisible)
+            {
+                var enginePackage = packages.FirstOrDefault(p => p.IsAppManaged);
+                InstallerCards.Add(CreateEngineCard(enginePackage));
+            }
+
+            foreach (var package in packages.Where(p => !p.IsAppManaged))
             {
                 InstallerCards.Add(CreateCard(package));
             }
@@ -659,17 +705,37 @@ public partial class InstallerManagerViewModel : ViewModelBase
             return;
         }
 
+        if (card.IsEngine)
+        {
+            if (!card.IsEngineInstalled || string.IsNullOrWhiteSpace(card.InstallationPath))
+            {
+                await _dialogService.ShowMessageAsync("Diffusion Nexus Engine",
+                    "Install the engine first — workloads are installed into it.");
+                return;
+            }
+
+            await ShowWorkloadsDialogAsync(card.InstallationPath,
+                Services.Engine.EngineWorkloadCatalog.WorkloadIds);
+            return;
+        }
+
+        await ShowWorkloadsDialogAsync(card.InstallationPath, null);
+    }
+
+    /// <summary>
+    /// Opens the workloads dialog against a ComfyUI root. <paramref name="allowedConfigurationIds"/>
+    /// narrows the list to the curated engine workloads; null shows every ComfyUI workload.
+    /// </summary>
+    private async Task ShowWorkloadsDialogAsync(string comfyUiRoot, IReadOnlyList<Guid>? allowedConfigurationIds)
+    {
         try
         {
             var vm = new WorkloadsViewModel(
                 _configurationRepository, _checkerService, _installService,
-                card.InstallationPath);
+                comfyUiRoot, allowedConfigurationIds, _resourceMonitor);
             await vm.LoadWorkloadsCommand.ExecuteAsync(null);
 
-            var dialog = new Views.Dialogs.WorkloadsDialog
-            {
-                DataContext = vm
-            };
+            var dialog = new Views.Dialogs.WorkloadsDialog { DataContext = vm };
 
             var parentWindow = (Avalonia.Application.Current?.ApplicationLifetime
                 as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.MainWindow;
@@ -679,7 +745,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            Serilog.Log.Error(ex, "Failed to open workloads dialog for {Name}", card.Name);
+            Serilog.Log.Error(ex, "Failed to open workloads dialog for {Path}", comfyUiRoot);
             await _dialogService.ShowMessageAsync("Error", $"Failed to load workloads: {ex.Message}");
         }
     }
@@ -798,6 +864,213 @@ public partial class InstallerManagerViewModel : ViewModelBase
         var card = InstallerPackageCardViewModel.CreateCoreCard();
         card.WorkloadsRequested += OnWorkloadsRequestedAsync;
         return card;
+    }
+
+    /// <summary>
+    /// Builds the static "Diffusion Nexus Engine" tile. Wires the install handler and, once
+    /// the engine exists, the workloads handler. Visibility is controlled by
+    /// <see cref="IsEngineTileVisible"/>, which follows the same switch as the Diffusion Canvas.
+    /// </summary>
+    private InstallerPackageCardViewModel CreateEngineCard(InstallerPackage? enginePackage)
+    {
+        var card = InstallerPackageCardViewModel.CreateEngineCard(enginePackage);
+        card.EngineInstallRequested += OnEngineInstallRequestedAsync;
+        card.WorkloadsRequested += OnWorkloadsRequestedAsync;
+        return card;
+    }
+
+    private Task OnEngineInstallRequestedAsync(InstallerPackageCardViewModel card) => InstallEngineAsync();
+
+    /// <summary>
+    /// Installs the base engine: asks for a target folder, runs the SDK install with all content
+    /// excluded, and on success records it as an app-managed ComfyUI installation. Progress goes
+    /// to the Unified Console so a stalled install shows its last successful step.
+    /// </summary>
+    public async Task InstallEngineAsync()
+    {
+        var card = InstallerCards.FirstOrDefault(c => c.IsEngine);
+        if (card is null || _engineInstaller is null) return;
+
+        // Guards re-entrancy: a second Install click routed through a stale card reference (or a
+        // freshly-built one, if the reload guard in OnIsEngineTileVisibleChanged were ever
+        // bypassed) must never start a second SDK install writing into the same folder while one
+        // is already running. Set before the folder dialog so it also covers the window while
+        // that's up, and cleared unconditionally in the outer finally below — every exit path
+        // from here on, cancelled pick, thrown exception, or a completed install, reaches it.
+        if (_isEngineInstallInFlight) return;
+        _isEngineInstallInFlight = true;
+        var visibilityAtStart = IsEngineTileVisible;
+
+        // Outer try/finally guarantees the in-flight flag is cleared on every exit from here
+        // on, including an exception from the folder picker itself — ShowOpenFolderDialogAsync
+        // sat outside any try/finally before this fix, so a throw there left the flag stuck for
+        // the rest of the session: every later Install click became a silent no-op, and the
+        // Canvas visibility toggle stopped reloading the card list (OnIsEngineTileVisibleChanged
+        // also honors this flag).
+        try
+        {
+            var folder = await _dialogService.ShowOpenFolderDialogAsync(
+                $"Choose where to install the Diffusion Nexus Engine (default: {Services.Engine.ManagedEngineLocator.DefaultInstallRoot})");
+
+            if (string.IsNullOrWhiteSpace(folder))
+            {
+                return;
+            }
+
+            UnifiedConsolePanelRequested?.Invoke(this, EventArgs.Empty);
+
+            card.IsEngineInstalling = true;
+            card.EngineProgressPercent = 0;
+            card.EngineStatusMessage = "Starting engine install...";
+            _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
+                $"Starting base engine install into {folder}.");
+
+            var logProgress = new Progress<DiffusionNexus.Installer.SDK.Services.InstallLogEntry>(entry =>
+            {
+                card.EngineStatusMessage = entry.Message;
+                _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine", entry.Message);
+            });
+
+            var stepProgress = new Progress<DiffusionNexus.Installer.SDK.Services.InstallationProgress>(p =>
+            {
+                card.EngineProgressPercent = p.ProgressPercentage;
+                card.EngineStatusMessage = $"[{p.StepIndex + 1}/{p.TotalSteps}] {p.Message}";
+            });
+
+            try
+            {
+                var sharedRoots = await ResolveSharedModelRootsAsync();
+
+                var outcome = await _engineInstaller.InstallBaseEngineAsync(
+                    new Services.Engine.EngineInstallRequest(folder, sharedRoots),
+                    logProgress, stepProgress, CancellationToken.None);
+
+                if (outcome.IsSuccess)
+                {
+                    // Reuse the existing app-managed row instead of always appending. A stale row
+                    // (folder gone) is exactly what put the tile back in front of the user with an
+                    // Install button in the first place — unconditionally adding a second IsAppManaged
+                    // row here would leave the stale one as the older, first-returned row for both
+                    // this tile's own load path and the Canvas engine-root resolver in App.axaml.cs
+                    // (both do a plain FirstOrDefault(p => p.IsAppManaged)), so the successful
+                    // reinstall would still look and behave like a dead install. Updating the row in
+                    // place (rather than removing + re-adding) also preserves its Id, so any settings
+                    // that ever get FK-linked to it (galleries, base model folders — see the ordinary
+                    // Remove flow above for what that can include) stay attached instead of being
+                    // orphaned by a delete.
+                    var appManagedRows = (await _unitOfWork.InstallerPackages.GetAllAsync())
+                        .Where(p => p.IsAppManaged)
+                        .ToList();
+
+                    var package = appManagedRows.FirstOrDefault();
+                    if (package is null)
+                    {
+                        package = new InstallerPackage
+                        {
+                            Name = "Diffusion Nexus Engine",
+                            InstallationPath = outcome.RepositoryPath ?? folder,
+                            Type = InstallerType.ComfyUI,
+                            ExecutablePath = null,
+                            Arguments = string.Empty,
+                            IsAppManaged = true,
+                            CreatedAt = DateTimeOffset.UtcNow
+                        };
+                        await _unitOfWork.InstallerPackages.AddAsync(package);
+                    }
+                    else
+                    {
+                        package.Name = "Diffusion Nexus Engine";
+                        package.InstallationPath = outcome.RepositoryPath ?? folder;
+                        package.Type = InstallerType.ComfyUI;
+                        package.ExecutablePath = null;
+                        package.Arguments = string.Empty;
+                        package.IsAppManaged = true;
+                        package.CreatedAt = DateTimeOffset.UtcNow;
+                        _unitOfWork.InstallerPackages.Update(package);
+
+                        // Defensive: a pre-fix build could already have left more than one
+                        // app-managed row behind. Converge on exactly one going forward.
+                        foreach (var duplicate in appManagedRows.Skip(1))
+                            _unitOfWork.InstallerPackages.Remove(duplicate);
+                    }
+
+                    await _unitOfWork.SaveChangesAsync();
+
+                    card.InstallationPath = package.InstallationPath;
+                    card.IsEngineInstalled = true;
+                    card.VersionDisplay = "App-managed";
+
+                    _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
+                        $"Engine installed at {package.InstallationPath}.");
+                    _eventAggregator.PublishInstallerPackagesChanged(new InstallerPackagesChangedEventArgs());
+                }
+                else if (outcome.IsCancelled)
+                {
+                    _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
+                        "Engine install cancelled by the user. Nothing was registered.");
+                }
+                else
+                {
+                    _unifiedLogger.Error(LogCategory.Installation, "Diffusion Nexus Engine",
+                        $"Engine install failed: {outcome.Message}");
+
+                    // A genuine failure (not a cancel) is worth reporting — offer the existing
+                    // feedback dialog instead of leaving the user with a dead end.
+                    var report = await _dialogService.ShowConfirmAsync("Engine install failed",
+                        $"{outcome.Message}\n\nSend a report so this can be fixed?");
+                    if (report)
+                        await _dialogService.ShowFeedbackDialogAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                Serilog.Log.Error(ex, "Diffusion Nexus Engine install failed");
+                _unifiedLogger.Error(LogCategory.Installation, "Diffusion Nexus Engine",
+                    $"Engine install failed: {ex.Message}", ex);
+                await _dialogService.ShowMessageAsync("Engine install failed", ex.Message);
+            }
+            finally
+            {
+                card.IsEngineInstalling = false;
+                card.EngineStatusMessage = null;
+                card.EngineProgressPercent = 0;
+
+                // The visibility switch may have moved while we were installing — its own reload was
+                // suppressed in OnIsEngineTileVisibleChanged to avoid detaching `card` mid-install.
+                // Catch up now: the install has finished, so a reload can no longer orphan it.
+                if (IsEngineTileVisible != visibilityAtStart)
+                    _ = LoadInstallationsCommand.ExecuteAsync(null);
+            }
+        }
+        finally
+        {
+            _isEngineInstallInFlight = false;
+        }
+    }
+
+    /// <summary>
+    /// Model libraries the engine should read instead of duplicating. Uses the registered base
+    /// model folders when available; an empty list simply means the engine keeps models locally.
+    /// The starred default folder (if any) is ordered first, since the SDK installer feeds
+    /// <c>SharedModelRoots.FirstOrDefault()</c> into the engine's model base folder.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> ResolveSharedModelRootsAsync()
+    {
+        try
+        {
+            var settings = await _unitOfWork.AppSettings.GetSettingsWithIncludesAsync();
+            return settings?.BaseModelFolders
+                .Where(f => f.IsEnabled && !string.IsNullOrWhiteSpace(f.FolderPath))
+                .OrderByDescending(f => f.IsDefault)
+                .ThenBy(f => f.Order)
+                .Select(f => f.FolderPath)
+                .ToList() ?? [];
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Could not resolve shared model roots for the engine install.");
+            return [];
+        }
     }
 
     private void OnOpenFolderRequested(InstallerPackageCardViewModel card)
