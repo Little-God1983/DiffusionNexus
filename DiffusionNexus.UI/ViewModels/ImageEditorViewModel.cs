@@ -905,6 +905,8 @@ public partial class ImageEditorViewModel : ObservableObject
         var exportPath = await ShowSaveFileDialogFunc("Export Image", suggestedName, $"*{extension}");
         if (string.IsNullOrEmpty(exportPath)) return;
 
+        exportPath = EnsureExtension(exportPath, extension);
+
         try
         {
             if (SaveImageFunc(exportPath))
@@ -927,6 +929,8 @@ public partial class ImageEditorViewModel : ObservableObject
 
         var exportPath = await ShowSaveFileDialogFunc("Export as PNG", suggestedName, "*.png");
         if (string.IsNullOrEmpty(exportPath)) return;
+
+        exportPath = EnsureExtension(exportPath, ".png");
 
         try
         {
@@ -951,6 +955,8 @@ public partial class ImageEditorViewModel : ObservableObject
         var exportPath = await ShowSaveFileDialogFunc("Export as JPEG", suggestedName, "*.jpg");
         if (string.IsNullOrEmpty(exportPath)) return;
 
+        exportPath = EnsureExtension(exportPath, ".jpg", ".jpeg");
+
         try
         {
             if (SaveJpegFunc(exportPath))
@@ -974,6 +980,8 @@ public partial class ImageEditorViewModel : ObservableObject
         var exportPath = await ShowSaveFileDialogFunc("Export as Layered TIFF", suggestedName, "*.tif");
         if (string.IsNullOrEmpty(exportPath)) return;
 
+        exportPath = EnsureExtension(exportPath, ".tif", ".tiff");
+
         try
         {
             if (SaveLayeredTiffFunc(exportPath))
@@ -985,6 +993,29 @@ public partial class ImageEditorViewModel : ObservableObject
         {
             StatusMessage = $"Error exporting layered TIFF: {ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// Ensures an export path carries an extension matching the format the command exports.
+    /// The save picker sets no default extension, so it returns exactly what the user typed —
+    /// clearing the suggested ".jpg" would otherwise produce an extensionless file that neither
+    /// Windows nor the gallery recognises.
+    /// </summary>
+    /// <param name="path">The path the user chose.</param>
+    /// <param name="accepted">
+    /// Extensions that already match the format, most-preferred first. The first is appended when
+    /// none match. Appended rather than swapped so names that merely contain a dot
+    /// ("render v1.2") are not truncated.
+    /// </param>
+    private static string EnsureExtension(string path, params string[] accepted)
+    {
+        foreach (var extension in accepted)
+        {
+            if (path.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
+                return path;
+        }
+
+        return path + accepted[0];
     }
 
     /// <summary>Resolves the full save path from a SaveAsResult, creating directories as needed.</summary>

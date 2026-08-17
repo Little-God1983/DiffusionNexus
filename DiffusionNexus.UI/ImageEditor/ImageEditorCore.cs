@@ -19,7 +19,28 @@ public partial class ImageEditorCore : IDisposable
     private bool _isPreviewActive;
     private bool _disposed;
     private int _imageDpi = 72;
+
+    /// <summary>
+    /// Guards every bitmap and layer that <see cref="RenderWithZoom"/> can reach.
+    /// <para>
+    /// Avalonia executes the canvas' <c>ICustomDrawOperation.Render</c> — and therefore
+    /// <see cref="RenderWithZoom"/> — on the compositor's <b>render thread</b>, while loading,
+    /// clearing, cropping, transforming and every layer edit run on the UI thread. Any code that
+    /// frees a bitmap, replaces one, or mutates the layer collection must hold this lock, or Skia
+    /// dereferences a freed <c>sk_bitmap_t</c> and the process dies with an access violation
+    /// (surfacing as <c>ExecutionEngineException</c>) that no <c>catch</c> can intercept.
+    /// </para>
+    /// Hold it only for the mutation itself: decoding, encoding and file I/O belong outside, and
+    /// bitmaps detached under the lock can safely be disposed after releasing it.
+    /// </summary>
     private readonly object _bitmapLock = new();
+
+    /// <summary>
+    /// The render lock described on <c>_bitmapLock</c>, exposed so tests can hold it to simulate
+    /// an in-flight repaint. Production code must never take this from outside the editor core.
+    /// </summary>
+    internal object RenderLock => _bitmapLock;
+
     private SKRect _lastImageRect;
 
     // Layer state - delegated to LayerManager when services are wired
@@ -263,11 +284,15 @@ public partial class ImageEditorCore : IDisposable
     {
         if (_layers != null || _workingBitmap == null || _services is null) return;
 
-        var layerName = !string.IsNullOrEmpty(CurrentImagePath) 
-            ? Path.GetFileNameWithoutExtension(CurrentImagePath) 
+        var layerName = !string.IsNullOrEmpty(CurrentImagePath)
+            ? Path.GetFileNameWithoutExtension(CurrentImagePath)
             : "Background";
 
-        _services.Layers.EnableLayerMode(_workingBitmap, layerName);
+        lock (_bitmapLock)
+        {
+            _services.Layers.EnableLayerMode(_workingBitmap, layerName);
+        }
+
         OnImageChanged();
     }
 
@@ -278,13 +303,19 @@ public partial class ImageEditorCore : IDisposable
     {
         if (_layers == null || _services is null) return;
 
-        var flattened = _services.Layers.DisableLayerMode();
-        if (flattened != null)
+        SKBitmap? replaced = null;
+
+        lock (_bitmapLock)
         {
-            _workingBitmap?.Dispose();
-            _workingBitmap = flattened;
+            var flattened = _services.Layers.DisableLayerMode();
+            if (flattened != null)
+            {
+                replaced = _workingBitmap;
+                _workingBitmap = flattened;
+            }
         }
 
+        replaced?.Dispose();
         OnImageChanged();
     }
 
@@ -294,7 +325,12 @@ public partial class ImageEditorCore : IDisposable
     public void FlattenAllLayers()
     {
         if (_services is null) return;
-        _services.Layers.FlattenAllLayers();
+
+        lock (_bitmapLock)
+        {
+            _services.Layers.FlattenAllLayers();
+        }
+
         OnImageChanged();
     }
 
@@ -305,7 +341,10 @@ public partial class ImageEditorCore : IDisposable
     /// <returns>The newly created layer, or null if not in layer mode.</returns>
     public Layer? AddLayer(string? name = null)
     {
-        return _services?.Layers.AddLayer(name);
+        lock (_bitmapLock)
+        {
+            return _services?.Layers.AddLayer(name);
+        }
     }
 
     /// <summary>
@@ -316,7 +355,10 @@ public partial class ImageEditorCore : IDisposable
     /// <returns>The newly created layer, or null if not in layer mode.</returns>
     public Layer? AddLayerFromBitmap(SKBitmap bitmap, string? name = null)
     {
-        return _services?.Layers.AddLayerFromBitmap(bitmap, name);
+        lock (_bitmapLock)
+        {
+            return _services?.Layers.AddLayerFromBitmap(bitmap, name);
+        }
     }
 
     /// <summary>
@@ -324,7 +366,11 @@ public partial class ImageEditorCore : IDisposable
     /// </summary>
     public void ResizeLayerCanvas(int newWidth, int newHeight, int offsetX, int offsetY)
     {
-        _services?.Layers.ResizeCanvas(newWidth, newHeight, offsetX, offsetY);
+        lock (_bitmapLock)
+        {
+            _services?.Layers.ResizeCanvas(newWidth, newHeight, offsetX, offsetY);
+        }
+
         OnImageChanged();
     }
 
@@ -335,7 +381,10 @@ public partial class ImageEditorCore : IDisposable
     /// <returns>True if removed successfully.</returns>
     public bool RemoveLayer(Layer layer)
     {
-        return _services?.Layers.RemoveLayer(layer) ?? false;
+        lock (_bitmapLock)
+        {
+            return _services?.Layers.RemoveLayer(layer) ?? false;
+        }
     }
 
     /// <summary>
@@ -345,7 +394,10 @@ public partial class ImageEditorCore : IDisposable
     /// <returns>The duplicated layer, or null if failed.</returns>
     public Layer? DuplicateLayer(Layer layer)
     {
-        return _services?.Layers.DuplicateLayer(layer);
+        lock (_bitmapLock)
+        {
+            return _services?.Layers.DuplicateLayer(layer);
+        }
     }
 
     /// <summary>
@@ -355,7 +407,10 @@ public partial class ImageEditorCore : IDisposable
     /// <returns>True if moved successfully.</returns>
     public bool MoveLayerUp(Layer layer)
     {
-        return _services?.Layers.MoveLayerUp(layer) ?? false;
+        lock (_bitmapLock)
+        {
+            return _services?.Layers.MoveLayerUp(layer) ?? false;
+        }
     }
 
     /// <summary>
@@ -365,7 +420,10 @@ public partial class ImageEditorCore : IDisposable
     /// <returns>True if moved successfully.</returns>
     public bool MoveLayerDown(Layer layer)
     {
-        return _services?.Layers.MoveLayerDown(layer) ?? false;
+        lock (_bitmapLock)
+        {
+            return _services?.Layers.MoveLayerDown(layer) ?? false;
+        }
     }
 
     /// <summary>
@@ -375,7 +433,10 @@ public partial class ImageEditorCore : IDisposable
     /// <returns>True if merged successfully.</returns>
     public bool MergeLayerDown(Layer layer)
     {
-        return _services?.Layers.MergeLayerDown(layer) ?? false;
+        lock (_bitmapLock)
+        {
+            return _services?.Layers.MergeLayerDown(layer) ?? false;
+        }
     }
 
     /// <summary>
@@ -383,7 +444,10 @@ public partial class ImageEditorCore : IDisposable
     /// </summary>
     public void MergeVisibleLayers()
     {
-        _services?.Layers.MergeVisibleLayers();
+        lock (_bitmapLock)
+        {
+            _services?.Layers.MergeVisibleLayers();
+        }
     }
 
     /// <summary>
@@ -415,6 +479,36 @@ public partial class ImageEditorCore : IDisposable
     #endregion Layer Operations
 
     /// <summary>
+    /// Publishes a freshly decoded image: discards the current layer stack and swaps in the new
+    /// original/working bitmaps while holding the render lock, then frees the replaced bitmaps
+    /// once the render thread can no longer be inside a draw that references them.
+    /// </summary>
+    /// <param name="original">The newly decoded source bitmap. Ownership transfers to the editor.</param>
+    /// <param name="working">The editable copy of <paramref name="original"/>. Ownership transfers to the editor.</param>
+    private void SwapLoadedBitmaps(SKBitmap original, SKBitmap working)
+    {
+        SKBitmap? replacedOriginal;
+        SKBitmap? replacedWorking;
+
+        lock (_bitmapLock)
+        {
+            // Tear down existing layer stack without flattening (we're discarding it)
+            if (_isLayerMode && _services is not null)
+            {
+                _services.Layers.Reset();
+            }
+
+            replacedOriginal = _originalBitmap;
+            replacedWorking = _workingBitmap;
+            _originalBitmap = original;
+            _workingBitmap = working;
+        }
+
+        replacedOriginal?.Dispose();
+        replacedWorking?.Dispose();
+    }
+
+    /// <summary>
     /// Loads an image from the specified file path.
     /// Automatically enables layer mode with the image as the first layer.
     /// </summary>
@@ -429,30 +523,25 @@ public partial class ImageEditorCore : IDisposable
         {
             // Clear preview without raising event since we'll raise it after loading
             ClearPreview(raiseEvent: false);
-            
-            // Tear down existing layer stack without flattening (we're discarding it)
-            if (_isLayerMode && _services is not null)
-            {
-                _services.Layers.Reset();
-            }
-            
-            _originalBitmap?.Dispose();
-            _workingBitmap?.Dispose();
 
             // Get file size
             var fileInfo = new FileInfo(filePath);
-            FileSizeBytes = fileInfo.Length;
 
+            // Decode before touching editor state: it is the slow part, it must not stall the
+            // render thread, and a failed decode then leaves the current image intact.
             using var stream = File.OpenRead(filePath);
-            _originalBitmap = SKBitmap.Decode(stream);
-            if (_originalBitmap is null)
+            var decoded = SKBitmap.Decode(stream);
+            if (decoded is null)
             {
                 Logger?.Error(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditorCore",
                     $"SKBitmap.Decode returned null (unsupported or corrupt format — note: Skia cannot decode TIFF) for {filePath}");
                 return false;
             }
 
-            _workingBitmap = _originalBitmap.Copy();
+            var working = decoded.Copy();
+            SwapLoadedBitmaps(decoded, working);
+
+            FileSizeBytes = fileInfo.Length;
             CurrentImagePath = filePath;
             ResetZoom();
             
@@ -486,23 +575,17 @@ public partial class ImageEditorCore : IDisposable
         {
             // Clear preview without raising event since we'll raise it after loading
             ClearPreview(raiseEvent: false);
-            
-            // Tear down existing layer stack without flattening (we're discarding it)
-            if (_isLayerMode && _services is not null)
-            {
-                _services.Layers.Reset();
-            }
-            
-            _originalBitmap?.Dispose();
-            _workingBitmap?.Dispose();
 
-            _originalBitmap = SKBitmap.Decode(imageData);
-            if (_originalBitmap is null)
+            // Decode before touching editor state — see LoadImage(string).
+            var decoded = SKBitmap.Decode(imageData);
+            if (decoded is null)
                 return false;
 
-            _workingBitmap = _originalBitmap.Copy();
+            var working = decoded.Copy();
+            SwapLoadedBitmaps(decoded, working);
+
             CurrentImagePath = null;
-            
+
             // Auto-enable layer mode with the image as the first layer
             EnableLayerMode();
 
@@ -568,25 +651,38 @@ public partial class ImageEditorCore : IDisposable
         ClearInpaintBase();
 
         var wasLayerMode = _isLayerMode;
+        var restored = _originalBitmap.Copy();
 
-        // If in layer mode, disable it through LayerManager
-        if (wasLayerMode && _services is not null)
+        SKBitmap? replacedWorking;
+        SKBitmap? flattened = null;
+
+        lock (_bitmapLock)
         {
-            _services.Layers.DisableLayerMode()?.Dispose();
+            // If in layer mode, disable it through LayerManager
+            if (wasLayerMode && _services is not null)
+            {
+                flattened = _services.Layers.DisableLayerMode();
+            }
+
+            // Reset working bitmap from original
+            replacedWorking = _workingBitmap;
+            _workingBitmap = restored;
         }
 
-        // Reset working bitmap from original
-        _workingBitmap?.Dispose();
-        _workingBitmap = _originalBitmap.Copy();
+        flattened?.Dispose();
+        replacedWorking?.Dispose();
 
         // If was in layer mode, recreate via LayerManager
         if (wasLayerMode && _services is not null)
         {
-            var layerName = !string.IsNullOrEmpty(CurrentImagePath) 
-                ? Path.GetFileNameWithoutExtension(CurrentImagePath) 
+            var layerName = !string.IsNullOrEmpty(CurrentImagePath)
+                ? Path.GetFileNameWithoutExtension(CurrentImagePath)
                 : "Background";
 
-            _services.Layers.EnableLayerMode(_workingBitmap, layerName);
+            lock (_bitmapLock)
+            {
+                _services.Layers.EnableLayerMode(restored, layerName);
+            }
         }
 
         OnImageChanged();
@@ -600,16 +696,28 @@ public partial class ImageEditorCore : IDisposable
         ClearPreview();
         ClearInpaintBase();
 
-        // Disable layer mode if active
-        if (_isLayerMode && _services is not null)
+        SKBitmap? flattened = null;
+        SKBitmap? original;
+        SKBitmap? working;
+
+        lock (_bitmapLock)
         {
-            _services.Layers.DisableLayerMode()?.Dispose();
+            // Disable layer mode if active
+            if (_isLayerMode && _services is not null)
+            {
+                flattened = _services.Layers.DisableLayerMode();
+            }
+
+            original = _originalBitmap;
+            working = _workingBitmap;
+            _originalBitmap = null;
+            _workingBitmap = null;
         }
 
-        _originalBitmap?.Dispose();
-        _workingBitmap?.Dispose();
-        _originalBitmap = null;
-        _workingBitmap = null;
+        flattened?.Dispose();
+        original?.Dispose();
+        working?.Dispose();
+
         CurrentImagePath = null;
         OnImageChanged();
     }
@@ -655,25 +763,32 @@ public partial class ImageEditorCore : IDisposable
 
         try
         {
-            if (_isLayerMode && _layers != null)
+            SKBitmap? replacedWorking = null;
+
+            lock (_bitmapLock)
             {
-                // Crop all layers
-                _layers.CropAll(clampedRect);
-            }
-            
-            // Also crop the working bitmap if it exists
-            if (_workingBitmap is not null)
-            {
-                var croppedBitmap = new SKBitmap(clampedRect.Width, clampedRect.Height);
-                using (var canvas = new SKCanvas(croppedBitmap))
+                if (_isLayerMode && _layers != null)
                 {
-                    var srcRect = new SKRect(clampedRect.Left, clampedRect.Top, clampedRect.Right, clampedRect.Bottom);
-                    var destRect = new SKRect(0, 0, clampedRect.Width, clampedRect.Height);
-                    canvas.DrawBitmap(_workingBitmap, srcRect, destRect);
+                    // Crop all layers
+                    _layers.CropAll(clampedRect);
                 }
-                _workingBitmap.Dispose();
-                _workingBitmap = croppedBitmap;
+
+                // Also crop the working bitmap if it exists
+                if (_workingBitmap is not null)
+                {
+                    var croppedBitmap = new SKBitmap(clampedRect.Width, clampedRect.Height);
+                    using (var canvas = new SKCanvas(croppedBitmap))
+                    {
+                        var srcRect = new SKRect(clampedRect.Left, clampedRect.Top, clampedRect.Right, clampedRect.Bottom);
+                        var destRect = new SKRect(0, 0, clampedRect.Width, clampedRect.Height);
+                        canvas.DrawBitmap(_workingBitmap, srcRect, destRect);
+                    }
+                    replacedWorking = _workingBitmap;
+                    _workingBitmap = croppedBitmap;
+                }
             }
+
+            replacedWorking?.Dispose();
 
             // Clear crop tool state
             CropTool.ClearCropRegion();
@@ -725,12 +840,16 @@ public partial class ImageEditorCore : IDisposable
     /// Delegates file I/O to DocumentService.
     /// </summary>
     /// <param name="filePath">The file path to save to.</param>
-    /// <param name="format">The image format (default: PNG).</param>
+    /// <param name="format">
+    /// The encoder to use. Pass <c>null</c> (the default) to derive it from the file extension,
+    /// falling back to PNG for an unknown or missing one. An explicit format always wins: callers
+    /// like "Export as JPEG" mean it regardless of what the user typed in the save dialog.
+    /// </param>
     /// <param name="quality">Quality for lossy formats (0-100).</param>
     /// <returns>True if saved successfully.</returns>
-    public bool SaveImage(string filePath, SKEncodedImageFormat format = SKEncodedImageFormat.Png, int quality = 95)
+    public bool SaveImage(string filePath, SKEncodedImageFormat? format = null, int quality = 95)
     {
-        FileLogger.LogEntry($"filePath={filePath}, format={format}, quality={quality}");
+        FileLogger.LogEntry($"filePath={filePath}, format={format?.ToString() ?? "(from extension)"}, quality={quality}");
         
         // Get the bitmap to save - flatten layers if in layer mode
         SKBitmap? bitmapToSave = null;
@@ -754,14 +873,12 @@ public partial class ImageEditorCore : IDisposable
             return false;
         }
 
-        // Determine format from extension if not explicitly provided
-        var resolvedFormat = format;
-        if (_services is not null)
-        {
-            resolvedFormat = _services.Document.GetFormatFromExtension(filePath);
-        }
-        
-        FileLogger.Log($"Bitmap to save size: {bitmapToSave.Width}x{bitmapToSave.Height}");
+        // Determine format from extension only when the caller did not ask for a specific one
+        var resolvedFormat = format
+            ?? _services?.Document.GetFormatFromExtension(filePath)
+            ?? SKEncodedImageFormat.Png;
+
+        FileLogger.Log($"Bitmap to save size: {bitmapToSave.Width}x{bitmapToSave.Height}, encoding as {resolvedFormat}");
 
         try
         {
@@ -1020,17 +1137,25 @@ public partial class ImageEditorCore : IDisposable
     /// </summary>
     private void SetOperationTargetBitmap(SKBitmap newBitmap)
     {
-        if (_isLayerMode && _layers?.ActiveLayer != null)
+        SKBitmap? replaced = null;
+
+        // Re-entrant: several callers already hold the render lock around a wider operation.
+        lock (_bitmapLock)
         {
-            // When in layer mode, we need to replace the active layer's bitmap
-            // The Layer class doesn't expose a bitmap setter, so we use the internal method
-            _layers.ActiveLayer.ReplaceBitmap(newBitmap);
+            if (_isLayerMode && _layers?.ActiveLayer != null)
+            {
+                // When in layer mode, we need to replace the active layer's bitmap
+                // The Layer class doesn't expose a bitmap setter, so we use the internal method
+                _layers.ActiveLayer.ReplaceBitmap(newBitmap);
+            }
+            else
+            {
+                replaced = _workingBitmap;
+                _workingBitmap = newBitmap;
+            }
         }
-        else
-        {
-            _workingBitmap?.Dispose();
-            _workingBitmap = newBitmap;
-        }
+
+        replaced?.Dispose();
     }
 
     #endregion Shared Operation Helpers
@@ -1384,41 +1509,52 @@ public partial class ImageEditorCore : IDisposable
 
         ClearPreview(raiseEvent: false);
 
-        // Disable existing layer mode if active
-        if (_isLayerMode)
-        {
-            _services.Layers.DisableLayerMode()?.Dispose();
-        }
-
-        // Dispose old bitmaps
-        _originalBitmap?.Dispose();
-        _workingBitmap?.Dispose();
-
-        // Store a flattened copy as the original for Reset support
-        var flattened = loadedLayers.Flatten();
-        _originalBitmap = flattened;
-        _workingBitmap = flattened?.Copy();
-
-        // Get file size
-        var fileInfo = new FileInfo(filePath);
-        FileSizeBytes = fileInfo.Length;
-
-        // Initialize layer mode from the loaded stack via LayerManager
-        // We enable with the first layer, then add the rest
         var firstLayer = loadedLayers[0];
         if (firstLayer.Bitmap is null)
         {
             loadedLayers.Dispose();
             return false;
         }
-        _services.Layers.EnableLayerMode(firstLayer.Bitmap.Copy(), firstLayer.Name);
 
-        for (var i = 1; i < loadedLayers.Count; i++)
+        // Store a flattened copy as the original for Reset support
+        var flattened = loadedLayers.Flatten();
+
+        SKBitmap? previousFlattened = null;
+        SKBitmap? replacedOriginal;
+        SKBitmap? replacedWorking;
+
+        lock (_bitmapLock)
         {
-            var layer = loadedLayers[i];
-            if (layer.Bitmap is null) continue;
-            _services.Layers.AddLayerFromBitmap(layer.Bitmap.Copy(), layer.Name);
+            // Disable existing layer mode if active
+            if (_isLayerMode)
+            {
+                previousFlattened = _services.Layers.DisableLayerMode();
+            }
+
+            replacedOriginal = _originalBitmap;
+            replacedWorking = _workingBitmap;
+            _originalBitmap = flattened;
+            _workingBitmap = flattened?.Copy();
+
+            // Initialize layer mode from the loaded stack via LayerManager
+            // We enable with the first layer, then add the rest
+            _services.Layers.EnableLayerMode(firstLayer.Bitmap.Copy(), firstLayer.Name);
+
+            for (var i = 1; i < loadedLayers.Count; i++)
+            {
+                var layer = loadedLayers[i];
+                if (layer.Bitmap is null) continue;
+                _services.Layers.AddLayerFromBitmap(layer.Bitmap.Copy(), layer.Name);
+            }
         }
+
+        previousFlattened?.Dispose();
+        replacedOriginal?.Dispose();
+        replacedWorking?.Dispose();
+
+        // Get file size
+        var fileInfo = new FileInfo(filePath);
+        FileSizeBytes = fileInfo.Length;
 
         // Dispose the original loaded stack (we've copied the bitmaps)
         loadedLayers.Dispose();
@@ -1448,25 +1584,39 @@ public partial class ImageEditorCore : IDisposable
         if (_disposed) return;
         if (disposing)
         {
-            _originalBitmap?.Dispose();
-            _workingBitmap?.Dispose();
-            _previewBitmap?.Dispose();
-            _inpaintBaseBitmap?.Dispose();
+            SKBitmap? original;
+            SKBitmap? working;
+            SKBitmap? preview;
+            SKBitmap? inpaintBase;
 
-            // Unsubscribe all service event handlers
-            if (_services is not null)
+            lock (_bitmapLock)
             {
-                _services.Layers.ContentChanged -= OnLayersContentChanged;
-                _services.Layers.LayersChanged -= OnLayersCollectionChanged;
-                _services.Layers.LayerModeChanged -= OnLayerModeChanged;
-                _services.Viewport.Changed -= OnViewportChanged;
-                _services.Dispose();
+                original = _originalBitmap;
+                working = _workingBitmap;
+                preview = _previewBitmap;
+                inpaintBase = _inpaintBaseBitmap;
+
+                _originalBitmap = null;
+                _workingBitmap = null;
+                _previewBitmap = null;
+                _inpaintBaseBitmap = null;
+                _isPreviewActive = false;
+
+                // Unsubscribe all service event handlers
+                if (_services is not null)
+                {
+                    _services.Layers.ContentChanged -= OnLayersContentChanged;
+                    _services.Layers.LayersChanged -= OnLayersCollectionChanged;
+                    _services.Layers.LayerModeChanged -= OnLayerModeChanged;
+                    _services.Viewport.Changed -= OnViewportChanged;
+                    _services.Dispose();
+                }
             }
 
-            _originalBitmap = null;
-            _workingBitmap = null;
-            _previewBitmap = null;
-            _inpaintBaseBitmap = null;
+            original?.Dispose();
+            working?.Dispose();
+            preview?.Dispose();
+            inpaintBase?.Dispose();
         }
         _disposed = true;
     }
