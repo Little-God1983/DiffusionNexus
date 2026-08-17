@@ -125,4 +125,104 @@ public sealed class BaseModelFolderRegistrarTests : IDisposable
             s => s.AddBaseModelFolderAsync(modelsDir, It.IsAny<int?>(), It.IsAny<CancellationToken>()),
             Times.Exactly(2));
     }
+
+    [Fact]
+    public void ResolveModelRoots_ComfyUI_ExcludesPerCategoryFoldersFromExtraModelPaths()
+    {
+        // The bug: every category entry in extra_model_paths.yaml was registered as a root,
+        // so one yaml produced a Settings list of twenty folders where one was correct.
+        var install = Dir("Comfy");
+        File.WriteAllText(Path.Combine(install, "main.py"), "# comfy");
+        var modelsDir = Dir("Comfy", "models");
+
+        var library = Dir("Library");
+        var loras = Dir("Library", "Lora");
+        var vae = Dir("Library", "VAE");
+        File.WriteAllLines(Path.Combine(install, "extra_model_paths.yaml"),
+        [
+            "comfyui:",
+            $"    base_path: {library}",
+            "    loras: Lora/",
+            "    vae: VAE/",
+        ]);
+
+        var roots = BaseModelFolderRegistrar.ResolveModelRoots(
+            Package(install, InstallerType.ComfyUI));
+
+        roots.Should().BeEquivalentTo(new[] { modelsDir, library },
+            o => o.WithoutStrictOrdering(),
+            "only the installation's models/ folder and the shared base_path are roots");
+        roots.Should().NotContain(loras).And.NotContain(vae);
+    }
+
+    [Fact]
+    public async Task PruneRedundantFolders_RemovesTheCategoryRows_AndKeepsTheRoots()
+    {
+        var install = Dir("Comfy");
+        File.WriteAllText(Path.Combine(install, "main.py"), "# comfy");
+        var modelsDir = Dir("Comfy", "models");
+        var library = Dir("Library");
+        var loras = Dir("Library", "Lora");
+        File.WriteAllLines(Path.Combine(install, "extra_model_paths.yaml"),
+        [
+            "comfyui:",
+            $"    base_path: {library}",
+            "    loras: Lora/",
+        ]);
+
+        var package = Package(install, InstallerType.ComfyUI, id: 6);
+        BaseModelFolder[] rows =
+        [
+            new() { Id = 1, FolderPath = library, InstallerPackageId = 6 },
+            new() { Id = 2, FolderPath = loras, InstallerPackageId = 6 },
+            new() { Id = 3, FolderPath = modelsDir, InstallerPackageId = 6 },
+        ];
+
+        var settings = new Mock<IAppSettingsService>();
+        settings.Setup(s => s.GetAllBaseModelFoldersAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(rows);
+        IReadOnlyCollection<int>? removedIds = null;
+        settings.Setup(s => s.RemoveBaseModelFoldersAsync(It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<CancellationToken>()))
+            .Callback<IReadOnlyCollection<int>, CancellationToken>((ids, _) => removedIds = ids)
+            .ReturnsAsync(1);
+
+        var removed = await new BaseModelFolderRegistrar(settings.Object)
+            .PruneRedundantFoldersAsync([package]);
+
+        removed.Should().Be(1);
+        removedIds.Should().BeEquivalentTo(new[] { 2 }, "only the loras category row is redundant");
+    }
+
+    [Fact]
+    public async Task PruneRedundantFolders_NothingRedundant_DoesNotCallRemove()
+    {
+        var install = Dir("Forge");
+        Dir("Forge", "models");
+        var settings = new Mock<IAppSettingsService>();
+        settings.Setup(s => s.GetAllBaseModelFoldersAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new BaseModelFolder { Id = 1, FolderPath = Dir("Forge", "models"), InstallerPackageId = 1 }]);
+
+        var removed = await new BaseModelFolderRegistrar(settings.Object)
+            .PruneRedundantFoldersAsync([Package(install, InstallerType.Forge, id: 1)]);
+
+        removed.Should().Be(0);
+        settings.Verify(
+            s => s.RemoveBaseModelFoldersAsync(It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<CancellationToken>()),
+            Times.Never, "an empty prune must not issue a write");
+    }
+
+    [Fact]
+    public async Task PruneRedundantFolders_SwallowsFailures()
+    {
+        var settings = new Mock<IAppSettingsService>();
+        settings.Setup(s => s.GetAllBaseModelFoldersAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("db down"));
+
+        var removed = 0;
+        var act = async () => removed = await new BaseModelFolderRegistrar(settings.Object)
+            .PruneRedundantFoldersAsync([Package(Dir("Forge"), InstallerType.Forge)]);
+
+        await act.Should().NotThrowAsync("a cleanup failure must never break app startup");
+        removed.Should().Be(0);
+    }
 }
