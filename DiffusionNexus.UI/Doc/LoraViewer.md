@@ -477,7 +477,7 @@ The third tab in the LoRA Viewer reorganizes installed LoRA files on disk into a
 
 ### What it does
 
-The Sorter takes the LoRAs the app already knows about (the same set as the Installed tab), computes a target folder layout, displays it as an expandable tree preview, and — only after the user clicks **Start Sorting** — moves or copies each LoRA **together with its sidecar files** (`.civitai.info`, `.json`, `.preview.*`, `.txt`) into that layout. The database is updated in move mode so the library remains current; copy mode keeps the DB pointing at the originals.
+The Sorter takes the LoRAs the app already knows about (the same set as the Installed tab), computes a target folder layout, displays it as an expandable tree preview, and — only after the user clicks **Start Sorting** — moves or copies each LoRA **together with its sidecar files** (`.civitai.info`, `.json`, `.preview.*`, `.txt`, video previews — the same set `StaticFileTypes.GeneralExtensions` counts as part of a model) into that layout. The database is updated in move mode so the library remains current; copy mode keeps the DB pointing at the originals.
 
 ### Options
 
@@ -485,7 +485,7 @@ The Sorter takes the LoRAs the app already knows about (the same set as the Inst
 |--------|---------|---------|-------|
 | **Source folder** | One enabled LoRA source, or any folder via Browse | Favorite source, else first | Arbitrary folders trigger metadata resolution on the fly via hash lookup. |
 | **Target folder** | "Same as source" or any picked folder | Same as source | If target lies in a different registered LoRA source, a warning alerts that colliding sources can lead to unpredictable outcomes. |
-| **Folder structure** | Base model only · Base model + category | Base model + category | Categories inferred from tags using the same logic as the download pipeline. Unknown base model or category → `Unknown\` folder. |
+| **Folder structure** | Base model only · Base model + category | Base model + category | Categories inferred from tags by `SorterCategoryResolver`, the one helper the download pipeline also uses. Unknown base model → `Unknown\` folder; an unresolved **category** adds no segment at all, exactly as the downloader omits it — otherwise sorting and downloading would move the same files back and forth forever. |
 | **Operation** | Move · Copy | Move | Move shows a warning that old folder structure cannot be restored automatically. Copy into the source root itself is blocked (would re-import on next scan). |
 | **Delete empty source dirs** | on/off | off | Move mode only; triggered after the run completes. |
 
@@ -493,7 +493,8 @@ The Sorter takes the LoRAs the app already knows about (the same set as the Inst
 
 Generic filenames like `V1.safetensors` from different models can collide once sorted into the same base model + category folder. The Sorter detects these collisions during preview and resolves them automatically:
 
-1. **Different content, same target name → deterministic auto-rename**: files are suffixed with their Civitai version ID (the downloader's convention), or `_2`, `_3`, etc. for files without one. Deterministic names make re-runs idempotent — a second pass finds files in place and skips them.
+1. **Different content, same target name → deterministic auto-rename**: files are suffixed with their Civitai version ID (the downloader's convention), or `_2`, `_3`, etc. for files without one. The version-suffixed name is content-compared before `_2` is considered, so a copy-mode re-run recognises its own earlier copy and transfers nothing.
+   A file that cannot be read (locked by a running backend) counts as different content: it is renamed around, never overwritten.
 2. **Identical content, same target → skip the second copy** and report it. The summary points to the existing Find Duplicates tool for cleanup.
 
 **No overwrite occurs.** Renamed files take their sidecars with them and their DB row (move mode) gets the new path. If two DB rows pointed at the same file (a historic deduplication edge), the file moves once and both rows are updated.
@@ -510,15 +511,17 @@ If `free < required + 1 GB` safety margin, the available-space bar turns red and
 
 ### Sort history manifest
 
-Every run writes a full plan to `%LocalAppData%\DiffusionNexus\SortHistory\{timestamp}.json` — one record per file with old path → new path, operation, and sizes. Each completed file is flagged in the manifest as it finishes. This enables a future "Restore previous structure" UI (not v1).
+Every run writes a full plan to `%LocalAppData%\DiffusionNexus\SortHistory\{timestamp}.json` — one record per file with old path → new path, operation, sizes, and each sidecar's source/target. Completion is journalled separately, one appended line per finished file, into `{timestamp}.completed.jsonl`: appending is O(1) and a killed run costs at most the last line, whereas rewriting the plan file per file was O(n²) and left truncated JSON. This enables a future "Restore previous structure" UI (not v1). If the history directory cannot be written the run continues without a restore point.
 
 ### Metadata cache
 
 Files not yet in the database (when browsing arbitrary folders) are resolved via:
 
-1. DB lookup by path, then by SHA256 hash (file known under another path).
-2. Local sidecars (`.civitai.info` / `.json` next to the file).
+1. Local `.civitai.info` sidecar next to the file (also the source of the tags used for category inference).
+2. Per-hash disk cache (below).
 3. Civitai hash lookup API call (same as the sync pipeline).
+
+DB rows are matched by path earlier, when the cached library is loaded; there is no by-hash DB lookup (descoped from the spec). A file that cannot be hashed or an API shape change resolves as unknown rather than failing the pass, and the API key is read once per pass, not once per file.
 
 Downloaded metadata is cached in `%LocalAppData%\DiffusionNexus\SorterCache\{sha256}.json` so re-runs or re-previews never hit the network twice for the same file. The cache is a lookup cache only — the DB is never polluted with unregistered folders.
 
