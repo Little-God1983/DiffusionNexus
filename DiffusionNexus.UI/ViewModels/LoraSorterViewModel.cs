@@ -360,6 +360,9 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         if (SelectedSourceFolder is null)
         {
             _resolveCts?.Cancel();
+            // _lastPlan goes with the rest: leaving it behind is the same stale-armed-Start trap
+            // DisarmPlan exists for.
+            _lastPlan = null;
             PreviewRoots.Clear();
             PreviewSummary = null;
             DiskSummary = null;
@@ -382,8 +385,12 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         // Cancel any in-flight pass unconditionally — even a cache-hit pass for a different
         // selection must stop a stale resolve for a previously-selected source, otherwise it can
         // complete later and its continuation (below) clobbers what this pass is about to commit.
+        // Cancel only: each pass disposes its own CTS in its finally, once its awaited work has
+        // actually finished. Disposing the *previous* pass's source from here would race a resolve
+        // that is still running into an ObjectDisposedException the moment it next handed the token
+        // to HttpClient — and _resolveCts is null whenever no pass is in flight, so Cancel() can
+        // never land on a disposed source either.
         _resolveCts?.Cancel();
-        _resolveCts?.Dispose();
 
         // One CTS per pass, created even on a cache hit. Planning re-hashes on every collision and
         // every option toggle re-plans, so it can run for minutes on a large library — and the
@@ -509,10 +516,20 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         catch (Exception ex)
         {
             _logger?.Error(LogCategory.FileSystem, LogSource, $"Preview failed: {ex.Message}", ex);
-            StatusMessage = $"Preview failed: {ex.Message}";
-            _statusMessageIsWarning = false;
+            // Logged either way, but only painted when this pass still owns the state — a superseded
+            // pass that dies on its way out must not overwrite the newer pass's result with an error.
             if (IsCurrentPass())
+            {
+                StatusMessage = $"Preview failed: {ex.Message}";
+                _statusMessageIsWarning = false;
                 DisarmPlan($"Preview failed: {ex.Message}");
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(_resolveCts, passCts))
+                _resolveCts = null;
+            passCts.Dispose();
         }
     }
 
