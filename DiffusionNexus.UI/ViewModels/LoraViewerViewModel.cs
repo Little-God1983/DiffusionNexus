@@ -335,14 +335,15 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             ? new LoraSorterViewModel()
             : new LoraSorterViewModel(
                 _settingsService, _syncService, _logger,
-                new DbLocalPathUpdater(scopeFactory),
+                new DbLocalPathUpdater(scopeFactory, _logger),
                 new SorterMetadataResolver(_civitaiClient, GetApiKeyForSorterAsync,
                     SorterMetadataResolver.DefaultCacheDirectory, ComputeFullSha256, _logger),
                 new FileOperations(),
                 DiskUtility.GetAvailableSpace,
                 ComputeFullSha256,
                 File.Exists,
-                SortHistoryWriter.DefaultHistoryDirectory);
+                SortHistoryWriter.DefaultHistoryDirectory,
+                loadCachedFiles: LoadCachedFilesForSorterAsync);
         SorterViewModel.SortCompleted += (_, _) => _ = RefreshAsync();
 
         _ = InitializeBaseModelFilterAsync();
@@ -1328,6 +1329,22 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// by-hash metadata lookup (<see cref="DownloadMetadataForTileAsync"/>); also handed to
     /// <see cref="SorterMetadataResolver"/> for the LoRA Sorter's unknown-file resolution.
     /// </summary>
+    /// <summary>
+    /// Loads the installed-file rows for the LoRA Sorter from a fresh DI scope, the same pattern
+    /// <see cref="LoadCachedTilesAsync"/> uses. <c>IModelSyncService</c> and <c>IUnitOfWork</c> are
+    /// transient while this ViewModel is scoped, so <see cref="_syncService"/> is a single
+    /// session-long <c>DbContext</c>; the sorter starts preview passes fire-and-forget from three
+    /// option hooks with no re-entrancy guard, so handing it that shared instance risked
+    /// "A second operation was started on this context instance before a previous operation
+    /// completed" on a big library.
+    /// </summary>
+    private static async Task<IReadOnlyList<InstalledModelFile>> LoadCachedFilesForSorterAsync(CancellationToken ct)
+    {
+        using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+        var freshSyncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
+        return await freshSyncService.LoadCachedFilesAsync(ct);
+    }
+
     private async Task<string?> GetApiKeyForSorterAsync()
     {
         using var keyScope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();

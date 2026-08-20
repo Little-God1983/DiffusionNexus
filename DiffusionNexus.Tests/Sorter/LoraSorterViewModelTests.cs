@@ -45,7 +45,8 @@ public sealed class LoraSorterViewModelTests : IDisposable
         Func<string, long>? getAvailableSpace = null,
         Func<string, bool>? fileExistsOnDisk = null,
         Func<string, string>? resolverHash = null,
-        Func<string, CancellationToken, Task>? deleteEmptyDirectories = null)
+        Func<string, CancellationToken, Task>? deleteEmptyDirectories = null,
+        Func<CancellationToken, Task<IReadOnlyList<InstalledModelFile>>>? loadCachedFiles = null)
     {
         _settings.Setup(s => s.GetEnabledLoraSourcesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([SourceRoot]);
@@ -64,7 +65,8 @@ public sealed class LoraSorterViewModelTests : IDisposable
             hashFile: _ => "hash",
             fileExistsOnDisk: fileExistsOnDisk ?? File.Exists,
             historyDirectory: Path.Combine(_root.FullName, "history"),
-            deleteEmptyDirectories: deleteEmptyDirectories);
+            deleteEmptyDirectories: deleteEmptyDirectories,
+            loadCachedFiles: loadCachedFiles);
     }
 
     [Fact]
@@ -374,6 +376,28 @@ public sealed class LoraSorterViewModelTests : IDisposable
         await vm.InitializeAsync(); // must not throw
 
         vm.StatusMessage.Should().Contain("Preview failed");
+    }
+
+    [Fact]
+    public async Task AnInjectedLoadCachedFilesDelegateIsUsedInsteadOfTheSharedSyncService()
+    {
+        // Production passes a delegate that opens a fresh DI scope per call, so the sorter never
+        // touches the session-long DbContext the scoped LoraViewerViewModel holds. If the VM
+        // silently fell back to the shared IModelSyncService, this would preview nothing.
+        var a = WriteLora(@"flat\a.safetensors");
+        var calls = 0;
+        var vm = CreateVm(cached: [], loadCachedFiles: _ =>
+        {
+            calls++;
+            return Task.FromResult<IReadOnlyList<InstalledModelFile>>(
+                [Installed(a, "SDXL 1.0", "character")]);
+        });
+
+        await vm.InitializeAsync();
+
+        calls.Should().Be(1);
+        _sync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Never);
+        vm.PreviewRoots.Single().Name.Should().Be("SDXL 1.0");
     }
 
     [Fact]

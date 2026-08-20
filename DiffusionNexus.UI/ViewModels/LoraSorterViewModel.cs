@@ -25,7 +25,6 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     private static readonly string[] ModelExtensions = [".safetensors", ".ckpt", ".pt", ".pth"];
 
     private readonly IAppSettingsService? _settingsService;
-    private readonly IModelSyncService? _syncService;
     private readonly IUnifiedLogger? _logger;
     private readonly ILocalPathUpdater _pathUpdater;
     private readonly SorterMetadataResolver _metadataResolver;
@@ -38,6 +37,22 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// <summary>Post-run "delete empty source folders" step, injected so the failure path is
     /// testable — an undeletable folder cannot be created reliably from a test.</summary>
     private readonly Func<string, CancellationToken, Task> _deleteEmptyDirectories;
+
+    /// <summary>
+    /// Loads the DB-known installed files. Injected rather than reached through
+    /// <c>IModelSyncService</c> directly, because that instance is shared: it and
+    /// <c>IUnitOfWork</c> are both transient while <c>LoraViewerViewModel</c> is scoped, so the
+    /// viewer resolves exactly one sync service — and therefore one <c>DbContext</c> — for the
+    /// whole session and forwards that same instance here. Preview passes are started
+    /// fire-and-forget from three option hooks and <c>RunBusyAsync</c> has no re-entrancy guard, so
+    /// two passes could each issue a multi-second AsSplitQuery on that one context and hit
+    /// "A second operation was started on this context instance". Every other bulk consumer in
+    /// <c>LoraViewerViewModel</c> (LoadCachedTilesAsync, DownloadMissingMetadataAsync,
+    /// RebuildTilesFromDatabaseAsync) resolves a fresh scope for exactly this reason; the
+    /// production wiring passes a delegate that does the same. Null only when no sync service was
+    /// supplied at all (design time).
+    /// </summary>
+    private readonly Func<CancellationToken, Task<IReadOnlyList<InstalledModelFile>>>? _loadCachedFiles;
 
     private LoraSortPlan? _lastPlan;
     private CancellationTokenSource? _sortCts;
@@ -96,7 +111,6 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         _isInitializing = true;
 
         _settingsService = null;
-        _syncService = null;
         _logger = null;
         _pathUpdater = new NullLocalPathUpdater();
         _metadataResolver = new SorterMetadataResolver(null, () => Task.FromResult<string?>(null),
@@ -107,6 +121,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         _fileExistsOnDisk = File.Exists;
         _historyDirectory = SortHistoryWriter.DefaultHistoryDirectory;
         _deleteEmptyDirectories = DefaultDeleteEmptyDirectories;
+        _loadCachedFiles = null;
         HookIsBusyNotifications();
 
         SourceFolders.Add(@"C:\Demo\Loras");
@@ -130,10 +145,10 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         Func<string, string> hashFile,
         Func<string, bool> fileExistsOnDisk,
         string historyDirectory,
-        Func<string, CancellationToken, Task>? deleteEmptyDirectories = null)
+        Func<string, CancellationToken, Task>? deleteEmptyDirectories = null,
+        Func<CancellationToken, Task<IReadOnlyList<InstalledModelFile>>>? loadCachedFiles = null)
     {
         _settingsService = settingsService;
-        _syncService = syncService;
         _logger = logger;
         _pathUpdater = pathUpdater ?? throw new ArgumentNullException(nameof(pathUpdater));
         _metadataResolver = metadataResolver ?? throw new ArgumentNullException(nameof(metadataResolver));
@@ -143,6 +158,8 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         _fileExistsOnDisk = fileExistsOnDisk ?? throw new ArgumentNullException(nameof(fileExistsOnDisk));
         _historyDirectory = historyDirectory ?? throw new ArgumentNullException(nameof(historyDirectory));
         _deleteEmptyDirectories = deleteEmptyDirectories ?? DefaultDeleteEmptyDirectories;
+        _loadCachedFiles = loadCachedFiles
+            ?? (syncService is null ? null : syncService.LoadCachedFilesAsync);
         HookIsBusyNotifications();
     }
 
@@ -520,9 +537,9 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         // saved in Settings is picked up instead of being stale for the resolver's lifetime.
         _metadataResolver.ResetApiKeyCache();
 
-        var cached = _syncService is null
+        IReadOnlyList<InstalledModelFile> cached = _loadCachedFiles is null
             ? Array.Empty<InstalledModelFile>()
-            : await _syncService.LoadCachedFilesAsync(ct);
+            : await _loadCachedFiles(ct);
 
         ct.ThrowIfCancellationRequested();
 
@@ -762,7 +779,8 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
             _sortCts!.Token, taskHandle?.CancellationToken ?? CancellationToken.None);
 
-        var executor = new LoraSortExecutor(_fileOperations, _pathUpdater, new SortHistoryWriter(_historyDirectory), _logger);
+        var executor = new LoraSortExecutor(_fileOperations, _pathUpdater,
+            new SortHistoryWriter(_historyDirectory, _logger), _logger);
         var progress = new Progress<(double Fraction, string Status)>(p =>
         {
             BusyMessage = $"{p.Status} ({(int)(p.Fraction * 100)}%)";
