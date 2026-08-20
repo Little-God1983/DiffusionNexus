@@ -177,12 +177,16 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 
     partial void OnIncludeCategoryChanged(bool value)
     {
+        // A run-result banner ("Done: …"/"Cancelled — …") survives exactly its own post-run
+        // recompute; any further user action clears it, same as a fresh preview warning would.
+        ClearRunResultBanner();
         if (_isInitializing) return;
         _ = RecomputePreviewAsync();
     }
 
     partial void OnIsMoveChanged(bool value)
     {
+        ClearRunResultBanner();
         if (_isInitializing) return;
         _ = RecomputePreviewAsync();
     }
@@ -191,6 +195,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     {
         OnPropertyChanged(nameof(EffectiveTargetRoot));
         StartSortingCommand.NotifyCanExecuteChanged();
+        ClearRunResultBanner();
         if (_isInitializing) return;
         _ = RecomputePreviewAsync();
     }
@@ -199,8 +204,15 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     {
         OnPropertyChanged(nameof(EffectiveTargetRoot));
         StartSortingCommand.NotifyCanExecuteChanged();
+        ClearRunResultBanner();
         if (_isInitializing) return;
         _ = RecomputePreviewAsync();
+    }
+
+    private void ClearRunResultBanner()
+    {
+        StatusMessage = null;
+        _statusMessageIsWarning = false;
     }
 
     partial void OnTransferCountChanged(int value) => StartSortingCommand.NotifyCanExecuteChanged();
@@ -295,6 +307,13 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         var sourceFolder = SelectedSourceFolder!;
         var targetRoot = EffectiveTargetRoot!;
 
+        // Cancel any in-flight resolve unconditionally — even a cache-hit pass for a different
+        // selection must stop a stale resolve for a previously-selected source, otherwise it can
+        // complete later and its continuation (below) clobbers what this pass is about to commit.
+        _resolveCts?.Cancel();
+        _resolveCts?.Dispose();
+        _resolveCts = null;
+
         List<SortCandidate> candidates;
         if (_candidateCache is not null && string.Equals(_candidateCacheSourceFolder, sourceFolder, StringComparison.OrdinalIgnoreCase))
         {
@@ -302,8 +321,6 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         }
         else
         {
-            _resolveCts?.Cancel();
-            _resolveCts?.Dispose();
             var resolveCts = new CancellationTokenSource();
             _resolveCts = resolveCts;
 
@@ -314,6 +331,15 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             catch (OperationCanceledException)
             {
                 return; // a newer recompute pass superseded this one
+            }
+
+            // Commit guard: the awaited resolve may have let a newer recompute pass change the
+            // selection out from under this one (e.g. switched away and back before this pass
+            // finished). Don't cache or paint results that no longer match the live selection.
+            if (!string.Equals(sourceFolder, SelectedSourceFolder, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(targetRoot, EffectiveTargetRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
             }
 
             _candidateCache = candidates;

@@ -163,10 +163,7 @@ public sealed class LoraSorterViewModelTests : IDisposable
     {
         var a = WriteLora(@"flat\a.safetensors");
         var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
-
-        var dialog = new Mock<IDialogService>();
-        dialog.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(true);
-        vm.DialogService = dialog.Object;
+        vm.DialogService = ConfirmingDialogService();
 
         await vm.InitializeAsync();
 
@@ -177,6 +174,30 @@ public sealed class LoraSorterViewModelTests : IDisposable
 
         vm.StatusMessage.Should().Contain("Done");
         sortCompleted.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ChangingAnOptionClearsTheRunResultBanner()
+    {
+        // After a completed run the Done-banner shows; the next user action clears it.
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        vm.DialogService = ConfirmingDialogService();
+        await vm.InitializeAsync();
+        await vm.StartSortingCommand.ExecuteAsync(null);
+        vm.StatusMessage.Should().Contain("Done");
+
+        vm.IncludeCategory = !vm.IncludeCategory;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        vm.StatusMessage.Should().BeNull();
+    }
+
+    private static IDialogService ConfirmingDialogService()
+    {
+        var dialog = new Mock<IDialogService>();
+        dialog.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(true);
+        return dialog.Object;
     }
 
     [Fact]
