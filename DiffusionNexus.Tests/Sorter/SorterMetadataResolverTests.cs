@@ -1,3 +1,4 @@
+using System.Text.Json;
 using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.UI.Services.Lora.Sorting;
@@ -122,6 +123,113 @@ public sealed class SorterMetadataResolverTests : IDisposable
         var meta = await Resolver(_client.Object).ResolveAsync(model);
 
         meta.Should().Be(new ResolvedLoraMetadata("Illustrious", 2, "abc123"));
+    }
+
+    [Fact]
+    public async Task ApiKeyIsReadOncePerPassNotOncePerFile()
+    {
+        // Review 6.3: the provider opens a DI scope + DbContext + query in production, and
+        // it was awaited inline in the API call — 1000 unresolved files meant 1000 reads of
+        // a value that cannot change mid-pass.
+        var reads = 0;
+        var resolver = new SorterMetadataResolver(_client.Object,
+            () => { reads++; return Task.FromResult<string?>("key"); },
+            In("cache"), p => Path.GetFileNameWithoutExtension(p), logger: null);
+        foreach (var i in Enumerable.Range(0, 3)) WriteModel($"lora{i}.safetensors");
+
+        foreach (var i in Enumerable.Range(0, 3))
+            await resolver.ResolveAsync(In($"lora{i}.safetensors"));
+
+        reads.Should().Be(1);
+
+        // A new pass re-reads, so a key changed in Settings meanwhile is picked up.
+        // (Uses a fresh file: lora0's hash is now in the disk cache and never reaches the API.)
+        WriteModel("lora3.safetensors");
+        resolver.ResetApiKeyCache();
+        await resolver.ResolveAsync(In("lora3.safetensors"));
+        reads.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task ApiKeyProviderFailureDegradesToAnAnonymousLookup()
+    {
+        var model = WriteModel();
+        _client.Setup(c => c.GetModelVersionByHashAsync("abc123", null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CivitaiModelVersion { Id = 9, BaseModel = "Pony" });
+        var resolver = new SorterMetadataResolver(_client.Object,
+            () => throw new InvalidOperationException("settings db down"),
+            In("cache"), _ => "abc123", logger: null);
+
+        var meta = await resolver.ResolveAsync(model);
+
+        meta.BaseModelRaw.Should().Be("Pony");
+    }
+
+    [Fact]
+    public async Task UnreadableFileResolvesAsUnknownInsteadOfThrowing()
+    {
+        // Review 2.3: _hashFile → File.OpenRead throws for a .safetensors held open by a
+        // running backend, and it escaped the "never throws" contract, killing the pass.
+        var model = WriteModel();
+        var resolver = new SorterMetadataResolver(_client.Object, () => Task.FromResult<string?>(null),
+            In("cache"), _ => throw new IOException("in use"), logger: null);
+
+        var meta = await resolver.ResolveAsync(model);
+
+        meta.Should().Be(new ResolvedLoraMetadata(null, null, string.Empty));
+        _client.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task CivitaiShapeChangeResolvesAsUnknownInsteadOfThrowing()
+    {
+        // CivitaiClient.DeserializeOrThrow raises JsonException on a response-shape change;
+        // this repo has been bitten by that twice.
+        var model = WriteModel();
+        _client.Setup(c => c.GetModelVersionByHashAsync("abc123", null, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new JsonException("allowCommercialUse changed shape"));
+
+        var meta = await Resolver(_client.Object).ResolveAsync(model);
+
+        meta.Should().Be(new ResolvedLoraMetadata(null, null, "abc123"));
+    }
+
+    [Fact]
+    public async Task SidecarTagsAreExposedForCategoryInference()
+    {
+        // Review 4.2: a fully resolved LoRA in a browsed folder was still forced into
+        // Unknown\ because nothing carried its tags out of the sidecar.
+        var model = WriteModel();
+        File.WriteAllText(In("lora.civitai.info"),
+            """{"id": 5, "baseModel": "Pony", "model": {"name": "x", "tags": ["anime", "style"]}}""");
+
+        var meta = await Resolver(_client.Object).ResolveAsync(model);
+
+        meta.Tags.Should().BeEquivalentTo(["anime", "style"]);
+        SorterCategoryResolver.InferFolderName(meta.Tags).Should().Be("Style");
+    }
+
+    [Fact]
+    public async Task TopLevelTagArrayAndTagObjectsAreBothAccepted()
+    {
+        var model = WriteModel();
+        File.WriteAllText(In("lora.civitai.info"),
+            """{"id": 6, "baseModel": "Pony", "tags": ["concept", {"name": "extra"}, 42]}""");
+
+        var meta = await Resolver(_client.Object).ResolveAsync(model);
+
+        meta.Tags.Should().BeEquivalentTo(["concept", "extra"]);
+    }
+
+    [Fact]
+    public async Task SidecarWithoutTagsYieldsAnEmptyTagList()
+    {
+        var model = WriteModel();
+        File.WriteAllText(In("lora.civitai.info"), """{"id": 7, "baseModel": "Pony"}""");
+
+        var meta = await Resolver(_client.Object).ResolveAsync(model);
+
+        meta.Tags.Should().BeEmpty();
     }
 
     [Fact]
