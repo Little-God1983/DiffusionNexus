@@ -46,7 +46,18 @@
         <StackPanel Spacing="14">
 
           <StackPanel Spacing="4">
-            <TextBlock Classes="fieldLabel" Text="SOURCE FOLDER" FontSize="11" Opacity="0.6"/>
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Classes="fieldLabel" Text="SOURCE FOLDER" FontSize="11" Opacity="0.6"
+                         VerticalAlignment="Center"/>
+              <Button Grid.Column="1" Command="{Binding RefreshCommand}"
+                      Background="#2A2A2A" BorderBrush="#333" BorderThickness="1" Padding="6,2"
+                      ToolTip.Tip="Re-scan the source folder and refresh the preview">
+                <StackPanel Orientation="Horizontal" Spacing="4">
+                  <TextBlock Text="&#x21BB;" FontSize="11"/>
+                  <TextBlock Text="Refresh" FontSize="11"/>
+                </StackPanel>
+              </Button>
+            </Grid>
             <ComboBox ItemsSource="{Binding SourceFolders}"
                       SelectedItem="{Binding SelectedSourceFolder}"
                       HorizontalAlignment="Stretch"/>

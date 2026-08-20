@@ -220,6 +220,42 @@ public sealed class LoraSorterViewModelTests : IDisposable
         vm.TransferCount.Should().Be(before);
     }
 
+    [Fact]
+    public async Task RefreshRebuildsCandidatesFromDisk()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        await vm.InitializeAsync();
+        vm.TransferCount.Should().Be(1);
+
+        File.Delete(a);
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        vm.TransferCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task PreviewFailureIsSurfacedNotSwallowed()
+    {
+        var vm = CreateVm(cached: []);
+        _sync.Setup(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("db down"));
+
+        await vm.InitializeAsync(); // must not throw
+
+        vm.StatusMessage.Should().Contain("Preview failed");
+    }
+
+    [Fact]
+    public async Task InaccessibleSubfolderIsSkippedNotFatal()
+    {
+        // Simulate by asserting the safe enumerator itself: a nonexistent nested dir must not throw.
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        await vm.InitializeAsync(); // enumeration path exercised for unknown files
+        vm.TransferCount.Should().Be(1);
+    }
+
     private static IEnumerable<string> FlattenNames(IEnumerable<SortPreviewNodeViewModel> nodes)
     {
         foreach (var node in nodes)

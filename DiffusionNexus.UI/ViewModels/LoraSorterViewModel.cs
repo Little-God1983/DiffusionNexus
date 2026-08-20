@@ -47,6 +47,12 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// <summary>Cancels an in-flight candidate resolution when a newer recompute supersedes it.</summary>
     private CancellationTokenSource? _resolveCts;
 
+    /// <summary>Set by <see cref="CancelSort"/> right before it cancels <see cref="_resolveCts"/>, so
+    /// the resulting <see cref="OperationCanceledException"/> catch in <see cref="RecomputePreviewCoreAsync"/>
+    /// can tell a genuine user cancel apart from a newer recompute pass silently superseding this one
+    /// (which cancels the same field but must NOT surface a "cancelled" status message).</summary>
+    private bool _previewCancelledByUser;
+
     /// <summary>Suppresses the property-change recompute hooks while <see cref="InitializeAsync"/>
     /// is populating <see cref="SourceFolders"/>/<see cref="SelectedSourceFolder"/>, so exactly one
     /// awaited recompute runs instead of a redundant fire-and-forget pass racing it.</summary>
@@ -227,31 +233,43 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// Called from the view's <c>OnAttachedToVisualTree</c>.</summary>
     public async Task InitializeAsync()
     {
-        _isInitializing = true;
         try
         {
-            if (_settingsService is not null)
+            _isInitializing = true;
+            try
             {
-                var sources = await _settingsService.GetEnabledLoraSourcesAsync();
-                SourceFolders.Clear();
-                foreach (var source in sources)
-                    SourceFolders.Add(source);
+                if (_settingsService is not null)
+                {
+                    var sources = await _settingsService.GetEnabledLoraSourcesAsync();
+                    SourceFolders.Clear();
+                    foreach (var source in sources)
+                        SourceFolders.Add(source);
 
-                var favorite = await _settingsService.GetFavoriteLoraSourceAsync();
-                SelectedSourceFolder = favorite is not null && SourceFolders.Contains(favorite, StringComparer.OrdinalIgnoreCase)
-                    ? favorite
-                    : SourceFolders.FirstOrDefault();
+                    var favorite = await _settingsService.GetFavoriteLoraSourceAsync();
+                    SelectedSourceFolder = favorite is not null && SourceFolders.Contains(favorite, StringComparer.OrdinalIgnoreCase)
+                        ? favorite
+                        : SourceFolders.FirstOrDefault();
+                }
             }
-        }
-        finally
-        {
-            _isInitializing = false;
-        }
+            finally
+            {
+                _isInitializing = false;
+            }
 
-        // Initialize always re-enumerates: a prior run may have moved files since this VM was last used.
-        _candidateCache = null;
-        _candidateCacheSourceFolder = null;
-        await RecomputePreviewAsync();
+            // Initialize always re-enumerates: a prior run may have moved files since this VM was last used.
+            _candidateCache = null;
+            _candidateCacheSourceFolder = null;
+            await RecomputePreviewAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // A blank tab with an unobserved task exception is worse than a visible failure —
+            // e.g. a DB error resolving enabled sources, or an access-denied source folder.
+            _isInitializing = false;
+            _logger?.Error(LogCategory.FileSystem, LogSource, $"Preview failed: {ex.Message}", ex);
+            StatusMessage = $"Preview failed: {ex.Message}";
+            _statusMessageIsWarning = false;
+        }
     }
 
     [RelayCommand]
@@ -314,79 +332,110 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         _resolveCts?.Dispose();
         _resolveCts = null;
 
-        List<SortCandidate> candidates;
-        if (_candidateCache is not null && string.Equals(_candidateCacheSourceFolder, sourceFolder, StringComparison.OrdinalIgnoreCase))
+        try
         {
-            candidates = _candidateCache;
+            List<SortCandidate> candidates;
+            if (_candidateCache is not null && string.Equals(_candidateCacheSourceFolder, sourceFolder, StringComparison.OrdinalIgnoreCase))
+            {
+                candidates = _candidateCache;
+            }
+            else
+            {
+                var resolveCts = new CancellationTokenSource();
+                _resolveCts = resolveCts;
+
+                // Candidate resolution touches disk (enumeration + per-file metadata/hashing) and
+                // must not run on the UI thread — a browsed folder with thousands of unknown files
+                // would freeze the overlay. ResolveCandidatesAsync used to set BusyMessage directly;
+                // it now reports through this UI-thread-constructed IProgress<string> instead, whose
+                // Report() marshals back via the captured SynchronizationContext.
+                var resolveProgress = new Progress<string>(msg => BusyMessage = msg);
+
+                try
+                {
+                    candidates = await Task.Run(
+                        () => ResolveCandidatesAsync(sourceFolder, resolveProgress, resolveCts.Token),
+                        resolveCts.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Two callers cancel _resolveCts: a newer recompute pass superseding this stale
+                    // one (silent — the newer pass will paint its own result), or the user hitting
+                    // Cancel on the busy overlay (surfaced below). _previewCancelledByUser tells them apart.
+                    if (_previewCancelledByUser)
+                    {
+                        _previewCancelledByUser = false;
+                        StatusMessage = "Cancelled — preview not updated.";
+                        _statusMessageIsWarning = false;
+                    }
+                    return;
+                }
+
+                // Commit guard: the awaited resolve may have let a newer recompute pass change the
+                // selection out from under this one (e.g. switched away and back before this pass
+                // finished). Don't cache or paint results that no longer match the live selection.
+                if (!string.Equals(sourceFolder, SelectedSourceFolder, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(targetRoot, EffectiveTargetRoot, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                _candidateCache = candidates;
+                _candidateCacheSourceFolder = sourceFolder;
+            }
+
+            // BuildPlan also touches disk (lazy hashing on collisions), so it's offloaded too. The
+            // options snapshot is read here — on the calling (UI) context — not from inside the
+            // Task.Run body.
+            var options = BuildOptions();
+            var plan = await Task.Run(() => new LoraSortPlanner(_hashFile, _fileExistsOnDisk).BuildPlan(candidates, options));
+            _lastPlan = plan;
+
+            BuildPreviewTree(plan, targetRoot);
+
+            TransferCount = plan.TransferCount;
+            PreviewSummary = $"✓ {plan.TransferCount} files will {(IsMove ? "move" : "copy")}   ·   {plan.AlreadyInPlaceCount} already in place   ·   ✎ {plan.RenamedCount} auto-renamed · {plan.SkippedDuplicateCount} duplicates skipped";
+
+            var free = _getAvailableSpace(targetRoot);
+            HasEnoughSpace = free >= plan.RequiredBytes + SafetyMarginBytes;
+            DiskSummary = $"{SortPreviewNodeViewModel.FormatBytes(plan.RequiredBytes)} required · {SortPreviewNodeViewModel.FormatBytes(free)} free";
+            BlockReason = HasEnoughSpace ? null : "Not enough free space on the target drive.";
+
+            // Only clear a stale preview warning — a sort-run result message ("Done: …"/"Cancelled — …")
+            // set by StartSortingAsync after its post-run recompute must survive this pass.
+            if (_statusMessageIsWarning)
+            {
+                StatusMessage = null;
+                _statusMessageIsWarning = false;
+            }
+
+            if (!IsMove && string.Equals(targetRoot, sourceFolder, StringComparison.OrdinalIgnoreCase))
+            {
+                HasEnoughSpace = false;
+                BlockReason = "Copy into the source folder would duplicate every file — pick a different target.";
+            }
+            else if (SourceFolders.Any(s => !string.Equals(s, sourceFolder, StringComparison.OrdinalIgnoreCase) && IsWithin(targetRoot, s)))
+            {
+                StatusMessage = "⚠ Target is another LoRA source — colliding sources can lead to unpredictable outcomes (duplicate imports on the next scan).";
+                _statusMessageIsWarning = true;
+            }
+
+            _logger?.Info(LogCategory.FileSystem, LogSource,
+                $"Preview: {plan.TransferCount} transfers, {plan.RenamedCount} renames, {plan.SkippedDuplicateCount} duplicates");
         }
-        else
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            var resolveCts = new CancellationTokenSource();
-            _resolveCts = resolveCts;
-
-            try
-            {
-                candidates = await ResolveCandidatesAsync(sourceFolder, resolveCts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                return; // a newer recompute pass superseded this one
-            }
-
-            // Commit guard: the awaited resolve may have let a newer recompute pass change the
-            // selection out from under this one (e.g. switched away and back before this pass
-            // finished). Don't cache or paint results that no longer match the live selection.
-            if (!string.Equals(sourceFolder, SelectedSourceFolder, StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(targetRoot, EffectiveTargetRoot, StringComparison.OrdinalIgnoreCase))
-            {
-                return;
-            }
-
-            _candidateCache = candidates;
-            _candidateCacheSourceFolder = sourceFolder;
-        }
-
-        var plan = new LoraSortPlanner(_hashFile, _fileExistsOnDisk).BuildPlan(candidates, BuildOptions());
-        _lastPlan = plan;
-
-        BuildPreviewTree(plan, targetRoot);
-
-        TransferCount = plan.TransferCount;
-        PreviewSummary = $"✓ {plan.TransferCount} files will {(IsMove ? "move" : "copy")}   ·   {plan.AlreadyInPlaceCount} already in place   ·   ✎ {plan.RenamedCount} auto-renamed · {plan.SkippedDuplicateCount} duplicates skipped";
-
-        var free = _getAvailableSpace(targetRoot);
-        HasEnoughSpace = free >= plan.RequiredBytes + SafetyMarginBytes;
-        DiskSummary = $"{SortPreviewNodeViewModel.FormatBytes(plan.RequiredBytes)} required · {SortPreviewNodeViewModel.FormatBytes(free)} free";
-        BlockReason = HasEnoughSpace ? null : "Not enough free space on the target drive.";
-
-        // Only clear a stale preview warning — a sort-run result message ("Done: …"/"Cancelled — …")
-        // set by StartSortingAsync after its post-run recompute must survive this pass.
-        if (_statusMessageIsWarning)
-        {
-            StatusMessage = null;
+            _logger?.Error(LogCategory.FileSystem, LogSource, $"Preview failed: {ex.Message}", ex);
+            StatusMessage = $"Preview failed: {ex.Message}";
             _statusMessageIsWarning = false;
         }
-
-        if (!IsMove && string.Equals(targetRoot, sourceFolder, StringComparison.OrdinalIgnoreCase))
-        {
-            HasEnoughSpace = false;
-            BlockReason = "Copy into the source folder would duplicate every file — pick a different target.";
-        }
-        else if (SourceFolders.Any(s => !string.Equals(s, sourceFolder, StringComparison.OrdinalIgnoreCase) && IsWithin(targetRoot, s)))
-        {
-            StatusMessage = "⚠ Target is another LoRA source — colliding sources can lead to unpredictable outcomes (duplicate imports on the next scan).";
-            _statusMessageIsWarning = true;
-        }
-
-        _logger?.Info(LogCategory.FileSystem, LogSource,
-            $"Preview: {plan.TransferCount} transfers, {plan.RenamedCount} renames, {plan.SkippedDuplicateCount} duplicates");
     }
 
     /// <summary>Enumerates DB-known candidates under <paramref name="sourceFolder"/> plus
     /// unknown on-disk files, resolving the latter's metadata. Only invoked when the candidate
     /// cache misses (source-folder change or <see cref="InitializeAsync"/>) — option toggles
     /// reuse the cached result and skip this entirely (spec: preview recompute is in-memory).</summary>
-    private async Task<List<SortCandidate>> ResolveCandidatesAsync(string sourceFolder, CancellationToken ct)
+    private async Task<List<SortCandidate>> ResolveCandidatesAsync(string sourceFolder, IProgress<string>? progress, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
 
@@ -416,7 +465,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         }
 
         var unknownFiles = Directory.Exists(sourceFolder)
-            ? Directory.EnumerateFiles(sourceFolder, "*", SearchOption.AllDirectories)
+            ? EnumerateFilesSafe(sourceFolder)
                 .Where(p => ModelExtensions.Contains(Path.GetExtension(p), StringComparer.OrdinalIgnoreCase))
                 .Where(p => !knownPaths.Contains(Path.GetFullPath(p)))
                 .ToList()
@@ -429,7 +478,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         {
             ct.ThrowIfCancellationRequested();
             var path = unknownFiles[i];
-            BusyMessage = $"Resolving metadata {i + 1}/{unknownFiles.Count}…";
+            progress?.Report($"Resolving metadata {i + 1}/{unknownFiles.Count}…");
             var metadata = await _metadataResolver.ResolveAsync(path, ct);
             var sizeBytes = new FileInfo(path).Length;
             candidates.Add(new SortCandidate(path, metadata.BaseModelRaw,
@@ -440,8 +489,71 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         return candidates;
     }
 
+    /// <summary>Recursive directory walk that tolerates an inaccessible subtree instead of aborting
+    /// the whole enumeration — unlike <c>Directory.EnumerateFiles(root, "*", AllDirectories)</c>,
+    /// which throws (and kills the entire preview) the moment it hits one permission-denied folder.
+    /// Arbitrary browsed folders are a headline feature of the sorter, so this is expected to happen.</summary>
+    private IEnumerable<string> EnumerateFilesSafe(string root)
+    {
+        var pending = new Stack<string>();
+        pending.Push(root);
+
+        while (pending.Count > 0)
+        {
+            var dir = pending.Pop();
+
+            string[] files;
+            try
+            {
+                files = Directory.GetFiles(dir);
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+            {
+                _logger?.Warn(LogCategory.FileSystem, LogSource, $"Skipping inaccessible folder: {dir} ({ex.Message})");
+                continue;
+            }
+
+            foreach (var file in files)
+                yield return file;
+
+            string[] subdirectories;
+            try
+            {
+                subdirectories = Directory.GetDirectories(dir);
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+            {
+                _logger?.Warn(LogCategory.FileSystem, LogSource, $"Skipping inaccessible folder: {dir} ({ex.Message})");
+                continue;
+            }
+
+            foreach (var subdirectory in subdirectories)
+                pending.Push(subdirectory);
+        }
+    }
+
     [RelayCommand]
-    private void CancelSort() => _sortCts?.Cancel();
+    private void CancelSort()
+    {
+        _sortCts?.Cancel();
+        if (_resolveCts is not null)
+        {
+            _previewCancelledByUser = true;
+            _resolveCts.Cancel();
+        }
+    }
+
+    /// <summary>Manually re-syncs a stale preview: clears the resolved-candidate cache and
+    /// re-enumerates disk from scratch, same as switching source folders would. Needed because
+    /// nothing else invalidates the cache — files can change underneath a browsed folder (or an
+    /// enabled source) without the VM ever finding out.</summary>
+    [RelayCommand]
+    private async Task RefreshAsync()
+    {
+        _candidateCache = null;
+        _candidateCacheSourceFolder = null;
+        await RecomputePreviewAsync();
+    }
 
     [RelayCommand(CanExecute = nameof(CanStart))]
     private async Task StartSortingAsync()
@@ -525,7 +637,11 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         LoraSortResult result;
         try
         {
-            result = await executor.ExecuteAsync(plan, progress, linkedCts.Token);
+            // ExecuteAsync is almost entirely synchronous file I/O and hashing — awaited directly it
+            // would freeze the UI thread for the whole run (overlay never repaints, Cancel unclickable).
+            // The executor touches no UI-bound state; `progress` was constructed above on the calling
+            // (UI) context, so its Report() callbacks still marshal back correctly from the pool thread.
+            result = await Task.Run(() => executor.ExecuteAsync(plan, progress, linkedCts.Token));
             taskHandle?.Complete($"{result.Moved + result.Copied} sorted, {result.Skipped} duplicates skipped, {result.Failed} failed.");
         }
         catch (Exception ex)
