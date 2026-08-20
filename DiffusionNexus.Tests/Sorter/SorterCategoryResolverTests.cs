@@ -12,9 +12,17 @@ public class SorterCategoryResolverTests
             .Should().Be(CivitaiCategory.Style);
 
     [Fact]
-    public void InfersFromFirstMatchingTagCaseInsensitiveWithSpaces()
-        => SorterCategoryResolver.Resolve(null, new[] { "anime", "base model" })
-            .Should().Be(CivitaiCategory.BaseModel);
+    public void InfersFromFirstMatchingSingleWordTagCaseInsensitive()
+        => SorterCategoryResolver.Resolve(null, new[] { "anime", "STYLE" })
+            .Should().Be(CivitaiCategory.Style);
+
+    [Fact]
+    public void MultiWordTagDoesNotParseMatchingDownloaderBehavior()
+        // Downloader parity (CivitaiResultViewModel.InferCategoryFromTags): "base model"
+        // normalizes to "base_model", which does not parse to CivitaiCategory.BaseModel.
+        // Sorted files must land exactly where downloads land, so we mirror this bug-for-bug.
+        => SorterCategoryResolver.Resolve(null, new[] { "base model" })
+            .Should().Be(CivitaiCategory.Unknown);
 
     [Fact]
     public void NullAndWhitespaceTagsAreSkipped()

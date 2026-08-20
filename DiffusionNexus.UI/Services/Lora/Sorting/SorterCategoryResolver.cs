@@ -20,7 +20,7 @@ public static class SorterCategoryResolver
         foreach (var tagName in tagNames)
         {
             if (string.IsNullOrWhiteSpace(tagName)) continue;
-            var normalized = tagName.Replace(" ", "").Trim();
+            var normalized = tagName.Replace(" ", "_").Trim();
             if (Enum.TryParse<CivitaiCategory>(normalized, ignoreCase: true, out var category)
                 && category != CivitaiCategory.Unknown)
             {
