@@ -1,5 +1,6 @@
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.Lora.Sorting;
 using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.UI.ViewModels;
@@ -132,5 +133,79 @@ public sealed class LoraSorterViewModelTests : IDisposable
 
         vm.TransferCount.Should().Be(1);
         vm.PreviewRoots.Single().Name.Should().Be("Unknown");
+    }
+
+    [Fact]
+    public async Task SiblingFolderSharingPrefixIsNotSwept()
+    {
+        // Source "...\Loras" must not sweep "...\Loras_backup" — a bare StartsWith would match
+        // the shared name prefix even though the sibling folder is a different location.
+        var a = WriteLora(@"flat\a.safetensors");
+        var siblingDir = Path.Combine(_root.FullName, "Loras_backup");
+        Directory.CreateDirectory(siblingDir);
+        var b = Path.Combine(siblingDir, "b.safetensors");
+        File.WriteAllText(b, "weights");
+
+        var vm = CreateVm(cached:
+        [
+            Installed(a, "SDXL 1.0", "character"),
+            Installed(b, "SDXL 1.0", "character"),
+        ]);
+
+        await vm.InitializeAsync();
+
+        vm.TransferCount.Should().Be(1);
+        FlattenNames(vm.PreviewRoots).Should().NotContain("b.safetensors");
+    }
+
+    [Fact]
+    public async Task RunResultMessageSurvivesPostRunRecompute()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+
+        var dialog = new Mock<IDialogService>();
+        dialog.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(true);
+        vm.DialogService = dialog.Object;
+
+        await vm.InitializeAsync();
+
+        var sortCompleted = false;
+        vm.SortCompleted += (_, _) => sortCompleted = true;
+
+        await vm.StartSortingCommand.ExecuteAsync(null);
+
+        vm.StatusMessage.Should().Contain("Done");
+        sortCompleted.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task OptionToggleDoesNotReEnumerateDisk()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        await vm.InitializeAsync();
+
+        var before = vm.TransferCount;
+        before.Should().BeGreaterThan(0);
+
+        // If the option toggle re-walked the disk, this deleted file would drop out of the
+        // DB-known candidate set (fileExistsOnDisk check) and TransferCount would fall.
+        File.Delete(a);
+
+        vm.IncludeCategory = false;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        vm.TransferCount.Should().Be(before);
+    }
+
+    private static IEnumerable<string> FlattenNames(IEnumerable<SortPreviewNodeViewModel> nodes)
+    {
+        foreach (var node in nodes)
+        {
+            yield return node.Name;
+            foreach (var childName in FlattenNames(node.Children))
+                yield return childName;
+        }
     }
 }
