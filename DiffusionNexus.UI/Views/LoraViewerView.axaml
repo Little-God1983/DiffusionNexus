@@ -4,6 +4,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
              xmlns:browser="using:DiffusionNexus.UI.Views.CivitaiBrowser"
+             xmlns:views="using:DiffusionNexus.UI.Views"
              xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
              xmlns:air="using:Avalonia.Controls"
              xmlns:al="using:Avalonia.Layout"
@@ -328,6 +329,10 @@
 
     <TabItem Header="Browse Civitai">
       <browser:CivitaiBrowserView DataContext="{Binding BrowserViewModel}"/>
+    </TabItem>
+
+    <TabItem Header="LoRA Sorter">
+      <views:LoraSorterView DataContext="{Binding SorterViewModel}"/>
     </TabItem>
   </TabControl>
 </UserControl>
