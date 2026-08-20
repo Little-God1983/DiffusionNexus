@@ -44,7 +44,8 @@ public sealed class LoraSorterViewModelTests : IDisposable
         IReadOnlyList<InstalledModelFile>? cached = null,
         Func<string, long>? getAvailableSpace = null,
         Func<string, bool>? fileExistsOnDisk = null,
-        Func<string, string>? resolverHash = null)
+        Func<string, string>? resolverHash = null,
+        Func<string, CancellationToken, Task>? deleteEmptyDirectories = null)
     {
         _settings.Setup(s => s.GetEnabledLoraSourcesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([SourceRoot]);
@@ -62,7 +63,8 @@ public sealed class LoraSorterViewModelTests : IDisposable
             getAvailableSpace: getAvailableSpace ?? (_ => freeSpace),
             hashFile: _ => "hash",
             fileExistsOnDisk: fileExistsOnDisk ?? File.Exists,
-            historyDirectory: Path.Combine(_root.FullName, "history"));
+            historyDirectory: Path.Combine(_root.FullName, "history"),
+            deleteEmptyDirectories: deleteEmptyDirectories);
     }
 
     [Fact]
@@ -257,6 +259,34 @@ public sealed class LoraSorterViewModelTests : IDisposable
 
         vm.StatusMessage.Should().Contain("Done");
         sortCompleted.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task AnUndeletableEmptyFolderDoesNotTurnASuccessfulSortIntoAFailure()
+    {
+        // DiskUtility.DeleteEmptyDirectories calls Directory.Delete with no guard, and it runs
+        // AFTER every file has been transferred and taskHandle.Complete() has reported success. An
+        // Explorer window or AV holding one now-empty folder used to unwind into StartSortingAsync's
+        // catch: no post-run recompute, SortCompleted never fired, and the user saw
+        // "Sorting failed: Access to the path … is denied" over a preview listing dead paths.
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")],
+            deleteEmptyDirectories: (_, _) => throw new UnauthorizedAccessException("Access to the path 'flat' is denied."));
+        vm.DialogService = ConfirmingDialogService();
+        await vm.InitializeAsync();
+        vm.DeleteEmptySourceFolders = true;
+
+        var sortCompleted = false;
+        vm.SortCompleted += (_, _) => sortCompleted = true;
+
+        await vm.StartSortingCommand.ExecuteAsync(null);
+
+        vm.StatusMessage.Should().StartWith("Done:");
+        vm.StatusMessage.Should().Contain("some empty folders could not be removed");
+        sortCompleted.Should().BeTrue();
+        // The post-run recompute ran: the tree was rebuilt from disk, where the DB's old path no
+        // longer exists, so the "SDXL 1.0" bucket the pre-run preview showed is gone.
+        vm.PreviewRoots.Select(n => n.Name).Should().NotContain("SDXL 1.0");
     }
 
     [Fact]

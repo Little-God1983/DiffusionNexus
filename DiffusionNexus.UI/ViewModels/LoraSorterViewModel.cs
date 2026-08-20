@@ -35,8 +35,16 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     private readonly Func<string, bool> _fileExistsOnDisk;
     private readonly string _historyDirectory;
 
+    /// <summary>Post-run "delete empty source folders" step, injected so the failure path is
+    /// testable — an undeletable folder cannot be created reliably from a test.</summary>
+    private readonly Func<string, CancellationToken, Task> _deleteEmptyDirectories;
+
     private LoraSortPlan? _lastPlan;
     private CancellationTokenSource? _sortCts;
+
+    /// <summary>Set when the post-run empty-folder cleanup failed, so the result banner can say so
+    /// without turning a fully successful sort into "Sorting failed".</summary>
+    private bool _emptyFolderCleanupFailed;
 
     /// <summary>Resolved-candidate cache, keyed by the source folder it was resolved for. A
     /// pure option toggle (category/move/target) only re-runs <see cref="LoraSortPlanner"/>
@@ -89,6 +97,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         _hashFile = ComputeSha256;
         _fileExistsOnDisk = File.Exists;
         _historyDirectory = SortHistoryWriter.DefaultHistoryDirectory;
+        _deleteEmptyDirectories = DefaultDeleteEmptyDirectories;
         HookIsBusyNotifications();
 
         SourceFolders.Add(@"C:\Demo\Loras");
@@ -111,7 +120,8 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         Func<string, long> getAvailableSpace,
         Func<string, string> hashFile,
         Func<string, bool> fileExistsOnDisk,
-        string historyDirectory)
+        string historyDirectory,
+        Func<string, CancellationToken, Task>? deleteEmptyDirectories = null)
     {
         _settingsService = settingsService;
         _syncService = syncService;
@@ -123,6 +133,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         _hashFile = hashFile ?? throw new ArgumentNullException(nameof(hashFile));
         _fileExistsOnDisk = fileExistsOnDisk ?? throw new ArgumentNullException(nameof(fileExistsOnDisk));
         _historyDirectory = historyDirectory ?? throw new ArgumentNullException(nameof(historyDirectory));
+        _deleteEmptyDirectories = deleteEmptyDirectories ?? DefaultDeleteEmptyDirectories;
         HookIsBusyNotifications();
     }
 
@@ -713,9 +724,16 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             await RecomputePreviewAsync();
 
             // Set AFTER the post-run recompute so it isn't wiped by the recompute's warning-clear step.
-            StatusMessage = result.Cancelled
+            var message = result.Cancelled
                 ? $"Cancelled — {result.Moved + result.Copied} done, rest untouched."
                 : $"Done: {result.Moved + result.Copied} sorted, {result.Skipped} duplicates skipped, {result.Failed} failed.";
+            if (_emptyFolderCleanupFailed)
+                message += " (some empty folders could not be removed)";
+            // A null manifest means the history file could not be written; the run itself is fine,
+            // but there is no restore point for it, and silently pretending otherwise is worse.
+            if (result.ManifestPath is null)
+                message += " (no restore point was recorded — see the log)";
+            StatusMessage = message;
             _statusMessageIsWarning = false;
 
             SortCompleted?.Invoke(this, EventArgs.Empty);
@@ -761,9 +779,29 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             throw;
         }
 
+        // Every file has already been transferred and every DB row repointed at this point, and
+        // taskHandle.Complete() has already reported success. DiskUtility.DeleteEmptyDirectories
+        // calls Directory.Delete with no guard of its own, so an Explorer window or AV holding one
+        // now-empty folder — or a permission-denied subdirectory, exactly the case the directory
+        // walk deliberately tolerates — used to unwind into StartSortingAsync's catch: the candidate
+        // cache was never cleared, no post-run recompute happened, SortCompleted never fired so the
+        // Installed tab never refreshed, and the user saw "Sorting failed: Access to the path … is
+        // denied" over a preview still listing paths that no longer exist. Pressing Start then
+        // replayed a plan whose sources were gone. A leftover empty folder is cosmetic; losing the
+        // post-run bookkeeping is not.
+        _emptyFolderCleanupFailed = false;
         if (IsMove && DeleteEmptySourceFolders && !result.Cancelled)
         {
-            await new DiskUtility().DeleteEmptyDirectoriesAsync(SelectedSourceFolder!, CancellationToken.None);
+            try
+            {
+                await _deleteEmptyDirectories(SelectedSourceFolder!, CancellationToken.None);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _emptyFolderCleanupFailed = true;
+                _logger?.Warn(LogCategory.FileSystem, LogSource,
+                    $"Sorted files moved fine, but empty source folders under {SelectedSourceFolder} could not all be removed: {ex.Message}");
+            }
         }
 
         _logger?.Info(LogCategory.FileSystem, LogSource,
@@ -920,6 +958,9 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             : fullRoot + Path.DirectorySeparatorChar;
         return fullPath.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase);
     }
+
+    private static Task DefaultDeleteEmptyDirectories(string path, CancellationToken ct)
+        => new DiskUtility().DeleteEmptyDirectoriesAsync(path, ct);
 
     private static string ComputeSha256(string filePath)
     {
