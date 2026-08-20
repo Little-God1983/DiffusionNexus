@@ -42,7 +42,9 @@ public sealed class LoraSorterViewModelTests : IDisposable
 
     private LoraSorterViewModel CreateVm(long freeSpace = long.MaxValue,
         IReadOnlyList<InstalledModelFile>? cached = null,
-        Func<string, long>? getAvailableSpace = null)
+        Func<string, long>? getAvailableSpace = null,
+        Func<string, bool>? fileExistsOnDisk = null,
+        Func<string, string>? resolverHash = null)
     {
         _settings.Setup(s => s.GetEnabledLoraSourcesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([SourceRoot]);
@@ -55,11 +57,11 @@ public sealed class LoraSorterViewModelTests : IDisposable
             _settings.Object, _sync.Object, logger: null,
             pathUpdater: Mock.Of<ILocalPathUpdater>(),
             metadataResolver: new SorterMetadataResolver(null, () => Task.FromResult<string?>(null),
-                Path.Combine(_root.FullName, "cache"), _ => "hash", logger: null),
+                Path.Combine(_root.FullName, "cache"), resolverHash ?? (_ => "hash"), logger: null),
             fileOperations: new FileOperations(),
             getAvailableSpace: getAvailableSpace ?? (_ => freeSpace),
             hashFile: _ => "hash",
-            fileExistsOnDisk: File.Exists,
+            fileExistsOnDisk: fileExistsOnDisk ?? File.Exists,
             historyDirectory: Path.Combine(_root.FullName, "history"));
     }
 
@@ -136,6 +138,64 @@ public sealed class LoraSorterViewModelTests : IDisposable
 
         vm.TransferCount.Should().Be(1);
         vm.PreviewRoots.Single().Name.Should().Be("Unknown");
+    }
+
+    [Fact]
+    public async Task UnreadableDbKnownFileIsSkippedNotFatalAndIsReported()
+    {
+        // FileSizeBytes is null on this row, so the size comes from new FileInfo(path).Length —
+        // which throws FileNotFoundException for a path that is gone. One bad file out of 3000
+        // used to abort the whole preview with zero candidates.
+        var good = WriteLora(@"flat\good.safetensors");
+        var vanished = Path.Combine(SourceRoot, "flat", "gone.safetensors");
+        var vm = CreateVm(
+            cached: [Installed(good, "SDXL 1.0", "character"), Installed(vanished, "SDXL 1.0", "character")],
+            // The row survives the existence check; the file itself does not. Scoped to that one
+            // path so the planner's real collision probing is untouched.
+            fileExistsOnDisk: p => string.Equals(p, vanished, StringComparison.OrdinalIgnoreCase) || File.Exists(p));
+
+        await vm.InitializeAsync();
+
+        vm.TransferCount.Should().Be(1);
+        vm.StatusMessage.Should().Contain("1 file(s) skipped");
+        FlattenNames(vm.PreviewRoots).Should().NotContain("gone.safetensors");
+    }
+
+    [Fact]
+    public async Task UnreadableBrowsedFileIsSkippedNotFatalAndIsReported()
+    {
+        // The resolver hashes the file first; deleting it there is a deterministic stand-in for the
+        // enumerate-then-vanish race, and makes the following new FileInfo(path).Length throw.
+        var doomed = WriteLora(@"flat\doomed.safetensors");
+        WriteLora(@"flat\fine.safetensors");
+        var vm = CreateVm(cached: [], resolverHash: p =>
+        {
+            if (string.Equals(p, doomed, StringComparison.OrdinalIgnoreCase)) File.Delete(p);
+            return "hash";
+        });
+
+        await vm.InitializeAsync();
+
+        vm.TransferCount.Should().Be(1);
+        vm.StatusMessage.Should().Contain("1 file(s) skipped");
+        FlattenNames(vm.PreviewRoots).Should().NotContain("doomed.safetensors");
+    }
+
+    [Fact]
+    public async Task TheSkippedFileNoteSurvivesAnOptionToggle()
+    {
+        var good = WriteLora(@"flat\good.safetensors");
+        var vanished = Path.Combine(SourceRoot, "flat", "gone.safetensors");
+        var vm = CreateVm(
+            cached: [Installed(good, "SDXL 1.0", "character"), Installed(vanished, "SDXL 1.0", "character")],
+            fileExistsOnDisk: p => string.Equals(p, vanished, StringComparison.OrdinalIgnoreCase) || File.Exists(p));
+        await vm.InitializeAsync();
+
+        vm.IncludeCategory = false;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        // The toggle re-plans from the cache without re-resolving, so the note must come with it.
+        vm.StatusMessage.Should().Contain("1 file(s) skipped");
     }
 
     [Fact]

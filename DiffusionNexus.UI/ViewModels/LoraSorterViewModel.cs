@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Enums;
@@ -43,6 +44,11 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// re-enumerates disk and re-resolves unknown-file metadata.</summary>
     private List<SortCandidate>? _candidateCache;
     private string? _candidateCacheSourceFolder;
+
+    /// <summary>How many files the cached resolution pass had to skip because they could not be
+    /// read. Cached alongside the candidates so an option toggle — which does not re-resolve —
+    /// keeps showing the same "N files skipped" note instead of silently dropping it.</summary>
+    private int _candidateCacheSkippedCount;
 
     /// <summary>Cancels an in-flight candidate resolution when a newer recompute supersedes it.</summary>
     private CancellationTokenSource? _resolveCts;
@@ -258,8 +264,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             }
 
             // Initialize always re-enumerates: a prior run may have moved files since this VM was last used.
-            _candidateCache = null;
-            _candidateCacheSourceFolder = null;
+            InvalidateCandidateCache();
             await RecomputePreviewAsync();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -358,9 +363,10 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 // Report() marshals back via the captured SynchronizationContext.
                 var resolveProgress = new Progress<string>(msg => BusyMessage = msg);
 
+                CandidateResolution resolution;
                 try
                 {
-                    candidates = await Task.Run(
+                    resolution = await Task.Run(
                         () => ResolveCandidatesAsync(sourceFolder, resolveProgress, resolveCts.Token),
                         resolveCts.Token);
                 }
@@ -387,8 +393,10 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                     return;
                 }
 
+                candidates = resolution.Candidates;
                 _candidateCache = candidates;
                 _candidateCacheSourceFolder = sourceFolder;
+                _candidateCacheSkippedCount = resolution.SkippedCount;
             }
 
             // BuildPlan also touches disk (lazy hashing on collisions), so it's offloaded too. The
@@ -424,6 +432,17 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 _statusMessageIsWarning = true;
             }
 
+            // Files the resolver could not read are silently absent from the preview otherwise, and
+            // "the preview is short by 3 files" is exactly the kind of thing a user must be told.
+            if (_candidateCacheSkippedCount > 0)
+            {
+                var note = $"⚠ {_candidateCacheSkippedCount} file(s) skipped (locked/unreadable) — see the log.";
+                StatusMessage = _statusMessageIsWarning && StatusMessage is not null
+                    ? $"{StatusMessage}   {note}"
+                    : note;
+                _statusMessageIsWarning = true;
+            }
+
             _logger?.Info(LogCategory.FileSystem, LogSource,
                 $"Preview: {plan.TransferCount} transfers, {plan.RenamedCount} renames, {plan.SkippedDuplicateCount} duplicates");
         }
@@ -439,7 +458,9 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// unknown on-disk files, resolving the latter's metadata. Only invoked when the candidate
     /// cache misses (source-folder change or <see cref="InitializeAsync"/>) — option toggles
     /// reuse the cached result and skip this entirely (spec: preview recompute is in-memory).</summary>
-    private async Task<List<SortCandidate>> ResolveCandidatesAsync(string sourceFolder, IProgress<string>? progress, CancellationToken ct)
+    /// <returns>The candidates, plus the number of files skipped because they could not be read —
+    /// see <see cref="IsSkippableFileFailure"/>.</returns>
+    private async Task<CandidateResolution> ResolveCandidatesAsync(string sourceFolder, IProgress<string>? progress, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
 
@@ -456,6 +477,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 
         var candidates = new List<SortCandidate>();
         var knownPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var skipped = 0;
 
         foreach (var f in cached)
         {
@@ -466,11 +488,20 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             if (!IsWithin(path, sourceFolder)) continue;
             if (!_fileExistsOnDisk(path)) continue;
 
-            knownPaths.Add(Path.GetFullPath(path));
-            var category = SorterCategoryResolver.ToFolderName(SorterCategoryResolver.ResolveForModel(f.Model));
-            var sizeBytes = f.File.FileSizeBytes ?? new FileInfo(path).Length;
-            candidates.Add(new SortCandidate(path, f.Version.BaseModelRaw, category,
-                f.Version.CivitaiId, f.File.HashSHA256, sizeBytes, SidecarLocator.FindSidecars(path)));
+            try
+            {
+                var category = SorterCategoryResolver.ToFolderName(SorterCategoryResolver.ResolveForModel(f.Model));
+                var sizeBytes = f.File.FileSizeBytes ?? new FileInfo(path).Length;
+                var candidate = new SortCandidate(path, f.Version.BaseModelRaw, category,
+                    f.Version.CivitaiId, f.File.HashSHA256, sizeBytes, SidecarLocator.FindSidecars(path));
+                knownPaths.Add(Path.GetFullPath(path));
+                candidates.Add(candidate);
+            }
+            catch (Exception ex) when (IsSkippableFileFailure(ex))
+            {
+                skipped++;
+                _logger?.Warn(LogCategory.FileSystem, LogSource, $"Skipping {path}: {ex.Message}");
+            }
         }
 
         var unknownFiles = Directory.Exists(sourceFolder)
@@ -487,23 +518,56 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             ct.ThrowIfCancellationRequested();
             var path = unknownFiles[i];
             progress?.Report($"Resolving metadata {i + 1}/{unknownFiles.Count}…");
-            var metadata = await _metadataResolver.ResolveAsync(path, ct);
-            var sizeBytes = new FileInfo(path).Length;
-            // The resolver surfaces the sidecar's tags, so a properly downloaded LoRA in a browsed
-            // folder lands in its real category folder. This used to hardcode Unknown, which meant
-            // the headline "Browse any folder" feature dumped a fully-resolved library into
-            // <Target>\<BaseModel>\Unknown\ — the spec reserves Unknown for genuinely unresolved
-            // files. InferFolderName returns null when no tag names a category; the Unknown bucket
-            // name is equivalent to null here (SorterPathBuilder.IsUnresolvedCategory treats both
-            // as "no category segment"), so the candidate record stays non-null.
-            var category = SorterCategoryResolver.InferFolderName(metadata.Tags)
-                ?? SorterPathBuilder.UnknownFolderName;
-            candidates.Add(new SortCandidate(path, metadata.BaseModelRaw, category,
-                metadata.CivitaiVersionId, metadata.Sha256, sizeBytes, SidecarLocator.FindSidecars(path)));
+
+            try
+            {
+                var metadata = await _metadataResolver.ResolveAsync(path, ct);
+                var sizeBytes = new FileInfo(path).Length;
+                // The resolver surfaces the sidecar's tags, so a properly downloaded LoRA in a browsed
+                // folder lands in its real category folder. This used to hardcode Unknown, which meant
+                // the headline "Browse any folder" feature dumped a fully-resolved library into
+                // <Target>\<BaseModel>\Unknown\ — the spec reserves Unknown for genuinely unresolved
+                // files. InferFolderName returns null when no tag names a category; the Unknown bucket
+                // name is equivalent to null here (SorterPathBuilder.IsUnresolvedCategory treats both
+                // as "no category segment"), so the candidate record stays non-null.
+                var category = SorterCategoryResolver.InferFolderName(metadata.Tags)
+                    ?? SorterPathBuilder.UnknownFolderName;
+                candidates.Add(new SortCandidate(path, metadata.BaseModelRaw, category,
+                    metadata.CivitaiVersionId, metadata.Sha256, sizeBytes, SidecarLocator.FindSidecars(path)));
+            }
+            catch (Exception ex) when (IsSkippableFileFailure(ex))
+            {
+                skipped++;
+                _logger?.Warn(LogCategory.FileSystem, LogSource, $"Skipping {path}: {ex.Message}");
+            }
         }
 
-        return candidates;
+        if (skipped > 0)
+        {
+            _logger?.Warn(LogCategory.FileSystem, LogSource,
+                $"{skipped} file(s) under {sourceFolder} could not be read and were left out of the preview.");
+        }
+
+        return new CandidateResolution(candidates, skipped);
     }
+
+    /// <summary>Whether a per-file failure should cost one file rather than the whole preview.</summary>
+    /// <remarks>
+    /// A single unreadable file used to abort the entire pass: the hash read
+    /// (<c>File.OpenRead</c> with <c>FileShare.Read</c>) throws for a <c>.safetensors</c> held open
+    /// by a running ComfyUI/A1111 or behind a denied ACL, <c>new FileInfo(path).Length</c> throws
+    /// <see cref="FileNotFoundException"/> when the file vanished between enumeration and use, and a
+    /// Civitai response-shape change raises <see cref="JsonException"/> — this repo has been bitten
+    /// by that twice. One bad file out of 3000 killed the preview with zero candidates, which is the
+    /// folder-granularity failure the safe directory walk exists to prevent, one level down.
+    /// <see cref="OperationCanceledException"/> is deliberately not covered: cancellation must
+    /// still unwind the pass.
+    /// </remarks>
+    private static bool IsSkippableFileFailure(Exception ex)
+        => ex is IOException or UnauthorizedAccessException or JsonException;
+
+    /// <summary>Result of one resolution pass: the candidates and how many files it had to skip.</summary>
+    private sealed record CandidateResolution(List<SortCandidate> Candidates, int SkippedCount);
 
     /// <summary>Search a root and every subfolder, skip locked/no-permission subtrees, and do not
     /// follow reparse points. The same shape the rest of the app already uses
@@ -568,8 +632,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     private async Task RefreshAsync()
     {
         ClearRunResultBanner();
-        _candidateCache = null;
-        _candidateCacheSourceFolder = null;
+        InvalidateCandidateCache();
         await RecomputePreviewAsync();
     }
 
@@ -615,8 +678,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 
             // Files moved/copied to new locations — the cached candidate list (built from their
             // old paths) is now stale and must be rebuilt from disk, not just re-planned.
-            _candidateCache = null;
-            _candidateCacheSourceFolder = null;
+            InvalidateCandidateCache();
             await RecomputePreviewAsync();
 
             // Set AFTER the post-run recompute so it isn't wiped by the recompute's warning-clear step.
@@ -723,6 +785,15 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         HasEnoughSpace = free >= needed;
         DiskSummary = $"{SortPreviewNodeViewModel.FormatBytes(plan.RequiredBytes)} required · {SortPreviewNodeViewModel.FormatBytes(free)} free";
         BlockReason = HasEnoughSpace ? null : "Not enough free space on the target drive.";
+    }
+
+    /// <summary>Drops the resolved-candidate cache so the next recompute re-enumerates disk and
+    /// re-resolves metadata, together with everything derived from that pass.</summary>
+    private void InvalidateCandidateCache()
+    {
+        _candidateCache = null;
+        _candidateCacheSourceFolder = null;
+        _candidateCacheSkippedCount = 0;
     }
 
     private LoraSortOptions BuildOptions() =>
