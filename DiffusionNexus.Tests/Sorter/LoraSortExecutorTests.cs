@@ -1,6 +1,8 @@
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.Services.Lora.Sorting;
 using DiffusionNexus.UI.Utilities;
 using FluentAssertions;
+using Moq;
 
 namespace DiffusionNexus.Tests.Sorter;
 
@@ -310,6 +312,31 @@ public sealed class LoraSortExecutorTests : IDisposable
         : IProgress<(double Fraction, string Status)>
     {
         public void Report((double Fraction, string Status) value) => onReport(value);
+    }
+
+    [Fact]
+    public async Task RunLogsTimedDbBatchesAndAFinalTally()
+    {
+        // Review 7.2 / the standing project rule: every step reports to the Unified Console
+        // WITH timings, so "slow" and "hung" are distinguishable from an exported log.
+        var logger = new Mock<IUnifiedLogger>();
+        var lines = new List<string>();
+        logger.Setup(l => l.Info(LogCategory.FileSystem, "LoraSorter", It.IsAny<string>(), It.IsAny<string?>()))
+            .Callback((LogCategory _, string _, string message, string? _) => lines.Add(message));
+        var moves = new List<PlannedMove>();
+        for (var i = 0; i < 20; i++)
+        {
+            Write($@"flat\m{i}.safetensors");
+            moves.Add(Move($@"flat\m{i}.safetensors", $@"SDXL 1.0\Character\m{i}.safetensors"));
+        }
+        var executor = new LoraSortExecutor(new FileOperations(), new RecordingPathUpdater(_dbChanges),
+            new SortHistoryWriter(In("history")), logger.Object);
+
+        await executor.ExecuteAsync(Plan(isMove: true, moves.ToArray()));
+
+        lines.Should().Contain(l => l.StartsWith("Sort run starting"));
+        lines.Should().Contain(l => l.StartsWith("DB batch flushed:") && l.Contains(" ms "));
+        lines.Should().Contain(l => l.StartsWith("Sort run finished in") && l.Contains(" ms:"));
     }
 
     /// <summary>Stands in for any fault outside the IOException/UnauthorizedAccessException filter.</summary>

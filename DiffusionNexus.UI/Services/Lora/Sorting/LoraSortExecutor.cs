@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.Utilities;
 
@@ -34,6 +35,7 @@ public sealed class LoraSortExecutor
         IProgress<(double Fraction, string Status)>? progress = null,
         CancellationToken ct = default)
     {
+        var runWatch = Stopwatch.StartNew();
         var manifestPath = _historyWriter.WritePlan(plan, DateTimeOffset.Now);
         if (manifestPath is null)
         {
@@ -42,7 +44,9 @@ public sealed class LoraSortExecutor
                 "Sort history could not be written — the run continues without a restore point.");
         }
         _logger?.Info(LogCategory.FileSystem, LogSource,
-            $"{plan.TransferCount} to transfer, {plan.SkippedDuplicateCount} duplicates skipped, {plan.RenamedCount} renamed");
+            $"Sort run starting ({(plan.IsMove ? "move" : "copy")}): {plan.TransferCount} to transfer, "
+            + $"{plan.SkippedDuplicateCount} duplicates skipped, {plan.RenamedCount} renamed, "
+            + $"{plan.AlreadyInPlaceCount} already in place — {plan.SourceRoot} → {plan.TargetRoot}");
 
         var moved = 0;
         var copied = 0;
@@ -92,8 +96,12 @@ public sealed class LoraSortExecutor
                         {
                             try
                             {
+                                var batchWatch = Stopwatch.StartNew();
+                                var batchSize = pendingDbChanges.Count;
                                 await _pathUpdater.UpdateLocalPathsAsync(pendingDbChanges, ct);
                                 pendingDbChanges.Clear();
+                                _logger?.Info(LogCategory.FileSystem, LogSource,
+                                    $"DB batch flushed: {batchSize} paths repointed in {batchWatch.ElapsedMilliseconds} ms ({done + 1}/{plan.TransferCount} files done)");
                             }
                             catch (OperationCanceledException)
                             {
@@ -149,8 +157,12 @@ public sealed class LoraSortExecutor
             {
                 try
                 {
+                    var finalWatch = Stopwatch.StartNew();
+                    var finalSize = pendingDbChanges.Count;
                     await _pathUpdater.UpdateLocalPathsAsync(pendingDbChanges, CancellationToken.None);
                     pendingDbChanges.Clear();
+                    _logger?.Info(LogCategory.FileSystem, LogSource,
+                        $"Final DB flush: {finalSize} paths repointed in {finalWatch.ElapsedMilliseconds} ms");
                 }
                 catch (Exception ex)
                 {
@@ -162,7 +174,8 @@ public sealed class LoraSortExecutor
 
         var skipped = plan.SkippedDuplicateCount;
         _logger?.Info(LogCategory.FileSystem, LogSource,
-            $"Sort run finished: {moved} moved, {copied} copied, {skipped} skipped, {failed} failed, cancelled={cancelled}");
+            $"Sort run finished in {runWatch.ElapsedMilliseconds} ms: {moved} moved, {copied} copied, "
+            + $"{skipped} skipped, {failed} failed, cancelled={cancelled}");
 
         return new LoraSortResult(moved, copied, skipped, failed, cancelled, manifestPath);
     }
