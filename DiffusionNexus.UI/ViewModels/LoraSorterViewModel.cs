@@ -275,6 +275,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             _logger?.Error(LogCategory.FileSystem, LogSource, $"Preview failed: {ex.Message}", ex);
             StatusMessage = $"Preview failed: {ex.Message}";
             _statusMessageIsWarning = false;
+            DisarmPlan($"Preview failed: {ex.Message}");
         }
     }
 
@@ -331,12 +332,22 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         var sourceFolder = SelectedSourceFolder!;
         var targetRoot = EffectiveTargetRoot!;
 
-        // Cancel any in-flight resolve unconditionally — even a cache-hit pass for a different
+        // Cancel any in-flight pass unconditionally — even a cache-hit pass for a different
         // selection must stop a stale resolve for a previously-selected source, otherwise it can
         // complete later and its continuation (below) clobbers what this pass is about to commit.
         _resolveCts?.Cancel();
         _resolveCts?.Dispose();
-        _resolveCts = null;
+
+        // One CTS per pass, created even on a cache hit. Planning re-hashes on every collision and
+        // every option toggle re-plans, so it can run for minutes on a large library — and the
+        // overlay's Cancel button used to be a complete no-op for that whole phase, because this
+        // field was only populated on a cache miss.
+        var passCts = new CancellationTokenSource();
+        _resolveCts = passCts;
+
+        // Whether this pass still owns the VM's state. A newer pass replaces _resolveCts before
+        // cancelling this one, so a superseded pass must not paint (or wipe) anything.
+        bool IsCurrentPass() => ReferenceEquals(_resolveCts, passCts);
 
         // Each new pass starts with a clean flag — CancelSort only sets it for the pass currently
         // in flight, so a leftover true here (from a resolve that ran to completion despite being
@@ -353,9 +364,6 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             }
             else
             {
-                var resolveCts = new CancellationTokenSource();
-                _resolveCts = resolveCts;
-
                 // Candidate resolution touches disk (enumeration + per-file metadata/hashing) and
                 // must not run on the UI thread — a browsed folder with thousands of unknown files
                 // would freeze the overlay. ResolveCandidatesAsync used to set BusyMessage directly;
@@ -363,26 +371,9 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 // Report() marshals back via the captured SynchronizationContext.
                 var resolveProgress = new Progress<string>(msg => BusyMessage = msg);
 
-                CandidateResolution resolution;
-                try
-                {
-                    resolution = await Task.Run(
-                        () => ResolveCandidatesAsync(sourceFolder, resolveProgress, resolveCts.Token),
-                        resolveCts.Token);
-                }
-                catch (OperationCanceledException)
-                {
-                    // Two callers cancel _resolveCts: a newer recompute pass superseding this stale
-                    // one (silent — the newer pass will paint its own result), or the user hitting
-                    // Cancel on the busy overlay (surfaced below). _previewCancelledByUser tells them apart.
-                    if (_previewCancelledByUser)
-                    {
-                        _previewCancelledByUser = false;
-                        StatusMessage = "Cancelled — preview not updated.";
-                        _statusMessageIsWarning = false;
-                    }
-                    return;
-                }
+                var resolution = await Task.Run(
+                    () => ResolveCandidatesAsync(sourceFolder, resolveProgress, passCts.Token),
+                    passCts.Token);
 
                 // Commit guard: the awaited resolve may have let a newer recompute pass change the
                 // selection out from under this one (e.g. switched away and back before this pass
@@ -403,7 +394,9 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             // options snapshot is read here — on the calling (UI) context — not from inside the
             // Task.Run body.
             var options = BuildOptions();
-            var plan = await Task.Run(() => new LoraSortPlanner(_hashFile, _fileExistsOnDisk).BuildPlan(candidates, options));
+            var plan = await Task.Run(
+                () => new LoraSortPlanner(_hashFile, _fileExistsOnDisk).BuildPlan(candidates, options, passCts.Token),
+                passCts.Token);
             _lastPlan = plan;
 
             BuildPreviewTree(plan, targetRoot);
@@ -446,12 +439,50 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             _logger?.Info(LogCategory.FileSystem, LogSource,
                 $"Preview: {plan.TransferCount} transfers, {plan.RenamedCount} renames, {plan.SkippedDuplicateCount} duplicates");
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException)
+        {
+            // Two callers cancel this pass: a newer recompute superseding it (silent — the newer
+            // pass owns the state and will paint its own result), or the user hitting Cancel on the
+            // busy overlay. _previewCancelledByUser tells them apart.
+            if (!IsCurrentPass()) return;
+
+            DisarmPlan("Preview was cancelled — press Refresh to rebuild it.");
+            if (_previewCancelledByUser)
+            {
+                _previewCancelledByUser = false;
+                StatusMessage = "Cancelled — preview not updated.";
+                _statusMessageIsWarning = false;
+            }
+        }
+        catch (Exception ex)
         {
             _logger?.Error(LogCategory.FileSystem, LogSource, $"Preview failed: {ex.Message}", ex);
             StatusMessage = $"Preview failed: {ex.Message}";
             _statusMessageIsWarning = false;
+            if (IsCurrentPass())
+                DisarmPlan($"Preview failed: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Drops everything Start depends on. Previews wrote their results only on the success path, so
+    /// a failed or cancelled pass left the button armed against the <i>previous</i> folder's plan:
+    /// preview S1 succeeds (42 files, move), the user switches to S2 and that pass throws, the
+    /// button still reads "Start Sorting (42 files)", and the confirm dialog interpolates the
+    /// <i>live</i> IsMove/EffectiveTargetRoot ("42 files will be copied into S2") while
+    /// <see cref="_lastPlan"/> still describes moving files inside S1. The
+    /// <c>ReferenceEquals(_lastPlan, plan)</c> guard in <see cref="StartSortingAsync"/> was written
+    /// for this class of problem but cannot see it, because nothing reassigned <c>_lastPlan</c>.
+    /// </summary>
+    private void DisarmPlan(string reason)
+    {
+        _lastPlan = null;
+        TransferCount = 0;
+        HasEnoughSpace = false;
+        PreviewRoots.Clear();
+        PreviewSummary = null;
+        DiskSummary = null;
+        BlockReason = reason;
     }
 
     /// <summary>Enumerates DB-known candidates under <paramref name="sourceFolder"/> plus

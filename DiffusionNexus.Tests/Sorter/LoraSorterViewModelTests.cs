@@ -347,6 +347,31 @@ public sealed class LoraSorterViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task AFailedPassDisarmsThePlanFromTheSuccessfulOneBeforeIt()
+    {
+        // Preview S1 succeeds; the next pass throws. Start used to stay armed against S1's plan
+        // while the confirm dialog interpolated the LIVE mode and target — "42 files will be copied
+        // into S2" for a plan that moves files inside S1. ReferenceEquals(_lastPlan, plan) could not
+        // catch it, because nothing had reassigned _lastPlan.
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        await vm.InitializeAsync();
+        vm.TransferCount.Should().Be(1);
+        vm.StartSortingCommand.CanExecute(null).Should().BeTrue();
+
+        _sync.Setup(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("db down"));
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        vm.TransferCount.Should().Be(0);
+        vm.HasEnoughSpace.Should().BeFalse();
+        vm.PreviewRoots.Should().BeEmpty();
+        vm.PreviewSummary.Should().BeNull();
+        vm.BlockReason.Should().Contain("db down");
+        vm.StartSortingCommand.CanExecute(null).Should().BeFalse();
+    }
+
+    [Fact]
     public async Task DeeplyNestedUnknownFilesAreEnumerated()
     {
         WriteLora(@"a\b\c\d\deep.safetensors");
