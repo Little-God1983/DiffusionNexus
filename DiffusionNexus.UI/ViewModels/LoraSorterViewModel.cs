@@ -235,6 +235,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     {
         try
         {
+            ClearRunResultBanner();
             _isInitializing = true;
             try
             {
@@ -331,6 +332,12 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         _resolveCts?.Cancel();
         _resolveCts?.Dispose();
         _resolveCts = null;
+
+        // Each new pass starts with a clean flag — CancelSort only sets it for the pass currently
+        // in flight, so a leftover true here (from a resolve that ran to completion despite being
+        // cancelled, racing past the OperationCanceledException) must not mislabel a later silent
+        // supersede as a user cancel.
+        _previewCancelledByUser = false;
 
         try
         {
@@ -550,6 +557,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     [RelayCommand]
     private async Task RefreshAsync()
     {
+        ClearRunResultBanner();
         _candidateCache = null;
         _candidateCacheSourceFolder = null;
         await RecomputePreviewAsync();

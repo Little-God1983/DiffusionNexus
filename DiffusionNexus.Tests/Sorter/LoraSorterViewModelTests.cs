@@ -235,6 +235,23 @@ public sealed class LoraSorterViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task RefreshClearsACancelledPreviewBanner()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        await vm.InitializeAsync();
+
+        // Simulate the post-cancel state the Cancel path leaves behind.
+        vm.CancelSortCommand.Execute(null);
+        vm.StatusMessage = "Cancelled — preview not updated.";
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        vm.StatusMessage.Should().BeNull();
+        vm.TransferCount.Should().Be(1); // preview genuinely rebuilt
+    }
+
+    [Fact]
     public async Task PreviewFailureIsSurfacedNotSwallowed()
     {
         var vm = CreateVm(cached: []);
