@@ -35,6 +35,12 @@ public sealed class LoraSortExecutor
         CancellationToken ct = default)
     {
         var manifestPath = _historyWriter.WritePlan(plan, DateTimeOffset.Now);
+        if (manifestPath is null)
+        {
+            // History is a convenience; a read-only LocalAppData must not block sorting.
+            _logger?.Warn(LogCategory.FileSystem, LogSource,
+                "Sort history could not be written — the run continues without a restore point.");
+        }
         _logger?.Info(LogCategory.FileSystem, LogSource,
             $"{plan.TransferCount} to transfer, {plan.SkippedDuplicateCount} duplicates skipped, {plan.RenamedCount} renamed");
 
@@ -193,7 +199,7 @@ public sealed class LoraSortExecutor
     /// or unreadable manifest must never fail a file that is already on disk at its
     /// new path, and must never let a transient I/O error count a moved file as failed.
     /// </summary>
-    private void MarkCompletedSafely(string manifestPath, string source)
+    private void MarkCompletedSafely(string? manifestPath, string source)
     {
         try
         {

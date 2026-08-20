@@ -230,9 +230,7 @@ public sealed class LoraSortExecutorTests : IDisposable
         reports[^1].Fraction.Should().Be(1.0);
         updater.Calls.Should().Be(2);                // the failed batch, then ONE retry
         _dbChanges.Should().HaveCount(21);           // 20 deferred + the 21st, in one final call
-        var manifest = File.ReadAllText(result.ManifestPath!);
-        foreach (var i in new[] { 19, 20 })
-            manifest.Should().Contain($"m{i}.safetensors");
+        SortHistoryWriter.ReadCompleted(result.ManifestPath!).Should().HaveCount(21);
     }
 
     private sealed class FailFirstCallPathUpdater(List<(string, string)> sink) : ILocalPathUpdater
@@ -258,8 +256,9 @@ public sealed class LoraSortExecutorTests : IDisposable
             Move(@"flat\a.safetensors", @"SDXL 1.0\Character\a.safetensors")));
 
         result.ManifestPath.Should().NotBeNull();
-        var json = File.ReadAllText(result.ManifestPath!);
-        json.Should().Contain("\"completed\": true");
+        File.Exists(result.ManifestPath!).Should().BeTrue();
+        SortHistoryWriter.ReadCompleted(result.ManifestPath!).Should().ContainSingle()
+            .Which.Should().Be(In("flat", "a.safetensors"));
     }
 
     [Fact]
