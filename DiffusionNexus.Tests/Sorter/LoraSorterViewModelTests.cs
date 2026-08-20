@@ -139,6 +139,26 @@ public sealed class LoraSorterViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task BrowsedFolderFileWithSidecarTagsLandsInItsCategoryFolder()
+    {
+        // LoadCachedFilesAsync hard-filters to enabled LoRA source roots, so a browsed folder gets
+        // no DB metadata at all — this is the NORMAL path for the "Browse any folder" feature. The
+        // category used to be hardcoded to Unknown, dumping a fully resolved library into
+        // <Target>\SDXL 1.0\Unknown\ instead of \Character\.
+        var lora = WriteLora(@"flat\hero.safetensors");
+        File.WriteAllText(Path.ChangeExtension(lora, null) + ".civitai.info",
+            """{"baseModel":"SDXL 1.0","id":4242,"model":{"tags":["character"]}}""");
+        var vm = CreateVm(cached: []);
+
+        await vm.InitializeAsync();
+
+        vm.TransferCount.Should().Be(1);
+        var root = vm.PreviewRoots.Should().ContainSingle().Subject;
+        root.Name.Should().Be("SDXL 1.0");
+        root.Children.Should().ContainSingle(c => !c.IsFile).Which.Name.Should().Be("Character");
+    }
+
+    [Fact]
     public async Task SiblingFolderSharingPrefixIsNotSwept()
     {
         // Source "...\Loras" must not sweep "...\Loras_backup" — a bare StartsWith would match

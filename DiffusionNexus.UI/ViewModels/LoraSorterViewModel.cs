@@ -443,6 +443,11 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     {
         ct.ThrowIfCancellationRequested();
 
+        // The resolver memoizes the Civitai API key for the whole pass (it used to open a DI scope,
+        // a DbContext and a query per file). Invalidate it once per pass so a key the user just
+        // saved in Settings is picked up instead of being stale for the resolver's lifetime.
+        _metadataResolver.ResetApiKeyCache();
+
         var cached = _syncService is null
             ? Array.Empty<InstalledModelFile>()
             : await _syncService.LoadCachedFilesAsync(ct);
@@ -484,8 +489,16 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             progress?.Report($"Resolving metadata {i + 1}/{unknownFiles.Count}…");
             var metadata = await _metadataResolver.ResolveAsync(path, ct);
             var sizeBytes = new FileInfo(path).Length;
-            candidates.Add(new SortCandidate(path, metadata.BaseModelRaw,
-                SorterCategoryResolver.ToFolderName(CivitaiCategory.Unknown),
+            // The resolver surfaces the sidecar's tags, so a properly downloaded LoRA in a browsed
+            // folder lands in its real category folder. This used to hardcode Unknown, which meant
+            // the headline "Browse any folder" feature dumped a fully-resolved library into
+            // <Target>\<BaseModel>\Unknown\ — the spec reserves Unknown for genuinely unresolved
+            // files. InferFolderName returns null when no tag names a category; the Unknown bucket
+            // name is equivalent to null here (SorterPathBuilder.IsUnresolvedCategory treats both
+            // as "no category segment"), so the candidate record stays non-null.
+            var category = SorterCategoryResolver.InferFolderName(metadata.Tags)
+                ?? SorterPathBuilder.UnknownFolderName;
+            candidates.Add(new SortCandidate(path, metadata.BaseModelRaw, category,
                 metadata.CivitaiVersionId, metadata.Sha256, sizeBytes, SidecarLocator.FindSidecars(path)));
         }
 
