@@ -126,6 +126,11 @@ public sealed class LoraSortPlanner
         }
 
         var transfers = moves.Where(m => m.Action == PlannedAction.Transfer).ToList();
+        // TODO: Linux Implementation for LoRA Sorter: Path.GetPathRoot returns "/" for every
+        // absolute path on Linux, so sameVolumeMove is always true, requiredBytes collapses to
+        // 0 and the free-space pre-flight silently passes for a cross-device move. A Linux
+        // build needs a real device-id comparison (stat st_dev / DriveInfo mount point) behind
+        // an injectable volume-identity policy rather than this string compare.
         var sameVolumeMove = options.IsMove && string.Equals(
             Path.GetPathRoot(options.SourceRoot), Path.GetPathRoot(options.TargetRoot),
             StringComparison.OrdinalIgnoreCase);

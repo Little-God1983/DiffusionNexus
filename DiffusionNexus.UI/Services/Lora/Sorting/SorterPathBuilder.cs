@@ -14,6 +14,18 @@ public static class SorterPathBuilder
     public static bool IsPlaceholderBaseModel(string? baseModel)
         => string.IsNullOrWhiteSpace(baseModel) || baseModel == "???";
 
+    /// <summary>
+    /// Folder-name sanitization. Windows-only rules today.
+    /// </summary>
+    /// <remarks>
+    /// TODO: Linux Implementation for LoRA Sorter: the TrimEnd('.', ' ') below is a Win32
+    /// restriction, and Path.GetInvalidFileNameChars() returns only NUL and '/' on Linux —
+    /// so a base-model or category name carrying \ : * ? " &lt; &gt; | would pass straight into a
+    /// created directory name there, and such a folder is then awkward on any Windows client
+    /// sharing the library. A Linux build should sanitize against the union of both platforms'
+    /// invalid sets; this method is the single seam for that (make it an injectable policy
+    /// rather than adding a second static).
+    /// </remarks>
     public static string SanitizeFolderName(string name)
     {
         var invalid = Path.GetInvalidFileNameChars();
