@@ -377,6 +377,30 @@ public sealed class LoraSorterViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task DesignTimeConstructorKeepsItsDemoDataAndStartsNoBackgroundWork()
+    {
+        // "SelectedSourceFolder = SourceFolders[0]" fired the recompute hook with _isInitializing
+        // still false, so the design-time VM kicked off real disk and DriveInfo work against
+        // C:\Demo\Loras; its continuation then cleared PreviewRoots and zeroed TransferCount,
+        // showing an empty tree — the opposite of what the demo data is for. LoraViewerViewModel's
+        // design-time ctor builds this VM too, so every "new LoraViewerViewModel()" in the suite
+        // spawned filesystem I/O off the test thread with any exception unobserved.
+        var vm = new LoraSorterViewModel();
+
+        // Synchronous and deterministic: RunBusyAsync sets IsBusy before its first await, so a
+        // still-false IsBusy on return from the ctor proves no pass was started at all.
+        vm.IsBusy.Should().BeFalse();
+        vm.TransferCount.Should().Be(17);
+        vm.PreviewRoots.Should().HaveCount(2);
+
+        await Task.Delay(250);
+
+        vm.TransferCount.Should().Be(17);
+        vm.PreviewRoots.Should().HaveCount(2);
+        vm.PreviewSummary.Should().Contain("17 files will move");
+    }
+
+    [Fact]
     public async Task AFailedPassDisarmsThePlanFromTheSuccessfulOneBeforeIt()
     {
         // Preview S1 succeeds; the next pass throws. Start used to stay armed against S1's plan

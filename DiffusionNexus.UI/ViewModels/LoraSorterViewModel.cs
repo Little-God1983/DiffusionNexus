@@ -86,6 +86,15 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// <see cref="LoraViewerViewModel"/>'s design-time ctor must also build a sorter VM.</summary>
     public LoraSorterViewModel()
     {
+        // Latched for the lifetime of the design-time VM: "SelectedSourceFolder = SourceFolders[0]"
+        // below fires OnSelectedSourceFolderChanged, which used to start a real recompute against
+        // C:\Demo\Loras — disk enumeration and a DriveInfo probe. The ctor then added the demo tree
+        // and TransferCount = 17, and that pass's continuation cleared PreviewRoots and reset
+        // TransferCount to 0, so the previewer showed an empty tree instead of the demo data. It
+        // also meant every "new LoraViewerViewModel()" (whose design-time ctor builds this VM) span
+        // up background filesystem I/O with any exception unobserved.
+        _isInitializing = true;
+
         _settingsService = null;
         _syncService = null;
         _logger = null;
