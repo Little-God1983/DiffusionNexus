@@ -17,7 +17,9 @@ public sealed class LoraSorterViewModelTests : IDisposable
 
     public void Dispose()
     {
-        try { _root.Delete(recursive: true); } catch (IOException) { }
+        // UnauthorizedAccessException also shows up here: recursive delete of a tree containing a
+        // directory junction hits the reparse point itself.
+        try { _root.Delete(recursive: true); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
 
     private string SourceRoot => Path.Combine(_root.FullName, "Loras");
@@ -265,13 +267,51 @@ public sealed class LoraSorterViewModelTests : IDisposable
     }
 
     [Fact]
-    public async Task InaccessibleSubfolderIsSkippedNotFatal()
+    public async Task DeeplyNestedUnknownFilesAreEnumerated()
     {
-        // Simulate by asserting the safe enumerator itself: a nonexistent nested dir must not throw.
-        var a = WriteLora(@"flat\a.safetensors");
-        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
-        await vm.InitializeAsync(); // enumeration path exercised for unknown files
+        WriteLora(@"a\b\c\d\deep.safetensors");
+        WriteLora(@"top.safetensors");
+        var vm = CreateVm(cached: []);
+
+        await vm.InitializeAsync();
+
+        vm.TransferCount.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task DirectoryJunctionsAreNotFollowed()
+    {
+        // The walk skips reparse points, which is what stops a junction pointing at itself or an
+        // ancestor from growing the enumeration without bound (a probe confirmed the unguarded
+        // options happily produce "real\loop\real\loop\real\..." forever). Asserted here against a
+        // junction to a *sibling* folder so a regression fails the test instead of hanging it.
+        var real = WriteLora(@"real\x.safetensors");
+        var outside = Path.Combine(_root.FullName, "Outside");
+        Directory.CreateDirectory(outside);
+        File.WriteAllText(Path.Combine(outside, "hidden.safetensors"), "weights");
+
+        var link = Path.Combine(SourceRoot, "link");
+        CreateJunction(link, outside);
+        Directory.Exists(link).Should().BeTrue("mklink /J needs no elevation and CI is windows-latest");
+
+        var vm = CreateVm(cached: []);
+        await vm.InitializeAsync();
+
         vm.TransferCount.Should().Be(1);
+        FlattenNames(vm.PreviewRoots).Should().NotContain("hidden.safetensors");
+        real.Should().NotBeNull();
+    }
+
+    private static void CreateJunction(string link, string target)
+    {
+        using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+            "cmd.exe", $"/c mklink /J \"{link}\" \"{target}\"")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        })!;
+        process.WaitForExit();
     }
 
     [Theory]

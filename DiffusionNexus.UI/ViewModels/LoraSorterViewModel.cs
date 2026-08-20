@@ -469,8 +469,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         }
 
         var unknownFiles = Directory.Exists(sourceFolder)
-            ? EnumerateFilesSafe(sourceFolder)
-                .Where(p => ModelExtensions.Contains(Path.GetExtension(p), StringComparer.OrdinalIgnoreCase))
+            ? EnumerateModelFilesSafe(sourceFolder)
                 .Where(p => !knownPaths.Contains(Path.GetFullPath(p)))
                 .ToList()
             : new List<string>();
@@ -493,47 +492,48 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         return candidates;
     }
 
-    /// <summary>Recursive directory walk that tolerates an inaccessible subtree instead of aborting
-    /// the whole enumeration — unlike <c>Directory.EnumerateFiles(root, "*", AllDirectories)</c>,
-    /// which throws (and kills the entire preview) the moment it hits one permission-denied folder.
-    /// Arbitrary browsed folders are a headline feature of the sorter, so this is expected to happen.</summary>
-    private IEnumerable<string> EnumerateFilesSafe(string root)
+    /// <summary>Search a root and every subfolder, skip locked/no-permission subtrees, and do not
+    /// follow reparse points. The same shape the rest of the app already uses
+    /// (<c>ImageResourceHasher.RecursiveSafe</c>, <c>PipelineAssetInstaller.RecursiveSafe</c>).</summary>
+    /// <remarks>
+    /// <c>AttributesToSkip</c> excludes <see cref="FileAttributes.ReparsePoint"/>, which is the cycle
+    /// guard: this replaced a hand-rolled stack walk in which a directory junction pointing at itself
+    /// or an ancestor (<c>mklink /J</c>, or the symlinked shared-models directory common in
+    /// multi-backend setups) grew the pending stack without bound and the preview never returned.
+    /// Junctions and symlinks are therefore not followed — a LoRA reachable only through one is not
+    /// enumerated, which is the correct trade for a walk of an arbitrary user-picked folder.
+    /// </remarks>
+    private static readonly EnumerationOptions RecursiveSafe = new()
     {
-        var pending = new Stack<string>();
-        pending.Push(root);
+        RecurseSubdirectories = true,
+        IgnoreInaccessible = true,
+        MatchCasing = MatchCasing.CaseInsensitive,
+        AttributesToSkip = FileAttributes.ReparsePoint | FileAttributes.System,
+    };
 
-        while (pending.Count > 0)
+    /// <summary>Enumerates model files under <paramref name="root"/>, tolerating an inaccessible or
+    /// vanished subtree instead of aborting the whole preview — arbitrary browsed folders are a
+    /// headline feature of the sorter, so both are expected to happen. Materialized as it goes, so a
+    /// mid-walk failure keeps whatever was already found rather than discarding the pass.</summary>
+    private List<string> EnumerateModelFilesSafe(string root)
+    {
+        var files = new List<string>();
+        try
         {
-            var dir = pending.Pop();
-
-            string[] files;
-            try
+            foreach (var path in Directory.EnumerateFiles(root, "*", RecursiveSafe))
             {
-                files = Directory.GetFiles(dir);
+                if (ModelExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase))
+                    files.Add(path);
             }
-            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
-            {
-                _logger?.Warn(LogCategory.FileSystem, LogSource, $"Skipping inaccessible folder: {dir} ({ex.Message})");
-                continue;
-            }
-
-            foreach (var file in files)
-                yield return file;
-
-            string[] subdirectories;
-            try
-            {
-                subdirectories = Directory.GetDirectories(dir);
-            }
-            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
-            {
-                _logger?.Warn(LogCategory.FileSystem, LogSource, $"Skipping inaccessible folder: {dir} ({ex.Message})");
-                continue;
-            }
-
-            foreach (var subdirectory in subdirectories)
-                pending.Push(subdirectory);
         }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // DirectoryNotFoundException (an IOException) is the enumerate-while-it-is-being-moved
+            // race; IgnoreInaccessible already absorbs per-subtree ACL denials.
+            _logger?.Warn(LogCategory.FileSystem, LogSource,
+                $"Directory walk of '{root}' stopped early after {files.Count} file(s): {ex.Message}");
+        }
+        return files;
     }
 
     [RelayCommand]
