@@ -169,6 +169,49 @@ public class LoraSortPlannerTests
     }
 
     [Fact]
+    public void CopyModeReRunTransfersNothing()
+    {
+        // Review 4.3: run 1 copied V1 (content A, version 42) in as V1_42 because the plain
+        // name held someone else's content B. Copy mode leaves the source in place, so run 2
+        // collided again, found V1_42 "taken" — never comparing content — and copied A in a
+        // SECOND time as V1_2. Run 3 → V1_3, unbounded. Disk state below is post-run-1.
+        var onDisk = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            @"E:\Sorted\SDXL 1.0\Character\V1.safetensors",     // a different model's file
+            @"E:\Sorted\SDXL 1.0\Character\V1_42.safetensors",  // our copy from run 1
+        };
+        var planner = Planner(
+            hash: p => p == @"E:\Sorted\SDXL 1.0\Character\V1.safetensors" ? ShaB : ShaA,
+            exists: onDisk.Contains);
+
+        var plan = planner.BuildPlan(
+            [Candidate(@"E:\Loras\x\V1.safetensors", versionId: 42, sha: ShaA)],
+            Options(isMove: false, source: @"E:\Loras", target: @"E:\Sorted"));
+
+        plan.TransferCount.Should().Be(0);
+        plan.SkippedDuplicateCount.Should().Be(1);
+        plan.Moves.Single().TargetFilePath.Should().Be(@"E:\Sorted\SDXL 1.0\Character\V1_42.safetensors");
+    }
+
+    [Fact]
+    public void DifferentContentAtTheVersionSuffixedNameStillFallsToNumericSuffix()
+    {
+        var onDisk = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            @"E:\Sorted\SDXL 1.0\Character\V1.safetensors",
+            @"E:\Sorted\SDXL 1.0\Character\V1_42.safetensors",
+        };
+        var planner = Planner(hash: _ => ShaB, exists: onDisk.Contains);
+
+        var plan = planner.BuildPlan(
+            [Candidate(@"E:\Loras\x\V1.safetensors", versionId: 42, sha: ShaA)],
+            Options(isMove: false, source: @"E:\Loras", target: @"E:\Sorted"));
+
+        plan.Moves.Single().TargetFilePath.Should().Be(@"E:\Sorted\SDXL 1.0\Character\V1_2.safetensors");
+        plan.Moves.Single().WasRenamed.Should().BeTrue();
+    }
+
+    [Fact]
     public void LegacyDashedUppercaseStoredHashStillMatchesAFreshlyComputedOne()
     {
         // Review 4.6: ModelFile.HashSHA256 has been stored with separators by older import

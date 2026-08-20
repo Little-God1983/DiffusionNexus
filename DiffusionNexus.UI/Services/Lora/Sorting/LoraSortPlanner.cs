@@ -65,6 +65,13 @@ public sealed class LoraSortPlanner
             bool NameIsTaken(string name)
                 => names.ContainsKey(name) || _fileExistsOnDisk(Path.Combine(targetDir, name));
 
+            // Whoever holds `name` in this target directory: an earlier candidate of this
+            // same plan, or the file already sitting there on disk.
+            string? HashOfClaimant(string name)
+                => names.TryGetValue(name, out var claimant)
+                    ? HashOfCandidate(claimant)
+                    : HashOfFile(Path.Combine(targetDir, name));
+
             var sourceDir = Path.GetDirectoryName(candidate.FilePath) ?? string.Empty;
             if (string.Equals(sourceDir, targetDir, StringComparison.OrdinalIgnoreCase)
                 && !names.ContainsKey(fileName))
@@ -86,15 +93,29 @@ public sealed class LoraSortPlanner
             // Collision: classify by content. Claimant is the earlier candidate if any,
             // otherwise the file already on disk at the plain target path.
             var myHash = HashOfCandidate(candidate);
-            var claimantHash = names.TryGetValue(fileName, out var claimant)
-                ? HashOfCandidate(claimant)
-                : HashOfFile(Path.Combine(targetDir, fileName));
 
-            if (SameContent(myHash, claimantHash))
+            if (SameContent(myHash, HashOfClaimant(fileName)))
             {
                 moves.Add(new PlannedMove(candidate, targetDir,
                     Path.Combine(targetDir, fileName), PlannedAction.SkippedDuplicate, WasRenamed: false));
                 continue;
+            }
+
+            // The plain name belongs to different content, so the deterministic
+            // {stem}_{versionId} name is next. If THAT one is already taken it is very
+            // likely this same file from an earlier run: copy mode leaves the source in
+            // place, so run 2 collided on the plain name again, found its own _{versionId}
+            // copy "taken" and fell through to _2, run 3 to _3, unbounded. Hash-compare
+            // first — an identical file there is our earlier copy, so there is nothing to do.
+            if (candidate.CivitaiVersionId is { } versionId)
+            {
+                var suffixed = $"{Path.GetFileNameWithoutExtension(fileName)}_{versionId}{Path.GetExtension(fileName)}";
+                if (NameIsTaken(suffixed) && SameContent(myHash, HashOfClaimant(suffixed)))
+                {
+                    moves.Add(new PlannedMove(candidate, targetDir,
+                        Path.Combine(targetDir, suffixed), PlannedAction.SkippedDuplicate, WasRenamed: false));
+                    continue;
+                }
             }
 
             var renamed = SorterPathBuilder.BuildCollisionFreeFileName(
