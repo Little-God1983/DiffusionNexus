@@ -16,19 +16,45 @@ public sealed class LoraSortPlanner
         _fileExistsOnDisk = fileExistsOnDisk;
     }
 
-    public LoraSortPlan BuildPlan(IReadOnlyList<SortCandidate> candidates, LoraSortOptions options)
+    /// <param name="ct">Planning re-hashes on every collision and every option toggle
+    /// re-plans, so a large library can spend minutes here — the caller's Cancel must
+    /// be able to cut it short.</param>
+    public LoraSortPlan BuildPlan(IReadOnlyList<SortCandidate> candidates, LoraSortOptions options,
+        CancellationToken ct = default)
     {
         var moves = new List<PlannedMove>(candidates.Count);
         var claimed = new Dictionary<string, Dictionary<string, SortCandidate>>(StringComparer.OrdinalIgnoreCase);
-        var hashCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var hashCache = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
 
-        string HashOfFile(string path)
-            => hashCache.TryGetValue(path, out var h) ? h : hashCache[path] = _hashFile(path);
-        string HashOfCandidate(SortCandidate c)
+        // A hash we cannot read is not "no collision" — it is a file we cannot prove is
+        // identical, so it must be treated as different content (rename, never overwrite).
+        // Same guard CivitaiDownloadQueue.ResolveCollisionFreeTargetPathAsync carries; the
+        // sorter dropped it while claiming to mirror the convention, so one .safetensors
+        // held open by a running backend killed the entire preview.
+        string? HashOfFile(string path)
+        {
+            if (hashCache.TryGetValue(path, out var cached)) return cached;
+            try
+            {
+                return hashCache[path] = _hashFile(path);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return hashCache[path] = null;
+            }
+        }
+
+        string? HashOfCandidate(SortCandidate c)
             => !string.IsNullOrWhiteSpace(c.Sha256) ? c.Sha256! : HashOfFile(c.FilePath);
+
+        static bool SameContent(string? left, string? right)
+            => left is not null && right is not null
+               && string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
 
         foreach (var candidate in candidates)
         {
+            ct.ThrowIfCancellationRequested();
+
             var targetDir = SorterPathBuilder.BuildTargetDirectory(
                 options.TargetRoot, candidate.BaseModelRaw, candidate.CategoryFolderName, options.IncludeCategory);
             var names = claimed.TryGetValue(targetDir, out var existing)
@@ -64,7 +90,7 @@ public sealed class LoraSortPlanner
                 ? HashOfCandidate(claimant)
                 : HashOfFile(Path.Combine(targetDir, fileName));
 
-            if (string.Equals(myHash, claimantHash, StringComparison.OrdinalIgnoreCase))
+            if (SameContent(myHash, claimantHash))
             {
                 moves.Add(new PlannedMove(candidate, targetDir,
                     Path.Combine(targetDir, fileName), PlannedAction.SkippedDuplicate, WasRenamed: false));

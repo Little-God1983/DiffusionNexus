@@ -131,6 +131,50 @@ public class LoraSortPlannerTests
     }
 
     [Fact]
+    public void UnreadableCollisionTargetIsRenamedNotSkippedAndNeverEscapes()
+    {
+        // Review 2.4: hashing the on-disk claimant threw IOException straight out of
+        // BuildPlan when a backend held the file open — "Preview failed", no plan at all.
+        // A file we cannot read is a file we cannot prove is ours: rename, never overwrite.
+        var planner = Planner(
+            hash: p => p == @"E:\Loras\SDXL 1.0\Character\V1.safetensors"
+                ? throw new IOException("locked by another process")
+                : "mine",
+            exists: p => p == @"E:\Loras\SDXL 1.0\Character\V1.safetensors");
+
+        var plan = planner.BuildPlan([Candidate(@"E:\Loras\x\V1.safetensors", versionId: 9)], Options());
+
+        plan.Moves.Single().TargetFilePath.Should().Be(@"E:\Loras\SDXL 1.0\Character\V1_9.safetensors");
+        plan.SkippedDuplicateCount.Should().Be(0);
+    }
+
+    [Fact]
+    public void UnreadableCandidateIsRenamedNotSkipped()
+    {
+        var planner = Planner(
+            hash: p => p == @"E:\Loras\x\V1.safetensors"
+                ? throw new UnauthorizedAccessException("denied")
+                : "disk",
+            exists: p => p == @"E:\Loras\SDXL 1.0\Character\V1.safetensors");
+
+        var plan = planner.BuildPlan([Candidate(@"E:\Loras\x\V1.safetensors", versionId: 9)], Options());
+
+        plan.Moves.Single().Action.Should().Be(PlannedAction.Transfer);
+        plan.Moves.Single().WasRenamed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void CancellationStopsPlanning()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = () => Planner().BuildPlan([Candidate(@"E:\Loras\x\a.safetensors")], Options(), cts.Token);
+
+        act.Should().Throw<OperationCanceledException>();
+    }
+
+    [Fact]
     public void SameVolumeMoveRequiresZeroBytes()
     {
         var plan = Planner().BuildPlan([Candidate(@"E:\Loras\x\a.safetensors", size: 5000)],
