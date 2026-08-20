@@ -45,7 +45,7 @@ public sealed class LoraSortPlanner
         }
 
         string? HashOfCandidate(SortCandidate c)
-            => !string.IsNullOrWhiteSpace(c.Sha256) ? c.Sha256! : HashOfFile(c.FilePath);
+            => NormalizeHash(c.Sha256) ?? HashOfFile(c.FilePath);
 
         static bool SameContent(string? left, string? right)
             => left is not null && right is not null
@@ -116,5 +116,29 @@ public sealed class LoraSortPlanner
             AlreadyInPlaceCount: moves.Count(m => m.Action == PlannedAction.AlreadyInPlace),
             RenamedCount: moves.Count(m => m.WasRenamed),
             SkippedDuplicateCount: moves.Count(m => m.Action == PlannedAction.SkippedDuplicate));
+    }
+
+    /// <summary>
+    /// Stored DB hashes are not trustworthy input: ModelFile.HashSHA256 has been written
+    /// in mixed case and with separators by older import paths (the reason
+    /// LoraDuplicateFinder.NormalizeHash exists), and a dashed legacy value never equals
+    /// a freshly computed one — so "identical content is skipped" silently never fired
+    /// and the duplicate was renamed and transferred instead. Anything that is not
+    /// exactly 64 hex digits after stripping separators is not a hash and is reported as
+    /// absent, so the file is hashed lazily rather than trusted as content identity.
+    /// </summary>
+    private static string? NormalizeHash(string? stored)
+    {
+        if (string.IsNullOrWhiteSpace(stored)) return null;
+
+        Span<char> normalized = stackalloc char[64];
+        var length = 0;
+        foreach (var c in stored)
+        {
+            if (c is '-' or ':' or ' ' or '\t' or '\r' or '\n') continue;
+            if (!Uri.IsHexDigit(c) || length == normalized.Length) return null;
+            normalized[length++] = char.ToLowerInvariant(c);
+        }
+        return length == normalized.Length ? new string(normalized) : null;
     }
 }

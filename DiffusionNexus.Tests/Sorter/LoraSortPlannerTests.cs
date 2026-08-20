@@ -5,6 +5,11 @@ namespace DiffusionNexus.Tests.Sorter;
 
 public class LoraSortPlannerTests
 {
+    // Real-shaped hashes: the planner only trusts a stored value that is exactly
+    // 64 hex digits (review 4.6), anything else is hashed lazily instead.
+    private const string ShaA = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    private const string ShaB = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+
     private static SortCandidate Candidate(
         string path, string? baseModel = "SDXL 1.0", string category = "Character",
         int? versionId = null, string? sha = null, long size = 1000)
@@ -65,8 +70,8 @@ public class LoraSortPlannerTests
     {
         var plan = Planner().BuildPlan(
         [
-            Candidate(@"E:\Loras\x\V1.safetensors", versionId: 111, sha: "aaa"),
-            Candidate(@"E:\Loras\y\V1.safetensors", versionId: 222, sha: "bbb"),
+            Candidate(@"E:\Loras\x\V1.safetensors", versionId: 111, sha: ShaA),
+            Candidate(@"E:\Loras\y\V1.safetensors", versionId: 222, sha: ShaB),
         ], Options());
 
         plan.Moves[0].TargetFilePath.Should().Be(@"E:\Loras\SDXL 1.0\Character\V1.safetensors");
@@ -80,8 +85,8 @@ public class LoraSortPlannerTests
     {
         var plan = Planner().BuildPlan(
         [
-            Candidate(@"E:\Loras\x\V1.safetensors", sha: "aaa"),
-            Candidate(@"E:\Loras\y\V1.safetensors", sha: "AAA"), // hash compare is case-insensitive
+            Candidate(@"E:\Loras\x\V1.safetensors", sha: ShaA),
+            Candidate(@"E:\Loras\y\V1.safetensors", sha: ShaA.ToUpperInvariant()), // hash compare is case-insensitive
         ], Options());
 
         plan.Moves[1].Action.Should().Be(PlannedAction.SkippedDuplicate);
@@ -164,6 +169,46 @@ public class LoraSortPlannerTests
     }
 
     [Fact]
+    public void LegacyDashedUppercaseStoredHashStillMatchesAFreshlyComputedOne()
+    {
+        // Review 4.6: ModelFile.HashSHA256 has been stored with separators by older import
+        // paths (LoraDuplicateFinder.NormalizeHash exists for exactly this), so the stored
+        // value never equalled a fresh hash and the duplicate was renamed and copied in.
+        var dashed = string.Join('-', Enumerable.Range(0, 8)
+            .Select(i => ShaA.Substring(i * 8, 8))).ToUpperInvariant();
+        var planner = Planner(hash: _ => ShaA);
+
+        var plan = planner.BuildPlan(
+        [
+            Candidate(@"E:\Loras\x\V1.safetensors", sha: dashed),
+            Candidate(@"E:\Loras\y\V1.safetensors"), // no stored hash → computed as ShaA
+        ], Options());
+
+        plan.Moves[1].Action.Should().Be(PlannedAction.SkippedDuplicate);
+        plan.RenamedCount.Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData("not-a-hash")]                                                   // non-hex
+    [InlineData("0123456789abcdef")]                                             // truncated
+    [InlineData("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdefff")] // too long
+    public void GarbageStoredHashIsTreatedAsAbsentAndHashedLazily(string stored)
+    {
+        var hashed = new List<string>();
+        var planner = Planner(hash: p => { hashed.Add(p); return p.Contains(@"\x\") ? ShaA : ShaB; });
+
+        var plan = planner.BuildPlan(
+        [
+            Candidate(@"E:\Loras\x\V1.safetensors", sha: stored),
+            Candidate(@"E:\Loras\y\V1.safetensors", sha: stored, versionId: 7),
+        ], Options());
+
+        hashed.Should().Contain(@"E:\Loras\y\V1.safetensors");
+        plan.Moves[1].Action.Should().Be(PlannedAction.Transfer); // NOT a bogus duplicate skip
+        plan.Moves[1].TargetFilePath.Should().Be(@"E:\Loras\SDXL 1.0\Character\V1_7.safetensors");
+    }
+
+    [Fact]
     public void CancellationStopsPlanning()
     {
         using var cts = new CancellationTokenSource();
@@ -189,8 +234,8 @@ public class LoraSortPlannerTests
         var plan = Planner().BuildPlan(
         [
             Candidate(@"E:\Loras\x\a.safetensors", size: 5000),
-            Candidate(@"E:\Loras\x\V1.safetensors", sha: "s", size: 700),
-            Candidate(@"E:\Loras\y\V1.safetensors", sha: "s", size: 700), // duplicate → skipped
+            Candidate(@"E:\Loras\x\V1.safetensors", sha: ShaA, size: 700),
+            Candidate(@"E:\Loras\y\V1.safetensors", sha: ShaA, size: 700), // duplicate → skipped
         ], Options(isMove: false, source: @"E:\Loras", target: @"D:\Backup"));
 
         plan.RequiredBytes.Should().Be(5700);
