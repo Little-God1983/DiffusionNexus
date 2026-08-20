@@ -9,6 +9,9 @@ namespace DiffusionNexus.UI.Services.Lora.Sorting;
 /// </summary>
 public static class SidecarLocator
 {
+    /// <summary>
+    /// Model extensions (.safetensors/.ckpt/.pt/.pth) are deliberately absent: a model file must never be treated as another model's sidecar.
+    /// </summary>
     public static readonly string[] SidecarExtensions =
     [
         ".civitai.info", ".json", ".metadata.json", ".cm-info.json",

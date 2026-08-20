@@ -33,7 +33,20 @@ public sealed class SidecarLocatorTests : IDisposable
     }
 
     [Fact]
-    public void ModelFileItselfIsNeverReturned()
+    public void ModelFileItselfIsNeverReturnedEvenWhenItsExtensionIsASidecarExtension()
+    {
+        // ".json" IS in SidecarExtensions: without the self-exclusion guard,
+        // FindSidecars("mylora.json") would return the input file itself.
+        var model = Write("mylora.json");
+        var info = Write("mylora.civitai.info");
+
+        var sidecars = SidecarLocator.FindSidecars(model);
+
+        sidecars.Should().BeEquivalentTo(new[] { info });
+    }
+
+    [Fact]
+    public void ModelWithNoSidecarsYieldsEmpty()
     {
         var model = Write("mylora.safetensors");
         SidecarLocator.FindSidecars(model).Should().BeEmpty();
