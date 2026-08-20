@@ -39,6 +39,13 @@ public class SorterCategoryResolverTests
         => SorterCategoryResolver.Resolve(CivitaiCategory.Unknown, new[] { "poses" })
             .Should().Be(CivitaiCategory.Poses);
 
+    [Fact]
+    public void UndefinedUserCategoryOverrideFallsThroughToTags()
+        // Same hole 4.5 closed for tags: an undefined stored integer (e.g. corrupt/legacy
+        // AppSettings data) must not name a directory by its raw number.
+        => SorterCategoryResolver.Resolve((CivitaiCategory)2000, new[] { "style" })
+            .Should().Be(CivitaiCategory.Style);
+
     [Theory]
     [InlineData(CivitaiCategory.BaseModel, "Base Model")]
     [InlineData(CivitaiCategory.Character, "Character")]

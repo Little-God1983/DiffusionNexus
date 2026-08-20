@@ -188,6 +188,26 @@ public sealed class LoraSorterViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task WhitespaceOnlyLocalPathIsSkippedNotFatalAndIsReported()
+    {
+        // Path.GetFullPath (called inside the IsWithin boundary check) throws ArgumentException
+        // for a whitespace-only string. A blank/malformed ModelFile.LocalPath row used to abort
+        // the whole pass with zero candidates because the boundary check ran before the per-file
+        // try/catch could absorb it.
+        var good = WriteLora(@"flat\good.safetensors");
+        var vm = CreateVm(cached:
+        [
+            Installed(good, "SDXL 1.0", "character"),
+            Installed("   ", "SDXL 1.0", "character"),
+        ]);
+
+        await vm.InitializeAsync();
+
+        vm.TransferCount.Should().Be(1);
+        vm.StatusMessage.Should().Contain("1 file(s) skipped");
+    }
+
+    [Fact]
     public async Task TheSkippedFileNoteSurvivesAnOptionToggle()
     {
         var good = WriteLora(@"flat\good.safetensors");

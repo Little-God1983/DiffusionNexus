@@ -579,28 +579,38 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         var candidates = new List<SortCandidate>();
         var knownPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var skipped = 0;
+        var knownAdded = 0;
+        var knownSkipped = 0;
+        var unknownAdded = 0;
+        var unknownSkipped = 0;
 
         foreach (var f in cached)
         {
             var path = f.File.LocalPath;
-            if (string.IsNullOrEmpty(path)) continue;
-            // Boundary-aware: a bare StartsWith would sweep sibling folders that merely share a
-            // name prefix (e.g. source "E:\Loras" matching "E:\Loras_backup\x.safetensors").
-            if (!IsWithin(path, sourceFolder)) continue;
-            if (!_fileExistsOnDisk(path)) continue;
 
             try
             {
+                if (string.IsNullOrEmpty(path)) continue;
+                // Boundary-aware: a bare StartsWith would sweep sibling folders that merely share a
+                // name prefix (e.g. source "E:\Loras" matching "E:\Loras_backup\x.safetensors").
+                // Path.GetFullPath (inside IsWithin) throws ArgumentException for a whitespace-only
+                // path — the check lives inside this try so a single blank/malformed ModelFile.LocalPath
+                // row is skipped instead of aborting the whole pass.
+                if (!IsWithin(path, sourceFolder)) continue;
+                if (!_fileExistsOnDisk(path)) continue;
+
                 var category = SorterCategoryResolver.ToFolderName(SorterCategoryResolver.ResolveForModel(f.Model));
                 var sizeBytes = f.File.FileSizeBytes ?? new FileInfo(path).Length;
                 var candidate = new SortCandidate(path, f.Version.BaseModelRaw, category,
                     f.Version.CivitaiId, f.File.HashSHA256, sizeBytes, SidecarLocator.FindSidecars(path));
                 knownPaths.Add(Path.GetFullPath(path));
                 candidates.Add(candidate);
+                knownAdded++;
             }
             catch (Exception ex) when (IsSkippableFileFailure(ex))
             {
                 skipped++;
+                knownSkipped++;
                 _logger?.Warn(LogCategory.FileSystem, LogSource, $"Skipping {path}: {ex.Message}");
             }
         }
@@ -645,10 +655,12 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                     ?? SorterPathBuilder.UnknownFolderName;
                 candidates.Add(new SortCandidate(path, metadata.BaseModelRaw, category,
                     metadata.CivitaiVersionId, metadata.Sha256, sizeBytes, SidecarLocator.FindSidecars(path)));
+                unknownAdded++;
             }
             catch (Exception ex) when (IsSkippableFileFailure(ex))
             {
                 skipped++;
+                unknownSkipped++;
                 _logger?.Warn(LogCategory.FileSystem, LogSource, $"Skipping {path}: {ex.Message}");
             }
         }
@@ -661,7 +673,8 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 
         _logger?.Info(LogCategory.FileSystem, LogSource,
             $"Candidate resolution finished: {candidates.Count} candidates " +
-            $"({candidates.Count - unknownFiles.Count + skipped} DB-known, {unknownFiles.Count - skipped} resolved from disk/API), " +
+            $"({knownAdded} DB-known added, {knownSkipped} DB-known skipped, " +
+            $"{unknownAdded} resolved from disk/API, {unknownSkipped} unknown skipped), " +
             $"{skipped} skipped, {stopwatch.ElapsedMilliseconds} ms");
 
         return new CandidateResolution(candidates, skipped);
@@ -677,10 +690,13 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// by that twice. One bad file out of 3000 killed the preview with zero candidates, which is the
     /// folder-granularity failure the safe directory walk exists to prevent, one level down.
     /// <see cref="OperationCanceledException"/> is deliberately not covered: cancellation must
-    /// still unwind the pass.
+    /// still unwind the pass. <see cref="ArgumentException"/> is included because
+    /// <see cref="Path.GetFullPath(string)"/> (via <see cref="IsWithin"/>) throws it for a
+    /// whitespace-only path — a blank <c>ModelFile.LocalPath</c> row must cost one file, not the
+    /// whole pass.
     /// </remarks>
     private static bool IsSkippableFileFailure(Exception ex)
-        => ex is IOException or UnauthorizedAccessException or JsonException;
+        => ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException;
 
     /// <summary>Result of one resolution pass: the candidates and how many files it had to skip.</summary>
     private sealed record CandidateResolution(List<SortCandidate> Candidates, int SkippedCount);
@@ -871,13 +887,15 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         {
             try
             {
-                await _deleteEmptyDirectories(SelectedSourceFolder!, CancellationToken.None);
+                // The plan that actually ran, not the (possibly since-changed) live selection —
+                // see the "preview changed while confirming" guard above this call's caller.
+                await _deleteEmptyDirectories(plan.SourceRoot, CancellationToken.None);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _emptyFolderCleanupFailed = true;
                 _logger?.Warn(LogCategory.FileSystem, LogSource,
-                    $"Sorted files moved fine, but empty source folders under {SelectedSourceFolder} could not all be removed: {ex.Message}");
+                    $"Sorted files moved fine, but empty source folders under {plan.SourceRoot} could not all be removed: {ex.Message}");
             }
         }
 

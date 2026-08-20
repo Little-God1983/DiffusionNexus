@@ -15,7 +15,8 @@ public static class SorterCategoryResolver
 {
     public static CivitaiCategory Resolve(CivitaiCategory? userCategory, IEnumerable<string?> tagNames)
     {
-        if (userCategory is { } explicitCategory && explicitCategory != CivitaiCategory.Unknown)
+        if (userCategory is { } explicitCategory && explicitCategory != CivitaiCategory.Unknown
+            && Enum.IsDefined(explicitCategory))
             return explicitCategory;
 
         foreach (var tagName in tagNames)

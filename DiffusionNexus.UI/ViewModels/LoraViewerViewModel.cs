@@ -1324,12 +1324,6 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     }
 
     /// <summary>
-    /// Reads the Civitai API key from a fresh DI scope so callers always see the latest
-    /// database value rather than a stale EF Core tracked entity. Extracted from the
-    /// by-hash metadata lookup (<see cref="DownloadMetadataForTileAsync"/>); also handed to
-    /// <see cref="SorterMetadataResolver"/> for the LoRA Sorter's unknown-file resolution.
-    /// </summary>
-    /// <summary>
     /// Loads the installed-file rows for the LoRA Sorter from a fresh DI scope, the same pattern
     /// <see cref="LoadCachedTilesAsync"/> uses. <c>IModelSyncService</c> and <c>IUnitOfWork</c> are
     /// transient while this ViewModel is scoped, so <see cref="_syncService"/> is a single
@@ -1345,6 +1339,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         return await freshSyncService.LoadCachedFilesAsync(ct);
     }
 
+    /// <summary>
+    /// Reads the Civitai API key from a fresh DI scope so callers always see the latest
+    /// database value rather than a stale EF Core tracked entity. Extracted from the
+    /// by-hash metadata lookup (<see cref="DownloadMetadataForTileAsync"/>); also handed to
+    /// <see cref="SorterMetadataResolver"/> for the LoRA Sorter's unknown-file resolution.
+    /// </summary>
     private async Task<string?> GetApiKeyForSorterAsync()
     {
         using var keyScope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
