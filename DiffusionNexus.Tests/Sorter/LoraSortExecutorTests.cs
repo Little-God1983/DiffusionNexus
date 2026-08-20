@@ -147,6 +147,62 @@ public sealed class LoraSortExecutorTests : IDisposable
     }
 
     [Fact]
+    public async Task CancellationDuringDbBatchFlushStillReturnsGracefullyAndRetriesFlush()
+    {
+        // 20 transfers trigger the mid-loop DbBatchSize flush; the updater cancels
+        // that first call. The executor must not throw: it reports Cancelled and
+        // delivers the kept batch via the CancellationToken.None final flush.
+        var moves = new List<PlannedMove>();
+        for (var i = 0; i < 21; i++)
+        {
+            Write($@"flat\m{i}.safetensors");
+            moves.Add(Move($@"flat\m{i}.safetensors", $@"SDXL 1.0\Character\m{i}.safetensors"));
+        }
+        var updater = new CancelThenRecordPathUpdater(_dbChanges);
+        var executor = new LoraSortExecutor(new FileOperations(), updater,
+            new SortHistoryWriter(In("history")), logger: null);
+
+        var result = await executor.ExecuteAsync(Plan(isMove: true, moves.ToArray()));
+
+        result.Cancelled.Should().BeTrue();
+        result.Moved.Should().Be(20);
+        File.Exists(In("flat", "m20.safetensors")).Should().BeTrue();
+        _dbChanges.Should().HaveCount(20); // delivered by the final CancellationToken.None retry
+    }
+
+    private sealed class CancelThenRecordPathUpdater(List<(string, string)> sink) : ILocalPathUpdater
+    {
+        private bool _first = true;
+
+        public Task UpdateLocalPathsAsync(IReadOnlyList<(string OldPath, string NewPath)> changes,
+            CancellationToken ct = default)
+        {
+            if (_first) { _first = false; throw new OperationCanceledException(); }
+            sink.AddRange(changes.Select(c => (c.OldPath, c.NewPath)));
+            return Task.CompletedTask;
+        }
+    }
+
+    [Fact]
+    public async Task DbFailureNeverCrashesTheRun()
+    {
+        Write(@"flat\a.safetensors");
+        var executor = new LoraSortExecutor(new FileOperations(), new ThrowingPathUpdater(),
+            new SortHistoryWriter(In("history")), logger: null);
+
+        var result = await executor.ExecuteAsync(Plan(isMove: true,
+            Move(@"flat\a.safetensors", @"SDXL 1.0\Character\a.safetensors")));
+
+        result.Moved.Should().Be(1); // file physically moved; DB staleness is logged, not fatal
+    }
+
+    private sealed class ThrowingPathUpdater : ILocalPathUpdater
+    {
+        public Task UpdateLocalPathsAsync(IReadOnlyList<(string OldPath, string NewPath)> changes,
+            CancellationToken ct = default) => throw new InvalidOperationException("db down");
+    }
+
+    [Fact]
     public async Task ManifestIsWrittenBeforeExecutionAndEntriesGetCompleted()
     {
         Write(@"flat\a.safetensors");

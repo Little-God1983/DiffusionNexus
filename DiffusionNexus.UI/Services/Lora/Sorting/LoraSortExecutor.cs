@@ -47,14 +47,14 @@ public sealed class LoraSortExecutor
 
         foreach (var move in plan.Moves)
         {
-            if (move.Action != PlannedAction.Transfer)
-                continue;
-
             if (ct.IsCancellationRequested)
             {
                 cancelled = true;
                 break;
             }
+
+            if (move.Action != PlannedAction.Transfer)
+                continue;
 
             var source = move.Candidate.FilePath;
             try
@@ -90,8 +90,24 @@ public sealed class LoraSortExecutor
                     pendingDbChanges.Add((source, move.TargetFilePath));
                     if (pendingDbChanges.Count >= DbBatchSize)
                     {
-                        await _pathUpdater.UpdateLocalPathsAsync(pendingDbChanges, ct);
-                        pendingDbChanges.Clear();
+                        try
+                        {
+                            await _pathUpdater.UpdateLocalPathsAsync(pendingDbChanges, ct);
+                            pendingDbChanges.Clear();
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            // Files already transferred stay transferred; the pending batch
+                            // rides through to the unconditional CancellationToken.None flush below.
+                            cancelled = true;
+                            break;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger?.Error(LogCategory.FileSystem, LogSource,
+                                $"DB batch flush failed; {pendingDbChanges.Count} rows will be retried at the end of the run.", ex);
+                            continue;
+                        }
                     }
                 }
                 else
@@ -113,8 +129,16 @@ public sealed class LoraSortExecutor
 
         if (pendingDbChanges.Count > 0)
         {
-            await _pathUpdater.UpdateLocalPathsAsync(pendingDbChanges, CancellationToken.None);
-            pendingDbChanges.Clear();
+            try
+            {
+                await _pathUpdater.UpdateLocalPathsAsync(pendingDbChanges, CancellationToken.None);
+                pendingDbChanges.Clear();
+            }
+            catch (Exception ex)
+            {
+                _logger?.Error(LogCategory.FileSystem, LogSource,
+                    $"Final DB batch flush failed; {pendingDbChanges.Count} rows stay stale and will be re-resolved by hash on the next library sync.", ex);
+            }
         }
 
         var skipped = plan.SkippedDuplicateCount;
