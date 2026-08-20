@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
+using DiffusionNexus.UI.Helpers;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -19,14 +20,11 @@ public partial class SortPreviewNodeViewModel : ObservableObject
     [ObservableProperty]
     private bool _isExpanded;
 
-    public string CountAndSizeDisplay => IsFile ? FormatBytes(TotalBytes)
-        : $"{LoraCount} LoRAs · {FormatBytes(TotalBytes)}";
-
-    internal static string FormatBytes(long bytes) => bytes switch
-    {
-        >= 1L << 30 => $"{bytes / (double)(1L << 30):F1} GB",
-        >= 1L << 20 => $"{bytes / (double)(1L << 20):F1} MB",
-        >= 1L << 10 => $"{bytes / (double)(1L << 10):F1} KB",
-        _ => $"{bytes} B"
-    };
+    /// <summary>Formatted through the shared <see cref="FileSizeFormatter"/>, which exists to
+    /// consolidate exactly these copies. The private one this replaced used <c>:F1</c> for GB where
+    /// the shared formatter and <c>CivitaiDownloadQueue</c> both use <c>:F2</c>, so the sorter's
+    /// disk gate read "4.2 GB" while the download queue's gate for the same bytes read "4.20 GB",
+    /// on the same screen.</summary>
+    public string CountAndSizeDisplay => IsFile ? FileSizeFormatter.Format(TotalBytes)
+        : $"{LoraCount} LoRAs · {FileSizeFormatter.Format(TotalBytes)}";
 }

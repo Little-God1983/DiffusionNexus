@@ -6,6 +6,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Service.Services.IO;
+using DiffusionNexus.UI.Helpers;
 using DiffusionNexus.UI.Services.Lora.Sorting;
 using DiffusionNexus.UI.Utilities;
 using Microsoft.Extensions.DependencyInjection;
@@ -113,11 +114,16 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         _settingsService = null;
         _logger = null;
         _pathUpdater = new NullLocalPathUpdater();
+        // The shared hasher, not yet another private SHA256 copy — this VM's own copy sat next to
+        // HashingService and LoraViewerViewModel.ComputeFullSha256, the latter being what the
+        // runtime already injects here as hashFile.
+        var designTimeHash = (string path) =>
+            new HashingService().ComputeFileHash(path, HashingService.HashAlgorithmType.SHA256);
         _metadataResolver = new SorterMetadataResolver(null, () => Task.FromResult<string?>(null),
-            SorterMetadataResolver.DefaultCacheDirectory, ComputeSha256, logger: null);
+            SorterMetadataResolver.DefaultCacheDirectory, designTimeHash, logger: null);
         _fileOperations = new FileOperations();
         _getAvailableSpace = DiskUtility.GetAvailableSpace;
-        _hashFile = ComputeSha256;
+        _hashFile = designTimeHash;
         _fileExistsOnDisk = File.Exists;
         _historyDirectory = SortHistoryWriter.DefaultHistoryDirectory;
         _deleteEmptyDirectories = DefaultDeleteEmptyDirectories;
@@ -717,7 +723,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             : await DialogService.ShowConfirmAsync("Start sorting?",
                 $"{plan.TransferCount} files will be {(IsMove ? "moved" : "copied")} into {EffectiveTargetRoot}.\n" +
                 $"{plan.RenamedCount} will be renamed, {plan.SkippedDuplicateCount} duplicates skipped.\n" +
-                $"Total {SortPreviewNodeViewModel.FormatBytes(totalTransferBytes)}.");
+                $"Total {FileSizeFormatter.Format(totalTransferBytes)}.");
 
         if (!confirmed) return;
 
@@ -879,7 +885,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 
         var needed = plan.RequiredBytes > 0 ? plan.RequiredBytes + SafetyMarginBytes : 0;
         HasEnoughSpace = free >= needed;
-        DiskSummary = $"{SortPreviewNodeViewModel.FormatBytes(plan.RequiredBytes)} required · {SortPreviewNodeViewModel.FormatBytes(free)} free";
+        DiskSummary = $"{FileSizeFormatter.Format(plan.RequiredBytes)} required · {FileSizeFormatter.Format(free)} free";
         BlockReason = HasEnoughSpace ? null : "Not enough free space on the target drive.";
     }
 
@@ -988,12 +994,6 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 
     private static Task DefaultDeleteEmptyDirectories(string path, CancellationToken ct)
         => new DiskUtility().DeleteEmptyDirectoriesAsync(path, ct);
-
-    private static string ComputeSha256(string filePath)
-    {
-        using var stream = File.OpenRead(filePath);
-        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream)).ToLowerInvariant();
-    }
 
     /// <summary>No-op path updater for the design-time constructor, which never touches the DB.</summary>
     private sealed class NullLocalPathUpdater : ILocalPathUpdater
