@@ -1,5 +1,6 @@
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.Lora.Sorting;
 using DiffusionNexus.UI.Utilities;
@@ -46,7 +47,8 @@ public sealed class LoraSorterViewModelTests : IDisposable
         Func<string, bool>? fileExistsOnDisk = null,
         Func<string, string>? resolverHash = null,
         Func<string, CancellationToken, Task>? deleteEmptyDirectories = null,
-        Func<CancellationToken, Task<IReadOnlyList<InstalledModelFile>>>? loadCachedFiles = null)
+        Func<CancellationToken, Task<IReadOnlyList<InstalledModelFile>>>? loadCachedFiles = null,
+        IUnifiedLogger? logger = null)
     {
         _settings.Setup(s => s.GetEnabledLoraSourcesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([SourceRoot]);
@@ -56,7 +58,7 @@ public sealed class LoraSorterViewModelTests : IDisposable
             .ReturnsAsync(cached ?? []);
 
         return new LoraSorterViewModel(
-            _settings.Object, _sync.Object, logger: null,
+            _settings.Object, _sync.Object, logger,
             pathUpdater: Mock.Of<ILocalPathUpdater>(),
             metadataResolver: new SorterMetadataResolver(null, () => Task.FromResult<string?>(null),
                 Path.Combine(_root.FullName, "cache"), resolverHash ?? (_ => "hash"), logger: null),
@@ -553,6 +555,32 @@ public sealed class LoraSorterViewModelTests : IDisposable
     [InlineData(@"E:\Other\a.safetensors", @"E:\Loras", false)]
     public void IsWithinHandlesDriveRootsAndPrefixSiblings(string path, string root, bool expected)
         => LoraSorterViewModel.IsWithin(path, root).Should().Be(expected);
+
+    [Fact]
+    public async Task PreviewAndRunReportTimedStepsToTheUnifiedConsole()
+    {
+        // Standing project rule: every step reports to the Unified Console WITH timings, so an
+        // exported log can tell "slow" from "hung" by which step last succeeded. Before this the
+        // slowest loop in the feature reported only into BusyMessage, and the branch had no
+        // Stopwatch anywhere.
+        var lines = new List<string>();
+        var logger = new Mock<IUnifiedLogger>();
+        logger.Setup(l => l.Info(LogCategory.FileSystem, "LoraSorter", It.IsAny<string>(), It.IsAny<string?>()))
+            .Callback((LogCategory _, string _, string message, string? _) => lines.Add(message));
+
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")], logger: logger.Object);
+        vm.DialogService = ConfirmingDialogService();
+
+        await vm.InitializeAsync();
+        await vm.StartSortingCommand.ExecuteAsync(null);
+
+        lines.Should().Contain(l => l.StartsWith("Resolving candidates under"));
+        lines.Should().Contain(l => l.StartsWith("Candidate resolution finished:") && l.Contains(" ms"));
+        lines.Should().Contain(l => l.StartsWith("Plan built for") && l.Contains(" ms:"));
+        lines.Should().Contain(l => l.StartsWith("Sort started:"));
+        lines.Should().Contain(l => l.StartsWith("Sort finished:") && l.Contains(" ms"));
+    }
 
     private static IEnumerable<string> FlattenNames(IEnumerable<SortPreviewNodeViewModel> nodes)
     {

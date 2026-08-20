@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -22,6 +23,9 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 {
     private const long SafetyMarginBytes = 1L << 30; // 1 GB
     private const string LogSource = "LoraSorter";
+
+    /// <summary>Heartbeat cadence for the unknown-file resolution loop's progress log line.</summary>
+    private const int ResolveLogInterval = 50;
 
     private static readonly string[] ModelExtensions = [".safetensors", ".ckpt", ".pt", ".pth"];
 
@@ -437,9 +441,11 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             // options snapshot is read here — on the calling (UI) context — not from inside the
             // Task.Run body.
             var options = BuildOptions();
+            var planStopwatch = Stopwatch.StartNew();
             var plan = await Task.Run(
                 () => new LoraSortPlanner(_hashFile, _fileExistsOnDisk).BuildPlan(candidates, options, passCts.Token),
                 passCts.Token);
+            planStopwatch.Stop();
             _lastPlan = plan;
 
             BuildPreviewTree(plan, targetRoot);
@@ -480,7 +486,10 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             }
 
             _logger?.Info(LogCategory.FileSystem, LogSource,
-                $"Preview: {plan.TransferCount} transfers, {plan.RenamedCount} renames, {plan.SkippedDuplicateCount} duplicates");
+                $"Plan built for {candidates.Count} candidates in {planStopwatch.ElapsedMilliseconds} ms: " +
+                $"{plan.TransferCount} transfers, {plan.AlreadyInPlaceCount} already in place, " +
+                $"{plan.RenamedCount} renames, {plan.SkippedDuplicateCount} duplicates, " +
+                $"{FileSizeFormatter.Format(plan.RequiredBytes)} required");
         }
         catch (OperationCanceledException)
         {
@@ -549,6 +558,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 
         ct.ThrowIfCancellationRequested();
 
+        var stopwatch = Stopwatch.StartNew();
         var candidates = new List<SortCandidate>();
         var knownPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var skipped = 0;
@@ -585,13 +595,23 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             : new List<string>();
 
         _logger?.Info(LogCategory.FileSystem, LogSource,
-            $"Resolving candidates under {sourceFolder}: {candidates.Count} known, {unknownFiles.Count} unknown");
+            $"Resolving candidates under {sourceFolder}: {candidates.Count} known, {unknownFiles.Count} unknown " +
+            $"(enumeration {stopwatch.ElapsedMilliseconds} ms)");
 
         for (var i = 0; i < unknownFiles.Count; i++)
         {
             ct.ThrowIfCancellationRequested();
             var path = unknownFiles[i];
             progress?.Report($"Resolving metadata {i + 1}/{unknownFiles.Count}…");
+
+            // A heartbeat, so an exported log can tell "slow" (the line keeps advancing) from
+            // "hung" (it stopped) — this loop is a full-file SHA256 plus a serialized Civitai
+            // round-trip per file and is by far the slowest thing the feature does.
+            if (i > 0 && i % ResolveLogInterval == 0)
+            {
+                _logger?.Info(LogCategory.FileSystem, LogSource,
+                    $"Resolved {i}/{unknownFiles.Count} unknown files ({stopwatch.ElapsedMilliseconds} ms elapsed, {skipped} skipped)");
+            }
 
             try
             {
@@ -621,6 +641,11 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             _logger?.Warn(LogCategory.FileSystem, LogSource,
                 $"{skipped} file(s) under {sourceFolder} could not be read and were left out of the preview.");
         }
+
+        _logger?.Info(LogCategory.FileSystem, LogSource,
+            $"Candidate resolution finished: {candidates.Count} candidates " +
+            $"({candidates.Count - unknownFiles.Count + skipped} DB-known, {unknownFiles.Count - skipped} resolved from disk/API), " +
+            $"{skipped} skipped, {stopwatch.ElapsedMilliseconds} ms");
 
         return new CandidateResolution(candidates, skipped);
     }
@@ -793,8 +818,10 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             taskHandle?.ReportProgress(p.Fraction, p.Status);
         });
 
+        var stopwatch = Stopwatch.StartNew();
         _logger?.Info(LogCategory.FileSystem, LogSource,
-            $"Sort started: {(IsMove ? "move" : "copy")}, {plan.TransferCount} files → {EffectiveTargetRoot}");
+            $"Sort started: {(IsMove ? "move" : "copy")}, {plan.TransferCount} files " +
+            $"({FileSizeFormatter.Format(plan.Moves.Where(m => m.Action == PlannedAction.Transfer).Sum(m => m.Candidate.FileSizeBytes))}) → {EffectiveTargetRoot}");
 
         LoraSortResult result;
         try
@@ -838,9 +865,11 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         }
 
         _logger?.Info(LogCategory.FileSystem, LogSource,
-            result.Cancelled
+            (result.Cancelled
                 ? $"Sort cancelled: {result.Moved + result.Copied} done, {result.Skipped} skipped, {result.Failed} failed"
-                : $"Sort finished: {result.Moved + result.Copied} sorted, {result.Skipped} duplicates skipped, {result.Failed} failed");
+                : $"Sort finished: {result.Moved + result.Copied} sorted, {result.Skipped} duplicates skipped, {result.Failed} failed")
+            + $" in {stopwatch.ElapsedMilliseconds} ms"
+            + (result.ManifestPath is null ? " (no restore point recorded)" : $" (manifest: {result.ManifestPath})"));
 
         return result;
     }
