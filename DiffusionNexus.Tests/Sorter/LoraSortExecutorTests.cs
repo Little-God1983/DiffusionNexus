@@ -203,6 +203,52 @@ public sealed class LoraSortExecutorTests : IDisposable
     }
 
     [Fact]
+    public async Task FailedDbBatchIsDeferredAndRetriedExactlyOnceWithoutStallingProgress()
+    {
+        // Review 2.2: the failure handler `continue`d without clearing the batch, so the
+        // list stayed at DbBatchSize and every following transfer re-tripped the flush and
+        // re-threw — while the triggering file never got its MarkCompleted, done++ or
+        // progress report. 21 files, updater throws on its first call.
+        var moves = new List<PlannedMove>();
+        for (var i = 0; i < 21; i++)
+        {
+            Write($@"flat\m{i}.safetensors");
+            moves.Add(Move($@"flat\m{i}.safetensors", $@"SDXL 1.0\Character\m{i}.safetensors"));
+        }
+        var updater = new FailFirstCallPathUpdater(_dbChanges);
+        var executor = new LoraSortExecutor(new FileOperations(), updater,
+            new SortHistoryWriter(In("history")), logger: null);
+        var reports = new List<(double Fraction, string Status)>();
+
+        var result = await executor.ExecuteAsync(Plan(isMove: true, moves.ToArray()),
+            new ActionProgress(reports.Add));
+
+        result.Moved.Should().Be(21);
+        result.Cancelled.Should().BeFalse();
+        result.Failed.Should().Be(0);
+        reports.Should().HaveCount(21);              // no frozen progress bar
+        reports[^1].Fraction.Should().Be(1.0);
+        updater.Calls.Should().Be(2);                // the failed batch, then ONE retry
+        _dbChanges.Should().HaveCount(21);           // 20 deferred + the 21st, in one final call
+        var manifest = File.ReadAllText(result.ManifestPath!);
+        foreach (var i in new[] { 19, 20 })
+            manifest.Should().Contain($"m{i}.safetensors");
+    }
+
+    private sealed class FailFirstCallPathUpdater(List<(string, string)> sink) : ILocalPathUpdater
+    {
+        public int Calls { get; private set; }
+
+        public Task UpdateLocalPathsAsync(IReadOnlyList<(string OldPath, string NewPath)> changes,
+            CancellationToken ct = default)
+        {
+            if (++Calls == 1) throw new InvalidOperationException("db down");
+            sink.AddRange(changes.Select(c => (c.OldPath, c.NewPath)));
+            return Task.CompletedTask;
+        }
+    }
+
+    [Fact]
     public async Task ManifestIsWrittenBeforeExecutionAndEntriesGetCompleted()
     {
         Write(@"flat\a.safetensors");

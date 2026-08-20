@@ -44,6 +44,9 @@ public sealed class LoraSortExecutor
         var cancelled = false;
         var done = 0;
         var pendingDbChanges = new List<(string OldPath, string NewPath)>();
+        // Rows whose batch flush failed for a non-cancellation reason. They are retried
+        // exactly once, folded into the terminal flush — never re-attempted per file.
+        var deferredDbChanges = new List<(string OldPath, string NewPath)>();
 
         // The whole loop sits in a try/finally: whatever unwinds out of it — an
         // exception the per-file filter does not cover, or a plain break — the
@@ -91,13 +94,17 @@ public sealed class LoraSortExecutor
                                 // Files already transferred stay transferred; the pending batch
                                 // rides through to the unconditional CancellationToken.None flush below.
                                 cancelled = true;
-                                break;
                             }
                             catch (Exception ex)
                             {
+                                // Move the batch aside AND clear it. Leaving it in place made the
+                                // very next successful transfer re-trip >= DbBatchSize and re-throw,
+                                // for every remaining file: ~2980 failing round-trips on a 3000-file
+                                // run, with the progress bar frozen at the file that tripped it.
+                                deferredDbChanges.AddRange(pendingDbChanges);
+                                pendingDbChanges.Clear();
                                 _logger?.Error(LogCategory.FileSystem, LogSource,
-                                    $"DB batch flush failed; {pendingDbChanges.Count} rows will be retried at the end of the run.", ex);
-                                continue;
+                                    $"DB batch flush failed; {deferredDbChanges.Count} rows will be retried once at the end of the run.", ex);
                             }
                         }
                     }
@@ -106,10 +113,15 @@ public sealed class LoraSortExecutor
                         copied++;
                     }
 
+                    // The file IS transferred by this point whatever the DB did — journal it,
+                    // count it and report it, or the manifest and the progress bar contradict disk.
                     MarkCompletedSafely(manifestPath, source);
                     done++;
                     _logger?.Info(LogCategory.FileSystem, LogSource, $"{source} → {move.TargetFilePath}");
                     progress?.Report(((double)done / plan.TransferCount, Path.GetFileName(move.TargetFilePath)));
+
+                    if (cancelled)
+                        break;
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
@@ -120,6 +132,13 @@ public sealed class LoraSortExecutor
         }
         finally
         {
+            // Deferred rows get their single retry here, folded into the terminal flush.
+            if (deferredDbChanges.Count > 0)
+            {
+                pendingDbChanges.InsertRange(0, deferredDbChanges);
+                deferredDbChanges.Clear();
+            }
+
             if (pendingDbChanges.Count > 0)
             {
                 try
