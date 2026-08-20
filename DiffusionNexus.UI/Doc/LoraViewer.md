@@ -533,7 +533,7 @@ Downloaded metadata is cached in `%LocalAppData%\DiffusionNexus\SorterCache\{sha
    - Create target directories and move/copy via `IFileOperations`.
    - **Move mode:** update `ModelFile.LocalPath` in batched DB writes.
    - **Copy mode:** DB untouched.
-3. **Logging:** every step logs to the Unified Console (`LogCategory.FileSystem`, source `"LoraSorter"`) — plan summary, each file's transfer, DB batches, final tally.
+3. **Logging:** every step logs to the Unified Console (`LogCategory.FileSystem`, source `"LoraSorter"`) **with elapsed timings**, so an exported log can tell "slow" from "hung" by which step last succeeded: candidate resolution (known/unknown/skipped counts, plus a heartbeat every 50 resolved files), plan summary, sort start, each DB batch, and the final tally. A run whose history file could not be written still completes and says so — there is simply no restore point for it.
 4. **Cancellation / partial failure:** already-moved files stay (their DB rows are updated — the library remains consistent). The run stops at the current file and reports tally. A locked or inaccessible file is skipped and logged, not fatal.
 5. **After completion:** result summary in status bar; the Installed tab's cached tiles refresh so paths shown are current.
 
@@ -543,6 +543,9 @@ Downloaded metadata is cached in `%LocalAppData%\DiffusionNexus\SorterCache\{sha
 - Sorting is LoRA-family only, matching the Viewer scope.
 - The Restore UI ships as a follow-up (manifest data is written from day one).
 - Editing categories must be done in the model detail view (`UserCategory`), not within the Sorter itself.
+- Directory junctions and symlinks under the source folder are **not** followed — the enumeration skips reparse points, which is the cycle guard (a junction pointing at itself or an ancestor would otherwise enumerate forever). A LoRA reachable only through one is not sorted.
+- The tab does its first disk walk when the **Sorter tab is opened**, not when the LoRA Viewer is opened: initialization triggers from `OnAttachedToVisualTree` only.
+- When the target has no `DriveInfo` (a UNC share, an unmapped or not-ready drive), the free-space gate reports "Free space unknown" and lets the run proceed instead of blocking it with no stated reason.
 
 ### Detailed specification
 
