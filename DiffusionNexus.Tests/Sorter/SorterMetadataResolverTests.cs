@@ -97,4 +97,44 @@ public sealed class SorterMetadataResolverTests : IDisposable
 
         meta.Should().Be(new ResolvedLoraMetadata(null, null, "abc123"));
     }
+
+    [Fact]
+    public async Task MalformedSidecarFallsThroughToApi()
+    {
+        var model = WriteModel();
+        File.WriteAllText(In("lora.civitai.info"), "{ not json ");
+        _client.Setup(c => c.GetModelVersionByHashAsync("abc123", null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CivitaiModelVersion { Id = 1, BaseModel = "Pony" });
+
+        var meta = await Resolver(_client.Object).ResolveAsync(model);
+
+        meta.BaseModelRaw.Should().Be("Pony");
+    }
+
+    [Fact]
+    public async Task EmptyObjectSidecarIsNotAHitAndFallsThrough()
+    {
+        var model = WriteModel();
+        File.WriteAllText(In("lora.civitai.info"), "{}");
+        _client.Setup(c => c.GetModelVersionByHashAsync("abc123", null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CivitaiModelVersion { Id = 2, BaseModel = "Illustrious" });
+
+        var meta = await Resolver(_client.Object).ResolveAsync(model);
+
+        meta.Should().Be(new ResolvedLoraMetadata("Illustrious", 2, "abc123"));
+    }
+
+    [Fact]
+    public async Task MalformedCacheFileIsDeletedAndResolutionFallsThrough()
+    {
+        var model = WriteModel();
+        Directory.CreateDirectory(In("cache"));
+        File.WriteAllText(In(Path.Combine("cache", "abc123.json")), "garbage");
+        _client.Setup(c => c.GetModelVersionByHashAsync("abc123", null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CivitaiModelVersion { Id = 3, BaseModel = "SDXL 1.0" });
+
+        var meta = await Resolver(_client.Object).ResolveAsync(model);
+
+        meta.BaseModelRaw.Should().Be("SDXL 1.0");
+    }
 }

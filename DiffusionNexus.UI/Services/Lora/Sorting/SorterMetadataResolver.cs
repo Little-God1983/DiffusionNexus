@@ -114,6 +114,11 @@ public sealed class SorterMetadataResolver
                 ? idProp.GetInt32()
                 : null;
 
+            // Valid JSON with neither field present/non-null isn't a usable hit —
+            // fall through to hash/cache/API instead of returning an empty result.
+            if (baseModel is null && id is null)
+                return false;
+
             metadata = new ResolvedLoraMetadata(baseModel, id, Sha256: "");
             return true;
         }
@@ -121,6 +126,12 @@ public sealed class SorterMetadataResolver
         {
             _logger?.Warn(LogCategory.FileSystem, LogSource,
                 $"Malformed .civitai.info sidecar at {sidecarPath}: {ex.Message}");
+            return false;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger?.Warn(LogCategory.FileSystem, LogSource,
+                $"Could not read .civitai.info sidecar at {sidecarPath}: {ex.Message}");
             return false;
         }
     }
@@ -148,13 +159,27 @@ public sealed class SorterMetadataResolver
             try { File.Delete(cachePath); } catch (IOException) { } catch (UnauthorizedAccessException) { }
             return false;
         }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger?.Warn(LogCategory.FileSystem, LogSource,
+                $"Could not read cache entry at {cachePath}: {ex.Message}");
+            return false;
+        }
     }
 
     private void WriteCache(string sha, CacheEntry entry)
     {
-        Directory.CreateDirectory(_cacheDirectory);
         var cachePath = Path.Combine(_cacheDirectory, $"{sha}.json");
-        File.WriteAllText(cachePath, JsonSerializer.Serialize(entry, CacheJsonOptions));
+        try
+        {
+            Directory.CreateDirectory(_cacheDirectory);
+            File.WriteAllText(cachePath, JsonSerializer.Serialize(entry, CacheJsonOptions));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger?.Warn(LogCategory.FileSystem, LogSource,
+                $"Could not write cache entry at {cachePath}: {ex.Message}");
+        }
     }
 
     private sealed record CacheEntry(string? BaseModel, int? VersionId);
