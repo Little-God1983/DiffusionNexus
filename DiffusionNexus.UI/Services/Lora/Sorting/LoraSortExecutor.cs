@@ -45,99 +45,93 @@ public sealed class LoraSortExecutor
         var done = 0;
         var pendingDbChanges = new List<(string OldPath, string NewPath)>();
 
-        foreach (var move in plan.Moves)
+        // The whole loop sits in a try/finally: whatever unwinds out of it — an
+        // exception the per-file filter does not cover, or a plain break — the
+        // already-transferred files MUST have their DB rows repointed, or they are
+        // physically at their new location while the library still points at the old
+        // one (they show as missing in the Installed tab).
+        try
         {
-            if (ct.IsCancellationRequested)
+            foreach (var move in plan.Moves)
             {
-                cancelled = true;
-                break;
-            }
-
-            if (move.Action != PlannedAction.Transfer)
-                continue;
-
-            var source = move.Candidate.FilePath;
-            try
-            {
-                _fileOperations.CreateDirectory(move.TargetDirectory);
-
-                if (plan.IsMove)
-                    _fileOperations.MoveFile(source, move.TargetFilePath, overwrite: false);
-                else
-                    _fileOperations.CopyFile(source, move.TargetFilePath, overwrite: false);
-
-                foreach (var sidecar in move.Candidate.SidecarPaths)
+                if (ct.IsCancellationRequested)
                 {
-                    var sidecarTarget = SidecarLocator.DeriveSidecarTargetPath(
-                        sidecar, source, move.TargetFilePath);
-                    try
-                    {
-                        if (plan.IsMove)
-                            _fileOperations.MoveFile(sidecar, sidecarTarget, overwrite: false);
-                        else
-                            _fileOperations.CopyFile(sidecar, sidecarTarget, overwrite: false);
-                    }
-                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                    {
-                        _logger?.Warn(LogCategory.FileSystem, LogSource,
-                            $"Sidecar transfer failed for {sidecar}: {ex.Message}");
-                    }
+                    cancelled = true;
+                    break;
                 }
 
-                if (plan.IsMove)
+                if (move.Action != PlannedAction.Transfer)
+                    continue;
+
+                var source = move.Candidate.FilePath;
+                try
                 {
-                    moved++;
-                    pendingDbChanges.Add((source, move.TargetFilePath));
-                    if (pendingDbChanges.Count >= DbBatchSize)
+                    _fileOperations.CreateDirectory(move.TargetDirectory);
+
+                    if (plan.IsMove)
+                        _fileOperations.MoveFile(source, move.TargetFilePath, overwrite: false);
+                    else
+                        _fileOperations.CopyFile(source, move.TargetFilePath, overwrite: false);
+
+                    TransferSidecars(move, source, plan.IsMove);
+
+                    if (plan.IsMove)
                     {
-                        try
+                        moved++;
+                        pendingDbChanges.Add((source, move.TargetFilePath));
+                        if (pendingDbChanges.Count >= DbBatchSize)
                         {
-                            await _pathUpdater.UpdateLocalPathsAsync(pendingDbChanges, ct);
-                            pendingDbChanges.Clear();
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            // Files already transferred stay transferred; the pending batch
-                            // rides through to the unconditional CancellationToken.None flush below.
-                            cancelled = true;
-                            break;
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger?.Error(LogCategory.FileSystem, LogSource,
-                                $"DB batch flush failed; {pendingDbChanges.Count} rows will be retried at the end of the run.", ex);
-                            continue;
+                            try
+                            {
+                                await _pathUpdater.UpdateLocalPathsAsync(pendingDbChanges, ct);
+                                pendingDbChanges.Clear();
+                            }
+                            catch (OperationCanceledException)
+                            {
+                                // Files already transferred stay transferred; the pending batch
+                                // rides through to the unconditional CancellationToken.None flush below.
+                                cancelled = true;
+                                break;
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger?.Error(LogCategory.FileSystem, LogSource,
+                                    $"DB batch flush failed; {pendingDbChanges.Count} rows will be retried at the end of the run.", ex);
+                                continue;
+                            }
                         }
                     }
-                }
-                else
-                {
-                    copied++;
-                }
+                    else
+                    {
+                        copied++;
+                    }
 
-                _historyWriter.MarkCompleted(manifestPath, source);
-                done++;
-                _logger?.Info(LogCategory.FileSystem, LogSource, $"{source} → {move.TargetFilePath}");
-                progress?.Report(((double)done / plan.TransferCount, Path.GetFileName(move.TargetFilePath)));
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                _logger?.Error(LogCategory.FileSystem, LogSource, $"Failed to transfer {source}", ex);
-                failed++;
+                    MarkCompletedSafely(manifestPath, source);
+                    done++;
+                    _logger?.Info(LogCategory.FileSystem, LogSource, $"{source} → {move.TargetFilePath}");
+                    progress?.Report(((double)done / plan.TransferCount, Path.GetFileName(move.TargetFilePath)));
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    _logger?.Error(LogCategory.FileSystem, LogSource, $"Failed to transfer {source}", ex);
+                    failed++;
+                }
             }
         }
-
-        if (pendingDbChanges.Count > 0)
+        finally
         {
-            try
+            if (pendingDbChanges.Count > 0)
             {
-                await _pathUpdater.UpdateLocalPathsAsync(pendingDbChanges, CancellationToken.None);
-                pendingDbChanges.Clear();
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(LogCategory.FileSystem, LogSource,
-                    $"Final DB batch flush failed; {pendingDbChanges.Count} rows stay stale and will be re-resolved by hash on the next library sync.", ex);
+                try
+                {
+                    await _pathUpdater.UpdateLocalPathsAsync(pendingDbChanges, CancellationToken.None);
+                    pendingDbChanges.Clear();
+                }
+                catch (Exception ex)
+                {
+                    _logger?.Error(LogCategory.FileSystem, LogSource,
+                        $"Final DB batch flush failed; {pendingDbChanges.Count} rows stay stale and will be re-resolved by hash on the next library sync.", ex);
+                }
             }
         }
 
@@ -146,5 +140,50 @@ public sealed class LoraSortExecutor
             $"Sort run finished: {moved} moved, {copied} copied, {skipped} skipped, {failed} failed, cancelled={cancelled}");
 
         return new LoraSortResult(moved, copied, skipped, failed, cancelled, manifestPath);
+    }
+
+    /// <summary>
+    /// Moves/copies the companion files. Target derivation is inside the guarded
+    /// block: a sidecar name that does not follow the {stem}{extension} convention
+    /// must cost that one companion file, never the whole run.
+    /// </summary>
+    private void TransferSidecars(PlannedMove move, string source, bool isMove)
+    {
+        foreach (var sidecar in move.Candidate.SidecarPaths)
+        {
+            try
+            {
+                var sidecarTarget = SidecarLocator.DeriveSidecarTargetPath(
+                    sidecar, source, move.TargetFilePath);
+
+                if (isMove)
+                    _fileOperations.MoveFile(sidecar, sidecarTarget, overwrite: false);
+                else
+                    _fileOperations.CopyFile(sidecar, sidecarTarget, overwrite: false);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                _logger?.Warn(LogCategory.FileSystem, LogSource,
+                    $"Sidecar transfer failed for {sidecar}: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// The manifest is a restore aid, not part of the transfer contract: a truncated
+    /// or unreadable manifest must never fail a file that is already on disk at its
+    /// new path, and must never let a transient I/O error count a moved file as failed.
+    /// </summary>
+    private void MarkCompletedSafely(string manifestPath, string source)
+    {
+        try
+        {
+            _historyWriter.MarkCompleted(manifestPath, source);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Warn(LogCategory.FileSystem, LogSource,
+                $"Could not journal {source} into the sort manifest: {ex.Message}");
+        }
     }
 }

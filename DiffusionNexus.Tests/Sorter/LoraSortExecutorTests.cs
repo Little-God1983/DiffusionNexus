@@ -215,4 +215,74 @@ public sealed class LoraSortExecutorTests : IDisposable
         var json = File.ReadAllText(result.ManifestPath!);
         json.Should().Contain("\"completed\": true");
     }
+
+    [Fact]
+    public async Task ManifestFailureNeitherFailsNorMisreportsATransferredFile()
+    {
+        // Review 2.1: the manifest write sat inside the per-file try, so an I/O error
+        // from it counted a file that HAD moved as failed, and a JsonException from a
+        // truncated manifest unwound out of the whole run. It is a restore aid — it
+        // must never contradict what is on disk.
+        Write(@"flat\a.safetensors");
+        Write(@"flat\b.safetensors");
+        var executor = Executor();
+        // Nuke the history directory once the first file is journalled: every later
+        // MarkCompleted then throws DirectoryNotFoundException.
+        var progress = new ActionProgress(_ =>
+        {
+            try { Directory.Delete(In("history"), recursive: true); } catch (IOException) { }
+        });
+
+        var result = await executor.ExecuteAsync(Plan(isMove: true,
+            Move(@"flat\a.safetensors", @"SDXL 1.0\Character\a.safetensors"),
+            Move(@"flat\b.safetensors", @"SDXL 1.0\Character\b.safetensors")), progress);
+
+        result.Moved.Should().Be(2);
+        result.Failed.Should().Be(0);
+        File.Exists(In("SDXL 1.0", "Character", "b.safetensors")).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task PendingDbRowsAreFlushedEvenWhenTheLoopBlowsUp()
+    {
+        // Review 2.1: the terminal flush sat after the loop, so any exception the
+        // per-file filter does not cover dropped up to 19 path repoints — files at
+        // their new location, DB pointing at the old one.
+        Write(@"flat\a.safetensors");
+        Write(@"flat\b.safetensors");
+        var executor = new LoraSortExecutor(new ExplodeOnSecondCreateDirectory(),
+            new RecordingPathUpdater(_dbChanges), new SortHistoryWriter(In("history")), logger: null);
+
+        var act = () => executor.ExecuteAsync(Plan(isMove: true,
+            Move(@"flat\a.safetensors", @"SDXL 1.0\Character\a.safetensors"),
+            Move(@"flat\b.safetensors", @"SDXL 1.0\Character\b.safetensors")));
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+        _dbChanges.Should().ContainSingle(); // file a's repoint survived the blow-up
+    }
+
+    private sealed class ActionProgress(Action<(double Fraction, string Status)> onReport)
+        : IProgress<(double Fraction, string Status)>
+    {
+        public void Report((double Fraction, string Status) value) => onReport(value);
+    }
+
+    /// <summary>Stands in for any fault outside the IOException/UnauthorizedAccessException filter.</summary>
+    private sealed class ExplodeOnSecondCreateDirectory : IFileOperations
+    {
+        private readonly FileOperations _inner = new();
+        private int _calls;
+
+        public void CreateDirectory(string path)
+        {
+            if (++_calls > 1) throw new InvalidOperationException("boom");
+            _inner.CreateDirectory(path);
+        }
+
+        public bool FileExists(string path) => _inner.FileExists(path);
+        public void CopyFile(string s, string d, bool o) => _inner.CopyFile(s, d, o);
+        public void MoveFile(string s, string d, bool o) => _inner.MoveFile(s, d, o);
+        public string[] GetFiles(string directoryPath) => _inner.GetFiles(directoryPath);
+        public void DeleteFile(string path) => _inner.DeleteFile(path);
+    }
 }
