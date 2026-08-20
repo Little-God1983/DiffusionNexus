@@ -740,12 +740,33 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// <summary>Whether <paramref name="path"/> is <paramref name="root"/> itself or nested beneath it.
     /// Boundary-aware — unlike a bare <c>StartsWith</c> this rejects a sibling folder that merely
     /// shares a name prefix (e.g. "E:\Loras" vs "E:\Loras_backup").</summary>
-    private static bool IsWithin(string path, string root)
+    /// <remarks>
+    /// The root is normalized to end in exactly one separator rather than having its trailing one
+    /// trimmed: <see cref="Path.TrimEndingDirectorySeparator(string)"/> deliberately does not trim a
+    /// *root* path (its implementation is <c>EndsInDirectorySeparator(path) &amp;&amp; !IsRoot(path)</c>),
+    /// so a drive-root source like <c>E:\</c> stayed 3 characters long and the boundary check then read
+    /// the <c>L</c> of <c>E:\Loras\…</c> instead of a separator — making every path under a dedicated
+    /// LoRA drive test as "outside" it. That discarded every DB-known file (full re-hash plus a Civitai
+    /// round-trip each, and the whole library sorted into Unknown\) and silently disabled the
+    /// "target is another LoRA source" warning. Verified with a probe: for <c>E:\</c> both
+    /// <c>GetFullPath</c> and <c>TrimEndingDirectorySeparator</c> return <c>E:\</c>, length 3.
+    /// </remarks>
+    internal static bool IsWithin(string path, string root)
     {
-        var normalizedRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
-        var normalizedPath = Path.GetFullPath(path);
-        return normalizedPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase)
-            && (normalizedPath.Length == normalizedRoot.Length || normalizedPath[normalizedRoot.Length] == Path.DirectorySeparatorChar);
+        var fullRoot = Path.GetFullPath(root);
+        var fullPath = Path.GetFullPath(path);
+
+        // The root itself counts as "within", with or without a trailing separator on either side.
+        if (string.Equals(Path.TrimEndingDirectorySeparator(fullPath),
+                Path.TrimEndingDirectorySeparator(fullRoot), StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var rootWithSeparator = fullRoot.EndsWith(Path.DirectorySeparatorChar)
+            ? fullRoot
+            : fullRoot + Path.DirectorySeparatorChar;
+        return fullPath.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string ComputeSha256(string filePath)

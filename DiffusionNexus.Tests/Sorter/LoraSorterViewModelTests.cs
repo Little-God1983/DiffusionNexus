@@ -273,6 +273,24 @@ public sealed class LoraSorterViewModelTests : IDisposable
         vm.TransferCount.Should().Be(1);
     }
 
+    [Theory]
+    // A dedicated LoRA drive as the source: Path.TrimEndingDirectorySeparator deliberately does NOT
+    // trim a root path, so the old boundary check read the 'L' of "E:\Loras" instead of a separator
+    // and declared every file on the drive to be outside it.
+    [InlineData(@"E:\Loras\a.safetensors", @"E:\", true)]
+    [InlineData(@"E:\a.safetensors", @"E:\", true)]
+    [InlineData(@"E:\", @"E:\", true)]
+    // Prefix-sharing siblings still must not match.
+    [InlineData(@"E:\Loras_backup\b.safetensors", @"E:\Loras", false)]
+    [InlineData(@"E:\Loras\a.safetensors", @"E:\Loras", true)]
+    // Trailing separators on either input are irrelevant.
+    [InlineData(@"E:\Loras\a.safetensors", @"E:\Loras\", true)]
+    [InlineData(@"E:\Loras", @"E:\Loras\", true)]
+    [InlineData(@"E:\Loras\", @"E:\Loras", true)]
+    [InlineData(@"E:\Other\a.safetensors", @"E:\Loras", false)]
+    public void IsWithinHandlesDriveRootsAndPrefixSiblings(string path, string root, bool expected)
+        => LoraSorterViewModel.IsWithin(path, root).Should().Be(expected);
+
     private static IEnumerable<string> FlattenNames(IEnumerable<SortPreviewNodeViewModel> nodes)
     {
         foreach (var node in nodes)
