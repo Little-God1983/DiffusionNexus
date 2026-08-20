@@ -403,10 +403,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             TransferCount = plan.TransferCount;
             PreviewSummary = $"✓ {plan.TransferCount} files will {(IsMove ? "move" : "copy")}   ·   {plan.AlreadyInPlaceCount} already in place   ·   ✎ {plan.RenamedCount} auto-renamed · {plan.SkippedDuplicateCount} duplicates skipped";
 
-            var free = _getAvailableSpace(targetRoot);
-            HasEnoughSpace = free >= plan.RequiredBytes + SafetyMarginBytes;
-            DiskSummary = $"{SortPreviewNodeViewModel.FormatBytes(plan.RequiredBytes)} required · {SortPreviewNodeViewModel.FormatBytes(free)} free";
-            BlockReason = HasEnoughSpace ? null : "Not enough free space on the target drive.";
+            ApplyDiskPreflight(plan, targetRoot);
 
             // Only clear a stale preview warning — a sort-run result message ("Done: …"/"Cancelled — …")
             // set by StartSortingAsync after its post-run recompute must survive this pass.
@@ -674,6 +671,46 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     #endregion
 
     #region Helpers
+
+    /// <summary>
+    /// Free-space gate for the chosen target. Two things the naive version got wrong:
+    /// <list type="bullet">
+    /// <item><description>It assumed every target has a <see cref="DriveInfo"/>. Verified with a
+    /// dotnet probe: <c>new DriveInfo(Path.GetPathRoot(@"\\nas\share\loras"))</c> throws
+    /// <see cref="ArgumentException"/> ("Drive name must be a root directory"), and an unmapped
+    /// letter throws <see cref="DriveNotFoundException"/> (an <see cref="IOException"/>). That
+    /// escaped mid-pass, after the tree was painted but before the gate was set, leaving Start
+    /// permanently disabled with no stated reason on a perfectly usable NAS target. The gate now
+    /// fails <b>open</b> and says the number is unknown — the executor still reports per-file
+    /// failures if the share really is full.</description></item>
+    /// <item><description>It applied the 1 GB safety margin to a same-volume move, whose
+    /// <see cref="LoraSortPlan.RequiredBytes"/> is 0 because the transfer is a directory-entry
+    /// rename. That blocked the primary use case — reorganizing a library in place on the
+    /// near-full drive it already lives on.</description></item>
+    /// </list>
+    /// </summary>
+    private void ApplyDiskPreflight(LoraSortPlan plan, string targetRoot)
+    {
+        long free;
+        try
+        {
+            free = _getAvailableSpace(targetRoot);
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
+        {
+            _logger?.Warn(LogCategory.FileSystem, LogSource,
+                $"Free space unavailable for '{targetRoot}' ({ex.GetType().Name}: {ex.Message}) — disk gate skipped.");
+            HasEnoughSpace = true;
+            DiskSummary = "Free space unknown (network or unsupported path) — proceed with care";
+            BlockReason = null;
+            return;
+        }
+
+        var needed = plan.RequiredBytes > 0 ? plan.RequiredBytes + SafetyMarginBytes : 0;
+        HasEnoughSpace = free >= needed;
+        DiskSummary = $"{SortPreviewNodeViewModel.FormatBytes(plan.RequiredBytes)} required · {SortPreviewNodeViewModel.FormatBytes(free)} free";
+        BlockReason = HasEnoughSpace ? null : "Not enough free space on the target drive.";
+    }
 
     private LoraSortOptions BuildOptions() =>
         new(SelectedSourceFolder!, EffectiveTargetRoot!, IncludeCategory, IsMove, DeleteEmptySourceFolders);

@@ -39,7 +39,8 @@ public sealed class LoraSorterViewModelTests : IDisposable
     }
 
     private LoraSorterViewModel CreateVm(long freeSpace = long.MaxValue,
-        IReadOnlyList<InstalledModelFile>? cached = null)
+        IReadOnlyList<InstalledModelFile>? cached = null,
+        Func<string, long>? getAvailableSpace = null)
     {
         _settings.Setup(s => s.GetEnabledLoraSourcesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([SourceRoot]);
@@ -54,7 +55,7 @@ public sealed class LoraSorterViewModelTests : IDisposable
             metadataResolver: new SorterMetadataResolver(null, () => Task.FromResult<string?>(null),
                 Path.Combine(_root.FullName, "cache"), _ => "hash", logger: null),
             fileOperations: new FileOperations(),
-            getAvailableSpace: _ => freeSpace,
+            getAvailableSpace: getAvailableSpace ?? (_ => freeSpace),
             hashFile: _ => "hash",
             fileExistsOnDisk: File.Exists,
             historyDirectory: Path.Combine(_root.FullName, "history"));
@@ -271,6 +272,45 @@ public sealed class LoraSorterViewModelTests : IDisposable
         var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
         await vm.InitializeAsync(); // enumeration path exercised for unknown files
         vm.TransferCount.Should().Be(1);
+    }
+
+    [Theory]
+    // DriveInfo(@"\\nas\share") throws ArgumentException; an unmapped drive letter throws
+    // DriveNotFoundException (an IOException). Both must degrade to "unknown", not to a
+    // permanently disabled Start button with no stated reason.
+    [InlineData(typeof(ArgumentException))]
+    [InlineData(typeof(DriveNotFoundException))]
+    [InlineData(typeof(UnauthorizedAccessException))]
+    public async Task UnknowableFreeSpaceFailsOpenInsteadOfBlockingTheRun(Type exceptionType)
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")],
+            getAvailableSpace: _ => throw (Exception)Activator.CreateInstance(exceptionType)!);
+
+        await vm.InitializeAsync();
+
+        vm.HasEnoughSpace.Should().BeTrue();
+        vm.DiskSummary.Should().Contain("unknown");
+        vm.BlockReason.Should().BeNull();
+        vm.StartSortingCommand.CanExecute(null).Should().BeTrue();
+        vm.StatusMessage.Should().NotContain("Preview failed");
+    }
+
+    [Fact]
+    public async Task SameVolumeMoveIsNotBlockedByTheOneGigabyteMargin()
+    {
+        // A same-volume move is a directory-entry rename — RequiredBytes is 0, so the margin
+        // must not apply. Otherwise the primary use case (reorganizing in place on the near-full
+        // drive the library lives on) reports "Not enough free space".
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(freeSpace: 1_000, cached: [Installed(a, "SDXL 1.0", "character")]);
+
+        await vm.InitializeAsync();
+
+        vm.TransferCount.Should().Be(1);
+        vm.HasEnoughSpace.Should().BeTrue();
+        vm.BlockReason.Should().BeNull();
+        vm.StartSortingCommand.CanExecute(null).Should().BeTrue();
     }
 
     [Theory]
