@@ -64,6 +64,61 @@ public sealed class SidecarLocatorTests : IDisposable
     }
 
     [Fact]
+    public void VideoPreviewsAndCivitaiThumbCompanionsAreFound()
+    {
+        // Review 4.4: SidecarExtensions was a hand-copy of StaticFileTypes.GeneralExtensions
+        // missing every video extension plus .civitai and .thumb, so a LoRA with a video
+        // preview had its weights moved and MyLora.mp4 left behind, permanently detached —
+        // and ModelDiscoveryService still considered that file part of the model.
+        var model = Write("mylora.safetensors");
+        var expected = new[] { ".mp4", ".webm", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".m4v", ".civitai", ".thumb" }
+            .Select(e => Write("mylora" + e)).ToArray();
+
+        SidecarLocator.FindSidecars(model).Should().Contain(expected);
+    }
+
+    [Fact]
+    public void SidecarExtensionsCoverTheCanonicalNonModelList()
+    {
+        // The canonical list lives in DiffusionNexus.Service (internal), so it cannot be
+        // referenced here — this asserts the copy stays a superset of its non-model entries.
+        string[] canonicalNonModel =
+        [
+            ".thumb.jpg", ".preview.png", ".preview.webp", ".metadata.json", ".webp", ".mp4",
+            ".mov", ".webm", ".avi", ".mkv", ".wmv", ".flv", ".m4v", ".png", ".preview.jpeg",
+            ".preview.jpg", ".cm-info.json", ".civitai.info", ".civitai", ".thumb", ".json", ".yaml"
+        ];
+
+        SidecarLocator.SidecarExtensions.Should().Contain(canonicalNonModel);
+        SidecarLocator.SidecarExtensions.Should().NotContain([".safetensors", ".ckpt", ".pt", ".pth"]);
+    }
+
+    [Fact]
+    public void SidecarNameThatBreaksTheStemConventionFallsBackInsteadOfThrowing()
+    {
+        // The slice sidecarName[sourceStem.Length..] was unguarded: a name shorter than the
+        // stem threw ArgumentOutOfRangeException out of the executor's transfer loop, past
+        // its IOException/UnauthorizedAccessException filter.
+        var mapped = SidecarLocator.DeriveSidecarTargetPath(
+            sidecarPath: @"E:\src\ab.preview.png",
+            modelFilePath: @"E:\src\a-much-longer-stem.safetensors",
+            targetModelFilePath: @"E:\dst\Unknown\renamed_42.safetensors");
+
+        mapped.Should().Be(@"E:\dst\Unknown\renamed_42.preview.png");
+    }
+
+    [Fact]
+    public void UnknownSidecarExtensionFallsBackToThePlainExtension()
+    {
+        var mapped = SidecarLocator.DeriveSidecarTargetPath(
+            sidecarPath: @"E:\src\somethingelse.bin",
+            modelFilePath: @"E:\src\V1.safetensors",
+            targetModelFilePath: @"E:\dst\V1_2.safetensors");
+
+        mapped.Should().Be(@"E:\dst\V1_2.bin");
+    }
+
+    [Fact]
     public void MultiDotSidecarExtensionIsPreserved()
     {
         var mapped = SidecarLocator.DeriveSidecarTargetPath(
