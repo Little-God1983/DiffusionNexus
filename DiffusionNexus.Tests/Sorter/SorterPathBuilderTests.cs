@@ -40,6 +40,32 @@ public class SorterPathBuilderTests
         => SorterPathBuilder.BuildTargetDirectory(@"E:\Loras", "???", "Style", includeCategory: true)
             .Should().Be(@"E:\Loras\Unknown\Style");
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("Unknown")]
+    [InlineData("unknown")]
+    public void UnresolvedCategoryOmitsTheSegmentLikeTheDownloader(string? category)
+        // Review 4.1: DownloadDestinationViewModel.BuildTargetDirectory skips the category
+        // segment when it is empty, so a downloaded but uncategorized LoRA lives at
+        // {root}\{BaseModel}\. The sorter appended "Unknown\" — every sort run dragged
+        // those files down a level and the next download re-created them one level up.
+        => SorterPathBuilder.BuildTargetDirectory(@"E:\Loras", "SDXL 1.0", category, includeCategory: true)
+            .Should().Be(@"E:\Loras\SDXL 1.0");
+
+    [Fact]
+    public void UnresolvedCategoryStillKeepsTheUnknownBaseModelFolder()
+        => SorterPathBuilder.BuildTargetDirectory(@"E:\Loras", null, "Unknown", includeCategory: true)
+            .Should().Be(@"E:\Loras\Unknown");
+
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("  ", true)]
+    [InlineData("Unknown", true)]
+    [InlineData("Character", false)]
+    public void IsUnresolvedCategoryDetectsTheNoSegmentCases(string? category, bool expected)
+        => SorterPathBuilder.IsUnresolvedCategory(category).Should().Be(expected);
+
     [Fact]
     public void FreeNameIsKeptPlain()
         => SorterPathBuilder.BuildCollisionFreeFileName("V1.safetensors", 3204603, _ => false)

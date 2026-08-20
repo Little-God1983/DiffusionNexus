@@ -353,26 +353,12 @@ public partial class DownloadLoraDialogViewModel : ObservableObject
             : null;
     }
 
+    /// <summary>
+    /// Delegates to the one shared inference helper — see
+    /// <see cref="Services.Lora.Sorting.SorterCategoryResolver.InferFolderName"/>.
+    /// </summary>
     private static string? InferCategoryFromTags(IReadOnlyList<string> tags)
-    {
-        foreach (var tagName in tags)
-        {
-            if (string.IsNullOrWhiteSpace(tagName)) continue;
-
-            var normalized = tagName.Replace(" ", "_").Trim();
-            if (Enum.TryParse<Domain.Enums.CivitaiCategory>(normalized, ignoreCase: true, out var category)
-                && category != Domain.Enums.CivitaiCategory.Unknown)
-            {
-                return category switch
-                {
-                    Domain.Enums.CivitaiCategory.BaseModel => "Base Model",
-                    _ => category.ToString()
-                };
-            }
-        }
-
-        return null;
-    }
+        => Services.Lora.Sorting.SorterCategoryResolver.InferFolderName(tags);
 
     private static string FormatFileSize(double sizeKb)
     {

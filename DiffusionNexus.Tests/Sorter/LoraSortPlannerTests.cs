@@ -55,6 +55,16 @@ public class LoraSortPlannerTests
     }
 
     [Fact]
+    public void UnknownCategoryPlansIntoTheBaseModelFolderItself()
+    {
+        // Downloader parity (review 4.1): no category segment for an unresolved category.
+        var plan = Planner().BuildPlan(
+            [Candidate(@"E:\Loras\flat\a.safetensors", category: "Unknown")], Options());
+
+        plan.Moves.Single().TargetFilePath.Should().Be(@"E:\Loras\SDXL 1.0\a.safetensors");
+    }
+
+    [Fact]
     public void FileAlreadyAtComputedTargetIsMarkedInPlace()
     {
         var plan = Planner().BuildPlan(
