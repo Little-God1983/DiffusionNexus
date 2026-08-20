@@ -27,15 +27,20 @@ public partial class LoraSorterView : ControlBase
         AvaloniaXamlLoader.Load(this);
     }
 
+    /// <summary>
+    /// The <b>only</b> initialization trigger, deliberately. This view is inline XAML inside a
+    /// <c>TabItem</c>, and Avalonia resolves <c>DataContext="{Binding SorterViewModel}"</c> through
+    /// the logical tree as soon as the parent view's DataContext is set — regardless of which tab
+    /// is selected. Initializing from <c>OnDataContextChanged</c> as well therefore ran a full disk
+    /// walk, a SHA256 of every unknown file and by-hash API requests on <i>every</i> LoRA Viewer
+    /// open, even when the user never touched the Sorter tab. A non-selected TabItem's content is
+    /// not attached to the <i>visual</i> tree until it is selected, so attaching is the event that
+    /// actually means "the user is looking at the sorter". <see cref="ControlBase"/>'s service
+    /// injection still runs on both events — it is inherited and untouched.
+    /// </summary>
     protected override void OnAttachedToVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(sender, e);
-        TryInitializeSorter();
-    }
-
-    protected override void OnDataContextChanged(object? sender, EventArgs e)
-    {
-        base.OnDataContextChanged(sender, e);
         TryInitializeSorter();
     }
 
