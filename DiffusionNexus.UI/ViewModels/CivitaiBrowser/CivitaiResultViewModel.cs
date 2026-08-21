@@ -332,24 +332,13 @@ public partial class CivitaiResultViewModel : ObservableObject
         return $"{dirWithoutOldTransform}/{transforms}/{filePart}{trailing}";
     }
 
+    /// <summary>
+    /// Delegates to the one shared inference helper: the LoRA Sorter reorganizes files
+    /// into the folders this method picks, so a private copy here means the two silently
+    /// drift and then fight over the same files (review 4.1).
+    /// </summary>
     private static string? InferCategoryFromTags(IReadOnlyList<string> tags)
-    {
-        foreach (var tagName in tags)
-        {
-            if (string.IsNullOrWhiteSpace(tagName)) continue;
-            var normalized = tagName.Replace(" ", "_").Trim();
-            if (Enum.TryParse<global::DiffusionNexus.Domain.Enums.CivitaiCategory>(normalized, ignoreCase: true, out var category)
-                && category != global::DiffusionNexus.Domain.Enums.CivitaiCategory.Unknown)
-            {
-                return category switch
-                {
-                    global::DiffusionNexus.Domain.Enums.CivitaiCategory.BaseModel => "Base Model",
-                    _ => category.ToString()
-                };
-            }
-        }
-        return null;
-    }
+        => Services.Lora.Sorting.SorterCategoryResolver.InferFolderName(tags);
 
     // Cap the number of simultaneous video frame extractions across all visible cards.
     // Each extraction streams an MP4 and runs an FFmpeg invocation — letting 50 cards

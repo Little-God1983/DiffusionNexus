@@ -1,0 +1,155 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             x:Class="DiffusionNexus.UI.Views.LoraSorterView"
+             x:DataType="vm:LoraSorterViewModel">
+
+  <UserControl.Styles>
+    <Style Selector="TextBlock.dimmed"><Setter Property="Opacity" Value="0.45"/></Style>
+    <Style Selector="TextBlock.renamed"><Setter Property="Foreground" Value="#FFA726"/></Style>
+  </UserControl.Styles>
+
+  <UserControl.DataTemplates>
+    <DataTemplate DataType="vm:SortPreviewNodeViewModel">
+      <StackPanel>
+        <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,1">
+          <ToggleButton Grid.Column="0" IsChecked="{Binding IsExpanded}"
+                        Content="▸" Padding="2,0" Background="Transparent" BorderThickness="0"
+                        IsVisible="{Binding !IsFile}"/>
+          <TextBlock Grid.Column="1" Text="{Binding Name}"
+                     FontFamily="Consolas,monospace" FontSize="12" Margin="4,0,12,0"
+                     Classes.dimmed="{Binding IsAlreadyInPlace}"
+                     Classes.renamed="{Binding IsRenamed}"/>
+          <TextBlock Grid.Column="2" Text="{Binding CountAndSizeDisplay}" FontSize="11" Opacity="0.5"/>
+        </Grid>
+        <ItemsControl ItemsSource="{Binding Children}" Margin="18,0,0,0"
+                      IsVisible="{Binding IsExpanded}"/>
+      </StackPanel>
+    </DataTemplate>
+  </UserControl.DataTemplates>
+
+  <Grid RowDefinitions="Auto,*,Auto">
+
+    <!-- Headline -->
+    <Border Grid.Row="0" Background="#1E1E1E" Padding="16,12" BorderBrush="#333" BorderThickness="0,0,0,1">
+      <StackPanel Spacing="2">
+        <TextBlock Text="Sort your LoRAs" FontSize="18" FontWeight="Bold"/>
+        <TextBlock Text="Reorganize your LoRA library into clean folders by base model and category."
+                   FontSize="12" Opacity="0.6"/>
+      </StackPanel>
+    </Border>
+
+    <Grid Grid.Row="1" ColumnDefinitions="300,*">
+
+      <!-- Options rail -->
+      <Border Grid.Column="0" Background="#1E1E1E" BorderBrush="#333" BorderThickness="0,0,1,0" Padding="16,14">
+        <StackPanel Spacing="14">
+
+          <StackPanel Spacing="4">
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Classes="fieldLabel" Text="SOURCE FOLDER" FontSize="11" Opacity="0.6"
+                         VerticalAlignment="Center"/>
+              <Button Grid.Column="1" Command="{Binding RefreshCommand}"
+                      Background="#2A2A2A" BorderBrush="#333" BorderThickness="1" Padding="6,2"
+                      ToolTip.Tip="Re-scan the source folder and refresh the preview">
+                <StackPanel Orientation="Horizontal" Spacing="4">
+                  <TextBlock Text="&#x21BB;" FontSize="11"/>
+                  <TextBlock Text="Refresh" FontSize="11"/>
+                </StackPanel>
+              </Button>
+            </Grid>
+            <ComboBox ItemsSource="{Binding SourceFolders}"
+                      SelectedItem="{Binding SelectedSourceFolder}"
+                      HorizontalAlignment="Stretch"/>
+            <Button Content="Browse any folder…" Command="{Binding BrowseSourceCommand}"
+                    HorizontalAlignment="Stretch" FontSize="12"/>
+          </StackPanel>
+
+          <StackPanel Spacing="4">
+            <TextBlock Classes="fieldLabel" Text="TARGET FOLDER" FontSize="11" Opacity="0.6"/>
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" VerticalAlignment="Center" FontSize="12" TextTrimming="CharacterEllipsis">
+                <TextBlock.Text>
+                  <Binding Path="CustomTargetFolder" TargetNullValue="Same as source"/>
+                </TextBlock.Text>
+              </TextBlock>
+              <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
+                <Button Content="…" Command="{Binding BrowseTargetCommand}"/>
+                <Button Content="✕" Command="{Binding ClearTargetOverrideCommand}"
+                        IsVisible="{Binding CustomTargetFolder, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+              </StackPanel>
+            </Grid>
+          </StackPanel>
+
+          <StackPanel Spacing="4">
+            <TextBlock Classes="fieldLabel" Text="FOLDER STRUCTURE" FontSize="11" Opacity="0.6"/>
+            <RadioButton GroupName="Structure" Content="Base model only"
+                         IsChecked="{Binding !IncludeCategory}"/>
+            <RadioButton GroupName="Structure" Content="Base model + category"
+                         IsChecked="{Binding IncludeCategory}"/>
+          </StackPanel>
+
+          <StackPanel Spacing="4">
+            <TextBlock Classes="fieldLabel" Text="OPERATION" FontSize="11" Opacity="0.6"/>
+            <RadioButton GroupName="Operation" Content="Move (reorganize)" IsChecked="{Binding IsMove}"/>
+            <RadioButton GroupName="Operation" Content="Copy (duplicate)" IsChecked="{Binding !IsMove}"/>
+          </StackPanel>
+
+          <Border Background="#2A2A2A" BorderBrush="#444" BorderThickness="1" CornerRadius="4"
+                  Padding="8,6" IsVisible="{Binding IsMove}">
+            <TextBlock Text="⚠ Move rearranges your files on disk — the old folder structure cannot be restored automatically."
+                       Foreground="#FFA726" FontSize="11.5" TextWrapping="Wrap"/>
+          </Border>
+
+          <CheckBox Content="Delete empty source folders"
+                    IsChecked="{Binding DeleteEmptySourceFolders}"
+                    IsEnabled="{Binding IsMove}" FontSize="12"/>
+
+          <Border Background="#252526" BorderBrush="#333" BorderThickness="1" CornerRadius="4" Padding="8,6">
+            <StackPanel Spacing="2">
+              <TextBlock Text="{Binding DiskSummary}" FontSize="12"/>
+              <TextBlock Text="{Binding BlockReason}" Foreground="#FF6B6B" FontSize="11.5"
+                         TextWrapping="Wrap"
+                         IsVisible="{Binding BlockReason, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+            </StackPanel>
+          </Border>
+
+          <Button Command="{Binding StartSortingCommand}"
+                  HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                  Background="#2D7D46" Foreground="White" FontWeight="SemiBold" Padding="0,8">
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <TextBlock Text="▶"/>
+              <TextBlock Text="{Binding TransferCount, StringFormat='Start Sorting ({0} files)'}"/>
+            </StackPanel>
+          </Button>
+
+        </StackPanel>
+      </Border>
+
+      <!-- Folder structure preview -->
+      <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto">
+        <TextBlock Grid.Row="0" Text="FOLDER STRUCTURE PREVIEW" FontSize="11" Opacity="0.6" Margin="18,14,18,6"/>
+        <ScrollViewer Grid.Row="1" Padding="18,0" HorizontalScrollBarVisibility="Auto">
+          <ItemsControl ItemsSource="{Binding PreviewRoots}"/>
+        </ScrollViewer>
+        <TextBlock Grid.Row="2" Text="{Binding PreviewSummary}" Margin="18,8,18,12" FontSize="12" Opacity="0.85"/>
+      </Grid>
+    </Grid>
+
+    <!-- Status bar -->
+    <Border Grid.Row="2" Background="#1E1E1E" Padding="8,4" BorderBrush="#333" BorderThickness="0,1,0,0"
+            IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+      <TextBlock Text="{Binding StatusMessage}" Opacity="0.8" FontSize="12"/>
+    </Border>
+
+    <!-- Busy overlay (same convention as the Installed tab) -->
+    <Border Grid.Row="0" Grid.RowSpan="3" Background="#CC000000" IsVisible="{Binding IsBusy}">
+      <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="12">
+        <ProgressBar IsIndeterminate="True" Width="300"/>
+        <TextBlock Text="{Binding BusyMessage}" HorizontalAlignment="Center"/>
+        <Button Content="Cancel" Command="{Binding CancelSortCommand}" HorizontalAlignment="Center"/>
+      </StackPanel>
+    </Border>
+
+  </Grid>
+</UserControl>

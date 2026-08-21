@@ -14,9 +14,11 @@ using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Infrastructure;
 using DiffusionNexus.Service.Services;
+using DiffusionNexus.Service.Services.IO;
 using DiffusionNexus.UI.Models;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.CivitaiBrowser;
+using DiffusionNexus.UI.Services.Lora.Sorting;
 using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.UI.ViewModels.CivitaiBrowser;
 using Microsoft.Extensions.DependencyInjection;
@@ -280,6 +282,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         _updateChecker = null;
         UnknownBaseModelItem.SelectionChanged += OnBaseModelFilterChanged;
         BrowserViewModel = new CivitaiBrowserViewModel();
+        SorterViewModel = new LoraSorterViewModel();
         // Load demo data for design-time preview
         LoadDemoData();
     }
@@ -325,6 +328,24 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         var waitlist = new CivitaiWaitlist(_civitaiClient, _logger);
         BrowserViewModel = new CivitaiBrowserViewModel(_civitaiClient, _settingsService, _logger, queue, waitlist, AvailableBaseModels);
 
+        // LoRA Sorter sub-tab. Same DB-backed source of truth as the Installed tab;
+        // disk seams are the production implementations.
+        var scopeFactory = App.Services?.GetService<IServiceScopeFactory>();
+        SorterViewModel = scopeFactory is null
+            ? new LoraSorterViewModel()
+            : new LoraSorterViewModel(
+                _settingsService, _syncService, _logger,
+                new DbLocalPathUpdater(scopeFactory, _logger),
+                new SorterMetadataResolver(_civitaiClient, GetApiKeyForSorterAsync,
+                    SorterMetadataResolver.DefaultCacheDirectory, ComputeFullSha256, _logger),
+                new FileOperations(),
+                DiskUtility.GetAvailableSpace,
+                ComputeFullSha256,
+                File.Exists,
+                SortHistoryWriter.DefaultHistoryDirectory,
+                loadCachedFiles: LoadCachedFilesForSorterAsync);
+        SorterViewModel.SortCompleted += (_, _) => _ = RefreshAsync();
+
         _ = InitializeBaseModelFilterAsync();
         _ = LoadDestinationFoldersAsync(destination);
     }
@@ -333,6 +354,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// View model for the "Browse Civitai" sub-tab.
     /// </summary>
     public CivitaiBrowserViewModel BrowserViewModel { get; }
+
+    /// <summary>View model for the "LoRA Sorter" sub-tab.</summary>
+    public LoraSorterViewModel SorterViewModel { get; }
 
     #endregion
 
@@ -1297,6 +1321,35 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         using var sha256 = SHA256.Create();
         var hash = sha256.ComputeHash(stream);
         return Convert.ToHexStringLower(hash);
+    }
+
+    /// <summary>
+    /// Loads the installed-file rows for the LoRA Sorter from a fresh DI scope, the same pattern
+    /// <see cref="LoadCachedTilesAsync"/> uses. <c>IModelSyncService</c> and <c>IUnitOfWork</c> are
+    /// transient while this ViewModel is scoped, so <see cref="_syncService"/> is a single
+    /// session-long <c>DbContext</c>; the sorter starts preview passes fire-and-forget from three
+    /// option hooks with no re-entrancy guard, so handing it that shared instance risked
+    /// "A second operation was started on this context instance before a previous operation
+    /// completed" on a big library.
+    /// </summary>
+    private static async Task<IReadOnlyList<InstalledModelFile>> LoadCachedFilesForSorterAsync(CancellationToken ct)
+    {
+        using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+        var freshSyncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
+        return await freshSyncService.LoadCachedFilesAsync(ct);
+    }
+
+    /// <summary>
+    /// Reads the Civitai API key from a fresh DI scope so callers always see the latest
+    /// database value rather than a stale EF Core tracked entity. Extracted from the
+    /// by-hash metadata lookup (<see cref="DownloadMetadataForTileAsync"/>); also handed to
+    /// <see cref="SorterMetadataResolver"/> for the LoRA Sorter's unknown-file resolution.
+    /// </summary>
+    private async Task<string?> GetApiKeyForSorterAsync()
+    {
+        using var keyScope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+        var freshSettings = keyScope.ServiceProvider.GetRequiredService<IAppSettingsService>();
+        return await freshSettings.GetCivitaiApiKeyAsync();
     }
 
     /// <summary>
@@ -2476,12 +2529,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         // Fresh DI scope so we read the latest API key from the database, not a stale
         // tracked entity (same approach as the bulk DownloadMissingMetadataAsync).
-        string? apiKey;
-        using (var keyScope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope())
-        {
-            var freshSettings = keyScope.ServiceProvider.GetRequiredService<IAppSettingsService>();
-            apiKey = await freshSettings.GetCivitaiApiKeyAsync();
-        }
+        var apiKey = await GetApiKeyForSorterAsync();
 
         var hash = await Task.Run(() => ComputeFullSha256(localPath));
         _logger?.Info(LogCategory.Network, "CivitaiSync",

@@ -468,3 +468,85 @@ BaseModelFilterItem
 2. **`CivitaiId` is redundant with `CivitaiModelPageId`** on the Model table: both store the Civitai page ID. The distinction (unique vs non-unique) exists only because of gap #1. If the sync service consolidated into one Model per Civitai page, a single column would suffice.
 
 3. **No version-level CivitaiId → model page ID lookup in FetchCivitaiDataAsync**: If a model has no `CivitaiId`/`CivitaiModelPageId` but its version has a `CivitaiId`, the detail panel could call `GET /api/v1/model-versions/{versionId}` to discover the `modelId` and then fetch the full model. Currently it shows "No Civitai ID" instead.
+
+---
+
+## 13. LoRA Sorter tab
+
+The third tab in the LoRA Viewer reorganizes installed LoRA files on disk into a clean folder hierarchy by base model and optionally by category, with a live preview before any files are touched.
+
+### What it does
+
+The Sorter takes the LoRAs the app already knows about (the same set as the Installed tab), computes a target folder layout, displays it as an expandable tree preview, and — only after the user clicks **Start Sorting** — moves or copies each LoRA **together with its sidecar files** (`.civitai.info`, `.json`, `.preview.*`, `.txt`, video previews — the same set `StaticFileTypes.GeneralExtensions` counts as part of a model) into that layout. The database is updated in move mode so the library remains current; copy mode keeps the DB pointing at the originals.
+
+### Options
+
+| Option | Choices | Default | Notes |
+|--------|---------|---------|-------|
+| **Source folder** | One enabled LoRA source, or any folder via Browse | Favorite source, else first | Arbitrary folders trigger metadata resolution on the fly via hash lookup. |
+| **Target folder** | "Same as source" or any picked folder | Same as source | If target lies in a different registered LoRA source, a warning alerts that colliding sources can lead to unpredictable outcomes. |
+| **Folder structure** | Base model only · Base model + category | Base model + category | Categories inferred from tags by `SorterCategoryResolver`, the one helper the download pipeline also uses. Unknown base model → `Unknown\` folder; an unresolved **category** adds no segment at all, exactly as the downloader omits it — otherwise sorting and downloading would move the same files back and forth forever. |
+| **Operation** | Move · Copy | Move | Move shows a warning that old folder structure cannot be restored automatically. Copy into the source root itself is blocked (would re-import on next scan). |
+| **Delete empty source dirs** | on/off | off | Move mode only; triggered after the run completes. |
+
+### Collision policy — automatic, no dialogs
+
+Generic filenames like `V1.safetensors` from different models can collide once sorted into the same base model + category folder. The Sorter detects these collisions during preview and resolves them automatically:
+
+1. **Different content, same target name → deterministic auto-rename**: files are suffixed with their Civitai version ID (the downloader's convention), or `_2`, `_3`, etc. for files without one. **Every** candidate name is content-compared before the next one is tried — the plain name, the version-suffixed one and each numeric fallback alike — so a copy-mode re-run recognises its own earlier copy wherever it landed and transfers nothing, instead of growing `_2`, `_3`, `_4`… on every run.
+   A file that cannot be read (locked by a running backend) counts as different content: it is renamed around, never overwritten.
+2. **Identical content, same target → skip the second copy** and report it. The summary points to the existing Find Duplicates tool for cleanup.
+
+**No overwrite occurs.** Renamed files take their sidecars with them and their DB row (move mode) gets the new path. If two DB rows pointed at the same file (a historic deduplication edge), the file moves once and both rows are updated.
+
+### Disk-space pre-flight
+
+The tab computes required vs. available space before allowing the sort to begin:
+
+- **Copy operation:** required = total size of all files and sidecars being copied.
+- **Move, same drive:** required ≈ 0 (in-place renames).
+- **Move, cross-drive:** required = total size of files whose source and target are on different drives (worst-case copy-then-delete).
+
+If `free < required + 1 GB` safety margin, the available-space bar turns red and **Start Sorting** is disabled.
+
+### Sort history manifest
+
+Every run writes a full plan to `%LocalAppData%\DiffusionNexus\SortHistory\{timestamp}.json` — one record per file with old path → new path, operation, sizes, and each sidecar's source/target. Completion is journalled separately, one appended line per finished file, into `{timestamp}.completed.jsonl`: appending is O(1) and a killed run costs at most the last line, whereas rewriting the plan file per file was O(n²) and left truncated JSON. This enables a future "Restore previous structure" UI (not v1). If the history directory cannot be written the run continues without a restore point.
+
+### Metadata cache
+
+Files not yet in the database (when browsing arbitrary folders) are resolved via:
+
+1. Local `.civitai.info` sidecar next to the file (also the source of the tags used for category inference).
+2. Per-hash disk cache (below).
+3. Civitai hash lookup API call (same as the sync pipeline), followed by a `/models/{id}` call for the owning model's **tags** — the by-hash response is a model *version* and carries none, so without this second call every sidecar-less file would sort without a category. A failed tag call is non-fatal: the base model and version id are kept and cached, and the tag list is left unresolved so a later pass retries it (an empty-but-resolved list is never re-fetched).
+
+DB rows are matched by path earlier, when the cached library is loaded; there is no by-hash DB lookup (descoped from the spec). A file that cannot be hashed or an API shape change resolves as unknown rather than failing the pass, and the API key is read once per pass, not once per file.
+
+Downloaded metadata is cached in `%LocalAppData%\DiffusionNexus\SorterCache\{sha256}.json` so a re-run or re-preview of the same file normally costs no network call at all. One exception is deliberate: an entry whose tag lookup never succeeded is stored as *unresolved* rather than as "this model has no tags", so the next pass retries it — that is what stops one transient Civitai failure from leaving a file category-less forever. Within a single pass the tag lookup is also memoized per model id, so a folder full of versions of the same model costs one `/models/{id}` call, not one per file. The cache is a lookup cache only — the DB is never polluted with unregistered folders.
+
+### Execution
+
+1. **Confirm step** summarizes: operation, file count, total size, target root, how many files will auto-rename or skip as duplicates.
+2. **Per-file move/copy** (sequential, cancellable):
+   - Gather the file set (model file + all same-directory sidecars).
+   - Create target directories and move/copy via `IFileOperations`.
+   - **Move mode:** update `ModelFile.LocalPath` in batched DB writes.
+   - **Copy mode:** DB untouched.
+3. **Logging:** every step logs to the Unified Console (`LogCategory.FileSystem`, source `"LoraSorter"`) **with elapsed timings**, so an exported log can tell "slow" from "hung" by which step last succeeded: candidate resolution (known/unknown/skipped counts, plus a heartbeat every 50 resolved files), plan summary, sort start, each DB batch, and the final tally. A run whose history file could not be written still completes and says so — there is simply no restore point for it.
+4. **Cancellation / partial failure:** cancelling a *preview* keeps the tree on screen and marks it possibly stale (Start is disarmed until a Refresh rebuilds it) rather than blanking it. Cancelling a *run*: already-moved files stay (their DB rows are updated — the library remains consistent). The run stops at the current file and reports tally. A locked or inaccessible file is skipped and logged, not fatal.
+5. **After completion:** result summary in status bar; the Installed tab's cached tiles refresh so paths shown are current.
+
+### Known limitations (v1)
+
+- No custom tag→folder mapping rules (legacy `CustomTagMapXmlService` could be revived in v2).
+- Sorting is LoRA-family only, matching the Viewer scope.
+- The Restore UI ships as a follow-up (manifest data is written from day one).
+- Editing categories must be done in the model detail view (`UserCategory`), not within the Sorter itself.
+- Directory junctions and symlinks under the source folder are **not** followed — the enumeration skips reparse points, which is the cycle guard (a junction pointing at itself or an ancestor would otherwise enumerate forever). A LoRA reachable only through one is not sorted. Reparse points are the *only* attribute the walk skips: hidden and system files are enumerated normally, since a model file can carry either bit after a restore, a NAS copy, or a sync client's folder marking.
+- The tab does its first disk walk when the **Sorter tab is opened**, not when the LoRA Viewer is opened: initialization triggers from `OnAttachedToVisualTree` only.
+- When the target has no `DriveInfo` but the folder exists (a UNC share), the free-space gate reports "Free space unknown" and lets the run proceed instead of blocking it with no stated reason. A target that cannot be *reached* — an unmapped or not-ready drive letter, a denied or missing folder — blocks the run instead, since failing open there only moves the failure into the run, where it costs every file.
+
+### Detailed specification
+
+For full design details, see `docs/superpowers/specs/2026-08-20-lora-sorter-design.md`.
