@@ -724,7 +724,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
             // One rebuild, at the end: the service wrote straight to the database, so the
             // in-memory tiles are stale until they are re-projected from it.
-            await RebuildTilesFromDatabaseAsync();
+            //
+            // Inside Task.Run for the same reason the plan and the run are (R7): the await above
+            // resumes on the UI thread, and this reads every visible file row out of SQLite — which
+            // has no true async, so it runs inline and freezes the overlay it is meant to be
+            // dismissing. RebuildTilesFromDatabaseAsync marshals its own tile swap through
+            // InvokeOnUiAsync, so calling it from the pool is what it is built for.
+            await Task.Run(RebuildTilesFromDatabaseAsync, ct);
 
             var statusText = DescribeOutcome(report);
             _logger?.Info(LogCategory.Network, "CivitaiSync", statusText);
@@ -1351,13 +1357,19 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         // Re-read the one model the run touched so the tile (and the detail view behind it)
         // shows what was just written, without rebuilding the whole grid.
-        using (var scope = RequireScopeFactory().CreateScope())
+        //
+        // The read is on the pool (R7): it is five split queries and the version's thumbnail BLOBs,
+        // and SQLite has no true async, so on the UI thread it blocks the frame. Only the tile
+        // update goes back to the UI thread, where it belongs.
+        var refreshedModel = await Task.Run(async () =>
         {
+            using var scope = RequireScopeFactory().CreateScope();
             var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-            var refreshedModel = await unitOfWork.Models.GetByIdWithIncludesAsync(modelId);
-            if (refreshedModel is not null)
-                await InvokeOnUiAsync(() => tile.RefreshModelData(refreshedModel));
-        }
+            return await unitOfWork.Models.GetByIdWithIncludesAsync(modelId);
+        });
+
+        if (refreshedModel is not null)
+            await InvokeOnUiAsync(() => tile.RefreshModelData(refreshedModel));
 
         // Pull a preview thumbnail if the tile still lacks one after the metadata sync.
         if (tile.IsThumbnailMissing)
