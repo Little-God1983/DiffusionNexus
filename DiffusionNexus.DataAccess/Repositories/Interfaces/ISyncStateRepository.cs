@@ -37,7 +37,8 @@ public interface ISyncStateRepository : IRepository<ModelSyncState>
 
     /// <summary>
     /// Models with a valid local file, within scope and in the library — by default only the
-    /// LoRA-family ones that carry no Civitai id yet. No retry filtering — the caller applies
+    /// LoRA-family ones that carry no Civitai id yet AND are not user-edited (a bulk run must
+    /// never hand a hand-edited model to the appliers). No retry filtering — the caller applies
     /// SyncRetryPolicy.
     /// </summary>
     /// <param name="scope">What the run targets.</param>
@@ -45,7 +46,8 @@ public interface ISyncStateRepository : IRepository<ModelSyncState>
     /// The enabled LoRA source folders — see the remarks on <see cref="ISyncStateRepository"/>.
     /// </param>
     /// <param name="includeMatched">
-    /// Also offer models that already carry a Civitai id. A bulk run leaves them alone (there is
+    /// Also offer models that already carry a Civitai id or are user-edited (the appliers still
+    /// protect authored text on those). A bulk run leaves them alone (there is
     /// nothing to identify), but a forced re-fetch — the per-tile "Download Metadata" button — is
     /// the user asking for exactly those: refusing to select them made the button report "no
     /// metadata found" for every model that had ever been matched.
