@@ -245,4 +245,73 @@ public sealed class SorterMetadataResolverTests : IDisposable
 
         meta.BaseModelRaw.Should().Be("SDXL 1.0");
     }
+
+    [Fact]
+    public async Task ApiResolvedFileGetsItsCategoryFromTheOwningModelsTags()
+    {
+        // The headline "browse any folder" case: LoRAs downloaded outside DiffusionNexus have no
+        // sidecar, so the by-hash API is the only source — and it returns a model VERSION, which
+        // carries no tags. Without the follow-up /models/{id} call every such file landed
+        // category-less in <Target>\<BaseModel>\.
+        var model = WriteModel();
+        _client.Setup(c => c.GetModelVersionByHashAsync("abc123", null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CivitaiModelVersion { Id = 777, ModelId = 900, BaseModel = "SDXL 1.0" });
+        _client.Setup(c => c.GetModelAsync(900, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CivitaiModel { Id = 900, Tags = ["character", "anime"] });
+        var resolver = Resolver(_client.Object);
+
+        var meta = await resolver.ResolveAsync(model);
+
+        meta.BaseModelRaw.Should().Be("SDXL 1.0");
+        meta.Tags.Should().BeEquivalentTo(["character", "anime"]);
+
+        // And the tags come back off the per-hash cache, without either call being repeated.
+        var second = await resolver.ResolveAsync(model);
+        second.Tags.Should().BeEquivalentTo(["character", "anime"]);
+        _client.Verify(c => c.GetModelAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task AFailedTagLookupKeepsTheVersionResultAndIsRetriedNextPass()
+    {
+        // A transient failure of the second call must not cost the base model / version id, and
+        // must not be cached as "this model has no tags" — that would make the file permanently
+        // category-less, which is exactly the stickiness the per-hash cache is prone to.
+        var model = WriteModel();
+        _client.Setup(c => c.GetModelVersionByHashAsync("abc123", null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CivitaiModelVersion { Id = 777, ModelId = 900, BaseModel = "SDXL 1.0" });
+        _client.SetupSequence(c => c.GetModelAsync(900, null, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("offline"))
+            .ReturnsAsync(new CivitaiModel { Id = 900, Tags = ["style"] });
+        var resolver = Resolver(_client.Object);
+
+        var first = await resolver.ResolveAsync(model);
+
+        first.BaseModelRaw.Should().Be("SDXL 1.0");
+        first.CivitaiVersionId.Should().Be(777);
+        first.Tags.Should().BeEmpty();
+
+        var second = await resolver.ResolveAsync(model);
+
+        second.Tags.Should().BeEquivalentTo(["style"]);
+    }
+
+    [Fact]
+    public async Task AModelWithNoTagsIsCachedAsResolvedAndNotReFetched()
+    {
+        var model = WriteModel();
+        _client.Setup(c => c.GetModelVersionByHashAsync("abc123", null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CivitaiModelVersion { Id = 777, ModelId = 900, BaseModel = "SDXL 1.0" });
+        _client.Setup(c => c.GetModelAsync(900, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CivitaiModel { Id = 900, Tags = [] });
+        var resolver = Resolver(_client.Object);
+
+        await resolver.ResolveAsync(model);
+        var second = await resolver.ResolveAsync(model);
+
+        second.Tags.Should().BeEmpty();
+        _client.Verify(c => c.GetModelVersionByHashAsync(It.IsAny<string>(), It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _client.Verify(c => c.GetModelAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
 }

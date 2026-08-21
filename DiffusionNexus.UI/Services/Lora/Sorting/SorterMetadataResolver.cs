@@ -9,11 +9,13 @@ namespace DiffusionNexus.UI.Services.Lora.Sorting;
 public sealed record ResolvedLoraMetadata(string? BaseModelRaw, int? CivitaiVersionId, string Sha256)
 {
     /// <summary>
-    /// Tag names carried by the file's <c>.civitai.info</c> sidecar (<c>model.tags</c> or a
-    /// top-level <c>tags</c> array), empty when it has none or the metadata came from the
-    /// by-hash API — that endpoint returns no tags. Callers feed these to
-    /// <see cref="SorterCategoryResolver"/> so a properly downloaded LoRA in a browsed
-    /// folder can still land in its category folder instead of being forced to Unknown.
+    /// Tag names for the model: from the file's <c>.civitai.info</c> sidecar (<c>model.tags</c>
+    /// or a top-level <c>tags</c> array) when it has one, otherwise from the Civitai
+    /// <c>/models/{id}</c> lookup that follows the by-hash call — the by-hash response itself
+    /// carries no tags, only the owning <c>modelId</c>. Callers feed these to
+    /// <see cref="SorterCategoryResolver"/> so a LoRA in a browsed folder lands in its category
+    /// folder instead of being forced to Unknown. Empty when the model genuinely has no tags,
+    /// or when nothing could be resolved at all.
     /// </summary>
     public IReadOnlyList<string> Tags { get; init; } = [];
 }
@@ -99,7 +101,11 @@ public sealed class SorterMetadataResolver
             return new ResolvedLoraMetadata(null, null, string.Empty);
         }
 
-        if (TryReadCache(sha, out var cached))
+        // A cache entry written before the model lookup existed — or by a pass whose model lookup
+        // failed — carries no tag list at all, which is not the same as "this model has no tags".
+        // Serving it would make a category-less result permanent for that hash, so it is re-resolved
+        // once a client is available; a resolved-but-empty list is served as-is and never re-fetched.
+        if (TryReadCache(sha, out var cached, out var tagsResolved) && (tagsResolved || _civitaiClient is null))
             return cached! with { Sha256 = sha };
 
         if (_civitaiClient is null)
@@ -123,12 +129,41 @@ public sealed class SorterMetadataResolver
 
         if (version is null)
         {
-            WriteCache(sha, new CacheEntry(null, null));
+            // Fully resolved negative result: nothing to look tags up for, so the empty list is
+            // final and this hash is never re-queried.
+            WriteCache(sha, new CacheEntry(null, null, []));
             return new ResolvedLoraMetadata(null, null, sha);
         }
 
-        WriteCache(sha, new CacheEntry(version.BaseModel, version.Id));
-        return new ResolvedLoraMetadata(version.BaseModel, version.Id, sha);
+        var tags = await TryReadModelTagsAsync(version.ModelId, ct);
+        WriteCache(sha, new CacheEntry(version.BaseModel, version.Id, tags));
+        return new ResolvedLoraMetadata(version.BaseModel, version.Id, sha) { Tags = tags ?? [] };
+    }
+
+    /// <summary>
+    /// The by-hash endpoint returns a model <i>version</i>, and tags live on the owning model —
+    /// so the category of a file with no sidecar (the whole point of "browse any folder": LoRAs
+    /// downloaded outside DiffusionNexus) needs this second call. Failure is non-fatal and
+    /// returns null, meaning "not resolved": the base-model/version-id result is still cached and
+    /// returned, and the tag list is left open so a later pass can fill it in.
+    /// </summary>
+    private async Task<IReadOnlyList<string>?> TryReadModelTagsAsync(int modelId, CancellationToken ct)
+    {
+        if (_civitaiClient is null || modelId <= 0) return [];
+
+        try
+        {
+            var model = await _civitaiClient.GetModelAsync(modelId, await GetApiKeyAsync(), ct);
+            return model?.Tags ?? [];
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException
+                                   || (ex is TaskCanceledException && !ct.IsCancellationRequested))
+        {
+            _logger?.Warn(LogCategory.Network, LogSource,
+                $"Civitai model lookup for tags failed (model {modelId}): {ex.Message} — the file keeps its " +
+                "base model but sorts without a category this pass.");
+            return null;
+        }
     }
 
     /// <summary>
@@ -235,9 +270,12 @@ public sealed class SorterMetadataResolver
         return names;
     }
 
-    private bool TryReadCache(string sha, out ResolvedLoraMetadata? metadata)
+    /// <param name="tagsResolved">False when the entry predates tag caching or was written by a
+    /// pass whose model lookup failed — see the call site.</param>
+    private bool TryReadCache(string sha, out ResolvedLoraMetadata? metadata, out bool tagsResolved)
     {
         metadata = null;
+        tagsResolved = false;
         var cachePath = Path.Combine(_cacheDirectory, $"{sha}.json");
         if (!File.Exists(cachePath))
             return false;
@@ -248,7 +286,11 @@ public sealed class SorterMetadataResolver
             if (entry is null)
                 throw new JsonException("Deserialized to null.");
 
-            metadata = new ResolvedLoraMetadata(entry.BaseModel, entry.VersionId, sha);
+            metadata = new ResolvedLoraMetadata(entry.BaseModel, entry.VersionId, sha)
+            {
+                Tags = entry.Tags ?? []
+            };
+            tagsResolved = entry.Tags is not null;
             return true;
         }
         catch (JsonException ex)
@@ -281,5 +323,9 @@ public sealed class SorterMetadataResolver
         }
     }
 
-    private sealed record CacheEntry(string? BaseModel, int? VersionId);
+    /// <param name="Tags">Null means "tags were never resolved for this hash" (an entry written
+    /// before tag caching existed, or one whose model lookup failed); an empty list means the
+    /// model really has none. The distinction is what stops a transient API failure from making a
+    /// file category-less forever.</param>
+    private sealed record CacheEntry(string? BaseModel, int? VersionId, IReadOnlyList<string>? Tags = null);
 }

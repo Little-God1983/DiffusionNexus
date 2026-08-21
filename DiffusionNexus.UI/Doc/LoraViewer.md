@@ -519,7 +519,7 @@ Files not yet in the database (when browsing arbitrary folders) are resolved via
 
 1. Local `.civitai.info` sidecar next to the file (also the source of the tags used for category inference).
 2. Per-hash disk cache (below).
-3. Civitai hash lookup API call (same as the sync pipeline).
+3. Civitai hash lookup API call (same as the sync pipeline), followed by a `/models/{id}` call for the owning model's **tags** — the by-hash response is a model *version* and carries none, so without this second call every sidecar-less file would sort without a category. A failed tag call is non-fatal: the base model and version id are kept and cached, and the tag list is left unresolved so a later pass retries it (an empty-but-resolved list is never re-fetched).
 
 DB rows are matched by path earlier, when the cached library is loaded; there is no by-hash DB lookup (descoped from the spec). A file that cannot be hashed or an API shape change resolves as unknown rather than failing the pass, and the API key is read once per pass, not once per file.
 
