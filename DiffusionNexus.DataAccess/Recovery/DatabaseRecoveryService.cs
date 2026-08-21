@@ -272,6 +272,8 @@ public sealed class DatabaseRecoveryService
             // ALTER TABLE never actually executed — leaving queries to fail with
             // "no such column: …". Mirrors the AppSettings repair above.
             RepairModelsTableColumns(dbContext, connection);
+            RepairModelImagesTableColumns(dbContext, connection);
+            EnsureModelSyncStatesTable(dbContext);
         }
         catch (Exception ex)
         {
@@ -288,25 +290,7 @@ public sealed class DatabaseRecoveryService
     /// </summary>
     private void RepairModelsTableColumns(DiffusionNexusCoreDbContext dbContext, DbConnection connection)
     {
-        var wasOpen = connection.State == ConnectionState.Open;
-        if (!wasOpen) connection.Open();
-
-        var existingColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        try
-        {
-            using var command = connection.CreateCommand();
-            command.CommandText = "PRAGMA table_info('Models');";
-            using var reader = command.ExecuteReader();
-            while (reader.Read())
-            {
-                var name = reader["name"].ToString();
-                if (!string.IsNullOrEmpty(name)) existingColumns.Add(name);
-            }
-        }
-        finally
-        {
-            if (!wasOpen) connection.Close();
-        }
+        var existingColumns = ReadColumnNames(connection, "Models");
 
         if (existingColumns.Count == 0)
         {
@@ -336,6 +320,97 @@ public sealed class DatabaseRecoveryService
                 _log.Error(ex, $"CheckAndRepairSchema: Failed to add Models.'{col.Key}'");
             }
         }
+    }
+
+    /// <summary>
+    /// Mirror of <see cref="RepairModelsTableColumns"/> for the <c>ModelImages</c> table.
+    /// Add entries here whenever a migration adds nullable columns there.
+    /// </summary>
+    private void RepairModelImagesTableColumns(DiffusionNexusCoreDbContext dbContext, DbConnection connection)
+    {
+        var existingColumns = ReadColumnNames(connection, "ModelImages");
+
+        if (existingColumns.Count == 0)
+        {
+            // Table doesn't exist yet — initial migration will create it.
+            return;
+        }
+
+        // Migration 20260821112114_AddModelSyncStateAndThumbnailAttempts
+        var requiredColumns = new Dictionary<string, string>
+        {
+            { "ThumbnailAttemptedAt", "ALTER TABLE ModelImages ADD COLUMN ThumbnailAttemptedAt TEXT" },
+            { "ThumbnailFailure",     "ALTER TABLE ModelImages ADD COLUMN ThumbnailFailure TEXT" },
+        };
+
+        foreach (var col in requiredColumns)
+        {
+            if (existingColumns.Contains(col.Key)) continue;
+
+            _log.Warning($"CheckAndRepairSchema: Missing ModelImages.'{col.Key}' column. Attempting to add...");
+            try
+            {
+                dbContext.Database.ExecuteSqlRaw(col.Value);
+                _log.Information($"CheckAndRepairSchema: Successfully added ModelImages.'{col.Key}'");
+            }
+            catch (Exception ex)
+            {
+                _log.Error(ex, $"CheckAndRepairSchema: Failed to add ModelImages.'{col.Key}'");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Recreates the <c>ModelSyncStates</c> table when a migration row was force-marked as applied
+    /// without the CREATE TABLE ever running. Column types must stay in sync with migration
+    /// 20260821112114_AddModelSyncStateAndThumbnailAttempts.
+    /// </summary>
+    private void EnsureModelSyncStatesTable(DiffusionNexusCoreDbContext dbContext)
+    {
+        try
+        {
+            dbContext.Database.ExecuteSqlRaw(
+                "CREATE TABLE IF NOT EXISTS ModelSyncStates (" +
+                "ModelId INTEGER NOT NULL CONSTRAINT PK_ModelSyncStates PRIMARY KEY, " +
+                "MetadataCheckedAt TEXT NULL, MetadataOutcome TEXT NOT NULL, MetadataAttempts INTEGER NOT NULL, " +
+                "LastError TEXT NULL, TagsCheckedAt TEXT NULL, ImagesCheckedAt TEXT NULL, SidecarSignature TEXT NULL, " +
+                "HeaderCheckedAt TEXT NULL, UpdatedAt TEXT NOT NULL, " +
+                "CONSTRAINT FK_ModelSyncStates_Models_ModelId FOREIGN KEY (ModelId) REFERENCES Models (Id) ON DELETE CASCADE);");
+        }
+        catch (Exception ex)
+        {
+            _log.Error(ex, "CheckAndRepairSchema: Failed to ensure ModelSyncStates table");
+        }
+    }
+
+    /// <summary>
+    /// Reads the column names of <paramref name="table"/> via <c>PRAGMA table_info</c>.
+    /// Returns an empty set when the table does not exist. Leaves the connection in the
+    /// state it was found in.
+    /// </summary>
+    private static HashSet<string> ReadColumnNames(DbConnection connection, string table)
+    {
+        var wasOpen = connection.State == ConnectionState.Open;
+        if (!wasOpen) connection.Open();
+
+        var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = $"PRAGMA table_info('{table}');";
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                var name = reader["name"].ToString();
+                if (!string.IsNullOrEmpty(name)) columns.Add(name);
+            }
+        }
+        finally
+        {
+            if (!wasOpen) connection.Close();
+        }
+
+        return columns;
     }
 
     /// <summary>
