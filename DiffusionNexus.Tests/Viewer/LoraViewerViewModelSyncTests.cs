@@ -32,6 +32,9 @@ public class LoraViewerViewModelSyncTests
     private readonly Mock<IUnitOfWork> _unitOfWork = new();
     private readonly Mock<IModelRepository> _models = new();
 
+    /// <summary>Every value <c>SyncStatus</c> took during the run — the final one overwrites the progress text.</summary>
+    private readonly List<string?> _statusHistory = [];
+
     private LoraViewerViewModel CreateViewModel(bool withSyncService = true)
     {
         _modelSync.Setup(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()))
@@ -43,7 +46,7 @@ public class LoraViewerViewModelSyncTests
         services.AddSingleton(_unitOfWork.Object);
         var provider = services.BuildServiceProvider();
 
-        return new LoraViewerViewModel(
+        var vm = new LoraViewerViewModel(
             _settings.Object,
             _modelSync.Object,
             civitaiClient: null,
@@ -54,6 +57,13 @@ public class LoraViewerViewModelSyncTests
             librarySync: withSyncService ? _sync.Object : null,
             uiScheduler: new ImmediateUiScheduler(),
             scopeFactory: provider.GetRequiredService<IServiceScopeFactory>());
+
+        vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(LoraViewerViewModel.SyncStatus)) _statusHistory.Add(vm.SyncStatus);
+        };
+
+        return vm;
     }
 
     private static SyncPlan PlanFor(SyncScope scope, params SyncPlanStep[] steps)
@@ -98,8 +108,46 @@ public class LoraViewerViewModelSyncTests
             "the run must execute the plan that was just presented, not re-plan");
     }
 
+    /// <summary>
+    /// The plan cannot know there is nothing to do: a plan that carries the discovery step always
+    /// reports work, because nobody knows what a folder scan will find until it has run. So the
+    /// "up to date" wording has to come from the <i>report</i> — discovered nothing, planned nothing.
+    /// </summary>
     [Fact]
-    public async Task DownloadMissingMetadata_NoWorkShowsUpToDateAndDoesNotExecute()
+    public async Task DownloadMissingMetadata_UpToDateWordingWhenRunFoundNothing()
+    {
+        var vm = CreateViewModel();
+        var plan = PlanFor(
+            SyncScope.Library,
+            new SyncPlanStep(SyncStepKind.DiscoverFiles, 0, TimeSpan.FromSeconds(2), "Discover new files in all LoRA sources"),
+            new SyncPlanStep(SyncStepKind.IdentifyModel, 0, TimeSpan.Zero, "Identify unknown files"));
+
+        _sync.Setup(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(plan);
+        _sync.Setup(s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncPlan p, IProgress<LibrarySyncProgress>? _, CancellationToken _) => new SyncReport(
+                p,
+                [
+                    new SyncStepReport(SyncStepKind.DiscoverFiles, 0, 1, 1, 0, 0),
+                    new SyncStepReport(SyncStepKind.IdentifyModel, 0, 0, 0, 0, 0),
+                ],
+                Failures: [],
+                Cancelled: false,
+                Elapsed: TimeSpan.FromSeconds(1),
+                NewFilesDiscovered: 0));
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        vm.SyncStatus.Should().Be("Library is up to date — nothing to do",
+            "\"Discovered 0\" is technically true and useless to read");
+        _sync.Verify(s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()), Times.Once,
+            "the run still has to happen — the scan is the only thing that can prove there is nothing new");
+        vm.IsBusy.Should().BeFalse("the busy overlay must be released on the nothing-to-do path too");
+    }
+
+    /// <summary>The `!plan.HasWork` early-out stays correct for an option set that excludes discovery.</summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_EmptyPlanShortCircuitsWithoutExecuting()
     {
         var vm = CreateViewModel();
         _sync.Setup(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()))
@@ -109,8 +157,32 @@ public class LoraViewerViewModelSyncTests
 
         vm.SyncStatus.Should().Be("Library is up to date — nothing to do");
         _sync.Verify(s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()), Times.Never,
-            "an empty plan must not start a run");
+            "a plan with no steps at all has nothing to run");
         vm.IsBusy.Should().BeFalse("the busy overlay must be released on the nothing-to-do path too");
+    }
+
+    [Fact]
+    public async Task DownloadMissingMetadata_ProgressUpdatesStatus()
+    {
+        var vm = CreateViewModel();
+        var plan = PlanFor(SyncScope.Library, IdentifyStep());
+
+        IProgress<LibrarySyncProgress>? captured = null;
+        _sync.Setup(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(plan);
+        _sync.Setup(s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncPlan p, IProgress<LibrarySyncProgress>? progress, CancellationToken _) =>
+            {
+                captured = progress;
+                progress!.Report(new LibrarySyncProgress(SyncStepKind.FetchTags, 3, 68, "Foo"));
+                return ReportFor(p);
+            });
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        captured.Should().NotBeNull("the run must be given somewhere to report progress");
+        _statusHistory.Should().Contain("Tags [3/68] Foo",
+            "the status bar shows the step label, the position and the item currently being worked on");
     }
 
     [Fact]

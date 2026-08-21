@@ -1598,15 +1598,6 @@ public partial class ModelTileViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Returns true if the model was synced with Civitai but the selected version has no preview images.
-    /// These models need their image records re-fetched from the Civitai API.
-    /// </summary>
-    public bool IsImageDataMissing =>
-        ModelEntity?.CivitaiId is not null
-        && SelectedVersion?.CivitaiId is not null
-        && (SelectedVersion.Images is null || SelectedVersion.Images.Count == 0);
-
-    /// <summary>
     /// Returns true if the tile is showing "No Preview" but has a downloadable image URL.
     /// Checks the actual visual state (Bitmap) rather than entity data, so it catches
     /// corrupt BLOBs and decode failures too. Also returns true when the primary image is

@@ -177,11 +177,15 @@ does what is genuinely outstanding. `LoraViewerViewModel` just starts the run, s
 progress, and rebuilds its grid once at the end.
 
 ```
-DownloadMissingMetadataAsync
-│
-├── PlanAsync(SyncScope.Library, SyncOptions.All)
-│     → SyncPlan: one SyncPlanStep per step (Kind, Count, EstimatedDuration, Description)
-│     → plan.HasWork == false  ⇒  "Library is up to date — nothing to do", no run
+DownloadMissingMetadataAsync                      (both service calls run on Task.Run —
+│                                                  SQLite is synchronous, and the planning
+├── PlanAsync(SyncScope.Library, SyncOptions.All)   pass + the folder scan would otherwise
+│     → SyncPlan: one SyncPlanStep per step         freeze the overlay and the Cancel button)
+│       (Kind, Count, EstimatedDuration, Description)
+│     → plan.HasWork == false ⇒ "Library is up to date — nothing to do", no run.
+│       Only reachable for an option set WITHOUT DiscoverFiles: a plan carrying the
+│       discovery step always reports work, because nobody knows what a scan will
+│       find until it has run.
 │     (Plan B puts a confirmation dialog here; for now the plan is logged and started)
 │
 ├── ExecuteAsync(plan, progress, ct)
@@ -191,14 +195,17 @@ DownloadMissingMetadataAsync
 │
 ├── RebuildTilesFromDatabaseAsync()   ← exactly once, after the run
 │
-└── SyncStatus = report.Summary  (+ " · N failed" when report.Failures is non-empty)
+└── SyncStatus:
+      report.NewFilesDiscovered == 0 && every step Planned == 0
+        ⇒ "Library is up to date — nothing to do"   ← the honest verdict, from the report
+      otherwise report.Summary (+ " · N failed" when report.Failures is non-empty)
 ```
 
 ### The steps
 
 | Step | What it does |
 |------|--------------|
-| `DiscoverFiles` | Walks every enabled LoRA source folder and inserts rows for files that are not in the DB yet. Runs for every scope — a scoped run still notices new files. |
+| `DiscoverFiles` | Walks every enabled LoRA source folder and inserts rows for files that are not in the DB yet. It ignores the scope — a folder- or model-scoped run that *includes* this step still scans everything — but it is only in the run at all when the caller asks for it, and the per-LoRA button does not. |
 | `IdentifyModel` | The identity chain for one file: full-file SHA256 → Civitai `GET /model-versions/by-hash/{sha}` → on 404, the local `.civitai.info` / `.json` sidecar. Writes name, base model, trigger words, Civitai ids, image records. |
 | `FetchTags` | For a model that has a Civitai id but no tags yet: `GET /models/{id}` and replace the tag set (reusing existing `Tag` rows by normalized name). |
 | `FetchImages` | For a version with a Civitai version id but no image records: `GET /model-versions/{id}` and persist the returned images. |

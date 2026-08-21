@@ -688,11 +688,20 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             BusyMessage = "Syncing with Civitai...";
             SyncStatus = "Planning sync...";
 
-            var plan = await _librarySync.PlanAsync(SyncScope.Library, SyncOptions.All, ct);
+            // Task.Run, not a bare await: SQLite has no true async, so the planning pass (the
+            // first-run state backfill plus every step's selection query) and the discovery scan
+            // both run to completion inline before anything yields — on the UI thread that means a
+            // frozen overlay and a dead Cancel button, which is exactly what the old phase code
+            // used a background thread to avoid. Every UI touch below the await hops back through
+            // PostToUi / InvokeOnUiAsync.
+            var plan = await Task.Run(() => _librarySync.PlanAsync(SyncScope.Library, SyncOptions.All, ct), ct);
 
+            // Correct only when the caller excluded discovery: a plan that still carries the
+            // Discover step always reports work, because nobody knows what a scan will find until
+            // it has run. The honest "nothing to do" verdict is the report's, below.
             if (!plan.HasWork)
             {
-                SyncStatus = "Library is up to date — nothing to do";
+                SyncStatus = UpToDateStatus;
                 _logger?.Info(LogCategory.Network, "CivitaiSync", "Sync plan is empty — nothing to do");
                 return;
             }
@@ -701,18 +710,16 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             _logger?.Info(LogCategory.Network, "CivitaiSync",
                 $"Starting sync: {string.Join(" · ", plan.Steps.Select(s => $"{SyncReport.Label(s.Kind)} {s.Count}"))}");
 
-            var progress = new Progress<LibrarySyncProgress>(p => PostToUi(() =>
-                SyncStatus = $"{SyncReport.Label(p.Step)} [{p.Index}/{p.Total}] {p.CurrentItem}"));
+            var progress = new UiProgress<LibrarySyncProgress>(this, p =>
+                SyncStatus = $"{SyncReport.Label(p.Step)} [{p.Index}/{p.Total}] {p.CurrentItem}");
 
-            var report = await _librarySync.ExecuteAsync(plan, progress, ct);
+            var report = await Task.Run(() => _librarySync.ExecuteAsync(plan, progress, ct), ct);
 
             // One rebuild, at the end: the service wrote straight to the database, so the
             // in-memory tiles are stale until they are re-projected from it.
             await RebuildTilesFromDatabaseAsync();
 
-            var statusText = report.Failures.Count > 0
-                ? $"{report.Summary} · {report.Failures.Count} failed"
-                : report.Summary;
+            var statusText = DescribeOutcome(report);
             _logger?.Info(LogCategory.Network, "CivitaiSync", statusText);
             SyncStatus = statusText;
         }
@@ -879,6 +886,35 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// </summary>
     private IServiceScopeFactory RequireScopeFactory()
         => _scopeFactory ?? App.Services!.GetRequiredService<IServiceScopeFactory>();
+
+    /// <summary>Status shown when a run had genuinely nothing left to do.</summary>
+    private const string UpToDateStatus = "Library is up to date — nothing to do";
+
+    /// <summary>
+    /// The status line for a finished run. A run that discovered no new file and had nothing
+    /// planned in any step did no work at all, and <see cref="SyncReport.Summary"/> would report
+    /// that as "Discovered 0" — technically true, and useless to read.
+    /// </summary>
+    private static string DescribeOutcome(SyncReport report)
+    {
+        if (report.NewFilesDiscovered == 0 && report.Steps.All(s => s.Planned == 0))
+            return UpToDateStatus;
+
+        return report.Failures.Count > 0
+            ? $"{report.Summary} · {report.Failures.Count} failed"
+            : report.Summary;
+    }
+
+    /// <summary>
+    /// Progress sink that marshals through this ViewModel's UI-thread seam — deliberately not
+    /// <see cref="Progress{T}"/>, which captures the <c>SynchronizationContext</c> at construction
+    /// and would add a second, invisible hop on top of the one the ViewModel already owns (and in
+    /// a unit test, with no context to capture, would deliver on the thread pool instead).
+    /// </summary>
+    private sealed class UiProgress<T>(LoraViewerViewModel owner, Action<T> onReport) : IProgress<T>
+    {
+        public void Report(T value) => owner.PostToUi(() => onReport(value));
+    }
 
     /// <summary>Fire-and-forget hop to the UI thread, through the scheduler seam when injected.</summary>
     private void PostToUi(Action action)
@@ -1250,8 +1286,10 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             new HashSet<SyncStepKind> { SyncStepKind.IdentifyModel, SyncStepKind.FetchTags, SyncStepKind.FetchImages },
             ForceIdentify: true);
 
-        var plan = await _librarySync.PlanAsync(SyncScope.ForModels(modelId), options);
-        var report = await _librarySync.ExecuteAsync(plan);
+        // Off the UI thread for the same reason the bulk run is (see DownloadMissingMetadataAsync):
+        // the selection queries and the file hash both run inline until the first real yield.
+        var plan = await Task.Run(() => _librarySync.PlanAsync(SyncScope.ForModels(modelId), options));
+        var report = await Task.Run(() => _librarySync.ExecuteAsync(plan));
 
         var applied = report.Steps.Any(s => s.Succeeded > 0);
         if (!applied)
