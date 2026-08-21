@@ -599,6 +599,27 @@ public sealed class LoraSorterViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task FilesCarryingTheHiddenOrSystemAttributeAreStillEnumerated()
+    {
+        // EnumerationOptions.AttributesToSkip defaults to Hidden | System and applies to FILES as
+        // well as directories. A model file restored by a backup tool, copied off a NAS, or living
+        // under a folder a sync client marked System silently never reached the preview — no
+        // warning, no log line, and the skipped-file note stayed at 0 because nothing threw.
+        // Directory.GetFiles, which this walk replaced, returned such entries.
+        WriteLora(@"flat\normal.safetensors");
+        var system = WriteLora(@"flat\system.safetensors");
+        var hidden = WriteLora(@"flat\hidden.safetensors");
+        File.SetAttributes(system, File.GetAttributes(system) | FileAttributes.System);
+        File.SetAttributes(hidden, File.GetAttributes(hidden) | FileAttributes.Hidden);
+        var vm = CreateVm(cached: []);
+
+        await vm.InitializeAsync();
+
+        vm.TransferCount.Should().Be(3);
+        FlattenNames(vm.PreviewRoots).Should().Contain(["system.safetensors", "hidden.safetensors"]);
+    }
+
+    [Fact]
     public async Task DirectoryJunctionsAreNotFollowed()
     {
         // The walk skips reparse points, which is what stops a junction pointing at itself or an

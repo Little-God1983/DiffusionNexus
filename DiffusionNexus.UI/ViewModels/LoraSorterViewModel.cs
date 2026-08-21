@@ -789,7 +789,13 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         RecurseSubdirectories = true,
         IgnoreInaccessible = true,
         MatchCasing = MatchCasing.CaseInsensitive,
-        AttributesToSkip = FileAttributes.ReparsePoint | FileAttributes.System,
+        // ReparsePoint ONLY. The default is Hidden | System, and EnumerationOptions applies
+        // AttributesToSkip to files as well as directories: a .safetensors carrying the System
+        // bit — common on files restored by a backup tool, copied off a NAS, or under a folder a
+        // sync client marked System — simply never appeared in the preview, with no warning, no
+        // log line, and a "N file(s) skipped" note still reading 0 because nothing threw. The
+        // walk this replaced used Directory.GetFiles, which returns Hidden/System entries alike.
+        AttributesToSkip = FileAttributes.ReparsePoint,
     };
 
     /// <summary>Enumerates model files under <paramref name="root"/>, tolerating an inaccessible or

@@ -543,7 +543,7 @@ Downloaded metadata is cached in `%LocalAppData%\DiffusionNexus\SorterCache\{sha
 - Sorting is LoRA-family only, matching the Viewer scope.
 - The Restore UI ships as a follow-up (manifest data is written from day one).
 - Editing categories must be done in the model detail view (`UserCategory`), not within the Sorter itself.
-- Directory junctions and symlinks under the source folder are **not** followed — the enumeration skips reparse points, which is the cycle guard (a junction pointing at itself or an ancestor would otherwise enumerate forever). A LoRA reachable only through one is not sorted.
+- Directory junctions and symlinks under the source folder are **not** followed — the enumeration skips reparse points, which is the cycle guard (a junction pointing at itself or an ancestor would otherwise enumerate forever). A LoRA reachable only through one is not sorted. Reparse points are the *only* attribute the walk skips: hidden and system files are enumerated normally, since a model file can carry either bit after a restore, a NAS copy, or a sync client's folder marking.
 - The tab does its first disk walk when the **Sorter tab is opened**, not when the LoRA Viewer is opened: initialization triggers from `OnAttachedToVisualTree` only.
 - When the target has no `DriveInfo` but the folder exists (a UNC share), the free-space gate reports "Free space unknown" and lets the run proceed instead of blocking it with no stated reason. A target that cannot be *reached* — an unmapped or not-ready drive letter, a denied or missing folder — blocks the run instead, since failing open there only moves the failure into the run, where it costs every file.
 
