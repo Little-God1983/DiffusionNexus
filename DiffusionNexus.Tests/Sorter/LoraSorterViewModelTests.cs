@@ -602,18 +602,14 @@ public sealed class LoraSorterViewModelTests : IDisposable
         process.WaitForExit();
     }
 
-    [Theory]
-    // DriveInfo(@"\\nas\share") throws ArgumentException; an unmapped drive letter throws
-    // DriveNotFoundException (an IOException). Both must degrade to "unknown", not to a
-    // permanently disabled Start button with no stated reason.
-    [InlineData(typeof(ArgumentException))]
-    [InlineData(typeof(DriveNotFoundException))]
-    [InlineData(typeof(UnauthorizedAccessException))]
-    public async Task UnknowableFreeSpaceFailsOpenInsteadOfBlockingTheRun(Type exceptionType)
+    [Fact]
+    public async Task UnknowableFreeSpaceOnAnExistingTargetFailsOpenInsteadOfBlockingTheRun()
     {
+        // new DriveInfo(@"\nas\share\") throws ArgumentException and there is no free-space
+        // number to give for a UNC target — but the folder is right there, so the run may proceed.
         var a = WriteLora(@"flat\a.safetensors");
         var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")],
-            getAvailableSpace: _ => throw (Exception)Activator.CreateInstance(exceptionType)!);
+            getAvailableSpace: _ => throw new ArgumentException("Drive name must be a root directory."));
 
         await vm.InitializeAsync();
 
@@ -622,6 +618,42 @@ public sealed class LoraSorterViewModelTests : IDisposable
         vm.BlockReason.Should().BeNull();
         vm.StartSortingCommand.CanExecute(null).Should().BeTrue();
         vm.StatusMessage.Should().NotContain("Preview failed");
+    }
+
+    [Theory]
+    // An unplugged Z:\ throws DriveNotFoundException (an IOException). Failing open on it armed
+    // Start, and the executor then threw on CreateDirectory for every single file:
+    // "Done: 0 sorted, 0 duplicates skipped, 412 failed." Unreachable is not unknowable.
+    [InlineData(typeof(DriveNotFoundException))]
+    [InlineData(typeof(IOException))]
+    [InlineData(typeof(UnauthorizedAccessException))]
+    public async Task AnUnreachableTargetBlocksTheRunWithAStatedReason(Type exceptionType)
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")],
+            getAvailableSpace: _ => throw (Exception)Activator.CreateInstance(exceptionType)!);
+
+        await vm.InitializeAsync();
+
+        vm.HasEnoughSpace.Should().BeFalse();
+        vm.BlockReason.Should().Contain("not reachable");
+        vm.StartSortingCommand.CanExecute(null).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task AMissingTargetFolderBlocksEvenWhenTheProbeIsUnanswerable()
+    {
+        // Same ArgumentException as the UNC case, but the target root does not exist — there is
+        // nothing to sort into, so this must not inherit the UNC fail-open.
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")],
+            getAvailableSpace: _ => throw new ArgumentException("Drive name must be a root directory."));
+        vm.CustomTargetFolder = Path.Combine(_root.FullName, "NoSuchTarget");
+
+        await vm.InitializeAsync();
+
+        vm.HasEnoughSpace.Should().BeFalse();
+        vm.BlockReason.Should().Contain("not reachable");
     }
 
     [Fact]

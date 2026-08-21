@@ -982,8 +982,11 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// letter throws <see cref="DriveNotFoundException"/> (an <see cref="IOException"/>). That
     /// escaped mid-pass, after the tree was painted but before the gate was set, leaving Start
     /// permanently disabled with no stated reason on a perfectly usable NAS target. The gate now
-    /// fails <b>open</b> and says the number is unknown — the executor still reports per-file
-    /// failures if the share really is full.</description></item>
+    /// fails <b>open</b> for that case — an existing folder whose free space is simply not
+    /// knowable — and says so; the executor still reports per-file failures if the share really is
+    /// full. An <i>unreachable</i> target (dead drive letter, denied or missing folder) is a
+    /// different thing and still blocks: failing open there just moves the failure to the run,
+    /// where it costs every file.</description></item>
     /// <item><description>It applied the 1 GB safety margin to a same-volume move, whose
     /// <see cref="LoraSortPlan.RequiredBytes"/> is 0 because the transfer is a directory-entry
     /// rename. That blocked the primary use case — reorganizing a library in place on the
@@ -999,11 +1002,27 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         }
         catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
         {
+            // Fail open only where there is genuinely no number to give: a target that has no
+            // DriveInfo at all — new DriveInfo(@"\\nas\share\") throws ArgumentException — but
+            // whose folder is right there. "Unknowable" and "unreachable" are different things.
+            // A dead drive letter throws DriveNotFoundException (an IOException) and failing open
+            // on it armed Start for a run the executor then failed on every single file:
+            // "Done: 0 sorted, 0 duplicates skipped, 412 failed."
+            if (ex is ArgumentException && Directory.Exists(targetRoot))
+            {
+                _logger?.Warn(LogCategory.FileSystem, LogSource,
+                    $"Free space unavailable for '{targetRoot}' ({ex.GetType().Name}: {ex.Message}) — disk gate skipped.");
+                HasEnoughSpace = true;
+                DiskSummary = "Free space unknown (network or unsupported path) — proceed with care";
+                BlockReason = null;
+                return;
+            }
+
             _logger?.Warn(LogCategory.FileSystem, LogSource,
-                $"Free space unavailable for '{targetRoot}' ({ex.GetType().Name}: {ex.Message}) — disk gate skipped.");
-            HasEnoughSpace = true;
-            DiskSummary = "Free space unknown (network or unsupported path) — proceed with care";
-            BlockReason = null;
+                $"Target '{targetRoot}' could not be probed ({ex.GetType().Name}: {ex.Message}) — run blocked.");
+            HasEnoughSpace = false;
+            DiskSummary = "Free space unknown — the target could not be reached";
+            BlockReason = "Target drive or folder is not reachable.";
             return;
         }
 
