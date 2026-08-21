@@ -16,6 +16,7 @@ using DiffusionNexus.Installer.SDK.Shared.Services.Feedback;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.Service.Services.DatasetQuality;
 using DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
+using DiffusionNexus.Service.Services.Sync;
 using DiffusionNexus.UI.Converters;
 using DiffusionNexus.UI.Controls;
 using DiffusionNexus.UI.Services;
@@ -609,6 +610,10 @@ public partial class App : Application
         services.AddTransient<IModelSyncService, ModelFileSyncService>();
         services.AddTransient<ILoraDuplicateFinder, LoraDuplicateFinder>();
 
+        // Library metadata sync pipeline (#521 WP2): appliers, state backfill, steps and the
+        // single-flight ILibrarySyncService the LoRA viewer plans and executes runs through.
+        services.AddLibrarySync();
+
         // DatasetBackupService - use factory to inject activity log service
         services.AddTransient<IDatasetBackupService>(sp => new DatasetBackupService(
             sp.GetRequiredService<IAppSettingsService>(),
@@ -948,7 +953,10 @@ public partial class App : Application
             sp.GetService<ISecureStorage>(),
             sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>(),
             sp.GetService<Civitai.ICivitaiBaseModelCatalog>(),
-            sp.GetService<ILoraUpdateChecker>()));
+            sp.GetService<ILoraUpdateChecker>(),
+            sp.GetService<Domain.Services.Sync.ILibrarySyncService>(),
+            sp.GetService<IUiScheduler>(),
+            sp.GetService<IServiceScopeFactory>()));
         services.AddScoped<LoraDownloadService>(sp => new LoraDownloadService(
             sp.GetService<Civitai.ICivitaiClient>(),
             sp.GetService<IAppSettingsService>(),

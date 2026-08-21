@@ -141,8 +141,8 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         _logger = null;
         _pathUpdater = new NullLocalPathUpdater();
         // The shared hasher, not yet another private SHA256 copy — this VM's own copy sat next to
-        // HashingService and LoraViewerViewModel.ComputeFullSha256, the latter being what the
-        // runtime already injects here as hashFile.
+        // HashingService and the LoRA viewer's own SHA256 helper; the runtime now injects
+        // FileHasher.Sha256Upper (the library-wide implementation) here as hashFile.
         var designTimeHash = (string path) =>
             new HashingService().ComputeFileHash(path, HashingService.HashAlgorithmType.SHA256);
         _metadataResolver = new SorterMetadataResolver(null, () => Task.FromResult<string?>(null),

@@ -679,7 +679,7 @@ public partial class ModelDetailViewModel : ViewModelBase
     /// <para>
     /// Only fetches the full <see cref="CivitaiModel"/> when a modelId is available, to get
     /// model-level fields (description, tags, license) — same call the "Download Metadata"
-    /// button uses via <c>UpdateModelFromCivitaiAsync</c> in <c>LoraViewerViewModel</c>.
+    /// button uses via <c>CivitaiMetadataApplier</c> in the library sync pipeline.
     /// </para>
     /// Uses a scoped <see cref="IUnitOfWork"/> to avoid DbContext conflicts.
     /// </summary>
@@ -836,7 +836,7 @@ public partial class ModelDetailViewModel : ViewModelBase
                 }
             }
 
-            // --- Version (same fields as UpdateModelFromCivitaiAsync) ---
+            // --- Version (same fields as CivitaiMetadataApplier writes) ---
 
             var version = new ModelVersion
             {
@@ -862,7 +862,7 @@ public partial class ModelDetailViewModel : ViewModelBase
                 version.TriggerWords.Add(new TriggerWord { Word = word, Order = order++ });
             }
 
-            // Images (same structure as UpdateModelFromCivitaiAsync)
+            // Images (same structure as CivitaiMetadataApplier writes)
             var sortOrder = 0;
             foreach (var civImage in bestVersion.Images)
             {

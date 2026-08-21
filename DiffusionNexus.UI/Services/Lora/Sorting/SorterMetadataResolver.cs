@@ -60,7 +60,7 @@ public sealed class SorterMetadataResolver
     /// <param name="cacheDirectory">Injected for tests; production uses
     /// Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
     ///     "DiffusionNexus", "SorterCache").</param>
-    /// <param name="hashFile">SHA256 (lowercase hex) of a file — injected for tests.</param>
+    /// <param name="hashFile">SHA256 hex digest of a file (any case) — injected for tests.</param>
     public SorterMetadataResolver(
         ICivitaiClient? civitaiClient,
         Func<Task<string?>> apiKeyProvider,
@@ -300,13 +300,21 @@ public sealed class SorterMetadataResolver
         return names;
     }
 
+    /// <summary>
+    /// Cache file for a digest. The name is lower-cased so the store is case-insensitive:
+    /// the hasher now emits uppercase (<c>FileHasher.Sha256Upper</c>, the library-wide
+    /// convention) and every entry written by an earlier build is lowercase — keying on the
+    /// digest as-is would silently orphan the whole existing cache and re-fetch every file.
+    /// </summary>
+    private string CachePathFor(string sha) => Path.Combine(_cacheDirectory, $"{sha.ToLowerInvariant()}.json");
+
     /// <param name="tagsResolved">False when the entry predates tag caching or was written by a
     /// pass whose model lookup failed — see the call site.</param>
     private bool TryReadCache(string sha, out ResolvedLoraMetadata? metadata, out bool tagsResolved)
     {
         metadata = null;
         tagsResolved = false;
-        var cachePath = Path.Combine(_cacheDirectory, $"{sha}.json");
+        var cachePath = CachePathFor(sha);
         if (!File.Exists(cachePath))
             return false;
 
@@ -340,7 +348,7 @@ public sealed class SorterMetadataResolver
 
     private void WriteCache(string sha, CacheEntry entry)
     {
-        var cachePath = Path.Combine(_cacheDirectory, $"{sha}.json");
+        var cachePath = CachePathFor(sha);
         try
         {
             Directory.CreateDirectory(_cacheDirectory);

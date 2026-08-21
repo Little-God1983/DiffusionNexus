@@ -1,0 +1,224 @@
+using DiffusionNexus.DataAccess.Repositories.Interfaces;
+using DiffusionNexus.DataAccess.UnitOfWork;
+using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.Sync;
+using DiffusionNexus.Tests.Helpers;
+using DiffusionNexus.UI.ViewModels;
+using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
+using Moq;
+
+namespace DiffusionNexus.Tests.Viewer;
+
+/// <summary>
+/// The LoRA viewer no longer owns the metadata sync: the "Download Metadata" button and the
+/// per-tile button both plan and execute against <see cref="ILibrarySyncService"/> (#521 WP2).
+/// These tests pin the ViewModel's half of that contract — the scope and options it asks for,
+/// the status text it shows, and the single tile rebuild after a run — with the service itself
+/// mocked (its own behaviour is covered by <c>LibrarySyncServiceTests</c>).
+/// <para>
+/// No Avalonia platform is initialised: UI-thread marshalling goes through the injected
+/// <see cref="ImmediateUiScheduler"/>, and the fresh-scope database reads go through an
+/// injected <see cref="IServiceScopeFactory"/> instead of the <c>App.Services</c> locator.
+/// </para>
+/// </summary>
+public class LoraViewerViewModelSyncTests
+{
+    private readonly Mock<ILibrarySyncService> _sync = new();
+    private readonly Mock<IModelSyncService> _modelSync = new();
+    private readonly Mock<IAppSettingsService> _settings = new();
+    private readonly Mock<IUnitOfWork> _unitOfWork = new();
+    private readonly Mock<IModelRepository> _models = new();
+
+    private LoraViewerViewModel CreateViewModel(bool withSyncService = true)
+    {
+        _modelSync.Setup(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<InstalledModelFile>());
+        _unitOfWork.SetupGet(u => u.Models).Returns(_models.Object);
+
+        var services = new ServiceCollection();
+        services.AddSingleton(_modelSync.Object);
+        services.AddSingleton(_unitOfWork.Object);
+        var provider = services.BuildServiceProvider();
+
+        return new LoraViewerViewModel(
+            _settings.Object,
+            _modelSync.Object,
+            civitaiClient: null,
+            secureStorage: null,
+            logger: null,
+            baseModelCatalog: null,
+            updateChecker: null,
+            librarySync: withSyncService ? _sync.Object : null,
+            uiScheduler: new ImmediateUiScheduler(),
+            scopeFactory: provider.GetRequiredService<IServiceScopeFactory>());
+    }
+
+    private static SyncPlan PlanFor(SyncScope scope, params SyncPlanStep[] steps)
+        => new(scope, SyncOptions.All, steps, DateTimeOffset.UtcNow);
+
+    private static SyncPlanStep IdentifyStep(int count = 3)
+        => new(SyncStepKind.IdentifyModel, count, TimeSpan.FromSeconds(3 * count), "Identify unknown files");
+
+    private static SyncReport ReportFor(SyncPlan plan, int succeeded = 3, params SyncFailure[] failures)
+        => new(
+            plan,
+            [new SyncStepReport(SyncStepKind.IdentifyModel, 3, 3, succeeded, 0, failures.Length)],
+            failures,
+            Cancelled: false,
+            Elapsed: TimeSpan.FromSeconds(12),
+            NewFilesDiscovered: 0);
+
+    /// <summary>Plans return a one-step plan; executions return a report for the plan they were given.</summary>
+    private SyncPlan SetupPlanAndExecute(params SyncFailure[] failures)
+    {
+        var plan = PlanFor(SyncScope.Library, IdentifyStep());
+
+        _sync.Setup(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(plan);
+        _sync.Setup(s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncPlan p, IProgress<LibrarySyncProgress>? _, CancellationToken _) => ReportFor(p, failures: failures));
+
+        return plan;
+    }
+
+    [Fact]
+    public async Task DownloadMissingMetadata_PlansThenExecutesLibraryScope()
+    {
+        var vm = CreateViewModel();
+        var plan = SetupPlanAndExecute();
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _sync.Verify(s => s.PlanAsync(SyncScope.Library, It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()), Times.Once,
+            "the bulk button syncs the whole library, not a folder or a model subset");
+        _sync.Verify(s => s.ExecuteAsync(plan, It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()), Times.Once,
+            "the run must execute the plan that was just presented, not re-plan");
+    }
+
+    [Fact]
+    public async Task DownloadMissingMetadata_NoWorkShowsUpToDateAndDoesNotExecute()
+    {
+        var vm = CreateViewModel();
+        _sync.Setup(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PlanFor(SyncScope.Library)); // no steps at all → HasWork is false
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        vm.SyncStatus.Should().Be("Library is up to date — nothing to do");
+        _sync.Verify(s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()), Times.Never,
+            "an empty plan must not start a run");
+        vm.IsBusy.Should().BeFalse("the busy overlay must be released on the nothing-to-do path too");
+    }
+
+    [Fact]
+    public async Task DownloadMissingMetadata_StatusIsReportSummary()
+    {
+        var vm = CreateViewModel();
+        var plan = SetupPlanAndExecute();
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        vm.SyncStatus.Should().Be(ReportFor(plan).Summary,
+            "the status bar shows the report's own summary rather than a second, divergent tally");
+    }
+
+    [Fact]
+    public async Task DownloadMissingMetadata_StatusAppendsFailureCount()
+    {
+        var vm = CreateViewModel();
+        var failures = new[]
+        {
+            new SyncFailure(SyncStepKind.IdentifyModel, 1, "a.safetensors", "timeout"),
+            new SyncFailure(SyncStepKind.IdentifyModel, 2, "b.safetensors", "timeout"),
+        };
+        var plan = SetupPlanAndExecute(failures);
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        vm.SyncStatus.Should().Be(ReportFor(plan, failures: failures).Summary + " · 2 failed",
+            "failures are the part of the outcome the user has to act on, so they are never silent");
+    }
+
+    [Fact]
+    public async Task DownloadMissingMetadata_RebuildsTilesOnceAfterRun()
+    {
+        var vm = CreateViewModel();
+        SetupPlanAndExecute();
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Once,
+            "the grid is rebuilt exactly once, after the run — not per phase as the old tile-driven sync did");
+    }
+
+    [Fact]
+    public async Task DownloadMissingMetadata_WithoutServiceShowsUnavailable()
+    {
+        var vm = CreateViewModel(withSyncService: false);
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        vm.SyncStatus.Should().Be("Library sync not available.");
+        _sync.Verify(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DownloadMetadataForTile_UsesForModelsScopeWithForceIdentify()
+    {
+        var vm = CreateViewModel();
+        var tile = CreateTile(modelId: 42);
+
+        SyncScope? scope = null;
+        SyncOptions? options = null;
+        _sync.Setup(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncScope s, SyncOptions o, CancellationToken _) =>
+            {
+                scope = s;
+                options = o;
+                return PlanFor(s, IdentifyStep(1));
+            });
+        _sync.Setup(s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncPlan p, IProgress<LibrarySyncProgress>? _, CancellationToken _) => ReportFor(p, succeeded: 1));
+        _models.Setup(m => m.GetByIdWithIncludesAsync(42, It.IsAny<CancellationToken>())).ReturnsAsync((Model?)null);
+
+        var applied = await vm.DownloadMetadataForTileAsync(tile);
+
+        applied.Should().BeTrue("a step that succeeded for the model means metadata was applied");
+        scope!.Kind.Should().Be(SyncScopeKind.Models);
+        scope.ModelIds.Should().Equal(42);
+        options!.ForceIdentify.Should().BeTrue(
+            "the per-tile button is an explicit re-fetch request, so a stored 'already checked' verdict must not skip it");
+        options.Steps.Should().BeEquivalentTo(new[]
+        {
+            SyncStepKind.IdentifyModel, SyncStepKind.FetchTags, SyncStepKind.FetchImages,
+        }, "one tile never triggers a library-wide discovery pass");
+    }
+
+    [Fact]
+    public async Task DownloadMetadataForTile_WithNothingAppliedReturnsFalse()
+    {
+        var vm = CreateViewModel();
+        var tile = CreateTile(modelId: 42);
+
+        _sync.Setup(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncScope s, SyncOptions _, CancellationToken _) => PlanFor(s, IdentifyStep(1)));
+        _sync.Setup(s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncPlan p, IProgress<LibrarySyncProgress>? _, CancellationToken _) => ReportFor(p, succeeded: 0));
+
+        var applied = await vm.DownloadMetadataForTileAsync(tile);
+
+        applied.Should().BeFalse("nothing succeeded, so the detail view must say so instead of reloading unchanged data");
+    }
+
+    private static ModelTileViewModel CreateTile(int modelId)
+    {
+        var model = new Model { Id = modelId, Name = "Local Only LoRA", Type = ModelType.LORA };
+        var version = new ModelVersion { Id = 700, Name = "v1.0", BaseModelRaw = "???", Model = model };
+        version.Files.Add(new ModelFile { Id = 7000, FileName = "a.safetensors", IsPrimary = true, ModelVersion = version });
+        model.Versions.Add(version);
+        return ModelTileViewModel.FromModel(model);
+    }
+}
