@@ -1,4 +1,4 @@
-using DiffusionNexus.Civitai;
+﻿using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.DataAccess;
 using DiffusionNexus.DataAccess.Data;
@@ -322,6 +322,48 @@ public sealed class CivitaiMetadataApplierTests : IDisposable
             var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
             var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
             saved!.Tags.Should().BeEmpty();
+        }
+    }
+
+    [Fact]
+    public async Task ApplyTagsAsync_TreatsNullTagListAsAnsweredButNotAuthoritative()
+    {
+        // `Tags` is annotated non-nullable and defaults to [], but System.Text.Json writes null
+        // through for an explicit `"tags": null` — and Civitai's shapes have drifted twice before.
+        // A degraded payload must not throw (an NRE escapes the steps' narrow catch filter and
+        // takes the whole run down) and must not be mistaken for an authoritative empty list.
+        int modelId;
+        using (var seedScope = NewScope())
+        {
+            var uow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = NewLocalModel("null-tags", @"C:\m\degraded-tags.safetensors");
+            model.Tags.Add(new ModelTag { Tag = new Tag { Name = "keep", NormalizedName = "keep" } });
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+        }
+
+        var degraded = NewCivitaiModel(NewCivitaiVersion());
+        degraded = degraded with { Tags = null! };
+        var applier = NewApplier(degraded);
+
+        int? written = null;
+        using (var scope = NewScope())
+        {
+            var work = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var act = async () => written = await applier.ApplyTagsAsync(work, modelId, civitaiModelId: 77, apiKey: null);
+            await act.Should().NotThrowAsync();
+        }
+
+        // Non-null, so the step still stamps and stops re-asking…
+        written.Should().Be(1);
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+            // …but the tags we already hold survive, unlike the empty-array case above.
+            saved!.Tags.Select(t => t.Tag!.Name).Should().BeEquivalentTo(["keep"]);
         }
     }
 

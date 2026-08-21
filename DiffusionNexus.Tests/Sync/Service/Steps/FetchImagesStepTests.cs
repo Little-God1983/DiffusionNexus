@@ -1,4 +1,4 @@
-using DiffusionNexus.Civitai;
+﻿using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.DataAccess;
 using DiffusionNexus.DataAccess.Data;
@@ -191,12 +191,23 @@ public sealed class FetchImagesStepTests : IDisposable
     {
         var seeded = await SeedAsync("multi", civitaiId: 101, versionCivitaiIds: [701, 702]);
 
-        var step = NewStep();
+        // The mock is built here rather than via NewStep() so the call count can be pinned: the
+        // single stamp must be earned by every version having run, not by the loop exiting early.
+        var client = new Mock<ICivitaiClient>();
+        client
+            .Setup(x => x.GetModelVersionAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((int id, string? _, CancellationToken _) => NewCivitaiVersion(id, NewImage(id * 10)));
+        var step = new FetchImagesStep(Scopes, new CivitaiMetadataApplier(client.Object));
+
         var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
         var result = await step.ExecuteOneAsync(items.Single(), apiKey: null, CancellationToken.None);
 
         result.Succeeded.Should().BeTrue();
         result.Skipped.Should().BeFalse();
+
+        client.Verify(
+            c => c.GetModelVersionAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
 
         (await CountImagesAsync(seeded.ModelId, seeded.VersionIds[0])).Should().Be(1);
         (await CountImagesAsync(seeded.ModelId, seeded.VersionIds[1])).Should().Be(1);

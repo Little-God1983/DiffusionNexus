@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
@@ -73,6 +73,7 @@ public sealed class FetchTagsStep : ISyncStep
 
         using var dbScope = _scopes.CreateScope();
         var uow = dbScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var now = DateTimeOffset.UtcNow;
 
         try
         {
@@ -90,7 +91,7 @@ public sealed class FetchTagsStep : ISyncStep
                 return SyncItemResult.Skip;
             }
 
-            await StampAsync(uow, candidate.ModelId, ct).ConfigureAwait(false);
+            await StampAsync(uow, candidate.ModelId, now, ct).ConfigureAwait(false);
 
             if (tagCount is null)
             {
@@ -124,9 +125,8 @@ public sealed class FetchTagsStep : ISyncStep
         }
     }
 
-    private static async Task StampAsync(IUnitOfWork uow, int modelId, CancellationToken ct)
+    private static async Task StampAsync(IUnitOfWork uow, int modelId, DateTimeOffset now, CancellationToken ct)
     {
-        var now = DateTimeOffset.UtcNow;
         var state = await uow.SyncStates.GetOrCreateAsync(modelId, ct).ConfigureAwait(false);
 
         state.TagsCheckedAt = now;

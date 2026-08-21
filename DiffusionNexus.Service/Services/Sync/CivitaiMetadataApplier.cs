@@ -1,4 +1,4 @@
-using DiffusionNexus.Civitai;
+﻿using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
@@ -206,10 +206,21 @@ public sealed class CivitaiMetadataApplier
     /// when Civitai had no model to answer with at all.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The <c>null</c> / <c>0</c> split is the whole point of the entry point: "the page is gone"
     /// and "the page lists no tags" are different facts, and the caller stamps them differently.
     /// An empty tag list from a page that *did* respond is authoritative, so tags removed upstream
-    /// are removed here too — except on a user-edited model, whose tags are never ours to touch.
+    /// are removed here too — except on a user-edited model, whose tags are never ours to touch,
+    /// and except on a degraded payload (<c>"tags": null</c>), which is not an answer at all.
+    /// </para>
+    /// <para>
+    /// The authoritative-clear branch is currently unreachable from <c>FetchTagsStep</c>:
+    /// <c>SelectTagCandidatesAsync</c> only offers models with no tags, and <c>ForceTags</c>
+    /// bypasses the "already checked" policy, not that predicate. That is <i>intentional</i> — a
+    /// forced re-sync must never be able to turn into a bulk tag-wipe driven by one degraded
+    /// Civitai response. Re-pulling tags for models that already have some is separate design
+    /// work, and would start at the repository query, not here.
+    /// </para>
     /// </remarks>
     public async Task<int?> ApplyTagsAsync(
         IUnitOfWork uow,
@@ -229,6 +240,13 @@ public sealed class CivitaiMetadataApplier
 
         // Same guard as ApplyAsync: never overwrite a user's own tags.
         if (dbModel.IsUserEdited) return dbModel.Tags.Count;
+
+        // Tags is annotated non-nullable and initialized to [], but System.Text.Json writes null
+        // straight through for an explicit `"tags": null` — the client does not enable
+        // RespectNullableAnnotations, and Civitai's response shapes have drifted under us twice
+        // before. A missing list is a degraded payload, NOT an authoritative empty one: it must not
+        // clear tags. It still counts as answered (non-null), so the caller stops re-asking.
+        if (civitaiModel.Tags is null) return dbModel.Tags.Count;
 
         var tagLookup = await uow.Models.GetAllTagsLookupAsync(ct);
         SyncTags(dbModel, civitaiModel.Tags, tagLookup);

@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
@@ -78,29 +78,33 @@ public sealed class FetchImagesStep : ISyncStep
 
         using var dbScope = _scopes.CreateScope();
         var uow = dbScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var now = DateTimeOffset.UtcNow;
 
         try
         {
-            var answered = 0;
-            var added = 0;
+            // "Answered" is any non-null result: Civitai listed the version, whether or not it had
+            // images for it (a 0 also covers the local version row vanishing mid-run, which the
+            // applier cannot distinguish and which needs no separate handling here).
+            var versionsAnswered = 0;
+            var versionsGone = 0;
+            var imagesAdded = 0;
 
             foreach (var candidate in candidates)
             {
                 ct.ThrowIfCancellationRequested();
 
-                var imagesAdded = await _civitai
+                var added = await _civitai
                     .ApplyImagesAsync(uow, candidate.ModelId, candidate.VersionId, candidate.CivitaiVersionId, apiKey, ct)
                     .ConfigureAwait(false);
 
-                if (imagesAdded is null)
+                if (added is null)
                 {
-                    _logger?.Warn(LogCategory.Network, LogSource,
-                        $"{item.Name}: Civitai returned no version for id {candidate.CivitaiVersionId}; marked images as checked");
+                    versionsGone++;
                     continue;
                 }
 
-                answered++;
-                added += imagesAdded.Value;
+                versionsAnswered++;
+                imagesAdded += added.Value;
             }
 
             // See FetchTagsStep: the model may have been deleted mid-run, and a state row whose
@@ -114,13 +118,21 @@ public sealed class FetchImagesStep : ISyncStep
 
             // One stamp for the model, after its last version — including when every version came
             // back empty, which is the whole point of the step.
-            await StampAsync(uow, item.ModelId, ct).ConfigureAwait(false);
+            await StampAsync(uow, item.ModelId, now, ct).ConfigureAwait(false);
+
+            // One line for the whole item, and only now: logged from inside the loop it would both
+            // repeat per version and claim a stamp that a later version's fault could still cancel.
+            if (versionsGone > 0)
+            {
+                _logger?.Warn(LogCategory.Network, LogSource,
+                    $"{item.Name}: Civitai returned no version for {versionsGone} of {candidates.Count} version id(s); marked images as checked");
+            }
 
             // Nothing on Civitai answered at all: stamped (final), but not a success either.
-            if (answered == 0) return SyncItemResult.Skip;
+            if (versionsAnswered == 0) return SyncItemResult.Skip;
 
             _logger?.Debug(LogCategory.Network, LogSource,
-                $"Images for '{item.Name}': {added} added across {answered} version(s)");
+                $"Images for '{item.Name}': {imagesAdded} added across {versionsAnswered} version(s)");
             return SyncItemResult.Success;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -141,9 +153,8 @@ public sealed class FetchImagesStep : ISyncStep
         }
     }
 
-    private static async Task StampAsync(IUnitOfWork uow, int modelId, CancellationToken ct)
+    private static async Task StampAsync(IUnitOfWork uow, int modelId, DateTimeOffset now, CancellationToken ct)
     {
-        var now = DateTimeOffset.UtcNow;
         var state = await uow.SyncStates.GetOrCreateAsync(modelId, ct).ConfigureAwait(false);
 
         state.ImagesCheckedAt = now;
