@@ -446,6 +446,40 @@ public sealed class SidecarMetadataApplierTests : IDisposable
         result.Signature.Should().NotBeEmpty();
     }
 
+    // ------------------------------------------------- B3: "applied" means metadata was applied
+
+    /// <summary>
+    /// B3. A <c>.json</c> next to a LoRA is very often a kohya training config, not metadata — and
+    /// nothing in it is readable as metadata. Reporting that as applied stamped the model
+    /// <c>Sidecar</c> and flipped its <see cref="DataSource"/> to <c>LocalFile</c> on the strength
+    /// of a file nothing was read from.
+    /// </summary>
+    [Fact]
+    public async Task ApplyAsync_UnrelatedJsonSidecarIsNotApplied()
+    {
+        var modelPath = NewModelFile("MyLora.safetensors");
+        var modelId = await SeedAsync(modelPath);
+
+        await File.WriteAllTextAsync(
+            Path.Combine(_tempDir.FullName, "MyLora.json"),
+            """{"ss_learning_rate":"1e-4"}""");
+
+        var result = await ApplyAsync(modelId, modelPath);
+
+        result.Applied.Should().BeFalse("nothing in that file was metadata");
+        result.SidecarPath.Should().EndWith("MyLora.json");
+        result.Signature.Should().NotBeEmpty("the file exists, so it has a signature to remember it by");
+
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+
+        saved!.Source.Should().Be(DataSource.Manual, "no local file was the source of anything");
+        saved.LastSyncedAt.Should().BeNull();
+        saved.Name.Should().Be("local");
+        saved.Versions.Single().BaseModelRaw.Should().Be("???");
+    }
+
     /// <summary>Encodes a solid-color PNG of the given size — a real image the applier can decode.</summary>
     private static byte[] EncodePng(int width, int height)
     {

@@ -33,8 +33,10 @@ public class ModelSyncState
     public DateTimeOffset? ImagesCheckedAt { get; set; }
 
     /// <summary>
-    /// <c>{fullPath}|{lastWriteUtcTicks}|{length}</c> of the sidecar last parsed, so an unchanged sidecar is not
-    /// re-parsed on every run and a changed one is.
+    /// <c>{fullPath}|{lastWriteUtcTicks}|{length}</c> of the sidecar last <i>looked at</i>, so an unchanged sidecar
+    /// is not re-read on every run and a changed one is. Recorded whether or not metadata was applied — a file that
+    /// holds none, or could not be parsed, still gets its signature stored, or it would be due again on every run.
+    /// <c>""</c> means "looked, and there is no sidecar"; <c>null</c> means "never recorded".
     /// </summary>
     public string? SidecarSignature { get; set; }
 

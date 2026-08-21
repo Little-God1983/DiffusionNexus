@@ -18,8 +18,12 @@ public sealed record SidecarLookup(string? SidecarPath, string Signature);
 
 /// <summary>
 /// Outcome of <see cref="SidecarMetadataApplier.ApplyAsync"/>.
-/// <paramref name="Applied"/> covers the sidecar metadata only; a local preview image
-/// can still have been stored (<paramref name="ThumbnailApplied"/>) when no sidecar exists.
+/// <paramref name="Applied"/> means <i>metadata was applied</i> — not merely that a sidecar file
+/// existed: a <c>.json</c> holding a training config, or one that could not be parsed at all, is
+/// <c>false</c>. It covers the sidecar metadata only; a local preview image can still have been
+/// stored (<paramref name="ThumbnailApplied"/>), including when there is no sidecar.
+/// <paramref name="Signature"/> is the file's current signature whenever a sidecar exists — also
+/// when nothing was applied — so an unreadable file is not re-read until it changes.
 /// </summary>
 public sealed record SidecarApplyResult(bool Applied, string? SidecarPath, string Signature, bool ThumbnailApplied);
 
@@ -164,13 +168,15 @@ public sealed class SidecarMetadataApplier
                     : ApplySimpleJsonFormat(root, dbModel, dbVersion);
             }
 
-            // Always mark source and sync time
-            dbModel.Source = DataSource.LocalFile;
-            dbModel.LastSyncedAt = DateTimeOffset.UtcNow;
-            dirty = true;
-
+            // Only a sidecar something was actually read from makes this model locally sourced. A
+            // .json next to a LoRA is as often a kohya training config as it is metadata, and
+            // stamping Source/LastSyncedAt unconditionally claimed a file nothing was read from as
+            // the origin of the model's data — and told the caller "applied", which the step turns
+            // into a Sidecar outcome.
             if (dirty)
             {
+                dbModel.Source = DataSource.LocalFile;
+                dbModel.LastSyncedAt = DateTimeOffset.UtcNow;
                 await uow.SaveChangesAsync(ct);
             }
 

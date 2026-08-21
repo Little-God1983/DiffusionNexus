@@ -206,13 +206,29 @@ DownloadMissingMetadataAsync                      (both service calls run on Tas
 | Step | What it does |
 |------|--------------|
 | `DiscoverFiles` | Walks every enabled LoRA source folder and inserts rows for files that are not in the DB yet. It ignores the scope — a folder- or model-scoped run that *includes* this step still scans everything — but it is only in the run at all when the caller asks for it, and the per-LoRA button does not. |
-| `IdentifyModel` | The identity chain for one file: full-file SHA256 → Civitai `GET /model-versions/by-hash/{sha}` → on 404, the local `.civitai.info` / `.json` sidecar. Writes name, base model, trigger words, Civitai ids, image records. |
+| `IdentifyModel` | The identity chain for one file: full-file SHA256 → Civitai `GET /model-versions/by-hash/{sha}` → on 404, the local `.civitai.info` / `.json` sidecar. Writes name, base model, trigger words, Civitai ids, image records — see *user edits* and *what counts as applied* below. |
 | `FetchTags` | For a model that has a Civitai id but no tags yet: `GET /models/{id}` and replace the tag set (reusing existing `Tag` rows by normalized name). |
 | `FetchImages` | For a version with a Civitai version id but no image records: `GET /model-versions/{id}` and persist the returned images. |
 | `Thumbnails` | Reserved. Not implemented yet (Plan B). Until it lands, tiles download their own preview when they scroll into view (`ModelTileViewModel.Activate()`), so nothing is missing on screen — only the bulk pre-fetch is gone. |
 
 Network items are paced ~1.5 s apart. Cancellation is cooperative: a cancelled run still
 reports what it completed, because those stamps are already committed.
+
+**User edits are never overwritten.** A model the user has edited (`Model.IsUserEdited`) is not
+even offered to a bulk identify run — nothing upstream is more authoritative than what the user
+typed. A *forced* run (the per-LoRA button, or an explicit id scope) does select it, because that
+is the user asking; what protects them there is the appliers, which decide "may I write this
+text?" in one place each (`CanWriteModelText` / `CanWriteVersionText`) and reference it from every
+write site, all three sidecar formats included. Model name, description and tags hang off
+`Model.IsUserEdited`; version name, description and trigger words off `ModelVersion.IsUserEdited`.
+Facts nobody authored locally — Civitai ids, base model, download URL, file hashes, images, NSFW —
+are applied either way.
+
+**What counts as applied.** A sidecar is `Sidecar` only when metadata actually came out of it. A
+`.json` next to a LoRA is as often a kohya training config as it is metadata, and a `.civitai.info`
+can be truncated; either way the outcome is `NotIdentified`, `Source`/`LastSyncedAt` are left
+alone, and the file's real signature is still stored — so it is not read again until it changes (or
+the 30-day window comes round), rather than costing a re-hash and a Civitai request on every run.
 
 ### Where the state lives
 
@@ -226,7 +242,7 @@ empty"* is distinguishable from *"never checked"* — the distinction the old
 | `MetadataCheckedAt` / `MetadataAttempts` | When identity was last attempted, and how many consecutive failures |
 | `LastError` | One-line reason for the last failure (never a stack trace) |
 | `TagsCheckedAt` / `ImagesCheckedAt` | Stamped **even when the result was empty** — that is what makes "no tags" final |
-| `SidecarSignature` | `{path}|{lastWriteUtcTicks}|{length}` of the sidecar last parsed, so an unchanged sidecar is not re-read and a changed one is |
+| `SidecarSignature` | `{path}|{lastWriteUtcTicks}|{length}` of the sidecar last **looked at**, so an unchanged sidecar is not re-read and a changed one is. Recorded whether or not anything was applied. `""` = looked, no sidecar; `null` = never recorded |
 | `HeaderCheckedAt` | Safetensors header read (WP4) |
 
 Models that predate the table get a row derived from data already in the database
@@ -286,7 +302,7 @@ wordings — "No metadata found on Civitai for this file." when the step ran and
 | Situation | Fallback |
 |-----------|----------|
 | No API key configured | Requests still work (public models), but at a lower rate limit |
-| Hash lookup returns 404 | Sidecar is tried; outcome recorded as `Sidecar` or `NotIdentified`, re-checked after 30 days |
+| Hash lookup returns 404 | Sidecar is tried; outcome recorded as `Sidecar` when metadata came out of it, `NotIdentified` otherwise (unreadable, or not metadata at all), re-checked after 30 days |
 | Hash returns a version but no images | The `FetchImages` step covers it via the version endpoint |
 | Network/disk failure on one item | Recorded as a `SyncFailure` (step, model, reason) and counted in the report; the run continues |
 | `CivitaiId` already owned by another DB row | Only `CivitaiModelPageId` is set (grouping still works), warning logged |

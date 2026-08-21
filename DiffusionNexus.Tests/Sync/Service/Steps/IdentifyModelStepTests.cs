@@ -490,6 +490,38 @@ public sealed class IdentifyModelStepTests : IDisposable
         next.Select(i => i.ModelId).Should().NotContain(modelId);
     }
 
+    /// <summary>
+    /// B3. A kohya training config saved as <c>MyLora.json</c> is not metadata. The applier used to
+    /// report every existing sidecar as applied, so the model was stamped <see cref="SyncOutcome.Sidecar"/>
+    /// — a verdict that says "we know what this is" about a file nothing was read from.
+    /// </summary>
+    [Fact]
+    public async Task Execute_UnrelatedJsonSidecarStampsNotIdentified()
+    {
+        var path = NewModelFile("MyLora.safetensors");
+        var (modelId, _) = await SeedAsync("MyLora", path);
+
+        await File.WriteAllTextAsync(
+            Path.Combine(_tempDir.FullName, "MyLora.json"),
+            """{"ss_learning_rate":"1e-4"}""");
+        var expectedSignature = SidecarMetadataApplier.Find(path).Signature;
+
+        var step = NewNotFoundStep();
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        var result = await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+
+        var state = await ReadStateAsync(modelId);
+        state!.MetadataOutcome.Should().Be(SyncOutcome.NotIdentified);
+        // The signature is still recorded, so the file is not re-read until it changes.
+        state.SidecarSignature.Should().Be(expectedSignature);
+
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        (await uow.Models.GetByIdAsync(modelId))!.LastSyncedAt.Should().BeNull();
+    }
+
     [Fact]
     public async Task Execute_HttpErrorStampsErrorAndIncrementsAttempts()
     {
