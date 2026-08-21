@@ -396,7 +396,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     {
         if (SelectedSourceFolder is null)
         {
-            _resolveCts?.Cancel();
+            CancelQuietly(_resolveCts);
             // _lastPlan goes with the rest: leaving it behind is the same stale-armed-Start trap
             // DisarmPlan exists for.
             _lastPlan = null;
@@ -459,9 +459,16 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         // Cancel only: each pass disposes its own CTS in its finally, once its awaited work has
         // actually finished. Disposing the *previous* pass's source from here would race a resolve
         // that is still running into an ObjectDisposedException the moment it next handed the token
-        // to HttpClient — and _resolveCts is null whenever no pass is in flight, so Cancel() can
-        // never land on a disposed source either.
-        _resolveCts?.Cancel();
+        // to HttpClient.
+        //
+        // Cancelled through CancelQuietly. THREADING: passes are started and resumed on the UI
+        // thread — nothing here uses ConfigureAwait(false), so every continuation marshals back
+        // through the captured SynchronizationContext — and this field is only ever written from a
+        // pass's prologue or its finally. That assumption was implicit before and is stated here;
+        // CancelQuietly makes the code correct without it too (the test project, or any future
+        // headless path), where two passes could otherwise interleave into a
+        // NullReferenceException or an ObjectDisposedException.
+        CancelQuietly(_resolveCts);
 
         // One CTS per pass, created even on a cache hit. Planning re-hashes on every collision and
         // every option toggle re-plans, so it can run for minutes on a large library — and the
@@ -608,6 +615,8 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         }
         finally
         {
+            // Field first, then the local: no other pass can reach this source once the field no
+            // longer points at it, so Cancel() can never land on a disposed source.
             if (ReferenceEquals(_resolveCts, passCts))
                 _resolveCts = null;
             passCts.Dispose();
@@ -870,10 +879,15 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     private void CancelSort()
     {
         _sortCts?.Cancel();
-        if (_resolveCts is not null)
+
+        // One read, then use the local — the field is nulled by the owning pass's finally, so
+        // testing it and then dereferencing it are two chances to see different values. See the
+        // threading note in RecomputePreviewCoreAsync.
+        var resolveCts = _resolveCts;
+        if (resolveCts is not null)
         {
             _previewCancelledByUser = true;
-            _resolveCts.Cancel();
+            CancelQuietly(resolveCts);
         }
     }
 
@@ -1199,6 +1213,23 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             ? fullRoot
             : fullRoot + Path.DirectorySeparatorChar;
         return fullPath.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Cancels a source that another pass may be retiring concurrently. Reading the field into a
+    /// local closes the check-then-use gap (no NullReferenceException); the catch closes the
+    /// remaining one, since the owning pass's <c>finally</c> disposes the source right after
+    /// clearing the field. Cancelling a pass that has already finished is a no-op by definition.
+    /// </summary>
+    private static void CancelQuietly(CancellationTokenSource? cts)
+    {
+        try
+        {
+            cts?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
     }
 
     private static Task DefaultDeleteEmptyDirectories(string path, CancellationToken ct)
