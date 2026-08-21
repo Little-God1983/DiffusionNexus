@@ -4,6 +4,7 @@ using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services.Sync;
+using DiffusionNexus.Domain.Utilities;
 using Microsoft.EntityFrameworkCore;
 
 namespace DiffusionNexus.DataAccess.Repositories;
@@ -56,7 +57,8 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
     /// SourceFolder narrows further to the one folder. Explicit ids bypass the library predicate:
     /// the user pointed at those models.
     /// </summary>
-    private static IQueryable<Model> ApplyScope(IQueryable<Model> q, SyncScope scope, IReadOnlyList<string> enabledSourceRoots)
+    private async Task<IQueryable<Model>> ApplyScopeAsync(
+        IQueryable<Model> q, SyncScope scope, IReadOnlyList<string> enabledSourceRoots, CancellationToken ct)
     {
         switch (scope.Kind)
         {
@@ -64,40 +66,122 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
                 var ids = scope.ModelIds ?? Array.Empty<int>();
                 return q.Where(m => ids.Contains(m.Id));
             case SyncScopeKind.SourceFolder:
-                return ApplyLibrary(q.Where(HasFileUnder(PrefixOf(scope.SourceFolder))), enabledSourceRoots);
+                var inFolder = await HasFileUnderAnyAsync([scope.SourceFolder], ct).ConfigureAwait(false);
+                return await ApplyLibraryAsync(q.Where(inFolder), enabledSourceRoots, ct).ConfigureAwait(false);
             default:
-                return ApplyLibrary(q, enabledSourceRoots);
+                return await ApplyLibraryAsync(q, enabledSourceRoots, ct).ConfigureAwait(false);
         }
     }
 
     /// <summary>
-    /// Restricts to models with a visible local file under any enabled source root (see
-    /// <see cref="HasFileUnder"/>). With no enabled root nothing is in the library, so nothing is
-    /// selected.
+    /// Restricts to models with a visible local file under any enabled source root. With no enabled
+    /// root nothing is in the library, so nothing is selected.
     /// </summary>
-    private static IQueryable<Model> ApplyLibrary(IQueryable<Model> q, IReadOnlyList<string> enabledSourceRoots)
-    {
-        Expression<Func<Model, bool>>? inLibrary = null;
+    private async Task<IQueryable<Model>> ApplyLibraryAsync(
+        IQueryable<Model> q, IReadOnlyList<string> enabledSourceRoots, CancellationToken ct)
+        => q.Where(await HasFileUnderAnyAsync(enabledSourceRoots, ct).ConfigureAwait(false));
 
-        foreach (var root in enabledSourceRoots.Where(r => !string.IsNullOrWhiteSpace(r)))
+    /// <summary>
+    /// "Owns a visible local file inside one of <paramref name="roots"/>" — the same question the
+    /// viewer asks per file (<see cref="LocalPathRoots.IsUnder"/>), expressed as something SQLite
+    /// can run. An empty or blank-only root list yields <c>false</c>: nothing enabled means nothing
+    /// in the library, never everything.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two spellings of the boundary separator are emitted per root (<c>root\%</c> and
+    /// <c>root/%</c>), because the viewer accepts either and a stored path written by code that
+    /// joined with a slash was otherwise invisible to every sync selection while still showing in
+    /// the grid.
+    /// </para>
+    /// <para>
+    /// The comparison is <c>lower(LocalPath)</c> against an ASCII-folded prefix, and the bundled
+    /// e_sqlite3 has no ICU — so <c>lower()</c> folds ASCII and nothing else. For a root made only
+    /// of ASCII that is exactly case-insensitive prefix matching and the SQL is authoritative. A
+    /// root containing any non-ASCII character (<c>E:\ÖFFENTLICH\Loras</c>) cannot be folded in SQL
+    /// at all, so it is not expressed as a <c>LIKE</c>: its membership is resolved in memory by
+    /// <see cref="ModelIdsUnderAsync"/> and joined in as an id set. That costs one two-column scan
+    /// of the visible file rows, which is why it is paid only for the roots that need it — and it
+    /// is what keeps the tag and image selections correct, as neither carries a path to re-check.
+    /// </para>
+    /// </remarks>
+    private async Task<Expression<Func<Model, bool>>> HasFileUnderAnyAsync(
+        IReadOnlyList<string?> roots, CancellationToken ct)
+    {
+        var usable = roots.Where(r => !string.IsNullOrWhiteSpace(r)).Select(r => r!).ToList();
+
+        Expression<Func<Model, bool>>? inLibrary = null;
+        var unfoldable = new List<string>();
+
+        foreach (var root in usable)
         {
-            var underRoot = HasFileUnder(PrefixOf(root));
-            inLibrary = inLibrary is null ? underRoot : OrElse(inLibrary, underRoot);
+            if (!IsAsciiOnly(root))
+            {
+                unfoldable.Add(root);
+                continue;
+            }
+
+            foreach (var prefix in PrefixesOf(root))
+            {
+                var underRoot = HasFileUnder(prefix);
+                inLibrary = inLibrary is null ? underRoot : OrElse(inLibrary, underRoot);
+            }
+        }
+
+        if (unfoldable.Count > 0)
+        {
+            var modelIds = await ModelIdsUnderAsync(unfoldable, ct).ConfigureAwait(false);
+            Expression<Func<Model, bool>> byId = m => modelIds.Contains(m.Id);
+            inLibrary = inLibrary is null ? byId : OrElse(inLibrary, byId);
         }
 
         // A composed OR over the roots rather than `roots.Any(...)` inside the predicate: this is
         // plain `LIKE 'root%' OR LIKE 'root%'` that SQLite optimises, and it does not depend on
         // the provider's translation of LINQ operators over a parameter collection.
-        return q.Where(inLibrary ?? (_ => false));
+        return inLibrary ?? (_ => false);
     }
 
     /// <summary>
-    /// The lower-cased prefix a stored path must start with to lie under <paramref name="root"/>.
-    /// The trailing separator makes it boundary-aware: "E:\Loras\" must not match "E:\Loras_backup\...".
+    /// Ids of models owning a visible local file under one of <paramref name="roots"/>, decided in
+    /// memory by <see cref="LocalPathRoots.IsUnder"/> — the authoritative predicate. Only called
+    /// for roots SQL cannot fold (see <see cref="HasFileUnderAnyAsync"/>); it materialises two
+    /// columns per visible file row and no BLOBs.
     /// </summary>
-    // TODO: Linux Implementation for Task 13: case-sensitive paths and '/' separator.
-    private static string PrefixOf(string? root)
-        => AsciiLower((root ?? string.Empty).TrimEnd('\\', '/') + Path.DirectorySeparatorChar);
+    private async Task<HashSet<int>> ModelIdsUnderAsync(IReadOnlyList<string> roots, CancellationToken ct)
+    {
+        var rows = await (from f in Context.ModelFiles.AsNoTracking()
+                          where f.LocalPath != null && (f.IsLocalFileValid || f.LocalFileVerifiedAt == null)
+                          join v in Context.ModelVersions on f.ModelVersionId equals v.Id
+                          select new { v.ModelId, f.LocalPath })
+            .ToListAsync(ct).ConfigureAwait(false);
+
+        return rows.Where(r => LocalPathRoots.IsUnderAny(r.LocalPath, roots))
+            .Select(r => r.ModelId)
+            .ToHashSet();
+    }
+
+    /// <summary>Whether every character of <paramref name="value"/> is ASCII, i.e. whether SQLite's <c>lower()</c> can fold it.</summary>
+    private static bool IsAsciiOnly(string value)
+    {
+        foreach (var c in value)
+        {
+            if (!char.IsAscii(c)) return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// The lower-cased prefixes a stored path must start with to lie under <paramref name="root"/>,
+    /// one per separator spelling. The trailing separator makes them boundary-aware: "E:\Loras\"
+    /// must not match "E:\Loras_backup\...".
+    /// </summary>
+    // TODO: Linux Implementation for Task 13: case-sensitive paths.
+    private static string[] PrefixesOf(string root)
+    {
+        var trimmed = AsciiLower(root.TrimEnd('\\', '/'));
+        return [trimmed + '\\', trimmed + '/'];
+    }
 
     /// <summary>
     /// Lower-cases the ASCII letters and nothing else, because the other side of the comparison is
@@ -152,7 +236,7 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
     public async Task<IReadOnlyList<IdentifyCandidate>> SelectIdentifyCandidatesAsync(
         SyncScope scope, IReadOnlyList<string> enabledSourceRoots, bool includeMatched, CancellationToken ct = default)
     {
-        var models = ApplyScope(Context.Models, scope, enabledSourceRoots);
+        var models = await ApplyScopeAsync(Context.Models, scope, enabledSourceRoots, ct).ConfigureAwait(false);
 
         // A model that already carries a Civitai id has nothing to identify — unless the caller
         // asked for it anyway, which is what a forced re-fetch (the per-tile "Download Metadata"
@@ -187,6 +271,23 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
                           })
             .ToListAsync(ct).ConfigureAwait(false);
 
+        // The authoritative library predicate, applied to the rows themselves and BEFORE the
+        // grouping (R6). The SQL above is a pre-filter: it answers "does this MODEL own a file
+        // under a root", which is not the same question as "is THIS file under a root". Filtering
+        // here means a model with copies both inside and outside an enabled source is identified
+        // through the copy the user can actually see, exactly as the viewer fans its tiles out per
+        // location — rather than through whichever row won the primary/id tie-break.
+        //
+        // Explicit ids are the user pointing at models, so no root applies to them at all.
+        if (scope.Kind != SyncScopeKind.Models)
+        {
+            rows = rows
+                .Where(r => LocalPathRoots.IsUnderAny(r.LocalPath, enabledSourceRoots))
+                .Where(r => scope.Kind != SyncScopeKind.SourceFolder
+                            || LocalPathRoots.IsUnder(r.LocalPath, scope.SourceFolder))
+                .ToList();
+        }
+
         // One candidate per model: prefer the primary file, then the lowest version/file id. Done in
         // memory (tiny). SQLite guarantees no row order without an ORDER BY, so the tie-breakers and
         // the final ordering are what make repeated runs return the same candidates in the same order.
@@ -201,7 +302,9 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
     public async Task<IReadOnlyList<TagCandidate>> SelectTagCandidatesAsync(
         SyncScope scope, IReadOnlyList<string> enabledSourceRoots, CancellationToken ct = default)
     {
-        var rows = await ApplyScope(Context.Models.AsNoTracking(), scope, enabledSourceRoots)
+        var scoped = await ApplyScopeAsync(Context.Models.AsNoTracking(), scope, enabledSourceRoots, ct).ConfigureAwait(false);
+
+        var rows = await scoped
             .Where(m => m.CivitaiId != null && !m.IsUserEdited && !m.Tags.Any())
             .Select(m => new
             {
@@ -221,7 +324,7 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
     public async Task<IReadOnlyList<ImageCandidate>> SelectImageCandidatesAsync(
         SyncScope scope, IReadOnlyList<string> enabledSourceRoots, CancellationToken ct = default)
     {
-        var models = ApplyScope(Context.Models, scope, enabledSourceRoots)
+        var models = (await ApplyScopeAsync(Context.Models, scope, enabledSourceRoots, ct).ConfigureAwait(false))
             .Where(m => m.CivitaiId != null);
 
         // Joined from ModelVersions rather than SelectMany-ed off the navigation: see SelectIdentifyCandidatesAsync.

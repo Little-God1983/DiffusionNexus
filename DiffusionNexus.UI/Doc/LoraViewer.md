@@ -301,6 +301,16 @@ detail panel is exactly this: `DownloadMetadataForTileAsync` plans
 `ForceIdentify: true` — same service, same steps, one model — then re-reads that model and
 refreshes the tile.
 
+**The scope predicate is the viewer's predicate.** "In the library" means "owns a local file
+the user can still see, under an enabled LoRA source" — and that is decided by one shared
+function, `LocalPathRoots.IsUnder` in Domain, which `ModelFileSyncService.MatchEnabledRoot`
+(the grid) and `SyncStateRepository` (the sync) both call. They used to answer it separately:
+the viewer accepted `\` or `/` at the root boundary and compared `OrdinalIgnoreCase`, while the
+repository baked in `Path.DirectorySeparatorChar` and folded ASCII only, so a grid full of
+models could produce a plan with nothing in it. The SQL `LIKE` is still there as a cheap
+pre-filter — now emitting both separator spellings — and a root containing non-ASCII characters,
+which SQLite's ICU-less `lower()` cannot fold, is resolved by an in-memory id set instead.
+
 Forcing also widens *selection*, not just due-ness: `SelectIdentifyCandidatesAsync` takes an
 `includeMatched` flag (`ForceIdentify || scope.Kind == Models`) that drops the
 "no `CivitaiId` yet" predicate, and an explicit id scope additionally drops the LoRA-family

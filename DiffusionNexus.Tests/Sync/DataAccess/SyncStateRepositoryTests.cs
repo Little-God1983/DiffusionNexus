@@ -459,6 +459,98 @@ public sealed class SyncStateRepositoryTests : IDisposable
         candidates.Select(c => c.Name).Should().BeEquivalentTo(new[] { "first-root", "second-root" });
     }
 
+    /// <summary>
+    /// R6. The viewer accepts either separator at the root boundary
+    /// (<c>ModelFileSyncService.MatchEnabledRoot</c>); the repository baked in
+    /// <c>Path.DirectorySeparatorChar</c>, so a row stored as <c>C:\m/name.safetensors</c> — what
+    /// any code that joins with a slash writes — showed in the grid and was invisible to every
+    /// sync selection.
+    /// </summary>
+    [Fact]
+    public async Task IdentifyCandidates_ForwardSlashLocalPathMatchesRoot()
+    {
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var forwardSlash = NewLocalModel("forward-slash", @"C:\m/forward-slash.safetensors");
+        var backslash = NewLocalModel("backslash", @"C:\m\backslash.safetensors");
+
+        foreach (var m in new[] { forwardSlash, backslash })
+            await uow.Models.AddAsync(m);
+        await uow.SaveChangesAsync();
+
+        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library, Roots, includeMatched: false);
+
+        candidates.Select(c => c.Name).Should().BeEquivalentTo(new[] { "forward-slash", "backslash" });
+
+        // A root the user typed with a trailing separator — in either spelling — is the same root.
+        (await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library, [@"C:\m\"], includeMatched: false))
+            .Select(c => c.Name).Should().BeEquivalentTo(new[] { "forward-slash", "backslash" });
+        (await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library, [@"C:\m/"], includeMatched: false))
+            .Select(c => c.Name).Should().BeEquivalentTo(new[] { "forward-slash", "backslash" });
+    }
+
+    /// <summary>
+    /// R6. SQLite's bundled <c>e_sqlite3</c> has no ICU, so <c>lower()</c> folds ASCII and nothing
+    /// else — and neither does the repository's own fold of the root, which is what kept the two
+    /// sides agreeing for the easy spellings. They stop agreeing the moment the non-ASCII letter
+    /// itself differs in case: a root the user typed as <c>ÖFFENTLICH</c> never matched a path
+    /// stored as <c>öffentlich</c>, and the plan came back silently empty. The authoritative
+    /// predicate is now <c>OrdinalIgnoreCase</c> in memory, as in the viewer.
+    /// </summary>
+    [Fact]
+    public async Task IdentifyCandidates_NonAsciiRootCaseInsensitive()
+    {
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        // The "Ö" is lower-case in the stored path and upper-case in the root.
+        var inside = NewLocalModel("inside", @"E:\öffentlich\Loras\inside.safetensors");
+
+        // Same root spelling, different folder: still outside, so the fix must not simply widen.
+        var outside = NewLocalModel("outside", @"E:\öffentlich\Andere\outside.safetensors");
+
+        // The all-ASCII-difference case, which the fold already handled and must keep handling.
+        var alsoInside = NewLocalModel("also-inside", @"E:\Öffentlich\LORAS\also-inside.safetensors");
+
+        foreach (var m in new[] { inside, outside, alsoInside })
+            await uow.Models.AddAsync(m);
+        await uow.SaveChangesAsync();
+
+        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(
+            SyncScope.Library, [@"E:\ÖFFENTLICH\Loras"], includeMatched: false);
+
+        candidates.Select(c => c.Name).Should().BeEquivalentTo(new[] { "inside", "also-inside" });
+    }
+
+    /// <summary>
+    /// R6. The same fold applies to the other two selections, which have no local path to check in
+    /// memory: a non-ASCII root must neither lose them nor widen them to the whole database.
+    /// </summary>
+    [Fact]
+    public async Task TagAndImageCandidates_NonAsciiRootCaseInsensitive()
+    {
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var inside = NewLocalModel("inside", @"E:\öffentlich\Loras\inside.safetensors",
+            civitaiId: 7, versionCivitaiId: 70);
+        var outside = NewLocalModel("outside", @"E:\öffentlich\Andere\outside.safetensors",
+            civitaiId: 8, versionCivitaiId: 80);
+
+        foreach (var m in new[] { inside, outside })
+            await uow.Models.AddAsync(m);
+        await uow.SaveChangesAsync();
+
+        string[] roots = [@"E:\ÖFFENTLICH\Loras"];
+
+        (await uow.SyncStates.SelectTagCandidatesAsync(SyncScope.Library, roots))
+            .Select(c => c.Name).Should().BeEquivalentTo(new[] { "inside" });
+
+        (await uow.SyncStates.SelectImageCandidatesAsync(SyncScope.Library, roots))
+            .Select(c => c.Name).Should().BeEquivalentTo(new[] { "inside" });
+    }
+
     /// <summary>Nothing is enabled, so nothing is in the library — for all three selections.</summary>
     [Fact]
     public async Task NoEnabledSourcesSelectsNothingForLibraryScope()

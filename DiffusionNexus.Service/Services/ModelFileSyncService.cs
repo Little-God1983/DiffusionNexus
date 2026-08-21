@@ -3,6 +3,7 @@ using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Utilities;
 
 namespace DiffusionNexus.Service.Services;
 
@@ -157,19 +158,19 @@ public class ModelFileSyncService : IModelSyncService
     /// Returns the normalized root that contains <paramref name="filePath"/>, or
     /// null if it lives outside every enabled source.
     /// </summary>
+    /// <remarks>
+    /// The predicate itself lives in <see cref="LocalPathRoots"/> because the library sync asks the
+    /// same question of the same rows (R6). It used to be spelled out here and again, differently,
+    /// in <c>SyncStateRepository</c> — so a file this method accepted could be one the sync could
+    /// not see, and the user got a grid full of models and a plan with nothing in it.
+    /// </remarks>
     private static string? MatchEnabledRoot(string filePath, IReadOnlyList<string> normalizedRoots)
     {
         foreach (var root in normalizedRoots)
         {
-            if (filePath.Equals(root, StringComparison.OrdinalIgnoreCase)) return root;
-            if (filePath.Length > root.Length
-                && filePath.StartsWith(root, StringComparison.OrdinalIgnoreCase)
-                && (filePath[root.Length] == Path.DirectorySeparatorChar
-                    || filePath[root.Length] == Path.AltDirectorySeparatorChar))
-            {
-                return root;
-            }
+            if (LocalPathRoots.IsUnder(filePath, root)) return root;
         }
+
         return null;
     }
 
@@ -182,11 +183,7 @@ public class ModelFileSyncService : IModelSyncService
     {
         foreach (var root in normalizedRoots)
         {
-            if (filePath.Equals(root, StringComparison.OrdinalIgnoreCase)) return true;
-            if (filePath.Length > root.Length
-                && filePath.StartsWith(root, StringComparison.OrdinalIgnoreCase)
-                && (filePath[root.Length] == Path.DirectorySeparatorChar
-                    || filePath[root.Length] == Path.AltDirectorySeparatorChar))
+            if (LocalPathRoots.IsUnder(filePath, root))
             {
                 return true;
             }
