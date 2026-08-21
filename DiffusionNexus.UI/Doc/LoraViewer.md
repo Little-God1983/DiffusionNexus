@@ -523,7 +523,7 @@ Files not yet in the database (when browsing arbitrary folders) are resolved via
 
 DB rows are matched by path earlier, when the cached library is loaded; there is no by-hash DB lookup (descoped from the spec). A file that cannot be hashed or an API shape change resolves as unknown rather than failing the pass, and the API key is read once per pass, not once per file.
 
-Downloaded metadata is cached in `%LocalAppData%\DiffusionNexus\SorterCache\{sha256}.json` so re-runs or re-previews never hit the network twice for the same file. The cache is a lookup cache only — the DB is never polluted with unregistered folders.
+Downloaded metadata is cached in `%LocalAppData%\DiffusionNexus\SorterCache\{sha256}.json` so a re-run or re-preview of the same file normally costs no network call at all. One exception is deliberate: an entry whose tag lookup never succeeded is stored as *unresolved* rather than as "this model has no tags", so the next pass retries it — that is what stops one transient Civitai failure from leaving a file category-less forever. Within a single pass the tag lookup is also memoized per model id, so a folder full of versions of the same model costs one `/models/{id}` call, not one per file. The cache is a lookup cache only — the DB is never polluted with unregistered folders.
 
 ### Execution
 

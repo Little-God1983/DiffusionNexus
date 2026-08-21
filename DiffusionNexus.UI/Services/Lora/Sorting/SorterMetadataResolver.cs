@@ -45,8 +45,17 @@ public sealed class SorterMetadataResolver
     private readonly Func<string, string> _hashFile;
     private readonly IUnifiedLogger? _logger;
 
-    /// <summary>Memoized API key read — see <see cref="ResetApiKeyCache"/>.</summary>
+    /// <summary>Memoized API key read — see <see cref="ResetPerPassCaches"/>.</summary>
     private Task<string?>? _apiKeyTask;
+
+    /// <summary>
+    /// modelId → tag list for this pass, so a folder holding twenty versions of the same model
+    /// costs one <c>/models/{id}</c> call instead of twenty. A null value is a remembered failure
+    /// ("not resolved this pass"), which is exactly what the caller propagates so the hash cache
+    /// stays open for a later retry — re-asking a model whose lookup just failed would only
+    /// re-time-out once per file. Cleared per pass by <see cref="ResetPerPassCaches"/>.
+    /// </summary>
+    private readonly Dictionary<int, IReadOnlyList<string>?> _modelTagsMemo = [];
 
     /// <param name="cacheDirectory">Injected for tests; production uses
     /// Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -71,11 +80,16 @@ public sealed class SorterMetadataResolver
         "DiffusionNexus", "SorterCache");
 
     /// <summary>
-    /// Drops the memoized API key so the next resolution pass re-reads it. Callers that
-    /// keep a resolver alive across passes (the LoRA Sorter view model does) must call
-    /// this once per pass, so a key the user changed in Settings meanwhile is picked up.
+    /// Drops the per-pass memos (API key, model tags) so the next resolution pass re-reads them.
+    /// Callers that keep a resolver alive across passes (the LoRA Sorter view model does) must call
+    /// this once per pass, so a key the user changed in Settings meanwhile is picked up and a model
+    /// whose tag lookup failed last pass gets one more chance.
     /// </summary>
-    public void ResetApiKeyCache() => _apiKeyTask = null;
+    public void ResetPerPassCaches()
+    {
+        _apiKeyTask = null;
+        _modelTagsMemo.Clear();
+    }
 
     /// <summary>Resolution chain per spec §3: local .civitai.info sidecar → per-hash disk
     /// cache → Civitai by-hash API (result cached). Never throws for a 404/offline, an
@@ -154,15 +168,22 @@ public sealed class SorterMetadataResolver
     /// downloaded outside DiffusionNexus) needs this second call. Failure is non-fatal and
     /// returns null, meaning "not resolved": the base-model/version-id result is still cached and
     /// returned, and the tag list is left open so a later pass can fill it in.
+    /// Memoized per pass (see <see cref="_modelTagsMemo"/>) — a folder of sibling versions of one
+    /// model otherwise paid this round-trip once per file.
     /// </summary>
     private async Task<IReadOnlyList<string>?> TryReadModelTagsAsync(int modelId, CancellationToken ct)
     {
         if (_civitaiClient is null || modelId <= 0) return [];
 
+        if (_modelTagsMemo.TryGetValue(modelId, out var memoized))
+            return memoized;
+
         try
         {
             var model = await _civitaiClient.GetModelAsync(modelId, await GetApiKeyAsync(), ct);
-            return model?.Tags ?? [];
+            var tags = model?.Tags ?? [];
+            _modelTagsMemo[modelId] = tags;
+            return tags;
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException
                                    || (ex is TaskCanceledException && !ct.IsCancellationRequested))
@@ -170,6 +191,7 @@ public sealed class SorterMetadataResolver
             _logger?.Warn(LogCategory.Network, LogSource,
                 $"Civitai model lookup for tags failed (model {modelId}): {ex.Message} — the file keeps its " +
                 "base model but sorts without a category this pass.");
+            _modelTagsMemo[modelId] = null;
             return null;
         }
     }

@@ -661,10 +661,11 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     {
         ct.ThrowIfCancellationRequested();
 
-        // The resolver memoizes the Civitai API key for the whole pass (it used to open a DI scope,
-        // a DbContext and a query per file). Invalidate it once per pass so a key the user just
-        // saved in Settings is picked up instead of being stale for the resolver's lifetime.
-        _metadataResolver.ResetApiKeyCache();
+        // The resolver memoizes the Civitai API key and per-model tag lookups for the whole pass
+        // (the key used to cost a DI scope, a DbContext and a query per file; the tags a Civitai
+        // round-trip per file). Invalidate them once per pass so a key the user just saved in
+        // Settings is picked up, and a model whose tag lookup failed gets another chance.
+        _metadataResolver.ResetPerPassCaches();
 
         IReadOnlyList<InstalledModelFile> cached = _loadCachedFiles is null
             ? Array.Empty<InstalledModelFile>()

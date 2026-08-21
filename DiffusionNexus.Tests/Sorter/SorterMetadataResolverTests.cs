@@ -145,7 +145,7 @@ public sealed class SorterMetadataResolverTests : IDisposable
         // A new pass re-reads, so a key changed in Settings meanwhile is picked up.
         // (Uses a fresh file: lora0's hash is now in the disk cache and never reaches the API.)
         WriteModel("lora3.safetensors");
-        resolver.ResetApiKeyCache();
+        resolver.ResetPerPassCaches();
         await resolver.ResolveAsync(In("lora3.safetensors"));
         reads.Should().Be(2);
     }
@@ -324,9 +324,49 @@ public sealed class SorterMetadataResolverTests : IDisposable
         first.CivitaiVersionId.Should().Be(777);
         first.Tags.Should().BeEmpty();
 
+        // Next pass — within the same pass the failure is memoized, so the retry is deliberately
+        // not re-attempted per file (that would cost one timeout per file of the same model).
+        resolver.ResetPerPassCaches();
         var second = await resolver.ResolveAsync(model);
 
         second.Tags.Should().BeEquivalentTo(["style"]);
+    }
+
+    [Fact]
+    public async Task TagsAreLookedUpOncePerModelPerPassNotOncePerFile()
+    {
+        // Two sibling versions of the same model in one folder: the by-hash call is per file (they
+        // are different files), but the follow-up /models/{id} call answers for both. Without the
+        // memo a folder of twenty versions of one model paid twenty identical round-trips.
+        var a = WriteModel("a.safetensors");
+        var b = WriteModel("b.safetensors");
+        _client.Setup(c => c.GetModelVersionByHashAsync("sha-a", null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CivitaiModelVersion { Id = 1, ModelId = 900, BaseModel = "SDXL 1.0" });
+        _client.Setup(c => c.GetModelVersionByHashAsync("sha-b", null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CivitaiModelVersion { Id = 2, ModelId = 900, BaseModel = "SDXL 1.0" });
+        _client.Setup(c => c.GetModelAsync(900, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CivitaiModel { Id = 900, Tags = ["character"] });
+        var resolver = new SorterMetadataResolver(_client.Object, () => Task.FromResult<string?>(null),
+            In("cache"), p => "sha-" + Path.GetFileNameWithoutExtension(p), logger: null);
+
+        var first = await resolver.ResolveAsync(a);
+        var second = await resolver.ResolveAsync(b);
+
+        first.Tags.Should().BeEquivalentTo(["character"]);
+        second.Tags.Should().BeEquivalentTo(["character"]);
+        _client.Verify(c => c.GetModelVersionByHashAsync(It.IsAny<string>(), It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Exactly(2));
+        _client.Verify(c => c.GetModelAsync(900, null, It.IsAny<CancellationToken>()), Times.Once);
+
+        // A new pass may re-ask (tags do change upstream); the per-hash disk cache still spares it
+        // here, so use a third file of the same model to show the memo itself was dropped.
+        var c3 = WriteModel("c.safetensors");
+        _client.Setup(c => c.GetModelVersionByHashAsync("sha-c", null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CivitaiModelVersion { Id = 3, ModelId = 900, BaseModel = "SDXL 1.0" });
+        resolver.ResetPerPassCaches();
+        await resolver.ResolveAsync(c3);
+
+        _client.Verify(c => c.GetModelAsync(900, null, It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
     [Fact]
