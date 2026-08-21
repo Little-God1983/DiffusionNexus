@@ -234,6 +234,37 @@ public sealed class IdentifyModelStepTests : IDisposable
         items.Select(i => i.ModelId).Should().Contain(candidate.ModelId);
     }
 
+    /// <summary>
+    /// R5. A row derived from a legacy model carries no signature at all, and "never recorded" is
+    /// not "changed": treating null as an empty signature made every legacy model that happens to
+    /// own a sidecar due on the first run, which is exactly the herd R1 set out to prevent (the
+    /// live dry run still planned 200 identify items against ~83 genuinely-unchecked models).
+    /// </summary>
+    [Fact]
+    public async Task Select_NullStoredSignatureIsNotAChangeTrigger()
+    {
+        var path = NewModelFile("derived.safetensors");
+        await File.WriteAllTextAsync(Path.Combine(_tempDir.FullName, "derived.civitai.info"), "{}");
+
+        // Exactly what SyncStateDeriver produces for a legacy unidentified model: stamped now,
+        // never attempted, no signature ever recorded.
+        var candidate = await SeedAsync("derived", path,
+            outcome: SyncOutcome.NotIdentified, checkedAt: Now,
+            sidecarSignature: null, withState: true);
+
+        var items = await NewNotFoundStep().SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+
+        items.Select(i => i.ModelId).Should().NotContain(candidate.ModelId);
+
+        // The user asking for it explicitly still gets it, and so does the regular 30-day check.
+        var forced = await NewNotFoundStep().SelectAsync(SyncScope.Library, Options(force: true), Now, CancellationToken.None);
+        forced.Select(i => i.ModelId).Should().Contain(candidate.ModelId);
+
+        var later = await NewNotFoundStep().SelectAsync(
+            SyncScope.Library, Options(), Now.Add(SyncRetryPolicy.Default.NotIdentifiedRetryAfter), CancellationToken.None);
+        later.Select(i => i.ModelId).Should().Contain(candidate.ModelId);
+    }
+
     [Fact]
     public async Task Select_UnchangedSidecarSignatureStaysInsideTheWindow()
     {

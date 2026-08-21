@@ -88,6 +88,24 @@ public sealed class IdentifyModelStep : ISyncStep
         return items;
     }
 
+    /// <summary>
+    /// Whether this candidate is due, either because the retry policy says so or because its
+    /// sidecar changed since the last look.
+    /// </summary>
+    /// <remarks>
+    /// A stored signature of <c>null</c> means "never recorded", which is <i>not</i> the same as
+    /// "recorded as absent" (<c>""</c>) and is never a change trigger (R5). Rows derived from a
+    /// legacy library all carry null, so comparing them against a real sidecar's signature made
+    /// every legacy model that happens to own a <c>.civitai.info</c> due on the very first run —
+    /// the same herd <see cref="SyncStateDeriver"/> stamps <c>now</c> to avoid. Such a model is
+    /// picked up at its next regular check (30 days, or immediately via ForceIdentify — the
+    /// per-tile button), and that check records the signature, after which changes are tracked
+    /// normally.
+    /// <para>
+    /// The null gate also bounds the disk work of planning: <see cref="SidecarMetadataApplier.Find"/>
+    /// is probed only for rows that have been checked before, not for the whole library.
+    /// </para>
+    /// </remarks>
     private static bool IsDue(IdentifyCandidate candidate, SyncOptions options, DateTimeOffset now)
     {
         if (options.Policy.IsIdentifyDue(candidate.Outcome, candidate.CheckedAt, candidate.Attempts, now, options.ForceIdentify))
@@ -96,9 +114,10 @@ public sealed class IdentifyModelStep : ISyncStep
         // A sidecar that appeared or changed since the last look is new evidence, so it beats the
         // retry window: the user just dropped a .civitai.info next to the file and expects it read.
         if (candidate.Outcome is not (SyncOutcome.Sidecar or SyncOutcome.NotIdentified)) return false;
+        if (candidate.SidecarSignature is null) return false;
 
         var signature = SidecarMetadataApplier.Find(candidate.LocalPath).Signature;
-        return !string.Equals(signature, candidate.SidecarSignature ?? string.Empty, StringComparison.Ordinal);
+        return !string.Equals(signature, candidate.SidecarSignature, StringComparison.Ordinal);
     }
 
     /// <inheritdoc />
