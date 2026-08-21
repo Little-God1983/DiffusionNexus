@@ -273,18 +273,33 @@ public class LoraSortPlannerTests
     }
 
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public void ThePlanCarriesTheDeleteEmptySourceFoldersOption(bool deleteEmpty)
+    // The _2 slot holds a DIFFERENT model: it is taken, so the walk must carry on to _3.
+    [InlineData(false, @"E:\Sorted\SDXL 1.0\Character\V1_3.safetensors", 1, 0)]
+    // The _2 slot holds OUR OWN file: content-identical, so this is "already sorted" and the walk
+    // stops there rather than minting _3 — the unbounded-growth bug review-2 A3 was raised for.
+    [InlineData(true, @"E:\Sorted\SDXL 1.0\Character\V1_2.safetensors", 0, 1)]
+    public void EveryNumericFallbackSlotIsContentComparedNotJustTheVersionSlot(
+        bool secondSlotIsOurs, string expectedTarget, int expectedTransfers, int expectedSkips)
     {
-        // The post-run cleanup is decided by the plan that ran, not by live UI state, so the flag
-        // needs a snapshot to be read from — LoraSortPlan carried IsMove but not this one.
-        var options = new LoraSortOptions(@"E:\Loras", @"E:\Loras", IncludeCategory: true,
-            IsMove: true, DeleteEmptySourceFolders: deleteEmpty);
+        // Both the plain name and _2 are occupied and there is no version id, so the plain slot and
+        // then _2 are each hashed. Only what _2 holds decides the outcome.
+        var ours = @"E:\Sorted\SDXL 1.0\Character\V1_2.safetensors";
+        var onDisk = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            @"E:\Sorted\SDXL 1.0\Character\V1.safetensors",
+            ours,
+        };
+        var planner = Planner(
+            hash: p => p == ours && secondSlotIsOurs ? ShaA : ShaB,
+            exists: onDisk.Contains);
 
-        var plan = Planner().BuildPlan([Candidate(@"E:\Loras\flat\a.safetensors")], options);
+        var plan = planner.BuildPlan(
+            [Candidate(@"E:\Loras\x\V1.safetensors", versionId: null, sha: ShaA)],
+            Options(isMove: false, source: @"E:\Loras", target: @"E:\Sorted"));
 
-        plan.DeleteEmptySourceFolders.Should().Be(deleteEmpty);
+        plan.Moves.Single().TargetFilePath.Should().Be(expectedTarget);
+        plan.TransferCount.Should().Be(expectedTransfers);
+        plan.SkippedDuplicateCount.Should().Be(expectedSkips);
     }
 
     [Fact]

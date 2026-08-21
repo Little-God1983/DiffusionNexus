@@ -42,7 +42,7 @@ public sealed class LoraSortExecutorTests : IDisposable
 
     private LoraSortPlan Plan(bool isMove, params PlannedMove[] moves)
         => new(moves, _root.FullName, _root.FullName, isMove,
-            DeleteEmptySourceFolders: false, RequiredBytes: 0,
+            RequiredBytes: 0,
             TransferCount: moves.Count(m => m.Action == PlannedAction.Transfer),
             AlreadyInPlaceCount: moves.Count(m => m.Action == PlannedAction.AlreadyInPlace),
             RenamedCount: moves.Count(m => m.WasRenamed),

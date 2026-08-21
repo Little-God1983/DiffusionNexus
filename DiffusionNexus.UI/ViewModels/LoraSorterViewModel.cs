@@ -274,17 +274,16 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 
     /// <summary>
     /// Unlike the other options this one changes nothing about the plan itself — only the post-run
-    /// cleanup decision, which is read from the plan so that it describes the run that actually
-    /// happened. Re-stamping the armed plan keeps that snapshot in step with the checkbox the user
-    /// can see, without paying for a re-plan (minutes on a large library, since planning re-hashes
-    /// on every collision).
+    /// cleanup decision, which <see cref="StartSortingAsync"/> snapshots at the moment it captures
+    /// the plan. So there is deliberately no re-plan and no re-stamp here: re-stamping the armed
+    /// plan (<c>_lastPlan with { … }</c>) produced a <i>new</i> plan reference, which the
+    /// reference-equality guard in <see cref="StartSortingAsync"/> could not tell apart from a real
+    /// preview change — ticking the checkbox while the confirm dialog was open aborted the run
+    /// with "Preview changed while confirming".
     /// </summary>
     partial void OnDeleteEmptySourceFoldersChanged(bool value)
     {
         ClearRunResultBanner();
-        if (_isInitializing) return;
-        if (_lastPlan is not null)
-            _lastPlan = _lastPlan with { DeleteEmptySourceFolders = value };
     }
 
     partial void OnSelectedSourceFolderChanged(string? value)
@@ -396,6 +395,10 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     {
         if (SelectedSourceFolder is null)
         {
+            // Claim a new generation here too. This path never enters RecomputePreviewCoreAsync, so
+            // without it an in-flight pass for the folder the user just deselected still saw itself
+            // as current and committed its tree, summary and plan over the cleared state below.
+            Interlocked.Increment(ref _previewGeneration);
             CancelQuietly(_resolveCts);
             // _lastPlan goes with the rest: leaving it behind is the same stale-armed-Start trap
             // DisarmPlan exists for.
@@ -686,16 +689,26 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         {
             var path = f.File.LocalPath;
 
-            // Path shape is validated here, not caught as an exception below: a blank or malformed
-            // ModelFile.LocalPath is a bad row, and admitting ArgumentException into the per-file
-            // "locked/unreadable" filter also admitted ArgumentNullException and
-            // ArgumentOutOfRangeException raised anywhere inside the resolver, the Civitai client or
-            // the sidecar locator — reporting an NRE-class defect to the user as N unreadable files
-            // over an empty preview, pointing them at their disk instead of at the bug.
+            // A blank LocalPath is a bad row, not an exceptional condition — skipped directly
+            // rather than thrown at ourselves just to be caught one line later.
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                skipped++;
+                knownSkipped++;
+                _logger?.Warn(LogCategory.FileSystem, LogSource,
+                    "Skipping a ModelFile row whose LocalPath is blank.");
+                continue;
+            }
+
+            // A malformed path is caught narrowly, and deliberately not folded into the per-file
+            // "locked/unreadable" filter further down: admitting ArgumentException there also
+            // admitted ArgumentNullException and ArgumentOutOfRangeException raised anywhere inside
+            // the resolver, the Civitai client or the sidecar locator — reporting an NRE-class
+            // defect to the user as N unreadable files over an empty preview, pointing them at
+            // their disk instead of at the bug.
             string fullPath;
             try
             {
-                if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("Path is blank.");
                 fullPath = Path.GetFullPath(path);
             }
             catch (ArgumentException ex)
@@ -910,6 +923,12 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         var plan = _lastPlan;
         if (plan is null) return;
 
+        // Snapshotted here, with the plan, rather than read live after the run: the checkbox stays
+        // enabled while the confirm dialog is open, and the value that decides the cleanup must be
+        // the one in force when the user pressed Start. It is deliberately NOT stamped onto the
+        // plan — that would replace the plan reference and trip the guard below.
+        var deleteEmpty = DeleteEmptySourceFolders;
+
         var totalTransferBytes = plan.Moves.Where(m => m.Action == PlannedAction.Transfer).Sum(m => m.Candidate.FileSizeBytes);
 
         var confirmed = DialogService is null
@@ -936,7 +955,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             LoraSortResult result;
             try
             {
-                result = await RunBusyAsync(() => ExecuteSortAsync(plan), "Sorting LoRAs…");
+                result = await RunBusyAsync(() => ExecuteSortAsync(plan, deleteEmpty), "Sorting LoRAs…");
             }
             finally
             {
@@ -972,7 +991,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         }
     }
 
-    private async Task<LoraSortResult> ExecuteSortAsync(LoraSortPlan plan)
+    private async Task<LoraSortResult> ExecuteSortAsync(LoraSortPlan plan, bool deleteEmptySourceFolders)
     {
         var taskTracker = App.Services?.GetService<ITaskTracker>();
         using var taskHandle = taskTracker?.BeginTask("Sorting LoRAs", LogCategory.FileSystem);
@@ -1019,12 +1038,12 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         // replayed a plan whose sources were gone. A leftover empty folder is cosmetic; losing the
         // post-run bookkeeping is not.
         _emptyFolderCleanupFailed = false;
-        // Read from the plan, not from live UI state: the run that just happened used plan.IsMove
-        // and the DeleteEmptySourceFolders captured at BuildOptions() time, so deciding the cleanup
-        // from the current radio/checkbox could delete folders for a run that never asked for it
-        // (or skip them for one that did). Only the busy overlay blocking the toggles kept that
-        // latent — and the plan is exactly what the cleanup path below already uses for its root.
-        if (plan.IsMove && plan.DeleteEmptySourceFolders && !result.Cancelled)
+        // Move-or-copy comes from the plan and the checkbox from the Start-time snapshot — neither
+        // from live UI state. Deciding the cleanup from the current radio/checkbox could delete
+        // folders for a run that never asked for it (or skip them for one that did); only the busy
+        // overlay blocking the toggles kept that latent. The plan is also what the cleanup path
+        // below uses for its root.
+        if (plan.IsMove && deleteEmptySourceFolders && !result.Cancelled)
         {
             try
             {

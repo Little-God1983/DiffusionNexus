@@ -366,10 +366,10 @@ public sealed class LoraSorterViewModelTests : IDisposable
     [Fact]
     public async Task TheEmptyFolderCleanupFollowsThePlanAndStaysInStepWithTheCheckbox()
     {
-        // The gate used to read the live checkbox while the run it was deciding about used the
-        // options captured at plan time. It now reads plan.DeleteEmptySourceFolders — and because
-        // this flag alone does not warrant a re-plan, toggling it re-stamps the armed plan, so the
-        // run still matches what the user can see.
+        // The gate used to read the live checkbox after the run, while the run it was deciding
+        // about used the options captured at plan time. It now reads plan.IsMove plus the checkbox
+        // as snapshotted when Start captured the plan — so a box ticked after the preview was
+        // computed still applies, without the plan needing to be re-stamped or re-planned.
         var a = WriteLora(@"flat\a.safetensors");
         string? cleanedRoot = null;
         var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")],
@@ -422,6 +422,42 @@ public sealed class LoraSorterViewModelTests : IDisposable
         await vm.RecomputePreviewCommand.ExecuteAsync(null);
 
         vm.StatusMessage.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task TickingDeleteEmptyFoldersWhileTheConfirmDialogIsOpenDoesNotAbortTheRun()
+    {
+        // Keeping the armed plan in step with the checkbox by re-stamping it
+        // (`_lastPlan = _lastPlan with { … }`) minted a NEW plan reference, and the confirm-time
+        // ReferenceEquals guard — which exists to catch a genuine re-plan landing behind the
+        // dialog — could not tell the two apart. Ticking the box in front of the open dialog
+        // therefore aborted the run the user had just confirmed with "Preview changed while
+        // confirming". The flag is snapshotted when Start captures the plan instead, so nothing
+        // reassigns _lastPlan and the guard keeps its original meaning.
+        var a = WriteLora(@"flat\a.safetensors");
+        string? cleanedRoot = null;
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")],
+            deleteEmptyDirectories: (root, _) =>
+            {
+                cleanedRoot = root;
+                return Task.CompletedTask;
+            });
+        var dialog = new Mock<IDialogService>();
+        dialog.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>()))
+            .ReturnsAsync(() =>
+            {
+                vm.DeleteEmptySourceFolders = true;
+                return true;
+            });
+        vm.DialogService = dialog.Object;
+        await vm.InitializeAsync();
+
+        await vm.StartSortingCommand.ExecuteAsync(null);
+
+        vm.StatusMessage.Should().StartWith("Done:");
+        vm.StatusMessage.Should().NotContain("Preview changed");
+        // The snapshot is taken before the dialog opens, so the late tick governs the NEXT run.
+        cleanedRoot.Should().BeNull();
     }
 
     private static IDialogService ConfirmingDialogService()
@@ -753,19 +789,35 @@ public sealed class LoraSorterViewModelTests : IDisposable
         var deniedDir = Path.GetDirectoryName(denied)!;
         var user = Environment.UserName;
 
+        // xunit 2.x has no runtime Assert.Skip, so an unusable environment is reported by logging
+        // the reason and returning. What must NOT depend on the environment is the cleanup: every
+        // path after the ACE is applied — including the "the deny did not bite" bail-out — has to
+        // remove it again, or an elevated run leaves a permanently denied temp tree behind that
+        // Dispose() cannot delete either.
         if (!OperatingSystem.IsWindows())
-            return; // icacls is Windows-only; the walk's behaviour is asserted on the CI platform.
-
-        if (!RunIcacls($"\"{deniedDir}\" /deny \"{user}:(OI)(CI)(RX)\"")
-            || !IsInaccessible(deniedDir))
         {
-            // Elevated sessions keep access through the Administrators ACE, so the deny cannot be
-            // proven to bite here. Skipping beats asserting something the environment did not do.
+            Skipped("icacls is Windows-only; the walk's behaviour is asserted on the CI platform.");
+            return;
+        }
+
+        if (!RunIcacls($"\"{deniedDir}\" /deny \"{user}:(OI)(CI)(RX)\""))
+        {
+            // icacls itself failed, so no ACE was applied and there is nothing to undo.
+            Skipped($"icacls could not deny {user} access to {deniedDir}.");
             return;
         }
 
         try
         {
+            if (!IsInaccessible(deniedDir))
+            {
+                // Elevated sessions keep access through the Administrators ACE, so the deny cannot
+                // be proven to bite here. Skipping beats asserting something the environment did
+                // not do — but the ACE still comes off in the finally below.
+                Skipped($"the deny ACE on {deniedDir} does not bite in this session (elevated?).");
+                return;
+            }
+
             var vm = CreateVm(cached: []);
 
             await vm.InitializeAsync();
@@ -781,6 +833,10 @@ public sealed class LoraSorterViewModelTests : IDisposable
             RunIcacls($"\"{deniedDir}\" /remove:d \"{user}\"");
         }
     }
+
+    /// <summary>Reports an environment-driven skip; xunit 2.x cannot skip a running test.</summary>
+    private static void Skipped(string reason)
+        => Console.WriteLine($"[skipped] {reason}");
 
     private static bool IsInaccessible(string directory)
     {
@@ -822,7 +878,7 @@ public sealed class LoraSorterViewModelTests : IDisposable
     [Fact]
     public async Task UnknowableFreeSpaceOnAnExistingTargetFailsOpenInsteadOfBlockingTheRun()
     {
-        // new DriveInfo(@"\nas\share\") throws ArgumentException and there is no free-space
+        // new DriveInfo(@"\\nas\share\") throws ArgumentException and there is no free-space
         // number to give for a UNC target — but the folder is right there, so the run may proceed.
         var a = WriteLora(@"flat\a.safetensors");
         var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")],

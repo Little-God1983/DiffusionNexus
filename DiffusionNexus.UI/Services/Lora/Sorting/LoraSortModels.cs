@@ -24,10 +24,6 @@ public sealed record LoraSortPlan(
     string SourceRoot,
     string TargetRoot,
     bool IsMove,
-    // Snapshotted from the options alongside IsMove, so the post-run "delete empty source folders"
-    // step is decided by the plan that actually ran rather than by live UI state. The busy overlay
-    // blocking the toggles was the only thing keeping that latent.
-    bool DeleteEmptySourceFolders,
     long RequiredBytes,          // per spec §6: copy = all planned bytes; move = cross-volume bytes only
     int TransferCount,
     int AlreadyInPlaceCount,
