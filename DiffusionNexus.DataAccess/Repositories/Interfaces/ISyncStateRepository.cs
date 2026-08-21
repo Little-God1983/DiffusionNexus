@@ -10,10 +10,12 @@ namespace DiffusionNexus.DataAccess.Repositories.Interfaces;
 /// <remarks>
 /// Every candidate selection takes the enabled LoRA source roots as well as the scope, because
 /// "the library" is exactly what those roots contain. A model is in the library when it has a
-/// file with a <c>LocalPath</c> that is marked valid and lies under one of the roots; rows left
-/// behind by a source the user has since disabled, moved or removed are still in the database
-/// but are no longer library members, and syncing them spends the user's Civitai budget on
-/// models they cannot see. The predicate applies to <see cref="SyncScopeKind.Library"/> and
+/// file with a <c>LocalPath</c> under one of the roots that the user can still see — the same
+/// rule as <c>ModelFileSyncService.LoadCachedFilesAsync</c>: valid, or never verified at all
+/// (a legacy row predating verification). Rows left behind by a source the user has since
+/// disabled, moved or removed are still in the database but are no longer library members, and
+/// syncing them spends the user's Civitai budget on models they cannot see. The predicate
+/// applies to <see cref="SyncScopeKind.Library"/> and
 /// <see cref="SyncScopeKind.SourceFolder"/> (which narrows further to that one folder); an
 /// explicit <see cref="SyncScopeKind.Models"/> scope is the user pointing at specific models, so
 /// it deliberately ignores the roots. An empty root list therefore selects nothing at all for

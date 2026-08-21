@@ -1,4 +1,4 @@
-using System.Linq.Expressions;
+﻿using System.Linq.Expressions;
 using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.Domain.Entities;
@@ -51,7 +51,7 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
 
     /// <summary>
     /// Narrows <paramref name="q"/> to the run's target. Library and SourceFolder are both
-    /// restricted to the library — a valid local file under an enabled source root — because a
+    /// restricted to the library — a visible local file under an enabled source root — because a
     /// row whose source the user has disabled or removed is no longer something they can see;
     /// SourceFolder narrows further to the one folder. Explicit ids bypass the library predicate:
     /// the user pointed at those models.
@@ -71,8 +71,9 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
     }
 
     /// <summary>
-    /// Restricts to models with a valid local file under any enabled source root. With no enabled
-    /// root nothing is in the library, so nothing is selected.
+    /// Restricts to models with a visible local file under any enabled source root (see
+    /// <see cref="HasFileUnder"/>). With no enabled root nothing is in the library, so nothing is
+    /// selected.
     /// </summary>
     private static IQueryable<Model> ApplyLibrary(IQueryable<Model> q, IReadOnlyList<string> enabledSourceRoots)
     {
@@ -96,12 +97,38 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
     /// </summary>
     // TODO: Linux Implementation for Task 13: case-sensitive paths and '/' separator.
     private static string PrefixOf(string? root)
-        => ((root ?? string.Empty).TrimEnd('\\', '/') + Path.DirectorySeparatorChar).ToLowerInvariant();
+        => AsciiLower((root ?? string.Empty).TrimEnd('\\', '/') + Path.DirectorySeparatorChar);
 
-    /// <summary>Models owning at least one valid local file whose path starts with <paramref name="prefixLower"/>.</summary>
+    /// <summary>
+    /// Lower-cases the ASCII letters and nothing else, because the other side of the comparison is
+    /// <c>f.LocalPath.ToLower()</c> — SQLite's own <c>lower()</c>, and the bundled e_sqlite3 has no
+    /// ICU, so it folds ASCII only. .NET's full-Unicode <c>ToLowerInvariant</c> turned a root like
+    /// <c>E:\Öffentlich\Loras</c> into <c>e:\öffentlich\loras\</c> while the column still read
+    /// <c>e:\Öffentlich\loras\…</c>: no match, and a silently empty Library plan.
+    /// </summary>
+    private static string AsciiLower(string value)
+        => string.Create(value.Length, value, static (destination, source) =>
+        {
+            for (var i = 0; i < source.Length; i++)
+            {
+                var c = source[i];
+                destination[i] = char.IsAsciiLetterUpper(c) ? (char)(c + 32) : c;
+            }
+        });
+
+    /// <summary>
+    /// Models owning at least one local file the user can actually see whose path starts with
+    /// <paramref name="prefixLower"/>. "Can see" mirrors <c>ModelFileSyncService.LoadCachedFilesAsync</c>:
+    /// a row is kept unless it was verified and found missing, so a legacy row that predates
+    /// verification (<c>IsLocalFileValid == false</c> because it defaulted there, never checked)
+    /// stays in the sync library exactly as it stays in the viewer (issue #380). The identify step
+    /// still probes <c>File.Exists</c> before hashing, so a file that really is gone costs nothing.
+    /// </summary>
     private static Expression<Func<Model, bool>> HasFileUnder(string prefixLower)
         => m => m.Versions.Any(v => v.Files.Any(f =>
-               f.LocalPath != null && f.IsLocalFileValid && f.LocalPath.ToLower().StartsWith(prefixLower)));
+               f.LocalPath != null
+               && (f.IsLocalFileValid || f.LocalFileVerifiedAt == null)
+               && f.LocalPath.ToLower().StartsWith(prefixLower)));
 
     /// <summary>Combines two predicates over the same parameter with <c>||</c>, keeping them translatable.</summary>
     private static Expression<Func<T, bool>> OrElse<T>(Expression<Func<T, bool>> left, Expression<Func<T, bool>> right)
@@ -131,7 +158,8 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
         // Flattened as joins from the leaf table on purpose: the equivalent
         // m.Versions.SelectMany(v => v.Files.Where(...)) needs SQL APPLY, which SQLite has not got.
         var rows = await (from f in Context.ModelFiles.AsNoTracking()
-                          where f.LocalPath != null && f.IsLocalFileValid
+                          // Same "the user can see this file" rule as HasFileUnder.
+                          where f.LocalPath != null && (f.IsLocalFileValid || f.LocalFileVerifiedAt == null)
                           join v in Context.ModelVersions on f.ModelVersionId equals v.Id
                           join m in models on v.ModelId equals m.Id
                           select new

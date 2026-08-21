@@ -1,4 +1,4 @@
-using DiffusionNexus.DataAccess;
+﻿using DiffusionNexus.DataAccess;
 using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
@@ -42,15 +42,22 @@ public sealed class SyncStateRepositoryTests : IDisposable
     /// </summary>
     private static readonly string[] Roots = [@"C:\m"];
 
+    /// <summary>A moment in the past standing in for "this row was actually verified then".</summary>
+    private static readonly DateTimeOffset Verified = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
     // helper used by every test here
     private static Model NewLocalModel(string name, string path, int? civitaiId = null, bool userEdited = false,
         ModelType type = ModelType.LORA, bool withTag = false, int? versionCivitaiId = null, bool withImage = false,
-        bool validFile = true, bool withFile = true)
+        bool validFile = true, bool withFile = true, DateTimeOffset? verifiedAt = null)
     {
         var m = new Model { Name = name, Type = type, Source = DataSource.LocalFile, CivitaiId = civitaiId, IsUserEdited = userEdited };
         var v = new ModelVersion { Name = "v1", CivitaiId = versionCivitaiId, BaseModelRaw = "???" };
         if (withFile)
-            v.Files.Add(new ModelFile { FileName = Path.GetFileName(path), LocalPath = path, IsLocalFileValid = validFile, IsPrimary = true, HashSHA256 = "AA" });
+            v.Files.Add(new ModelFile
+            {
+                FileName = Path.GetFileName(path), LocalPath = path, IsLocalFileValid = validFile,
+                LocalFileVerifiedAt = verifiedAt, IsPrimary = true, HashSHA256 = "AA",
+            });
         if (withImage) v.Images.Add(new ModelImage { Url = "https://x/y.jpeg" });
         m.Versions.Add(v);
         if (withTag) m.Tags.Add(new ModelTag { Tag = new Tag { Name = "style", NormalizedName = "style" } });
@@ -109,18 +116,28 @@ public sealed class SyncStateRepositoryTests : IDisposable
 
         var inLora = NewLocalModel("in-lora", @"C:\m\in-lora.safetensors");
         var outMatched = NewLocalModel("out-matched", @"C:\m\out-matched.safetensors", civitaiId: 5);
-        var outInvalid = NewLocalModel("out-invalid", @"C:\m\out-invalid.safetensors");
-        outInvalid.Versions.First().Files.First().IsLocalFileValid = false;
+
+        // Verified and found missing: the viewer hides it, so the sync must not chase it either.
+        var outVerifiedMissing = NewLocalModel("out-verified-missing", @"C:\m\out-verified-missing.safetensors",
+            validFile: false, verifiedAt: Verified);
+
+        // A legacy row from before verification existed: IsLocalFileValid defaulted to false and
+        // nothing has ever checked it. ModelFileSyncService.LoadCachedFilesAsync keeps exactly
+        // these rows and the viewer shows them (issue #380), so the sync library holds them too;
+        // IdentifyModelStep still File.Exists-checks before hashing anything.
+        var inLegacyUnverified = NewLocalModel("in-legacy-unverified", @"C:\m\in-legacy-unverified.safetensors",
+            validFile: false, verifiedAt: null);
+
         var outCheckpoint = NewLocalModel("out-checkpoint", @"C:\m\out-checkpoint.safetensors", type: ModelType.Checkpoint);
         var inUnknown = NewLocalModel("in-unknown", @"C:\m\in-unknown.safetensors", type: ModelType.Unknown);
 
-        foreach (var m in new[] { inLora, outMatched, outInvalid, outCheckpoint, inUnknown })
+        foreach (var m in new[] { inLora, outMatched, outVerifiedMissing, inLegacyUnverified, outCheckpoint, inUnknown })
             await uow.Models.AddAsync(m);
         await uow.SaveChangesAsync();
 
         var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library, Roots);
 
-        candidates.Select(c => c.Name).Should().BeEquivalentTo(new[] { "in-lora", "in-unknown" });
+        candidates.Select(c => c.Name).Should().BeEquivalentTo(new[] { "in-lora", "in-unknown", "in-legacy-unverified" });
 
         // A model with no state row projects the documented defaults, not nulls or garbage.
         var stateless = candidates.Single(c => c.Name == "in-lora");
@@ -405,7 +422,7 @@ public sealed class SyncStateRepositoryTests : IDisposable
         var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
         var present = NewLocalModel("present", @"C:\m\present.safetensors", civitaiId: 1);
-        var invalidFile = NewLocalModel("invalid-file", @"C:\m\invalid-file.safetensors", civitaiId: 2, validFile: false);
+        var invalidFile = NewLocalModel("invalid-file", @"C:\m\invalid-file.safetensors", civitaiId: 2, validFile: false, verifiedAt: Verified);
         var noFileAtAll = NewLocalModel("no-file", @"C:\m\no-file.safetensors", civitaiId: 3, withFile: false);
         var outsideLibrary = NewLocalModel("outside", @"D:\elsewhere\outside.safetensors", civitaiId: 4);
 
@@ -425,7 +442,7 @@ public sealed class SyncStateRepositoryTests : IDisposable
         var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
         var present = NewLocalModel("present", @"C:\m\present.safetensors", civitaiId: 1, versionCivitaiId: 10);
-        var invalidFile = NewLocalModel("invalid-file", @"C:\m\invalid-file.safetensors", civitaiId: 2, versionCivitaiId: 20, validFile: false);
+        var invalidFile = NewLocalModel("invalid-file", @"C:\m\invalid-file.safetensors", civitaiId: 2, versionCivitaiId: 20, validFile: false, verifiedAt: Verified);
         var noFileAtAll = NewLocalModel("no-file", @"C:\m\no-file.safetensors", civitaiId: 3, versionCivitaiId: 30, withFile: false);
         var outsideLibrary = NewLocalModel("outside", @"D:\elsewhere\outside.safetensors", civitaiId: 4, versionCivitaiId: 40);
 
@@ -436,6 +453,38 @@ public sealed class SyncStateRepositoryTests : IDisposable
         var candidates = await uow.SyncStates.SelectImageCandidatesAsync(SyncScope.Library, Roots);
 
         candidates.Select(c => c.Name).Should().BeEquivalentTo(new[] { "present" });
+    }
+
+    /// <summary>
+    /// F1. The prefix is compared against <c>lower(LocalPath)</c> — SQLite's own <c>lower()</c>,
+    /// which folds ASCII only (e_sqlite3 ships without ICU). Folding the root with .NET's full
+    /// Unicode <c>ToLowerInvariant</c> turned "Ö" into "ö" on one side of the comparison while the
+    /// other side kept "Ö", so an ordinary source folder like <c>E:\Öffentlich\Loras</c> matched
+    /// nothing at all and every Library plan came back silently empty.
+    /// </summary>
+    [Fact]
+    public async Task LibraryScopeMatchesRootsWithNonAsciiUppercaseLetters()
+    {
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        // Mixed on purpose: the ASCII letters must still fold, the "Ö" must not.
+        const string root = @"C:\Öffentlich\LORAS";
+
+        var identify = NewLocalModel("umlaut-identify", @"C:\Öffentlich\LORAS\umlaut-identify.safetensors");
+        var tagsAndImages = NewLocalModel("umlaut-tags", @"C:\Öffentlich\LORAS\sub\umlaut-tags.safetensors",
+            civitaiId: 9, versionCivitaiId: 90);
+
+        foreach (var m in new[] { identify, tagsAndImages })
+            await uow.Models.AddAsync(m);
+        await uow.SaveChangesAsync();
+
+        (await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library, [root]))
+            .Select(c => c.Name).Should().BeEquivalentTo(new[] { "umlaut-identify" });
+        (await uow.SyncStates.SelectTagCandidatesAsync(SyncScope.Library, [root]))
+            .Select(c => c.Name).Should().BeEquivalentTo(new[] { "umlaut-tags" });
+        (await uow.SyncStates.SelectImageCandidatesAsync(SyncScope.Library, [root]))
+            .Select(c => c.Name).Should().BeEquivalentTo(new[] { "umlaut-tags" });
     }
 
     public void Dispose()
