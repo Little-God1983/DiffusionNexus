@@ -656,6 +656,43 @@ public sealed class IdentifyModelStepTests : IDisposable
     }
 
     [Fact]
+    public async Task Execute_ModelDeletedBeforeWork_IsSkippedOnSidecarBranch()
+    {
+        var path = NewModelFile("deleted-sidecar.safetensors");
+        var (modelId, _) = await SeedAsync("deleted-sidecar", path);
+
+        // 404 on Civitai: without an up-front existence check this lands on the sidecar/NotIdentified
+        // branch, which stamps unconditionally — a state row whose PK/FK points at a deleted model,
+        // i.e. a DbUpdateException outside the step's narrow catch filter.
+        var client = new Mock<ICivitaiClient>();
+        client.Setup(x => x.GetModelVersionByHashAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CivitaiModelVersion?)null);
+        var step = new IdentifyModelStep(Scopes, client.Object,
+            new CivitaiMetadataApplier(client.Object), new SidecarMetadataApplier());
+
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        var item = items.Single(i => i.ModelId == modelId);
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var doomed = await uow.Models.GetByIdAsync(modelId);
+            uow.Models.Remove(doomed!);
+            await uow.SaveChangesAsync();
+        }
+
+        var result = await step.ExecuteOneAsync(item, apiKey: null, CancellationToken.None);
+
+        result.Skipped.Should().BeTrue();
+        result.Succeeded.Should().BeFalse();
+        (await ReadStateAsync(modelId)).Should().BeNull();
+
+        // The check is hoisted above the hash and the request: a deleted model costs neither.
+        client.Verify(x => x.GetModelVersionByHashAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
     public void Step_DescribesItselfForThePlanView()
     {
         var step = NewNotFoundStep();

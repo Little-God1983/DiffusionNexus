@@ -1,0 +1,304 @@
+using System.Diagnostics;
+using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.Sync;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Service.Services.Sync.Steps;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace DiffusionNexus.Service.Services.Sync;
+
+/// <summary>
+/// Runs the library metadata sync (#521 WP2): turns the registered <see cref="ISyncStep"/>s into a
+/// plan the user can agree to, then executes that plan under a process-wide single-flight gate.
+/// </summary>
+/// <remarks>
+/// The service owns no <c>DbContext</c> — it is a singleton, and every step creates its own scope —
+/// so the only state it holds is the gate. Step order is registration order: tags and images can
+/// only run against models the identify step has already matched.
+/// </remarks>
+public sealed class LibrarySyncService : ILibrarySyncService
+{
+    private const string LogSource = "LibrarySync";
+
+    /// <summary>Civitai's own courtesy interval between calls, applied between network items.</summary>
+    private static readonly TimeSpan PacingInterval = TimeSpan.FromMilliseconds(1500);
+
+    /// <summary>
+    /// Discovery walks every enabled source folder no matter how the run was scoped, so the plan
+    /// dialog must not imply otherwise ("this folder only" would be a lie for this one step).
+    /// </summary>
+    private const string DiscoverDescription = "Discover new files in all LoRA sources";
+
+    private readonly IReadOnlyList<ISyncStep> _steps;
+    private readonly SyncStateInitializer _initializer;
+    private readonly IServiceScopeFactory _scopes;
+    private readonly IUnifiedLogger? _logger;
+    private readonly Func<CancellationToken, Task> _pacer;
+    private readonly SemaphoreSlim _gate = new(1, 1);
+
+    // volatile: the UI thread polls this while the run itself lives on a thread-pool thread.
+    private volatile bool _isRunning;
+
+    public LibrarySyncService(
+        IEnumerable<ISyncStep> steps,
+        SyncStateInitializer initializer,
+        IServiceScopeFactory scopes,
+        IUnifiedLogger? logger = null,
+        Func<CancellationToken, Task>? pacer = null)
+    {
+        _steps = (steps ?? throw new ArgumentNullException(nameof(steps))).ToList();
+        _initializer = initializer ?? throw new ArgumentNullException(nameof(initializer));
+        _scopes = scopes ?? throw new ArgumentNullException(nameof(scopes));
+        _logger = logger;
+        _pacer = pacer ?? (ct => Task.Delay(PacingInterval, ct));
+    }
+
+    /// <inheritdoc />
+    public bool IsRunning => _isRunning;
+
+    /// <inheritdoc />
+    public async Task<SyncPlan> PlanAsync(SyncScope scope, SyncOptions options, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(scope);
+        ArgumentNullException.ThrowIfNull(options);
+
+        // Before anything is selected: a model with no state row looks "never checked" to every
+        // step, so the backfill has to have happened or the first run re-does the whole library.
+        await _initializer.EnsureInitializedAsync(ct).ConfigureAwait(false);
+
+        var now = DateTimeOffset.UtcNow;
+        var planSteps = new List<SyncPlanStep>();
+
+        foreach (var step in _steps)
+        {
+            // A requested kind with no registered step (Thumbnails, until Plan B) is simply absent
+            // from the plan rather than an error — the option set is a wish, not a contract.
+            if (!options.Steps.Contains(step.Kind)) continue;
+
+            ct.ThrowIfCancellationRequested();
+
+            var items = await step.SelectAsync(scope, options, now, ct).ConfigureAwait(false);
+            planSteps.Add(BuildPlanStep(step, items));
+        }
+
+        var plan = new SyncPlan(scope, options, planSteps, now);
+
+        _logger?.Info(LogCategory.Network, LogSource, $"Plan: {DescribePlan(plan)}");
+
+        return plan;
+    }
+
+    /// <summary>
+    /// Turns a step's selection into its planned row. Two kinds do not map one item to one unit of
+    /// work: discovery does not know its size until it runs, and images calls Civitai once per
+    /// <i>version</i> while grouping its items per model.
+    /// </summary>
+    private static SyncPlanStep BuildPlanStep(ISyncStep step, IReadOnlyList<SyncItem> items)
+    {
+        var perItem = step.EstimatedPerItem;
+
+        return step.Kind switch
+        {
+            // Always 0: the pseudo-item exists only so the step has something to execute, and
+            // showing "1" would read as "one new file found" before anything has been scanned.
+            SyncStepKind.DiscoverFiles => new SyncPlanStep(step.Kind, 0, Scale(perItem, items.Count), DiscoverDescription),
+
+            SyncStepKind.FetchImages => new SyncPlanStep(step.Kind, items.Count, Scale(perItem, CountVersions(items)), step.Description),
+
+            _ => new SyncPlanStep(step.Kind, items.Count, Scale(perItem, items.Count), step.Description),
+        };
+    }
+
+    /// <summary>Total versions across the items, which is the number of calls the images step makes.</summary>
+    private static int CountVersions(IReadOnlyList<SyncItem> items)
+        => items.Sum(i => i.Payload is IReadOnlyList<ImageCandidate> versions ? versions.Count : 1);
+
+    private static TimeSpan Scale(TimeSpan perItem, int count) => TimeSpan.FromTicks(perItem.Ticks * count);
+
+    /// <inheritdoc />
+    public async Task<SyncReport> ExecuteAsync(SyncPlan plan, IProgress<LibrarySyncProgress>? progress = null, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+
+        // Wait(0), not WaitAsync: the caller must learn synchronously that a run is already going,
+        // and a queued second run is never what the user meant by pressing Sync twice.
+        if (!_gate.Wait(0)) throw new InvalidOperationException("A library sync is already running.");
+
+        _isRunning = true;
+        var stopwatch = Stopwatch.StartNew();
+
+        var tally = new RunTally();
+        var cancelled = false;
+
+        try
+        {
+            try
+            {
+                var apiKey = await ResolveApiKeyAsync(ct).ConfigureAwait(false);
+
+                foreach (var planStep in plan.Steps)
+                {
+                    var step = _steps.FirstOrDefault(s => s.Kind == planStep.Kind);
+                    if (step is null) continue;
+
+                    ct.ThrowIfCancellationRequested();
+
+                    await RunStepAsync(step, planStep, plan, apiKey, progress, tally, ct).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // A cancelled run still reports what it managed to do — the stamps are already
+                // committed, so pretending nothing happened would only cause it to be redone.
+                cancelled = true;
+                _logger?.Info(LogCategory.Network, LogSource, "Library sync cancelled by the user");
+            }
+
+            stopwatch.Stop();
+
+            var syncReport = new SyncReport(plan, tally.Steps, tally.Failures, cancelled, stopwatch.Elapsed, tally.Discovered);
+            _logger?.Info(LogCategory.Network, LogSource, $"Sync finished: {syncReport.Summary} in {Describe(stopwatch.Elapsed)}");
+
+            return syncReport;
+        }
+        finally
+        {
+            _isRunning = false;
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Runs one step to completion, recording its counts into <paramref name="tally"/>. Items are
+    /// re-selected here rather than taken from the plan: the plan dialog may have been open for
+    /// minutes, and acting on ids that old means touching models the user has since deleted or
+    /// already fixed by hand.
+    /// </summary>
+    private async Task RunStepAsync(
+        ISyncStep step,
+        SyncPlanStep planStep,
+        SyncPlan plan,
+        string? apiKey,
+        IProgress<LibrarySyncProgress>? progress,
+        RunTally tally,
+        CancellationToken ct)
+    {
+        var items = await step.SelectAsync(plan.Scope, plan.Options, DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
+
+        _logger?.Info(LogCategory.Network, LogSource,
+            $"{StepLabel(step.Kind)}: starting {items.Count} item(s) (planned {planStep.Count})");
+
+        var processed = 0;
+        var succeeded = 0;
+        var skipped = 0;
+        var failed = 0;
+
+        try
+        {
+            for (var i = 0; i < items.Count; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var item = items[i];
+                progress?.Report(new LibrarySyncProgress(step.Kind, i + 1, items.Count, item.Name));
+
+                var result = await ExecuteItemAsync(step, item, apiKey, ct).ConfigureAwait(false);
+
+                processed++;
+                if (result.Succeeded) succeeded++;
+                else if (result.Skipped) skipped++;
+                else
+                {
+                    failed++;
+                    tally.Failures.Add(new SyncFailure(step.Kind, item.ModelId, item.Name, result.FailureReason ?? "Unknown error"));
+                }
+
+                // Only an item that actually reached Civitai owes the API a pause; a skip made no
+                // call, and discovery is a local disk scan that nobody is rate limiting.
+                if (!result.Skipped && step.Kind != SyncStepKind.DiscoverFiles)
+                    await _pacer(ct).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            // In the finally, not after the loop: a cancelled step still did work, and its counts
+            // are the only record that those items must not be redone.
+            tally.Steps.Add(new SyncStepReport(step.Kind, planStep.Count, processed, succeeded, skipped, failed));
+            if (step is DiscoverFilesStep discoverStep) tally.Discovered = discoverStep.DiscoveredCount;
+
+            _logger?.Info(LogCategory.Network, LogSource,
+                $"{StepLabel(step.Kind)}: {succeeded} succeeded · {skipped} skipped · {failed} failed of {processed} processed");
+        }
+    }
+
+    /// <summary>Mutable running totals for one <see cref="ExecuteAsync"/>, so a cancelled step still reports.</summary>
+    private sealed class RunTally
+    {
+        public List<SyncStepReport> Steps { get; } = [];
+        public List<SyncFailure> Failures { get; } = [];
+        public int Discovered { get; set; }
+    }
+
+    /// <summary>
+    /// Executes one item. Steps return failure results for the faults they expect (network, disk,
+    /// a changed response shape); anything that escapes is a bug, and laundering it into a "1
+    /// failed" row would hide it behind a report row nobody investigates.
+    /// </summary>
+    private async Task<SyncItemResult> ExecuteItemAsync(ISyncStep step, SyncItem item, string? apiKey, CancellationToken ct)
+    {
+        try
+        {
+            return await step.ExecuteOneAsync(item, apiKey, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error(LogCategory.Network, LogSource,
+                $"{StepLabel(step.Kind)} threw an unexpected exception on '{item.Name}' (model {item.ModelId})", ex);
+            throw;
+        }
+    }
+
+    /// <summary>Reads the Civitai key once per run, from its own scope (the settings service is scoped/transient).</summary>
+    private async Task<string?> ResolveApiKeyAsync(CancellationToken ct)
+    {
+        using var scope = _scopes.CreateScope();
+        var settings = scope.ServiceProvider.GetRequiredService<IAppSettingsService>();
+        return await settings.GetCivitaiApiKeyAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>e.g. <c>Identify 3 · Tags 68 · Images 0 (~2 min)</c>.</summary>
+    private static string DescribePlan(SyncPlan plan)
+    {
+        var parts = plan.Steps
+            .Where(s => s.Kind != SyncStepKind.DiscoverFiles)
+            .Select(s => $"{StepLabel(s.Kind)} {s.Count}")
+            .ToList();
+
+        if (plan.Steps.Any(s => s.Kind == SyncStepKind.DiscoverFiles)) parts.Insert(0, "Discover");
+        if (parts.Count == 0) parts.Add("nothing to do");
+
+        return $"{string.Join(" · ", parts)} (~{Describe(plan.EstimatedDuration)})";
+    }
+
+    /// <summary>Imperative, plan-voice labels ("Identify 3"), as opposed to the report's past tense.</summary>
+    private static string StepLabel(SyncStepKind kind) => kind switch
+    {
+        SyncStepKind.DiscoverFiles => "Discover",
+        SyncStepKind.IdentifyModel => "Identify",
+        SyncStepKind.FetchTags => "Tags",
+        SyncStepKind.FetchImages => "Images",
+        SyncStepKind.Thumbnails => "Thumbnails",
+        _ => kind.ToString(),
+    };
+
+    private static string Describe(TimeSpan duration) => duration switch
+    {
+        { TotalSeconds: < 60 } => $"{duration.TotalSeconds:0} s",
+        { TotalMinutes: < 60 } => $"{duration.TotalMinutes:0} min",
+        _ => $"{(int)duration.TotalHours} h {duration.Minutes} min",
+    };
+}
