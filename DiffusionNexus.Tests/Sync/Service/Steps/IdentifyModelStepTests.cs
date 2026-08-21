@@ -1,4 +1,3 @@
-using System.Net.Http;
 using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.DataAccess;
