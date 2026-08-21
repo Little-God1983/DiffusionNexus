@@ -90,15 +90,22 @@ public sealed class SortHistoryWriter
         File.AppendAllText(CompletionLogPath(manifestPath), record + Environment.NewLine);
     }
 
-    /// <summary>The append-only completion log that belongs to a plan file.</summary>
-    public static string CompletionLogPath(string manifestPath)
+    /// <summary>The append-only completion log that belongs to a plan file. Internal for the same
+    /// reason as <see cref="ReadCompleted"/>: only the writer and the tests know about it today.</summary>
+    internal static string CompletionLogPath(string manifestPath)
         => Path.ChangeExtension(manifestPath, null) + ".completed.jsonl";
 
     /// <summary>
     /// Source paths recorded as completed, for Restore (and for asserting on a run). A
     /// torn last line from a killed run is skipped rather than failing the whole read.
     /// </summary>
-    public static IReadOnlyCollection<string> ReadCompleted(string manifestPath)
+    /// <remarks>
+    /// Internal until Restore ships: no production code reads the journal yet, and a public API
+    /// whose only callers are its own tests advertises a contract nothing depends on. The tests
+    /// reach it through <c>InternalsVisibleTo("DiffusionNexus.Tests")</c>. The journal itself is
+    /// written from day one on purpose — a Restore added later needs the data to already exist.
+    /// </remarks>
+    internal static IReadOnlyCollection<string> ReadCompleted(string manifestPath)
     {
         var path = CompletionLogPath(manifestPath);
         if (!File.Exists(path)) return [];
