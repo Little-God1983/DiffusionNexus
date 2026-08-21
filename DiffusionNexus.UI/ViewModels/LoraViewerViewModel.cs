@@ -1227,9 +1227,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         try
         {
-            var applied = await DownloadMetadataForTileAsync(tile);
+            var outcome = await DownloadMetadataForTileAsync(tile);
 
-            if (applied)
+            if (outcome.Applied)
             {
                 // DownloadMetadataForTileAsync already refreshed the in-memory tile (it now
                 // carries a CivitaiId), so reloading the detail re-fetches the full version
@@ -1238,7 +1238,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             }
             else
             {
-                detail.StatusMessage = "No metadata found on Civitai for this file.";
+                // "Nothing found" is a claim about Civitai, so it may only be made when we
+                // actually asked. A forced run that planned no identify item asked nobody —
+                // saying "not on Civitai" there is how a selection bug reads as a verdict.
+                detail.StatusMessage = outcome.IdentifyPlanned > 0
+                    ? "No metadata found on Civitai for this file."
+                    : "Nothing to refresh for this model.";
             }
         }
         catch (Exception ex)
@@ -1262,16 +1267,21 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// </summary>
     /// <remarks>
     /// <c>ForceIdentify</c> is set because pressing the button IS the user asking for another
-    /// look: a stored "checked, not on Civitai" verdict would otherwise skip the model and the
-    /// button would appear to do nothing.
+    /// look, and a forced step ignores both the stored verdict and the retry window: neither a
+    /// "checked, not on Civitai" outcome nor an already-matched model may make the button appear
+    /// to do nothing.
     /// </remarks>
-    /// <returns><c>true</c> when any step applied something, which is what tells the detail view to reload.</returns>
-    public async Task<bool> DownloadMetadataForTileAsync(ModelTileViewModel tile)
+    /// <returns>
+    /// Whether anything was applied — which is what tells the detail view to reload — together
+    /// with the report it came from, so the caller can tell "we asked and Civitai has nothing"
+    /// apart from "there was nothing to ask about".
+    /// </returns>
+    public async Task<TileMetadataSyncResult> DownloadMetadataForTileAsync(ModelTileViewModel tile)
     {
         if (_librarySync is null)
         {
             SyncStatus = "Library sync not available.";
-            return false;
+            return TileMetadataSyncResult.NotRun;
         }
 
         var modelId = tile.ModelEntity?.Id ?? 0;
@@ -1279,7 +1289,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         {
             _logger?.Warn(LogCategory.Network, "CivitaiSync",
                 $"Cannot download metadata for '{tile.DisplayName}': the tile has no persisted model.");
-            return false;
+            return TileMetadataSyncResult.NotRun;
         }
 
         var options = new SyncOptions(
@@ -1296,7 +1306,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         {
             _logger?.Info(LogCategory.Network, "CivitaiSync",
                 $"No metadata applied for '{tile.DisplayName}': {report.Summary}");
-            return false;
+            return new TileMetadataSyncResult(Applied: false, report);
         }
 
         // Re-read the one model the run touched so the tile (and the detail view behind it)
@@ -1323,7 +1333,24 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             }
         }
 
-        return true;
+        return new TileMetadataSyncResult(Applied: true, report);
+    }
+
+    /// <summary>
+    /// The outcome of one per-tile metadata fetch. <paramref name="Report"/> is null only when the
+    /// run never started (no sync service, or a tile with no persisted model).
+    /// </summary>
+    public sealed record TileMetadataSyncResult(bool Applied, SyncReport? Report)
+    {
+        /// <summary>A fetch that never reached the service.</summary>
+        public static readonly TileMetadataSyncResult NotRun = new(Applied: false, Report: null);
+
+        /// <summary>
+        /// How many models the identify step planned. Zero means it asked Civitai nothing at all,
+        /// so nothing it reports is a verdict about Civitai.
+        /// </summary>
+        public int IdentifyPlanned
+            => Report?.Steps.FirstOrDefault(s => s.Kind == SyncStepKind.IdentifyModel)?.Planned ?? 0;
     }
 
     /// <summary>

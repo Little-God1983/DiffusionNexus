@@ -135,7 +135,7 @@ public sealed class SyncStateRepositoryTests : IDisposable
             await uow.Models.AddAsync(m);
         await uow.SaveChangesAsync();
 
-        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library, Roots);
+        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library, Roots, includeMatched: false);
 
         candidates.Select(c => c.Name).Should().BeEquivalentTo(new[] { "in-lora", "in-unknown", "in-legacy-unverified" });
 
@@ -185,7 +185,7 @@ public sealed class SyncStateRepositoryTests : IDisposable
         var nonPrimaryFile = primaryLast.Versions.First().Files.Single(f => !f.IsPrimary);
         primaryFile.Id.Should().NotBe(nonPrimaryFile.Id);
 
-        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library, Roots);
+        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library, Roots, includeMatched: false);
 
         candidates.Should().HaveCount(2);
 
@@ -195,6 +195,61 @@ public sealed class SyncStateRepositoryTests : IDisposable
 
         var withoutPrimary = candidates.Single(c => c.Name == "no-primary");
         withoutPrimary.FileId.Should().BeOneOf(noPrimary.Versions.First().Files.Select(f => f.Id).ToArray());
+    }
+
+    /// <summary>
+    /// C1. A bulk run has nothing to identify about a model that already carries a Civitai id, but
+    /// a forced re-fetch is the user asking for exactly that model — and the per-tile "Download
+    /// Metadata" button is a forced re-fetch. Filtering matched models out unconditionally made
+    /// that button report "no metadata found on Civitai" for every model that had ever matched,
+    /// which on the live library is the majority of it.
+    /// </summary>
+    [Fact]
+    public async Task IdentifyCandidatesIncludeMatchedModelsWhenRequested()
+    {
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var matched = NewLocalModel("matched", @"C:\m\matched.safetensors", civitaiId: 5);
+        await uow.Models.AddAsync(matched);
+        await uow.SaveChangesAsync();
+
+        var state = await uow.SyncStates.GetOrCreateAsync(matched.Id);
+        state.MetadataOutcome = SyncOutcome.Matched;
+        await uow.SaveChangesAsync();
+
+        var forced = await uow.SyncStates.SelectIdentifyCandidatesAsync(
+            SyncScope.ForModels(matched.Id), Roots, includeMatched: true);
+
+        var candidate = forced.Should().ContainSingle().Subject;
+        candidate.ModelId.Should().Be(matched.Id);
+        candidate.Outcome.Should().Be(SyncOutcome.Matched);
+
+        var unforced = await uow.SyncStates.SelectIdentifyCandidatesAsync(
+            SyncScope.ForModels(matched.Id), Roots, includeMatched: false);
+
+        unforced.Should().BeEmpty("a bulk run has nothing to identify about a model that is already matched");
+    }
+
+    /// <summary>
+    /// C1, second half. Explicit ids are the user pointing at models, so the LoRA-family filter —
+    /// which exists to keep a library-wide run off checkpoints — has no business discarding them.
+    /// </summary>
+    [Fact]
+    public async Task IdentifyCandidatesInModelsScopeIgnoreTheLoraFamilyFilter()
+    {
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var checkpoint = NewLocalModel("checkpoint", @"C:\m\checkpoint.safetensors", type: ModelType.Checkpoint);
+        await uow.Models.AddAsync(checkpoint);
+        await uow.SaveChangesAsync();
+
+        (await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.ForModels(checkpoint.Id), Roots, includeMatched: true))
+            .Select(c => c.Name).Should().BeEquivalentTo(new[] { "checkpoint" });
+
+        (await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library, Roots, includeMatched: true))
+            .Should().BeEmpty("a library-wide run still only identifies the LoRA family");
     }
 
     [Fact]
@@ -215,7 +270,7 @@ public sealed class SyncStateRepositoryTests : IDisposable
         state.SidecarSignature = "sig";
         await uow.SaveChangesAsync();
 
-        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library, Roots);
+        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library, Roots, includeMatched: false);
 
         var candidate = candidates.Should().ContainSingle().Subject;
         candidate.ModelId.Should().Be(model.Id);
@@ -245,7 +300,8 @@ public sealed class SyncStateRepositoryTests : IDisposable
             await uow.Models.AddAsync(m);
         await uow.SaveChangesAsync();
 
-        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.ForFolder(@"E:\Loras"), [@"E:\Loras", @"E:\Loras_backup"]);
+        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(
+            SyncScope.ForFolder(@"E:\Loras"), [@"E:\Loras", @"E:\Loras_backup"], includeMatched: false);
 
         candidates.Select(c => c.Name).Should().BeEquivalentTo(new[] { "in-root", "in-nested" });
     }
@@ -264,7 +320,7 @@ public sealed class SyncStateRepositoryTests : IDisposable
             await uow.Models.AddAsync(m);
         await uow.SaveChangesAsync();
 
-        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.ForModels(a.Id, c.Id), Roots);
+        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.ForModels(a.Id, c.Id), Roots, includeMatched: false);
 
         candidates.Select(x => x.Name).Should().BeEquivalentTo(new[] { "a", "c" });
     }
@@ -350,7 +406,7 @@ public sealed class SyncStateRepositoryTests : IDisposable
             await uow.Models.AddAsync(m);
         await uow.SaveChangesAsync();
 
-        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library, Roots);
+        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library, Roots, includeMatched: false);
 
         candidates.Select(c => c.Name).Should().BeEquivalentTo(new[] { "in-source" });
     }
@@ -370,7 +426,7 @@ public sealed class SyncStateRepositoryTests : IDisposable
         await uow.SaveChangesAsync();
 
         var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(
-            SyncScope.Library, [@"C:\m", @"E:\Loras"]);
+            SyncScope.Library, [@"C:\m", @"E:\Loras"], includeMatched: false);
 
         candidates.Select(c => c.Name).Should().BeEquivalentTo(new[] { "first-root", "second-root" });
     }
@@ -386,7 +442,7 @@ public sealed class SyncStateRepositoryTests : IDisposable
         await uow.Models.AddAsync(model);
         await uow.SaveChangesAsync();
 
-        (await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library, [])).Should().BeEmpty();
+        (await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library, [], includeMatched: false)).Should().BeEmpty();
         (await uow.SyncStates.SelectTagCandidatesAsync(SyncScope.Library, [])).Should().BeEmpty();
         (await uow.SyncStates.SelectImageCandidatesAsync(SyncScope.Library, [])).Should().BeEmpty();
     }
@@ -405,7 +461,7 @@ public sealed class SyncStateRepositoryTests : IDisposable
         await uow.Models.AddAsync(outside);
         await uow.SaveChangesAsync();
 
-        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.ForModels(outside.Id), []);
+        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.ForModels(outside.Id), [], includeMatched: false);
 
         candidates.Select(c => c.Name).Should().BeEquivalentTo(new[] { "outside" });
     }
@@ -479,7 +535,7 @@ public sealed class SyncStateRepositoryTests : IDisposable
             await uow.Models.AddAsync(m);
         await uow.SaveChangesAsync();
 
-        (await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library, [root]))
+        (await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library, [root], includeMatched: false))
             .Select(c => c.Name).Should().BeEquivalentTo(new[] { "umlaut-identify" });
         (await uow.SyncStates.SelectTagCandidatesAsync(SyncScope.Library, [root]))
             .Select(c => c.Name).Should().BeEquivalentTo(new[] { "umlaut-tags" });

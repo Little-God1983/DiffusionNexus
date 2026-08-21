@@ -82,7 +82,8 @@ public sealed class IdentifyModelStepTests : IDisposable
         DateTimeOffset? checkedAt = null,
         int attempts = 0,
         string? sidecarSignature = null,
-        bool withState = false)
+        bool withState = false,
+        int? civitaiId = null)
     {
         using var scope = NewScope();
         var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
@@ -91,7 +92,8 @@ public sealed class IdentifyModelStepTests : IDisposable
         {
             Name = name,
             Type = ModelType.LORA,
-            Source = DataSource.LocalFile,
+            Source = civitaiId is null ? DataSource.LocalFile : DataSource.CivitaiApi,
+            CivitaiId = civitaiId,
         };
         var version = new ModelVersion { Name = "v1", BaseModelRaw = "???" };
         version.Files.Add(new ModelFile
@@ -215,6 +217,67 @@ public sealed class IdentifyModelStepTests : IDisposable
 
         items.Select(i => i.ModelId).Should().Contain(matched.ModelId);
         items.Select(i => i.ModelId).Should().NotContain(gone.ModelId);
+    }
+
+    /// <summary>
+    /// C1. The per-tile "Download Metadata" button forces this step over one model that has, in
+    /// the overwhelming majority of cases, already been matched. Selecting only models without a
+    /// Civitai id meant the forced run planned nothing, reported nothing succeeded, and the detail
+    /// view told the user "No metadata found on Civitai for this file." about a file Civitai knows
+    /// perfectly well.
+    /// </summary>
+    [Fact]
+    public async Task Select_ForceIdentifyIncludesMatchedModel()
+    {
+        var path = NewModelFile("already-matched.safetensors");
+        var matched = await SeedAsync("already-matched", path, civitaiId: 77,
+            outcome: SyncOutcome.Matched, checkedAt: Now.AddDays(-1), withState: true);
+
+        var forced = await NewNotFoundStep().SelectAsync(SyncScope.ForModels(matched.ModelId), Options(force: true), Now, CancellationToken.None);
+        forced.Select(i => i.ModelId).Should().Contain(matched.ModelId);
+
+        // The bulk run still leaves it alone: there is nothing to identify about a matched model.
+        var bulk = await NewNotFoundStep().SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        bulk.Select(i => i.ModelId).Should().NotContain(matched.ModelId);
+    }
+
+    /// <summary>
+    /// C1, the execution half: a forced re-fetch of an already-matched model must write the fresh
+    /// response over the stored data and leave the model matched — not fail, and not demote it.
+    /// </summary>
+    [Fact]
+    public async Task Execute_ForceOnMatchedModelReappliesMetadata()
+    {
+        var path = NewModelFile("refetch.safetensors");
+        var (modelId, _) = await SeedAsync("refetch", path, civitaiId: 77,
+            outcome: SyncOutcome.Matched, checkedAt: Now.AddDays(-1), withState: true);
+
+        var civVersion = NewCivitaiVersion();
+        var step = NewStep(c =>
+        {
+            c.Setup(x => x.GetModelVersionByHashAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(civVersion);
+            c.Setup(x => x.GetModelAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(NewCivitaiModel(civVersion));
+        });
+
+        var items = await step.SelectAsync(SyncScope.ForModels(modelId), Options(force: true), Now, CancellationToken.None);
+        var result = await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+        result.FailureReason.Should().BeNull();
+
+        var state = await ReadStateAsync(modelId);
+        state!.MetadataOutcome.Should().Be(SyncOutcome.Matched);
+        state.MetadataAttempts.Should().Be(0);
+        state.LastError.Should().BeNull();
+
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+        saved!.CivitaiId.Should().Be(77, "the id it already owned is still its own");
+        saved.Name.Should().Be("Civitai Name", "the fresh response was actually written, not just re-stamped");
+        saved.Versions.Single().BaseModelRaw.Should().Be("SDXL 1.0");
     }
 
     [Fact]

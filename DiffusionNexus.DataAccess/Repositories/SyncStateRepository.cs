@@ -150,10 +150,19 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<IdentifyCandidate>> SelectIdentifyCandidatesAsync(
-        SyncScope scope, IReadOnlyList<string> enabledSourceRoots, CancellationToken ct = default)
+        SyncScope scope, IReadOnlyList<string> enabledSourceRoots, bool includeMatched, CancellationToken ct = default)
     {
-        var models = ApplyScope(Context.Models, scope, enabledSourceRoots)
-            .Where(m => m.CivitaiId == null && LoraFamily.Contains(m.Type));
+        var models = ApplyScope(Context.Models, scope, enabledSourceRoots);
+
+        // A model that already carries a Civitai id has nothing to identify — unless the caller
+        // asked for it anyway, which is what a forced re-fetch (the per-tile "Download Metadata"
+        // button) is. Selecting it is not the same as re-checking it: the retry policy still
+        // decides due-ness, and only a force makes a Matched row due.
+        if (!includeMatched) models = models.Where(m => m.CivitaiId == null);
+
+        // The type filter keeps a library-wide run off checkpoints and the like. Explicit ids are
+        // the user pointing at models, so it has no business discarding what they pointed at.
+        if (scope.Kind != SyncScopeKind.Models) models = models.Where(m => LoraFamily.Contains(m.Type));
 
         // Flattened as joins from the leaf table on purpose: the equivalent
         // m.Versions.SelectMany(v => v.Files.Where(...)) needs SQL APPLY, which SQLite has not got.

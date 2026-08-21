@@ -69,7 +69,16 @@ public sealed class IdentifyModelStep : ISyncStep
         var settings = dbScope.ServiceProvider.GetRequiredService<IAppSettingsService>();
         var enabledRoots = await settings.GetEnabledLoraSourcesAsync(ct).ConfigureAwait(false);
 
-        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(scope, enabledRoots, ct).ConfigureAwait(false);
+        // A forced run is the user asking for another look at a model they can see, so a stored
+        // Civitai id must not hide it: that is what made the per-tile button answer "no metadata
+        // found on Civitai" for every already-matched model. An explicit id scope is the same
+        // request by a different route. Due-ness is still the retry policy's call — and under
+        // force it always says yes.
+        var includeMatched = options.ForceIdentify || scope.Kind == SyncScopeKind.Models;
+
+        var candidates = await uow.SyncStates
+            .SelectIdentifyCandidatesAsync(scope, enabledRoots, includeMatched, ct)
+            .ConfigureAwait(false);
 
         var items = new List<SyncItem>(candidates.Count);
         foreach (var candidate in candidates)

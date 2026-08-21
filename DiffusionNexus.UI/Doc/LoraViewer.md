@@ -253,8 +253,19 @@ A forced step ignores the stored verdict and the retry window. The per-LoRA butt
 detail panel is exactly this: `DownloadMetadataForTileAsync` plans
 `SyncScope.ForModels(modelId)` with `IdentifyModel + FetchTags + FetchImages` and
 `ForceIdentify: true` — same service, same steps, one model — then re-reads that model and
-refreshes the tile. It returns `true` when any step succeeded, which is what tells the
-detail view to reload.
+refreshes the tile.
+
+Forcing also widens *selection*, not just due-ness: `SelectIdentifyCandidatesAsync` takes an
+`includeMatched` flag (`ForceIdentify || scope.Kind == Models`) that drops the
+"no `CivitaiId` yet" predicate, and an explicit id scope additionally drops the LoRA-family
+type filter. Without that, a forced run over an already-matched model planned zero items and
+the detail panel reported "No metadata found on Civitai for this file." about a model Civitai
+knows — for most of the library.
+
+The method returns `TileMetadataSyncResult(Applied, Report)`: `Applied` (any step succeeded)
+tells the detail view to reload; `IdentifyPlanned` is what separates the two failure
+wordings — "No metadata found on Civitai for this file." when the step ran and found nothing,
+"Nothing to refresh for this model." when it planned nothing and therefore asked nobody.
 
 ### Fallbacks
 

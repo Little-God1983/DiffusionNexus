@@ -256,9 +256,9 @@ public class LoraViewerViewModelSyncTests
             .ReturnsAsync((SyncPlan p, IProgress<LibrarySyncProgress>? _, CancellationToken _) => ReportFor(p, succeeded: 1));
         _models.Setup(m => m.GetByIdWithIncludesAsync(42, It.IsAny<CancellationToken>())).ReturnsAsync((Model?)null);
 
-        var applied = await vm.DownloadMetadataForTileAsync(tile);
+        var outcome = await vm.DownloadMetadataForTileAsync(tile);
 
-        applied.Should().BeTrue("a step that succeeded for the model means metadata was applied");
+        outcome.Applied.Should().BeTrue("a step that succeeded for the model means metadata was applied");
         scope!.Kind.Should().Be(SyncScopeKind.Models);
         scope.ModelIds.Should().Equal(42);
         options!.ForceIdentify.Should().BeTrue(
@@ -280,9 +280,39 @@ public class LoraViewerViewModelSyncTests
         _sync.Setup(s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((SyncPlan p, IProgress<LibrarySyncProgress>? _, CancellationToken _) => ReportFor(p, succeeded: 0));
 
-        var applied = await vm.DownloadMetadataForTileAsync(tile);
+        var outcome = await vm.DownloadMetadataForTileAsync(tile);
 
-        applied.Should().BeFalse("nothing succeeded, so the detail view must say so instead of reloading unchanged data");
+        outcome.Applied.Should().BeFalse("nothing succeeded, so the detail view must say so instead of reloading unchanged data");
+        outcome.IdentifyPlanned.Should().Be(3, "the step did run — the detail view may say Civitai has nothing");
+    }
+
+    /// <summary>
+    /// C1. The detail view says "No metadata found on Civitai for this file." only when the
+    /// identify step actually asked. A run that planned nothing asked nobody, so the outcome has
+    /// to carry that fact out of the ViewModel — otherwise a selection bug reads as a verdict
+    /// about Civitai, which is exactly how ~1,583 matched models came to be reported as unknown.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMetadataForTile_ReportsThatNothingWasPlannedWhenTheStepHadNoWork()
+    {
+        var vm = CreateViewModel();
+        var tile = CreateTile(modelId: 42);
+
+        _sync.Setup(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncScope s, SyncOptions _, CancellationToken _) => PlanFor(s, IdentifyStep(0)));
+        _sync.Setup(s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncPlan p, IProgress<LibrarySyncProgress>? _, CancellationToken _) => new SyncReport(
+                p,
+                [new SyncStepReport(SyncStepKind.IdentifyModel, 0, 0, 0, 0, 0)],
+                [],
+                Cancelled: false,
+                Elapsed: TimeSpan.Zero,
+                NewFilesDiscovered: 0));
+
+        var outcome = await vm.DownloadMetadataForTileAsync(tile);
+
+        outcome.Applied.Should().BeFalse();
+        outcome.IdentifyPlanned.Should().Be(0, "nothing was asked, so nothing may be claimed about Civitai");
     }
 
     private static ModelTileViewModel CreateTile(int modelId)

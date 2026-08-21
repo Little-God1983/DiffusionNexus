@@ -36,16 +36,28 @@ public interface ISyncStateRepository : IRepository<ModelSyncState>
     Task<ModelSyncState> GetOrCreateAsync(int modelId, CancellationToken ct = default);
 
     /// <summary>
-    /// LoRA-family models with a valid local file and no Civitai id, within scope and in the
-    /// library. No retry filtering — the caller applies SyncRetryPolicy.
+    /// Models with a valid local file, within scope and in the library — by default only the
+    /// LoRA-family ones that carry no Civitai id yet. No retry filtering — the caller applies
+    /// SyncRetryPolicy.
     /// </summary>
     /// <param name="scope">What the run targets.</param>
     /// <param name="enabledSourceRoots">
     /// The enabled LoRA source folders — see the remarks on <see cref="ISyncStateRepository"/>.
     /// </param>
+    /// <param name="includeMatched">
+    /// Also offer models that already carry a Civitai id. A bulk run leaves them alone (there is
+    /// nothing to identify), but a forced re-fetch — the per-tile "Download Metadata" button — is
+    /// the user asking for exactly those: refusing to select them made the button report "no
+    /// metadata found" for every model that had ever been matched.
+    /// </param>
     /// <param name="ct">Cancellation token.</param>
+    /// <remarks>
+    /// A <see cref="SyncScopeKind.Models"/> scope additionally drops the LoRA-family type filter:
+    /// the user pointed at those models by id, and a Checkpoint they pointed at is not a
+    /// mis-selection to be silently discarded.
+    /// </remarks>
     Task<IReadOnlyList<IdentifyCandidate>> SelectIdentifyCandidatesAsync(
-        SyncScope scope, IReadOnlyList<string> enabledSourceRoots, CancellationToken ct = default);
+        SyncScope scope, IReadOnlyList<string> enabledSourceRoots, bool includeMatched, CancellationToken ct = default);
 
     /// <summary>
     /// Models with a Civitai id, not user-edited, zero tags, within scope and in the library.
