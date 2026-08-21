@@ -36,6 +36,20 @@ public interface ISyncStateRepository : IRepository<ModelSyncState>
     Task<ModelSyncState> GetOrCreateAsync(int modelId, CancellationToken ct = default);
 
     /// <summary>
+    /// Everything <see cref="SyncDerivationInput"/> holds, for one batch of models, in a single
+    /// projected query — no <c>Include</c>s, and specifically no <c>ThumbnailData</c>.
+    /// </summary>
+    /// <remarks>
+    /// The state backfill needs four booleans and two columns per model. Asking for the model graph
+    /// instead cost five split queries per model plus every image's thumbnail BLOB, 200 models to a
+    /// batch — hundreds of megabytes of JPEG read to decide a handful of timestamps on the first
+    /// launch after the upgrade. Models that no longer exist are simply absent from the result; the
+    /// caller derives nothing for them.
+    /// </remarks>
+    Task<IReadOnlyList<SyncDerivationInput>> GetDerivationInputsAsync(
+        IReadOnlyList<int> modelIds, CancellationToken ct = default);
+
+    /// <summary>
     /// Models with a valid local file, within scope and in the library — by default only the
     /// LoRA-family ones that carry no Civitai id yet AND are not user-edited (a bulk run must
     /// never hand a hand-edited model to the appliers). No retry filtering — the caller applies

@@ -112,30 +112,38 @@ public sealed class SyncStateInitializer
     }
 
     /// <summary>Derives and saves one batch, returning how many rows it added.</summary>
+    /// <remarks>
+    /// One projected query for the whole batch (R8). It used to be one <c>GetByIdWithIncludesAsync</c>
+    /// per model — five split queries each, dragging every image's <c>ThumbnailData</c> BLOB along —
+    /// to answer four booleans about it. Over a real library that is hundreds of megabytes of JPEG
+    /// read on the first launch after the upgrade, for nothing.
+    /// </remarks>
     private async Task<int> DeriveBatchAsync(IUnitOfWork uow, IReadOnlyList<int> batch, CancellationToken ct)
     {
         var now = DateTimeOffset.UtcNow;
-        var derivedInBatch = 0;
 
-        foreach (var id in batch)
+        var inputs = await uow.SyncStates.GetDerivationInputsAsync(batch, ct);
+
+        // Absent from the projection = deleted between the id query and now, so there is nothing to
+        // derive from. Logged as a set rather than per model: a bulk delete would otherwise write
+        // one debug line per row.
+        if (inputs.Count != batch.Count)
         {
-            var model = await uow.Models.GetByIdWithIncludesAsync(id, ct);
-            if (model is null)
-            {
-                // Deleted between the id query and now — nothing to derive from.
-                _logger?.Debug(LogCategory.FileSystem, LogSource,
-                    $"Skipped sync-state derivation for model {id}: the model no longer exists");
-                continue;
-            }
-
-            await uow.SyncStates.AddAsync(SyncStateDeriver.Derive(model, now), ct);
-            derivedInBatch++;
+            var missing = batch.Except(inputs.Select(i => i.ModelId)).ToList();
+            _logger?.Debug(LogCategory.FileSystem, LogSource,
+                $"Skipped sync-state derivation for {missing.Count} model(s) that no longer exist",
+                string.Join(", ", missing));
         }
 
-        if (derivedInBatch == 0) return 0;
+        foreach (var input in inputs)
+        {
+            await uow.SyncStates.AddAsync(SyncStateDeriver.Derive(input, now), ct);
+        }
+
+        if (inputs.Count == 0) return 0;
 
         await uow.SaveChangesAsync(ct);
-        return derivedInBatch;
+        return inputs.Count;
     }
 
     /// <summary>

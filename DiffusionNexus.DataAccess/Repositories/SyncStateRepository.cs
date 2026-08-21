@@ -47,6 +47,34 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
         return created;
     }
 
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<SyncDerivationInput>> GetDerivationInputsAsync(
+        IReadOnlyList<int> modelIds, CancellationToken ct = default)
+    {
+        if (modelIds.Count == 0) return [];
+
+        // A projection, not an Include: EXISTS subqueries for the two "has any" questions and two
+        // scalars, so the images' ThumbnailData BLOBs never leave the database. That is the whole
+        // point of the method — see the interface remarks.
+        return await Context.Models.AsNoTracking()
+            .Where(m => modelIds.Contains(m.Id))
+            .Select(m => new SyncDerivationInput(
+                m.Id,
+                m.CivitaiId,
+                m.LastSyncedAt,
+                m.Source,
+                m.Tags.Any(),
+                m.Versions.Any(v => v.Images.Any()),
+                // The in-memory twin is SyncStateDeriver.IsPlaceholder. Trim() is SQLite's, which
+                // strips spaces rather than every Unicode space character, so a base model written
+                // as a lone tab would count as real here and as a placeholder there. Nothing writes
+                // one, and the alternative is hauling the strings back to compare them in memory.
+                m.Versions.Any(v => v.BaseModelRaw != null
+                                    && v.BaseModelRaw.Trim() != ""
+                                    && v.BaseModelRaw != "???")))
+            .ToListAsync(ct).ConfigureAwait(false);
+    }
+
     /// <summary>Same set as <c>ModelFileSyncService.IsLoraFamily</c>.</summary>
     private static readonly ModelType[] LoraFamily = [ModelType.LORA, ModelType.LoCon, ModelType.DoRA, ModelType.Unknown];
 

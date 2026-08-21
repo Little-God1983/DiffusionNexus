@@ -8,6 +8,7 @@ using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace DiffusionNexus.Tests.Sync.DataAccess;
 
@@ -661,6 +662,130 @@ public sealed class SyncStateRepositoryTests : IDisposable
             .Select(c => c.Name).Should().BeEquivalentTo(new[] { "umlaut-tags" });
         (await uow.SyncStates.SelectImageCandidatesAsync(SyncScope.Library, [root]))
             .Select(c => c.Name).Should().BeEquivalentTo(new[] { "umlaut-tags" });
+    }
+
+    // ------------------------------------------------- R8: derivation inputs
+
+    /// <summary>
+    /// R8. The backfill asked for the whole model graph to answer four booleans about it, which
+    /// meant five split queries per model and every image's <c>ThumbnailData</c> BLOB — 200 models
+    /// to a batch. The projection answers the same questions and must not touch the BLOB column,
+    /// which is asserted against the SQL the provider actually emitted.
+    /// </summary>
+    [Fact]
+    public async Task GetDerivationInputs_AnswersHasImagesWithoutReadingThumbnailBlobs()
+    {
+        var sql = new List<string>();
+
+        using var connection = new SqliteConnection("DataSource=:memory:");
+        connection.Open();
+
+        var services = new ServiceCollection();
+        services.AddDataAccessLayer(options => options
+            .UseSqlite(connection)
+            .LogTo(sql.Add, [DbLoggerCategory.Database.Command.Name], LogLevel.Information));
+
+        using var provider = services.BuildServiceProvider();
+
+        using (var seedScope = provider.CreateScope())
+        {
+            seedScope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>().Database.EnsureCreated();
+
+            var uow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = NewLocalModel("heavy", @"C:\m\heavy.safetensors");
+            model.Versions.First().Images.Add(new ModelImage
+            {
+                Url = "https://x/y.jpeg",
+                // A megabyte of it, so a projection that dragged it along would be unmistakable.
+                ThumbnailData = new byte[1024 * 1024],
+            });
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+        }
+
+        int modelId;
+        using (var idScope = provider.CreateScope())
+        {
+            var uow = idScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            modelId = (await uow.SyncStates.GetModelIdsWithoutStateAsync()).Single();
+        }
+
+        sql.Clear();
+
+        using (var scope = provider.CreateScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+            var inputs = await uow.SyncStates.GetDerivationInputsAsync([modelId]);
+
+            var input = inputs.Should().ContainSingle().Subject;
+            input.ModelId.Should().Be(modelId);
+            input.HasImages.Should().BeTrue();
+            input.HasTags.Should().BeFalse();
+            input.HasRealBaseModel.Should().BeFalse("the seed's base model is the \"???\" placeholder");
+        }
+
+        // The whole point: the answer arrived without the column that holds the megabyte.
+        string.Join("\n", sql).Should().NotContain("ThumbnailData");
+    }
+
+    [Fact]
+    public async Task GetDerivationInputs_ProjectsTheFactsTheDeriverAsksFor()
+    {
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var matched = NewLocalModel("matched", @"C:\m\matched.safetensors",
+            civitaiId: 5, withTag: true, withImage: true);
+        matched.LastSyncedAt = Verified;
+
+        var sidecar = NewLocalModel("sidecar", @"C:\m\sidecar.safetensors");
+        sidecar.LastSyncedAt = Verified;
+        sidecar.Versions.First().BaseModelRaw = "Pony";
+
+        var untouched = NewLocalModel("untouched", @"C:\m\untouched.safetensors");
+
+        foreach (var m in new[] { matched, sidecar, untouched })
+            await uow.Models.AddAsync(m);
+        await uow.SaveChangesAsync();
+
+        var inputs = await uow.SyncStates.GetDerivationInputsAsync(
+            [matched.Id, sidecar.Id, untouched.Id]);
+
+        var matchedInput = inputs.Single(i => i.ModelId == matched.Id);
+        matchedInput.CivitaiId.Should().Be(5);
+        matchedInput.LastSyncedAt.Should().Be(Verified);
+        matchedInput.Source.Should().Be(DataSource.LocalFile);
+        matchedInput.HasTags.Should().BeTrue();
+        matchedInput.HasImages.Should().BeTrue();
+
+        var sidecarInput = inputs.Single(i => i.ModelId == sidecar.Id);
+        sidecarInput.CivitaiId.Should().BeNull();
+        sidecarInput.HasRealBaseModel.Should().BeTrue();
+        sidecarInput.HasTags.Should().BeFalse();
+        sidecarInput.HasImages.Should().BeFalse();
+
+        var untouchedInput = inputs.Single(i => i.ModelId == untouched.Id);
+        untouchedInput.LastSyncedAt.Should().BeNull();
+        untouchedInput.HasRealBaseModel.Should().BeFalse();
+    }
+
+    /// <summary>A model deleted since the id query is simply absent — the caller derives nothing for it.</summary>
+    [Fact]
+    public async Task GetDerivationInputs_SkipsIdsThatNoLongerExist()
+    {
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var alive = NewLocalModel("alive", @"C:\m\alive.safetensors");
+        await uow.Models.AddAsync(alive);
+        await uow.SaveChangesAsync();
+
+        var inputs = await uow.SyncStates.GetDerivationInputsAsync([alive.Id, alive.Id + 9999]);
+
+        inputs.Select(i => i.ModelId).Should().Equal(alive.Id);
+
+        (await uow.SyncStates.GetDerivationInputsAsync([])).Should().BeEmpty();
     }
 
     public void Dispose()

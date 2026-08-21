@@ -1,5 +1,6 @@
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Services.Sync;
 
 namespace DiffusionNexus.Service.Services.Sync;
 
@@ -41,19 +42,18 @@ namespace DiffusionNexus.Service.Services.Sync;
 public static class SyncStateDeriver
 {
     /// <summary>
-    /// Derives the state row for <paramref name="model"/>. The model is expected to be loaded
-    /// with its Versions (and their Images) and Tags — see <c>GetByIdWithIncludesAsync</c>.
+    /// Derives the state row from the four facts the table above actually asks about.
     /// </summary>
-    /// <param name="model">The legacy model.</param>
+    /// <param name="input">The projected facts — see <see cref="SyncDerivationInput"/>.</param>
     /// <param name="now">The derivation timestamp; also the row's <c>UpdatedAt</c>.</param>
-    public static ModelSyncState Derive(Model model, DateTimeOffset now)
+    public static ModelSyncState Derive(SyncDerivationInput input, DateTimeOffset now)
     {
-        ArgumentNullException.ThrowIfNull(model);
+        ArgumentNullException.ThrowIfNull(input);
 
-        var stamp = model.LastSyncedAt ?? now;
-        var state = new ModelSyncState { ModelId = model.Id, UpdatedAt = now };
+        var stamp = input.LastSyncedAt ?? now;
+        var state = new ModelSyncState { ModelId = input.ModelId, UpdatedAt = now };
 
-        if (model.CivitaiId is not null)
+        if (input.CivitaiId is not null)
         {
             state.MetadataOutcome = SyncOutcome.Matched;
             state.MetadataCheckedAt = stamp;
@@ -61,25 +61,53 @@ public static class SyncStateDeriver
             // A matched model with no tags / no images keeps those columns null on purpose:
             // it is genuinely unknown whether they were ever fetched, so the tag and image
             // steps get to ask once and stamp the answer.
-            state.TagsCheckedAt = model.Tags.Count > 0 ? stamp : null;
-            state.ImagesCheckedAt = model.Versions.Any(v => v.Images.Count > 0) ? stamp : null;
+            state.TagsCheckedAt = input.HasTags ? stamp : null;
+            state.ImagesCheckedAt = input.HasImages ? stamp : null;
             return state;
         }
 
         // Never synced and never matched: nothing has ever been checked (SyncOutcome.None).
-        if (model.LastSyncedAt is null) return state;
+        if (input.LastSyncedAt is null) return state;
 
         // `now`, not LastSyncedAt — see the anti-herd note on the class doc.
         state.MetadataCheckedAt = now;
 
         // A local file that came out of a sync with a real base model was identified by a
         // sidecar; anything else was looked at and stayed unidentified.
-        var hasRealBaseModel = model.Versions.Any(v => !IsPlaceholder(v.BaseModelRaw));
-        state.MetadataOutcome = model.Source == DataSource.LocalFile && hasRealBaseModel
+        state.MetadataOutcome = input.Source == DataSource.LocalFile && input.HasRealBaseModel
             ? SyncOutcome.Sidecar
             : SyncOutcome.NotIdentified;
 
         return state;
+    }
+
+    /// <summary>
+    /// The same derivation for a caller that already holds the loaded graph — with its Versions
+    /// (and their Images) and Tags, as <c>GetByIdWithIncludesAsync</c> returns it.
+    /// </summary>
+    /// <remarks>
+    /// An adapter, not a second implementation: it answers the four questions off the entity and
+    /// hands them to the overload above, so the two paths cannot drift. The backfill deliberately
+    /// does <i>not</i> use it — loading a graph to answer four booleans is what R8 removed — but it
+    /// is what pins the derivation table in the tests, where an entity is the clearer fixture, and
+    /// it is the definition the repository's projection has to match.
+    /// </remarks>
+    /// <param name="model">The legacy model.</param>
+    /// <param name="now">The derivation timestamp; also the row's <c>UpdatedAt</c>.</param>
+    public static ModelSyncState Derive(Model model, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+
+        return Derive(
+            new SyncDerivationInput(
+                model.Id,
+                model.CivitaiId,
+                model.LastSyncedAt,
+                model.Source,
+                HasTags: model.Tags.Count > 0,
+                HasImages: model.Versions.Any(v => v.Images.Count > 0),
+                HasRealBaseModel: model.Versions.Any(v => !IsPlaceholder(v.BaseModelRaw))),
+            now);
     }
 
     /// <summary>
