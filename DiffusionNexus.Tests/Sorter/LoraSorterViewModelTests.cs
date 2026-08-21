@@ -188,6 +188,38 @@ public sealed class LoraSorterViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task AFailedDbKnownFileIsSkippedOnceAndNeverReResolvedAsUnknown()
+    {
+        // The path must be registered as DB-known BEFORE the per-file reads that can throw
+        // (size, sidecar probing). Registered afterwards, a .safetensors held open by a running
+        // ComfyUI was skipped AND then re-enumerated as unknown: a full-file SHA256 plus a
+        // serialized Civitai round-trip on the same file, "2 file(s) skipped" reported for one
+        // file, and — if the second attempt succeeded — a candidate built from API metadata
+        // instead of its own DB row. The existence probe stands in for that per-file read: it
+        // fails for this one path only, and the file itself is really there to be enumerated.
+        var locked = WriteLora(@"flat\locked.safetensors");
+        var good = WriteLora(@"flat\good.safetensors");
+        var resolverCalls = new List<string>();
+        var vm = CreateVm(
+            cached: [Installed(locked, "SDXL 1.0", "character"), Installed(good, "SDXL 1.0", "character")],
+            fileExistsOnDisk: p => string.Equals(p, locked, StringComparison.OrdinalIgnoreCase)
+                ? throw new IOException("The process cannot access the file because it is being used by another process.")
+                : File.Exists(p),
+            resolverHash: p =>
+            {
+                resolverCalls.Add(p);
+                return "hash";
+            });
+
+        await vm.InitializeAsync();
+
+        vm.StatusMessage.Should().Contain("1 file(s) skipped");
+        vm.TransferCount.Should().Be(1);
+        resolverCalls.Should().NotContain(locked);
+        FlattenNames(vm.PreviewRoots).Should().NotContain("locked.safetensors");
+    }
+
+    [Fact]
     public async Task WhitespaceOnlyLocalPathIsSkippedNotFatalAndIsReported()
     {
         // Path.GetFullPath (called inside the IsWithin boundary check) throws ArgumentException

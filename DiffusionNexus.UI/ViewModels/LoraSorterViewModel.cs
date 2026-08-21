@@ -651,6 +651,19 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             try
             {
                 if (string.IsNullOrEmpty(path)) continue;
+
+                // FIRST, before anything that can throw. This marks the path as "the DB loop has
+                // taken responsibility for it", and the unknown-file walk below skips it on that
+                // basis. Registering it only after the size/sidecar work meant a DB-known
+                // .safetensors that failed to read — one held open by a running ComfyUI — was
+                // counted as skipped AND then re-enumerated as unknown: a full-file SHA256 plus a
+                // serialized Civitai round-trip on the same file, "2 file(s) skipped" reported for
+                // one file if it failed again, and if it succeeded, a candidate built from API
+                // metadata instead of its own DB row (losing UserCategory, the DB base model and
+                // the stored hash). Registering a path that then turns out to be outside the source
+                // or absent costs nothing: neither is ever enumerated.
+                knownPaths.Add(Path.GetFullPath(path));
+
                 // Boundary-aware: a bare StartsWith would sweep sibling folders that merely share a
                 // name prefix (e.g. source "E:\Loras" matching "E:\Loras_backup\x.safetensors").
                 // Path.GetFullPath (inside IsWithin) throws ArgumentException for a whitespace-only
@@ -663,7 +676,6 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 var sizeBytes = f.File.FileSizeBytes ?? new FileInfo(path).Length;
                 var candidate = new SortCandidate(path, f.Version.BaseModelRaw, category,
                     f.Version.CivitaiId, f.File.HashSHA256, sizeBytes, SidecarLocator.FindSidecars(path));
-                knownPaths.Add(Path.GetFullPath(path));
                 candidates.Add(candidate);
                 knownAdded++;
             }
