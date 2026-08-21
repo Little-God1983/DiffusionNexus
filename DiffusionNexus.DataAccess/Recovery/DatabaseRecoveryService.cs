@@ -274,6 +274,7 @@ public sealed class DatabaseRecoveryService
             RepairModelsTableColumns(dbContext, connection);
             RepairModelImagesTableColumns(dbContext, connection);
             EnsureModelSyncStatesTable(dbContext);
+            NormalizeModelFileHashCasing(dbContext, connection);
         }
         catch (Exception ex)
         {
@@ -380,6 +381,38 @@ public sealed class DatabaseRecoveryService
         catch (Exception ex)
         {
             _log.Error(ex, "CheckAndRepairSchema: Failed to ensure ModelSyncStates table");
+        }
+    }
+
+    /// <summary>
+    /// Re-runs the hash-casing normalization from migration
+    /// 20260821112114_AddModelSyncStateAndThumbnailAttempts. The migration's <c>Up()</c> body never
+    /// executes on a database that reached <see cref="MarkPendingMigrationsAsApplied"/> — the row is
+    /// stamped in <c>__EFMigrationsHistory</c> without the SQL running — which would leave
+    /// <c>ModelFiles.HashSHA256</c> mixed-case forever and break SQL equality against the uppercase
+    /// hashes the downloader writes. Idempotent: the WHERE clause makes an already-normalized
+    /// database a zero-row write.
+    /// </summary>
+    private void NormalizeModelFileHashCasing(DiffusionNexusCoreDbContext dbContext, DbConnection connection)
+    {
+        if (ReadColumnNames(connection, "ModelFiles").Count == 0)
+        {
+            // Table doesn't exist yet — initial migration will create it.
+            return;
+        }
+
+        try
+        {
+            var updated = dbContext.Database.ExecuteSqlRaw(
+                "UPDATE ModelFiles SET HashSHA256 = upper(HashSHA256) WHERE HashSHA256 IS NOT NULL AND HashSHA256 <> upper(HashSHA256);");
+            if (updated > 0)
+            {
+                _log.Warning($"CheckAndRepairSchema: Normalized {updated} lowercase ModelFiles.HashSHA256 value(s) to uppercase");
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Error(ex, "CheckAndRepairSchema: Failed to normalize ModelFiles.HashSHA256 casing");
         }
     }
 

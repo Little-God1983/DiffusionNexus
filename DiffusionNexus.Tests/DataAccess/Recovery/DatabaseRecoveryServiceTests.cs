@@ -95,6 +95,27 @@ public sealed class DatabaseRecoveryServiceTests : IDisposable
         cmd.ExecuteNonQuery();
     }
 
+    private string? Scalar(string sql)
+    {
+        using var conn = new SqliteConnection(ConnString);
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        return cmd.ExecuteScalar() as string;
+    }
+
+    /// <summary>Reads the single foreign key of <paramref name="table"/> as (referenced table, ON DELETE action).</summary>
+    private (string Table, string OnDelete) ForeignKey(string table)
+    {
+        using var conn = new SqliteConnection(ConnString);
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"PRAGMA foreign_key_list('{table}');";
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read(), $"{table} has no foreign key");
+        return (reader["table"].ToString()!, reader["on_delete"].ToString()!);
+    }
+
     private string? JournalMode()
     {
         using var conn = new SqliteConnection(ConnString);
@@ -195,6 +216,102 @@ public sealed class DatabaseRecoveryServiceTests : IDisposable
 
         Assert.True(beforeModels.SetEquals(Columns("Models")));
         Assert.True(beforeAppSettings.SetEquals(Columns("AppSettings")));
+    }
+
+    // ---- Scenario 2b: sync-schema self-heal (#521 WP1) ---------------------
+
+    [Fact]
+    public void CheckAndRepairSchema_ReAddsMissingModelImagesThumbnailColumns()
+    {
+        MigrateFresh();
+        // Simulate AddModelSyncStateAndThumbnailAttempts stamped as applied without its ALTERs running.
+        Exec("ALTER TABLE ModelImages DROP COLUMN ThumbnailAttemptedAt;");
+        Exec("ALTER TABLE ModelImages DROP COLUMN ThumbnailFailure;");
+        var corrupted = Columns("ModelImages");
+        Assert.DoesNotContain("ThumbnailAttemptedAt", corrupted);
+        Assert.DoesNotContain("ThumbnailFailure", corrupted);
+
+        var logger = new CapturingRecoveryLogger();
+        var svc = new DatabaseRecoveryService(logger);
+        using (var ctx = NewContext()) svc.CheckAndRepairSchema(ctx);
+
+        var repaired = Columns("ModelImages");
+        Assert.Contains("ThumbnailAttemptedAt", repaired);
+        Assert.Contains("ThumbnailFailure", repaired);
+        Assert.Contains(logger.Warnings, w => w.Contains("ThumbnailAttemptedAt"));
+        Assert.Empty(logger.Errors);
+    }
+
+    [Fact]
+    public void CheckAndRepairSchema_RecreatesDroppedModelSyncStatesTable_WithCascadeToModels()
+    {
+        MigrateFresh();
+        var expectedColumns = Columns("ModelSyncStates");
+        Assert.NotEmpty(expectedColumns);
+
+        Exec("DROP TABLE ModelSyncStates;");
+        Assert.Empty(Columns("ModelSyncStates"));
+
+        var logger = new CapturingRecoveryLogger();
+        var svc = new DatabaseRecoveryService(logger);
+        using (var ctx = NewContext()) svc.CheckAndRepairSchema(ctx);
+
+        // Every column the migration creates is back.
+        Assert.True(expectedColumns.SetEquals(Columns("ModelSyncStates")));
+        Assert.Empty(logger.Errors);
+
+        // …and so is the cascading FK, so deleting a model still takes its state row with it.
+        var (referencedTable, onDelete) = ForeignKey("ModelSyncStates");
+        Assert.Equal("Models", referencedTable);
+        Assert.Equal("CASCADE", onDelete);
+
+        using (var ctx = NewContext())
+        {
+            ctx.Models.Add(new Model { Name = "cascade-probe", SyncState = new ModelSyncState() });
+            ctx.SaveChanges();
+        }
+        using (var ctx = NewContext())
+        {
+            ctx.Models.Remove(ctx.Models.Single());
+            ctx.SaveChanges();
+        }
+        using (var ctx = NewContext())
+        {
+            Assert.Empty(ctx.ModelSyncStates);
+        }
+    }
+
+    [Fact]
+    public void CheckAndRepairSchema_UppercasesLowercaseModelFileHashes()
+    {
+        MigrateFresh();
+        Exec("INSERT INTO Models (Id, Name, Type, Mode, Source, IsNsfw, IsPoi, AllowNoCredit, AllowCommercialUse, AllowDerivatives, AllowDifferentLicense, CreatedAt, IsUserEdited, TotalVersionCount) " +
+             "VALUES (1, 'legacy', 'LORA', 'Available', 'LocalFile', 0, 0, 0, 'None', 0, 0, '2026-01-01T00:00:00+00:00', 0, 0);");
+        Exec("INSERT INTO ModelVersions (Id, ModelId, Name, BaseModel, EarlyAccessDays, CreatedAt, IsUserEdited, DownloadCount, RatingCount, Rating, ThumbsUpCount, ThumbsDownCount) " +
+             "VALUES (1, 1, 'v1', 'Unknown', 0, '2026-01-01T00:00:00+00:00', 0, 0, 0, 0, 0, 0);");
+        Exec("INSERT INTO ModelFiles (Id, ModelVersionId, FileName, SizeKB, FileType, IsPrimary, Format, Precision, SizeType, PickleScanResult, VirusScanResult, HashSHA256, LocalPath, IsLocalFileValid) " +
+             "VALUES (1, 1, 'a.safetensors', 1, 'Model', 1, 'SafeTensor', 'Unknown', 'Unknown', 'Pending', 'Pending', 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789', 'C:\\l\\a.safetensors', 1);");
+
+        // A second file that is already uppercase must be left byte-identical.
+        Exec("INSERT INTO ModelFiles (Id, ModelVersionId, FileName, SizeKB, FileType, IsPrimary, Format, Precision, SizeType, PickleScanResult, VirusScanResult, HashSHA256, LocalPath, IsLocalFileValid) " +
+             "VALUES (2, 1, 'b.safetensors', 1, 'Model', 0, 'SafeTensor', 'Unknown', 'Unknown', 'Pending', 'Pending', 'FEDCBA9876543210FEDCBA9876543210FEDCBA9876543210FEDCBA9876543210', 'C:\\l\\b.safetensors', 1);");
+
+        var logger = new CapturingRecoveryLogger();
+        var svc = new DatabaseRecoveryService(logger);
+        using (var ctx = NewContext()) svc.CheckAndRepairSchema(ctx);
+
+        Assert.Equal(
+            "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789",
+            Scalar("SELECT HashSHA256 FROM ModelFiles WHERE Id = 1;"));
+        Assert.Equal(
+            "FEDCBA9876543210FEDCBA9876543210FEDCBA9876543210FEDCBA9876543210",
+            Scalar("SELECT HashSHA256 FROM ModelFiles WHERE Id = 2;"));
+        Assert.Empty(logger.Errors);
+
+        // Idempotent: a second pass finds nothing left to normalize.
+        var second = new CapturingRecoveryLogger();
+        using (var ctx = NewContext()) new DatabaseRecoveryService(second).CheckAndRepairSchema(ctx);
+        Assert.DoesNotContain(second.Warnings, w => w.Contains("HashSHA256"));
     }
 
     // ---- Scenario 3: pending migrations but schema already correct ---------
