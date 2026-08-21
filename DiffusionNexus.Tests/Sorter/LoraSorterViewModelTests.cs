@@ -741,6 +741,72 @@ public sealed class LoraSorterViewModelTests : IDisposable
         real.Should().NotBeNull();
     }
 
+    [Fact]
+    public async Task AnInaccessibleSubfolderStillYieldsAPartialPreview()
+    {
+        // A permission-denied subtree must cost that subtree, not the preview. The predecessor of
+        // this test never actually created an inaccessible folder, so the guarantee rested purely
+        // on EnumerationOptions.IgnoreInaccessible with no local coverage. This one denies the
+        // current user read access for real, via icacls.
+        var reachable = WriteLora(@"open\reachable.safetensors");
+        var denied = WriteLora(@"locked\secret.safetensors");
+        var deniedDir = Path.GetDirectoryName(denied)!;
+        var user = Environment.UserName;
+
+        if (!OperatingSystem.IsWindows())
+            return; // icacls is Windows-only; the walk's behaviour is asserted on the CI platform.
+
+        if (!RunIcacls($"\"{deniedDir}\" /deny \"{user}:(OI)(CI)(RX)\"")
+            || !IsInaccessible(deniedDir))
+        {
+            // Elevated sessions keep access through the Administrators ACE, so the deny cannot be
+            // proven to bite here. Skipping beats asserting something the environment did not do.
+            return;
+        }
+
+        try
+        {
+            var vm = CreateVm(cached: []);
+
+            await vm.InitializeAsync();
+
+            vm.TransferCount.Should().Be(1);
+            FlattenNames(vm.PreviewRoots).Should().Contain("reachable.safetensors");
+            FlattenNames(vm.PreviewRoots).Should().NotContain("secret.safetensors");
+            vm.StatusMessage.Should().NotContain("Preview failed");
+            reachable.Should().NotBeNull();
+        }
+        finally
+        {
+            RunIcacls($"\"{deniedDir}\" /remove:d \"{user}\"");
+        }
+    }
+
+    private static bool IsInaccessible(string directory)
+    {
+        try
+        {
+            Directory.EnumerateFiles(directory).ToList();
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return true;
+        }
+    }
+
+    private static bool RunIcacls(string arguments)
+    {
+        using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+            "icacls.exe", arguments)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        });
+        return process is not null && process.WaitForExit(30_000) && process.ExitCode == 0;
+    }
+
     private static void CreateJunction(string link, string target)
     {
         using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
