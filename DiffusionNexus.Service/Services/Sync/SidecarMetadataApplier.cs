@@ -272,10 +272,11 @@ public sealed class SidecarMetadataApplier
                 dirty = true;
             }
 
-            // Base model
-            if (root.TryGetProperty("baseModel", out var baseModel) && baseModel.GetString() is { } baseModelStr)
+            // Base model — authored, so it hangs off the version guard like the name below it.
+            if (CanWriteVersionText(dbVersion)
+                && root.TryGetProperty("baseModel", out var baseModel) && baseModel.GetString() is { } baseModelStr)
             {
-                dbVersion.BaseModelRaw = baseModelStr;
+                WriteBaseModel(dbVersion, baseModelStr);
                 dirty = true;
             }
 
@@ -396,9 +397,10 @@ public sealed class SidecarMetadataApplier
                     dirty = true;
                 }
 
-                if (versionElement.TryGetProperty("baseModel", out var baseModel) && baseModel.GetString() is { } baseModelStr)
+                if (CanWriteVersionText(dbVersion)
+                    && versionElement.TryGetProperty("baseModel", out var baseModel) && baseModel.GetString() is { } baseModelStr)
                 {
-                    dbVersion.BaseModelRaw = baseModelStr;
+                    WriteBaseModel(dbVersion, baseModelStr);
                     dirty = true;
                 }
 
@@ -462,17 +464,19 @@ public sealed class SidecarMetadataApplier
 
         if (dbVersion is not null)
         {
-            if (root.TryGetProperty("baseModel", out var baseModel) && baseModel.GetString() is { } baseModelStr)
+            if (CanWriteVersionText(dbVersion)
+                && root.TryGetProperty("baseModel", out var baseModel) && baseModel.GetString() is { } baseModelStr)
             {
-                dbVersion.BaseModelRaw = baseModelStr;
+                WriteBaseModel(dbVersion, baseModelStr);
                 dirty = true;
             }
 
             // Fallback: "sd version" for very old sidecar format
-            if (dbVersion.BaseModelRaw is null or "???"
+            if (CanWriteVersionText(dbVersion)
+                && dbVersion.BaseModelRaw is null or "???"
                 && root.TryGetProperty("sd version", out var sdVer) && sdVer.GetString() is { } sdVerStr)
             {
-                dbVersion.BaseModelRaw = sdVerStr;
+                WriteBaseModel(dbVersion, sdVerStr);
                 dirty = true;
             }
 
@@ -495,11 +499,23 @@ public sealed class SidecarMetadataApplier
     private static bool CanWriteModelText(Model dbModel) => !dbModel.IsUserEdited;
 
     /// <summary>
-    /// The same rule for a version's authored text — its name and trigger words. Version edits are
-    /// tracked separately from the model's, so a user who renamed one version keeps the rest of the
-    /// model syncing normally.
+    /// The same rule for a version's authored answers — its name, trigger words and base model.
+    /// Version edits are tracked separately from the model's, so a user who renamed one version
+    /// keeps the rest of the model syncing normally.
     /// </summary>
     private static bool CanWriteVersionText(ModelVersion dbVersion) => !dbVersion.IsUserEdited;
+
+    /// <summary>
+    /// Writes both spellings of the base model — the raw upstream string and the
+    /// <see cref="BaseModelType"/> the viewer's filter reads — using the same parser the detail
+    /// view's editor uses. Writing only the raw one left the enum reporting the previous base
+    /// model forever. Callers must check <see cref="CanWriteVersionText"/> first.
+    /// </summary>
+    private static void WriteBaseModel(ModelVersion dbVersion, string baseModelRaw)
+    {
+        dbVersion.BaseModelRaw = baseModelRaw;
+        dbVersion.BaseModel = BaseModelTypeExtensions.ParseCivitai(baseModelRaw);
+    }
 
     /// <summary>
     /// Replaces a version's trigger words with the sidecar's <c>trainedWords</c>, returning whether

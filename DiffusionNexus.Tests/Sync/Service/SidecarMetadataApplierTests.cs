@@ -265,10 +265,83 @@ public sealed class SidecarMetadataApplierTests : IDisposable
         version.TriggerWords.Select(t => t.Word).Should().BeEquivalentTo(
             new[] { "mytrigger" }, "the user's trigger words are not the sidecar's to replace");
 
+        // R1: the base model is authored too — the detail view writes it and stamps IsUserEdited.
+        version.BaseModelRaw.Should().Be("???", "the user's base model is not the sidecar's to replace");
+        version.BaseModel.Should().Be(BaseModelType.Unknown);
+
         // Facts the user did not author are still applied.
-        version.BaseModelRaw.Should().Be("Pony");
         saved.IsNsfw.Should().BeTrue();
         if (expectIds) saved.CivitaiModelPageId.Should().Be(77);
+    }
+
+    /// <summary>
+    /// R1, sidecar twin of <c>CivitaiMetadataApplierTests.ApplyAsync_PreservesUserEditedBaseModel</c>:
+    /// a <c>.civitai.info</c> dropped next to a version the user set the base model on must not
+    /// overwrite that choice — while the ids it carries still land.
+    /// </summary>
+    [Fact]
+    public async Task ApplyAsync_PreservesUserEditedBaseModel_CivitaiInfoFormat()
+    {
+        var modelPath = NewModelFile("edited-base.safetensors");
+
+        int modelId;
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = NewLocalModel("my name", modelPath, versionUserEdited: true);
+            var version = model.Versions.First();
+            version.BaseModelRaw = "Pony";
+            version.BaseModel = BaseModelType.Pony;
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+        }
+
+        await File.WriteAllTextAsync(Path.Combine(_tempDir.FullName, "edited-base.civitai.info"), """
+        {"id":700,"modelId":77,"name":"civitai v1","baseModel":"SDXL 1.0","model":{"name":"Civitai Name","nsfw":true}}
+        """);
+
+        (await ApplyAsync(modelId, modelPath)).Applied.Should().BeTrue();
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+            var version = saved!.Versions.Single();
+
+            version.BaseModelRaw.Should().Be("Pony");
+            version.BaseModel.Should().Be(BaseModelType.Pony);
+
+            // The ids are not authored, so they still land.
+            saved.CivitaiModelPageId.Should().Be(77);
+            version.CivitaiId.Should().Be(700);
+        }
+    }
+
+    /// <summary>
+    /// R1. The enum travels with the raw string on every write, so the viewer's base-model filter
+    /// (which reads the enum) agrees with the label the detail view shows.
+    /// </summary>
+    [Fact]
+    public async Task ApplyAsync_WritesBaseModelEnumAlongsideRaw_CivitaiInfoFormat()
+    {
+        var modelPath = NewModelFile("base-enum.safetensors");
+        var modelId = await SeedAsync(modelPath);
+
+        await File.WriteAllTextAsync(Path.Combine(_tempDir.FullName, "base-enum.civitai.info"), """
+        {"id":700,"modelId":77,"baseModel":"SDXL 1.0"}
+        """);
+
+        (await ApplyAsync(modelId, modelPath)).Applied.Should().BeTrue();
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var version = (await uow.Models.GetByIdWithIncludesAsync(modelId))!.Versions.Single();
+
+            version.BaseModelRaw.Should().Be("SDXL 1.0");
+            version.BaseModel.Should().Be(BaseModelType.SDXL10);
+        }
     }
 
     [Fact]

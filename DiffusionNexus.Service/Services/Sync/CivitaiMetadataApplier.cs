@@ -146,18 +146,26 @@ public sealed class CivitaiMetadataApplier
                     "already assigned to another version");
             }
 
-            // Name, description and trigger words are the three fields a user edits on a version,
-            // so they all hang off the same guard — the ids, base model, download URL, stats and
-            // images below are facts about the upstream version, not text anyone authored here.
+            // Name, description, trigger words and the base model are the four fields a user edits
+            // on a version, so they all hang off the same guard — the ids, download URL, stats and
+            // images below are facts about the upstream version, not answers anyone authored here.
+            // The base model belongs on this side of the line because the detail view lets the user
+            // pick it (ModelDetailViewModel.Editing writes BaseModelRaw + BaseModel and stamps
+            // IsUserEdited); refreshing over it silently undid that choice.
             var preserveVersionEdits = !CanWriteVersionText(dbVersion);
 
             if (!preserveVersionEdits)
             {
                 dbVersion.Name = bestCivitaiVersion.Name;
                 dbVersion.Description = bestCivitaiVersion.Description;
+
+                // Raw string and enum are two spellings of one answer and the editor writes both;
+                // writing only the raw one left the enum — which the viewer's base-model filter
+                // reads — reporting the previous base model forever.
+                dbVersion.BaseModelRaw = bestCivitaiVersion.BaseModel;
+                dbVersion.BaseModel = BaseModelTypeExtensions.ParseCivitai(bestCivitaiVersion.BaseModel);
             }
 
-            dbVersion.BaseModelRaw = bestCivitaiVersion.BaseModel;
             dbVersion.DownloadUrl = bestCivitaiVersion.DownloadUrl;
             dbVersion.DownloadCount = bestCivitaiVersion.Stats?.DownloadCount ?? 0;
             dbVersion.PublishedAt = bestCivitaiVersion.PublishedAt;
@@ -303,9 +311,9 @@ public sealed class CivitaiMetadataApplier
     private static bool CanWriteModelText(Model dbModel) => !dbModel.IsUserEdited;
 
     /// <summary>
-    /// The same rule for a version's authored text — name, description, trigger words.
-    /// Version edits are tracked separately from the model's, so a user who renamed one version
-    /// keeps the rest of the model syncing normally.
+    /// The same rule for a version's authored answers — name, description, trigger words and the
+    /// base model. Version edits are tracked separately from the model's, so a user who renamed one
+    /// version keeps the rest of the model syncing normally.
     /// </summary>
     private static bool CanWriteVersionText(ModelVersion dbVersion) => !dbVersion.IsUserEdited;
 

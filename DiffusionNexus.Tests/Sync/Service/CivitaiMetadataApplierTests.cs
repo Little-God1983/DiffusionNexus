@@ -246,8 +246,10 @@ public sealed class CivitaiMetadataApplierTests : IDisposable
             // Non-user-authored facts are still applied.
             saved.CivitaiId.Should().Be(77);
             version.CivitaiId.Should().Be(700);
-            version.BaseModelRaw.Should().Be("SDXL 1.0");
             version.Images.Should().HaveCount(1);
+
+            // The base model is authored too (the detail view writes it and stamps IsUserEdited).
+            version.BaseModelRaw.Should().Be("???");
         }
     }
 
@@ -291,9 +293,93 @@ public sealed class CivitaiMetadataApplierTests : IDisposable
 
             // Facts the user did not author are still applied.
             version.CivitaiId.Should().Be(700);
-            version.BaseModelRaw.Should().Be("SDXL 1.0");
             version.DownloadUrl.Should().Be("https://civitai.com/api/download/models/700");
             version.Images.Should().HaveCount(1);
+        }
+    }
+
+    /// <summary>
+    /// R1. The base model is not a fact we may refresh over: the detail view lets the user pick it
+    /// (<c>ModelDetailViewModel.Editing</c> writes <c>BaseModelRaw</c> + <c>BaseModel</c> and stamps
+    /// <c>IsUserEdited</c>), so a sync that rewrote it silently undid that choice.
+    /// </summary>
+    [Fact]
+    public async Task ApplyAsync_PreservesUserEditedBaseModel()
+    {
+        int modelId, fileId;
+        using (var seedScope = NewScope())
+        {
+            var uow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = NewLocalModel("local", @"C:\m\edited-base.safetensors", versionUserEdited: true);
+            var version = model.Versions.First();
+            version.BaseModelRaw = "Pony";
+            version.BaseModel = BaseModelType.Pony;
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+            fileId = version.Files.First().Id;
+        }
+
+        // Civitai says "SDXL 1.0"; the user says Pony.
+        var civVersion = NewCivitaiVersion();
+        var applier = NewApplier(NewCivitaiModel(civVersion));
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            (await applier.ApplyAsync(uow, modelId, fileId, civVersion, apiKey: null)).Should().BeTrue();
+        }
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+            var version = saved!.Versions.Single();
+
+            version.BaseModelRaw.Should().Be("Pony");
+            version.BaseModel.Should().Be(BaseModelType.Pony);
+
+            // Everything that is genuinely upstream still lands.
+            saved.CivitaiId.Should().Be(77);
+            version.CivitaiId.Should().Be(700);
+        }
+    }
+
+    /// <summary>
+    /// R1. <c>BaseModelRaw</c> and the <c>BaseModel</c> enum are two spellings of one answer, and
+    /// the editor writes both. A sync that wrote only the raw string left the enum — which is what
+    /// the viewer's base-model filter reads — reporting the previous base model forever.
+    /// </summary>
+    [Fact]
+    public async Task ApplyAsync_WritesBaseModelEnumAlongsideRaw()
+    {
+        int modelId, fileId;
+        using (var seedScope = NewScope())
+        {
+            var uow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = NewLocalModel("local", @"C:\mase-enum.safetensors");
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+            fileId = model.Versions.First().Files.First().Id;
+        }
+
+        var civVersion = NewCivitaiVersion();
+        var applier = NewApplier(NewCivitaiModel(civVersion));
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            (await applier.ApplyAsync(uow, modelId, fileId, civVersion, apiKey: null)).Should().BeTrue();
+        }
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var version = (await uow.Models.GetByIdWithIncludesAsync(modelId))!.Versions.Single();
+
+            version.BaseModelRaw.Should().Be("SDXL 1.0");
+            version.BaseModel.Should().Be(BaseModelType.SDXL10);
         }
     }
 

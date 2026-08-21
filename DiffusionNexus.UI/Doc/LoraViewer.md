@@ -220,9 +220,13 @@ typed. A *forced* run (the per-LoRA button, or an explicit id scope) does select
 is the user asking; what protects them there is the appliers, which decide "may I write this
 text?" in one place each (`CanWriteModelText` / `CanWriteVersionText`) and reference it from every
 write site, all three sidecar formats included. Model name, description and tags hang off
-`Model.IsUserEdited`; version name, description and trigger words off `ModelVersion.IsUserEdited`.
-Facts nobody authored locally — Civitai ids, base model, download URL, file hashes, images, NSFW —
-are applied either way.
+`Model.IsUserEdited`; version name, description, trigger words **and base model** off
+`ModelVersion.IsUserEdited` — the detail view lets the user pick a base model and stamps the
+version as edited, so a refresh that rewrote it undid that choice. Every write of `BaseModelRaw`
+also writes the `BaseModel` enum (`BaseModelTypeExtensions.ParseCivitai`, the same helper the
+editor uses), so the viewer's base-model filter and the label the detail view shows never disagree.
+Facts nobody authored locally — Civitai ids, download URL, file hashes, images, NSFW — are applied
+either way.
 
 **What counts as applied.** A sidecar is `Sidecar` only when metadata actually came out of it. A
 `.json` next to a LoRA is as often a kohya training config as it is metadata, and a `.civitai.info`
