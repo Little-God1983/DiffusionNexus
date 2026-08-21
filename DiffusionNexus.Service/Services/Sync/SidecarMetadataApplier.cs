@@ -162,6 +162,11 @@ public sealed class SidecarMetadataApplier
 
             return new SidecarApplyResult(dirty, lookup.SidecarPath, lookup.Signature, thumbnailApplied);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // The user cancelled the sync — not a failure worth a warning row.
+            return notApplied;
+        }
         catch (Exception ex)
         {
             _logger?.Warn(LogCategory.FileSystem, LogSource,
@@ -631,6 +636,20 @@ public sealed class SidecarMetadataApplier
             _logger?.Debug(LogCategory.FileSystem, LogSource,
                 $"Found local preview for '{Path.GetFileName(modelFilePath)}': {Path.GetFileName(localImagePath)}");
 
+            // Resolve the target version BEFORE the transcode: a version that already carries a
+            // thumbnail keeps it (spec S4), and decoding a full-size preview only to throw the
+            // result away is the expensive part of this method.
+            if (modelId == 0) return false;
+
+            var dbModel = await uow.Models.GetByIdWithIncludesAsync(modelId, ct);
+            var dbVersion = dbModel?.Versions.FirstOrDefault(v =>
+                v.Files.Any(f => string.Equals(f.LocalPath, modelFilePath, StringComparison.OrdinalIgnoreCase)));
+
+            if (dbVersion is null) return false;
+
+            // Spec S4 — never overwrite: a version that already carries a thumbnail keeps it.
+            if (dbVersion.Images.Any(i => i.ThumbnailData is { Length: > 0 })) return false;
+
             // Read and transcode the local image to JPEG for BLOB storage
             var imageBytes = await File.ReadAllBytesAsync(localImagePath, ct);
             if (imageBytes.Length == 0) return false;
@@ -655,17 +674,6 @@ public sealed class SidecarMetadataApplier
             if (thumbnailBytes.Length == 0) return false;
 
             // Store in DB on the primary image (create one if needed)
-            if (modelId == 0) return false;
-
-            var dbModel = await uow.Models.GetByIdWithIncludesAsync(modelId, ct);
-            var dbVersion = dbModel?.Versions.FirstOrDefault(v =>
-                v.Files.Any(f => string.Equals(f.LocalPath, modelFilePath, StringComparison.OrdinalIgnoreCase)));
-
-            if (dbVersion is null) return false;
-
-            // Spec S4 — never overwrite: a version that already carries a thumbnail keeps it.
-            if (dbVersion.Images.Any(i => i.ThumbnailData is { Length: > 0 })) return false;
-
             var primaryImage = dbVersion.Images.FirstOrDefault();
             if (primaryImage is null)
             {
@@ -685,6 +693,11 @@ public sealed class SidecarMetadataApplier
             await uow.SaveChangesAsync(ct);
 
             return true;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // The user cancelled the sync — not a failure worth logging.
+            return false;
         }
         catch (Exception ex)
         {

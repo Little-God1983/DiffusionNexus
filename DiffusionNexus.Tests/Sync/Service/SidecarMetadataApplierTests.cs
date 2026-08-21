@@ -227,6 +227,53 @@ public sealed class SidecarMetadataApplierTests : IDisposable
     }
 
     [Fact]
+    public async Task ApplyAsync_DoesNotOverwriteExistingThumbnail()
+    {
+        var modelPath = NewModelFile("kept.safetensors");
+        byte[] existing = [1, 2, 3];
+
+        int modelId;
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = NewLocalModel("local", modelPath);
+            model.Versions.First().Images.Add(new ModelImage
+            {
+                Url = "https://civitai/existing.jpeg",
+                SortOrder = 0,
+                ThumbnailData = existing,
+                ThumbnailMimeType = "image/jpeg",
+            });
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+        }
+
+        // A perfectly good local preview sits next to the file — spec S4 still wins.
+        await File.WriteAllBytesAsync(
+            Path.Combine(_tempDir.FullName, "kept.preview.png"),
+            EncodePng(64, 64));
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var result = await new SidecarMetadataApplier().ApplyAsync(uow, modelId, modelPath);
+            result.ThumbnailApplied.Should().BeFalse();
+        }
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+
+            var images = saved!.Versions.Single().Images;
+            images.Should().ContainSingle("no file:// row may be added when a thumbnail exists");
+            images.Single().Url.Should().Be("https://civitai/existing.jpeg");
+            images.Single().ThumbnailData.Should().Equal(existing);
+        }
+    }
+
+    [Fact]
     public async Task ApplyAsync_NothingThereReturnsNotApplied()
     {
         var modelPath = NewModelFile("bare.safetensors");

@@ -1401,63 +1401,74 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     [Obsolete("Replaced by SidecarMetadataApplier (#521); removed in Task 12")]
     private async Task<bool> TryApplyLocalMetadataFallbackAsync(ModelTileViewModel tile, string localPath)
     {
-        var model = tile.ModelEntity;
-        if (model is null) return false;
-
-        // Use a fresh DI scope for DB writes to avoid concurrent DbContext access
-        using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
-        var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-
-        var applier = new SidecarMetadataApplier(_logger);
-        var result = await applier.ApplyAsync(unitOfWork, model.Id, localPath);
-
-        if (!result.Applied && !result.ThumbnailApplied) return false;
-
-        // Reload ONLY this model after save to get generated IDs on new images
-        var refreshedModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
-        if (refreshedModel is null) return true;
-
-        if (result.Applied)
+        try
         {
-            // Refresh tile on UI thread with updated data — use RefreshModelData to
-            // properly update _allGroupedModels and re-pick the primary entity.
-            await Dispatcher.UIThread.InvokeAsync(() => tile.RefreshModelData(refreshedModel));
-        }
+            var model = tile.ModelEntity;
+            if (model is null) return false;
 
-        if (result.ThumbnailApplied)
-        {
-            // RefreshModelData rebuilds the version list but never touches ThumbnailImage —
-            // decode the BLOB the applier just wrote so the preview shows up immediately.
-            var images = refreshedModel.Versions
-                .FirstOrDefault(v => v.Files.Any(f =>
-                    string.Equals(f.LocalPath, localPath, StringComparison.OrdinalIgnoreCase)))
-                ?.Images;
+            // Use a fresh DI scope for DB writes to avoid concurrent DbContext access
+            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
-            var thumbnailBytes = (images?.FirstOrDefault(i =>
-                    i.Url.StartsWith("file://", StringComparison.OrdinalIgnoreCase)
-                    && i.ThumbnailData is { Length: > 0 })
-                ?? images?.FirstOrDefault(i => i.ThumbnailData is { Length: > 0 }))
-                ?.ThumbnailData;
+            var applier = new SidecarMetadataApplier(_logger);
+            var result = await applier.ApplyAsync(unitOfWork, model.Id, localPath);
 
-            if (thumbnailBytes is { Length: > 0 })
+            if (!result.Applied && !result.ThumbnailApplied) return false;
+
+            // Reload ONLY this model after save to get generated IDs on new images
+            var refreshedModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
+            if (refreshedModel is null) return true;
+
+            if (result.Applied)
             {
-                // Display the thumbnail immediately
-                await Dispatcher.UIThread.InvokeAsync(() =>
-                {
-                    try
-                    {
-                        using var stream = new MemoryStream(thumbnailBytes);
-                        tile.ThumbnailImage = new Avalonia.Media.Imaging.Bitmap(stream);
-                    }
-                    catch
-                    {
-                        // Decode failure — not critical
-                    }
-                });
+                // Refresh tile on UI thread with updated data — use RefreshModelData to
+                // properly update _allGroupedModels and re-pick the primary entity.
+                await Dispatcher.UIThread.InvokeAsync(() => tile.RefreshModelData(refreshedModel));
             }
-        }
 
-        return true;
+            if (result.ThumbnailApplied)
+            {
+                // RefreshModelData rebuilds the version list but never touches ThumbnailImage —
+                // decode the BLOB the applier just wrote so the preview shows up immediately.
+                var images = refreshedModel.Versions
+                    .FirstOrDefault(v => v.Files.Any(f =>
+                        string.Equals(f.LocalPath, localPath, StringComparison.OrdinalIgnoreCase)))
+                    ?.Images;
+
+                var thumbnailBytes = (images?.FirstOrDefault(i =>
+                        i.Url.StartsWith("file://", StringComparison.OrdinalIgnoreCase)
+                        && i.ThumbnailData is { Length: > 0 })
+                    ?? images?.FirstOrDefault(i => i.ThumbnailData is { Length: > 0 }))
+                    ?.ThumbnailData;
+
+                if (thumbnailBytes is { Length: > 0 })
+                {
+                    // Display the thumbnail immediately
+                    await Dispatcher.UIThread.InvokeAsync(() =>
+                    {
+                        try
+                        {
+                            using var stream = new MemoryStream(thumbnailBytes);
+                            tile.ThumbnailImage = new Avalonia.Media.Imaging.Bitmap(stream);
+                        }
+                        catch
+                        {
+                            // Decode failure — not critical
+                        }
+                    });
+                }
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            // The applier itself never throws; this guards the scope creation, the reload
+            // and the two dispatcher hops so a failure here cannot escape into the sync loop.
+            _logger?.Warn(LogCategory.General, "LocalFallback",
+                $"Failed to read local metadata for '{tile.DisplayName}': {ex.Message}");
+            return false;
+        }
     }
 
     /// <summary>
