@@ -272,6 +272,21 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         _ = RecomputePreviewAsync();
     }
 
+    /// <summary>
+    /// Unlike the other options this one changes nothing about the plan itself — only the post-run
+    /// cleanup decision, which is read from the plan so that it describes the run that actually
+    /// happened. Re-stamping the armed plan keeps that snapshot in step with the checkbox the user
+    /// can see, without paying for a re-plan (minutes on a large library, since planning re-hashes
+    /// on every collision).
+    /// </summary>
+    partial void OnDeleteEmptySourceFoldersChanged(bool value)
+    {
+        ClearRunResultBanner();
+        if (_isInitializing) return;
+        if (_lastPlan is not null)
+            _lastPlan = _lastPlan with { DeleteEmptySourceFolders = value };
+    }
+
     partial void OnSelectedSourceFolderChanged(string? value)
     {
         OnPropertyChanged(nameof(EffectiveTargetRoot));
@@ -989,7 +1004,12 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         // replayed a plan whose sources were gone. A leftover empty folder is cosmetic; losing the
         // post-run bookkeeping is not.
         _emptyFolderCleanupFailed = false;
-        if (IsMove && DeleteEmptySourceFolders && !result.Cancelled)
+        // Read from the plan, not from live UI state: the run that just happened used plan.IsMove
+        // and the DeleteEmptySourceFolders captured at BuildOptions() time, so deciding the cleanup
+        // from the current radio/checkbox could delete folders for a run that never asked for it
+        // (or skip them for one that did). Only the busy overlay blocking the toggles kept that
+        // latent — and the plan is exactly what the cleanup path below already uses for its root.
+        if (plan.IsMove && plan.DeleteEmptySourceFolders && !result.Cancelled)
         {
             try
             {

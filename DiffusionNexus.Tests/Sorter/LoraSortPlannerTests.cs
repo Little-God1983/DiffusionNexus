@@ -272,6 +272,21 @@ public class LoraSortPlannerTests
         plan.Moves.Single().TargetFilePath.Should().Be(@"E:\Sorted\SDXL 1.0\Character\V1_2.safetensors");
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ThePlanCarriesTheDeleteEmptySourceFoldersOption(bool deleteEmpty)
+    {
+        // The post-run cleanup is decided by the plan that ran, not by live UI state, so the flag
+        // needs a snapshot to be read from — LoraSortPlan carried IsMove but not this one.
+        var options = new LoraSortOptions(@"E:\Loras", @"E:\Loras", IncludeCategory: true,
+            IsMove: true, DeleteEmptySourceFolders: deleteEmpty);
+
+        var plan = Planner().BuildPlan([Candidate(@"E:\Loras\flat\a.safetensors")], options);
+
+        plan.DeleteEmptySourceFolders.Should().Be(deleteEmpty);
+    }
+
     [Fact]
     public void LegacyDashedUppercaseStoredHashStillMatchesAFreshlyComputedOne()
     {

@@ -364,6 +364,50 @@ public sealed class LoraSorterViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task TheEmptyFolderCleanupFollowsThePlanAndStaysInStepWithTheCheckbox()
+    {
+        // The gate used to read the live checkbox while the run it was deciding about used the
+        // options captured at plan time. It now reads plan.DeleteEmptySourceFolders — and because
+        // this flag alone does not warrant a re-plan, toggling it re-stamps the armed plan, so the
+        // run still matches what the user can see.
+        var a = WriteLora(@"flat\a.safetensors");
+        string? cleanedRoot = null;
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")],
+            deleteEmptyDirectories: (root, _) =>
+            {
+                cleanedRoot = root;
+                return Task.CompletedTask;
+            });
+        vm.DialogService = ConfirmingDialogService();
+
+        await vm.InitializeAsync(); // planned with the box unchecked
+        vm.DeleteEmptySourceFolders = true;
+
+        await vm.StartSortingCommand.ExecuteAsync(null);
+
+        cleanedRoot.Should().Be(SourceRoot);
+    }
+
+    [Fact]
+    public async Task ARunPlannedWithoutTheCheckboxDoesNotCleanUp()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var cleanups = 0;
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")],
+            deleteEmptyDirectories: (_, _) =>
+            {
+                cleanups++;
+                return Task.CompletedTask;
+            });
+        vm.DialogService = ConfirmingDialogService();
+        await vm.InitializeAsync();
+
+        await vm.StartSortingCommand.ExecuteAsync(null);
+
+        cleanups.Should().Be(0);
+    }
+
+    [Fact]
     public async Task ChangingAnOptionClearsTheRunResultBanner()
     {
         // After a completed run the Done-banner shows; the next user action clears it.

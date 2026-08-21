@@ -20,7 +20,7 @@ public sealed class SortHistoryWriterTests : IDisposable
         var move = new PlannedMove(candidate, @"E:\Loras\SDXL 1.0\Character",
             @"E:\Loras\SDXL 1.0\Character\a_42.safetensors", PlannedAction.Transfer, WasRenamed: true);
         return new LoraSortPlan([move], @"E:\Loras", @"E:\Loras", IsMove: true,
-            RequiredBytes: 0, TransferCount: 1, AlreadyInPlaceCount: 0,
+            DeleteEmptySourceFolders: false, RequiredBytes: 0, TransferCount: 1, AlreadyInPlaceCount: 0,
             RenamedCount: 1, SkippedDuplicateCount: 0);
     }
 

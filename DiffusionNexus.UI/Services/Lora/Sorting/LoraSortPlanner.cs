@@ -143,7 +143,8 @@ public sealed class LoraSortPlanner
         var requiredBytes = sameVolumeMove ? 0L : transfers.Sum(m => m.Candidate.FileSizeBytes);
 
         return new LoraSortPlan(
-            moves, options.SourceRoot, options.TargetRoot, options.IsMove, requiredBytes,
+            moves, options.SourceRoot, options.TargetRoot, options.IsMove,
+            options.DeleteEmptySourceFolders, requiredBytes,
             TransferCount: transfers.Count,
             AlreadyInPlaceCount: moves.Count(m => m.Action == PlannedAction.AlreadyInPlace),
             RenamedCount: moves.Count(m => m.WasRenamed),
