@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Avalonia.Threading;
@@ -6,7 +6,6 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
-using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
@@ -23,7 +22,6 @@ using DiffusionNexus.UI.Services.Lora.Sorting;
 using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.UI.ViewModels.CivitaiBrowser;
 using Microsoft.Extensions.DependencyInjection;
-using SkiaSharp;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -978,7 +976,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
             try
             {
+#pragma warning disable CS0618 // forwarder kept until the ViewModel sync path is deleted (Task 12)
                 var applied = await TryApplyLocalMetadataFallbackAsync(tile, localPath);
+#pragma warning restore CS0618
                 if (applied) reprocessed++;
                 else skipped++;
             }
@@ -1072,7 +1072,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                     notFound++;
 
                     // Fallback: try to read local .civitai.info / .json metadata files
+#pragma warning disable CS0618 // forwarder kept until the ViewModel sync path is deleted (Task 12)
                     var localFallbackApplied = await TryApplyLocalMetadataFallbackAsync(tile, localPath);
+#pragma warning restore CS0618
                     if (localFallbackApplied)
                     {
                         _logger?.Info(LogCategory.Network, "CivitaiSync",
@@ -1389,631 +1391,73 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// and applies the discovered metadata to the model entity in the database.
     /// Also discovers local preview images (same base name, image extension) and stores
     /// them as thumbnail BLOBs so tiles show a preview without Civitai.
-    /// <para>
-    /// Two sidecar formats are supported:
-    /// <list type="bullet">
-    ///   <item><c>.civitai.info</c> — version-level Civitai response (top-level: id, modelId, baseModel, trainedWords, model{}, images[], files[])</item>
-    ///   <item><c>.json</c> — model-level Civitai response (top-level: id, name, type, nsfw, modelVersions[]) OR simple metadata (sd version, tags)</item>
-    /// </list>
-    /// </para>
     /// </summary>
-    /// <returns>True if any local metadata was found and applied.</returns>
+    /// <remarks>
+    /// The sidecar parsing and the local-preview transcode now live in
+    /// <see cref="SidecarMetadataApplier"/>; this forwarder only adds the tile refresh
+    /// and disappears with the ViewModel-driven sync path.
+    /// </remarks>
+    /// <returns>True if any local metadata or thumbnail was found and applied.</returns>
+    [Obsolete("Replaced by SidecarMetadataApplier (#521); removed in Task 12")]
     private async Task<bool> TryApplyLocalMetadataFallbackAsync(ModelTileViewModel tile, string localPath)
     {
-        try
+        var model = tile.ModelEntity;
+        if (model is null) return false;
+
+        // Use a fresh DI scope for DB writes to avoid concurrent DbContext access
+        using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+        var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var applier = new SidecarMetadataApplier(_logger);
+        var result = await applier.ApplyAsync(unitOfWork, model.Id, localPath);
+
+        if (!result.Applied && !result.ThumbnailApplied) return false;
+
+        // Reload ONLY this model after save to get generated IDs on new images
+        var refreshedModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
+        if (refreshedModel is null) return true;
+
+        if (result.Applied)
         {
-            var fileInfo = new FileInfo(localPath);
-            var directory = fileInfo.Directory;
-            if (directory is null || !directory.Exists) return false;
+            // Refresh tile on UI thread with updated data — use RefreshModelData to
+            // properly update _allGroupedModels and re-pick the primary entity.
+            await Dispatcher.UIThread.InvokeAsync(() => tile.RefreshModelData(refreshedModel));
+        }
 
-            var baseName = Path.GetFileNameWithoutExtension(fileInfo.Name);
+        if (result.ThumbnailApplied)
+        {
+            // RefreshModelData rebuilds the version list but never touches ThumbnailImage —
+            // decode the BLOB the applier just wrote so the preview shows up immediately.
+            var images = refreshedModel.Versions
+                .FirstOrDefault(v => v.Files.Any(f =>
+                    string.Equals(f.LocalPath, localPath, StringComparison.OrdinalIgnoreCase)))
+                ?.Images;
 
-            // Look for .civitai.info or .json sidecar files
-            var civitaiInfoFile = directory.GetFiles($"{baseName}.civitai.info").FirstOrDefault();
-            var jsonFile = directory.GetFiles($"{baseName}.json").FirstOrDefault();
+            var thumbnailBytes = (images?.FirstOrDefault(i =>
+                    i.Url.StartsWith("file://", StringComparison.OrdinalIgnoreCase)
+                    && i.ThumbnailData is { Length: > 0 })
+                ?? images?.FirstOrDefault(i => i.ThumbnailData is { Length: > 0 }))
+                ?.ThumbnailData;
 
-            if (civitaiInfoFile is null && jsonFile is null)
+            if (thumbnailBytes is { Length: > 0 })
             {
-                // No sidecar metadata — still try local thumbnail
-                var thumbnailApplied = await TryApplyLocalThumbnailAsync(tile, directory, baseName);
-                return thumbnailApplied;
-            }
-
-            // Parse the sidecar file — prefer .civitai.info (richer version-level data)
-            var metadataFile = civitaiInfoFile ?? jsonFile!;
-            var isCivitaiInfoFormat = civitaiInfoFile is not null;
-            var json = await File.ReadAllTextAsync(metadataFile.FullName);
-            using var doc = System.Text.Json.JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            // Use a fresh DI scope for DB writes
-            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
-            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-
-            var model = tile.ModelEntity;
-            if (model is null) return false;
-
-            // Load ONLY the target model — not the entire database
-            var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
-            if (dbModel is null) return false;
-
-            var dirty = false;
-
-            // Locate the DB version that owns the file at localPath
-            var dbVersion = dbModel.Versions.FirstOrDefault(v =>
-                v.Files.Any(f => string.Equals(f.LocalPath, localPath, StringComparison.OrdinalIgnoreCase)));
-
-            if (isCivitaiInfoFormat)
-            {
-                dirty = await ApplyCivitaiInfoFormatAsync(root, dbModel, dbVersion, unitOfWork.Models, localPath);
-            }
-            else
-            {
-                // .json may be model-level (has "modelVersions") or simple metadata (has "sd version")
-                dirty = root.TryGetProperty("modelVersions", out _)
-                    ? await ApplyModelLevelJsonFormatAsync(root, dbModel, dbVersion, unitOfWork.Models, localPath)
-                    : ApplySimpleJsonFormat(root, dbModel, dbVersion);
-            }
-
-            // Always mark source and sync time
-            dbModel.Source = DataSource.LocalFile;
-            dbModel.LastSyncedAt = DateTimeOffset.UtcNow;
-            dirty = true;
-
-            if (dirty)
-            {
-                await unitOfWork.SaveChangesAsync();
-
-                // Reload ONLY this model after save
-                var refreshedModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
-                if (refreshedModel is not null)
+                // Display the thumbnail immediately
+                await Dispatcher.UIThread.InvokeAsync(() =>
                 {
-                    await Dispatcher.UIThread.InvokeAsync(() => tile.RefreshModelData(refreshedModel));
-                }
-            }
-
-            // Try to find and apply a local thumbnail image
-            await TryApplyLocalThumbnailAsync(tile, directory, baseName);
-
-            return dirty;
-        }
-        catch (Exception ex)
-        {
-            _logger?.Warn(LogCategory.General, "LocalFallback",
-                $"Failed to read local metadata for '{tile.DisplayName}': {ex.Message}");
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Applies metadata from a .civitai.info sidecar (version-level Civitai response).
-    /// Extracts: model name, NSFW, modelId → CivitaiId/CivitaiModelPageId,
-    /// version id → CivitaiId, baseModel, trainedWords, image URLs, file hashes.
-    /// </summary>
-    private async Task<bool> ApplyCivitaiInfoFormatAsync(
-        System.Text.Json.JsonElement root,
-        Model dbModel,
-        ModelVersion? dbVersion,
-        IModelRepository modelRepo,
-        string localPath)
-    {
-        var dirty = false;
-
-        // ── Model-level fields from nested "model" object ──
-        if (root.TryGetProperty("model", out var modelProp))
-        {
-            if (modelProp.TryGetProperty("name", out var name) && name.GetString() is { } nameStr)
-            {
-                dbModel.Name = nameStr;
-                dirty = true;
-            }
-
-            if (modelProp.TryGetProperty("nsfw", out var nsfw)
-                && nsfw.ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False)
-            {
-                dbModel.IsNsfw = nsfw.GetBoolean();
-                dirty = true;
-            }
-        }
-
-        // ── CivitaiId / CivitaiModelPageId from "modelId" ──
-        if (root.TryGetProperty("modelId", out var modelIdProp) && modelIdProp.TryGetInt32(out var civitaiModelId))
-        {
-            dbModel.CivitaiModelPageId = civitaiModelId;
-
-            var civitaiIdTaken = await modelRepo.IsCivitaiIdTakenAsync(civitaiModelId, dbModel.Id);
-            if (!civitaiIdTaken)
-            {
-                dbModel.CivitaiId = civitaiModelId;
-            }
-
-            dirty = true;
-        }
-
-        // ── Version-level fields ──
-        if (dbVersion is not null)
-        {
-            // Version CivitaiId from top-level "id"
-            if (root.TryGetProperty("id", out var versionIdProp) && versionIdProp.TryGetInt32(out var civitaiVersionId))
-            {
-                var versionIdTaken = await modelRepo.IsVersionCivitaiIdTakenAsync(civitaiVersionId, dbVersion.Id);
-                if (!versionIdTaken)
-                {
-                    dbVersion.CivitaiId = civitaiVersionId;
-                    dirty = true;
-                }
-            }
-
-            // Version name
-            if (root.TryGetProperty("name", out var vName) && vName.GetString() is { } vNameStr)
-            {
-                dbVersion.Name = vNameStr;
-                dirty = true;
-            }
-
-            // Base model
-            if (root.TryGetProperty("baseModel", out var baseModel) && baseModel.GetString() is { } baseModelStr)
-            {
-                dbVersion.BaseModelRaw = baseModelStr;
-                dirty = true;
-            }
-
-            // Trained words / trigger words
-            if (root.TryGetProperty("trainedWords", out var trained) && trained.ValueKind == System.Text.Json.JsonValueKind.Array)
-            {
-                dbVersion.TriggerWords.Clear();
-                var order = 0;
-                foreach (var wordElement in trained.EnumerateArray())
-                {
-                    if (wordElement.ValueKind == System.Text.Json.JsonValueKind.String && wordElement.GetString() is { } word)
+                    try
                     {
-                        dbVersion.TriggerWords.Add(new TriggerWord { Word = word, Order = order++ });
-                        dirty = true;
+                        using var stream = new MemoryStream(thumbnailBytes);
+                        tile.ThumbnailImage = new Avalonia.Media.Imaging.Bitmap(stream);
                     }
-                }
-            }
-
-            // Download URL
-            if (root.TryGetProperty("downloadUrl", out var dlUrl) && dlUrl.GetString() is { } dlUrlStr)
-            {
-                dbVersion.DownloadUrl = dlUrlStr;
-                dirty = true;
-            }
-
-            // ── Image URLs from "images" array ──
-            if (root.TryGetProperty("images", out var images) && images.ValueKind == System.Text.Json.JsonValueKind.Array)
-            {
-                dirty |= ApplyImagesFromJson(dbVersion, images);
-            }
-
-            // ── File hashes from "files" array ──
-            if (root.TryGetProperty("files", out var files) && files.ValueKind == System.Text.Json.JsonValueKind.Array)
-            {
-                dirty |= ApplyFileHashesFromJson(dbVersion, files, localPath);
-            }
-        }
-
-        return dirty;
-    }
-
-    /// <summary>
-    /// Applies metadata from a .json sidecar that is a model-level Civitai response
-    /// (has top-level id, name, type, nsfw, modelVersions[]).
-    /// Finds the matching version by filename in the modelVersions array.
-    /// </summary>
-    private async Task<bool> ApplyModelLevelJsonFormatAsync(
-        System.Text.Json.JsonElement root,
-        Model dbModel,
-        ModelVersion? dbVersion,
-        IModelRepository modelRepo,
-        string localPath)
-    {
-        var dirty = false;
-        var localFileName = Path.GetFileName(localPath);
-
-        // ── Model-level fields ──
-        if (root.TryGetProperty("name", out var name) && name.GetString() is { } nameStr)
-        {
-            dbModel.Name = nameStr;
-            dirty = true;
-        }
-
-        if (root.TryGetProperty("nsfw", out var nsfw)
-            && nsfw.ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False)
-        {
-            dbModel.IsNsfw = nsfw.GetBoolean();
-            dirty = true;
-        }
-
-        // CivitaiId / CivitaiModelPageId from top-level "id"
-        if (root.TryGetProperty("id", out var modelIdProp) && modelIdProp.TryGetInt32(out var civitaiModelId))
-        {
-            dbModel.CivitaiModelPageId = civitaiModelId;
-
-            var civitaiIdTaken = await modelRepo.IsCivitaiIdTakenAsync(civitaiModelId, dbModel.Id);
-            if (!civitaiIdTaken)
-            {
-                dbModel.CivitaiId = civitaiModelId;
-            }
-
-            dirty = true;
-        }
-
-        // ── Find the matching version in modelVersions[] by filename ──
-        if (dbVersion is not null
-            && root.TryGetProperty("modelVersions", out var versions)
-            && versions.ValueKind == System.Text.Json.JsonValueKind.Array)
-        {
-            foreach (var versionElement in versions.EnumerateArray())
-            {
-                // Match by filename in the "files" array
-                var matchedByFile = false;
-                if (versionElement.TryGetProperty("files", out var vFiles) && vFiles.ValueKind == System.Text.Json.JsonValueKind.Array)
-                {
-                    foreach (var fileElement in vFiles.EnumerateArray())
+                    catch
                     {
-                        if (fileElement.TryGetProperty("name", out var fName)
-                            && string.Equals(fName.GetString(), localFileName, StringComparison.OrdinalIgnoreCase))
-                        {
-                            matchedByFile = true;
-                            break;
-                        }
+                        // Decode failure — not critical
                     }
-                }
-
-                if (!matchedByFile) continue;
-
-                // Found the matching version — extract all data
-                if (versionElement.TryGetProperty("id", out var vIdProp) && vIdProp.TryGetInt32(out var civitaiVersionId))
-                {
-                    var versionIdTaken = await modelRepo.IsVersionCivitaiIdTakenAsync(civitaiVersionId, dbVersion.Id);
-                    if (!versionIdTaken)
-                    {
-                        dbVersion.CivitaiId = civitaiVersionId;
-                        dirty = true;
-                    }
-                }
-
-                if (versionElement.TryGetProperty("name", out var vName) && vName.GetString() is { } vNameStr)
-                {
-                    dbVersion.Name = vNameStr;
-                    dirty = true;
-                }
-
-                if (versionElement.TryGetProperty("baseModel", out var baseModel) && baseModel.GetString() is { } baseModelStr)
-                {
-                    dbVersion.BaseModelRaw = baseModelStr;
-                    dirty = true;
-                }
-
-                if (versionElement.TryGetProperty("trainedWords", out var trained) && trained.ValueKind == System.Text.Json.JsonValueKind.Array)
-                {
-                    dbVersion.TriggerWords.Clear();
-                    var order = 0;
-                    foreach (var wordElement in trained.EnumerateArray())
-                    {
-                        if (wordElement.ValueKind == System.Text.Json.JsonValueKind.String && wordElement.GetString() is { } word)
-                        {
-                            dbVersion.TriggerWords.Add(new TriggerWord { Word = word, Order = order++ });
-                            dirty = true;
-                        }
-                    }
-                }
-
-                if (versionElement.TryGetProperty("downloadUrl", out var dlUrl) && dlUrl.GetString() is { } dlUrlStr)
-                {
-                    dbVersion.DownloadUrl = dlUrlStr;
-                    dirty = true;
-                }
-
-                // Images from this version
-                if (versionElement.TryGetProperty("images", out var images) && images.ValueKind == System.Text.Json.JsonValueKind.Array)
-                {
-                    dirty |= ApplyImagesFromJson(dbVersion, images);
-                }
-
-                // File hashes from this version
-                if (versionElement.TryGetProperty("files", out var filesArr) && filesArr.ValueKind == System.Text.Json.JsonValueKind.Array)
-                {
-                    dirty |= ApplyFileHashesFromJson(dbVersion, filesArr, localPath);
-                }
-
-                break; // Only match one version per file
+                });
             }
         }
 
-        return dirty;
-    }
-
-    /// <summary>
-    /// Applies metadata from a simple .json sidecar (has "sd version", "type", "tags" — not a full Civitai response).
-    /// </summary>
-    private static bool ApplySimpleJsonFormat(
-        System.Text.Json.JsonElement root,
-        Model dbModel,
-        ModelVersion? dbVersion)
-    {
-        var dirty = false;
-
-        if (root.TryGetProperty("model", out var modelProp))
-        {
-            if (modelProp.TryGetProperty("name", out var name) && name.GetString() is { } nameStr)
-            {
-                dbModel.Name = nameStr;
-                dirty = true;
-            }
-
-            if (modelProp.TryGetProperty("nsfw", out var nsfw)
-                && nsfw.ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False)
-            {
-                dbModel.IsNsfw = nsfw.GetBoolean();
-                dirty = true;
-            }
-        }
-
-        if (dbVersion is not null)
-        {
-            if (root.TryGetProperty("baseModel", out var baseModel) && baseModel.GetString() is { } baseModelStr)
-            {
-                dbVersion.BaseModelRaw = baseModelStr;
-                dirty = true;
-            }
-
-            // Fallback: "sd version" for very old sidecar format
-            if (dbVersion.BaseModelRaw is null or "???"
-                && root.TryGetProperty("sd version", out var sdVer) && sdVer.GetString() is { } sdVerStr)
-            {
-                dbVersion.BaseModelRaw = sdVerStr;
-                dirty = true;
-            }
-
-            if (root.TryGetProperty("trainedWords", out var trained) && trained.ValueKind == System.Text.Json.JsonValueKind.Array)
-            {
-                dbVersion.TriggerWords.Clear();
-                var order = 0;
-                foreach (var wordElement in trained.EnumerateArray())
-                {
-                    if (wordElement.ValueKind == System.Text.Json.JsonValueKind.String && wordElement.GetString() is { } word)
-                    {
-                        dbVersion.TriggerWords.Add(new TriggerWord { Word = word, Order = order++ });
-                        dirty = true;
-                    }
-                }
-            }
-        }
-
-        return dirty;
-    }
-
-    /// <summary>
-    /// Creates <see cref="ModelImage"/> entities from a JSON "images" array found in sidecar files.
-    /// Skips images that already exist by CivitaiId or URL.
-    /// </summary>
-    private static bool ApplyImagesFromJson(ModelVersion dbVersion, System.Text.Json.JsonElement imagesArray)
-    {
-        var dirty = false;
-        var existingUrls = dbVersion.Images
-            .Select(i => i.Url)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        var sortOrder = dbVersion.Images.Count;
-
-        foreach (var imgEl in imagesArray.EnumerateArray())
-        {
-            var url = imgEl.TryGetProperty("url", out var urlProp) ? urlProp.GetString() : null;
-            if (string.IsNullOrEmpty(url)) continue;
-
-            // Skip if we already have this URL
-            if (existingUrls.Contains(url)) continue;
-
-            var image = new ModelImage
-            {
-                ModelVersionId = dbVersion.Id,
-                Url = url,
-                SortOrder = sortOrder++,
-            };
-
-            if (imgEl.TryGetProperty("width", out var w) && w.TryGetInt32(out var width)) image.Width = width;
-            if (imgEl.TryGetProperty("height", out var h) && h.TryGetInt32(out var height)) image.Height = height;
-            if (imgEl.TryGetProperty("hash", out var hash) && hash.GetString() is { } hashStr) image.BlurHash = hashStr;
-            if (imgEl.TryGetProperty("type", out var type) && type.GetString() is { } typeStr) image.MediaType = typeStr;
-
-            if (imgEl.TryGetProperty("nsfwLevel", out var nsfwLvl) && nsfwLvl.TryGetInt32(out var nsfwLevel))
-            {
-                image.IsNsfw = nsfwLevel > 1;
-            }
-
-            dbVersion.Images.Add(image);
-            existingUrls.Add(url);
-            dirty = true;
-        }
-
-        return dirty;
-    }
-
-    /// <summary>
-    /// Applies file hashes from a JSON "files" array to the matching <see cref="ModelFile"/> entity.
-    /// Matches by filename comparison with the local file.
-    /// </summary>
-    private static bool ApplyFileHashesFromJson(
-        ModelVersion dbVersion,
-        System.Text.Json.JsonElement filesArray,
-        string localPath)
-    {
-        var dirty = false;
-        var localFileName = Path.GetFileName(localPath);
-
-        foreach (var fileEl in filesArray.EnumerateArray())
-        {
-            var fileName = fileEl.TryGetProperty("name", out var fName) ? fName.GetString() : null;
-            if (!string.Equals(fileName, localFileName, StringComparison.OrdinalIgnoreCase)) continue;
-
-            var dbFile = dbVersion.Files.FirstOrDefault(f =>
-                string.Equals(f.FileName, localFileName, StringComparison.OrdinalIgnoreCase))
-                ?? dbVersion.PrimaryFile;
-
-            if (dbFile is null) break;
-
-            // File CivitaiId
-            if (fileEl.TryGetProperty("id", out var fId) && fId.TryGetInt32(out var fileId))
-            {
-                dbFile.CivitaiId = fileId;
-                dirty = true;
-            }
-
-            // File size
-            if (fileEl.TryGetProperty("sizeKB", out var sizeKb) && sizeKb.TryGetDouble(out var sizeVal))
-            {
-                dbFile.SizeKB = sizeVal;
-                dirty = true;
-            }
-
-            // Hashes
-            if (fileEl.TryGetProperty("hashes", out var hashes))
-            {
-                if (hashes.TryGetProperty("SHA256", out var sha256) && sha256.GetString() is { } sha256Str)
-                { dbFile.HashSHA256 ??= sha256Str; dirty = true; }
-
-                if (hashes.TryGetProperty("AutoV2", out var autoV2) && autoV2.GetString() is { } autoV2Str)
-                { dbFile.HashAutoV2 ??= autoV2Str; dirty = true; }
-
-                if (hashes.TryGetProperty("CRC32", out var crc32) && crc32.GetString() is { } crc32Str)
-                { dbFile.HashCRC32 ??= crc32Str; dirty = true; }
-
-                if (hashes.TryGetProperty("BLAKE3", out var blake3) && blake3.GetString() is { } blake3Str)
-                { dbFile.HashBLAKE3 ??= blake3Str; dirty = true; }
-
-                if (hashes.TryGetProperty("AutoV1", out var autoV1) && autoV1.GetString() is { } autoV1Str)
-                { dbFile.HashAutoV1 ??= autoV1Str; dirty = true; }
-            }
-
-            // Download URL
-            if (fileEl.TryGetProperty("downloadUrl", out var dlUrl) && dlUrl.GetString() is { } dlUrlStr)
-            {
-                dbFile.DownloadUrl ??= dlUrlStr;
-                dirty = true;
-            }
-
-            break; // Only match one file entry per local file
-        }
-
-        return dirty;
-    }
-
-    /// <summary>
-    /// Image extensions to search for when looking for local preview images alongside model files.
-    /// Ordered by preference (preview-specific suffixes first, then common formats).
-    /// </summary>
-    private static readonly string[] LocalPreviewExtensions =
-    [
-        ".preview.png", ".preview.jpg", ".preview.jpeg", ".preview.webp",
-        ".thumb.jpg",
-        ".png", ".jpg", ".jpeg", ".webp"
-    ];
-
-    /// <summary>
-    /// Searches for a local preview image next to the model file (same base name, image extension)
-    /// and stores it as a thumbnail BLOB on the primary image entity.
-    /// </summary>
-    /// <returns>True if a local thumbnail was found and applied.</returns>
-    private async Task<bool> TryApplyLocalThumbnailAsync(ModelTileViewModel tile, DirectoryInfo directory, string baseName)
-    {
-        try
-        {
-            // Search for local preview images by base name + known image extensions
-            string? localImagePath = null;
-            foreach (var ext in LocalPreviewExtensions)
-            {
-                var candidate = Path.Combine(directory.FullName, baseName + ext);
-                if (File.Exists(candidate))
-                {
-                    localImagePath = candidate;
-                    break;
-                }
-            }
-
-            if (localImagePath is null) return false;
-
-            _logger?.Debug(LogCategory.General, "LocalFallback",
-                $"Found local preview for '{tile.DisplayName}': {Path.GetFileName(localImagePath)}");
-
-            // Read and transcode the local image to JPEG for BLOB storage
-            var imageBytes = await File.ReadAllBytesAsync(localImagePath);
-            if (imageBytes.Length == 0) return false;
-
-            byte[] thumbnailBytes;
-            using (var skBitmap = SKBitmap.Decode(imageBytes))
-            {
-                if (skBitmap is null) return false;
-
-                // Resize to thumbnail width (340px) to keep BLOB small
-                var targetWidth = 340;
-                var scale = (float)targetWidth / skBitmap.Width;
-                var targetHeight = (int)(skBitmap.Height * scale);
-                using var resized = skBitmap.Resize(new SKImageInfo(targetWidth, targetHeight), new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear));
-                if (resized is null) return false;
-
-                using var skImage = SKImage.FromBitmap(resized);
-                using var encoded = skImage.Encode(SKEncodedImageFormat.Jpeg, 85);
-                thumbnailBytes = encoded.ToArray();
-            }
-
-            if (thumbnailBytes.Length == 0) return false;
-
-            // Store in DB on the primary image (create one if needed)
-            var version = tile.SelectedVersion;
-            if (version is null) return false;
-
-            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
-            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-            var modelId = tile.ModelEntity?.Id;
-            if (modelId is null or 0) return false;
-            var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(modelId.Value);
-            var dbVersion = dbModel?.Versions.FirstOrDefault(v =>
-                v.Files.Any(f => string.Equals(f.LocalPath, tile.SelectedVersion?.PrimaryFile?.LocalPath, StringComparison.OrdinalIgnoreCase)));
-
-            if (dbVersion is null) return false;
-
-            var primaryImage = dbVersion.Images.FirstOrDefault();
-            if (primaryImage is null)
-            {
-                // Create a new image entity for the local thumbnail
-                primaryImage = new ModelImage
-                {
-                    ModelVersionId = dbVersion.Id,
-                    Url = $"file://{localImagePath}",
-                    SortOrder = 0,
-                };
-                dbVersion.Images.Add(primaryImage);
-            }
-
-            primaryImage.ThumbnailData = thumbnailBytes;
-            primaryImage.ThumbnailMimeType = "image/jpeg";
-
-            await unitOfWork.SaveChangesAsync();
-
-            // Display the thumbnail immediately
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                try
-                {
-                    using var stream = new MemoryStream(thumbnailBytes);
-                    tile.ThumbnailImage = new Avalonia.Media.Imaging.Bitmap(stream);
-                }
-                catch
-                {
-                    // Decode failure — not critical
-                }
-            });
-
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _logger?.Debug(LogCategory.General, "LocalFallback",
-                $"Failed to apply local thumbnail for '{tile.DisplayName}': {ex.Message}");
-            return false;
-        }
+        return true;
     }
 
     /// <summary>
@@ -2367,7 +1811,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         {
             // 404 on Civitai — try the local .civitai.info / .json sidecar, then mark
             // synced so the bulk flow doesn't keep retrying it.
+#pragma warning disable CS0618 // forwarder kept until the ViewModel sync path is deleted (Task 12)
             var localApplied = await TryApplyLocalMetadataFallbackAsync(tile, localPath);
+#pragma warning restore CS0618
             await MarkModelSyncedAsync(tile.ModelEntity);
             return localApplied;
         }
