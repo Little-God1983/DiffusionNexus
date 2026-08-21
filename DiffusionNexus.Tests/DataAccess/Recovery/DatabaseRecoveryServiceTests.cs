@@ -3,6 +3,8 @@ using DiffusionNexus.DataAccess.Recovery;
 using DiffusionNexus.Domain.Entities;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace DiffusionNexus.Tests.DataAccess.Recovery;
 
@@ -56,6 +58,16 @@ public sealed class DatabaseRecoveryServiceTests : IDisposable
     {
         using var ctx = NewContext();
         ctx.Database.Migrate();
+    }
+
+    // One migration behind the AddModelSyncStateAndThumbnailAttempts migration these tests target
+    // for the "pending migrations" scenario below (mirrors SyncSchemaMigrationTests.PreviousMigration).
+    private const string PreviousMigration = "20260816161430_AddInstallerPackageIsAppManaged";
+
+    private void MigrateTo(string target)
+    {
+        using var ctx = NewContext();
+        ctx.GetService<IMigrator>().Migrate(target);
     }
 
     private HashSet<string> Columns(string table)
@@ -501,6 +513,19 @@ public sealed class DatabaseRecoveryServiceTests : IDisposable
         }
     }
 
+    // ---- Scenario 7: automatic pre-migration backup (#521 S2) --------------
+
+    [Fact]
+    public void InitializeAndRepair_PendingMigrations_CreatesPreMigrationBackupNextToTheDatabase()
+    {
+        MigrateTo(PreviousMigration);
+
+        var svc = new DatabaseRecoveryService();
+        using (var ctx = NewContext()) svc.InitializeAndRepair(ctx);
+
+        Assert.Single(Directory.GetFiles(_dir, "*.pre-*.db"));
+    }
+
     // ---- Extra coverage: first-run + combined corruption -------------------
 
     [Fact]
@@ -517,6 +542,9 @@ public sealed class DatabaseRecoveryServiceTests : IDisposable
         var models = Columns("Models");
         Assert.Contains("Name", models);
         Assert.Contains("TotalVersionCount", models);
+
+        // No prior database existed, so there is nothing to back up.
+        Assert.Empty(Directory.GetFiles(_dir, "*.pre-*.db"));
     }
 
     [Fact]

@@ -50,6 +50,14 @@ public sealed class DatabaseRecoveryService
             var dbPath = dbContext.Database.GetConnectionString();
             _log.Information($"InitializeDatabase: Connection string: {dbPath}");
 
+            // Capture whether a database file already existed BEFORE any connection is opened.
+            // CanConnect() below eagerly creates an empty file for a SQLite ReadWriteCreate
+            // connection string, so checking File.Exists() after that point is always true —
+            // even on a genuine first-ever launch — which would make PreMigrationBackup back up
+            // a schema-less stub instead of skipping a brand new install as intended.
+            var dbFile = TryGetDatabaseFilePath(dbContext);
+            var dbFileExistedBeforeConnect = dbFile is not null && File.Exists(dbFile);
+
             // First verify we can connect
             _log.Information("InitializeDatabase: Testing connection...");
             if (!dbContext.Database.CanConnect())
@@ -71,6 +79,10 @@ public sealed class DatabaseRecoveryService
                 {
                     _log.Information($"InitializeDatabase:   - {migration}");
                 }
+
+                // Spec #521 S2: a consistent copy next to the DB before any schema change.
+                if (dbFileExistedBeforeConnect && dbFile is not null)
+                    PreMigrationBackup.TryCreate(dbFile, pendingMigrations[0], _log);
 
                 _log.Information("InitializeDatabase: Running Migrate()...");
                 dbContext.Database.Migrate();
@@ -145,6 +157,23 @@ public sealed class DatabaseRecoveryService
         }
 
         _log.Information("InitializeDatabase: Completed");
+    }
+
+    /// <summary>
+    /// Extracts the SQLite file path a context is opened against, for use by
+    /// <see cref="PreMigrationBackup"/>. Returns null for an in-memory or unresolvable
+    /// connection string instead of throwing.
+    /// </summary>
+    private static string? TryGetDatabaseFilePath(DiffusionNexusCoreDbContext dbContext)
+    {
+        try
+        {
+            var cs = dbContext.Database.GetConnectionString();
+            if (string.IsNullOrWhiteSpace(cs)) return null;
+            var path = new SqliteConnectionStringBuilder(cs).DataSource;
+            return string.IsNullOrWhiteSpace(path) || path == ":memory:" ? null : path;
+        }
+        catch { return null; }
     }
 
     /// <summary>
