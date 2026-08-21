@@ -193,7 +193,11 @@ DownloadMissingMetadataAsync                      (both service calls run on Tas
 │     steps run in registration order — a file must be discovered before it can be
 │     identified, and only an identified model has the ids tags/images need
 │
-├── RebuildTilesFromDatabaseAsync()   ← exactly once, after the run
+├── RebuildTilesFromDatabaseAsync()   ← exactly once, after the run — including after a
+│                                       CANCELLED one: those models are already committed,
+│                                       and the run's (signalled) token is deliberately not
+│                                       passed here, or the rebuild would be skipped and the
+│                                       report thrown away with it
 │
 └── SyncStatus:
       report.NewFilesDiscovered == 0 && every step Planned == 0
@@ -338,7 +342,10 @@ second run rather than queueing it, so both ways in are switched off while one i
 `ILibrarySyncService.IsRunning` — someone else's) gates the toolbar command's `CanExecute` and is
 mirrored onto `ModelDetailViewModel.IsLibrarySyncRunning`, which gates the detail panel's button.
 Both entry points still check before they start, for the routes that do not go through a button,
-and answer "A metadata sync is already running." The bulk run's `finally` disposes only the
+and both ask the same composite (`SyncInFlight`) — the service raises `IsRunning` only once
+`ExecuteAsync` is reached, so a bulk press landing while a per-tile fetch was still *planning* would
+otherwise pass a guard that only knew about that flag. The refusal answers "A metadata sync is
+already running." The bulk run's `finally` disposes only the
 `CancellationTokenSource` that call created — clearing the field blind let a late-finishing run
 dispose the *next* run's token source, after which Cancel cancelled nothing.
 

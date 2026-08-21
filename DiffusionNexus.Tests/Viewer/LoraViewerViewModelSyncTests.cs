@@ -410,6 +410,82 @@ public class LoraViewerViewModelSyncTests
     }
 
     /// <summary>
+    /// F1. Cancelling is not failing. The service stops cooperatively, swallows the
+    /// <see cref="OperationCanceledException"/> and returns a report for the models it did finish —
+    /// which are already committed to the database and invisible in the grid until it is rebuilt.
+    /// Handing the run's own (by then signalled) token to that rebuild threw the report away and
+    /// left the user with "Metadata sync cancelled" and a grid that still says nothing was found.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_CancelledRunStillRebuildsTheGridAndShowsItsTally()
+    {
+        var vm = CreateViewModel();
+        var plan = PlanFor(SyncScope.Library, IdentifyStep());
+        SyncReport? report = null;
+
+        _sync.Setup(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(plan);
+        _sync.Setup(s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncPlan p, IProgress<LibrarySyncProgress>? _, CancellationToken _) =>
+            {
+                // The user presses Cancel while the run is going; two of the three items are done.
+                vm.CancelMetadataDownloadCommand.Execute(null);
+                report = new SyncReport(
+                    p,
+                    [new SyncStepReport(SyncStepKind.IdentifyModel, 3, 2, 2, 0, 0)],
+                    Failures: [],
+                    Cancelled: true,
+                    Elapsed: TimeSpan.FromSeconds(4),
+                    NewFilesDiscovered: 0);
+                return report;
+            });
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Once,
+            "the models identified before the cancel are in the database and stay invisible until the grid is rebuilt");
+        vm.SyncStatus.Should().Be(report!.Summary,
+            "a cancelled run still has a tally, and the report is the only thing that knows it");
+        vm.SyncStatus.Should().Contain("(cancelled)", "the report's own summary says so");
+    }
+
+    /// <summary>
+    /// F2. The per-tile fetch owns the service from the moment it starts planning, but
+    /// <c>ILibrarySyncService.IsRunning</c> only turns true once <c>ExecuteAsync</c> is reached.
+    /// A bulk press in that window used to sail past the guard and hit the service's throw.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_IsRefusedWhileAPerTileFetchIsStillPlanning()
+    {
+        var vm = CreateViewModel();
+        var planning = new TaskCompletionSource();
+        var release = new TaskCompletionSource();
+
+        _sync.Setup(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()))
+            .Returns(async (SyncScope s, SyncOptions _, CancellationToken _) =>
+            {
+                planning.TrySetResult();
+                await release.Task;
+                return PlanFor(s, IdentifyStep(1));
+            });
+        _sync.Setup(s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncPlan p, IProgress<LibrarySyncProgress>? _, CancellationToken _) => ReportFor(p, succeeded: 0));
+
+        var tileRun = vm.DownloadMetadataForTileAsync(CreateTile(modelId: 42));
+        await planning.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // WaitAsync: without the fix the bulk run reaches the gated PlanAsync and blocks forever.
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null).WaitAsync(TimeSpan.FromSeconds(10));
+
+        vm.SyncStatus.Should().Be("A metadata sync is already running.");
+        _sync.Verify(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()), Times.Once,
+            "the bulk press must not queue a second plan behind the tile's");
+
+        release.TrySetResult();
+        await tileRun;
+    }
+
+    /// <summary>
     /// R10. Same single-flight rule from the other entry point: the detail panel's button runs
     /// through the same service, so it is refused while a bulk run is going — and while it runs,
     /// the bulk button is off.

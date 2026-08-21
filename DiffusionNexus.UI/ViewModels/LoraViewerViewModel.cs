@@ -217,9 +217,22 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// </summary>
     private void RefreshSyncRunning()
     {
-        IsSyncRunning = _localSyncActive || _metadataSyncCts is not null || (_librarySync?.IsRunning ?? false);
+        IsSyncRunning = SyncInFlight;
         if (DetailViewModel is not null) DetailViewModel.IsLibrarySyncRunning = IsSyncRunning;
     }
+
+    /// <summary>
+    /// The live answer to "is a run going?", read straight from its three sources rather than from
+    /// the observable mirror.
+    /// </summary>
+    /// <remarks>
+    /// One composite, used by both entry guards and by <see cref="RefreshSyncRunning"/> (F2). The
+    /// bulk guard used to ask only about its own CTS and the service's flag, and the service does
+    /// not raise that flag until <c>ExecuteAsync</c> — so a bulk press landing while a per-tile
+    /// fetch was still <i>planning</i> passed the guard and met the service's throw instead.
+    /// </remarks>
+    private bool SyncInFlight
+        => _localSyncActive || _metadataSyncCts is not null || (_librarySync?.IsRunning ?? false);
 
     /// <summary>Keeps a detail panel opened mid-run from showing an enabled button.</summary>
     partial void OnDetailViewModelChanged(ModelDetailViewModel? value)
@@ -723,7 +736,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         // run's token, so Cancel would then have cancelled nothing the user could see stop.
         // CanExecute already greys the button out — this is the guard for every other route in
         // (a keyboard binding, a test, a second window sharing the service).
-        if (_metadataSyncCts is not null || _librarySync.IsRunning)
+        if (SyncInFlight)
         {
             SyncStatus = AlreadyRunningStatus;
             return;
@@ -784,7 +797,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             // has no true async, so it runs inline and freezes the overlay it is meant to be
             // dismissing. RebuildTilesFromDatabaseAsync marshals its own tile swap through
             // InvokeOnUiAsync, so calling it from the pool is what it is built for.
-            await Task.Run(RebuildTilesFromDatabaseAsync, ct);
+            //
+            // Deliberately WITHOUT the run's token (F1). Cancelling is not failing: the service
+            // stops cooperatively and returns a report for the models it did finish, and those are
+            // already committed — passing the by-then-signalled token here made Task.Run throw
+            // before the rebuild, so the work landed in the database and stayed invisible in the
+            // grid, and the report was swallowed by the cancellation catch below.
+            await Task.Run(RebuildTilesFromDatabaseAsync);
 
             var statusText = DescribeOutcome(report);
             _logger?.Info(LogCategory.Network, "CivitaiSync", statusText);
@@ -1409,7 +1428,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         // The service admits one run at a time (R10): while this one is going, the bulk button is
         // off too, and the detail panel's own button is off from the moment the flag flips.
-        if (_localSyncActive || _librarySync.IsRunning)
+        if (SyncInFlight)
         {
             SyncStatus = AlreadyRunningStatus;
             return TileMetadataSyncResult.NotRun;
