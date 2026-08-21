@@ -458,6 +458,38 @@ public sealed class IdentifyModelStepTests : IDisposable
         state.SidecarSignature.Should().Be(string.Empty);
     }
 
+    /// <summary>
+    /// B2. A sidecar that cannot be parsed is still a sidecar with a signature. Stamping the empty
+    /// one the applier used to report made the model differ from its own file on the very next
+    /// plan, so it was re-hashed and re-queried on every single run — forever, for as long as the
+    /// bad file sat there.
+    /// </summary>
+    [Fact]
+    public async Task Execute_MalformedSidecarIsNotDueOnTheNextPlan()
+    {
+        var path = NewModelFile("malformed.safetensors");
+        var (modelId, _) = await SeedAsync("malformed", path);
+
+        // Truncated mid-object: JsonDocument.Parse throws.
+        await File.WriteAllTextAsync(Path.Combine(_tempDir.FullName, "malformed.civitai.info"), "{ \"name\": 123 ");
+        var expectedSignature = SidecarMetadataApplier.Find(path).Signature;
+        expectedSignature.Should().NotBeEmpty();
+
+        var step = NewNotFoundStep();
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        var result = await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+
+        var state = await ReadStateAsync(modelId);
+        state!.MetadataOutcome.Should().Be(SyncOutcome.NotIdentified);
+        state.SidecarSignature.Should().Be(expectedSignature);
+
+        // The next plan sees a file that has not changed since it was looked at, so it leaves it be.
+        var next = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        next.Select(i => i.ModelId).Should().NotContain(modelId);
+    }
+
     [Fact]
     public async Task Execute_HttpErrorStampsErrorAndIncrementsAttempts()
     {

@@ -417,6 +417,35 @@ public sealed class SidecarMetadataApplierTests : IDisposable
         result.Signature.Should().BeEmpty();
     }
 
+    // ------------------------------------------------- B2: a failure still reports the signature
+
+    /// <summary>
+    /// B2. Every failure path used to report an empty signature. The caller stores that, the next
+    /// plan computes the file's real signature, sees a difference, and re-hashes and re-queries the
+    /// model — forever. A sidecar that could not be parsed must report the signature it has, so it
+    /// is left alone until it actually changes (or the 30-day window comes round).
+    /// </summary>
+    [Fact]
+    public async Task ApplyAsync_MalformedSidecarReturnsItsSignature()
+    {
+        var modelPath = NewModelFile("malformed.safetensors");
+        var modelId = await SeedAsync(modelPath);
+
+        // Truncated mid-object: JsonDocument.Parse throws.
+        var sidecarPath = Path.Combine(_tempDir.FullName, "malformed.civitai.info");
+        await File.WriteAllTextAsync(sidecarPath, "{ \"name\": 123 ");
+
+        var expected = SidecarMetadataApplier.Find(modelPath);
+        expected.Signature.Should().NotBeEmpty();
+
+        var result = await ApplyAsync(modelId, modelPath);
+
+        result.Applied.Should().BeFalse();
+        result.SidecarPath.Should().Be(sidecarPath);
+        result.Signature.Should().Be(expected.Signature);
+        result.Signature.Should().NotBeEmpty();
+    }
+
     /// <summary>Encodes a solid-color PNG of the given size — a real image the applier can decode.</summary>
     private static byte[] EncodePng(int width, int height)
     {

@@ -105,7 +105,14 @@ public sealed class SidecarMetadataApplier
         string modelFilePath,
         CancellationToken ct = default)
     {
-        var notApplied = new SidecarApplyResult(false, null, string.Empty, false);
+        // Looked up first, before anything that can fail: the signature a failure reports has to be
+        // the one the file actually has. Every failure path used to report "", the caller stored
+        // that, and the next plan then computed the real signature, saw a difference, and re-hashed
+        // and re-queried the same model — on every run, for as long as the bad file sat there.
+        // A malformed sidecar is now left alone until it changes (or the 30-day window comes round).
+        // Find never throws; a missing directory is not a failure, it is simply no sidecar.
+        var lookup = Find(modelFilePath);
+        var notApplied = new SidecarApplyResult(false, lookup.SidecarPath, lookup.Signature, false);
 
         try
         {
@@ -114,14 +121,13 @@ public sealed class SidecarMetadataApplier
             if (directory is null || !directory.Exists) return notApplied;
 
             var baseName = Path.GetFileNameWithoutExtension(fileInfo.Name);
-            var lookup = Find(modelFilePath);
 
             if (lookup.SidecarPath is null)
             {
                 // No sidecar metadata — still try local thumbnail
                 var thumbnailOnly = await TryApplyLocalThumbnailAsync(
                     uow, modelId, modelFilePath, directory, baseName, ct);
-                return new SidecarApplyResult(false, null, string.Empty, thumbnailOnly);
+                return notApplied with { ThumbnailApplied = thumbnailOnly };
             }
 
             var isCivitaiInfoFormat = lookup.SidecarPath.EndsWith(
@@ -133,7 +139,12 @@ public sealed class SidecarMetadataApplier
 
             // Load ONLY the target model — not the entire database
             var dbModel = await uow.Models.GetByIdWithIncludesAsync(modelId, ct);
-            if (dbModel is null) return notApplied;
+            if (dbModel is null)
+            {
+                _logger?.Debug(LogCategory.General, LogSource,
+                    $"No model {modelId} to apply '{Path.GetFileName(lookup.SidecarPath)}' to — it was deleted during the run");
+                return notApplied;
+            }
 
             var dirty = false;
 
@@ -176,8 +187,12 @@ public sealed class SidecarMetadataApplier
         }
         catch (Exception ex)
         {
+            // One line, naming the sidecar that could not be read — this is the only place the
+            // failure is reported, because the result itself is indistinguishable from "no metadata
+            // in that file" by design (see notApplied above).
             _logger?.Warn(LogCategory.FileSystem, LogSource,
-                $"Failed to read local metadata for '{Path.GetFileName(modelFilePath)}': {ex.Message}");
+                $"{Path.GetFileName(modelFilePath)}: sidecar " +
+                $"'{Path.GetFileName(lookup.SidecarPath) ?? "(none)"}' could not be applied: {ex.Message}");
             return notApplied;
         }
     }
