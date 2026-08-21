@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Avalonia.Threading;
@@ -15,6 +15,7 @@ using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Infrastructure;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.Service.Services.IO;
+using DiffusionNexus.Service.Services.Sync;
 using DiffusionNexus.UI.Models;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.CivitaiBrowser;
@@ -1091,7 +1092,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                     $"  Base: {civitaiVersion.BaseModel}, Images: {civitaiVersion.Images.Count}, Files: {civitaiVersion.Files.Count}");
 
                 // Update model entity with Civitai data
+#pragma warning disable CS0618 // forwarder kept until the ViewModel sync path is deleted (Task 12)
                 await UpdateModelFromCivitaiAsync(tile, civitaiVersion, apiKey);
+#pragma warning restore CS0618
                 updated++;
 
                 _logger?.Info(LogCategory.Network, "CivitaiSync",
@@ -1168,7 +1171,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                     _logger?.Info(LogCategory.Network, "CivitaiSync",
                         $"Re-fetched {civitaiVersion.Images.Count} images for '{tile.DisplayName}'");
 
+#pragma warning disable CS0618 // forwarder kept until the ViewModel sync path is deleted (Task 12)
                     await UpdateModelFromCivitaiAsync(tile, civitaiVersion, apiKey);
+#pragma warning restore CS0618
                     fetched++;
                 }
                 else
@@ -1236,7 +1241,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                 var civitaiVersion = await _civitaiClient!.GetModelVersionAsync(versionCivitaiId, apiKey);
                 if (civitaiVersion is not null)
                 {
+#pragma warning disable CS0618 // forwarder kept until the ViewModel sync path is deleted (Task 12)
                     await UpdateModelFromCivitaiAsync(tile, civitaiVersion, apiKey);
+#pragma warning restore CS0618
                     backfilled++;
                 }
             }
@@ -2075,208 +2082,43 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// <summary>
     /// Updates a model entity from Civitai API response data.
     /// </summary>
+    /// <remarks>
+    /// The response → entity mapping now lives in <see cref="CivitaiMetadataApplier"/>;
+    /// this forwarder only adds the tile refresh and disappears with the ViewModel-driven
+    /// sync path.
+    /// </remarks>
+    [Obsolete("Replaced by LibrarySyncService (#521); removed in Task 12")]
     private async Task UpdateModelFromCivitaiAsync(
         ModelTileViewModel tile,
         CivitaiModelVersion civitaiVersion,
         string? apiKey)
     {
-        // Fetch the full model to get all versions (richer data including images)
-        CivitaiModel? civitaiModel = null;
-        if (civitaiVersion.ModelId > 0)
-        {
-            civitaiModel = await _civitaiClient!.GetModelAsync(civitaiVersion.ModelId, apiKey);
-        }
-
-        // Resolve the best image source: the full model response is more reliable than
-        // the hash-lookup response which often returns an empty images array.
-        var bestCivitaiVersion = civitaiModel?.ModelVersions
-            .FirstOrDefault(v => v.Id == civitaiVersion.Id) ?? civitaiVersion;
+        var model = tile.ModelEntity;
+        if (model is null) return;
 
         // Use a fresh DI scope for DB writes to avoid concurrent DbContext access
         using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
         var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
-        var model = tile.ModelEntity;
-        if (model is null) return;
+        var applier = new CivitaiMetadataApplier(_civitaiClient!, _logger);
+        var applied = await applier.ApplyAsync(
+            unitOfWork,
+            model.Id,
+            tile.SelectedVersion?.PrimaryFile?.Id ?? 0,
+            civitaiVersion,
+            apiKey);
 
-        // Load ONLY the target model — not the entire database (was the #1 cause of OOM)
-        var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
-        if (dbModel is null) return;
-
-        // Update model-level fields from Civitai
-        // Skip overwriting user-edited fields (description, tags, etc.) — IsUserEdited is sticky.
-        var preserveModelEdits = dbModel.IsUserEdited;
-        if (civitaiModel is not null)
-        {
-            // Always set the grouping key — not unique, safe for all models sharing the same Civitai page
-            dbModel.CivitaiModelPageId = civitaiModel.Id;
-
-            // Only assign CivitaiId if no other model already owns it (prevents UNIQUE constraint violation)
-            var civitaiIdTaken = await unitOfWork.Models.IsCivitaiIdTakenAsync(civitaiModel.Id, dbModel.Id);
-            if (!civitaiIdTaken)
-            {
-                dbModel.CivitaiId = civitaiModel.Id;
-            }
-            else
-            {
-                _logger?.Warn(LogCategory.Network, "CivitaiSync",
-                    $"Skipping CivitaiId {civitaiModel.Id} for model '{dbModel.Name}' (Id={dbModel.Id}): " +
-                    "already assigned to another model");
-            }
-
-            if (!preserveModelEdits)
-            {
-                dbModel.Name = civitaiModel.Name;
-                dbModel.Description = civitaiModel.Description;
-            }
-            dbModel.IsNsfw = civitaiModel.Nsfw;
-            dbModel.IsPoi = civitaiModel.Poi;
-            dbModel.Source = DataSource.CivitaiApi;
-            dbModel.LastSyncedAt = DateTimeOffset.UtcNow;
-            // Capture version-availability data from the same response so the
-            // "+N more versions" badge can be shown without an additional HTTP call.
-            dbModel.TotalVersionCount = civitaiModel.ModelVersions?.Count ?? 0;
-            dbModel.LastCheckedForUpdatesUtc = DateTime.UtcNow;
-            dbModel.AllowNoCredit = civitaiModel.AllowNoCredit;
-            dbModel.AllowDerivatives = civitaiModel.AllowDerivatives;
-            dbModel.AllowDifferentLicense = civitaiModel.AllowDifferentLicense;
-
-            // Update or create creator — reuse existing Creator entity by
-            // Username to avoid UNIQUE constraint violations.
-            if (civitaiModel.Creator is not null)
-            {
-                if (dbModel.Creator is not null)
-                {
-                    dbModel.Creator.Username = civitaiModel.Creator.Username;
-                    dbModel.Creator.AvatarUrl ??= civitaiModel.Creator.Image;
-                }
-                else
-                {
-                    var existingCreator = await unitOfWork.Models
-                        .FindCreatorByUsernameAsync(civitaiModel.Creator.Username);
-
-                    dbModel.Creator = existingCreator ?? new Creator
-                    {
-                        Username = civitaiModel.Creator.Username,
-                        AvatarUrl = civitaiModel.Creator.Image,
-                    };
-                }
-            }
-        }
-
-        // Update version-level fields for the matched version
-        var dbVersion = dbModel.Versions.FirstOrDefault(v =>
-            v.Files.Any(f => f.Id == tile.SelectedVersion?.PrimaryFile?.Id));
-
-        if (dbVersion is not null)
-        {
-            // Only assign CivitaiId if no other version already owns it (prevents UNIQUE constraint violation)
-            var versionIdTaken = await unitOfWork.Models
-                .IsVersionCivitaiIdTakenAsync(bestCivitaiVersion.Id, dbVersion.Id);
-            if (!versionIdTaken)
-            {
-                dbVersion.CivitaiId = bestCivitaiVersion.Id;
-            }
-            else
-            {
-                _logger?.Warn(LogCategory.Network, "CivitaiSync",
-                    $"Skipping CivitaiId {bestCivitaiVersion.Id} for version '{dbVersion.Name}' (Id={dbVersion.Id}): " +
-                    "already assigned to another version");
-            }
-
-            dbVersion.Name = bestCivitaiVersion.Name;
-            dbVersion.Description = bestCivitaiVersion.Description;
-            dbVersion.BaseModelRaw = bestCivitaiVersion.BaseModel;
-            dbVersion.DownloadUrl = bestCivitaiVersion.DownloadUrl;
-            dbVersion.DownloadCount = bestCivitaiVersion.Stats?.DownloadCount ?? 0;
-            dbVersion.PublishedAt = bestCivitaiVersion.PublishedAt;
-            dbVersion.EarlyAccessDays = bestCivitaiVersion.EarlyAccessTimeFrame;
-
-            // Update trigger words — skip when this version was user-edited
-            if (!dbVersion.IsUserEdited)
-            {
-                dbVersion.TriggerWords.Clear();
-                var order = 0;
-                foreach (var word in bestCivitaiVersion.TrainedWords)
-                {
-                    dbVersion.TriggerWords.Add(new TriggerWord
-                    {
-                        Word = word,
-                        Order = order++
-                    });
-                }
-            }
-
-            // Add images from Civitai (use the version with the richest data)
-            var existingImageIds = dbVersion.Images
-                .Where(i => i.CivitaiId.HasValue)
-                .Select(i => i.CivitaiId!.Value)
-                .ToHashSet();
-            var sortOrder = dbVersion.Images.Count;
-            foreach (var civImage in bestCivitaiVersion.Images)
-            {
-                if (string.IsNullOrEmpty(civImage.Url))
-                    continue;
-
-                if (civImage.Id.HasValue && existingImageIds.Contains(civImage.Id.Value))
-                    continue;
-
-                dbVersion.Images.Add(new ModelImage
-                {
-                    ModelVersionId = dbVersion.Id,
-                    CivitaiId = civImage.Id,
-                    Url = civImage.Url,
-                    MediaType = civImage.Type,
-                    IsNsfw = civImage.Nsfw,
-                    Width = civImage.Width ?? 0,
-                    Height = civImage.Height ?? 0,
-                    BlurHash = civImage.Hash,
-                    SortOrder = sortOrder++,
-                    CreatedAt = civImage.CreatedAt,
-                    PostId = civImage.PostId,
-                    Username = civImage.Username,
-                    Prompt = civImage.Meta?.Prompt,
-                    NegativePrompt = civImage.Meta?.NegativePrompt,
-                    Seed = civImage.Meta?.Seed,
-                    Steps = civImage.Meta?.Steps,
-                    Sampler = civImage.Meta?.Sampler,
-                    CfgScale = civImage.Meta?.CfgScale,
-                });
-            }
-
-            // Update file hashes from Civitai data
-            var civFile = bestCivitaiVersion.Files.FirstOrDefault(f => f.Primary == true);
-            if (civFile?.Hashes is not null)
-            {
-                var dbFile = dbVersion.PrimaryFile;
-                if (dbFile is not null)
-                {
-                    dbFile.CivitaiId = civFile.Id;
-                    dbFile.HashSHA256 ??= civFile.Hashes.SHA256;
-                    dbFile.HashAutoV2 ??= civFile.Hashes.AutoV2;
-                    dbFile.HashCRC32 ??= civFile.Hashes.CRC32;
-                    dbFile.HashBLAKE3 ??= civFile.Hashes.BLAKE3;
-                }
-            }
-        }
-
-        // Sync tags from Civitai model response (skip when user has edited tags)
-        if (!preserveModelEdits && civitaiModel?.Tags is { Count: > 0 } civitaiTags)
-        {
-            var tagLookup = await unitOfWork.Models.GetAllTagsLookupAsync();
-            SyncTagsFromCivitai(dbModel, civitaiTags, tagLookup);
-        }
-
-        await unitOfWork.SaveChangesAsync();
+        if (!applied) return;
 
         // Reload ONLY this model after save to get generated IDs on new images
         var refreshedModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
+        if (refreshedModel is null) return;
 
         // Refresh tile on UI thread with updated data — use RefreshModelData to
         // properly update _allGroupedModels and re-pick the primary entity.
         await Dispatcher.UIThread.InvokeAsync(() =>
         {
-            tile.RefreshModelData(refreshedModel ?? dbModel);
+            tile.RefreshModelData(refreshedModel);
         });
     }
 
@@ -2284,28 +2126,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// Replaces a model's tags with the Civitai tag list, reusing existing <see cref="Tag"/>
     /// rows by <see cref="Tag.NormalizedName"/> to avoid duplicates in the Tags table.
     /// </summary>
+    [Obsolete("Replaced by CivitaiMetadataApplier.SyncTags (#521); removed in Task 12")]
     private static void SyncTagsFromCivitai(
         Model dbModel,
         IReadOnlyList<string> civitaiTags,
         Dictionary<string, Tag> knownTags)
-    {
-        dbModel.Tags.Clear();
-
-        foreach (var tagName in civitaiTags)
-        {
-            if (string.IsNullOrWhiteSpace(tagName)) continue;
-
-            var normalized = tagName.Trim().ToLowerInvariant();
-
-            if (!knownTags.TryGetValue(normalized, out var tag))
-            {
-                tag = new Tag { Name = tagName, NormalizedName = normalized };
-                knownTags[normalized] = tag;
-            }
-
-            dbModel.Tags.Add(new ModelTag { Tag = tag });
-        }
-    }
+        => CivitaiMetadataApplier.SyncTags(dbModel, civitaiTags, knownTags);
 
     /// <summary>
     /// Scan all configured LoRA source folders for byte-identical files and open
@@ -2546,7 +2372,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             return localApplied;
         }
 
+#pragma warning disable CS0618 // forwarder kept until the ViewModel sync path is deleted (Task 12)
         await UpdateModelFromCivitaiAsync(tile, civitaiVersion, apiKey);
+#pragma warning restore CS0618
 
         // Pull a preview thumbnail if the tile still lacks one after the metadata sync.
         if (tile.IsThumbnailMissing)
