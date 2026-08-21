@@ -1,0 +1,220 @@
+using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Service.Services.Sync;
+using FluentAssertions;
+
+namespace DiffusionNexus.Tests.Sync.Service;
+
+/// <summary>
+/// The derivation table from spec S3, one theory row per table line.
+/// Every legacy model gets its state from data already on disk — never from the network.
+/// </summary>
+public sealed class SyncStateDeriverTests
+{
+    private static readonly DateTimeOffset Now = new(2026, 8, 21, 12, 0, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset Synced = new(2025, 3, 4, 5, 6, 7, TimeSpan.Zero);
+
+    /// <summary>Which timestamp a derived column is expected to carry.</summary>
+    public enum Stamp
+    {
+        /// <summary>Column must be null.</summary>
+        Null,
+
+        /// <summary><c>LastSyncedAt ?? now</c>.</summary>
+        Synced,
+
+        /// <summary>Explicitly <c>now</c> (the model has no <c>LastSyncedAt</c>).</summary>
+        Now,
+    }
+
+    private sealed record Case(
+        int? CivitaiId,
+        DateTimeOffset? LastSyncedAt,
+        DataSource Source,
+        string?[] BaseModelRaws,
+        bool WithTag,
+        int ImageOnVersionIndex,
+        bool IsUserEdited,
+        SyncOutcome ExpectedOutcome,
+        Stamp ExpectedMetadata,
+        Stamp ExpectedTags,
+        Stamp ExpectedImages);
+
+    private static readonly IReadOnlyDictionary<string, Case> Cases = new Dictionary<string, Case>
+    {
+        // Table line 1: CivitaiId != null => Matched.
+        ["matched-with-tags-and-images"] = new(
+            CivitaiId: 42, LastSyncedAt: Synced, Source: DataSource.CivitaiApi, BaseModelRaws: ["SDXL 1.0"],
+            WithTag: true, ImageOnVersionIndex: 0, IsUserEdited: false,
+            ExpectedOutcome: SyncOutcome.Matched,
+            ExpectedMetadata: Stamp.Synced, ExpectedTags: Stamp.Synced, ExpectedImages: Stamp.Synced),
+
+        // Table line 1, tagless + imageless: those columns stay null on purpose so the
+        // "asked one final time, then stamped" path still runs for them.
+        ["matched-without-tags-or-images"] = new(
+            CivitaiId: 42, LastSyncedAt: Synced, Source: DataSource.CivitaiApi, BaseModelRaws: ["SDXL 1.0"],
+            WithTag: false, ImageOnVersionIndex: -1, IsUserEdited: false,
+            ExpectedOutcome: SyncOutcome.Matched,
+            ExpectedMetadata: Stamp.Synced, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
+
+        // Table line 2: no Civitai id, synced, local file, real base model => Sidecar.
+        ["sidecar-local-file-with-real-base-model"] = new(
+            CivitaiId: null, LastSyncedAt: Synced, Source: DataSource.LocalFile, BaseModelRaws: ["Illustrious"],
+            WithTag: true, ImageOnVersionIndex: 0, IsUserEdited: false,
+            ExpectedOutcome: SyncOutcome.Sidecar,
+            ExpectedMetadata: Stamp.Synced, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
+
+        // Table line 3 variants: synced, but nothing actually identified the model.
+        ["not-identified-placeholder-base-model"] = new(
+            CivitaiId: null, LastSyncedAt: Synced, Source: DataSource.LocalFile, BaseModelRaws: ["???"],
+            WithTag: false, ImageOnVersionIndex: -1, IsUserEdited: false,
+            ExpectedOutcome: SyncOutcome.NotIdentified,
+            ExpectedMetadata: Stamp.Synced, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
+
+        ["not-identified-blank-base-model"] = new(
+            CivitaiId: null, LastSyncedAt: Synced, Source: DataSource.LocalFile, BaseModelRaws: ["   ", null],
+            WithTag: false, ImageOnVersionIndex: -1, IsUserEdited: false,
+            ExpectedOutcome: SyncOutcome.NotIdentified,
+            ExpectedMetadata: Stamp.Synced, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
+
+        ["not-identified-no-versions-at-all"] = new(
+            CivitaiId: null, LastSyncedAt: Synced, Source: DataSource.LocalFile, BaseModelRaws: [],
+            WithTag: false, ImageOnVersionIndex: -1, IsUserEdited: false,
+            ExpectedOutcome: SyncOutcome.NotIdentified,
+            ExpectedMetadata: Stamp.Synced, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
+
+        ["not-identified-non-local-source"] = new(
+            CivitaiId: null, LastSyncedAt: Synced, Source: DataSource.Manual, BaseModelRaws: ["Flux.1 D"],
+            WithTag: false, ImageOnVersionIndex: -1, IsUserEdited: false,
+            ExpectedOutcome: SyncOutcome.NotIdentified,
+            ExpectedMetadata: Stamp.Synced, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
+
+        // Table line 4: never synced, never matched => nothing was ever checked.
+        ["none-never-synced"] = new(
+            CivitaiId: null, LastSyncedAt: null, Source: DataSource.LocalFile, BaseModelRaws: ["Pony"],
+            WithTag: true, ImageOnVersionIndex: 0, IsUserEdited: false,
+            ExpectedOutcome: SyncOutcome.None,
+            ExpectedMetadata: Stamp.Null, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
+
+        // Extra 1: matched but never stamped with LastSyncedAt => every timestamp is `now`.
+        ["matched-without-last-synced-falls-back-to-now"] = new(
+            CivitaiId: 7, LastSyncedAt: null, Source: DataSource.CivitaiApi, BaseModelRaws: ["SD 1.5"],
+            WithTag: true, ImageOnVersionIndex: 0, IsUserEdited: false,
+            ExpectedOutcome: SyncOutcome.Matched,
+            ExpectedMetadata: Stamp.Now, ExpectedTags: Stamp.Now, ExpectedImages: Stamp.Now),
+
+        // Extra 2: images living on a NON-first version still count.
+        ["matched-images-on-second-version-count"] = new(
+            CivitaiId: 7, LastSyncedAt: Synced, Source: DataSource.CivitaiApi, BaseModelRaws: ["SD 1.5", "SD 1.5"],
+            WithTag: false, ImageOnVersionIndex: 1, IsUserEdited: false,
+            ExpectedOutcome: SyncOutcome.Matched,
+            ExpectedMetadata: Stamp.Synced, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Synced),
+
+        // Extra 3: a user-edited model derives exactly like its untouched twin.
+        ["user-edited-derives-like-its-twin"] = new(
+            CivitaiId: null, LastSyncedAt: Synced, Source: DataSource.LocalFile, BaseModelRaws: ["Illustrious"],
+            WithTag: true, ImageOnVersionIndex: 0, IsUserEdited: true,
+            ExpectedOutcome: SyncOutcome.Sidecar,
+            ExpectedMetadata: Stamp.Synced, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
+    };
+
+    public static TheoryData<string> CaseNames
+    {
+        get
+        {
+            var data = new TheoryData<string>();
+            foreach (var name in Cases.Keys) data.Add(name);
+            return data;
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(CaseNames))]
+    public void DeriveFollowsTheSpecTable(string caseName)
+    {
+        var testCase = Cases[caseName];
+        var model = BuildModel(testCase);
+
+        var state = SyncStateDeriver.Derive(model, Now);
+
+        state.ModelId.Should().Be(model.Id);
+        state.MetadataOutcome.Should().Be(testCase.ExpectedOutcome);
+        state.MetadataCheckedAt.Should().Be(Expected(testCase, testCase.ExpectedMetadata));
+        state.TagsCheckedAt.Should().Be(Expected(testCase, testCase.ExpectedTags));
+        state.ImagesCheckedAt.Should().Be(Expected(testCase, testCase.ExpectedImages));
+
+        // Constant for every derived row: nothing was attempted, nothing failed, no sidecar
+        // signature was computed, the safetensors header was never read.
+        state.MetadataAttempts.Should().Be(0);
+        state.LastError.Should().BeNull();
+        state.SidecarSignature.Should().BeNull();
+        state.HeaderCheckedAt.Should().BeNull();
+        state.UpdatedAt.Should().Be(Now);
+    }
+
+    [Fact]
+    public void DeriveIgnoresIsUserEdited()
+    {
+        var template = Cases["sidecar-local-file-with-real-base-model"];
+        var untouched = BuildModel(template with { IsUserEdited = false });
+        var edited = BuildModel(template with { IsUserEdited = true });
+
+        var fromUntouched = SyncStateDeriver.Derive(untouched, Now);
+        var fromEdited = SyncStateDeriver.Derive(edited, Now);
+
+        fromEdited.Should().BeEquivalentTo(fromUntouched, o => o.Excluding(s => s.Model));
+    }
+
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("", true)]
+    [InlineData("   ", true)]
+    [InlineData("???", true)]
+    [InlineData("SDXL 1.0", false)]
+    [InlineData("Unknown", false)]
+    public void IsPlaceholderRecognisesBlanksAndQuestionMarks(string? raw, bool expected)
+    {
+        SyncStateDeriver.IsPlaceholder(raw).Should().Be(expected);
+    }
+
+    private static DateTimeOffset? Expected(Case testCase, Stamp stamp) => stamp switch
+    {
+        Stamp.Null => null,
+        Stamp.Now => Now,
+        Stamp.Synced => testCase.LastSyncedAt ?? Now,
+        _ => throw new ArgumentOutOfRangeException(nameof(stamp)),
+    };
+
+    private static Model BuildModel(Case testCase)
+    {
+        var model = new Model
+        {
+            Id = 11,
+            Name = "derive-me",
+            Type = ModelType.LORA,
+            Source = testCase.Source,
+            CivitaiId = testCase.CivitaiId,
+            LastSyncedAt = testCase.LastSyncedAt,
+            IsUserEdited = testCase.IsUserEdited,
+        };
+
+        for (var i = 0; i < testCase.BaseModelRaws.Length; i++)
+        {
+            var version = new ModelVersion { Name = "v" + i, BaseModelRaw = testCase.BaseModelRaws[i] };
+            version.Files.Add(new ModelFile
+            {
+                FileName = "derive-me-" + i + ".safetensors",
+                LocalPath = @"C:\m\derive-me-" + i + ".safetensors",
+                IsLocalFileValid = true,
+                IsPrimary = true,
+                HashSHA256 = "AA",
+            });
+            if (i == testCase.ImageOnVersionIndex) version.Images.Add(new ModelImage { Url = "https://x/y.jpeg" });
+            model.Versions.Add(version);
+        }
+
+        if (testCase.WithTag) model.Tags.Add(new ModelTag { Tag = new Tag { Name = "style", NormalizedName = "style" } });
+
+        return model;
+    }
+}
