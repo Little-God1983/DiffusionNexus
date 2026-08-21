@@ -93,9 +93,12 @@ public sealed class DatabaseRecoveryService
                 _log.Information("InitializeDatabase: No pending migrations - SKIPPING Migrate()");
             }
 
-            // Post-migration verification to catch schema gaps
+            // Post-migration verification to catch schema gaps. The data repair inside it is only
+            // needed when a migration body could have been skipped this start — on a launch with
+            // nothing pending, everything it would fix was already fixed by the launch that
+            // applied (or stamped) the migration, and probing for it is a table scan per start.
             _log.Information("InitializeDatabase: Post-migration schema verification...");
-            CheckAndRepairSchema(dbContext);
+            CheckAndRepairSchema(dbContext, migrationsTouchedThisStart: pendingMigrations.Count > 0);
 
             // WAL: readers no longer block behind writers (e.g. the end-of-backup
             // LastBackupAt write). Persistent — set once per launch is idempotent.
@@ -236,7 +239,15 @@ public sealed class DatabaseRecoveryService
     /// <c>AppSettings</c> and <c>Models</c> tables actually exists, adding any that are missing.
     /// This is safer than waiting for a crash.
     /// </summary>
-    public void CheckAndRepairSchema(DiffusionNexusCoreDbContext dbContext)
+    /// <param name="dbContext">The context whose database is checked.</param>
+    /// <param name="migrationsTouchedThisStart">
+    /// Whether this start applied migrations or stamped them as applied. Only then can a migration
+    /// body have been skipped, so only then is the <i>data</i> repair
+    /// (<see cref="NormalizeModelFileHashCasing"/>) worth its table scan; the column repairs above
+    /// it are PRAGMA reads and run unconditionally. Defaults to <c>true</c> because every caller
+    /// that is not the clean startup path is by definition such a start.
+    /// </param>
+    public void CheckAndRepairSchema(DiffusionNexusCoreDbContext dbContext, bool migrationsTouchedThisStart = true)
     {
         try
         {
@@ -303,7 +314,7 @@ public sealed class DatabaseRecoveryService
             RepairModelsTableColumns(dbContext, connection);
             RepairModelImagesTableColumns(dbContext, connection);
             EnsureModelSyncStatesTable(dbContext);
-            NormalizeModelFileHashCasing(dbContext, connection);
+            if (migrationsTouchedThisStart) NormalizeModelFileHashCasing(dbContext, connection);
         }
         catch (Exception ex)
         {
@@ -419,9 +430,17 @@ public sealed class DatabaseRecoveryService
     /// executes on a database that reached <see cref="MarkPendingMigrationsAsApplied"/> — the row is
     /// stamped in <c>__EFMigrationsHistory</c> without the SQL running — which would leave
     /// <c>ModelFiles.HashSHA256</c> mixed-case forever and break SQL equality against the uppercase
-    /// hashes the downloader writes. Idempotent: the WHERE clause makes an already-normalized
-    /// database a zero-row write.
+    /// hashes the downloader writes.
     /// </summary>
+    /// <remarks>
+    /// Two things keep this off the critical path of every launch. Its caller only reaches it when
+    /// migrations were applied or stamped this start — the only way a migration body can have been
+    /// skipped — and once here it asks <c>EXISTS</c> before it writes. The probe still scans, but it
+    /// is read-only and stops at the first offending row, where the bare <c>UPDATE</c> took a write
+    /// lock and walked the whole table to update nothing. Writers stay honest at the source:
+    /// everything that stores a SHA256 uppercases it first, so on a healthy database the probe
+    /// answers no.
+    /// </remarks>
     private void NormalizeModelFileHashCasing(DiffusionNexusCoreDbContext dbContext, DbConnection connection)
     {
         if (ReadColumnNames(connection, "ModelFiles").Count == 0)
@@ -432,16 +451,41 @@ public sealed class DatabaseRecoveryService
 
         try
         {
+            if (!AnyLowercaseHash(connection))
+            {
+                _log.Information("CheckAndRepairSchema: ModelFiles.HashSHA256 casing already normalized — nothing written");
+                return;
+            }
+
             var updated = dbContext.Database.ExecuteSqlRaw(
                 "UPDATE ModelFiles SET HashSHA256 = upper(HashSHA256) WHERE HashSHA256 IS NOT NULL AND HashSHA256 <> upper(HashSHA256);");
-            if (updated > 0)
-            {
-                _log.Warning($"CheckAndRepairSchema: Normalized {updated} lowercase ModelFiles.HashSHA256 value(s) to uppercase");
-            }
+            _log.Information($"CheckAndRepairSchema: Normalized {updated} lowercase ModelFiles.HashSHA256 value(s) to uppercase");
         }
         catch (Exception ex)
         {
             _log.Error(ex, "CheckAndRepairSchema: Failed to normalize ModelFiles.HashSHA256 casing");
+        }
+    }
+
+    /// <summary>
+    /// Whether any <c>ModelFiles.HashSHA256</c> is not already uppercase. Read-only, and
+    /// <c>EXISTS</c> stops SQLite at the first hit rather than counting them all.
+    /// </summary>
+    private static bool AnyLowercaseHash(DbConnection connection)
+    {
+        var wasOpen = connection.State == ConnectionState.Open;
+        if (!wasOpen) connection.Open();
+
+        try
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText =
+                "SELECT EXISTS(SELECT 1 FROM ModelFiles WHERE HashSHA256 IS NOT NULL AND HashSHA256 <> upper(HashSHA256) LIMIT 1);";
+            return Convert.ToInt64(command.ExecuteScalar() ?? 0L) != 0L;
+        }
+        finally
+        {
+            if (!wasOpen) connection.Close();
         }
     }
 

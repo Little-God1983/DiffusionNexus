@@ -344,6 +344,36 @@ public sealed class SidecarMetadataApplierTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// R11. Sidecars written by other tools store the digest lowercase. Copying that in re-creates
+    /// the mixed casing the startup repair pass exists to remove, and breaks SQL equality against
+    /// every hash the app computes itself — all of which are uppercase.
+    /// </summary>
+    [Fact]
+    public async Task ApplyAsync_StoresALowercaseSidecarHashUppercased()
+    {
+        var modelPath = NewModelFile("lower-hash.safetensors");
+        var modelId = await SeedAsync(modelPath);
+
+        const string lower = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+        await File.WriteAllTextAsync(Path.Combine(_tempDir.FullName, "lower-hash.civitai.info"), $$$"""
+        {"id":700,"modelId":77,"files":[{"name":"lower-hash.safetensors","primary":true,"hashes":{"SHA256":"{{{lower}}}","AutoV2":"av2"}}]}
+        """);
+
+        (await ApplyAsync(modelId, modelPath)).Applied.Should().BeTrue();
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var file = (await uow.Models.GetByIdWithIncludesAsync(modelId))!.Versions.Single().PrimaryFile!;
+
+            file.HashSHA256.Should().Be(lower.ToUpperInvariant(),
+                "SHA256 is stored uppercase library-wide — that is what makes SQL equality work");
+            file.HashAutoV2.Should().Be("av2",
+                "the other hash columns carry no casing invariant, so they are stored as found");
+        }
+    }
+
     [Fact]
     public async Task ApplyAsync_PreservesUserEditedNameAndTriggerWords_CivitaiInfoFormat()
     {

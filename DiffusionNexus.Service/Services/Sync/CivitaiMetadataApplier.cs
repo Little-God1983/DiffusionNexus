@@ -212,7 +212,10 @@ public sealed class CivitaiMetadataApplier
                 if (dbFile is not null)
                 {
                     dbFile.CivitaiId = civFile.Id;
-                    dbFile.HashSHA256 ??= civFile.Hashes.SHA256;
+                    // Uppercased on the way in: Civitai answers in lowercase, and a stored
+                    // lowercase digest breaks SQL equality against every hash the app writes
+                    // itself — the invariant the startup repair pass exists to restore.
+                    dbFile.HashSHA256 ??= FileHasher.NormalizeSha256(civFile.Hashes.SHA256);
                     dbFile.HashAutoV2 ??= civFile.Hashes.AutoV2;
                     dbFile.HashCRC32 ??= civFile.Hashes.CRC32;
                     dbFile.HashBLAKE3 ??= civFile.Hashes.BLAKE3;

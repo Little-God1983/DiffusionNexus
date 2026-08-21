@@ -240,6 +240,15 @@ counted in `SyncReport.UnexpectedFailures` / `FirstUnexpectedError` so the statu
 loud. A real cancellation — `OperationCanceledException` while the run's own token is cancelled —
 still unwinds; a `TaskCanceledException` carrying somebody else's token is a timeout, not the user.
 
+**Hashes are stored uppercase, by whoever writes them.** Civitai and the sidecars answer in
+lowercase; both appliers put `ModelFile.HashSHA256` through `FileHasher.NormalizeSha256` on the way
+in, because a single lowercase row breaks SQL equality against every digest the app computes itself
+and gives the startup repair pass real work to do forever. That pass
+(`DatabaseRecoveryService.NormalizeModelFileHashCasing`) now runs only on a start that applied or
+stamped migrations — the only kind on which a migration body can have been skipped — and asks a
+read-only `EXISTS` before it writes anything. Only SHA256: the other hash columns carry no such
+invariant.
+
 **What counts as applied.** A sidecar is `Sidecar` only when metadata actually came out of it. A
 `.json` next to a LoRA is as often a kohya training config as it is metadata, and a `.civitai.info`
 can be truncated; either way the outcome is `NotIdentified`, `Source`/`LastSyncedAt` are left

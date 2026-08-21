@@ -631,8 +631,12 @@ public sealed class SidecarMetadataApplier
             // Hashes
             if (fileEl.TryGetProperty("hashes", out var hashes))
             {
+                // SHA256 is uppercased on the way in (sidecars store it lowercase): a stored
+                // lowercase digest breaks SQL equality against every hash the app writes itself,
+                // which is the invariant the startup repair pass exists to restore. The other
+                // columns have no such invariant and are stored as found.
                 if (hashes.TryGetProperty("SHA256", out var sha256) && sha256.GetString() is { } sha256Str)
-                { dbFile.HashSHA256 ??= sha256Str; dirty = true; }
+                { dbFile.HashSHA256 ??= FileHasher.NormalizeSha256(sha256Str); dirty = true; }
 
                 if (hashes.TryGetProperty("AutoV2", out var autoV2) && autoV2.GetString() is { } autoV2Str)
                 { dbFile.HashAutoV2 ??= autoV2Str; dirty = true; }

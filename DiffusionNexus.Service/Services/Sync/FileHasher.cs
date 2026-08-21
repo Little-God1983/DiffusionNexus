@@ -33,6 +33,18 @@ public static class FileHasher
         return Convert.ToHexString(hash);
     }
 
+    /// <summary>
+    /// The stored spelling of a SHA256 digest that came from somewhere else — uppercase hex, or
+    /// null. Every write to <c>ModelFile.HashSHA256</c> goes through this.
+    /// </summary>
+    /// <remarks>
+    /// Civitai and the sidecars return lowercase digests, so an applier that stored them verbatim
+    /// re-introduced exactly the mixed casing the recovery pass exists to clean up — and one
+    /// lowercase row is enough to make that pass do real work on every launch. SHA256 only: the
+    /// other hash columns carry no such invariant, and nothing compares them with SQL equality.
+    /// </remarks>
+    public static string? NormalizeSha256(string? hash) => hash?.ToUpperInvariant();
+
     /// <summary>True when <paramref name="hash"/> is a syntactically complete SHA256 digest (64 hex chars).</summary>
     public static bool IsSha256(string? hash)
     {

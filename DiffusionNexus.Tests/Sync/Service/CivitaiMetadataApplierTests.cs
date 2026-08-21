@@ -692,6 +692,59 @@ public sealed class CivitaiMetadataApplierTests : IDisposable
         applied.Should().BeFalse();
     }
 
+    /// <summary>
+    /// R11. Civitai answers with lowercase digests. Storing one verbatim re-creates the mixed
+    /// casing the startup repair pass exists to remove — and one such row is enough to make that
+    /// pass write on every launch — while breaking SQL equality against every hash the app
+    /// computes itself, all of which are uppercase.
+    /// </summary>
+    [Fact]
+    public async Task ApplyAsync_StoresALowercaseResponseHashUppercased()
+    {
+        int modelId, fileId;
+        using (var seedScope = NewScope())
+        {
+            var uow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = NewLocalModel("local", @"C:\m\lower.safetensors");
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+            fileId = model.Versions.First().Files.First().Id;
+        }
+
+        const string lower = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+        var template = NewCivitaiVersion();
+        var civVersion = template with
+        {
+            Files =
+            [
+                template.Files[0] with
+                {
+                    Hashes = new CivitaiFileHashes { SHA256 = lower, AutoV2 = "av2", CRC32 = "crc", BLAKE3 = "b3" },
+                },
+            ],
+        };
+        var applier = NewApplier(NewCivitaiModel(civVersion));
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            (await applier.ApplyAsync(uow, modelId, fileId, civVersion, apiKey: null)).Should().BeTrue();
+        }
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+            var file = saved!.Versions.Single().PrimaryFile!;
+
+            file.HashSHA256.Should().Be(lower.ToUpperInvariant(),
+                "SHA256 is stored uppercase library-wide — that is what makes SQL equality work");
+            file.HashAutoV2.Should().Be("av2",
+                "the other hash columns carry no casing invariant, so they are stored as received");
+        }
+    }
+
     public void Dispose()
     {
         _serviceProvider.Dispose();

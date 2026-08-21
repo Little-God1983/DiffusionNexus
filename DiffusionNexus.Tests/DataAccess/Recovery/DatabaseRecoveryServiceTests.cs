@@ -326,6 +326,60 @@ public sealed class DatabaseRecoveryServiceTests : IDisposable
         Assert.DoesNotContain(second.Warnings, w => w.Contains("HashSHA256"));
     }
 
+    /// <summary>
+    /// R12. The repair used to issue the UPDATE unconditionally: a write transaction and a full
+    /// pass over ModelFiles on every launch, to change nothing. A read-only EXISTS probe now goes
+    /// first and stops at the first offending row — on a healthy database there is none.
+    /// </summary>
+    [Fact]
+    public void CheckAndRepairSchema_AlreadyUppercaseHashes_ProbesButDoesNotWrite()
+    {
+        MigrateFresh();
+        SeedOneModelFile(hash: "FEDCBA9876543210FEDCBA9876543210FEDCBA9876543210FEDCBA9876543210");
+
+        var logger = new CapturingRecoveryLogger();
+        using (var ctx = NewContext()) new DatabaseRecoveryService(logger).CheckAndRepairSchema(ctx);
+
+        Assert.Contains(logger.Infos, i => i.Contains("already normalized"));
+        Assert.DoesNotContain(logger.Infos, i => i.Contains("Normalized 0"));
+        Assert.DoesNotContain(logger.Infos, i => i.Contains("value(s) to uppercase"));
+        Assert.Empty(logger.Errors);
+    }
+
+    /// <summary>
+    /// R12. Even the probe is a scan, so it is only paid for on a start that applied or stamped
+    /// migrations — the only kind of start on which a migration body can have been skipped.
+    /// </summary>
+    [Fact]
+    public void CheckAndRepairSchema_WithoutMigrationsThisStart_DoesNotTouchHashCasing()
+    {
+        MigrateFresh();
+        const string lower = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+        SeedOneModelFile(hash: lower);
+
+        var logger = new CapturingRecoveryLogger();
+        using (var ctx = NewContext())
+            new DatabaseRecoveryService(logger).CheckAndRepairSchema(ctx, migrationsTouchedThisStart: false);
+
+        Assert.Equal(lower, Scalar("SELECT HashSHA256 FROM ModelFiles WHERE Id = 1;"));
+        Assert.DoesNotContain(logger.Infos, i => i.Contains("HashSHA256"));
+
+        // …and the very next start that does touch migrations still fixes it.
+        using (var ctx = NewContext()) new DatabaseRecoveryService(logger).CheckAndRepairSchema(ctx);
+        Assert.Equal(lower.ToUpperInvariant(), Scalar("SELECT HashSHA256 FROM ModelFiles WHERE Id = 1;"));
+    }
+
+    /// <summary>Seeds the Models → ModelVersions → ModelFiles chain with one file carrying <paramref name="hash"/>.</summary>
+    private void SeedOneModelFile(string hash)
+    {
+        Exec("INSERT INTO Models (Id, Name, Type, Mode, Source, IsNsfw, IsPoi, AllowNoCredit, AllowCommercialUse, AllowDerivatives, AllowDifferentLicense, CreatedAt, IsUserEdited, TotalVersionCount) " +
+             "VALUES (1, 'legacy', 'LORA', 'Available', 'LocalFile', 0, 0, 0, 'None', 0, 0, '2026-01-01T00:00:00+00:00', 0, 0);");
+        Exec("INSERT INTO ModelVersions (Id, ModelId, Name, BaseModel, EarlyAccessDays, CreatedAt, IsUserEdited, DownloadCount, RatingCount, Rating, ThumbsUpCount, ThumbsDownCount) " +
+             "VALUES (1, 1, 'v1', 'Unknown', 0, '2026-01-01T00:00:00+00:00', 0, 0, 0, 0, 0, 0);");
+        Exec("INSERT INTO ModelFiles (Id, ModelVersionId, FileName, SizeKB, FileType, IsPrimary, Format, Precision, SizeType, PickleScanResult, VirusScanResult, HashSHA256, LocalPath, IsLocalFileValid) " +
+             $"VALUES (1, 1, 'a.safetensors', 1, 'Model', 1, 'SafeTensor', 'Unknown', 'Unknown', 'Pending', 'Pending', '{hash}', 'C:\\l\\a.safetensors', 1);");
+    }
+
     // ---- Scenario 3: pending migrations but schema already correct ---------
 
     [Fact]
