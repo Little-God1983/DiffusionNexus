@@ -113,6 +113,63 @@ public sealed class SyncStateRepositoryTests : IDisposable
         var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library);
 
         candidates.Select(c => c.Name).Should().BeEquivalentTo(new[] { "in-lora", "in-unknown" });
+
+        // A model with no state row projects the documented defaults, not nulls or garbage.
+        var stateless = candidates.Single(c => c.Name == "in-lora");
+        stateless.Outcome.Should().Be(SyncOutcome.None);
+        stateless.CheckedAt.Should().BeNull();
+        stateless.Attempts.Should().Be(0);
+        stateless.SidecarSignature.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task IdentifyCandidatesReturnOnePerModelPreferringPrimaryFile()
+    {
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        // Two valid files on one version, the SECOND of which is the primary.
+        var primaryLast = NewLocalModel("primary-last", @"C:\m\primary-last-a.safetensors");
+        primaryLast.Versions.First().Files.First().IsPrimary = false;
+        primaryLast.Versions.First().Files.Add(new ModelFile
+        {
+            FileName = "primary-last-b.safetensors",
+            LocalPath = @"C:\m\primary-last-b.safetensors",
+            IsLocalFileValid = true,
+            IsPrimary = true,
+            HashSHA256 = "BB",
+        });
+
+        // Two valid files, neither primary — still exactly one candidate.
+        var noPrimary = NewLocalModel("no-primary", @"C:\m\no-primary-a.safetensors");
+        noPrimary.Versions.First().Files.First().IsPrimary = false;
+        noPrimary.Versions.First().Files.Add(new ModelFile
+        {
+            FileName = "no-primary-b.safetensors",
+            LocalPath = @"C:\m\no-primary-b.safetensors",
+            IsLocalFileValid = true,
+            IsPrimary = false,
+            HashSHA256 = "CC",
+        });
+
+        await uow.Models.AddAsync(primaryLast);
+        await uow.Models.AddAsync(noPrimary);
+        await uow.SaveChangesAsync();
+
+        var primaryFile = primaryLast.Versions.First().Files.Single(f => f.IsPrimary);
+        var nonPrimaryFile = primaryLast.Versions.First().Files.Single(f => !f.IsPrimary);
+        primaryFile.Id.Should().NotBe(nonPrimaryFile.Id);
+
+        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library);
+
+        candidates.Should().HaveCount(2);
+
+        var withPrimary = candidates.Single(c => c.Name == "primary-last");
+        withPrimary.FileId.Should().Be(primaryFile.Id);
+        withPrimary.LocalPath.Should().Be(@"C:\m\primary-last-b.safetensors");
+
+        var withoutPrimary = candidates.Single(c => c.Name == "no-primary");
+        withoutPrimary.FileId.Should().BeOneOf(noPrimary.Versions.First().Files.Select(f => f.Id).ToArray());
     }
 
     [Fact]

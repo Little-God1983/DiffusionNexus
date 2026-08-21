@@ -34,11 +34,10 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
     /// <inheritdoc />
     public async Task<ModelSyncState> GetOrCreateAsync(int modelId, CancellationToken ct = default)
     {
-        // A row added earlier in this unit of work is not queryable yet — check the tracker first.
-        var local = Context.ChangeTracker.Entries<ModelSyncState>().FirstOrDefault(e => e.Entity.ModelId == modelId)?.Entity;
-        if (local is not null) return local;
-
-        var existing = await DbSet.FirstOrDefaultAsync(s => s.ModelId == modelId, ct).ConfigureAwait(false);
+        // ModelId is the primary key, so FindAsync resolves it against the identity map first —
+        // including a row Added earlier in this unit of work, which is not queryable yet — and only
+        // hits the database on a miss.
+        var existing = await DbSet.FindAsync([modelId], ct).ConfigureAwait(false);
         if (existing is not null) return existing;
 
         var created = new ModelSyncState { ModelId = modelId, UpdatedAt = DateTimeOffset.UtcNow };
@@ -71,14 +70,14 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
     /// <inheritdoc />
     public async Task<IReadOnlyList<IdentifyCandidate>> SelectIdentifyCandidatesAsync(SyncScope scope, CancellationToken ct = default)
     {
-        var models = ApplyScope(Context.Models.AsNoTracking(), scope)
+        var models = ApplyScope(Context.Models, scope)
             .Where(m => m.CivitaiId == null && LoraFamily.Contains(m.Type));
 
         // Flattened as joins from the leaf table on purpose: the equivalent
         // m.Versions.SelectMany(v => v.Files.Where(...)) needs SQL APPLY, which SQLite has not got.
         var rows = await (from f in Context.ModelFiles.AsNoTracking()
                           where f.LocalPath != null && f.IsLocalFileValid
-                          join v in Context.ModelVersions.AsNoTracking() on f.ModelVersionId equals v.Id
+                          join v in Context.ModelVersions on f.ModelVersionId equals v.Id
                           join m in models on v.ModelId equals m.Id
                           select new
                           {
@@ -91,9 +90,12 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
                           })
             .ToListAsync(ct).ConfigureAwait(false);
 
-        // One candidate per model: prefer the primary file, then the first. Done in memory (tiny).
+        // One candidate per model: prefer the primary file, then the lowest version/file id. Done in
+        // memory (tiny). SQLite guarantees no row order without an ORDER BY, so the tie-breakers and
+        // the final ordering are what make repeated runs return the same candidates in the same order.
         return rows.GroupBy(r => r.Id)
-            .Select(g => g.OrderByDescending(r => r.IsPrimary).First())
+            .Select(g => g.OrderByDescending(r => r.IsPrimary).ThenBy(r => r.VersionId).ThenBy(r => r.FileId).First())
+            .OrderBy(r => r.Id)
             .Select(r => new IdentifyCandidate(r.Id, r.VersionId, r.FileId, r.Name, r.LocalPath!, r.HashSHA256, r.BaseModelRaw, r.Outcome, r.CheckedAt, r.Attempts, r.Signature))
             .ToList();
     }
@@ -112,13 +114,15 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
             })
             .ToListAsync(ct).ConfigureAwait(false);
 
-        return rows.Select(r => new TagCandidate(r.Id, r.CivitaiModelId, r.Name, r.TagsCheckedAt)).ToList();
+        return rows.OrderBy(r => r.Id)
+            .Select(r => new TagCandidate(r.Id, r.CivitaiModelId, r.Name, r.TagsCheckedAt))
+            .ToList();
     }
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<ImageCandidate>> SelectImageCandidatesAsync(SyncScope scope, CancellationToken ct = default)
     {
-        var models = ApplyScope(Context.Models.AsNoTracking(), scope)
+        var models = ApplyScope(Context.Models, scope)
             .Where(m => m.CivitaiId != null);
 
         // Joined from ModelVersions rather than SelectMany-ed off the navigation: see SelectIdentifyCandidatesAsync.
@@ -135,6 +139,8 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
                           })
             .ToListAsync(ct).ConfigureAwait(false);
 
-        return rows.Select(r => new ImageCandidate(r.ModelId, r.VersionId, r.CivitaiVersionId, r.Name, r.ImagesCheckedAt)).ToList();
+        return rows.OrderBy(r => r.ModelId).ThenBy(r => r.VersionId)
+            .Select(r => new ImageCandidate(r.ModelId, r.VersionId, r.CivitaiVersionId, r.Name, r.ImagesCheckedAt))
+            .ToList();
     }
 }
