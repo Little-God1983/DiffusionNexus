@@ -61,24 +61,30 @@ public static class SorterPathBuilder
         => string.IsNullOrWhiteSpace(categoryFolderName)
            || string.Equals(categoryFolderName.Trim(), UnknownFolderName, StringComparison.OrdinalIgnoreCase);
 
-    public static string BuildCollisionFreeFileName(
-        string fileName, int? civitaiVersionId, Func<string, bool> nameIsTaken)
+    /// <summary>
+    /// The naming sequence a colliding file walks: the plain name, then <c>{stem}_{versionId}</c>
+    /// when there is a version id, then <c>{stem}_2</c>, <c>_3</c>, … without end.
+    /// </summary>
+    /// <remarks>
+    /// Name selection only — deliberately no "is it taken" callback and no disk access. Choosing a
+    /// name needs a content comparison at every step (a taken name holding an identical file means
+    /// "already sorted, skip", not "try the next name"), and the hashes and the plan-local claim
+    /// map both live in <see cref="LoraSortPlanner"/>. Splitting that decision across two types is
+    /// what let the numeric fallback grow <c>_2</c>, <c>_3</c>, <c>_4</c>… on every re-run of a copy:
+    /// each run collided on the plain name, saw its own previous copy as merely "taken", and never
+    /// compared content with it.
+    /// </remarks>
+    public static IEnumerable<string> EnumerateCandidateNames(string fileName, int? civitaiVersionId)
     {
-        if (!nameIsTaken(fileName)) return fileName;
+        yield return fileName;
 
         var stem = Path.GetFileNameWithoutExtension(fileName);
         var extension = Path.GetExtension(fileName);
 
         if (civitaiVersionId is { } versionId)
-        {
-            var suffixed = $"{stem}_{versionId}{extension}";
-            if (!nameIsTaken(suffixed)) return suffixed;
-        }
+            yield return $"{stem}_{versionId}{extension}";
 
         for (var i = 2; ; i++)
-        {
-            var candidate = $"{stem}_{i}{extension}";
-            if (!nameIsTaken(candidate)) return candidate;
-        }
+            yield return $"{stem}_{i}{extension}";
     }
 }

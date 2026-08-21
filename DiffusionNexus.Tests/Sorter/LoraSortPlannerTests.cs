@@ -222,6 +222,57 @@ public class LoraSortPlannerTests
     }
 
     [Fact]
+    public void CopyModeReRunWithNoVersionIdAlsoTransfersNothing()
+    {
+        // Review-2 A3, case A: no version id at all — the case the numeric convention exists for.
+        // Run 1 copied V1 (content A) in as V1_2 because the plain name held content B. Run 2 hit
+        // the plain name again, skipped the _{versionId} slot entirely (there is no version id),
+        // and saw its own run-1 copy at V1_2 as merely "taken" — never hashed — so it produced
+        // V1_3. Run 3 produced V1_4. Unbounded, identical to the bug 4.3 was raised for.
+        var onDisk = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            @"E:\Sorted\SDXL 1.0\Character\V1.safetensors",   // a different model's file
+            @"E:\Sorted\SDXL 1.0\Character\V1_2.safetensors", // our copy from run 1
+        };
+        var planner = Planner(
+            hash: p => p == @"E:\Sorted\SDXL 1.0\Character\V1.safetensors" ? ShaB : ShaA,
+            exists: onDisk.Contains);
+
+        var plan = planner.BuildPlan(
+            [Candidate(@"E:\Loras\x\V1.safetensors", versionId: null, sha: ShaA)],
+            Options(isMove: false, source: @"E:\Loras", target: @"E:\Sorted"));
+
+        plan.TransferCount.Should().Be(0);
+        plan.SkippedDuplicateCount.Should().Be(1);
+        plan.Moves.Single().TargetFilePath.Should().Be(@"E:\Sorted\SDXL 1.0\Character\V1_2.safetensors");
+    }
+
+    [Fact]
+    public void CopyModeReRunWithAThirdModelInTheVersionSlotAlsoTransfersNothing()
+    {
+        // Review-2 A3, case B: the _{versionId} slot is held by a THIRD model, so run 1 landed at
+        // V1_2. Run 2 used to walk plain (different) → V1_42 (different) → V1_2 "taken", uncompared,
+        // and copy itself in a second time as V1_3.
+        var onDisk = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            @"E:\Sorted\SDXL 1.0\Character\V1.safetensors",
+            @"E:\Sorted\SDXL 1.0\Character\V1_42.safetensors",
+            @"E:\Sorted\SDXL 1.0\Character\V1_2.safetensors", // our copy from run 1
+        };
+        var planner = Planner(
+            hash: p => p == @"E:\Sorted\SDXL 1.0\Character\V1_2.safetensors" ? ShaA : ShaB,
+            exists: onDisk.Contains);
+
+        var plan = planner.BuildPlan(
+            [Candidate(@"E:\Loras\x\V1.safetensors", versionId: 42, sha: ShaA)],
+            Options(isMove: false, source: @"E:\Loras", target: @"E:\Sorted"));
+
+        plan.TransferCount.Should().Be(0);
+        plan.SkippedDuplicateCount.Should().Be(1);
+        plan.Moves.Single().TargetFilePath.Should().Be(@"E:\Sorted\SDXL 1.0\Character\V1_2.safetensors");
+    }
+
+    [Fact]
     public void LegacyDashedUppercaseStoredHashStillMatchesAFreshlyComputedOne()
     {
         // Review 4.6: ModelFile.HashSHA256 has been stored with separators by older import

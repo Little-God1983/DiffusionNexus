@@ -82,47 +82,53 @@ public sealed class LoraSortPlanner
                 continue;
             }
 
-            if (!NameIsTaken(fileName))
+            // Name selection: walk the candidate sequence (plain → _{versionId} → _2, _3, …) and
+            // stop at the first name that is either free, or held by content identical to ours —
+            // in which case this file is already sorted and there is nothing to do. EVERY step
+            // gets that content check, not just the _{versionId} slot: with no version id at all
+            // (the case the numeric convention exists for) a copy-mode re-run collided on the
+            // plain name, saw its OWN run-1 copy at _2 as merely "taken", and produced _3, then
+            // _4, unbounded — the original bug, one slot to the right.
+            //
+            // The hash is computed lazily: a free plain name is the overwhelmingly common case and
+            // must not pay for a full-file SHA256.
+            string? myHash = null;
+            var myHashComputed = false;
+            string? MyHash()
             {
-                names[fileName] = candidate;
-                moves.Add(new PlannedMove(candidate, targetDir,
-                    Path.Combine(targetDir, fileName), PlannedAction.Transfer, WasRenamed: false));
-                continue;
+                if (myHashComputed) return myHash;
+                myHashComputed = true;
+                return myHash = HashOfCandidate(candidate);
             }
 
-            // Collision: classify by content. Claimant is the earlier candidate if any,
-            // otherwise the file already on disk at the plain target path.
-            var myHash = HashOfCandidate(candidate);
-
-            if (SameContent(myHash, HashOfClaimant(fileName)))
+            string? freeName = null;
+            string? duplicateOf = null;
+            foreach (var name in SorterPathBuilder.EnumerateCandidateNames(fileName, candidate.CivitaiVersionId))
             {
-                moves.Add(new PlannedMove(candidate, targetDir,
-                    Path.Combine(targetDir, fileName), PlannedAction.SkippedDuplicate, WasRenamed: false));
-                continue;
-            }
-
-            // The plain name belongs to different content, so the deterministic
-            // {stem}_{versionId} name is next. If THAT one is already taken it is very
-            // likely this same file from an earlier run: copy mode leaves the source in
-            // place, so run 2 collided on the plain name again, found its own _{versionId}
-            // copy "taken" and fell through to _2, run 3 to _3, unbounded. Hash-compare
-            // first — an identical file there is our earlier copy, so there is nothing to do.
-            if (candidate.CivitaiVersionId is { } versionId)
-            {
-                var suffixed = $"{Path.GetFileNameWithoutExtension(fileName)}_{versionId}{Path.GetExtension(fileName)}";
-                if (NameIsTaken(suffixed) && SameContent(myHash, HashOfClaimant(suffixed)))
+                ct.ThrowIfCancellationRequested();
+                if (!NameIsTaken(name))
                 {
-                    moves.Add(new PlannedMove(candidate, targetDir,
-                        Path.Combine(targetDir, suffixed), PlannedAction.SkippedDuplicate, WasRenamed: false));
-                    continue;
+                    freeName = name;
+                    break;
+                }
+                if (SameContent(MyHash(), HashOfClaimant(name)))
+                {
+                    duplicateOf = name;
+                    break;
                 }
             }
 
-            var renamed = SorterPathBuilder.BuildCollisionFreeFileName(
-                fileName, candidate.CivitaiVersionId, NameIsTaken);
-            names[renamed] = candidate;
-            moves.Add(new PlannedMove(candidate, targetDir,
-                Path.Combine(targetDir, renamed), PlannedAction.Transfer, WasRenamed: true));
+            if (duplicateOf is not null)
+            {
+                moves.Add(new PlannedMove(candidate, targetDir,
+                    Path.Combine(targetDir, duplicateOf), PlannedAction.SkippedDuplicate, WasRenamed: false));
+                continue;
+            }
+
+            var chosen = freeName!;
+            names[chosen] = candidate;
+            moves.Add(new PlannedMove(candidate, targetDir, Path.Combine(targetDir, chosen),
+                PlannedAction.Transfer, WasRenamed: !string.Equals(chosen, fileName, StringComparison.OrdinalIgnoreCase)));
         }
 
         var transfers = moves.Where(m => m.Action == PlannedAction.Transfer).ToList();

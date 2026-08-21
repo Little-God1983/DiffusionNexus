@@ -493,7 +493,7 @@ The Sorter takes the LoRAs the app already knows about (the same set as the Inst
 
 Generic filenames like `V1.safetensors` from different models can collide once sorted into the same base model + category folder. The Sorter detects these collisions during preview and resolves them automatically:
 
-1. **Different content, same target name → deterministic auto-rename**: files are suffixed with their Civitai version ID (the downloader's convention), or `_2`, `_3`, etc. for files without one. The version-suffixed name is content-compared before `_2` is considered, so a copy-mode re-run recognises its own earlier copy and transfers nothing.
+1. **Different content, same target name → deterministic auto-rename**: files are suffixed with their Civitai version ID (the downloader's convention), or `_2`, `_3`, etc. for files without one. **Every** candidate name is content-compared before the next one is tried — the plain name, the version-suffixed one and each numeric fallback alike — so a copy-mode re-run recognises its own earlier copy wherever it landed and transfers nothing, instead of growing `_2`, `_3`, `_4`… on every run.
    A file that cannot be read (locked by a running backend) counts as different content: it is renamed around, never overwritten.
 2. **Identical content, same target → skip the second copy** and report it. The summary points to the existing Find Duplicates tool for cleanup.
 

@@ -67,31 +67,17 @@ public class SorterPathBuilderTests
         => SorterPathBuilder.IsUnresolvedCategory(category).Should().Be(expected);
 
     [Fact]
-    public void FreeNameIsKeptPlain()
-        => SorterPathBuilder.BuildCollisionFreeFileName("V1.safetensors", 3204603, _ => false)
-            .Should().Be("V1.safetensors");
+    public void CandidateNamesStartPlainThenTakeTheVersionIdThenNumbers()
+        => SorterPathBuilder.EnumerateCandidateNames("V1.safetensors", 3204603).Take(4)
+            .Should().Equal("V1.safetensors", "V1_3204603.safetensors", "V1_2.safetensors", "V1_3.safetensors");
 
     [Fact]
-    public void TakenNameGetsVersionIdSuffix()
-        => SorterPathBuilder.BuildCollisionFreeFileName("V1.safetensors", 3204603,
-                n => n == "V1.safetensors")
-            .Should().Be("V1_3204603.safetensors");
+    public void WithoutAVersionIdTheSequenceIsPlainThenNumbers()
+        => SorterPathBuilder.EnumerateCandidateNames("V1.safetensors", null).Take(4)
+            .Should().Equal("V1.safetensors", "V1_2.safetensors", "V1_3.safetensors", "V1_4.safetensors");
 
     [Fact]
-    public void WithoutVersionIdNumericSuffixIsUsed()
-        => SorterPathBuilder.BuildCollisionFreeFileName("V1.safetensors", null,
-                n => n == "V1.safetensors")
-            .Should().Be("V1_2.safetensors");
-
-    [Fact]
-    public void NumericSuffixSkipsTakenCandidates()
-        => SorterPathBuilder.BuildCollisionFreeFileName("V1.safetensors", null,
-                n => n is "V1.safetensors" or "V1_2.safetensors")
-            .Should().Be("V1_3.safetensors");
-
-    [Fact]
-    public void TakenVersionIdSuffixFallsBackToNumeric()
-        => SorterPathBuilder.BuildCollisionFreeFileName("V1.safetensors", 42,
-                n => n is "V1.safetensors" or "V1_42.safetensors")
-            .Should().Be("V1_2.safetensors");
+    public void CandidateNamesKeepTheExtensionAndTheFullStem()
+        => SorterPathBuilder.EnumerateCandidateNames("my.lora.v2.ckpt", null).Take(2)
+            .Should().Equal("my.lora.v2.ckpt", "my.lora.v2_2.ckpt");
 }
