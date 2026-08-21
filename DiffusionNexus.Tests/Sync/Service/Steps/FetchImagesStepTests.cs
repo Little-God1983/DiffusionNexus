@@ -5,6 +5,7 @@ using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Service.Services.Sync;
 using DiffusionNexus.Service.Services.Sync.Steps;
@@ -35,6 +36,14 @@ public sealed class FetchImagesStepTests : IDisposable
 
         var services = new ServiceCollection();
         services.AddDataAccessLayer(options => options.UseSqlite(_connection));
+
+        // Candidates are scoped to the enabled LoRA sources, and every seeded file lives in the
+        // system temp folder.
+        var settings = new Mock<IAppSettingsService>();
+        settings.Setup(s => s.GetEnabledLoraSourcesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { Path.GetTempPath() });
+        services.AddTransient(_ => settings.Object);
+
         _serviceProvider = services.BuildServiceProvider();
 
         using var scope = _serviceProvider.CreateScope();
@@ -79,6 +88,7 @@ public sealed class FetchImagesStepTests : IDisposable
             {
                 FileName = $"{name}-{versionCivitaiId}.safetensors",
                 LocalPath = Path.Combine(Path.GetTempPath(), $"{name}-{versionCivitaiId}.safetensors"),
+                IsLocalFileValid = true,
                 IsPrimary = true,
             });
             model.Versions.Add(version);

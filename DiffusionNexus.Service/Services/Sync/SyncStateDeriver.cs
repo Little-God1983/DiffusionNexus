@@ -8,6 +8,35 @@ namespace DiffusionNexus.Service.Services.Sync;
 /// have had if the sync state had always been recorded — purely from data already in the
 /// database. Never touches the network: a library that has been synced for years must not
 /// re-ask Civitai about every model just because the state table is new.
+/// <para>The derivation table (<c>stamp</c> = <c>LastSyncedAt ?? now</c>):</para>
+/// <list type="table">
+///   <listheader><term>Model</term><description>Outcome / MetadataCheckedAt / TagsCheckedAt / ImagesCheckedAt</description></listheader>
+///   <item>
+///     <term><c>CivitaiId != null</c></term>
+///     <description><c>Matched</c> / <c>stamp</c> / <c>stamp</c> if it has tags else null / <c>stamp</c> if any version has images else null</description>
+///   </item>
+///   <item>
+///     <term>no id, synced, local file, real base model</term>
+///     <description><c>Sidecar</c> / <b><c>now</c></b> / null / null</description>
+///   </item>
+///   <item>
+///     <term>no id, synced, anything else</term>
+///     <description><c>NotIdentified</c> / <b><c>now</c></b> / null / null</description>
+///   </item>
+///   <item>
+///     <term>no id, never synced</term>
+///     <description><c>None</c> / null / null / null</description>
+///   </item>
+/// </list>
+/// <para>
+/// The two unmatched outcomes are stamped with <c>now</c> rather than the model's own
+/// <c>LastSyncedAt</c> on purpose (R1, anti-herd): a library last synced years ago sits far
+/// outside the 30-day retry window, so stamping history would make every unidentified model due
+/// the instant the state table appears — the 545-item, 27-minute first run the live dry run
+/// measured. The upgrade *is* the check; the next one falls due 30 days from it.
+/// <c>Matched</c> keeps the historical stamp because it is terminal for the retry policy, and
+/// <c>None</c> stays unstamped because nothing has genuinely ever been looked at.
+/// </para>
 /// </summary>
 public static class SyncStateDeriver
 {
@@ -40,7 +69,8 @@ public static class SyncStateDeriver
         // Never synced and never matched: nothing has ever been checked (SyncOutcome.None).
         if (model.LastSyncedAt is null) return state;
 
-        state.MetadataCheckedAt = model.LastSyncedAt;
+        // `now`, not LastSyncedAt — see the anti-herd note on the class doc.
+        state.MetadataCheckedAt = now;
 
         // A local file that came out of a sync with a real base model was identified by a
         // sidecar; anything else was looked at and stayed unidentified.

@@ -6,6 +6,7 @@ using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Service.Services.Sync;
 using DiffusionNexus.Service.Services.Sync.Steps;
@@ -35,15 +36,23 @@ public sealed class IdentifyModelStepTests : IDisposable
         _connection = new SqliteConnection("DataSource=:memory:");
         _connection.Open();
 
+        _tempDir = Directory.CreateTempSubdirectory("dn-identify-");
+
         var services = new ServiceCollection();
         services.AddDataAccessLayer(options => options.UseSqlite(_connection));
+
+        // The step scopes the selection to the enabled LoRA sources, which for these tests is the
+        // temp folder every seeded file lives in.
+        var settings = new Mock<IAppSettingsService>();
+        settings.Setup(s => s.GetEnabledLoraSourcesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { _tempDir.FullName });
+        services.AddTransient(_ => settings.Object);
+
         _serviceProvider = services.BuildServiceProvider();
 
         using var scope = _serviceProvider.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>();
         context.Database.EnsureCreated();
-
-        _tempDir = Directory.CreateTempSubdirectory("dn-identify-");
     }
 
     private IServiceScope NewScope() => _serviceProvider.CreateScope();

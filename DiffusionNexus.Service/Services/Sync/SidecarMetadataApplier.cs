@@ -69,14 +69,18 @@ public sealed class SidecarMetadataApplier
 
             var baseName = Path.GetFileNameWithoutExtension(fileInfo.Name);
 
-            // Look for .civitai.info or .json sidecar files
-            var civitaiInfoFile = directory.GetFiles($"{baseName}.civitai.info").FirstOrDefault();
-            var jsonFile = directory.GetFiles($"{baseName}.json").FirstOrDefault();
+            // Two exact probes instead of two pattern enumerations: the identify step calls this
+            // once per candidate while *planning*, and a source folder holding thousands of LoRAs
+            // (plus their sidecars and previews) made those enumerations the dominant cost of
+            // producing a plan — 16 s on the live library (#521 WP2 acceptance, R3). An exact probe
+            // is also stricter: GetFiles matches Windows 8.3 short names, an exact path does not.
+            //
+            // Prefer .civitai.info (richer version-level data) over .json.
+            var candidate = Path.Combine(directory.FullName, baseName + ".civitai.info");
+            if (!File.Exists(candidate)) candidate = Path.Combine(directory.FullName, baseName + ".json");
+            if (!File.Exists(candidate)) return none;
 
-            // Prefer .civitai.info (richer version-level data)
-            var sidecar = civitaiInfoFile ?? jsonFile;
-            if (sidecar is null) return none;
-
+            var sidecar = new FileInfo(candidate);
             return new SidecarLookup(
                 sidecar.FullName,
                 $"{sidecar.FullName}|{sidecar.LastWriteTimeUtc.Ticks}|{sidecar.Length}");

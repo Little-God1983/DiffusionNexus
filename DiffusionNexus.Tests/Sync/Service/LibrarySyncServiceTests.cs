@@ -31,6 +31,9 @@ public sealed class LibrarySyncServiceTests : IDisposable
 
     private const string ApiKey = "test-api-key";
 
+    /// <summary>The one enabled LoRA source every seeded model file lives under.</summary>
+    private const string SeedRoot = @"C:\m";
+
     public LibrarySyncServiceTests()
     {
         _connection = new SqliteConnection("DataSource=:memory:");
@@ -41,6 +44,9 @@ public sealed class LibrarySyncServiceTests : IDisposable
 
         var settings = new Mock<IAppSettingsService>();
         settings.Setup(s => s.GetCivitaiApiKeyAsync(It.IsAny<CancellationToken>())).ReturnsAsync(ApiKey);
+        // The real steps scope their selection to the enabled LoRA sources; the seeded files live here.
+        settings.Setup(s => s.GetEnabledLoraSourcesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { SeedRoot });
         services.AddTransient(_ => settings.Object);
 
         // The real DiscoverFilesStep delegates the disk scan to this; the sync service reads the
@@ -442,7 +448,7 @@ public sealed class LibrarySyncServiceTests : IDisposable
         version.Files.Add(new ModelFile
         {
             FileName = name + ".safetensors",
-            LocalPath = @"C:\m\" + name + ".safetensors",
+            LocalPath = Path.Combine(SeedRoot, name + ".safetensors"),
             IsLocalFileValid = true,
             IsPrimary = true,
         });

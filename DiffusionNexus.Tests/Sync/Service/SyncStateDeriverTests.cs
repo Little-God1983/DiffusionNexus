@@ -1,5 +1,6 @@
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Service.Services.Sync;
 using FluentAssertions;
 
@@ -58,36 +59,38 @@ public sealed class SyncStateDeriverTests
             ExpectedMetadata: Stamp.Synced, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
 
         // Table line 2: no Civitai id, synced, local file, real base model => Sidecar.
+        // The stamp is `now`, not LastSyncedAt: the upgrade itself counts as the check, so the
+        // whole legacy library does not fall due on the first run after it (R1, anti-herd).
         ["sidecar-local-file-with-real-base-model"] = new(
             CivitaiId: null, LastSyncedAt: Synced, Source: DataSource.LocalFile, BaseModelRaws: ["Illustrious"],
             WithTag: true, ImageOnVersionIndex: 0, IsUserEdited: false,
             ExpectedOutcome: SyncOutcome.Sidecar,
-            ExpectedMetadata: Stamp.Synced, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
+            ExpectedMetadata: Stamp.Now, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
 
         // Table line 3 variants: synced, but nothing actually identified the model.
         ["not-identified-placeholder-base-model"] = new(
             CivitaiId: null, LastSyncedAt: Synced, Source: DataSource.LocalFile, BaseModelRaws: ["???"],
             WithTag: false, ImageOnVersionIndex: -1, IsUserEdited: false,
             ExpectedOutcome: SyncOutcome.NotIdentified,
-            ExpectedMetadata: Stamp.Synced, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
+            ExpectedMetadata: Stamp.Now, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
 
         ["not-identified-blank-base-model"] = new(
             CivitaiId: null, LastSyncedAt: Synced, Source: DataSource.LocalFile, BaseModelRaws: ["   ", null],
             WithTag: false, ImageOnVersionIndex: -1, IsUserEdited: false,
             ExpectedOutcome: SyncOutcome.NotIdentified,
-            ExpectedMetadata: Stamp.Synced, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
+            ExpectedMetadata: Stamp.Now, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
 
         ["not-identified-no-versions-at-all"] = new(
             CivitaiId: null, LastSyncedAt: Synced, Source: DataSource.LocalFile, BaseModelRaws: [],
             WithTag: false, ImageOnVersionIndex: -1, IsUserEdited: false,
             ExpectedOutcome: SyncOutcome.NotIdentified,
-            ExpectedMetadata: Stamp.Synced, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
+            ExpectedMetadata: Stamp.Now, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
 
         ["not-identified-non-local-source"] = new(
             CivitaiId: null, LastSyncedAt: Synced, Source: DataSource.Manual, BaseModelRaws: ["Flux.1 D"],
             WithTag: false, ImageOnVersionIndex: -1, IsUserEdited: false,
             ExpectedOutcome: SyncOutcome.NotIdentified,
-            ExpectedMetadata: Stamp.Synced, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
+            ExpectedMetadata: Stamp.Now, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
 
         // Table line 4: never synced, never matched => nothing was ever checked.
         ["none-never-synced"] = new(
@@ -115,7 +118,7 @@ public sealed class SyncStateDeriverTests
             CivitaiId: null, LastSyncedAt: Synced, Source: DataSource.LocalFile, BaseModelRaws: ["Illustrious"],
             WithTag: true, ImageOnVersionIndex: 0, IsUserEdited: true,
             ExpectedOutcome: SyncOutcome.Sidecar,
-            ExpectedMetadata: Stamp.Synced, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
+            ExpectedMetadata: Stamp.Now, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
     };
 
     public static TheoryData<string> CaseNames
@@ -150,6 +153,31 @@ public sealed class SyncStateDeriverTests
         state.SidecarSignature.Should().BeNull();
         state.HeaderCheckedAt.Should().BeNull();
         state.UpdatedAt.Should().Be(Now);
+    }
+
+    /// <summary>
+    /// The anti-herd guarantee (R1). A library synced years ago carries a <c>LastSyncedAt</c> far
+    /// outside the 30-day retry window, so stamping the derived row with it would make every
+    /// unidentified model due the instant the state table appears — the 545-item, 27-minute first
+    /// run the live dry run measured. The upgrade counts as the check, so the stamp is <c>now</c>.
+    /// </summary>
+    [Fact]
+    public void LegacyNotIdentifiedIsNotDueImmediatelyAfterUpgrade()
+    {
+        var model = BuildModel(Cases["not-identified-placeholder-base-model"]);
+
+        var state = SyncStateDeriver.Derive(model, Now);
+
+        state.MetadataOutcome.Should().Be(SyncOutcome.NotIdentified);
+        state.MetadataCheckedAt.Should().Be(Now);
+        SyncRetryPolicy.Default
+            .IsIdentifyDue(state.MetadataOutcome, state.MetadataCheckedAt, 0, Now, false)
+            .Should().BeFalse();
+
+        // Still due once the retry window has actually elapsed — the check is deferred, not cancelled.
+        SyncRetryPolicy.Default
+            .IsIdentifyDue(state.MetadataOutcome, state.MetadataCheckedAt, 0, Now.Add(SyncRetryPolicy.Default.NotIdentifiedRetryAfter), false)
+            .Should().BeTrue();
     }
 
     [Fact]

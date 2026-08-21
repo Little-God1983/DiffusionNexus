@@ -3,6 +3,7 @@ using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using Microsoft.Extensions.DependencyInjection;
@@ -61,7 +62,14 @@ public sealed class IdentifyModelStep : ISyncStep
         using var dbScope = _scopes.CreateScope();
         var uow = dbScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
-        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(scope, ct).ConfigureAwait(false);
+        // "The library" is what the enabled LoRA sources hold, so the scope alone is not enough:
+        // without the roots the selection also picks up rows left behind by sources the user has
+        // since disabled or removed (#521 WP2 acceptance, R2). Resolved inside the scope because
+        // IAppSettingsService is transient over a scoped unit of work.
+        var settings = dbScope.ServiceProvider.GetRequiredService<IAppSettingsService>();
+        var enabledRoots = await settings.GetEnabledLoraSourcesAsync(ct).ConfigureAwait(false);
+
+        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(scope, enabledRoots, ct).ConfigureAwait(false);
 
         var items = new List<SyncItem>(candidates.Count);
         foreach (var candidate in candidates)

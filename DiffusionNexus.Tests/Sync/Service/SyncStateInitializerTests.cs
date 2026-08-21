@@ -81,7 +81,10 @@ public sealed class SyncStateInitializerTests : IDisposable
 
         var sidecarState = await uow.SyncStates.GetByModelIdAsync(sidecar);
         sidecarState!.MetadataOutcome.Should().Be(SyncOutcome.Sidecar);
-        sidecarState.MetadataCheckedAt.Should().Be(SyncedAt);
+        // Not SyncedAt: an unmatched legacy row is stamped with the derivation time, so the
+        // upgrade does not make the whole library due at once (R1, anti-herd).
+        sidecarState.MetadataCheckedAt.Should().BeAfter(SyncedAt);
+        sidecarState.MetadataCheckedAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5));
         sidecarState.TagsCheckedAt.Should().BeNull();
         sidecarState.ImagesCheckedAt.Should().BeNull();
 

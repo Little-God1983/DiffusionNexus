@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.Domain.Entities;
@@ -48,7 +49,14 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
     /// <summary>Same set as <c>ModelFileSyncService.IsLoraFamily</c>.</summary>
     private static readonly ModelType[] LoraFamily = [ModelType.LORA, ModelType.LoCon, ModelType.DoRA, ModelType.Unknown];
 
-    private static IQueryable<Model> ApplyScope(IQueryable<Model> q, SyncScope scope)
+    /// <summary>
+    /// Narrows <paramref name="q"/> to the run's target. Library and SourceFolder are both
+    /// restricted to the library — a valid local file under an enabled source root — because a
+    /// row whose source the user has disabled or removed is no longer something they can see;
+    /// SourceFolder narrows further to the one folder. Explicit ids bypass the library predicate:
+    /// the user pointed at those models.
+    /// </summary>
+    private static IQueryable<Model> ApplyScope(IQueryable<Model> q, SyncScope scope, IReadOnlyList<string> enabledSourceRoots)
     {
         switch (scope.Kind)
         {
@@ -56,21 +64,68 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
                 var ids = scope.ModelIds ?? Array.Empty<int>();
                 return q.Where(m => ids.Contains(m.Id));
             case SyncScopeKind.SourceFolder:
-                // TODO: Linux Implementation for Task 5: case-sensitive comparison and '/' separator.
-                // The trailing separator makes the prefix boundary-aware: "E:\Loras\" must not
-                // match "E:\Loras_backup\...".
-                var prefix = (scope.SourceFolder ?? string.Empty).TrimEnd('\\', '/') + Path.DirectorySeparatorChar;
-                var prefixLower = prefix.ToLowerInvariant();
-                return q.Where(m => m.Versions.Any(v => v.Files.Any(f => f.LocalPath != null && f.LocalPath.ToLower().StartsWith(prefixLower))));
+                return ApplyLibrary(q.Where(HasFileUnder(PrefixOf(scope.SourceFolder))), enabledSourceRoots);
             default:
-                return q;
+                return ApplyLibrary(q, enabledSourceRoots);
         }
     }
 
-    /// <inheritdoc />
-    public async Task<IReadOnlyList<IdentifyCandidate>> SelectIdentifyCandidatesAsync(SyncScope scope, CancellationToken ct = default)
+    /// <summary>
+    /// Restricts to models with a valid local file under any enabled source root. With no enabled
+    /// root nothing is in the library, so nothing is selected.
+    /// </summary>
+    private static IQueryable<Model> ApplyLibrary(IQueryable<Model> q, IReadOnlyList<string> enabledSourceRoots)
     {
-        var models = ApplyScope(Context.Models, scope)
+        Expression<Func<Model, bool>>? inLibrary = null;
+
+        foreach (var root in enabledSourceRoots.Where(r => !string.IsNullOrWhiteSpace(r)))
+        {
+            var underRoot = HasFileUnder(PrefixOf(root));
+            inLibrary = inLibrary is null ? underRoot : OrElse(inLibrary, underRoot);
+        }
+
+        // A composed OR over the roots rather than `roots.Any(...)` inside the predicate: this is
+        // plain `LIKE 'root%' OR LIKE 'root%'` that SQLite optimises, and it does not depend on
+        // the provider's translation of LINQ operators over a parameter collection.
+        return q.Where(inLibrary ?? (_ => false));
+    }
+
+    /// <summary>
+    /// The lower-cased prefix a stored path must start with to lie under <paramref name="root"/>.
+    /// The trailing separator makes it boundary-aware: "E:\Loras\" must not match "E:\Loras_backup\...".
+    /// </summary>
+    // TODO: Linux Implementation for Task 13: case-sensitive paths and '/' separator.
+    private static string PrefixOf(string? root)
+        => ((root ?? string.Empty).TrimEnd('\\', '/') + Path.DirectorySeparatorChar).ToLowerInvariant();
+
+    /// <summary>Models owning at least one valid local file whose path starts with <paramref name="prefixLower"/>.</summary>
+    private static Expression<Func<Model, bool>> HasFileUnder(string prefixLower)
+        => m => m.Versions.Any(v => v.Files.Any(f =>
+               f.LocalPath != null && f.IsLocalFileValid && f.LocalPath.ToLower().StartsWith(prefixLower)));
+
+    /// <summary>Combines two predicates over the same parameter with <c>||</c>, keeping them translatable.</summary>
+    private static Expression<Func<T, bool>> OrElse<T>(Expression<Func<T, bool>> left, Expression<Func<T, bool>> right)
+    {
+        var parameter = Expression.Parameter(typeof(T), "e");
+        return Expression.Lambda<Func<T, bool>>(
+            Expression.OrElse(Rebind(left, parameter), Rebind(right, parameter)),
+            parameter);
+    }
+
+    private static Expression Rebind<T>(Expression<Func<T, bool>> lambda, ParameterExpression parameter)
+        => new ParameterRebinder(lambda.Parameters[0], parameter).Visit(lambda.Body);
+
+    private sealed class ParameterRebinder(ParameterExpression from, ParameterExpression to) : ExpressionVisitor
+    {
+        protected override Expression VisitParameter(ParameterExpression node)
+            => node == from ? to : base.VisitParameter(node);
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<IdentifyCandidate>> SelectIdentifyCandidatesAsync(
+        SyncScope scope, IReadOnlyList<string> enabledSourceRoots, CancellationToken ct = default)
+    {
+        var models = ApplyScope(Context.Models, scope, enabledSourceRoots)
             .Where(m => m.CivitaiId == null && LoraFamily.Contains(m.Type));
 
         // Flattened as joins from the leaf table on purpose: the equivalent
@@ -101,9 +156,10 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
     }
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<TagCandidate>> SelectTagCandidatesAsync(SyncScope scope, CancellationToken ct = default)
+    public async Task<IReadOnlyList<TagCandidate>> SelectTagCandidatesAsync(
+        SyncScope scope, IReadOnlyList<string> enabledSourceRoots, CancellationToken ct = default)
     {
-        var rows = await ApplyScope(Context.Models.AsNoTracking(), scope)
+        var rows = await ApplyScope(Context.Models.AsNoTracking(), scope, enabledSourceRoots)
             .Where(m => m.CivitaiId != null && !m.IsUserEdited && !m.Tags.Any())
             .Select(m => new
             {
@@ -120,9 +176,10 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
     }
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<ImageCandidate>> SelectImageCandidatesAsync(SyncScope scope, CancellationToken ct = default)
+    public async Task<IReadOnlyList<ImageCandidate>> SelectImageCandidatesAsync(
+        SyncScope scope, IReadOnlyList<string> enabledSourceRoots, CancellationToken ct = default)
     {
-        var models = ApplyScope(Context.Models, scope)
+        var models = ApplyScope(Context.Models, scope, enabledSourceRoots)
             .Where(m => m.CivitaiId != null);
 
         // Joined from ModelVersions rather than SelectMany-ed off the navigation: see SelectIdentifyCandidatesAsync.

@@ -119,6 +119,26 @@ public sealed class SidecarMetadataApplierTests : IDisposable
         changed.Signature.Should().NotBe(preferred.Signature);
     }
 
+    /// <summary>
+    /// The lookup is two exact <c>File.Exists</c> probes, not a directory enumeration: only the
+    /// file whose name is exactly <c>{base}.civitai.info</c> / <c>{base}.json</c> counts. Windows
+    /// pattern matching would happily hand back an 8.3 short name or a near miss.
+    /// </summary>
+    [Fact]
+    public void Find_DoesNotMatchByShortNameOrWildcard()
+    {
+        var modelPath = NewModelFile("exact-name-only.safetensors");
+
+        File.WriteAllText(Path.Combine(_tempDir.FullName, "other.civitai.info"), "{}");
+        File.WriteAllText(Path.Combine(_tempDir.FullName, "exact-name-onlyx.civitai.info"), "{}");
+        File.WriteAllText(Path.Combine(_tempDir.FullName, "exact-name-onlyx.json"), "{}");
+
+        var lookup = SidecarMetadataApplier.Find(modelPath);
+
+        lookup.SidecarPath.Should().BeNull();
+        lookup.Signature.Should().BeEmpty();
+    }
+
     [Fact]
     public async Task ApplyAsync_CivitaiInfoSetsBaseModelIdsTriggerWordsAndMarksLocalFileSource()
     {

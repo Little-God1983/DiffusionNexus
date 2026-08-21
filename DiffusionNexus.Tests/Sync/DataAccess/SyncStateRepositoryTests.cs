@@ -36,13 +36,21 @@ public sealed class SyncStateRepositoryTests : IDisposable
 
     private IServiceScope NewScope() => _serviceProvider.CreateScope();
 
+    /// <summary>
+    /// The enabled LoRA sources every test seeds under. "In the library" means "has a valid
+    /// local file under one of these", so a candidate query without them selects nothing.
+    /// </summary>
+    private static readonly string[] Roots = [@"C:\m"];
+
     // helper used by every test here
     private static Model NewLocalModel(string name, string path, int? civitaiId = null, bool userEdited = false,
-        ModelType type = ModelType.LORA, bool withTag = false, int? versionCivitaiId = null, bool withImage = false)
+        ModelType type = ModelType.LORA, bool withTag = false, int? versionCivitaiId = null, bool withImage = false,
+        bool validFile = true, bool withFile = true)
     {
         var m = new Model { Name = name, Type = type, Source = DataSource.LocalFile, CivitaiId = civitaiId, IsUserEdited = userEdited };
         var v = new ModelVersion { Name = "v1", CivitaiId = versionCivitaiId, BaseModelRaw = "???" };
-        v.Files.Add(new ModelFile { FileName = Path.GetFileName(path), LocalPath = path, IsLocalFileValid = true, IsPrimary = true, HashSHA256 = "AA" });
+        if (withFile)
+            v.Files.Add(new ModelFile { FileName = Path.GetFileName(path), LocalPath = path, IsLocalFileValid = validFile, IsPrimary = true, HashSHA256 = "AA" });
         if (withImage) v.Images.Add(new ModelImage { Url = "https://x/y.jpeg" });
         m.Versions.Add(v);
         if (withTag) m.Tags.Add(new ModelTag { Tag = new Tag { Name = "style", NormalizedName = "style" } });
@@ -110,7 +118,7 @@ public sealed class SyncStateRepositoryTests : IDisposable
             await uow.Models.AddAsync(m);
         await uow.SaveChangesAsync();
 
-        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library);
+        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library, Roots);
 
         candidates.Select(c => c.Name).Should().BeEquivalentTo(new[] { "in-lora", "in-unknown" });
 
@@ -160,7 +168,7 @@ public sealed class SyncStateRepositoryTests : IDisposable
         var nonPrimaryFile = primaryLast.Versions.First().Files.Single(f => !f.IsPrimary);
         primaryFile.Id.Should().NotBe(nonPrimaryFile.Id);
 
-        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library);
+        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library, Roots);
 
         candidates.Should().HaveCount(2);
 
@@ -190,7 +198,7 @@ public sealed class SyncStateRepositoryTests : IDisposable
         state.SidecarSignature = "sig";
         await uow.SaveChangesAsync();
 
-        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library);
+        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library, Roots);
 
         var candidate = candidates.Should().ContainSingle().Subject;
         candidate.ModelId.Should().Be(model.Id);
@@ -220,7 +228,7 @@ public sealed class SyncStateRepositoryTests : IDisposable
             await uow.Models.AddAsync(m);
         await uow.SaveChangesAsync();
 
-        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.ForFolder(@"E:\Loras"));
+        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.ForFolder(@"E:\Loras"), [@"E:\Loras", @"E:\Loras_backup"]);
 
         candidates.Select(c => c.Name).Should().BeEquivalentTo(new[] { "in-root", "in-nested" });
     }
@@ -239,7 +247,7 @@ public sealed class SyncStateRepositoryTests : IDisposable
             await uow.Models.AddAsync(m);
         await uow.SaveChangesAsync();
 
-        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.ForModels(a.Id, c.Id));
+        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.ForModels(a.Id, c.Id), Roots);
 
         candidates.Select(x => x.Name).Should().BeEquivalentTo(new[] { "a", "c" });
     }
@@ -264,7 +272,7 @@ public sealed class SyncStateRepositoryTests : IDisposable
         state.TagsCheckedAt = tagsCheckedAt;
         await uow.SaveChangesAsync();
 
-        var candidates = await uow.SyncStates.SelectTagCandidatesAsync(SyncScope.Library);
+        var candidates = await uow.SyncStates.SelectTagCandidatesAsync(SyncScope.Library, Roots);
 
         var candidate = candidates.Should().ContainSingle().Subject;
         candidate.ModelId.Should().Be(inNoTags.Id);
@@ -295,7 +303,7 @@ public sealed class SyncStateRepositoryTests : IDisposable
         state.ImagesCheckedAt = imagesCheckedAt;
         await uow.SaveChangesAsync();
 
-        var candidates = await uow.SyncStates.SelectImageCandidatesAsync(SyncScope.Library);
+        var candidates = await uow.SyncStates.SelectImageCandidatesAsync(SyncScope.Library, Roots);
 
         var candidate = candidates.Should().ContainSingle().Subject;
         candidate.ModelId.Should().Be(model.Id);
@@ -303,6 +311,131 @@ public sealed class SyncStateRepositoryTests : IDisposable
         candidate.CivitaiVersionId.Should().Be(10);
         candidate.Name.Should().Be("imaged");
         candidate.ImagesCheckedAt.Should().Be(imagesCheckedAt);
+    }
+
+    // ------------------------------------------------- library scope (R2/R4)
+
+    /// <summary>
+    /// "The library" is what the enabled LoRA sources contain — nothing else. Rows left behind by
+    /// a source the user has since disabled or removed are still in the database and were the bulk
+    /// of the 545 identify candidates the live dry run planned.
+    /// </summary>
+    [Fact]
+    public async Task LibraryScopeExcludesModelsOutsideTheEnabledSources()
+    {
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var inSource = NewLocalModel("in-source", @"C:\m\in-source.safetensors");
+        var outDisabled = NewLocalModel("out-disabled", @"D:\old-source\out-disabled.safetensors");
+
+        foreach (var m in new[] { inSource, outDisabled })
+            await uow.Models.AddAsync(m);
+        await uow.SaveChangesAsync();
+
+        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library, Roots);
+
+        candidates.Select(c => c.Name).Should().BeEquivalentTo(new[] { "in-source" });
+    }
+
+    [Fact]
+    public async Task LibraryScopeUnionsEveryEnabledSource()
+    {
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var first = NewLocalModel("first-root", @"C:\m\first-root.safetensors");
+        var second = NewLocalModel("second-root", @"E:\Loras\second-root.safetensors");
+        var neither = NewLocalModel("neither-root", @"D:\elsewhere\neither-root.safetensors");
+
+        foreach (var m in new[] { first, second, neither })
+            await uow.Models.AddAsync(m);
+        await uow.SaveChangesAsync();
+
+        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(
+            SyncScope.Library, [@"C:\m", @"E:\Loras"]);
+
+        candidates.Select(c => c.Name).Should().BeEquivalentTo(new[] { "first-root", "second-root" });
+    }
+
+    /// <summary>Nothing is enabled, so nothing is in the library — for all three selections.</summary>
+    [Fact]
+    public async Task NoEnabledSourcesSelectsNothingForLibraryScope()
+    {
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var model = NewLocalModel("orphan", @"C:\m\orphan.safetensors", civitaiId: 7, versionCivitaiId: 70);
+        await uow.Models.AddAsync(model);
+        await uow.SaveChangesAsync();
+
+        (await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library, [])).Should().BeEmpty();
+        (await uow.SyncStates.SelectTagCandidatesAsync(SyncScope.Library, [])).Should().BeEmpty();
+        (await uow.SyncStates.SelectImageCandidatesAsync(SyncScope.Library, [])).Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Explicit ids are the user pointing at a model, so the library predicate does not apply —
+    /// "sync this one" must work for a model whose file sits outside every enabled source.
+    /// </summary>
+    [Fact]
+    public async Task ModelsScopeIgnoresTheEnabledSources()
+    {
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var outside = NewLocalModel("outside", @"D:\elsewhere\outside.safetensors");
+        await uow.Models.AddAsync(outside);
+        await uow.SaveChangesAsync();
+
+        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.ForModels(outside.Id), []);
+
+        candidates.Select(c => c.Name).Should().BeEquivalentTo(new[] { "outside" });
+    }
+
+    /// <summary>
+    /// R4 — ghost rows. A model whose file is gone (or was never valid) can still carry a Civitai
+    /// id from an old sync; asking Civitai for its tags spends a request on something the user
+    /// cannot see. The identify query has always required a valid local file; tags must too.
+    /// </summary>
+    [Fact]
+    public async Task TagCandidatesRequireAValidLocalFileInTheLibrary()
+    {
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var present = NewLocalModel("present", @"C:\m\present.safetensors", civitaiId: 1);
+        var invalidFile = NewLocalModel("invalid-file", @"C:\m\invalid-file.safetensors", civitaiId: 2, validFile: false);
+        var noFileAtAll = NewLocalModel("no-file", @"C:\m\no-file.safetensors", civitaiId: 3, withFile: false);
+        var outsideLibrary = NewLocalModel("outside", @"D:\elsewhere\outside.safetensors", civitaiId: 4);
+
+        foreach (var m in new[] { present, invalidFile, noFileAtAll, outsideLibrary })
+            await uow.Models.AddAsync(m);
+        await uow.SaveChangesAsync();
+
+        var candidates = await uow.SyncStates.SelectTagCandidatesAsync(SyncScope.Library, Roots);
+
+        candidates.Select(c => c.Name).Should().BeEquivalentTo(new[] { "present" });
+    }
+
+    [Fact]
+    public async Task ImageCandidatesRequireAValidLocalFileInTheLibrary()
+    {
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var present = NewLocalModel("present", @"C:\m\present.safetensors", civitaiId: 1, versionCivitaiId: 10);
+        var invalidFile = NewLocalModel("invalid-file", @"C:\m\invalid-file.safetensors", civitaiId: 2, versionCivitaiId: 20, validFile: false);
+        var noFileAtAll = NewLocalModel("no-file", @"C:\m\no-file.safetensors", civitaiId: 3, versionCivitaiId: 30, withFile: false);
+        var outsideLibrary = NewLocalModel("outside", @"D:\elsewhere\outside.safetensors", civitaiId: 4, versionCivitaiId: 40);
+
+        foreach (var m in new[] { present, invalidFile, noFileAtAll, outsideLibrary })
+            await uow.Models.AddAsync(m);
+        await uow.SaveChangesAsync();
+
+        var candidates = await uow.SyncStates.SelectImageCandidatesAsync(SyncScope.Library, Roots);
+
+        candidates.Select(c => c.Name).Should().BeEquivalentTo(new[] { "present" });
     }
 
     public void Dispose()
