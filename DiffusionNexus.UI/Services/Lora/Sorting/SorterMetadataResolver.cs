@@ -120,7 +120,15 @@ public sealed class SorterMetadataResolver
         // change, and this repo has been bitten by exactly that twice (allowCommercialUse
         // string→array, null stats counters). A shape change must degrade to "unresolved",
         // not abort a 3000-file preview.
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        //
+        // TaskCanceledException only when the caller did NOT cancel: HttpClient reports its own
+        // timeout that way, which is a network failure like any other. A user pressing Cancel
+        // during a 1000-file resolve raises the same type, and swallowing that logged the cancel
+        // as "Civitai by-hash lookup failed … A task was canceled", returned unresolved metadata
+        // for a file that was never looked up, and let the pass run one more file before the loop's
+        // next ThrowIfCancellationRequested noticed. Cancellation must unwind the pass.
+        catch (Exception ex) when (ex is HttpRequestException or JsonException
+                                   || (ex is TaskCanceledException && !ct.IsCancellationRequested))
         {
             _logger?.Warn(LogCategory.Network, LogSource,
                 $"Civitai by-hash lookup failed for {filePath}: {ex.Message}");

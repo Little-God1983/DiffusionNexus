@@ -233,6 +233,39 @@ public sealed class SorterMetadataResolverTests : IDisposable
     }
 
     [Fact]
+    public async Task AUserCancelDuringTheApiCallUnwindsInsteadOfLoggingANetworkFailure()
+    {
+        // TaskCanceledException derives from OperationCanceledException — the type the pass
+        // deliberately does not swallow. Swallowing it here logged the user's Cancel as a Civitai
+        // failure, returned unresolved metadata for a file that was never looked up, and left the
+        // cancel to be noticed one file later.
+        var model = WriteModel();
+        using var cts = new CancellationTokenSource();
+        _client.Setup(c => c.GetModelVersionByHashAsync("abc123", null, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TaskCanceledException("A task was canceled."));
+        cts.Cancel();
+
+        var act = () => Resolver(_client.Object).ResolveAsync(model, cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task AnHttpTimeoutIsStillTreatedAsAnUnresolvedFile()
+    {
+        // Same exception type, nobody cancelled: HttpClient reports its own timeout this way, and
+        // one slow request must cost one file, not the pass.
+        var model = WriteModel();
+        _client.Setup(c => c.GetModelVersionByHashAsync("abc123", null, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout."));
+
+        var meta = await Resolver(_client.Object).ResolveAsync(model, CancellationToken.None);
+
+        meta.BaseModelRaw.Should().BeNull();
+        meta.Sha256.Should().Be("abc123");
+    }
+
+    [Fact]
     public async Task MalformedCacheFileIsDeletedAndResolutionFallsThrough()
     {
         var model = WriteModel();
