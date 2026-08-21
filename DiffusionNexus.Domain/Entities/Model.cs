@@ -96,6 +96,9 @@ public class Model : BaseEntity
     /// <summary>Tags associated with this model.</summary>
     public ICollection<ModelTag> Tags { get; set; } = new List<ModelTag>();
 
+    /// <summary>Library-sync attempt state (1:1, optional — null for legacy rows until derived).</summary>
+    public ModelSyncState? SyncState { get; set; }
+
     #endregion
 
     #region Computed Properties

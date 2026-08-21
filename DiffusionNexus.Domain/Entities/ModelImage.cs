@@ -74,6 +74,12 @@ public class ModelImage
     /// </summary>
     public int? ThumbnailHeight { get; set; }
 
+    /// <summary>When the thumbnail pipeline last tried to produce <see cref="ThumbnailData"/> for this image.</summary>
+    public DateTimeOffset? ThumbnailAttemptedAt { get; set; }
+
+    /// <summary>Why the last attempt failed — one of <see cref="ThumbnailFailureReason"/>; null after success.</summary>
+    public string? ThumbnailFailure { get; set; }
+
     #endregion
 
     #region Full Image Cache (File on Disk)
