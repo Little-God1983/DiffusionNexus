@@ -1259,6 +1259,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                 // carries a CivitaiId), so reloading the detail re-fetches the full version
                 // list and repaints description/tags/images.
                 await detail.LoadAsync(tile);
+                // LoadAsync ends by clearing StatusMessage, so a successful refresh used to
+                // leave no trace at all — the bar just closed. Say what happened.
+                detail.StatusMessage = "Metadata refreshed from Civitai.";
             }
             else
             {
