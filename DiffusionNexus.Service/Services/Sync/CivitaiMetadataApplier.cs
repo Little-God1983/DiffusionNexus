@@ -67,7 +67,7 @@ public sealed class CivitaiMetadataApplier
 
         // Update model-level fields from Civitai
         // Skip overwriting user-edited fields (description, tags, etc.) — IsUserEdited is sticky.
-        var preserveModelEdits = dbModel.IsUserEdited;
+        var preserveModelEdits = !CanWriteModelText(dbModel);
         if (civitaiModel is not null)
         {
             // Always set the grouping key — not unique, safe for all models sharing the same Civitai page
@@ -146,8 +146,17 @@ public sealed class CivitaiMetadataApplier
                     "already assigned to another version");
             }
 
-            dbVersion.Name = bestCivitaiVersion.Name;
-            dbVersion.Description = bestCivitaiVersion.Description;
+            // Name, description and trigger words are the three fields a user edits on a version,
+            // so they all hang off the same guard — the ids, base model, download URL, stats and
+            // images below are facts about the upstream version, not text anyone authored here.
+            var preserveVersionEdits = !CanWriteVersionText(dbVersion);
+
+            if (!preserveVersionEdits)
+            {
+                dbVersion.Name = bestCivitaiVersion.Name;
+                dbVersion.Description = bestCivitaiVersion.Description;
+            }
+
             dbVersion.BaseModelRaw = bestCivitaiVersion.BaseModel;
             dbVersion.DownloadUrl = bestCivitaiVersion.DownloadUrl;
             dbVersion.DownloadCount = bestCivitaiVersion.Stats?.DownloadCount ?? 0;
@@ -155,7 +164,7 @@ public sealed class CivitaiMetadataApplier
             dbVersion.EarlyAccessDays = bestCivitaiVersion.EarlyAccessTimeFrame;
 
             // Update trigger words — skip when this version was user-edited
-            if (!dbVersion.IsUserEdited)
+            if (!preserveVersionEdits)
             {
                 dbVersion.TriggerWords.Clear();
                 var order = 0;
@@ -239,7 +248,7 @@ public sealed class CivitaiMetadataApplier
         if (dbModel is null) return 0;
 
         // Same guard as ApplyAsync: never overwrite a user's own tags.
-        if (dbModel.IsUserEdited) return dbModel.Tags.Count;
+        if (!CanWriteModelText(dbModel)) return dbModel.Tags.Count;
 
         // Tags is annotated non-nullable and initialized to [], but System.Text.Json writes null
         // straight through for an explicit `"tags": null` — the client does not enable
@@ -285,6 +294,20 @@ public sealed class CivitaiMetadataApplier
 
         return added;
     }
+
+    /// <summary>
+    /// Whether the model's own text — name, description, tags — may be written from upstream.
+    /// A model the user has edited answers no: <see cref="Model.IsUserEdited"/> is sticky, and
+    /// nothing Civitai returns is more authoritative than what the user typed.
+    /// </summary>
+    private static bool CanWriteModelText(Model dbModel) => !dbModel.IsUserEdited;
+
+    /// <summary>
+    /// The same rule for a version's authored text — name, description, trigger words.
+    /// Version edits are tracked separately from the model's, so a user who renamed one version
+    /// keeps the rest of the model syncing normally.
+    /// </summary>
+    private static bool CanWriteVersionText(ModelVersion dbVersion) => !dbVersion.IsUserEdited;
 
     /// <summary>
     /// Appends the Civitai images that are not already present by <see cref="ModelImage.CivitaiId"/>,

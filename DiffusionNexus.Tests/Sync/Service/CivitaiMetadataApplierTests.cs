@@ -251,6 +251,52 @@ public sealed class CivitaiMetadataApplierTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// B1. <c>IsUserEdited</c> on the version guarded the trigger words but not the two text fields
+    /// next to them, so a sync silently replaced a version the user had named and described.
+    /// </summary>
+    [Fact]
+    public async Task ApplyAsync_PreservesUserEditedVersionNameAndDescription()
+    {
+        int modelId, fileId;
+        using (var seedScope = NewScope())
+        {
+            var uow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = NewLocalModel("local", @"C:\m\edited-version.safetensors", versionUserEdited: true);
+            var version = model.Versions.First();
+            version.Name = "my version";
+            version.Description = "my version description";
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+            fileId = version.Files.First().Id;
+        }
+
+        var civVersion = NewCivitaiVersion();
+        var applier = NewApplier(NewCivitaiModel(civVersion));
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            (await applier.ApplyAsync(uow, modelId, fileId, civVersion, apiKey: null)).Should().BeTrue();
+        }
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var version = (await uow.Models.GetByIdWithIncludesAsync(modelId))!.Versions.Single();
+
+            version.Name.Should().Be("my version");
+            version.Description.Should().Be("my version description");
+
+            // Facts the user did not author are still applied.
+            version.CivitaiId.Should().Be(700);
+            version.BaseModelRaw.Should().Be("SDXL 1.0");
+            version.DownloadUrl.Should().Be("https://civitai.com/api/download/models/700");
+            version.Images.Should().HaveCount(1);
+        }
+    }
+
     [Fact]
     public async Task ApplyAsync_SkipsCivitaiIdAlreadyOwnedByAnotherModel()
     {

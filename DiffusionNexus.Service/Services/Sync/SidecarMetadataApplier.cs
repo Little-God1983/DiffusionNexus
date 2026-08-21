@@ -37,9 +37,12 @@ public sealed record SidecarApplyResult(bool Applied, string? SidecarPath, strin
 /// </para>
 /// </summary>
 /// <remarks>
-/// Moved verbatim out of <c>LoraViewerViewModel.TryApplyLocalMetadataFallbackAsync</c> (#521 WP2)
-/// so the sync pipeline — not a ViewModel — owns the sidecar → entity mapping. The caller owns
-/// the unit of work (and therefore the DbContext scope): this class only mutates the graph and saves.
+/// Moved out of <c>LoraViewerViewModel.TryApplyLocalMetadataFallbackAsync</c> (#521 WP2) so the
+/// sync pipeline — not a ViewModel — owns the sidecar → entity mapping. The caller owns the unit
+/// of work (and therefore the DbContext scope): this class only mutates the graph and saves.
+/// All three formats honor <see cref="Model.IsUserEdited"/> / <see cref="ModelVersion.IsUserEdited"/>
+/// via <c>CanWriteModelText</c> / <c>CanWriteVersionText</c>, so a user's own metadata is never
+/// overwritten by a file someone else wrote.
 /// </remarks>
 public sealed class SidecarMetadataApplier
 {
@@ -197,7 +200,8 @@ public sealed class SidecarMetadataApplier
         // ── Model-level fields from nested "model" object ──
         if (root.TryGetProperty("model", out var modelProp))
         {
-            if (modelProp.TryGetProperty("name", out var name) && name.GetString() is { } nameStr)
+            if (CanWriteModelText(dbModel)
+                && modelProp.TryGetProperty("name", out var name) && name.GetString() is { } nameStr)
             {
                 dbModel.Name = nameStr;
                 dirty = true;
@@ -240,7 +244,8 @@ public sealed class SidecarMetadataApplier
             }
 
             // Version name
-            if (root.TryGetProperty("name", out var vName) && vName.GetString() is { } vNameStr)
+            if (CanWriteVersionText(dbVersion)
+                && root.TryGetProperty("name", out var vName) && vName.GetString() is { } vNameStr)
             {
                 dbVersion.Name = vNameStr;
                 dirty = true;
@@ -254,18 +259,10 @@ public sealed class SidecarMetadataApplier
             }
 
             // Trained words / trigger words
-            if (root.TryGetProperty("trainedWords", out var trained) && trained.ValueKind == JsonValueKind.Array)
+            if (CanWriteVersionText(dbVersion)
+                && root.TryGetProperty("trainedWords", out var trained) && trained.ValueKind == JsonValueKind.Array)
             {
-                dbVersion.TriggerWords.Clear();
-                var order = 0;
-                foreach (var wordElement in trained.EnumerateArray())
-                {
-                    if (wordElement.ValueKind == JsonValueKind.String && wordElement.GetString() is { } word)
-                    {
-                        dbVersion.TriggerWords.Add(new TriggerWord { Word = word, Order = order++ });
-                        dirty = true;
-                    }
-                }
+                dirty |= ReplaceTriggerWords(dbVersion, trained);
             }
 
             // Download URL
@@ -308,7 +305,8 @@ public sealed class SidecarMetadataApplier
         var localFileName = Path.GetFileName(localPath);
 
         // ── Model-level fields ──
-        if (root.TryGetProperty("name", out var name) && name.GetString() is { } nameStr)
+        if (CanWriteModelText(dbModel)
+            && root.TryGetProperty("name", out var name) && name.GetString() is { } nameStr)
         {
             dbModel.Name = nameStr;
             dirty = true;
@@ -370,7 +368,8 @@ public sealed class SidecarMetadataApplier
                     }
                 }
 
-                if (versionElement.TryGetProperty("name", out var vName) && vName.GetString() is { } vNameStr)
+                if (CanWriteVersionText(dbVersion)
+                    && versionElement.TryGetProperty("name", out var vName) && vName.GetString() is { } vNameStr)
                 {
                     dbVersion.Name = vNameStr;
                     dirty = true;
@@ -382,18 +381,10 @@ public sealed class SidecarMetadataApplier
                     dirty = true;
                 }
 
-                if (versionElement.TryGetProperty("trainedWords", out var trained) && trained.ValueKind == JsonValueKind.Array)
+                if (CanWriteVersionText(dbVersion)
+                    && versionElement.TryGetProperty("trainedWords", out var trained) && trained.ValueKind == JsonValueKind.Array)
                 {
-                    dbVersion.TriggerWords.Clear();
-                    var order = 0;
-                    foreach (var wordElement in trained.EnumerateArray())
-                    {
-                        if (wordElement.ValueKind == JsonValueKind.String && wordElement.GetString() is { } word)
-                        {
-                            dbVersion.TriggerWords.Add(new TriggerWord { Word = word, Order = order++ });
-                            dirty = true;
-                        }
-                    }
+                    dirty |= ReplaceTriggerWords(dbVersion, trained);
                 }
 
                 if (versionElement.TryGetProperty("downloadUrl", out var dlUrl) && dlUrl.GetString() is { } dlUrlStr)
@@ -433,7 +424,8 @@ public sealed class SidecarMetadataApplier
 
         if (root.TryGetProperty("model", out var modelProp))
         {
-            if (modelProp.TryGetProperty("name", out var name) && name.GetString() is { } nameStr)
+            if (CanWriteModelText(dbModel)
+                && modelProp.TryGetProperty("name", out var name) && name.GetString() is { } nameStr)
             {
                 dbModel.Name = nameStr;
                 dirty = true;
@@ -463,22 +455,57 @@ public sealed class SidecarMetadataApplier
                 dirty = true;
             }
 
-            if (root.TryGetProperty("trainedWords", out var trained) && trained.ValueKind == JsonValueKind.Array)
+            if (CanWriteVersionText(dbVersion)
+                && root.TryGetProperty("trainedWords", out var trained) && trained.ValueKind == JsonValueKind.Array)
             {
-                dbVersion.TriggerWords.Clear();
-                var order = 0;
-                foreach (var wordElement in trained.EnumerateArray())
-                {
-                    if (wordElement.ValueKind == JsonValueKind.String && wordElement.GetString() is { } word)
-                    {
-                        dbVersion.TriggerWords.Add(new TriggerWord { Word = word, Order = order++ });
-                        dirty = true;
-                    }
-                }
+                dirty |= ReplaceTriggerWords(dbVersion, trained);
             }
         }
 
         return dirty;
+    }
+
+    /// <summary>
+    /// Whether the model's own text — its name — may be written from a sidecar. A model the user
+    /// has edited answers no: <see cref="Model.IsUserEdited"/> is sticky, and a file someone else
+    /// wrote is not more authoritative than what the user typed. The single place the rule lives,
+    /// referenced from all three sidecar formats.
+    /// </summary>
+    private static bool CanWriteModelText(Model dbModel) => !dbModel.IsUserEdited;
+
+    /// <summary>
+    /// The same rule for a version's authored text — its name and trigger words. Version edits are
+    /// tracked separately from the model's, so a user who renamed one version keeps the rest of the
+    /// model syncing normally.
+    /// </summary>
+    private static bool CanWriteVersionText(ModelVersion dbVersion) => !dbVersion.IsUserEdited;
+
+    /// <summary>
+    /// Replaces a version's trigger words with the sidecar's <c>trainedWords</c>, returning whether
+    /// anything was written. Callers must check <see cref="CanWriteVersionText"/> first.
+    /// </summary>
+    /// <remarks>
+    /// An array holding no usable strings is not an answer worth clearing a version's trigger words
+    /// over — and clearing without reporting it would leave an unsaved mutation on a tracked entity
+    /// that the thumbnail save later commits behind the caller's back.
+    /// </remarks>
+    private static bool ReplaceTriggerWords(ModelVersion dbVersion, JsonElement trainedWords)
+    {
+        var words = trainedWords.EnumerateArray()
+            .Where(e => e.ValueKind == JsonValueKind.String)
+            .Select(e => e.GetString()!)
+            .ToList();
+
+        if (words.Count == 0) return false;
+
+        dbVersion.TriggerWords.Clear();
+        var order = 0;
+        foreach (var word in words)
+        {
+            dbVersion.TriggerWords.Add(new TriggerWord { Word = word, Order = order++ });
+        }
+
+        return true;
     }
 
     /// <summary>

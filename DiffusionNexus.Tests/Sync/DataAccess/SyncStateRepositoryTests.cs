@@ -232,6 +232,34 @@ public sealed class SyncStateRepositoryTests : IDisposable
     }
 
     /// <summary>
+    /// B1. A bulk run must not offer a model the user has edited by hand: every applier below it
+    /// writes over the fields the user authored. A forced/per-tile run still gets it — that is the
+    /// user asking — and the appliers protect the authored fields on that path.
+    /// </summary>
+    [Fact]
+    public async Task IdentifyCandidatesExcludeUserEditedModelsUnlessIncludeMatched()
+    {
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var mine = NewLocalModel("mine", @"C:\m\mine.safetensors", userEdited: true);
+        var theirs = NewLocalModel("theirs", @"C:\m\theirs.safetensors");
+
+        foreach (var m in new[] { mine, theirs })
+            await uow.Models.AddAsync(m);
+        await uow.SaveChangesAsync();
+
+        var bulk = await uow.SyncStates.SelectIdentifyCandidatesAsync(SyncScope.Library, Roots, includeMatched: false);
+        bulk.Select(c => c.Name).Should().BeEquivalentTo(new[] { "theirs" },
+            "a bulk run has no business rewriting metadata the user authored");
+
+        var forced = await uow.SyncStates.SelectIdentifyCandidatesAsync(
+            SyncScope.ForModels(mine.Id), Roots, includeMatched: true);
+        forced.Select(c => c.Name).Should().BeEquivalentTo(new[] { "mine" },
+            "the user pointing at their own model is the user asking for it");
+    }
+
+    /// <summary>
     /// C1, second half. Explicit ids are the user pointing at models, so the LoRA-family filter —
     /// which exists to keep a library-wide run off checkpoints — has no business discarding them.
     /// </summary>

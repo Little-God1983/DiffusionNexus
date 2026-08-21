@@ -158,7 +158,12 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
         // asked for it anyway, which is what a forced re-fetch (the per-tile "Download Metadata"
         // button) is. Selecting it is not the same as re-checking it: the retry policy still
         // decides due-ness, and only a force makes a Matched row due.
-        if (!includeMatched) models = models.Where(m => m.CivitaiId == null);
+        //
+        // A hand-edited model is excluded from the same bulk run for a different reason: nothing
+        // upstream is more authoritative than what the user typed, so there is nothing to gain by
+        // offering it and a name/description/trigger-word overwrite to lose. Under includeMatched
+        // it IS offered — the user pointed at it — and the appliers protect the authored fields.
+        if (!includeMatched) models = models.Where(m => m.CivitaiId == null && !m.IsUserEdited);
 
         // The type filter keeps a library-wide run off checkpoints and the like. Explicit ids are
         // the user pointing at models, so it has no business discarding what they pointed at.
