@@ -404,6 +404,42 @@ public sealed class LoraSorterViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task CancellingAPassKeepsTheRenderedPreviewAndMarksItStale()
+    {
+        // Cancel used to run the full DisarmPlan: the 42-file tree, the summary and the disk line
+        // all vanished, under a status line asserting "preview not updated" and a block reason
+        // telling the user to press Refresh — three mutually contradictory statements. Start must
+        // be disarmed (its plan is gone); the tree must stay, flagged as possibly stale.
+        var a = WriteLora(@"flat\a.safetensors");
+        var secondPassStarted = new TaskCompletionSource();
+        var passes = 0;
+        var vm = CreateVm(loadCachedFiles: async ct =>
+        {
+            if (Interlocked.Increment(ref passes) == 1)
+                return [Installed(a, "SDXL 1.0", "character")];
+            secondPassStarted.SetResult();
+            await Task.Delay(Timeout.Infinite, ct);
+            return [];
+        });
+
+        await vm.InitializeAsync();
+        vm.PreviewRoots.Should().NotBeEmpty();
+
+        var second = vm.RefreshCommand.ExecuteAsync(null);
+        await secondPassStarted.Task;
+        vm.CancelSortCommand.Execute(null);
+        await second;
+
+        vm.PreviewRoots.Select(n => n.Name).Should().Equal("SDXL 1.0");
+        vm.PreviewSummary.Should().NotBeNull();
+        vm.StatusMessage.Should().Contain("stale");
+        vm.BlockReason.Should().Contain("stale");
+        vm.TransferCount.Should().Be(0);
+        vm.HasEnoughSpace.Should().BeFalse();
+        vm.StartSortingCommand.CanExecute(null).Should().BeFalse();
+    }
+
+    [Fact]
     public async Task RefreshClearsACancelledPreviewBanner()
     {
         var a = WriteLora(@"flat\a.safetensors");
@@ -412,7 +448,7 @@ public sealed class LoraSorterViewModelTests : IDisposable
 
         // Simulate the post-cancel state the Cancel path leaves behind.
         vm.CancelSortCommand.Execute(null);
-        vm.StatusMessage = "Cancelled — preview not updated.";
+        vm.StatusMessage = "Cancelled — the preview shown may be stale; press Refresh to rebuild it.";
 
         await vm.RefreshCommand.ExecuteAsync(null);
 

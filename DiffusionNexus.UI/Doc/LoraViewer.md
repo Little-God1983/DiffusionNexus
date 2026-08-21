@@ -534,7 +534,7 @@ Downloaded metadata is cached in `%LocalAppData%\DiffusionNexus\SorterCache\{sha
    - **Move mode:** update `ModelFile.LocalPath` in batched DB writes.
    - **Copy mode:** DB untouched.
 3. **Logging:** every step logs to the Unified Console (`LogCategory.FileSystem`, source `"LoraSorter"`) **with elapsed timings**, so an exported log can tell "slow" from "hung" by which step last succeeded: candidate resolution (known/unknown/skipped counts, plus a heartbeat every 50 resolved files), plan summary, sort start, each DB batch, and the final tally. A run whose history file could not be written still completes and says so — there is simply no restore point for it.
-4. **Cancellation / partial failure:** already-moved files stay (their DB rows are updated — the library remains consistent). The run stops at the current file and reports tally. A locked or inaccessible file is skipped and logged, not fatal.
+4. **Cancellation / partial failure:** cancelling a *preview* keeps the tree on screen and marks it possibly stale (Start is disarmed until a Refresh rebuilds it) rather than blanking it. Cancelling a *run*: already-moved files stay (their DB rows are updated — the library remains consistent). The run stops at the current file and reports tally. A locked or inaccessible file is skipped and logged, not fatal.
 5. **After completion:** result summary in status bar; the Installed tab's cached tiles refresh so paths shown are current.
 
 ### Known limitations (v1)

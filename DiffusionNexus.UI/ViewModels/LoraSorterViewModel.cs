@@ -565,11 +565,17 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             // busy overlay. _previewCancelledByUser tells them apart.
             if (!IsCurrentPass()) return;
 
-            DisarmPlan("Preview was cancelled — press Refresh to rebuild it.");
+            // Keep the tree. Start must be disarmed — the plan it would run is gone — but wiping
+            // the rendered preview, the summary and the disk line left the user staring at an
+            // empty tree under a message asserting that nothing had changed. What is true is that
+            // what they see is now possibly stale, and both the status line and the block reason
+            // say exactly that.
+            DisarmPlan("Preview was cancelled — the tree below may be stale; press Refresh to rebuild it.",
+                keepTree: true);
             if (_previewCancelledByUser)
             {
                 _previewCancelledByUser = false;
-                StatusMessage = "Cancelled — preview not updated.";
+                StatusMessage = "Cancelled — the preview shown may be stale; press Refresh to rebuild it.";
                 _statusMessageIsWarning = false;
             }
         }
@@ -603,14 +609,21 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// <c>ReferenceEquals(_lastPlan, plan)</c> guard in <see cref="StartSortingAsync"/> was written
     /// for this class of problem but cannot see it, because nothing reassigned <c>_lastPlan</c>.
     /// </summary>
-    private void DisarmPlan(string reason)
+    /// <param name="keepTree">Leaves the rendered preview (tree, summary, disk line) on screen and
+    /// disarms only what Start depends on. Used by the cancel path: the user still wants to see
+    /// what was there, flagged as possibly stale, rather than have it vanish. A failed pass clears
+    /// it, because there the tree may describe a folder that is no longer even selected.</param>
+    private void DisarmPlan(string reason, bool keepTree = false)
     {
         _lastPlan = null;
         TransferCount = 0;
         HasEnoughSpace = false;
-        PreviewRoots.Clear();
-        PreviewSummary = null;
-        DiskSummary = null;
+        if (!keepTree)
+        {
+            PreviewRoots.Clear();
+            PreviewSummary = null;
+            DiskSummary = null;
+        }
         BlockReason = reason;
     }
 
