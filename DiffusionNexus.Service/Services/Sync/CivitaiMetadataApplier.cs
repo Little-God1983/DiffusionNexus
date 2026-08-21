@@ -177,8 +177,17 @@ public sealed class CivitaiMetadataApplier
                 // Raw string and enum are two spellings of one answer and the editor writes both;
                 // writing only the raw one left the enum — which the viewer's base-model filter
                 // reads — reporting the previous base model forever.
-                dbVersion.BaseModelRaw = bestCivitaiVersion.BaseModel;
-                dbVersion.BaseModel = BaseModelTypeExtensions.ParseCivitai(bestCivitaiVersion.BaseModel);
+                //
+                // CivitaiModelVersion.BaseModel is a non-nullable string defaulting to "", so a
+                // response that omits it looks exactly like one that carries a blank. Writing that
+                // through would blank the raw string and set the enum to Unknown, undoing a base
+                // model an earlier sidecar established — on a version nobody edited, so no guard
+                // above catches it. A missing answer replaces nothing.
+                if (!string.IsNullOrWhiteSpace(bestCivitaiVersion.BaseModel))
+                {
+                    dbVersion.BaseModelRaw = bestCivitaiVersion.BaseModel;
+                    dbVersion.BaseModel = BaseModelTypeExtensions.ParseCivitai(bestCivitaiVersion.BaseModel);
+                }
             }
 
             dbVersion.DownloadUrl = bestCivitaiVersion.DownloadUrl;

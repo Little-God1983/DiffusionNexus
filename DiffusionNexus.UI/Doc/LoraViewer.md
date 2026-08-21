@@ -233,7 +233,10 @@ write site, all three sidecar formats included. Model name, description and tags
 `ModelVersion.IsUserEdited` — the detail view lets the user pick a base model and stamps the
 version as edited, so a refresh that rewrote it undid that choice. Every write of `BaseModelRaw`
 also writes the `BaseModel` enum (`BaseModelTypeExtensions.ParseCivitai`, the same helper the
-editor uses), so the viewer's base-model filter and the label the detail view shows never disagree.
+editor uses), so the viewer's base-model filter and the label the detail view shows never disagree —
+and a *blank* upstream base model is treated as a missing answer rather than an instruction to
+forget the stored one (Civitai's `baseModel` is a non-nullable string that defaults to `""`, so an
+omitted field and an empty one are the same value).
 Facts nobody authored locally — Civitai ids, download URL, file hashes, images, NSFW — are applied
 either way.
 

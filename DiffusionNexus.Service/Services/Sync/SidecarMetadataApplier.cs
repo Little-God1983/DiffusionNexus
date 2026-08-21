@@ -276,8 +276,7 @@ public sealed class SidecarMetadataApplier
             if (CanWriteVersionText(dbVersion)
                 && root.TryGetProperty("baseModel", out var baseModel) && baseModel.GetString() is { } baseModelStr)
             {
-                WriteBaseModel(dbVersion, baseModelStr);
-                dirty = true;
+                dirty |= WriteBaseModel(dbVersion, baseModelStr);
             }
 
             // Trained words / trigger words
@@ -400,8 +399,7 @@ public sealed class SidecarMetadataApplier
                 if (CanWriteVersionText(dbVersion)
                     && versionElement.TryGetProperty("baseModel", out var baseModel) && baseModel.GetString() is { } baseModelStr)
                 {
-                    WriteBaseModel(dbVersion, baseModelStr);
-                    dirty = true;
+                    dirty |= WriteBaseModel(dbVersion, baseModelStr);
                 }
 
                 if (CanWriteVersionText(dbVersion)
@@ -467,8 +465,7 @@ public sealed class SidecarMetadataApplier
             if (CanWriteVersionText(dbVersion)
                 && root.TryGetProperty("baseModel", out var baseModel) && baseModel.GetString() is { } baseModelStr)
             {
-                WriteBaseModel(dbVersion, baseModelStr);
-                dirty = true;
+                dirty |= WriteBaseModel(dbVersion, baseModelStr);
             }
 
             // Fallback: "sd version" for very old sidecar format
@@ -476,8 +473,7 @@ public sealed class SidecarMetadataApplier
                 && dbVersion.BaseModelRaw is null or "???"
                 && root.TryGetProperty("sd version", out var sdVer) && sdVer.GetString() is { } sdVerStr)
             {
-                WriteBaseModel(dbVersion, sdVerStr);
-                dirty = true;
+                dirty |= WriteBaseModel(dbVersion, sdVerStr);
             }
 
             if (CanWriteVersionText(dbVersion)
@@ -511,10 +507,20 @@ public sealed class SidecarMetadataApplier
     /// view's editor uses. Writing only the raw one left the enum reporting the previous base
     /// model forever. Callers must check <see cref="CanWriteVersionText"/> first.
     /// </summary>
-    private static void WriteBaseModel(ModelVersion dbVersion, string baseModelRaw)
+    /// <returns>Whether anything was written.</returns>
+    /// <remarks>
+    /// A blank <c>baseModel</c> is a missing answer, not an instruction to forget the stored one
+    /// (F6). The call sites only rejected an <i>absent</i> key, so a sidecar carrying
+    /// <c>"baseModel": ""</c> blanked the raw string and set the enum to <c>Unknown</c> on a version
+    /// nobody had edited. The check lives here so all four of them inherit it.
+    /// </remarks>
+    private static bool WriteBaseModel(ModelVersion dbVersion, string? baseModelRaw)
     {
+        if (string.IsNullOrWhiteSpace(baseModelRaw)) return false;
+
         dbVersion.BaseModelRaw = baseModelRaw;
         dbVersion.BaseModel = BaseModelTypeExtensions.ParseCivitai(baseModelRaw);
+        return true;
     }
 
     /// <summary>

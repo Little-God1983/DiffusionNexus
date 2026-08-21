@@ -345,6 +345,46 @@ public sealed class SidecarMetadataApplierTests : IDisposable
     }
 
     /// <summary>
+    /// F6, sidecar twin. The sidecar sites only rejected a <i>missing</i> <c>baseModel</c>; a
+    /// present-but-blank one was written through, setting the raw string to <c>""</c> and the enum
+    /// to <c>Unknown</c> on a version nobody had edited.
+    /// </summary>
+    [Fact]
+    public async Task ApplyAsync_BlankBaseModelLeavesTheStoredOneAlone_CivitaiInfoFormat()
+    {
+        var modelPath = NewModelFile("blank-base.safetensors");
+
+        int modelId;
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = NewLocalModel("local", modelPath);
+            var version = model.Versions.First();
+            version.BaseModelRaw = "Pony";
+            version.BaseModel = BaseModelType.Pony;
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+        }
+
+        await File.WriteAllTextAsync(Path.Combine(_tempDir.FullName, "blank-base.civitai.info"), """
+        {"id":700,"modelId":77,"baseModel":"   "}
+        """);
+
+        (await ApplyAsync(modelId, modelPath)).Applied.Should().BeTrue();
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var version = (await uow.Models.GetByIdWithIncludesAsync(modelId))!.Versions.Single();
+
+            version.BaseModelRaw.Should().Be("Pony", "a blank sidecar answer says nothing, so it replaces nothing");
+            version.BaseModel.Should().Be(BaseModelType.Pony);
+            version.CivitaiId.Should().Be(700, "the rest of the sidecar still applies");
+        }
+    }
+
+    /// <summary>
     /// R11. Sidecars written by other tools store the digest lowercase. Copying that in re-creates
     /// the mixed casing the startup repair pass exists to remove, and breaks SQL equality against
     /// every hash the app computes itself — all of which are uppercase.

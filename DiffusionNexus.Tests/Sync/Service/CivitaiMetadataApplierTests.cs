@@ -693,6 +693,53 @@ public sealed class CivitaiMetadataApplierTests : IDisposable
     }
 
     /// <summary>
+    /// F6. <c>CivitaiModelVersion.BaseModel</c> is a non-nullable string that defaults to <c>""</c>,
+    /// so a response that simply omits it is indistinguishable from one that carries a blank. Writing
+    /// that through set <c>BaseModelRaw</c> to <c>""</c> and the enum to <c>Unknown</c>, wiping a base
+    /// model an earlier sidecar had established — on a version the user never touched, so no guard
+    /// caught it. An empty answer is a missing answer.
+    /// </summary>
+    [Fact]
+    public async Task ApplyAsync_EmptyBaseModelLeavesTheStoredOneAlone()
+    {
+        int modelId, fileId;
+        using (var seedScope = NewScope())
+        {
+            var uow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = NewLocalModel("local", @"C:\m\blank-base.safetensors");
+            var version = model.Versions.First();
+            version.BaseModelRaw = "Pony";
+            version.BaseModel = BaseModelType.Pony;
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+            fileId = version.Files.First().Id;
+        }
+
+        var civVersion = NewCivitaiVersion() with { BaseModel = "" };
+        var applier = NewApplier(NewCivitaiModel(civVersion));
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            (await applier.ApplyAsync(uow, modelId, fileId, civVersion, apiKey: null)).Should().BeTrue();
+        }
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+            var version = saved!.Versions.Single();
+
+            version.BaseModelRaw.Should().Be("Pony", "a blank upstream answer says nothing, so it replaces nothing");
+            version.BaseModel.Should().Be(BaseModelType.Pony);
+
+            // The rest of the response still landed — this is a guard on one field, not a bail-out.
+            version.CivitaiId.Should().Be(700);
+        }
+    }
+
+    /// <summary>
     /// R11. Civitai answers with lowercase digests. Storing one verbatim re-creates the mixed
     /// casing the startup repair pass exists to remove — and one such row is enough to make that
     /// pass write on every launch — while breaking SQL equality against every hash the app
