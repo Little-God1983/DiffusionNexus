@@ -1,4 +1,4 @@
-﻿using DiffusionNexus.Civitai;
+using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
