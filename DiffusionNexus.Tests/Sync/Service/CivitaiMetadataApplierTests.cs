@@ -357,7 +357,7 @@ public sealed class CivitaiMetadataApplierTests : IDisposable
         using (var seedScope = NewScope())
         {
             var uow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-            var model = NewLocalModel("local", @"C:\mase-enum.safetensors");
+            var model = NewLocalModel("local", @"C:\m\base-enum.safetensors");
             await uow.Models.AddAsync(model);
             await uow.SaveChangesAsync();
             modelId = model.Id;
