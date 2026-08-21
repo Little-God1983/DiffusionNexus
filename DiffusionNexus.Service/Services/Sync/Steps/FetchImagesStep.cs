@@ -87,6 +87,7 @@ public sealed class FetchImagesStep : ISyncStep
         using var dbScope = _scopes.CreateScope();
         var uow = dbScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
         var now = DateTimeOffset.UtcNow;
+        var inFlight = candidates[0];
 
         try
         {
@@ -100,6 +101,9 @@ public sealed class FetchImagesStep : ISyncStep
             foreach (var candidate in candidates)
             {
                 ct.ThrowIfCancellationRequested();
+
+                // Which version the refusal handler names in its one warning line.
+                inFlight = candidate;
 
                 var added = await _civitai
                     .ApplyImagesAsync(uow, candidate.ModelId, candidate.VersionId, candidate.CivitaiVersionId, apiKey, ct)
@@ -148,17 +152,64 @@ public sealed class FetchImagesStep : ISyncStep
             // Deliberately unstamped: a cancelled item is work not done, not work that failed.
             throw;
         }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException or JsonException)
+        catch (HttpRequestException ex) when (SyncFaults.IsFinalRefusal(ex))
+        {
+            return await RecordRefusalAsync(uow, item, inFlight, ex, now, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (SyncFaults.IsItemFault(ex))
         {
             // No stamp for the whole model — the versions that did land keep their images (they
             // were saved as they went), and the next run re-asks the group. Re-asking a version
-            // that already has images is free: the repository no longer selects it.
+            // that already has images is free: the repository no longer selects it. The tracker is
+            // dropped first: the applier interleaves reads with mutations, and after a rejected save
+            // the context is still holding exactly the rows the database refused.
             uow.ClearChangeTracker();
 
             _logger?.Warn(LogCategory.Network, LogSource, $"Image fetch failed for '{item.Name}': {ex.Message}");
             _logger?.Debug(LogCategory.Network, LogSource, $"Image fetch failure detail for '{item.Name}'", ex.ToString());
             return SyncItemResult.Failure(ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Records "Civitai will not show us this version" as a final answer for the whole model:
+    /// stamped, warned about once, skipped. A refusal is not a hiccup — an early-access or
+    /// restricted page answers the same way tomorrow — and leaving it unstamped means re-asking on
+    /// every run forever, which is the bug this step exists to fix. It covers the model rather than
+    /// the one version because <c>ImagesCheckedAt</c> is per model; the remaining versions of a
+    /// model Civitai is refusing us are not going to answer differently.
+    /// </summary>
+    private async Task<SyncItemResult> RecordRefusalAsync(
+        IUnitOfWork uow, SyncItem item, ImageCandidate inFlight, HttpRequestException refusal,
+        DateTimeOffset now, CancellationToken ct)
+    {
+        uow.ClearChangeTracker();
+
+        // As on the success path: stamping a model deleted mid-run would Add a state row whose
+        // PK/FK points at nothing.
+        if (await uow.Models.GetByIdAsync(item.ModelId, ct).ConfigureAwait(false) is null)
+        {
+            _logger?.Debug(LogCategory.General, LogSource,
+                $"Skipped '{item.Name}': model {item.ModelId} was deleted during the run");
+            return SyncItemResult.Skip;
+        }
+
+        try
+        {
+            await StampAsync(uow, item.ModelId, now, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException && SyncFaults.IsItemFault(ex))
+        {
+            // Recording the answer failed; the answer stands. Report the item as failed so the run
+            // carries on rather than taking a database fault out to the top of the sync.
+            _logger?.Error(LogCategory.General, LogSource,
+                $"Could not mark '{item.Name}' as checked: {ex.Message}", ex);
+            return SyncItemResult.Failure(refusal.Message);
+        }
+
+        _logger?.Warn(LogCategory.Network, LogSource,
+            $"{item.Name}: Civitai refused ({SyncFaults.RefusalCode(refusal)}) for id {inFlight.CivitaiVersionId}; marked as checked");
+        return SyncItemResult.Skip;
     }
 
     private static async Task StampAsync(IUnitOfWork uow, int modelId, DateTimeOffset now, CancellationToken ct)

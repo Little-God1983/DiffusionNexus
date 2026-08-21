@@ -247,6 +247,60 @@ public sealed class FetchTagsStepTests : IDisposable
         second.Select(i => i.ModelId).Should().Contain(modelId);
     }
 
+    /// <summary>
+    /// I2. Only a 404 comes back as <c>null</c>; an early-access or otherwise restricted page
+    /// throws with its status attached. That is just as final an answer as a 404 — Civitai will
+    /// refuse again tomorrow — so it has to be stamped, or the model is re-asked on every single
+    /// run for as long as it exists, which is the exact bug this step was written to fix.
+    /// </summary>
+    [Fact]
+    public async Task Execute_ForbiddenResponseStampsCheckedAndIsSkipped()
+    {
+        var modelId = await SeedAsync("forbidden", civitaiId: 101);
+
+        var step = NewStep(c => c
+            .Setup(x => x.GetModelAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Civitai API 403 for /models/101", null, System.Net.HttpStatusCode.Forbidden)));
+
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        var result = await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        result.Succeeded.Should().BeFalse();
+        result.Skipped.Should().BeTrue("a refusal is an answer, not a failure to be retried");
+        result.FailureReason.Should().BeNull();
+
+        (await ReadStateAsync(modelId))!.TagsCheckedAt.Should().NotBeNull();
+
+        var second = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        second.Select(i => i.ModelId).Should().NotContain(modelId);
+    }
+
+    /// <summary>
+    /// I2, the other side: 5xx (and 429, and a bare connection failure) are the server having a
+    /// moment, not an answer about this model, so nothing is recorded and the item comes back.
+    /// </summary>
+    [Fact]
+    public async Task Execute_ServerErrorDoesNotStamp()
+    {
+        var modelId = await SeedAsync("unavailable", civitaiId: 101);
+
+        var step = NewStep(c => c
+            .Setup(x => x.GetModelAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Civitai API 503 for /models/101", null, System.Net.HttpStatusCode.ServiceUnavailable)));
+
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        var result = await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        result.Succeeded.Should().BeFalse();
+        result.Skipped.Should().BeFalse();
+        result.FailureReason.Should().Contain("503");
+
+        (await ReadStateAsync(modelId)).Should().BeNull();
+
+        var second = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        second.Select(i => i.ModelId).Should().Contain(modelId);
+    }
+
     [Fact]
     public async Task Execute_CancellationDoesNotStamp()
     {

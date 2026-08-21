@@ -31,6 +31,7 @@ public class LoraViewerViewModelSyncTests
     private readonly Mock<IAppSettingsService> _settings = new();
     private readonly Mock<IUnitOfWork> _unitOfWork = new();
     private readonly Mock<IModelRepository> _models = new();
+    private readonly Mock<ISyncStateRepository> _syncStates = new();
 
     /// <summary>Every value <c>SyncStatus</c> took during the run — the final one overwrites the progress text.</summary>
     private readonly List<string?> _statusHistory = [];
@@ -40,6 +41,7 @@ public class LoraViewerViewModelSyncTests
         _modelSync.Setup(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<InstalledModelFile>());
         _unitOfWork.SetupGet(u => u.Models).Returns(_models.Object);
+        _unitOfWork.SetupGet(u => u.SyncStates).Returns(_syncStates.Object);
 
         var services = new ServiceCollection();
         services.AddSingleton(_modelSync.Object);
@@ -212,6 +214,44 @@ public class LoraViewerViewModelSyncTests
 
         vm.SyncStatus.Should().Be(ReportFor(plan, failures: failures).Summary + " · 2 failed",
             "failures are the part of the outcome the user has to act on, so they are never silent");
+    }
+
+    /// <summary>
+    /// I4. The first plan after the upgrade also derives a state row for every pre-existing model,
+    /// which over a real library runs for seconds before any progress is reported — the user sees a
+    /// frozen-looking app and no explanation. Said once, up front, and only when it is true.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_AnnouncesTheFirstRunStateBackfill()
+    {
+        var vm = CreateViewModel();
+        SetupPlanAndExecute();
+
+        _models.Setup(m => m.CountAsync(It.IsAny<System.Linq.Expressions.Expression<Func<Model, bool>>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(2577);
+        _syncStates.Setup(s => s.CountAsync(It.IsAny<System.Linq.Expressions.Expression<Func<ModelSyncState, bool>>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(0);
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _statusHistory.Should().Contain(s => s != null && s.StartsWith("Preparing sync state"));
+    }
+
+    /// <summary>…and stays quiet on every run after that, when there is nothing to backfill.</summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_SaysNothingAboutBackfillWhenEveryModelHasAState()
+    {
+        var vm = CreateViewModel();
+        SetupPlanAndExecute();
+
+        _models.Setup(m => m.CountAsync(It.IsAny<System.Linq.Expressions.Expression<Func<Model, bool>>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(2577);
+        _syncStates.Setup(s => s.CountAsync(It.IsAny<System.Linq.Expressions.Expression<Func<ModelSyncState, bool>>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(2577);
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _statusHistory.Should().NotContain(s => s != null && s.StartsWith("Preparing sync state"));
     }
 
     [Fact]

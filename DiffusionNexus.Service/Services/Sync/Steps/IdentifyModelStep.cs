@@ -141,9 +141,10 @@ public sealed class IdentifyModelStep : ISyncStep
 
         // Before the hash and before the request: the model may have been deleted in the UI between
         // selection and now, and every path below this point stamps ModelSyncState — including the
-        // 404/sidecar branch, whose GetOrCreateAsync would Add a row with a dangling FK and blow up
-        // in SaveChanges with a DbUpdateException that no catch filter here covers. Hashing a
-        // multi-gigabyte file for a model that no longer exists is wasted work on top of that.
+        // 404/sidecar branch, whose GetOrCreateAsync would Add a row with a dangling FK and be
+        // rejected by SaveChanges. That rejection is survivable now (see the catch below), but a
+        // failure row for a model the user deliberately deleted is noise, and hashing a
+        // multi-gigabyte file for a model that no longer exists is wasted work on top of it.
         if (await uow.Models.GetByIdAsync(candidate.ModelId, ct).ConfigureAwait(false) is null)
         {
             _logger?.Debug(LogCategory.General, LogSource,
@@ -164,6 +165,12 @@ public sealed class IdentifyModelStep : ISyncStep
 
             // 404 — not on Civitai. Fall back to whatever the user has next to the file.
             var sidecar = await _sidecar.ApplyAsync(uow, candidate.ModelId, candidate.LocalPath, ct).ConfigureAwait(false);
+
+            // The applier answers a cancellation with "nothing applied", which is the same answer it
+            // gives for "there is no sidecar" — so without asking the token here, a model the user
+            // cancelled out of would be stamped NotIdentified and then left alone for 30 days.
+            ct.ThrowIfCancellationRequested();
+
             var outcome = sidecar.Applied ? SyncOutcome.Sidecar : SyncOutcome.NotIdentified;
             await StampAsync(uow, candidate.ModelId, outcome, now, sidecar.Signature, error: null, ct).ConfigureAwait(false);
 
@@ -176,19 +183,36 @@ public sealed class IdentifyModelStep : ISyncStep
             // Deliberately unstamped: a cancelled item is work not done, not work that failed.
             throw;
         }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException or JsonException)
+        catch (Exception ex) when (SyncFaults.IsItemFault(ex))
         {
-            // TaskCanceledException with our token intact is HttpClient's own timeout, and a
-            // JsonException is Civitai changing its response shape — both are faults of the run,
-            // not of the code, so they are stamped rather than thrown.
+            // TaskCanceledException with our token intact is HttpClient's own timeout, a
+            // JsonException is Civitai changing its response shape, and a rejected save is one
+            // model's graph the database will not take (see SyncFaults) — all faults of one item,
+            // not of the run, so they are stamped rather than thrown.
             //
             // CivitaiMetadataApplier interleaves DB reads (IsCivitaiIdTakenAsync,
             // FindCreatorByUsernameAsync, GetAllTagsLookupAsync) *after* it starts mutating the
             // graph, so a mid-flight fault can leave half a Civitai apply tracked. Drop all of it
-            // before stamping: the error path must persist the state row and nothing else. The
-            // computed hash survives because ResolveHashAsync already committed it.
+            // before stamping: the error path must persist the state row and nothing else. This is
+            // also what makes the stamp possible at all after a rejected save — the context would
+            // otherwise still be holding the rows the database just refused. The computed hash
+            // survives because ResolveHashAsync already committed it.
             uow.ClearChangeTracker();
-            await StampAsync(uow, candidate.ModelId, SyncOutcome.Error, now, signature: null, ex.Message, ct).ConfigureAwait(false);
+
+            try
+            {
+                await StampAsync(uow, candidate.ModelId, SyncOutcome.Error, now, signature: null, ex.Message, ct).ConfigureAwait(false);
+            }
+            catch (Exception stampEx) when (stampEx is not OperationCanceledException && SyncFaults.IsItemFault(stampEx))
+            {
+                // The stamp is a database write, and the fault we are recording may be the reason
+                // database writes are failing. Losing the record of the attempt is bad; taking the
+                // whole run down with it is worse, so the item is reported as failed and the run
+                // goes on — with both exceptions logged, because this is not normal.
+                _logger?.Error(LogCategory.General, LogSource,
+                    $"Could not record the identify failure for '{candidate.Name}': {stampEx.Message}", stampEx);
+                return SyncItemResult.Failure(ex.Message);
+            }
 
             _logger?.Warn(LogCategory.Network, LogSource, $"Identify failed for '{candidate.Name}': {ex.Message}");
             _logger?.Debug(LogCategory.Network, LogSource, $"Identify failure detail for '{candidate.Name}'", ex.ToString());

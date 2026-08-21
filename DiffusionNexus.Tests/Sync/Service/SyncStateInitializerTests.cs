@@ -112,6 +112,36 @@ public sealed class SyncStateInitializerTests : IDisposable
         before.Should().ContainKeys(matched, alreadyStated);
     }
 
+    /// <summary>
+    /// I4. The backfill runs inside <c>PlanAsync</c>, and on the first launch after the upgrade
+    /// that pass takes seconds over a real library — long enough for the user to press the per-tile
+    /// button while the bulk sync is already planning. Both calls then read the same "no state row
+    /// yet" id list and both Add the same primary keys, and the loser's save is rejected outright:
+    /// the second plan dies with a DbUpdateException instead of syncing anything.
+    /// </summary>
+    [Fact]
+    public async Task EnsureInitialized_ConcurrentCallsCreateEachRowOnce()
+    {
+        await SeedAsync();
+
+        var initializer = NewInitializer();
+
+        var first = Task.Run(() => initializer.EnsureInitializedAsync());
+        var second = Task.Run(() => initializer.EnsureInitializedAsync());
+
+        var created = await Task.WhenAll(first, second);
+
+        // Whoever got there first did all three; the other found nothing left to do.
+        created.Sum().Should().Be(3, "every legacy model is derived exactly once, by exactly one of the callers");
+
+        using var scope = _serviceProvider.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>();
+        var states = await context.Set<ModelSyncState>().AsNoTracking().CountAsync();
+        var models = await context.Set<Model>().AsNoTracking().CountAsync();
+
+        states.Should().Be(models, "one state row per model, no duplicates and none missing");
+    }
+
     private static readonly DateTimeOffset SyncedAt = new(2025, 3, 4, 5, 6, 7, TimeSpan.Zero);
 
     private async Task<Dictionary<int, DateTimeOffset>> SnapshotUpdatedAtAsync()

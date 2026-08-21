@@ -688,6 +688,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             BusyMessage = "Syncing with Civitai...";
             SyncStatus = "Planning sync...";
 
+            // The first plan after the upgrade also backfills a state row for every model that
+            // predates the table, which over a real library is the slowest thing this button ever
+            // does — and it happens before any progress is reported, so without a word the app looks
+            // hung. Two COUNT(*)s are a cheap way to know whether that is what is about to happen.
+            if (await Task.Run(() => HasPendingSyncStateBackfillAsync(ct), ct))
+                SyncStatus = "Preparing sync state — first run after update may take a moment…";
+
             // Task.Run, not a bare await: SQLite has no true async, so the planning pass (the
             // first-run state backfill plus every step's selection query) and the discovery scan
             // both run to completion inline before anything yields — on the UI thread that means a
@@ -889,6 +896,23 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
     /// <summary>Status shown when a run had genuinely nothing left to do.</summary>
     private const string UpToDateStatus = "Library is up to date — nothing to do";
+
+    /// <summary>
+    /// Whether models are still waiting for a <c>ModelSyncState</c> row — i.e. whether the next
+    /// plan will pay for the one-time backfill. Two counts rather than a new repository seam: the
+    /// answer only decides a status line, and it is wrong in the harmless direction (a model deleted
+    /// between the counts) rather than in the direction that would skip work.
+    /// </summary>
+    private async Task<bool> HasPendingSyncStateBackfillAsync(CancellationToken ct)
+    {
+        using var scope = RequireScopeFactory().CreateScope();
+        var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var models = await unitOfWork.Models.CountAsync(_ => true, ct);
+        if (models == 0) return false;
+
+        return await unitOfWork.SyncStates.CountAsync(_ => true, ct) < models;
+    }
 
     /// <summary>
     /// The status line for a finished run. A run that discovered no new file and had nothing

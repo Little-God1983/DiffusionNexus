@@ -795,6 +795,107 @@ public sealed class IdentifyModelStepTests : IDisposable
             Times.Never);
     }
 
+    /// <summary>
+    /// I1. A rejected save is a fault of one item's data, not of the run. It used to escape the
+    /// step's catch filter entirely, so <c>LibrarySyncService</c> rethrew it and one bad model
+    /// aborted the whole sync — every model behind it in the queue silently went unchecked.
+    /// </summary>
+    /// <remarks>
+    /// The collision is a real one, not a synthetic constraint: <c>Creator.Username</c> is uniquely
+    /// indexed, and the applier renames a model's existing creator to whatever the response says
+    /// without checking whether that name is already taken (a creator renaming themselves on
+    /// Civitai to a name another local model's creator already holds does exactly this).
+    /// </remarks>
+    [Fact]
+    public async Task Execute_DbUpdateExceptionIsRecordedNotRethrown()
+    {
+        var path = NewModelFile("db-conflict.safetensors");
+        var (modelId, _) = await SeedAsync("db-conflict", path);
+
+        // The candidate owns creator "old-name"; another model already owns "author", which is the
+        // username the Civitai response carries.
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = await uow.Models.GetByIdWithIncludesAsync(modelId);
+            model!.Creator = new Creator { Username = "old-name" };
+
+            var other = new Model { Name = "other", Type = ModelType.LORA, Source = DataSource.CivitaiApi };
+            other.Creator = new Creator { Username = "author" };
+            await uow.Models.AddAsync(other);
+            await uow.SaveChangesAsync();
+        }
+
+        var civVersion = NewCivitaiVersion();
+        var civModel = new CivitaiModel
+        {
+            Id = 77,
+            Name = "Civitai Name",
+            Tags = [],
+            ModelVersions = [civVersion],
+            Creator = new CivitaiCreator { Username = "author" },
+        };
+
+        var step = NewStep(c =>
+        {
+            c.Setup(x => x.GetModelVersionByHashAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(civVersion);
+            c.Setup(x => x.GetModelAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(civModel);
+        });
+
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        var item = items.Single(i => i.ModelId == modelId);
+
+        var result = await step.ExecuteOneAsync(item, apiKey: null, CancellationToken.None);
+
+        result.Succeeded.Should().BeFalse();
+        result.Skipped.Should().BeFalse();
+        result.FailureReason.Should().NotBeNullOrWhiteSpace();
+
+        // Recorded as an attempt, so the retry policy bounds it instead of retrying forever.
+        var state = await ReadStateAsync(modelId);
+        state!.MetadataOutcome.Should().Be(SyncOutcome.Error);
+        state.MetadataAttempts.Should().Be(1);
+        state.LastError.Should().NotBeNullOrWhiteSpace();
+
+        // The rejected graph is gone: the stamp is the only thing that survived the failure.
+        using var readScope = NewScope();
+        var readUow = readScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var saved = await readUow.Models.GetByIdWithIncludesAsync(modelId);
+        saved!.Name.Should().Be("db-conflict");
+        saved.Creator!.Username.Should().Be("old-name");
+    }
+
+    /// <summary>
+    /// I3. <see cref="SidecarMetadataApplier"/> answers a cancellation with "nothing applied",
+    /// which is indistinguishable from "there was no sidecar" — so the step must ask the token
+    /// itself before it stamps, or a cancelled model is recorded as one Civitai has never heard
+    /// of and is then not re-checked for 30 days.
+    /// </summary>
+    [Fact]
+    public async Task Execute_CancellationDuringSidecarDoesNotStamp()
+    {
+        var path = NewModelFile("cancel-sidecar.safetensors");
+        var (modelId, _) = await SeedAsync("cancel-sidecar", path);
+
+        using var cts = new CancellationTokenSource();
+
+        // 404 on Civitai → the sidecar branch. The user hits Cancel while that read is in flight.
+        var step = NewStep(c => c
+            .Setup(x => x.GetModelVersionByHashAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback(() => cts.Cancel())
+            .ReturnsAsync((CivitaiModelVersion?)null));
+
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        var item = items.Single(i => i.ModelId == modelId);
+
+        var act = () => step.ExecuteOneAsync(item, apiKey: null, cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        (await ReadStateAsync(modelId)).Should().BeNull("a cancelled item is work not done, not a model Civitai has never heard of");
+    }
+
     [Fact]
     public void Step_DescribesItselfForThePlanView()
     {

@@ -338,6 +338,13 @@ public sealed class CivitaiMetadataApplier
     /// Replaces a model's tags with the Civitai tag list, reusing existing <see cref="Tag"/>
     /// rows by <see cref="Tag.NormalizedName"/> to avoid duplicates in the Tags table.
     /// </summary>
+    /// <remarks>
+    /// Civitai tag lists are not normalized — "Anime" and "anime" both occur, on the same model —
+    /// and two spellings that fold to one <see cref="Tag"/> would produce two <see cref="ModelTag"/>
+    /// rows with the same composite key <c>(ModelId, TagId)</c>. That is not a cosmetic duplicate:
+    /// the change tracker rejects the second one outright, so the model's whole tag list is lost and
+    /// the item fails. One row per distinct normalized name, first spelling wins.
+    /// </remarks>
     public static void SyncTags(
         Model dbModel,
         IReadOnlyList<string> civitaiTags,
@@ -345,11 +352,14 @@ public sealed class CivitaiMetadataApplier
     {
         dbModel.Tags.Clear();
 
+        var applied = new HashSet<string>(StringComparer.Ordinal);
+
         foreach (var tagName in civitaiTags)
         {
             if (string.IsNullOrWhiteSpace(tagName)) continue;
 
             var normalized = tagName.Trim().ToLowerInvariant();
+            if (!applied.Add(normalized)) continue;
 
             if (!knownTags.TryGetValue(normalized, out var tag))
             {

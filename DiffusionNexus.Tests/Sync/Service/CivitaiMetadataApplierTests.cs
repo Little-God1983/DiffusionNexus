@@ -287,6 +287,48 @@ public sealed class CivitaiMetadataApplierTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// I1. Civitai tag lists are not normalized: "Anime" and "anime" both occur on the same model.
+    /// Both fold to one <c>Tag</c> row (by <c>NormalizedName</c>), so adding one <c>ModelTag</c>
+    /// each means two rows with the same composite primary key — the save is rejected outright and
+    /// the whole item fails, taking a good tag list with it.
+    /// </summary>
+    [Fact]
+    public async Task SyncTags_DeduplicatesCaseVariants()
+    {
+        int modelId;
+        using (var seedScope = NewScope())
+        {
+            var uow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = NewLocalModel("dupe-tags", @"C:\m\dupe-tags.safetensors");
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+        }
+
+        var civVersion = NewCivitaiVersion();
+        // "  anime" as well: the normalizer trims, so leading whitespace is a third spelling of the
+        // same tag, and a response that carries two of them must still produce one row.
+        var applier = NewApplier(NewCivitaiModel(civVersion, tags: ["Anime", "anime", "  anime", "style"]));
+
+        int? written = null;
+        using (var scope = NewScope())
+        {
+            var work = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var act = async () => written = await applier.ApplyTagsAsync(work, modelId, civitaiModelId: 77, apiKey: null);
+            await act.Should().NotThrowAsync("a duplicate spelling is Civitai's, and it is not a reason to lose the tags");
+        }
+
+        written.Should().Be(2);
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+            saved!.Tags.Select(t => t.Tag!.NormalizedName).Should().BeEquivalentTo(new[] { "anime", "style" });
+        }
+    }
+
     [Fact]
     public async Task ApplyTagsAsync_EmptyTagListIsAuthoritativeAndClearsStaleTags()
     {

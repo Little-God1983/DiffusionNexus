@@ -246,6 +246,20 @@ never re-fetched; only an explicit Force re-asks.
 | `None` / no row | Immediately |
 | Tags / images already stamped | Never (only Force) |
 
+What counts as an answer worth stamping, for the tags and images steps:
+
+| Civitai's reply | Recorded as |
+|-----------------|-------------|
+| Data, or an empty list | Checked (stamped) |
+| 404 (`GetAsync` returns null) | Checked (stamped), item skipped |
+| 401/403 and the rest of 4xx except 429 | Checked (stamped), item skipped — a refusal is the same refusal tomorrow |
+| 429, 5xx, connection/TLS failure, timeout | Not stamped — the item returns on the next run |
+
+A rejected database write (`DbUpdateException`, its unit-of-work translation, or a change-tracker
+conflict) is a fault of **one item**, not of the run: the tracker is dropped, identify stamps
+`Error` and the fetch steps stamp nothing, and the run carries on. Before that it aborted the whole
+sync, so every model queued behind the bad one went unchecked.
+
 ### Forcing a re-check
 
 `SyncOptions` carries `ForceIdentify`, `ForceTags`, `ForceImages`, `ForceThumbnails`.
