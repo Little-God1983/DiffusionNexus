@@ -1,4 +1,6 @@
+using System.Text.Json;
 using DiffusionNexus.Civitai;
+using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services.Sync;
@@ -108,11 +110,8 @@ public sealed class IdentifyModelStep : ISyncStep
             var version = await _client.GetModelVersionByHashAsync(hash, apiKey, ct).ConfigureAwait(false);
             if (version is not null)
             {
-                await _civitai.ApplyAsync(uow, candidate.ModelId, candidate.FileId, version, apiKey, ct).ConfigureAwait(false);
-                await StampAsync(uow, candidate.ModelId, SyncOutcome.Matched, now, signature: null, error: null, ct).ConfigureAwait(false);
-
-                _logger?.Debug(LogCategory.Network, LogSource, $"Identified '{candidate.Name}' on Civitai", $"versionId={version.Id}");
-                return SyncItemResult.Success;
+                var applied = await _civitai.ApplyAsync(uow, candidate.ModelId, candidate.FileId, version, apiKey, ct).ConfigureAwait(false);
+                return await RecordMatchAsync(uow, candidate, version, applied, now, ct).ConfigureAwait(false);
             }
 
             // 404 — not on Civitai. Fall back to whatever the user has next to the file.
@@ -129,15 +128,66 @@ public sealed class IdentifyModelStep : ISyncStep
             // Deliberately unstamped: a cancelled item is work not done, not work that failed.
             throw;
         }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException)
+        catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException or JsonException)
         {
-            // TaskCanceledException with our token intact is HttpClient's own timeout — an error.
+            // TaskCanceledException with our token intact is HttpClient's own timeout, and a
+            // JsonException is Civitai changing its response shape — both are faults of the run,
+            // not of the code, so they are stamped rather than thrown.
+            //
+            // CivitaiMetadataApplier interleaves DB reads (IsCivitaiIdTakenAsync,
+            // FindCreatorByUsernameAsync, GetAllTagsLookupAsync) *after* it starts mutating the
+            // graph, so a mid-flight fault can leave half a Civitai apply tracked. Drop all of it
+            // before stamping: the error path must persist the state row and nothing else. The
+            // computed hash survives because ResolveHashAsync already committed it.
+            uow.ClearChangeTracker();
             await StampAsync(uow, candidate.ModelId, SyncOutcome.Error, now, signature: null, ex.Message, ct).ConfigureAwait(false);
 
             _logger?.Warn(LogCategory.Network, LogSource, $"Identify failed for '{candidate.Name}': {ex.Message}");
             _logger?.Debug(LogCategory.Network, LogSource, $"Identify failure detail for '{candidate.Name}'", ex.ToString());
             return SyncItemResult.Failure(ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Turns the outcome of a Civitai apply into a stamped result. A hash match is only a
+    /// <see cref="SyncOutcome.Matched"/> when model-level data actually landed — see the two
+    /// escape hatches below, both of which would otherwise become permanent dead ends, because
+    /// <c>Matched</c> is terminal for the retry policy while a model with no <c>CivitaiId</c>
+    /// is invisible to the tags and images steps.
+    /// </summary>
+    private async Task<SyncItemResult> RecordMatchAsync(
+        IUnitOfWork uow, IdentifyCandidate candidate, CivitaiModelVersion version, bool applied,
+        DateTimeOffset now, CancellationToken ct)
+    {
+        // The applier returns false for exactly one reason: the model row is gone (deleted between
+        // select and execute). Stamping it would Add a state row whose PK/FK points at nothing.
+        var dbModel = await uow.Models.GetByIdAsync(candidate.ModelId, ct).ConfigureAwait(false);
+        if (dbModel is null)
+        {
+            _logger?.Debug(LogCategory.General, LogSource,
+                $"Skipped '{candidate.Name}': model {candidate.ModelId} was deleted during the run");
+            return SyncItemResult.Skip;
+        }
+
+        // A version whose ModelId is absent (<= 0) never reaches the applier's model-level branch,
+        // so neither id was written. CivitaiModelPageId is checked alongside CivitaiId on purpose:
+        // when a duplicate local copy already owns the CivitaiId the applier deliberately leaves it
+        // null but still sets the page id, and that is a real match, not a dead end.
+        var modelLevelDataMissing = dbModel.CivitaiId is null && dbModel.CivitaiModelPageId is null;
+
+        if (!applied || modelLevelDataMissing)
+        {
+            var reason = $"Civitai match applied nothing (model {candidate.ModelId}, version {version.Id})";
+            await StampAsync(uow, candidate.ModelId, SyncOutcome.Error, now, signature: null, reason, ct).ConfigureAwait(false);
+
+            _logger?.Warn(LogCategory.Network, LogSource, $"Identify failed for '{candidate.Name}': {reason}");
+            return SyncItemResult.Failure(reason);
+        }
+
+        await StampAsync(uow, candidate.ModelId, SyncOutcome.Matched, now, signature: null, error: null, ct).ConfigureAwait(false);
+
+        _logger?.Debug(LogCategory.Network, LogSource, $"Identified '{candidate.Name}' on Civitai", $"versionId={version.Id}");
+        return SyncItemResult.Success;
     }
 
     /// <summary>
@@ -153,7 +203,16 @@ public sealed class IdentifyModelStep : ISyncStep
         // Set before the Civitai applier runs: it fills hashes with `??=`, so the digest of the bytes
         // we actually have must already be in place to win over the response's (possibly stale) one.
         var file = await uow.ModelFiles.GetByIdAsync(candidate.FileId, ct).ConfigureAwait(false);
-        if (file is not null) file.HashSHA256 = hash;
+        if (file is not null)
+        {
+            file.HashSHA256 = hash;
+
+            // Committed before the network call, on its own: hashing a multi-gigabyte file is the
+            // expensive half of this step, and neither a cancellation nor a fault later in the item
+            // may throw that work away. It also puts the digest of the bytes we actually hold in
+            // place before CivitaiMetadataApplier's `??=` gets a chance to fill it from the response.
+            await uow.SaveChangesAsync(ct).ConfigureAwait(false);
+        }
 
         return hash;
     }

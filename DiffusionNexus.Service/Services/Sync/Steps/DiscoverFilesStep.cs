@@ -1,6 +1,7 @@
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace DiffusionNexus.Service.Services.Sync.Steps;
@@ -65,8 +66,11 @@ public sealed class DiscoverFilesStep : ISyncStep
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DbUpdateException)
         {
+            // Only the faults a disk scan can legitimately hit: an unreadable/absent source folder,
+            // a permission wall, or a write that the database rejected. A NullReferenceException in
+            // here is a bug and must surface as one, not as a tidy "step failed" row.
             _logger?.Error(LogCategory.FileSystem, LogSource, "File discovery failed", ex);
             return SyncItemResult.Failure(ex.Message);
         }

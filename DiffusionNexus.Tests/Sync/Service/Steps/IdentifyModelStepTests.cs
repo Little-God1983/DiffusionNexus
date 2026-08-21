@@ -1,3 +1,4 @@
+using System.Text.Json;
 using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.DataAccess;
@@ -429,7 +430,7 @@ public sealed class IdentifyModelStepTests : IDisposable
     public async Task Execute_CancellationDoesNotStamp()
     {
         var path = NewModelFile("cancel.safetensors");
-        var (modelId, _) = await SeedAsync("cancel", path);
+        var (modelId, fileId) = await SeedAsync("cancel", path);
 
         using var cts = new CancellationTokenSource();
         var step = NewStep(c => c
@@ -445,6 +446,213 @@ public sealed class IdentifyModelStepTests : IDisposable
         await act.Should().ThrowAsync<OperationCanceledException>();
         // No state row was written: a cancelled item is untouched work, not a failed attempt.
         (await ReadStateAsync(modelId)).Should().BeNull();
+
+        // ...but the SHA256 it had to compute survives, because it is committed before the network
+        // call. Re-hashing a multi-gigabyte file on the next run is the cost of getting this wrong.
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var file = await uow.ModelFiles.GetByIdAsync(fileId);
+        file!.HashSHA256.Should().Be(FileHasher.Sha256Upper(path));
+    }
+
+    [Fact]
+    public async Task Execute_ModelDeletedBetweenSelectAndExecuteIsSkippedWithoutStamping()
+    {
+        var path = NewModelFile("deleted.safetensors");
+        var (modelId, _) = await SeedAsync("deleted", path);
+
+        var civVersion = NewCivitaiVersion();
+        var step = NewStep(c =>
+        {
+            c.Setup(x => x.GetModelVersionByHashAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(civVersion);
+            c.Setup(x => x.GetModelAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(NewCivitaiModel(civVersion));
+        });
+
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        var item = items.Single(i => i.ModelId == modelId);
+
+        // The user deletes the model in the UI while the run is in flight.
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var doomed = await uow.Models.GetByIdAsync(modelId);
+            uow.Models.Remove(doomed!);
+            await uow.SaveChangesAsync();
+        }
+
+        var result = await step.ExecuteOneAsync(item, apiKey: null, CancellationToken.None);
+
+        result.Skipped.Should().BeTrue();
+        result.Succeeded.Should().BeFalse();
+        // Stamping would Add a ModelSyncState whose PK/FK points at a row that no longer exists.
+        (await ReadStateAsync(modelId)).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Execute_ApplierReportingNothingAppliedStampsError()
+    {
+        var path = NewModelFile("empty-apply.safetensors");
+        var (modelId, _) = await SeedAsync("empty-apply", path);
+
+        // ModelId 0 => the applier never fetches the full model and never reaches its model-level
+        // branch, so CivitaiId/CivitaiModelPageId stay null. Stamping that Matched would be a
+        // permanent dead end: terminal for the retry policy, invisible to the tags/images steps.
+        var civVersion = NewCivitaiVersion(modelId: 0);
+        var step = NewStep(c => c
+            .Setup(x => x.GetModelVersionByHashAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(civVersion));
+
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        var result = await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        result.Succeeded.Should().BeFalse();
+        result.Skipped.Should().BeFalse();
+        result.FailureReason.Should().Contain("applied nothing");
+
+        var state = await ReadStateAsync(modelId);
+        state!.MetadataOutcome.Should().Be(SyncOutcome.Error);
+        state.MetadataAttempts.Should().Be(1);
+        state.LastError.Should().Contain($"model {modelId}");
+        state.LastError.Should().Contain($"version {civVersion.Id}");
+    }
+
+    [Fact]
+    public async Task Execute_MatchedIsStillRecordedWhenADuplicateLocalCopyOwnsTheCivitaiId()
+    {
+        // A second local copy of the same LoRA: the applier refuses to move the (unique) CivitaiId
+        // but does set CivitaiModelPageId. That is a real match and must NOT be reported as an error.
+        var first = NewModelFile("dup-a.safetensors");
+        var second = NewModelFile("dup-b.safetensors");
+        var (ownerId, _) = await SeedAsync("dup-a", first);
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var owner = await uow.Models.GetByIdAsync(ownerId);
+            owner!.CivitaiId = 77;
+            await uow.SaveChangesAsync();
+        }
+        var (modelId, _) = await SeedAsync("dup-b", second);
+
+        var civVersion = NewCivitaiVersion(id: 701);
+        var step = NewStep(c =>
+        {
+            c.Setup(x => x.GetModelVersionByHashAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(civVersion);
+            c.Setup(x => x.GetModelAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(NewCivitaiModel(civVersion));
+        });
+
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        var result = await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+
+        var state = await ReadStateAsync(modelId);
+        state!.MetadataOutcome.Should().Be(SyncOutcome.Matched);
+
+        using var readScope = NewScope();
+        var readUow = readScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var saved = await readUow.Models.GetByIdAsync(modelId);
+        saved!.CivitaiId.Should().BeNull();
+        saved.CivitaiModelPageId.Should().Be(77);
+    }
+
+    [Fact]
+    public async Task Execute_JsonExceptionStampsErrorWithoutPersistingPartialGraph()
+    {
+        var path = NewModelFile("bad-json.safetensors");
+        var (modelId, _) = await SeedAsync("bad-json", path);
+
+        // Civitai changed a response shape: CivitaiClient deliberately does not retry a JsonException.
+        var step = NewStep(c => c
+            .Setup(x => x.GetModelVersionByHashAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new JsonException("unexpected token")));
+
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        var result = await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        result.Succeeded.Should().BeFalse();
+
+        var state = await ReadStateAsync(modelId);
+        state!.MetadataOutcome.Should().Be(SyncOutcome.Error);
+        state.MetadataAttempts.Should().Be(1);
+
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+        saved!.CivitaiId.Should().BeNull();
+        saved.Name.Should().Be("bad-json");
+    }
+
+    [Fact]
+    public async Task Execute_JsonExceptionFromInsideTheApplierDiscardsTheTrackedGraph()
+    {
+        var path = NewModelFile("bad-json-2.safetensors");
+        var (modelId, _) = await SeedAsync("bad-json-2", path);
+
+        // The hash lookup succeeds; the shape change is in the follow-up full-model call, which the
+        // applier makes *after* the graph is loaded - this is the path ClearChangeTracker guards.
+        var step = NewStep(c =>
+        {
+            c.Setup(x => x.GetModelVersionByHashAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(NewCivitaiVersion());
+            c.Setup(x => x.GetModelAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new JsonException("unexpected token"));
+        });
+
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        var result = await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        result.Succeeded.Should().BeFalse();
+        (await ReadStateAsync(modelId))!.MetadataOutcome.Should().Be(SyncOutcome.Error);
+
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+        saved!.CivitaiId.Should().BeNull();
+        saved.Versions.Single().BaseModelRaw.Should().Be("???");
+        // The hash still made it to disk - it was committed before the network call.
+        saved.Versions.Single().Files.Single().HashSHA256.Should().Be(FileHasher.Sha256Upper(path));
+    }
+
+    [Fact]
+    public async Task Execute_MatchedAfterErrorClearsLastErrorAndAttempts()
+    {
+        var path = NewModelFile("recovers.safetensors");
+        var (modelId, _) = await SeedAsync("recovers", path,
+            outcome: SyncOutcome.Error, checkedAt: Now.AddDays(-2), attempts: 2,
+            sidecarSignature: "sig-x", withState: true);
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var state = await uow.SyncStates.GetOrCreateAsync(modelId);
+            state.LastError = "x";
+            await uow.SaveChangesAsync();
+        }
+
+        var civVersion = NewCivitaiVersion();
+        var step = NewStep(c =>
+        {
+            c.Setup(x => x.GetModelVersionByHashAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(civVersion);
+            c.Setup(x => x.GetModelAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(NewCivitaiModel(civVersion));
+        });
+
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        var result = await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+
+        var after = await ReadStateAsync(modelId);
+        after!.MetadataOutcome.Should().Be(SyncOutcome.Matched);
+        after.MetadataAttempts.Should().Be(0);
+        after.LastError.Should().BeNull();
+        // Matched says nothing about the sidecar, so a later fallback must still see the old one.
+        after.SidecarSignature.Should().Be("sig-x");
     }
 
     [Fact]
