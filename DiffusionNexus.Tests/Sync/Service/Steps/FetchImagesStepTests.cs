@@ -231,6 +231,35 @@ public sealed class FetchImagesStepTests : IDisposable
         second.Should().BeEmpty();
     }
 
+    /// <summary>
+    /// R4. One image item is one <i>model</i> but N Civitai calls, one per version. Pacing between
+    /// items therefore paced nothing inside them: a six-version model fired six back-to-back
+    /// requests and then politely waited 1.5 s. The pacer is awaited once per request instead.
+    /// </summary>
+    [Fact]
+    public async Task Execute_AwaitsThePacerOncePerCivitaiCall()
+    {
+        await SeedAsync("multi", civitaiId: 101, versionCivitaiIds: [701, 702, 703]);
+
+        var client = new Mock<ICivitaiClient>();
+        client
+            .Setup(x => x.GetModelVersionAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((int id, string? _, CancellationToken _) => NewCivitaiVersion(id, NewImage(id * 10)));
+
+        var pacer = new Mock<ICivitaiRequestPacer>();
+        pacer.Setup(p => p.WaitAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        var step = new FetchImagesStep(Scopes, new CivitaiMetadataApplier(client.Object, logger: null, pacer: pacer.Object));
+
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        await step.ExecuteOneAsync(items.Single(), apiKey: null, CancellationToken.None);
+
+        client.Verify(
+            c => c.GetModelVersionAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(3));
+        pacer.Verify(p => p.WaitAsync(It.IsAny<CancellationToken>()), Times.Exactly(3));
+    }
+
     [Fact]
     public async Task Execute_ZeroImagesStillStampsChecked()
     {

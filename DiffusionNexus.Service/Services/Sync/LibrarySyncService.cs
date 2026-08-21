@@ -20,9 +20,6 @@ public sealed class LibrarySyncService : ILibrarySyncService
 {
     private const string LogSource = "LibrarySync";
 
-    /// <summary>Civitai's own courtesy interval between calls, applied between network items.</summary>
-    private static readonly TimeSpan PacingInterval = TimeSpan.FromMilliseconds(1500);
-
     /// <summary>
     /// Discovery walks every enabled source folder no matter how the run was scoped, so the plan
     /// dialog must not imply otherwise ("this folder only" would be a lie for this one step).
@@ -33,24 +30,27 @@ public sealed class LibrarySyncService : ILibrarySyncService
     private readonly SyncStateInitializer _initializer;
     private readonly IServiceScopeFactory _scopes;
     private readonly IUnifiedLogger? _logger;
-    private readonly Func<CancellationToken, Task> _pacer;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     // volatile: the UI thread polls this while the run itself lives on a thread-pool thread.
     private volatile bool _isRunning;
 
+    /// <remarks>
+    /// There is no pacing parameter: Civitai's courtesy interval is applied per <i>request</i> by
+    /// <see cref="ICivitaiRequestPacer"/> at the call sites inside the steps, because one item is
+    /// not one request (R4). Pacing here spaced items and left the bursts within an item — six
+    /// version calls, or a hash lookup followed by a model page — completely unpaced.
+    /// </remarks>
     public LibrarySyncService(
         IEnumerable<ISyncStep> steps,
         SyncStateInitializer initializer,
         IServiceScopeFactory scopes,
-        IUnifiedLogger? logger = null,
-        Func<CancellationToken, Task>? pacer = null)
+        IUnifiedLogger? logger = null)
     {
         _steps = (steps ?? throw new ArgumentNullException(nameof(steps))).ToList();
         _initializer = initializer ?? throw new ArgumentNullException(nameof(initializer));
         _scopes = scopes ?? throw new ArgumentNullException(nameof(scopes));
         _logger = logger;
-        _pacer = pacer ?? (ct => Task.Delay(PacingInterval, ct));
     }
 
     /// <inheritdoc />
@@ -212,11 +212,6 @@ public sealed class LibrarySyncService : ILibrarySyncService
                     failed++;
                     tally.Failures.Add(new SyncFailure(step.Kind, item.ModelId, item.Name, result.FailureReason ?? "Unknown error"));
                 }
-
-                // Only an item that actually reached Civitai owes the API a pause; a skip made no
-                // call, and discovery is a local disk scan that nobody is rate limiting.
-                if (!result.Skipped && step.Kind != SyncStepKind.DiscoverFiles)
-                    await _pacer(ct).ConfigureAwait(false);
             }
         }
         finally

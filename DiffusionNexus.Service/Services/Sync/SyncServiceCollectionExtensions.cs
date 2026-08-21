@@ -16,12 +16,19 @@ public static class SyncServiceCollectionExtensions
     /// </summary>
     /// <remarks>
     /// Requires <c>ICivitaiClient</c> and <c>IAppSettingsService</c> to be registered by the host.
-    /// Everything except the service itself is transient and stateless; the service is a singleton
-    /// because it owns the single-flight gate that stops two concurrent runs from hammering Civitai
-    /// with the same 2 500 requests.
+    /// Everything except the service and the request pacer is transient and stateless; the service
+    /// is a singleton because it owns the single-flight gate that stops two concurrent runs from
+    /// hammering Civitai with the same 2 500 requests, and the pacer because it holds the timestamp
+    /// of the last request.
     /// </remarks>
     public static IServiceCollection AddLibrarySync(this IServiceCollection services)
     {
+        // Singleton, and the only one: the pacer IS the process's memory of when it last spoke to
+        // Civitai, so a second instance would pace nothing. It is awaited immediately before every
+        // request the pipeline makes — inside the appliers and the identify step — because one
+        // SyncItem is not one request (R4).
+        services.AddSingleton<ICivitaiRequestPacer>(_ => new CivitaiRequestPacer());
+
         services.AddTransient<CivitaiMetadataApplier>();
         services.AddTransient<SidecarMetadataApplier>();
         services.AddTransient<SyncStateInitializer>();

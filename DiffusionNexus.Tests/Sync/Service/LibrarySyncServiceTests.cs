@@ -69,11 +69,12 @@ public sealed class LibrarySyncServiceTests : IDisposable
     private SyncStateInitializer NewInitializer() => new(Scopes);
 
     /// <summary>
-    /// Builds the service over the given fake steps. The pacer is replaced with a no-op counter so
-    /// tests never actually sleep; <paramref name="pacer"/> lets a test observe how often it fired.
+    /// Builds the service over the given fake steps. Nothing here sleeps: Civitai's courtesy
+    /// interval is applied per request inside the steps (<c>ICivitaiRequestPacer</c>), and these
+    /// steps are fakes that make no requests.
     /// </summary>
-    private LibrarySyncService NewService(IEnumerable<ISyncStep> steps, Func<CancellationToken, Task>? pacer = null)
-        => new(steps, NewInitializer(), Scopes, logger: null, pacer: pacer ?? (_ => Task.CompletedTask));
+    private LibrarySyncService NewService(IEnumerable<ISyncStep> steps)
+        => new(steps, NewInitializer(), Scopes, logger: null);
 
     private static SyncOptions OptionsFor(params SyncStepKind[] kinds) => new(new HashSet<SyncStepKind>(kinds));
 
@@ -342,49 +343,26 @@ public sealed class LibrarySyncServiceTests : IDisposable
         await service.ExecuteAsync(plan);
     }
 
+    /// <summary>
+    /// R4. The orchestrator no longer paces at all — the courtesy interval moved to the request
+    /// call sites — so a run over items that make no request must cost nothing but the work itself.
+    /// </summary>
     [Fact]
-    public async Task Execute_PacesOnlyAfterNetworkItems()
+    public async Task Execute_DoesNotPaceBetweenItems()
     {
-        var paces = 0;
-
-        // Ten items that made no network call at all: pacing them would add 15 seconds of
-        // apologising to nobody.
         var identify = new FakeStep(SyncStepKind.IdentifyModel)
             .Selecting(Enumerable.Range(1, 10).Select(i => Item(i)).ToList())
-            .Returning(_ => SyncItemResult.Skip);
+            .Returning(_ => SyncItemResult.Success);
 
-        var service = new LibrarySyncService([identify], NewInitializer(), Scopes, logger: null,
-            pacer: async ct => { Interlocked.Increment(ref paces); await Task.Delay(1500, ct); });
-
+        var service = NewService([identify]);
         var plan = await service.PlanAsync(SyncScope.Library, OptionsFor(SyncStepKind.IdentifyModel));
 
         var stopwatch = Stopwatch.StartNew();
         var report = await service.ExecuteAsync(plan);
         stopwatch.Stop();
 
-        report.Steps.Single().Skipped.Should().Be(10);
-        paces.Should().Be(0);
+        report.Steps.Single().Succeeded.Should().Be(10);
         stopwatch.ElapsedMilliseconds.Should().BeLessThan(200);
-    }
-
-    [Fact]
-    public async Task Execute_PacesAfterEveryNetworkItemExceptDiscover()
-    {
-        var paces = 0;
-
-        var discover = new FakeStep(SyncStepKind.DiscoverFiles).Selecting([Item(0, "scan")]).Returning(_ => SyncItemResult.Success);
-        var identify = new FakeStep(SyncStepKind.IdentifyModel)
-            .Selecting([Item(1), Item(2), Item(3)])
-            .Returning(item => item.ModelId == 2 ? SyncItemResult.Skip : SyncItemResult.Success);
-
-        var service = NewService([discover, identify], pacer: _ => { paces++; return Task.CompletedTask; });
-        var plan = await service.PlanAsync(SyncScope.Library, OptionsFor(SyncStepKind.DiscoverFiles, SyncStepKind.IdentifyModel));
-
-        await service.ExecuteAsync(plan);
-
-        // The local disk scan is not rate limited; of the three identify items only the two that
-        // reached Civitai are paced.
-        paces.Should().Be(2);
     }
 
     [Fact]
@@ -434,6 +412,10 @@ public sealed class LibrarySyncServiceTests : IDisposable
 
         // The gate is per-service, so the service itself must be a singleton.
         provider.GetRequiredService<ILibrarySyncService>().Should().BeSameAs(provider.GetRequiredService<ILibrarySyncService>());
+
+        // R4: the pacer holds the timestamp of the last Civitai request, so two of them pace nothing.
+        provider.GetRequiredService<ICivitaiRequestPacer>().Should().BeOfType<CivitaiRequestPacer>()
+            .And.BeSameAs(provider.GetRequiredService<ICivitaiRequestPacer>());
     }
 
     // ------------------------------------------------------------- Fixtures

@@ -211,8 +211,12 @@ DownloadMissingMetadataAsync                      (both service calls run on Tas
 | `FetchImages` | For a version with a Civitai version id but no image records: `GET /model-versions/{id}` and persist the returned images. |
 | `Thumbnails` | Reserved. Not implemented yet (Plan B). Until it lands, tiles download their own preview when they scroll into view (`ModelTileViewModel.Activate()`), so nothing is missing on screen — only the bulk pre-fetch is gone. |
 
-Network items are paced ~1.5 s apart. Cancellation is cooperative: a cancelled run still
-reports what it completed, because those stamps are already committed.
+Civitai requests are paced ~1.5 s apart — per **request**, not per item, by the singleton
+`ICivitaiRequestPacer` awaited immediately before every call. One item is not one request: the
+images step calls once per *version* and identify calls twice (hash lookup, model page), so pacing
+between items left those bursts unpaced. The pacer measures from the last call, so the first
+request of a run never waits. Cancellation is cooperative: a cancelled run still reports what it
+completed, because those stamps are already committed.
 
 **User edits are never overwritten.** A model the user has edited (`Model.IsUserEdited`) is not
 even offered to a bulk identify run — nothing upstream is more authoritative than what the user

@@ -280,6 +280,40 @@ public sealed class IdentifyModelStepTests : IDisposable
         saved.Versions.Single().BaseModelRaw.Should().Be("SDXL 1.0");
     }
 
+    /// <summary>
+    /// R4. One identify item is two Civitai requests — the hash lookup here and the model page
+    /// inside the applier — and pacing between items spaced neither of them.
+    /// </summary>
+    [Fact]
+    public async Task Execute_AwaitsThePacerOncePerCivitaiCall()
+    {
+        var path = NewModelFile("paced.safetensors");
+        var (modelId, _) = await SeedAsync("paced", path);
+
+        var civVersion = NewCivitaiVersion();
+        var client = new Mock<ICivitaiClient>();
+        client.Setup(x => x.GetModelVersionByHashAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(civVersion);
+        client.Setup(x => x.GetModelAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(NewCivitaiModel(civVersion));
+
+        var pacer = new Mock<ICivitaiRequestPacer>();
+        pacer.Setup(p => p.WaitAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        var step = new IdentifyModelStep(
+            Scopes, client.Object,
+            new CivitaiMetadataApplier(client.Object, logger: null, pacer: pacer.Object),
+            new SidecarMetadataApplier(),
+            logger: null,
+            pacer: pacer.Object);
+
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        var result = await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+        pacer.Verify(p => p.WaitAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
     [Fact]
     public async Task Select_ChangedSidecarMakesCandidateDueImmediately()
     {
