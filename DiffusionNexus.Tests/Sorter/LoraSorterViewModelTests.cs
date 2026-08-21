@@ -472,6 +472,89 @@ public sealed class LoraSorterViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task ASupersededPreviewPassCommitsNothingAndTheOverlayOutlivesIt()
+    {
+        // Pass A (slow) is superseded by pass B, which finishes first. Two things used to break:
+        // RunBusyAsync's shared IsBusy dropped the overlay when B finished — arming Start against
+        // whatever A had left behind — and A, on resuming, painted its own stale result over B's.
+        var a = WriteLora(@"flat\a.safetensors");
+        var passAStarted = new TaskCompletionSource();
+        var releaseA = new TaskCompletionSource();
+        var passes = 0;
+
+        var vm = CreateVm(loadCachedFiles: async _ =>
+        {
+            if (Interlocked.Increment(ref passes) == 1)
+            {
+                passAStarted.SetResult();
+                await releaseA.Task;
+                return [Installed(a, "PassA", "character")];
+            }
+            return [Installed(a, "PassB", "character")];
+        });
+
+        var passA = vm.InitializeAsync();
+        await passAStarted.Task;
+        vm.IsBusy.Should().BeTrue();
+
+        await vm.RefreshCommand.ExecuteAsync(null); // pass B, start to finish
+
+        vm.IsBusy.Should().BeTrue("pass A is still in flight");
+        vm.StartSortingCommand.CanExecute(null).Should().BeFalse();
+        vm.PreviewRoots.Select(n => n.Name).Should().Equal("PassB");
+
+        releaseA.SetResult();
+        await passA;
+
+        vm.IsBusy.Should().BeFalse("the last pass has now left");
+        // A must not repaint over B.
+        vm.PreviewRoots.Select(n => n.Name).Should().Equal("PassB");
+        vm.TransferCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ASupersededPassThatRunsToSuccessStillCommitsNothing()
+    {
+        // The nastier half of the same bug: cancelling a pass's token does NOT stop a delegate
+        // that is already running (Task.Run only refuses to *start* one), so a superseded pass
+        // reaches the SUCCESS path with a complete, stale plan and used to overwrite _lastPlan,
+        // the tree and the disk gate for good. Gated inside the planner's on-disk collision probe,
+        // which only ever sees paths under the built target directory.
+        var a = WriteLora(@"flat\a.safetensors");
+        var planningA = new TaskCompletionSource();
+        var releaseA = new TaskCompletionSource();
+        var probes = 0;
+        var passes = 0;
+
+        var vm = CreateVm(
+            fileExistsOnDisk: p =>
+            {
+                if (p.Contains("Character", StringComparison.OrdinalIgnoreCase)
+                    && Interlocked.Increment(ref probes) == 1)
+                {
+                    planningA.SetResult();
+                    releaseA.Task.GetAwaiter().GetResult();
+                }
+                return File.Exists(p);
+            },
+            loadCachedFiles: _ => Task.FromResult<IReadOnlyList<InstalledModelFile>>(
+                Interlocked.Increment(ref passes) == 1
+                    ? [Installed(a, "PassA", "character")]
+                    : [Installed(a, "PassB", "character")]));
+
+        var passA = vm.InitializeAsync();
+        await planningA.Task;
+
+        await vm.RefreshCommand.ExecuteAsync(null); // pass B finishes while A sits in the planner
+
+        releaseA.SetResult();
+        await passA; // A now runs to completion on the success path
+
+        vm.PreviewRoots.Select(n => n.Name).Should().Equal("PassB");
+        vm.IsBusy.Should().BeFalse();
+    }
+
+    [Fact]
     public async Task DeeplyNestedUnknownFilesAreEnumerated()
     {
         WriteLora(@"a\b\c\d\deep.safetensors");

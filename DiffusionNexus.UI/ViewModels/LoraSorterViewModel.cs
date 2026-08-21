@@ -81,6 +81,28 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// <summary>Cancels an in-flight candidate resolution when a newer recompute supersedes it.</summary>
     private CancellationTokenSource? _resolveCts;
 
+    /// <summary>
+    /// Monotonic id of the newest preview pass. Every pass captures its own value at entry and
+    /// must re-check it before committing <i>anything</i> — cache, plan, tree, summaries, disk
+    /// gate. Cancellation alone is not a sufficient guard: a superseded pass whose token is
+    /// cancelled between two checkpoints still runs to completion (<see cref="Task.Run(Action, CancellationToken)"/>
+    /// only refuses to <i>start</i> a cancelled delegate), reaches the success path and would
+    /// permanently overwrite the newer pass's plan and preview tree — including its
+    /// <see cref="IsMove"/>/<see cref="IncludeCategory"/> options, which the older
+    /// source/target-only commit guard could not see.
+    /// </summary>
+    private int _previewGeneration;
+
+    /// <summary>
+    /// How many preview passes are still running. <see cref="IsBusy"/> — and therefore
+    /// <see cref="CanStart"/> — is driven off this rather than off the shared
+    /// <c>RunBusyAsync</c>, because that helper's <c>finally</c> dropped the overlay as soon as
+    /// the <i>first</i> of several overlapping passes finished: pass A's plan stayed armed,
+    /// Start went enabled against it, and pressing it ran A's move plan while the radio already
+    /// read Copy.
+    /// </summary>
+    private int _inFlightPreviews;
+
     /// <summary>Set by <see cref="CancelSort"/> right before it cancels <see cref="_resolveCts"/>, so
     /// the resulting <see cref="OperationCanceledException"/> catch in <see cref="RecomputePreviewCoreAsync"/>
     /// can tell a genuine user cancel apart from a newer recompute pass silently superseding this one
@@ -374,13 +396,47 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             return;
         }
 
-        await RunBusyAsync(RecomputePreviewCoreAsync, "Computing preview…");
+        await RunPreviewBusyAsync(RecomputePreviewCoreAsync, "Computing preview…");
+    }
+
+    /// <summary>
+    /// Per-pass busy tracking for previews. The inherited <c>RunBusyAsync</c> cannot be used here:
+    /// its <c>finally</c> unconditionally clears <see cref="IsBusy"/>, so with two overlapping
+    /// passes the first one to finish re-enabled Start while the other was still computing.
+    /// The overlay drops only when the last pass leaves; the message always belongs to the
+    /// newest one.
+    /// </summary>
+    private async Task RunPreviewBusyAsync(Func<Task> action, string? message)
+    {
+        Interlocked.Increment(ref _inFlightPreviews);
+        IsBusy = true;
+        BusyMessage = message;
+        try
+        {
+            await action();
+        }
+        finally
+        {
+            if (Interlocked.Decrement(ref _inFlightPreviews) == 0)
+            {
+                IsBusy = false;
+                BusyMessage = null;
+            }
+        }
     }
 
     private async Task RecomputePreviewCoreAsync()
     {
         var sourceFolder = SelectedSourceFolder!;
         var targetRoot = EffectiveTargetRoot!;
+
+        // Claim ownership BEFORE cancelling the previous pass, so the pass being superseded can
+        // never observe itself as current on its way out.
+        var generation = Interlocked.Increment(ref _previewGeneration);
+
+        // Whether this pass still owns the VM's state. Checked before committing anything, on
+        // every exit path — cancelled, failed or successful.
+        bool IsCurrentPass() => generation == Volatile.Read(ref _previewGeneration);
 
         // Cancel any in-flight pass unconditionally — even a cache-hit pass for a different
         // selection must stop a stale resolve for a previously-selected source, otherwise it can
@@ -398,10 +454,6 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         // field was only populated on a cache miss.
         var passCts = new CancellationTokenSource();
         _resolveCts = passCts;
-
-        // Whether this pass still owns the VM's state. A newer pass replaces _resolveCts before
-        // cancelling this one, so a superseded pass must not paint (or wipe) anything.
-        bool IsCurrentPass() => ReferenceEquals(_resolveCts, passCts);
 
         // Each new pass starts with a clean flag — CancelSort only sets it for the pass currently
         // in flight, so a leftover true here (from a resolve that ran to completion despite being
@@ -423,20 +475,22 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 // would freeze the overlay. ResolveCandidatesAsync used to set BusyMessage directly;
                 // it now reports through this UI-thread-constructed IProgress<string> instead, whose
                 // Report() marshals back via the captured SynchronizationContext.
-                var resolveProgress = new Progress<string>(msg => BusyMessage = msg);
+                // Only the newest pass owns the overlay text — otherwise a superseded pass's
+                // trailing "Resolving metadata 40/900…" reports overwrite the live one's.
+                var resolveProgress = new Progress<string>(msg =>
+                {
+                    if (IsCurrentPass()) BusyMessage = msg;
+                });
 
                 var resolution = await Task.Run(
                     () => ResolveCandidatesAsync(sourceFolder, resolveProgress, passCts.Token),
                     passCts.Token);
 
-                // Commit guard: the awaited resolve may have let a newer recompute pass change the
-                // selection out from under this one (e.g. switched away and back before this pass
-                // finished). Don't cache or paint results that no longer match the live selection.
-                if (!string.Equals(sourceFolder, SelectedSourceFolder, StringComparison.OrdinalIgnoreCase)
-                    || !string.Equals(targetRoot, EffectiveTargetRoot, StringComparison.OrdinalIgnoreCase))
-                {
-                    return;
-                }
+                // Commit guard: the awaited resolve may have let a newer recompute pass start
+                // (a changed source/target, or a toggled option). Ownership subsumes comparing
+                // the individual inputs — every one of them starts a new pass, and options such
+                // as IsMove were never part of the old field-by-field comparison.
+                if (!IsCurrentPass()) return;
 
                 candidates = resolution.Candidates;
                 _candidateCache = candidates;
@@ -453,6 +507,12 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 () => new LoraSortPlanner(_hashFile, _fileExistsOnDisk).BuildPlan(candidates, options, passCts.Token),
                 passCts.Token);
             planStopwatch.Stop();
+
+            // Second commit guard, for the same reason: planning can run for minutes on a large
+            // library, and a cancelled token does not stop a delegate that is already running —
+            // so a superseded pass reaches this line with a complete, stale plan.
+            if (!IsCurrentPass()) return;
+
             _lastPlan = plan;
 
             BuildPreviewTree(plan, targetRoot);
