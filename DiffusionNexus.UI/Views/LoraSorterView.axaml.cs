@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Markup.Xaml;
+using Avalonia.VisualTree;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views.Controls;
 
@@ -44,9 +45,23 @@ public partial class LoraSorterView : ControlBase
         TryInitializeSorter();
     }
 
+    /// <summary>
+    /// The module host attaches the LoRA Viewer to the visual tree <i>before</i> it assigns the
+    /// ViewModel, so when this view's attach event fires, <c>DataContext</c> is still null and
+    /// <see cref="TryInitializeSorter"/> has nothing to initialize. Without this hook the sorter
+    /// stayed empty until something re-attached the module (e.g. opening Settings and coming back).
+    /// Same two-event pattern <see cref="ControlBase.TryInjectServices"/> uses; the
+    /// attached-to-visual-tree gate keeps the lazy "only when the tab is shown" semantics.
+    /// </summary>
+    protected override void OnDataContextChanged(object? sender, EventArgs e)
+    {
+        base.OnDataContextChanged(sender, e);
+        TryInitializeSorter();
+    }
+
     private void TryInitializeSorter()
     {
-        if (_initialized || DataContext is not LoraSorterViewModel vm) return;
+        if (_initialized || !this.IsAttachedToVisualTree() || DataContext is not LoraSorterViewModel vm) return;
         _initialized = true;
         _ = vm.InitializeAsync();
     }
