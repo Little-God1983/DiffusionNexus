@@ -355,6 +355,100 @@ public class LoraViewerViewModelSyncTests
         outcome.IdentifyPlanned.Should().Be(0, "nothing was asked, so nothing may be claimed about Civitai");
     }
 
+    /// <summary>
+    /// R10. The sync service admits one run at a time and throws on the second. The old code
+    /// assigned <c>_metadataSyncCts</c> before it looked at anything, so a second press both
+    /// started a doomed run and stranded the first run's token — Cancel then cancelled a token
+    /// nobody was listening to, and the run the user wanted stopped kept going to the end.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_SecondCallWhileRunningIsRefusedAndCancelStillReachesTheFirstRun()
+    {
+        var vm = CreateViewModel();
+        var plan = PlanFor(SyncScope.Library, IdentifyStep());
+
+        var entered = new TaskCompletionSource();
+        var release = new TaskCompletionSource();
+        CancellationToken firstRunToken = default;
+
+        _sync.Setup(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(plan);
+        _sync.Setup(s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()))
+            .Returns(async (SyncPlan p, IProgress<LibrarySyncProgress>? _, CancellationToken ct) =>
+            {
+                firstRunToken = ct;
+                entered.TrySetResult();
+                await release.Task;
+                return ReportFor(p);
+            });
+
+        var first = vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        vm.IsSyncRunning.Should().BeTrue("a run is in flight");
+        vm.DownloadMissingMetadataCommand.CanExecute(null).Should().BeFalse(
+            "the button that starts a run is off while one is running");
+
+        // WaitAsync, not a bare await: without the guard the second call reaches the gated mock
+        // and blocks on it forever, and a hanging test says nothing — this makes it fail instead.
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null).WaitAsync(TimeSpan.FromSeconds(10));
+
+        vm.SyncStatus.Should().Be("A metadata sync is already running.",
+            "the refusal has to explain itself — the alternative is an exception message about a run the user did not know about");
+        _sync.Verify(s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()), Times.Once,
+            "the second press must not start a second run");
+
+        vm.CancelMetadataDownloadCommand.Execute(null);
+        firstRunToken.IsCancellationRequested.Should().BeTrue(
+            "Cancel must reach the token the run in flight is actually observing");
+
+        release.TrySetResult();
+        await first;
+
+        vm.IsSyncRunning.Should().BeFalse("the run finished, so both buttons come back");
+        vm.DownloadMissingMetadataCommand.CanExecute(null).Should().BeTrue();
+    }
+
+    /// <summary>
+    /// R10. Same single-flight rule from the other entry point: the detail panel's button runs
+    /// through the same service, so it is refused while a bulk run is going — and while it runs,
+    /// the bulk button is off.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMetadataForTile_IsRefusedWhileTheServiceIsAlreadyRunning()
+    {
+        var vm = CreateViewModel();
+        _sync.SetupGet(s => s.IsRunning).Returns(true);
+
+        var outcome = await vm.DownloadMetadataForTileAsync(CreateTile(modelId: 42));
+
+        outcome.Applied.Should().BeFalse();
+        outcome.Report.Should().BeNull("the run never started");
+        vm.SyncStatus.Should().Be("A metadata sync is already running.");
+        _sync.Verify(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DownloadMetadataForTile_TurnsTheBulkButtonOffWhileItRuns()
+    {
+        var vm = CreateViewModel();
+        var canExecuteDuringRun = true;
+
+        _sync.Setup(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncScope s, SyncOptions _, CancellationToken _) => PlanFor(s, IdentifyStep(1)));
+        _sync.Setup(s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncPlan p, IProgress<LibrarySyncProgress>? _, CancellationToken _) =>
+            {
+                canExecuteDuringRun = vm.DownloadMissingMetadataCommand.CanExecute(null);
+                return ReportFor(p, succeeded: 0);
+            });
+
+        await vm.DownloadMetadataForTileAsync(CreateTile(modelId: 42));
+
+        canExecuteDuringRun.Should().BeFalse("one tile's fetch owns the single-flight service for its duration");
+        vm.IsSyncRunning.Should().BeFalse("and gives it back when it is done");
+    }
+
     private static ModelTileViewModel CreateTile(int modelId)
     {
         var model = new Model { Id = modelId, Name = "Local Only LoRA", Type = ModelType.LORA };

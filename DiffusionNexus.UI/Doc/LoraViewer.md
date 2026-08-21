@@ -323,6 +323,16 @@ tells the detail view to reload; `IdentifyPlanned` is what separates the two fai
 wordings — "No metadata found on Civitai for this file." when the step ran and found nothing,
 "Nothing to refresh for this model." when it planned nothing and therefore asked nobody.
 
+**One run at a time, and the buttons say so.** The service is single-flight and *throws* on a
+second run rather than queueing it, so both ways in are switched off while one is going:
+`LoraViewerViewModel.IsSyncRunning` (its own bulk run, its own per-tile run, or
+`ILibrarySyncService.IsRunning` — someone else's) gates the toolbar command's `CanExecute` and is
+mirrored onto `ModelDetailViewModel.IsLibrarySyncRunning`, which gates the detail panel's button.
+Both entry points still check before they start, for the routes that do not go through a button,
+and answer "A metadata sync is already running." The bulk run's `finally` disposes only the
+`CancellationTokenSource` that call created — clearing the field blind let a late-finishing run
+dispose the *next* run's token source, after which Cancel cancelled nothing.
+
 ### Fallbacks
 
 | Situation | Fallback |
@@ -332,7 +342,7 @@ wordings — "No metadata found on Civitai for this file." when the step ran and
 | Hash returns a version but no images | The `FetchImages` step covers it via the version endpoint |
 | Network/disk failure on one item | Recorded as a `SyncFailure` (step, model, reason) and counted in the report; the run continues |
 | `CivitaiId` already owned by another DB row | Only `CivitaiModelPageId` is set (grouping still works), warning logged |
-| A second run started while one is going | `ExecuteAsync` throws immediately — the service is single-flight process-wide |
+| A second run started while one is going | Refused before it starts: "A metadata sync is already running." (`ExecuteAsync` would throw — the service is single-flight process-wide) |
 | Service not registered | Button reports "Library sync not available." |
 
 ---

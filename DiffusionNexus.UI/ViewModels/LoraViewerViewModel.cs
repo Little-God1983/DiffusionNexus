@@ -65,6 +65,17 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     private CancellationTokenSource? _metadataSyncCts;
 
     /// <summary>
+    /// True from the moment this ViewModel starts a run — bulk or per-tile — until it finishes.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="_metadataSyncCts"/> because the per-tile flow has no CTS of its
+    /// own, and separate from <c>ILibrarySyncService.IsRunning</c> because that only turns true
+    /// once <c>ExecuteAsync</c> is reached on a pool thread — the planning before it is already
+    /// work the user must not be able to start twice.
+    /// </remarks>
+    private bool _localSyncActive;
+
+    /// <summary>
     /// Debounces search-text keystrokes. Every edit cancels the previous pending
     /// filter pass and schedules a new one, so <see cref="ApplyFilters"/> (which
     /// rebuilds the visible tile window — too expensive per keystroke) runs once
@@ -187,6 +198,34 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// </summary>
     [ObservableProperty]
     private ModelDetailViewModel? _detailViewModel;
+
+    /// <summary>
+    /// Whether a metadata sync is running — this ViewModel's own, or anyone else's.
+    /// </summary>
+    /// <remarks>
+    /// The sync service is single-flight and throws on a second run rather than queueing it, so
+    /// both buttons that can start one are disabled while it is true (R10). Kept in step by
+    /// <see cref="RefreshSyncRunning"/> at every point a run starts or ends.
+    /// </remarks>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(DownloadMissingMetadataCommand))]
+    private bool _isSyncRunning;
+
+    /// <summary>
+    /// Re-reads the two sources of "a sync is running" and pushes the answer at the detail panel,
+    /// whose own button is the other way to start one.
+    /// </summary>
+    private void RefreshSyncRunning()
+    {
+        IsSyncRunning = _localSyncActive || _metadataSyncCts is not null || (_librarySync?.IsRunning ?? false);
+        if (DetailViewModel is not null) DetailViewModel.IsLibrarySyncRunning = IsSyncRunning;
+    }
+
+    /// <summary>Keeps a detail panel opened mid-run from showing an enabled button.</summary>
+    partial void OnDetailViewModelChanged(ModelDetailViewModel? value)
+    {
+        if (value is not null) value.IsLibrarySyncRunning = IsSyncRunning;
+    }
 
     #endregion
 
@@ -670,7 +709,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// instead of re-asking Civitai about the whole library. Thumbnails are not a step yet
     /// (Plan B); on-screen tiles keep pulling their own preview on activation.
     /// </remarks>
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanStartMetadataSync))]
     private async Task DownloadMissingMetadataAsync()
     {
         if (_librarySync is null)
@@ -679,8 +718,23 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             return;
         }
 
-        _metadataSyncCts = new CancellationTokenSource();
-        var ct = _metadataSyncCts.Token;
+        // Before the CTS is assigned, not after (R10). The service admits one run at a time and
+        // throws on the second; overwriting the field first would also have stranded the first
+        // run's token, so Cancel would then have cancelled nothing the user could see stop.
+        // CanExecute already greys the button out — this is the guard for every other route in
+        // (a keyboard binding, a test, a second window sharing the service).
+        if (_metadataSyncCts is not null || _librarySync.IsRunning)
+        {
+            SyncStatus = AlreadyRunningStatus;
+            return;
+        }
+
+        var cts = new CancellationTokenSource();
+        _metadataSyncCts = cts;
+        _localSyncActive = true;
+        RefreshSyncRunning();
+
+        var ct = cts.Token;
         try
         {
             IsBusy = true;
@@ -751,10 +805,19 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             IsBusy = false;
             IsCancellable = false;
             BusyMessage = null;
-            _metadataSyncCts?.Dispose();
-            _metadataSyncCts = null;
+
+            // Only the CTS this call created: clearing the field unconditionally would let a
+            // late-finishing run dispose a newer run's token source out from under it.
+            cts.Dispose();
+            if (ReferenceEquals(_metadataSyncCts, cts)) _metadataSyncCts = null;
+
+            _localSyncActive = false;
+            RefreshSyncRunning();
         }
     }
+
+    /// <summary>Both buttons that can start a run are off while one is running — the service takes one at a time.</summary>
+    private bool CanStartMetadataSync() => !IsSyncRunning;
 
     /// <summary>
     /// Requests cancellation of the in-flight metadata sync. Safe no-op when idle.
@@ -902,6 +965,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
     /// <summary>Status shown when a run had genuinely nothing left to do.</summary>
     private const string UpToDateStatus = "Library is up to date — nothing to do";
+
+    /// <summary>
+    /// Status shown when a second run is asked for while one is going. The service refuses it, so
+    /// this says why rather than letting an exception message stand in for an explanation (R10).
+    /// </summary>
+    private const string AlreadyRunningStatus = "A metadata sync is already running.";
 
     /// <summary>
     /// Whether models are still waiting for a <c>ModelSyncState</c> row — i.e. whether the next
@@ -1338,14 +1407,34 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             return TileMetadataSyncResult.NotRun;
         }
 
+        // The service admits one run at a time (R10): while this one is going, the bulk button is
+        // off too, and the detail panel's own button is off from the moment the flag flips.
+        if (_localSyncActive || _librarySync.IsRunning)
+        {
+            SyncStatus = AlreadyRunningStatus;
+            return TileMetadataSyncResult.NotRun;
+        }
+
         var options = new SyncOptions(
             new HashSet<SyncStepKind> { SyncStepKind.IdentifyModel, SyncStepKind.FetchTags, SyncStepKind.FetchImages },
             ForceIdentify: true);
 
-        // Off the UI thread for the same reason the bulk run is (see DownloadMissingMetadataAsync):
-        // the selection queries and the file hash both run inline until the first real yield.
-        var plan = await Task.Run(() => _librarySync.PlanAsync(SyncScope.ForModels(modelId), options));
-        var report = await Task.Run(() => _librarySync.ExecuteAsync(plan));
+        SyncPlan plan;
+        SyncReport report;
+        _localSyncActive = true;
+        RefreshSyncRunning();
+        try
+        {
+            // Off the UI thread for the same reason the bulk run is (see DownloadMissingMetadataAsync):
+            // the selection queries and the file hash both run inline until the first real yield.
+            plan = await Task.Run(() => _librarySync.PlanAsync(SyncScope.ForModels(modelId), options));
+            report = await Task.Run(() => _librarySync.ExecuteAsync(plan));
+        }
+        finally
+        {
+            _localSyncActive = false;
+            RefreshSyncRunning();
+        }
 
         var applied = report.Steps.Any(s => s.Succeeded > 0);
         if (!applied)
