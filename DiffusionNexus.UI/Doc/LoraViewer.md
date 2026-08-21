@@ -582,6 +582,10 @@ BaseModelFilterItem
 
 3. **No version-level CivitaiId → model page ID lookup in FetchCivitaiDataAsync**: If a model has no `CivitaiId`/`CivitaiModelPageId` but its version has a `CivitaiId`, the detail panel could call `GET /api/v1/model-versions/{versionId}` to discover the `modelId` and then fetch the full model. Currently it shows "No Civitai ID" instead.
 
+### Release note
+
+- **A model you have hand-edited is left out of the bulk run.** `Model.IsUserEdited` takes it out of the identify selection entirely, so a model the user renamed *before* it was ever matched never picks up a Civitai id from "Download Metadata" — and without an id the tags and images steps have nothing to ask about either. That is deliberate: a bulk pass has no way to tell "I renamed this" from "this is what it is called". The detail panel's per-LoRA button is the way in — it is a forced, single-model run, which is the user asking, and the appliers still protect every field they authored.
+
 ---
 
 ## 13. LoRA Sorter tab
