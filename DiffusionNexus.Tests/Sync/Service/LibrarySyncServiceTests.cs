@@ -365,23 +365,99 @@ public sealed class LibrarySyncServiceTests : IDisposable
         stopwatch.ElapsedMilliseconds.Should().BeLessThan(200);
     }
 
+    /// <summary>
+    /// R5. A bug in one item used to take the whole run out: the exception escaped to the caller,
+    /// so the tally of everything that HAD succeeded was thrown away and the user saw a raw
+    /// NullReferenceException instead of a report. The bug is still reported — loudly, in the log
+    /// and as its own counter on the report — but the other 2 499 models still get synced.
+    /// </summary>
     [Fact]
-    public async Task Execute_UnexpectedExceptionFromStepPropagates()
+    public async Task Execute_UnexpectedExceptionOnOneItemIsCountedAndRunContinues()
     {
-        // A step returns failures for expected faults; anything that escapes is a bug and must not
-        // be laundered into a tidy "1 failed" row.
-        var identify = new FakeStep(SyncStepKind.IdentifyModel).Selecting([Item(1)]);
-        identify.OnExecute = _ => throw new NotSupportedException("boom");
+        var identify = new FakeStep(SyncStepKind.IdentifyModel)
+            .Selecting([Item(1), Item(2), Item(3)])
+            .Returning(_ => SyncItemResult.Success);
+        identify.OnExecute = item =>
+        {
+            if (item.ModelId == 2) throw new InvalidOperationException("boom");
+            return Task.CompletedTask;
+        };
 
         var service = NewService([identify]);
         var plan = await service.PlanAsync(SyncScope.Library, OptionsFor(SyncStepKind.IdentifyModel));
 
-        var act = () => service.ExecuteAsync(plan);
+        var report = await service.ExecuteAsync(plan);
 
-        await act.Should().ThrowAsync<NotSupportedException>().WithMessage("boom");
+        var step = report.Steps.Single();
+        step.Processed.Should().Be(3, "item 3 still ran");
+        step.Succeeded.Should().Be(2);
+        step.Failed.Should().Be(1);
 
-        // The gate must still open, or one bug would wedge sync for the rest of the session.
+        report.UnexpectedFailures.Should().Be(1);
+        report.FirstUnexpectedError.Should().Contain("boom");
+        report.Failures.Should().ContainSingle().Which.ModelId.Should().Be(2);
+
         service.IsRunning.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// R5, the other half: broadening the catch must not swallow a real cancellation. The user
+    /// pressing Cancel is not an item fault, and the run has to unwind rather than mark every
+    /// remaining model as "failed unexpectedly".
+    /// </summary>
+    [Fact]
+    public async Task Execute_RealCancellationStillPropagates()
+    {
+        using var cts = new CancellationTokenSource();
+
+        var identify = new FakeStep(SyncStepKind.IdentifyModel)
+            .Selecting([Item(1), Item(2)])
+            .Returning(_ => SyncItemResult.Success);
+        identify.OnExecute = _ =>
+        {
+            cts.Cancel();
+            cts.Token.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        };
+
+        var service = NewService([identify]);
+        var plan = await service.PlanAsync(SyncScope.Library, OptionsFor(SyncStepKind.IdentifyModel));
+
+        var report = await service.ExecuteAsync(plan, progress: null, cts.Token);
+
+        report.Cancelled.Should().BeTrue();
+        report.UnexpectedFailures.Should().Be(0, "a cancellation is not a bug in an item");
+        report.Steps.Single().Failed.Should().Be(0);
+    }
+
+    /// <summary>
+    /// R5. A <see cref="TaskCanceledException"/> whose token is not the run's is not a
+    /// cancellation at all — it is HttpClient's own timeout, or a bug — and must be counted like
+    /// any other unexpected failure rather than aborting the run as if the user had pressed Cancel.
+    /// </summary>
+    [Fact]
+    public async Task Execute_ForeignTaskCanceledExceptionIsAnOrdinaryFailure()
+    {
+        using var unrelated = new CancellationTokenSource();
+        await unrelated.CancelAsync();
+
+        var identify = new FakeStep(SyncStepKind.IdentifyModel)
+            .Selecting([Item(1), Item(2)])
+            .Returning(_ => SyncItemResult.Success);
+        identify.OnExecute = item =>
+        {
+            if (item.ModelId == 1) throw new TaskCanceledException("timeout", null, unrelated.Token);
+            return Task.CompletedTask;
+        };
+
+        var service = NewService([identify]);
+        var plan = await service.PlanAsync(SyncScope.Library, OptionsFor(SyncStepKind.IdentifyModel));
+
+        var report = await service.ExecuteAsync(plan);
+
+        report.Cancelled.Should().BeFalse();
+        report.UnexpectedFailures.Should().Be(1);
+        report.Steps.Single().Succeeded.Should().Be(1);
     }
 
     // ------------------------------------------------------------------ DI

@@ -7,7 +7,26 @@ public sealed record SyncFailure(SyncStepKind Step, int ModelId, string Name, st
 public sealed record SyncStepReport(SyncStepKind Kind, int Planned, int Processed, int Succeeded, int Skipped, int Failed);
 
 /// <summary>The result of <see cref="ILibrarySyncService.ExecuteAsync"/>.</summary>
-public sealed record SyncReport(SyncPlan Plan, IReadOnlyList<SyncStepReport> Steps, IReadOnlyList<SyncFailure> Failures, bool Cancelled, TimeSpan Elapsed, int NewFilesDiscovered)
+/// <param name="UnexpectedFailures">
+/// How many items failed with an exception no step claimed — i.e. a bug (R5). Such an item is
+/// counted as failed and the run carries on: one NullReferenceException destroying the tally of a
+/// 2 500-model run, and showing the user a raw stack message instead of a report, cost far more
+/// than it ever revealed. It is not swallowed — every one is logged at Error with the exception,
+/// and this counter exists so the UI can say so out loud rather than leaving it in the log.
+/// </param>
+/// <param name="FirstUnexpectedError">
+/// The message of the first such exception, so the status line can name it without the caller
+/// digging through <see cref="Failures"/>. Null when <paramref name="UnexpectedFailures"/> is 0.
+/// </param>
+public sealed record SyncReport(
+    SyncPlan Plan,
+    IReadOnlyList<SyncStepReport> Steps,
+    IReadOnlyList<SyncFailure> Failures,
+    bool Cancelled,
+    TimeSpan Elapsed,
+    int NewFilesDiscovered,
+    int UnexpectedFailures = 0,
+    string? FirstUnexpectedError = null)
 {
     public string Summary { get; } = BuildSummary(Steps, Cancelled, NewFilesDiscovered);
 

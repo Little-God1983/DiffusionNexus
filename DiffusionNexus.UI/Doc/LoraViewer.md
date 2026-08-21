@@ -199,6 +199,7 @@ DownloadMissingMetadataAsync                      (both service calls run on Tas
       report.NewFilesDiscovered == 0 && every step Planned == 0
         ⇒ "Library is up to date — nothing to do"   ← the honest verdict, from the report
       otherwise report.Summary (+ " · N failed" when report.Failures is non-empty)
+        (+ " · N items failed unexpectedly (see log)" when report.UnexpectedFailures > 0)
 ```
 
 ### The steps
@@ -231,6 +232,13 @@ also writes the `BaseModel` enum (`BaseModelTypeExtensions.ParseCivitai`, the sa
 editor uses), so the viewer's base-model filter and the label the detail view shows never disagree.
 Facts nobody authored locally — Civitai ids, download URL, file hashes, images, NSFW — are applied
 either way.
+
+**One bug does not cost the run.** An exception no step claimed used to escape to the caller: the
+tally of everything already synced was thrown away and the user saw a raw exception message where
+the report should have been. Such an item is now failed, logged at Error with the exception, and
+counted in `SyncReport.UnexpectedFailures` / `FirstUnexpectedError` so the status line says so out
+loud. A real cancellation — `OperationCanceledException` while the run's own token is cancelled —
+still unwinds; a `TaskCanceledException` carrying somebody else's token is a timeout, not the user.
 
 **What counts as applied.** A sidecar is `Sidecar` only when metadata actually came out of it. A
 `.json` next to a LoRA is as often a kohya training config as it is metadata, and a `.civitai.info`

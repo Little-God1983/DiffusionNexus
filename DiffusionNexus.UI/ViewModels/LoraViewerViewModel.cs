@@ -919,14 +919,27 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// planned in any step did no work at all, and <see cref="SyncReport.Summary"/> would report
     /// that as "Discovered 0" — technically true, and useless to read.
     /// </summary>
+    /// <remarks>
+    /// Items that failed with an exception no step claimed are called out separately (R5). They
+    /// are bugs, not "Civitai said no", and the run no longer dies on them — so unless the status
+    /// line says so, the only trace they leave is a log entry nobody opens.
+    /// </remarks>
     private static string DescribeOutcome(SyncReport report)
     {
         if (report.NewFilesDiscovered == 0 && report.Steps.All(s => s.Planned == 0))
             return UpToDateStatus;
 
-        return report.Failures.Count > 0
+        var status = report.Failures.Count > 0
             ? $"{report.Summary} · {report.Failures.Count} failed"
             : report.Summary;
+
+        if (report.UnexpectedFailures > 0)
+        {
+            var item = report.UnexpectedFailures == 1 ? "item" : "items";
+            status += $" · {report.UnexpectedFailures} {item} failed unexpectedly (see log)";
+        }
+
+        return status;
     }
 
     /// <summary>

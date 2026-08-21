@@ -156,7 +156,9 @@ public sealed class LibrarySyncService : ILibrarySyncService
 
             stopwatch.Stop();
 
-            var syncReport = new SyncReport(plan, tally.Steps, tally.Failures, cancelled, stopwatch.Elapsed, tally.Discovered);
+            var syncReport = new SyncReport(
+                plan, tally.Steps, tally.Failures, cancelled, stopwatch.Elapsed, tally.Discovered,
+                tally.UnexpectedFailures, tally.FirstUnexpectedError);
             _logger?.Info(LogCategory.Network, LogSource, $"Sync finished: {syncReport.Summary} in {Describe(stopwatch.Elapsed)}");
 
             return syncReport;
@@ -202,7 +204,8 @@ public sealed class LibrarySyncService : ILibrarySyncService
                 var item = items[i];
                 progress?.Report(new LibrarySyncProgress(step.Kind, i + 1, items.Count, item.Name));
 
-                var result = await ExecuteItemAsync(step, item, apiKey, ct).ConfigureAwait(false);
+                var outcome = await ExecuteItemAsync(step, item, apiKey, ct).ConfigureAwait(false);
+                var result = outcome.Result;
 
                 processed++;
                 if (result.Succeeded) succeeded++;
@@ -211,6 +214,12 @@ public sealed class LibrarySyncService : ILibrarySyncService
                 {
                     failed++;
                     tally.Failures.Add(new SyncFailure(step.Kind, item.ModelId, item.Name, result.FailureReason ?? "Unknown error"));
+
+                    if (outcome.Unexpected)
+                    {
+                        tally.UnexpectedFailures++;
+                        tally.FirstUnexpectedError ??= result.FailureReason;
+                    }
                 }
             }
         }
@@ -232,20 +241,51 @@ public sealed class LibrarySyncService : ILibrarySyncService
         public List<SyncStepReport> Steps { get; } = [];
         public List<SyncFailure> Failures { get; } = [];
         public int Discovered { get; set; }
+
+        /// <summary>Items that failed with an exception no step claimed — bugs, counted rather than fatal (R5).</summary>
+        public int UnexpectedFailures { get; set; }
+
+        /// <summary>The first such message, for the status line.</summary>
+        public string? FirstUnexpectedError { get; set; }
     }
+
+    /// <summary>One item's result, plus whether it got there via an exception nobody expected.</summary>
+    private readonly record struct ItemOutcome(SyncItemResult Result, bool Unexpected);
 
     /// <summary>
     /// Executes one item. Steps return failure results for the faults they expect (network, disk,
-    /// a changed response shape); anything that escapes is a bug, and laundering it into a "1
-    /// failed" row would hide it behind a report row nobody investigates.
+    /// a changed response shape); anything that escapes is a bug.
     /// </summary>
-    private async Task<SyncItemResult> ExecuteItemAsync(ISyncStep step, SyncItem item, string? apiKey, CancellationToken ct)
+    /// <remarks>
+    /// <para>
+    /// That bug is now counted rather than thrown (R5). Rethrowing meant one
+    /// <c>NullReferenceException</c> on model 812 destroyed the tally of the 811 models already
+    /// synced — the stamps were committed, but nothing recorded that they had been — and the user
+    /// saw the raw exception message where the report should have been. The item is failed, the
+    /// exception is logged at Error <i>with</i> the exception object, and
+    /// <see cref="SyncReport.UnexpectedFailures"/> carries it to the UI so it is stated out loud
+    /// rather than left in a log nobody opens.
+    /// </para>
+    /// <para>
+    /// The one exception that still escapes is a real cancellation: an
+    /// <see cref="OperationCanceledException"/> raised while <paramref name="ct"/> is cancelled.
+    /// A <see cref="TaskCanceledException"/> carrying somebody else's token is not the user
+    /// pressing Cancel — it is HttpClient's own timeout, or a bug — and is an ordinary failure.
+    /// </para>
+    /// <para>
+    /// No change tracker is reset here: every step owns its own scope inside
+    /// <c>ExecuteOneAsync</c> and disposes it on the way out, so there is no unit of work at this
+    /// level to clear. A step that keeps a context alive across items would have to clear it
+    /// itself, which is what the item-fault handlers inside the steps already do.
+    /// </para>
+    /// </remarks>
+    private async Task<ItemOutcome> ExecuteItemAsync(ISyncStep step, SyncItem item, string? apiKey, CancellationToken ct)
     {
         try
         {
-            return await step.ExecuteOneAsync(item, apiKey, ct).ConfigureAwait(false);
+            return new ItemOutcome(await step.ExecuteOneAsync(item, apiKey, ct).ConfigureAwait(false), Unexpected: false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
         }
@@ -253,7 +293,8 @@ public sealed class LibrarySyncService : ILibrarySyncService
         {
             _logger?.Error(LogCategory.Network, LogSource,
                 $"{StepLabel(step.Kind)} threw an unexpected exception on '{item.Name}' (model {item.ModelId})", ex);
-            throw;
+
+            return new ItemOutcome(SyncItemResult.Failure($"Unexpected {ex.GetType().Name}: {ex.Message}"), Unexpected: true);
         }
     }
 

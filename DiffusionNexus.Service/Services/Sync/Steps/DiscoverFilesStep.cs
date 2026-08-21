@@ -66,11 +66,18 @@ public sealed class DiscoverFilesStep : ISyncStep
         {
             throw;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DbUpdateException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DbUpdateException or TaskCanceledException)
         {
             // Only the faults a disk scan can legitimately hit: an unreadable/absent source folder,
             // a permission wall, or a write that the database rejected. A NullReferenceException in
-            // here is a bug and must surface as one, not as a tidy "step failed" row.
+            // here is a bug and must surface as one, not as a tidy "step failed" row — the sync
+            // service counts it and carries on (R5).
+            //
+            // TaskCanceledException is in the list because the filter above it already claimed the
+            // only cancellation that matters: one raised while OUR token is cancelled. What reaches
+            // here is a cancellation of somebody else's token — a timeout inside the scan — which is
+            // a fault of this scan, not the user pressing Cancel, and reporting it as a cancelled
+            // run would be a lie about what happened.
             _logger?.Error(LogCategory.FileSystem, LogSource, "File discovery failed", ex);
             return SyncItemResult.Failure(ex.Message);
         }
