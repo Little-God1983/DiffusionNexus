@@ -127,10 +127,18 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
     /// e_sqlite3 has no ICU — so <c>lower()</c> folds ASCII and nothing else. For a root made only
     /// of ASCII that is exactly case-insensitive prefix matching and the SQL is authoritative. A
     /// root containing any non-ASCII character (<c>E:\ÖFFENTLICH\Loras</c>) cannot be folded in SQL
-    /// at all, so it is not expressed as a <c>LIKE</c>: its membership is resolved in memory by
-    /// <see cref="ModelIdsUnderAsync"/> and joined in as an id set. That costs one two-column scan
-    /// of the visible file rows, which is why it is paid only for the roots that need it — and it
-    /// is what keeps the tag and image selections correct, as neither carries a path to re-check.
+    /// at all, so it is not expressed as a prefix comparison: its membership is resolved in memory
+    /// by <see cref="ModelIdsUnderAsync"/> and joined in as an id set. That costs one two-column
+    /// scan of the visible file rows, which is why it is paid only for the roots that need it — and
+    /// it is what keeps the tag and image selections correct, as neither carries a path to re-check.
+    /// </para>
+    /// <para>
+    /// None of it is an indexed lookup: <c>lower(LocalPath)</c> is a function of the column, so no
+    /// index on <c>LocalPath</c> can serve it and SQLite scans the file rows either way. What the
+    /// SQL buys is that the rows are discarded inside the engine instead of being materialised into
+    /// the process. And because EF renders a captured-variable <c>StartsWith</c> as a parameterised
+    /// comparison rather than a literal <c>LIKE</c> pattern, <c>%</c> and <c>_</c> occurring in a
+    /// source folder's name are ordinary characters here, not wildcards.
     /// </para>
     /// </remarks>
     private async Task<Expression<Func<Model, bool>>> HasFileUnderAnyAsync(
@@ -163,9 +171,9 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
             inLibrary = inLibrary is null ? byId : OrElse(inLibrary, byId);
         }
 
-        // A composed OR over the roots rather than `roots.Any(...)` inside the predicate: this is
-        // plain `LIKE 'root%' OR LIKE 'root%'` that SQLite optimises, and it does not depend on
-        // the provider's translation of LINQ operators over a parameter collection.
+        // A composed OR over the roots rather than `roots.Any(...)` inside the predicate: one
+        // prefix comparison per spelling, OR-ed, which does not depend on the provider translating
+        // LINQ operators over a captured collection.
         return inLibrary ?? (_ => false);
     }
 
@@ -175,10 +183,23 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
     /// for roots SQL cannot fold (see <see cref="HasFileUnderAnyAsync"/>); it materialises two
     /// columns per visible file row and no BLOBs.
     /// </summary>
+    /// <remarks>
+    /// SQL still does what it can. A root's leading run of ASCII characters is a prefix every path
+    /// under it must also start with — <c>E:\ÖFFENTLICH\Loras</c> yields <c>e:\</c>,
+    /// <c>E:\Loras\Öffentlich</c> yields <c>e:\loras\</c> — and that much <c>lower()</c> can fold,
+    /// so it narrows the rows the engine hands back. Without it every visible file row in the
+    /// library came into the process, once per selection, six to eight times per sync. The in-memory
+    /// predicate stays authoritative: the pre-filter can only ever be wider than the answer.
+    /// </remarks>
     private async Task<HashSet<int>> ModelIdsUnderAsync(IReadOnlyList<string> roots, CancellationToken ct)
     {
-        var rows = await (from f in Context.ModelFiles.AsNoTracking()
-                          where f.LocalPath != null && (f.IsLocalFileValid || f.LocalFileVerifiedAt == null)
+        var files = Context.ModelFiles.AsNoTracking()
+            .Where(f => f.LocalPath != null && (f.IsLocalFileValid || f.LocalFileVerifiedAt == null));
+
+        var asciiHead = AsciiHeadFilter(roots);
+        if (asciiHead is not null) files = files.Where(asciiHead);
+
+        var rows = await (from f in files
                           join v in Context.ModelVersions on f.ModelVersionId equals v.Id
                           select new { v.ModelId, f.LocalPath })
             .ToListAsync(ct).ConfigureAwait(false);
@@ -186,6 +207,41 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
         return rows.Where(r => LocalPathRoots.IsUnderAny(r.LocalPath, roots))
             .Select(r => r.ModelId)
             .ToHashSet();
+    }
+
+    /// <summary>
+    /// A widening SQL pre-filter for <see cref="ModelIdsUnderAsync"/>: the OR of each root's
+    /// ASCII head as a lower-cased prefix. Returns <c>null</c> — no pre-filter, every visible row
+    /// is a candidate — when any root has no ASCII head at all, i.e. begins with a non-ASCII
+    /// character, because there is then nothing SQLite can fold to narrow by.
+    /// </summary>
+    private static Expression<Func<ModelFile, bool>>? AsciiHeadFilter(IReadOnlyList<string> roots)
+    {
+        Expression<Func<ModelFile, bool>>? filter = null;
+
+        foreach (var root in roots)
+        {
+            var head = AsciiLower(AsciiHead(root));
+            if (head.Length == 0) return null;
+
+            Expression<Func<ModelFile, bool>> underHead =
+                f => f.LocalPath != null && f.LocalPath.ToLower().StartsWith(head);
+
+            filter = filter is null ? underHead : OrElse(filter, underHead);
+        }
+
+        return filter;
+    }
+
+    /// <summary>The leading run of ASCII characters of <paramref name="root"/>, trailing separators trimmed first.</summary>
+    private static string AsciiHead(string root)
+    {
+        var trimmed = root.TrimEnd('\\', '/');
+
+        var length = 0;
+        while (length < trimmed.Length && char.IsAscii(trimmed[length])) length++;
+
+        return trimmed[..length];
     }
 
     /// <summary>Whether every character of <paramref name="value"/> is ASCII, i.e. whether SQLite's <c>lower()</c> can fold it.</summary>

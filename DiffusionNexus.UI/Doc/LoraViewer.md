@@ -323,9 +323,16 @@ function, `LocalPathRoots.IsUnder` in Domain, which `ModelFileSyncService.MatchE
 (the grid) and `SyncStateRepository` (the sync) both call. They used to answer it separately:
 the viewer accepted `\` or `/` at the root boundary and compared `OrdinalIgnoreCase`, while the
 repository baked in `Path.DirectorySeparatorChar` and folded ASCII only, so a grid full of
-models could produce a plan with nothing in it. The SQL `LIKE` is still there as a cheap
-pre-filter — now emitting both separator spellings — and a root containing non-ASCII characters,
-which SQLite's ICU-less `lower()` cannot fold, is resolved by an in-memory id set instead.
+models could produce a plan with nothing in it. SQL still does the narrowing — a `lower(LocalPath)`
+prefix comparison per root, now emitting both separator spellings — and a root containing non-ASCII
+characters, which SQLite's ICU-less `lower()` cannot fold, is resolved by an in-memory id set
+instead, narrowed first by that root's leading run of ASCII characters (`E:\ÖFFENTLICH\Loras` → `e:\`).
+
+Two things that comment used to get wrong. None of this is an indexed lookup: `lower(LocalPath)` is
+a function of the column, so SQLite scans the file rows either way — what the SQL buys is that they
+are discarded inside the engine rather than materialised into the process. And it is not a literal
+`LIKE` pattern: EF renders a captured-variable `StartsWith` as a parameterised comparison, so `%`
+and `_` in a source folder's name are ordinary characters here, not wildcards.
 
 Forcing also widens *selection*, not just due-ness: `SelectIdentifyCandidatesAsync` takes an
 `includeMatched` flag (`ForceIdentify || scope.Kind == Models`) that drops the

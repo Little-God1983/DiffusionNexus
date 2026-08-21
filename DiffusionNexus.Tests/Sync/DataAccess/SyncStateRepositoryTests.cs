@@ -525,6 +525,37 @@ public sealed class SyncStateRepositoryTests : IDisposable
     }
 
     /// <summary>
+    /// F4. The unfoldable-root path narrows in SQL by the root's leading run of ASCII characters
+    /// before it decides membership in memory, so it must still answer correctly when the non-ASCII
+    /// character sits in the middle of the root (head <c>e:\loras\</c>) rather than near its start.
+    /// The pre-filter may only ever be wider than the answer — never narrower.
+    /// </summary>
+    [Fact]
+    public async Task IdentifyCandidates_NonAsciiMidRootStillMatchesThroughTheAsciiHeadPreFilter()
+    {
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var inside = NewLocalModel("inside", @"E:\Loras\öffentlich\Sub\inside.safetensors");
+
+        // Shares the ASCII head "e:\loras\", so the pre-filter keeps it and the in-memory
+        // predicate is what has to throw it out.
+        var siblingUnderTheSameHead = NewLocalModel("sibling", @"E:\Loras\Privat\sibling.safetensors");
+
+        // Outside the head entirely: dropped by the SQL narrowing itself.
+        var elsewhere = NewLocalModel("elsewhere", @"D:\Loras\öffentlich\elsewhere.safetensors");
+
+        foreach (var m in new[] { inside, siblingUnderTheSameHead, elsewhere })
+            await uow.Models.AddAsync(m);
+        await uow.SaveChangesAsync();
+
+        var candidates = await uow.SyncStates.SelectIdentifyCandidatesAsync(
+            SyncScope.Library, [@"E:\LORAS\ÖFFENTLICH"], includeMatched: false);
+
+        candidates.Select(c => c.Name).Should().BeEquivalentTo(new[] { "inside" });
+    }
+
+    /// <summary>
     /// R6. The same fold applies to the other two selections, which have no local path to check in
     /// memory: a non-ASCII root must neither lose them nor widen them to the whole database.
     /// </summary>
@@ -768,6 +799,39 @@ public sealed class SyncStateRepositoryTests : IDisposable
         var untouchedInput = inputs.Single(i => i.ModelId == untouched.Id);
         untouchedInput.LastSyncedAt.Should().BeNull();
         untouchedInput.HasRealBaseModel.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// F3. The derivation cannot depend on <c>IsUserEdited</c> — the projection does not carry it,
+    /// and a hand-edited legacy model must still get a state row like any other, or the backfill
+    /// would leave it permanently outside the sync. Asserted here, where the question now lives:
+    /// the deriver only ever sees this record.
+    /// </summary>
+    [Fact]
+    public async Task GetDerivationInputs_ProjectsAUserEditedModelExactlyLikeItsUntouchedTwin()
+    {
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        // One shared Tag entity: NormalizedName is unique, so two twins cannot each bring their own.
+        var tag = new Tag { Name = "style", NormalizedName = "style" };
+        var untouched = NewLocalModel("twin-a", @"C:\m\twin-a.safetensors", withImage: true);
+        var edited = NewLocalModel("twin-b", @"C:\m\twin-b.safetensors", userEdited: true, withImage: true);
+        foreach (var m in new[] { untouched, edited })
+        {
+            m.LastSyncedAt = Verified;
+            m.Versions.First().BaseModelRaw = "Pony";
+            m.Tags.Add(new ModelTag { Tag = tag });
+            await uow.Models.AddAsync(m);
+        }
+        await uow.SaveChangesAsync();
+
+        var inputs = await uow.SyncStates.GetDerivationInputsAsync([untouched.Id, edited.Id]);
+
+        inputs.Single(i => i.ModelId == edited.Id).Should().BeEquivalentTo(
+            inputs.Single(i => i.ModelId == untouched.Id),
+            o => o.Excluding(i => i.ModelId),
+            "nothing the deriver is given can tell the two apart");
     }
 
     /// <summary>A model deleted since the id query is simply absent — the caller derives nothing for it.</summary>

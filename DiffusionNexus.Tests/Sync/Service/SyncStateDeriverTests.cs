@@ -9,6 +9,14 @@ namespace DiffusionNexus.Tests.Sync.Service;
 /// <summary>
 /// The derivation table from spec S3, one theory row per table line.
 /// Every legacy model gets its state from data already on disk — never from the network.
+/// <para>
+/// The input is <see cref="SyncDerivationInput"/>, the projected record the backfill actually
+/// derives from (R8/F3) — there is no entity-shaped overload any more. Each case is still written
+/// in terms of the underlying rows (which base models the versions carry, which version holds an
+/// image) and folded into the record the same way <c>SyncStateRepository.GetDerivationInputsAsync</c>
+/// projects it; that the projection really answers this way is pinned by
+/// <c>SyncStateRepositoryTests.GetDerivationInputs_ProjectsTheFactsTheDeriverAsksFor</c>.
+/// </para>
 /// </summary>
 public sealed class SyncStateDeriverTests
 {
@@ -35,7 +43,6 @@ public sealed class SyncStateDeriverTests
         string?[] BaseModelRaws,
         bool WithTag,
         int ImageOnVersionIndex,
-        bool IsUserEdited,
         SyncOutcome ExpectedOutcome,
         Stamp ExpectedMetadata,
         Stamp ExpectedTags,
@@ -46,7 +53,7 @@ public sealed class SyncStateDeriverTests
         // Table line 1: CivitaiId != null => Matched.
         ["matched-with-tags-and-images"] = new(
             CivitaiId: 42, LastSyncedAt: Synced, Source: DataSource.CivitaiApi, BaseModelRaws: ["SDXL 1.0"],
-            WithTag: true, ImageOnVersionIndex: 0, IsUserEdited: false,
+            WithTag: true, ImageOnVersionIndex: 0,
             ExpectedOutcome: SyncOutcome.Matched,
             ExpectedMetadata: Stamp.Synced, ExpectedTags: Stamp.Synced, ExpectedImages: Stamp.Synced),
 
@@ -54,7 +61,7 @@ public sealed class SyncStateDeriverTests
         // "asked one final time, then stamped" path still runs for them.
         ["matched-without-tags-or-images"] = new(
             CivitaiId: 42, LastSyncedAt: Synced, Source: DataSource.CivitaiApi, BaseModelRaws: ["SDXL 1.0"],
-            WithTag: false, ImageOnVersionIndex: -1, IsUserEdited: false,
+            WithTag: false, ImageOnVersionIndex: -1,
             ExpectedOutcome: SyncOutcome.Matched,
             ExpectedMetadata: Stamp.Synced, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
 
@@ -63,60 +70,60 @@ public sealed class SyncStateDeriverTests
         // whole legacy library does not fall due on the first run after it (R1, anti-herd).
         ["sidecar-local-file-with-real-base-model"] = new(
             CivitaiId: null, LastSyncedAt: Synced, Source: DataSource.LocalFile, BaseModelRaws: ["Illustrious"],
-            WithTag: true, ImageOnVersionIndex: 0, IsUserEdited: false,
+            WithTag: true, ImageOnVersionIndex: 0,
             ExpectedOutcome: SyncOutcome.Sidecar,
             ExpectedMetadata: Stamp.Now, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
 
         // Table line 3 variants: synced, but nothing actually identified the model.
         ["not-identified-placeholder-base-model"] = new(
             CivitaiId: null, LastSyncedAt: Synced, Source: DataSource.LocalFile, BaseModelRaws: ["???"],
-            WithTag: false, ImageOnVersionIndex: -1, IsUserEdited: false,
+            WithTag: false, ImageOnVersionIndex: -1,
             ExpectedOutcome: SyncOutcome.NotIdentified,
             ExpectedMetadata: Stamp.Now, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
 
         ["not-identified-blank-base-model"] = new(
             CivitaiId: null, LastSyncedAt: Synced, Source: DataSource.LocalFile, BaseModelRaws: ["   ", null],
-            WithTag: false, ImageOnVersionIndex: -1, IsUserEdited: false,
+            WithTag: false, ImageOnVersionIndex: -1,
             ExpectedOutcome: SyncOutcome.NotIdentified,
             ExpectedMetadata: Stamp.Now, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
 
         ["not-identified-no-versions-at-all"] = new(
             CivitaiId: null, LastSyncedAt: Synced, Source: DataSource.LocalFile, BaseModelRaws: [],
-            WithTag: false, ImageOnVersionIndex: -1, IsUserEdited: false,
+            WithTag: false, ImageOnVersionIndex: -1,
             ExpectedOutcome: SyncOutcome.NotIdentified,
             ExpectedMetadata: Stamp.Now, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
 
         ["not-identified-non-local-source"] = new(
             CivitaiId: null, LastSyncedAt: Synced, Source: DataSource.Manual, BaseModelRaws: ["Flux.1 D"],
-            WithTag: false, ImageOnVersionIndex: -1, IsUserEdited: false,
+            WithTag: false, ImageOnVersionIndex: -1,
             ExpectedOutcome: SyncOutcome.NotIdentified,
             ExpectedMetadata: Stamp.Now, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
 
         // Table line 4: never synced, never matched => nothing was ever checked.
         ["none-never-synced"] = new(
             CivitaiId: null, LastSyncedAt: null, Source: DataSource.LocalFile, BaseModelRaws: ["Pony"],
-            WithTag: true, ImageOnVersionIndex: 0, IsUserEdited: false,
+            WithTag: true, ImageOnVersionIndex: 0,
             ExpectedOutcome: SyncOutcome.None,
             ExpectedMetadata: Stamp.Null, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
 
         // Extra 1: matched but never stamped with LastSyncedAt => every timestamp is `now`.
         ["matched-without-last-synced-falls-back-to-now"] = new(
             CivitaiId: 7, LastSyncedAt: null, Source: DataSource.CivitaiApi, BaseModelRaws: ["SD 1.5"],
-            WithTag: true, ImageOnVersionIndex: 0, IsUserEdited: false,
+            WithTag: true, ImageOnVersionIndex: 0,
             ExpectedOutcome: SyncOutcome.Matched,
             ExpectedMetadata: Stamp.Now, ExpectedTags: Stamp.Now, ExpectedImages: Stamp.Now),
 
         // Extra 2: images living on a NON-first version still count.
         ["matched-images-on-second-version-count"] = new(
             CivitaiId: 7, LastSyncedAt: Synced, Source: DataSource.CivitaiApi, BaseModelRaws: ["SD 1.5", "SD 1.5"],
-            WithTag: false, ImageOnVersionIndex: 1, IsUserEdited: false,
+            WithTag: false, ImageOnVersionIndex: 1,
             ExpectedOutcome: SyncOutcome.Matched,
             ExpectedMetadata: Stamp.Synced, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Synced),
 
         // Extra 3: a user-edited model derives exactly like its untouched twin.
         ["user-edited-derives-like-its-twin"] = new(
             CivitaiId: null, LastSyncedAt: Synced, Source: DataSource.LocalFile, BaseModelRaws: ["Illustrious"],
-            WithTag: true, ImageOnVersionIndex: 0, IsUserEdited: true,
+            WithTag: true, ImageOnVersionIndex: 0,
             ExpectedOutcome: SyncOutcome.Sidecar,
             ExpectedMetadata: Stamp.Now, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
     };
@@ -136,11 +143,11 @@ public sealed class SyncStateDeriverTests
     public void DeriveFollowsTheSpecTable(string caseName)
     {
         var testCase = Cases[caseName];
-        var model = BuildModel(testCase);
+        var input = BuildInput(testCase);
 
-        var state = SyncStateDeriver.Derive(model, Now);
+        var state = SyncStateDeriver.Derive(input, Now);
 
-        state.ModelId.Should().Be(model.Id);
+        state.ModelId.Should().Be(input.ModelId);
         state.MetadataOutcome.Should().Be(testCase.ExpectedOutcome);
         state.MetadataCheckedAt.Should().Be(Expected(testCase, testCase.ExpectedMetadata));
         state.TagsCheckedAt.Should().Be(Expected(testCase, testCase.ExpectedTags));
@@ -164,9 +171,9 @@ public sealed class SyncStateDeriverTests
     [Fact]
     public void LegacyNotIdentifiedIsNotDueImmediatelyAfterUpgrade()
     {
-        var model = BuildModel(Cases["not-identified-placeholder-base-model"]);
+        var input = BuildInput(Cases["not-identified-placeholder-base-model"]);
 
-        var state = SyncStateDeriver.Derive(model, Now);
+        var state = SyncStateDeriver.Derive(input, Now);
 
         state.MetadataOutcome.Should().Be(SyncOutcome.NotIdentified);
         state.MetadataCheckedAt.Should().Be(Now);
@@ -178,19 +185,6 @@ public sealed class SyncStateDeriverTests
         SyncRetryPolicy.Default
             .IsIdentifyDue(state.MetadataOutcome, state.MetadataCheckedAt, 0, Now.Add(SyncRetryPolicy.Default.NotIdentifiedRetryAfter), false)
             .Should().BeTrue();
-    }
-
-    [Fact]
-    public void DeriveIgnoresIsUserEdited()
-    {
-        var template = Cases["sidecar-local-file-with-real-base-model"];
-        var untouched = BuildModel(template with { IsUserEdited = false });
-        var edited = BuildModel(template with { IsUserEdited = true });
-
-        var fromUntouched = SyncStateDeriver.Derive(untouched, Now);
-        var fromEdited = SyncStateDeriver.Derive(edited, Now);
-
-        fromEdited.Should().BeEquivalentTo(fromUntouched, o => o.Excluding(s => s.Model));
     }
 
     [Theory]
@@ -213,36 +207,17 @@ public sealed class SyncStateDeriverTests
         _ => throw new ArgumentOutOfRangeException(nameof(stamp)),
     };
 
-    private static Model BuildModel(Case testCase)
-    {
-        var model = new Model
-        {
-            Id = 11,
-            Name = "derive-me",
-            Type = ModelType.LORA,
-            Source = testCase.Source,
-            CivitaiId = testCase.CivitaiId,
-            LastSyncedAt = testCase.LastSyncedAt,
-            IsUserEdited = testCase.IsUserEdited,
-        };
-
-        for (var i = 0; i < testCase.BaseModelRaws.Length; i++)
-        {
-            var version = new ModelVersion { Name = "v" + i, BaseModelRaw = testCase.BaseModelRaws[i] };
-            version.Files.Add(new ModelFile
-            {
-                FileName = "derive-me-" + i + ".safetensors",
-                LocalPath = @"C:\m\derive-me-" + i + ".safetensors",
-                IsLocalFileValid = true,
-                IsPrimary = true,
-                HashSHA256 = "AA",
-            });
-            if (i == testCase.ImageOnVersionIndex) version.Images.Add(new ModelImage { Url = "https://x/y.jpeg" });
-            model.Versions.Add(version);
-        }
-
-        if (testCase.WithTag) model.Tags.Add(new ModelTag { Tag = new Tag { Name = "style", NormalizedName = "style" } });
-
-        return model;
-    }
+    /// <summary>
+    /// Folds a case's underlying rows into the record the repository projects — the same three
+    /// questions, asked the same way: any tag at all, any version with any image, any version whose
+    /// base model is not a placeholder.
+    /// </summary>
+    private static SyncDerivationInput BuildInput(Case testCase) => new(
+        ModelId: 11,
+        CivitaiId: testCase.CivitaiId,
+        LastSyncedAt: testCase.LastSyncedAt,
+        Source: testCase.Source,
+        HasTags: testCase.WithTag,
+        HasImages: testCase.ImageOnVersionIndex >= 0,
+        HasRealBaseModel: testCase.BaseModelRaws.Any(raw => !SyncStateDeriver.IsPlaceholder(raw)));
 }

@@ -82,38 +82,15 @@ public static class SyncStateDeriver
     }
 
     /// <summary>
-    /// The same derivation for a caller that already holds the loaded graph — with its Versions
-    /// (and their Images) and Tags, as <c>GetByIdWithIncludesAsync</c> returns it.
-    /// </summary>
-    /// <remarks>
-    /// An adapter, not a second implementation: it answers the four questions off the entity and
-    /// hands them to the overload above, so the two paths cannot drift. The backfill deliberately
-    /// does <i>not</i> use it — loading a graph to answer four booleans is what R8 removed — but it
-    /// is what pins the derivation table in the tests, where an entity is the clearer fixture, and
-    /// it is the definition the repository's projection has to match.
-    /// </remarks>
-    /// <param name="model">The legacy model.</param>
-    /// <param name="now">The derivation timestamp; also the row's <c>UpdatedAt</c>.</param>
-    public static ModelSyncState Derive(Model model, DateTimeOffset now)
-    {
-        ArgumentNullException.ThrowIfNull(model);
-
-        return Derive(
-            new SyncDerivationInput(
-                model.Id,
-                model.CivitaiId,
-                model.LastSyncedAt,
-                model.Source,
-                HasTags: model.Tags.Count > 0,
-                HasImages: model.Versions.Any(v => v.Images.Count > 0),
-                HasRealBaseModel: model.Versions.Any(v => !IsPlaceholder(v.BaseModelRaw))),
-            now);
-    }
-
-    /// <summary>
     /// True when a stored base model carries no information — blank, or the legacy
     /// "<c>???</c>" placeholder written by earlier scans.
     /// </summary>
+    /// <remarks>
+    /// The in-memory twin of the base-model test inside
+    /// <c>SyncStateRepository.GetDerivationInputsAsync</c>'s projection, which is where
+    /// <see cref="SyncDerivationInput.HasRealBaseModel"/> is actually decided. Kept here because it
+    /// is the readable statement of the rule, and it is what the repository test asserts against.
+    /// </remarks>
     public static bool IsPlaceholder(string? baseModelRaw) =>
         string.IsNullOrWhiteSpace(baseModelRaw) || baseModelRaw == "???";
 }
