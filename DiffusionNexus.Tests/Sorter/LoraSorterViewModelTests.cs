@@ -240,6 +240,24 @@ public sealed class LoraSorterViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task AProgrammingDefectInTheResolverIsSurfacedNotCountedAsALockedFile()
+    {
+        // ArgumentException was added to the per-file "locked/unreadable" filter to absorb a
+        // whitespace-only LocalPath — but that filter also wraps ResolveAsync, so it swallowed
+        // ArgumentNullException/ArgumentOutOfRangeException from anywhere inside the resolver, the
+        // Civitai client or the sidecar locator. A systematic one on a 3000-file folder reported
+        // "3000 file(s) skipped (locked/unreadable)" over an empty preview, pointing the user at
+        // their disk instead of at the bug.
+        WriteLora(@"flat\mystery.safetensors");
+        var vm = CreateVm(cached: [], resolverHash: _ => throw new ArgumentNullException("cacheDirectory"));
+
+        await vm.InitializeAsync();
+
+        vm.StatusMessage.Should().Contain("Preview failed");
+        vm.StatusMessage.Should().NotContain("skipped");
+    }
+
+    [Fact]
     public async Task TheSkippedFileNoteSurvivesAnOptionToggle()
     {
         var good = WriteLora(@"flat\good.safetensors");

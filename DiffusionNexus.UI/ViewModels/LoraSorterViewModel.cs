@@ -661,35 +661,47 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         {
             var path = f.File.LocalPath;
 
+            // Path shape is validated here, not caught as an exception below: a blank or malformed
+            // ModelFile.LocalPath is a bad row, and admitting ArgumentException into the per-file
+            // "locked/unreadable" filter also admitted ArgumentNullException and
+            // ArgumentOutOfRangeException raised anywhere inside the resolver, the Civitai client or
+            // the sidecar locator — reporting an NRE-class defect to the user as N unreadable files
+            // over an empty preview, pointing them at their disk instead of at the bug.
+            string fullPath;
             try
             {
-                if (string.IsNullOrEmpty(path)) continue;
+                if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("Path is blank.");
+                fullPath = Path.GetFullPath(path);
+            }
+            catch (ArgumentException ex)
+            {
+                skipped++;
+                knownSkipped++;
+                _logger?.Warn(LogCategory.FileSystem, LogSource,
+                    $"Skipping malformed ModelFile.LocalPath '{path}': {ex.Message}");
+                continue;
+            }
 
-                // FIRST, before anything that can throw. This marks the path as "the DB loop has
-                // taken responsibility for it", and the unknown-file walk below skips it on that
-                // basis. Registering it only after the size/sidecar work meant a DB-known
-                // .safetensors that failed to read — one held open by a running ComfyUI — was
-                // counted as skipped AND then re-enumerated as unknown: a full-file SHA256 plus a
-                // serialized Civitai round-trip on the same file, "2 file(s) skipped" reported for
-                // one file if it failed again, and if it succeeded, a candidate built from API
-                // metadata instead of its own DB row (losing UserCategory, the DB base model and
-                // the stored hash). Registering a path that then turns out to be outside the source
-                // or absent costs nothing: neither is ever enumerated.
-                knownPaths.Add(Path.GetFullPath(path));
+            // Boundary-aware: a bare StartsWith would sweep sibling folders that merely share a
+            // name prefix (e.g. source "E:\Loras" matching "E:\Loras_backup\x.safetensors").
+            if (!IsWithin(fullPath, sourceFolder)) continue;
 
-                // Boundary-aware: a bare StartsWith would sweep sibling folders that merely share a
-                // name prefix (e.g. source "E:\Loras" matching "E:\Loras_backup\x.safetensors").
-                // Path.GetFullPath (inside IsWithin) throws ArgumentException for a whitespace-only
-                // path — the check lives inside this try so a single blank/malformed ModelFile.LocalPath
-                // row is skipped instead of aborting the whole pass.
-                if (!IsWithin(path, sourceFolder)) continue;
+            // Registered BEFORE the per-file reads below (existence, size, sidecars), so a file
+            // that fails one of them is skipped once instead of being re-enumerated as unknown:
+            // that cost a full-file SHA256
+            // plus a serialized Civitai round-trip on the same file, reported one file as two
+            // skips, and — when the retry succeeded — built the candidate from API metadata rather
+            // than its own DB row (losing UserCategory, the DB base model and the stored hash).
+            knownPaths.Add(fullPath);
+
+            try
+            {
                 if (!_fileExistsOnDisk(path)) continue;
 
                 var category = SorterCategoryResolver.ToFolderName(SorterCategoryResolver.ResolveForModel(f.Model));
                 var sizeBytes = f.File.FileSizeBytes ?? new FileInfo(path).Length;
-                var candidate = new SortCandidate(path, f.Version.BaseModelRaw, category,
-                    f.Version.CivitaiId, f.File.HashSHA256, sizeBytes, SidecarLocator.FindSidecars(path));
-                candidates.Add(candidate);
+                candidates.Add(new SortCandidate(path, f.Version.BaseModelRaw, category,
+                    f.Version.CivitaiId, f.File.HashSHA256, sizeBytes, SidecarLocator.FindSidecars(path)));
                 knownAdded++;
             }
             catch (Exception ex) when (IsSkippableFileFailure(ex))
@@ -775,13 +787,16 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// by that twice. One bad file out of 3000 killed the preview with zero candidates, which is the
     /// folder-granularity failure the safe directory walk exists to prevent, one level down.
     /// <see cref="OperationCanceledException"/> is deliberately not covered: cancellation must
-    /// still unwind the pass. <see cref="ArgumentException"/> is included because
-    /// <see cref="Path.GetFullPath(string)"/> (via <see cref="IsWithin"/>) throws it for a
-    /// whitespace-only path — a blank <c>ModelFile.LocalPath</c> row must cost one file, not the
-    /// whole pass.
+    /// still unwind the pass. Neither is <see cref="ArgumentException"/> — it briefly lived here to
+    /// absorb a whitespace-only <c>ModelFile.LocalPath</c>, which is now validated at the source
+    /// instead. This filter wraps <c>ResolveAsync</c>, so admitting it also admitted
+    /// <see cref="ArgumentNullException"/>/<see cref="ArgumentOutOfRangeException"/> raised
+    /// anywhere inside the resolver, the Civitai client or the sidecar locator: a programming
+    /// defect would then be reported to the user as "3000 file(s) skipped (locked/unreadable)"
+    /// over an empty preview, behind a single Warn.
     /// </remarks>
     private static bool IsSkippableFileFailure(Exception ex)
-        => ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException;
+        => ex is IOException or UnauthorizedAccessException or JsonException;
 
     /// <summary>Result of one resolution pass: the candidates and how many files it had to skip.</summary>
     private sealed record CandidateResolution(List<SortCandidate> Candidates, int SkippedCount);
