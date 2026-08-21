@@ -202,9 +202,16 @@ public sealed class CivitaiMetadataApplier
     /// <summary>
     /// Tags only (FetchTags step): fetch the model page and replace the model's tags unless
     /// the model is user-edited. Saves. Returns the number of tags on the model afterwards —
-    /// <c>0</c> is a valid, final answer for a model Civitai has no tags for.
+    /// <c>0</c> is a valid, final answer for a model Civitai has no tags for — or <c>null</c>
+    /// when Civitai had no model to answer with at all.
     /// </summary>
-    public async Task<int> ApplyTagsAsync(
+    /// <remarks>
+    /// The <c>null</c> / <c>0</c> split is the whole point of the entry point: "the page is gone"
+    /// and "the page lists no tags" are different facts, and the caller stamps them differently.
+    /// An empty tag list from a page that *did* respond is authoritative, so tags removed upstream
+    /// are removed here too — except on a user-edited model, whose tags are never ours to touch.
+    /// </remarks>
+    public async Task<int?> ApplyTagsAsync(
         IUnitOfWork uow,
         int modelId,
         int civitaiModelId,
@@ -213,26 +220,29 @@ public sealed class CivitaiMetadataApplier
     {
         var civitaiModel = await _client.GetModelAsync(civitaiModelId, apiKey, ct);
 
+        // A 404 says nothing about tags: the model page itself is gone. Reporting that as
+        // "zero tags" would let a dead page silently wipe the tags we already hold.
+        if (civitaiModel is null) return null;
+
         var dbModel = await uow.Models.GetByIdWithIncludesAsync(modelId, ct);
         if (dbModel is null) return 0;
 
-        // Same guard as ApplyAsync: never overwrite a user's own tags, and never let an
-        // empty response wipe tags we already hold.
-        if (!dbModel.IsUserEdited && civitaiModel?.Tags is { Count: > 0 } civitaiTags)
-        {
-            var tagLookup = await uow.Models.GetAllTagsLookupAsync(ct);
-            SyncTags(dbModel, civitaiTags, tagLookup);
-            await uow.SaveChangesAsync(ct);
-        }
+        // Same guard as ApplyAsync: never overwrite a user's own tags.
+        if (dbModel.IsUserEdited) return dbModel.Tags.Count;
+
+        var tagLookup = await uow.Models.GetAllTagsLookupAsync(ct);
+        SyncTags(dbModel, civitaiModel.Tags, tagLookup);
+        await uow.SaveChangesAsync(ct);
 
         return dbModel.Tags.Count;
     }
 
     /// <summary>
     /// Images only (FetchImages step): fetch the version and append every image not yet
-    /// present by <see cref="ModelImage.CivitaiId"/>. Saves. Returns the number added.
+    /// present by <see cref="ModelImage.CivitaiId"/>. Saves. Returns the number added, or
+    /// <c>null</c> when Civitai has no such version any more.
     /// </summary>
-    public async Task<int> ApplyImagesAsync(
+    public async Task<int?> ApplyImagesAsync(
         IUnitOfWork uow,
         int modelId,
         int versionId,
@@ -241,7 +251,9 @@ public sealed class CivitaiMetadataApplier
         CancellationToken ct = default)
     {
         var civitaiVersion = await _client.GetModelVersionAsync(civitaiVersionId, apiKey, ct);
-        if (civitaiVersion is null) return 0;
+
+        // As above: a version that 404s is not a version with no images.
+        if (civitaiVersion is null) return null;
 
         var dbModel = await uow.Models.GetByIdWithIncludesAsync(modelId, ct);
         var dbVersion = dbModel?.Versions.FirstOrDefault(v => v.Id == versionId);

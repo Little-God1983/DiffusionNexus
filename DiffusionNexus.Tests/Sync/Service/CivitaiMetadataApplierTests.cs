@@ -288,13 +288,17 @@ public sealed class CivitaiMetadataApplierTests : IDisposable
     }
 
     [Fact]
-    public async Task ApplyTagsAsync_ReturnsZeroForTaglessModelWithoutThrowing()
+    public async Task ApplyTagsAsync_EmptyTagListIsAuthoritativeAndClearsStaleTags()
     {
+        // A model page that responds with no tags is a real answer, not a missing one: tags removed
+        // upstream are removed here too. Returning 0 (not null) is what lets the FetchTags step
+        // record "checked and empty" instead of asking again on every run.
         int modelId;
         using (var seedScope = NewScope())
         {
             var uow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
             var model = NewLocalModel("tagless", @"C:\m\tagless.safetensors");
+            model.Tags.Add(new ModelTag { Tag = new Tag { Name = "stale", NormalizedName = "stale" } });
             await uow.Models.AddAsync(model);
             await uow.SaveChangesAsync();
             modelId = model.Id;
@@ -303,14 +307,115 @@ public sealed class CivitaiMetadataApplierTests : IDisposable
         var civVersion = NewCivitaiVersion();
         var applier = NewApplier(NewCivitaiModel(civVersion));   // Tags = []
 
-        using var scope = NewScope();
-        var work = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        int? written = null;
+        using (var scope = NewScope())
+        {
+            var work = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var act = async () => written = await applier.ApplyTagsAsync(work, modelId, civitaiModelId: 77, apiKey: null);
+            await act.Should().NotThrowAsync();
+        }
 
-        var written = 0;
-        var act = async () => written = await applier.ApplyTagsAsync(work, modelId, civitaiModelId: 77, apiKey: null);
-
-        await act.Should().NotThrowAsync();
         written.Should().Be(0);
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+            saved!.Tags.Should().BeEmpty();
+        }
+    }
+
+    [Fact]
+    public async Task ApplyTagsAsync_KeepsTagsOfAUserEditedModel()
+    {
+        int modelId;
+        using (var seedScope = NewScope())
+        {
+            var uow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = NewLocalModel("mine", @"C:\m\mine.safetensors", modelUserEdited: true);
+            model.Tags.Add(new ModelTag { Tag = new Tag { Name = "mine", NormalizedName = "mine" } });
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+        }
+
+        var applier = NewApplier(NewCivitaiModel(NewCivitaiVersion()));   // Tags = []
+
+        int? written;
+        using (var scope = NewScope())
+        {
+            var work = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            written = await applier.ApplyTagsAsync(work, modelId, civitaiModelId: 77, apiKey: null);
+        }
+
+        // Still a real answer (so the step stamps), but the user's own tags are untouched.
+        written.Should().Be(1);
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+            saved!.Tags.Select(t => t.Tag!.Name).Should().BeEquivalentTo(["mine"]);
+        }
+    }
+
+    [Fact]
+    public async Task ApplyTagsAsync_ReturnsNullWhenCivitaiHasNoSuchModel()
+    {
+        int modelId;
+        using (var seedScope = NewScope())
+        {
+            var uow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = NewLocalModel("gone", @"C:\m\gone.safetensors");
+            model.Tags.Add(new ModelTag { Tag = new Tag { Name = "keep", NormalizedName = "keep" } });
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+        }
+
+        var applier = NewApplier(model: null);   // GetModelAsync 404s
+
+        int? written;
+        using (var scope = NewScope())
+        {
+            var work = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            written = await applier.ApplyTagsAsync(work, modelId, civitaiModelId: 77, apiKey: null);
+        }
+
+        // null, not 0: a dead page must never be mistaken for "Civitai says: no tags"…
+        written.Should().BeNull();
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+            // …and must therefore not wipe what we already hold.
+            saved!.Tags.Select(t => t.Tag!.Name).Should().BeEquivalentTo(["keep"]);
+        }
+    }
+
+    [Fact]
+    public async Task ApplyImagesAsync_ReturnsNullWhenCivitaiHasNoSuchVersion()
+    {
+        int modelId, versionId;
+        using (var seedScope = NewScope())
+        {
+            var uow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = NewLocalModel("gone-version", @"C:\m\gone-version.safetensors");
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+            versionId = model.Versions.First().Id;
+        }
+
+        var applier = NewApplier(version: null);   // GetModelVersionAsync 404s
+
+        using var scope = NewScope();
+        var uow2 = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var added = await applier.ApplyImagesAsync(uow2, modelId, versionId, civitaiVersionId: 700, apiKey: null);
+
+        added.Should().BeNull();
     }
 
     [Fact]
@@ -336,7 +441,7 @@ public sealed class CivitaiMetadataApplierTests : IDisposable
         var civVersion = NewCivitaiVersion(images: [NewImage(5, "https://img/5.jpeg"), NewImage(6, "https://img/6.jpeg")]);
         var applier = NewApplier(version: civVersion);
 
-        int added;
+        int? added;
         using (var scope = NewScope())
         {
             var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
