@@ -60,8 +60,10 @@ public partial class ModelDetailViewModel : ViewModelBase
     /// Shared HttpClient for Civitai version-thumbnail downloads (see
     /// <see cref="LoadCivitaiThumbnailAsync"/>). Reusing a single instance avoids the
     /// socket exhaustion (TIME_WAIT accumulation) that a fresh <c>new HttpClient()</c> per
-    /// call caused on the tile thumbnail path — mirrors <c>ModelTileViewModel</c>'s
-    /// <c>s_thumbnailClient</c> pattern (issue #460).
+    /// call caused on the tile thumbnail path (issue #460). The tile itself no longer holds a
+    /// client of its own — it fetches through <c>IThumbnailProvider</c>'s typed client (#521
+    /// Plan B) — so this is the last hand-rolled one, and it is here because the version-tab
+    /// preview is a full-size Civitai image, not a thumbnail the pipeline knows about.
     /// </summary>
     private static readonly HttpClient s_civitaiThumbnailClient = new()
     {

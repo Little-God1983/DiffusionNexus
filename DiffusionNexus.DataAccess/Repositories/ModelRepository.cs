@@ -99,6 +99,12 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
                 i.ThumbnailMimeType,
                 i.ThumbnailWidth,
                 i.ThumbnailHeight,
+                // Two scalars, no BLOB: the tile refuses to re-fetch a row whose last attempt says
+                // not to, and without these it would see a blank slate on every row — which the
+                // retry policy reads as "never attempted", so a poster URL that 404s would be
+                // re-fetched on every scroll past the tile, forever.
+                i.ThumbnailAttemptedAt,
+                i.ThumbnailFailure,
                 i.LocalCachePath,
                 i.IsLocalCacheValid,
                 i.CachedAt,
@@ -114,8 +120,12 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
                 i.LikeCount,
                 i.HeartCount,
                 i.CommentCount,
-                // ThumbnailData deliberately EXCLUDED — loaded per-tile on demand
-                HasThumbnailInDb = i.ThumbnailData != null && i.ThumbnailData.Length > 0,
+                // ThumbnailData is answered, never selected. Compared against the empty BLOB
+                // rather than measured with .Length, which SQLite cannot translate: EF would
+                // answer the != null half in SQL, add the column to the SELECT list, and finish
+                // the comparison in memory — handing this query every thumbnail in the library,
+                // which is the exact cost the light load exists to avoid. See ThumbnailBlobs.Empty.
+                HasThumbnailInDb = i.ThumbnailData != null && i.ThumbnailData != ThumbnailBlobs.Empty,
             })
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
@@ -149,6 +159,8 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
                     ThumbnailMimeType = i.ThumbnailMimeType,
                     ThumbnailWidth = i.ThumbnailWidth,
                     ThumbnailHeight = i.ThumbnailHeight,
+                    ThumbnailAttemptedAt = i.ThumbnailAttemptedAt,
+                    ThumbnailFailure = i.ThumbnailFailure,
                     LocalCachePath = i.LocalCachePath,
                     IsLocalCacheValid = i.IsLocalCacheValid,
                     CachedAt = i.CachedAt,
@@ -184,6 +196,10 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
 
         return (result?.ThumbnailData, result?.ThumbnailMimeType);
     }
+
+    /// <inheritdoc />
+    public Task<ModelImage?> GetImageByIdAsync(int imageId, CancellationToken cancellationToken = default)
+        => Context.ModelImages.FirstOrDefaultAsync(i => i.Id == imageId, cancellationToken);
 
     /// <inheritdoc />
     public async Task<Model?> GetByIdWithIncludesAsync(int id, CancellationToken cancellationToken = default)

@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Service.Services.Sync.Thumbnails;
 using DiffusionNexus.UI.Services.CivitaiBrowser;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -306,31 +307,7 @@ public partial class CivitaiResultViewModel : ObservableObject
     /// full-resolution payloads (which can be 6+ MB and trip Avalonia's bitmap decoder).
     /// No-op for non-Civitai hosts.
     /// </summary>
-    private static string? RewriteToResizedImageUrl(string? url)
-    {
-        if (string.IsNullOrWhiteSpace(url)) return url;
-        if (!url.Contains("image.civitai.com", StringComparison.OrdinalIgnoreCase)) return url;
-
-        var queryIndex = url.IndexOf('?');
-        var bare = queryIndex >= 0 ? url[..queryIndex] : url;
-        var trailing = queryIndex >= 0 ? url[queryIndex..] : string.Empty;
-
-        var lastSlash = bare.LastIndexOf('/');
-        if (lastSlash <= 0) return url;
-
-        var dirPart = bare[..lastSlash];
-        var filePart = bare[(lastSlash + 1)..];
-
-        const string transforms = "width=450";
-
-        var prevSlash = dirPart.LastIndexOf('/');
-        var lastSegment = prevSlash >= 0 ? dirPart[(prevSlash + 1)..] : dirPart;
-        var dirWithoutOldTransform = lastSegment.Contains('=') && prevSlash >= 0
-            ? dirPart[..prevSlash]
-            : dirPart;
-
-        return $"{dirWithoutOldTransform}/{transforms}/{filePart}{trailing}";
-    }
+    private static string? RewriteToResizedImageUrl(string? url) => CivitaiImageUrls.ToThumbnailUrl(url);
 
     /// <summary>
     /// Delegates to the one shared inference helper: the LoRA Sorter reorganizes files

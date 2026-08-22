@@ -23,10 +23,14 @@ namespace DiffusionNexus.UI.ViewModels;
 /// captured as a scoped instance.
 /// </para>
 /// </summary>
+/// <remarks>
+/// No video-thumbnail service here: the tile's thumbnails come from <c>IThumbnailProvider</c>,
+/// which owns the FFmpeg fallback internally and is resolved from <see cref="ScopeFactory"/> at
+/// the point of use. The tile stopped extracting video frames itself in #521 Plan B.
+/// </remarks>
 public sealed record ModelTileDependencies(
     IUnifiedLogger? Logger = null,
     IServiceScopeFactory? ScopeFactory = null,
     IDialogService? DialogService = null,
-    IVideoThumbnailService? VideoThumbnailService = null,
     IClipboardService? Clipboard = null,
     IUiScheduler? UiScheduler = null);

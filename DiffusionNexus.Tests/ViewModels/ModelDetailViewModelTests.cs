@@ -88,9 +88,9 @@ public class ModelDetailViewModelTests
         // #460: LoadCivitaiThumbnailAsync used to create a fresh `new HttpClient()` per
         // download — the same per-call-client anti-pattern that produced the tile's
         // documented socket-exhaustion incident (TIME_WAIT accumulation -> OOM after ~100
-        // downloads; see ModelTileViewModelTests.ThumbnailDownloadsShareASingleStaticHttpClient).
-        // Assert the fix mirrors the tile's `s_thumbnailClient` pattern: one shared,
-        // readonly static client instead of a per-call instance.
+        // downloads). The tile's own client is gone (#521 Plan B moved its fetches onto
+        // IThumbnailProvider's typed client), so this is the last one, and the rule still
+        // holds for it: one shared, readonly static client instead of a per-call instance.
         var field = typeof(ModelDetailViewModel).GetField(
             "s_civitaiThumbnailClient", BindingFlags.NonPublic | BindingFlags.Static);
 

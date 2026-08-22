@@ -97,4 +97,37 @@ public interface ISyncStateRepository : IRepository<ModelSyncState>
     /// <param name="ct">Cancellation token.</param>
     Task<IReadOnlyList<ImageCandidate>> SelectImageCandidatesAsync(
         SyncScope scope, IReadOnlyList<string> enabledSourceRoots, CancellationToken ct = default);
+
+    /// <summary>
+    /// One image per in-scope version that still needs a thumbnail — the version's primary image,
+    /// picked exactly as <see cref="ModelVersion.PrimaryImage"/> picks it. Versions whose primary
+    /// already has thumbnail bytes yield nothing. No retry filtering: the caller applies
+    /// <see cref="SyncRetryPolicy.IsThumbnailDue"/> to the attempt columns carried on the candidate.
+    /// </summary>
+    /// <param name="scope">What the run targets.</param>
+    /// <param name="enabledSourceRoots">
+    /// The enabled LoRA source folders — see the remarks on <see cref="ISyncStateRepository"/>.
+    /// </param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <remarks>
+    /// <para>
+    /// Unlike <see cref="SelectImageCandidatesAsync"/> this applies no <c>CivitaiId</c> filter, on
+    /// purpose. A model identified from a sidecar or found on disk has a <c>file://</c> preview row
+    /// and no Civitai id at all, and a thumbnail is precisely what makes it visible in the grid.
+    /// </para>
+    /// <para>
+    /// Rows the pipeline has no business touching are dropped before the ranking, not after:
+    /// <c>user-thumbnail://</c> images are the user's own bytes, and a row with a blank URL has
+    /// nothing to fetch. Either one, left in, could win its version's rank and silently suppress
+    /// the real image behind it.
+    /// </para>
+    /// <para>
+    /// The query projects small columns only — <c>ThumbnailData</c> appears in it as an
+    /// is-it-empty flag evaluated inside SQLite and never as a selected column. A library-wide run
+    /// visits every image row in the database, so carrying the BLOB would mean reading the entire
+    /// thumbnail store into memory to decide which thumbnails are missing.
+    /// </para>
+    /// </remarks>
+    Task<IReadOnlyList<ThumbnailCandidate>> SelectThumbnailCandidatesAsync(
+        SyncScope scope, IReadOnlyList<string> enabledSourceRoots, CancellationToken ct = default);
 }

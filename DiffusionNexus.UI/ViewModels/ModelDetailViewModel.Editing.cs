@@ -687,8 +687,10 @@ public partial class ModelDetailViewModel
     #region Thumbnail upload
 
     /// <summary>
-    /// Maximum width (px) for stored custom thumbnail. Mirrors
-    /// <c>ModelTileViewModel.MaxThumbnailWidth</c> conventions.
+    /// Maximum width (px) for a stored custom thumbnail. Deliberately wider than the
+    /// <c>ThumbnailCodec.TargetWidth</c> (450) the sync pipeline produces: this is a picture the
+    /// user chose by hand for one model, not one of thousands fetched in bulk, so it is worth the
+    /// extra bytes and it must not be the first thing to look soft on a high-DPI display.
     /// </summary>
     private const int CustomThumbnailMaxWidth = 640;
 

@@ -71,8 +71,8 @@ public sealed class LibrarySyncService : ILibrarySyncService
 
         foreach (var step in _steps)
         {
-            // A requested kind with no registered step (Thumbnails, until Plan B) is simply absent
-            // from the plan rather than an error — the option set is a wish, not a contract.
+            // A requested kind with no registered step is simply absent from the plan rather than
+            // an error — the option set is a wish, not a contract.
             if (!options.Steps.Contains(step.Kind)) continue;
 
             ct.ThrowIfCancellationRequested();

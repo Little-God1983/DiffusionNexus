@@ -8,14 +8,19 @@ using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Installer.SDK.Shared.Services;
+using DiffusionNexus.Service.Services.Sync.Thumbnails;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Views.Dialogs;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using SkiaSharp;
 using System.Collections.ObjectModel;
+// Two unrelated systems own a "ThumbnailRequest": ThumbnailOrchestrator's on-disk dataset/gallery
+// cache, and the library-sync thumbnail pipeline. The tile means the latter, and says so.
+using ThumbnailRequest = DiffusionNexus.Service.Services.Sync.Thumbnails.ThumbnailRequest;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -33,7 +38,6 @@ public partial class ModelTileViewModel : ViewModelBase
     private readonly IUnifiedLogger? _logger;
     private readonly IServiceScopeFactory? _scopeFactory;
     private readonly IDialogService? _dialogService;
-    private readonly IVideoThumbnailService? _videoThumbnailService;
     private readonly IClipboardService _clipboard = AvaloniaClipboardService.Instance;
     private readonly IUiScheduler _uiScheduler = AvaloniaUiScheduler.Instance;
 
@@ -56,24 +60,18 @@ public partial class ModelTileViewModel : ViewModelBase
             _logger = d.Logger;
             _scopeFactory = d.ScopeFactory;
             _dialogService = d.DialogService;
-            _videoThumbnailService = d.VideoThumbnailService;
             _clipboard = d.Clipboard ?? AvaloniaClipboardService.Instance;
             _uiScheduler = d.UiScheduler ?? AvaloniaUiScheduler.Instance;
         }
     }
     /// <summary>
-    /// Maximum thumbnail BLOB size (1 MB). Images exceeding this limit are resized
-    /// down to <see cref="MaxThumbnailWidth"/> pixels wide before being persisted to
-    /// the database. Prevents DB bloat when the Civitai CDN ignores the width parameter
-    /// and returns full-resolution images (up to 25 MB seen in production).
+    /// The size above which a stored thumbnail is treated as legacy bloat and re-encoded on first
+    /// read (1 MB). Nothing produces such a BLOB any more — the provider's output is a 450px JPEG,
+    /// tens of KB — but the old naive <c>width=300</c> fetch stored whatever the CDN felt like
+    /// returning, up to 25 MB. The sync step will never shrink those rows: it only selects images
+    /// that have <i>no</i> thumbnail. So the tile's first read of one is the only occasion there is.
     /// </summary>
     private const int MaxThumbnailBytes = 1_048_576;
-
-    /// <summary>
-    /// Target width (in pixels) used when a downloaded thumbnail exceeds
-    /// <see cref="MaxThumbnailBytes"/> and must be resized.
-    /// </summary>
-    private const int MaxThumbnailWidth = 640;
 
     /// <summary>
     /// Whether the tile's container is currently attached to the visual tree.
@@ -82,16 +80,6 @@ public partial class ModelTileViewModel : ViewModelBase
     /// Set by <see cref="Activate"/> / <see cref="Deactivate"/>.
     /// </summary>
     private bool _isActive;
-
-    /// <summary>
-    /// Shared HttpClient for thumbnail downloads. Reusing a single instance avoids
-    /// socket exhaustion (TIME_WAIT accumulation) that caused OOM after ~100 downloads.
-    /// </summary>
-    private static readonly HttpClient s_thumbnailClient = new()
-    {
-        Timeout = TimeSpan.FromSeconds(60),
-        DefaultRequestHeaders = { { "User-Agent", "DiffusionNexus/1.0" } }
-    };
 
     /// <summary>
     /// Raised after the model (and all its grouped versions) has been deleted from disk and DB.
@@ -1302,18 +1290,37 @@ public partial class ModelTileViewModel : ViewModelBase
 
         if (primaryImage?.ThumbnailData is { Length: > 0 } data && !primaryImage.IsThumbnailDeferred)
         {
+            // Cleared up front, exactly like the two branches below. On a first load there is
+            // nothing here anyway, but on a version switch there is the previous version's
+            // picture — and the paths that return before the Post below (a corrupt BLOB, a
+            // decode that failed) would otherwise leave it on screen as this version's art.
+            // Worse, with the in-memory bytes nulled but ThumbnailImage still set,
+            // IsThumbnailMissing reads false and the repair affordance never appears: a
+            // plausible-looking tile showing the wrong model, with nothing to say so.
+            ThumbnailImage = null;
+
             // Thumbnail BLOB already in memory — decode off the UI thread (downscaled,
             // no JPEG round-trip), then marshal only the property assignment back.
             // Guard with `ct` since Activate/Deactivate/version-switch can make this
             // in-flight decode stale before it reaches the UI thread.
-            _ = Task.Run(() =>
+            var image = primaryImage;
+            _ = Task.Run(async () =>
             {
-                var bitmap = CreateTileBitmap(data);
+                var decode = TryCreateTileBitmap(data);
                 if (ct.IsCancellationRequested) return;
+
+                if (ShouldMarkCorrupt(data, decode.Outcome))
+                {
+                    // The placeholder stays: there is nothing to show, and now there is a record
+                    // of why. The next activation takes the fetch branch, because the bytes are gone.
+                    await MarkThumbnailCorruptAsync(image, data).ConfigureAwait(false);
+                    return;
+                }
+
                 _uiScheduler.Post(() =>
                 {
                     if (ct.IsCancellationRequested) return;
-                    ThumbnailImage = bitmap;
+                    ThumbnailImage = decode.Bitmap;
                 });
             });
         }
@@ -1323,23 +1330,158 @@ public partial class ModelTileViewModel : ViewModelBase
             ThumbnailImage = null;
             _ = LazyLoadThumbnailFromDbAsync(primaryImage, ct);
         }
-        else if (primaryImage is not null && !string.IsNullOrEmpty(primaryImage.Url)
-                 && !primaryImage.Url.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
+        else if (primaryImage is not null && IsFetchableUrl(primaryImage.Url))
         {
-            // No BLOB cached yet — download from Civitai URL in background
+            // No BLOB cached yet — fetch through the provider in the background, but only if the
+            // last attempt on this row says another one is worth making. Scrolling is not a reason
+            // to retry: without this gate a poster that 404s costs a GET, a DI scope and a
+            // SaveChanges every single time the tile passes the viewport, forever.
             ThumbnailImage = null;
-            _ = DownloadThumbnailAsync(primaryImage, ct);
+            if (IsScrollFetchDue(primaryImage, DateTimeOffset.UtcNow))
+                _ = DownloadThumbnailAsync(primaryImage, allowVideoDownload: false, ct);
         }
         else
         {
-            // Last resort: try to find a local preview image next to the safetensors file
+            // Everything else — no URL, a file:// preview, or a user-thumbnail:// row whose BLOB
+            // has gone — lands here: look for a preview image next to the model file. Nothing is
+            // fetched and nothing throws, which is the point; the old "any URL that is not file://"
+            // condition sent user-thumbnail:// rows into an HTTP request built out of a scheme
+            // nobody can serve.
             ThumbnailImage = null;
             _ = TryLoadLocalPreviewAsync(ct);
         }
     }
 
+    /// <summary>
+    /// Whether <paramref name="url"/> is something the thumbnail provider can fetch over the
+    /// network. The database holds three URL shapes and only this one is a URL in the sense of
+    /// "go and get it": <c>file://</c> points at disk (and is malformed by construction on
+    /// Windows), and <c>user-thumbnail://</c> is a synthetic id for bytes that are already the
+    /// record.
+    /// </summary>
+    internal static bool IsFetchableUrl(string? url) =>
+        url is not null
+        && (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || url.StartsWith("https://", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Whether a stored BLOB is the legacy oversize kind that should be re-encoded on read.
+    /// See <see cref="MaxThumbnailBytes"/> for why the tile is the only place this can happen.
+    /// </summary>
+    internal static bool NeedsOversizeSelfHeal(byte[]? data) => data is not null && data.Length > MaxThumbnailBytes;
+
+    /// <summary>
+    /// Whether a self-heal re-encode is worth writing back: only when it actually made the row
+    /// smaller.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="NeedsOversizeSelfHeal"/> measures the stored bytes, so a BLOB that cannot shrink
+    /// stays over the threshold and comes back through this path on every activation of the tile.
+    /// Without this check that means a decode, a JPEG encode, a scope and a SaveChanges each time,
+    /// forever, for a row that never changes. Such rows exist: an already-narrow image (under
+    /// <see cref="ThumbnailCodec.TargetWidth"/>, so no resize) that is simply enormous, and a
+    /// photographic source whose JPEG re-encode is no smaller than the PNG it came from.
+    /// </remarks>
+    internal static bool ShouldPersistSelfHeal(
+        byte[] original, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] ThumbnailPayload? reencoded) =>
+        reencoded is not null && reencoded.Data.Length < original.Length;
+
+    /// <summary>
+    /// Whether the scroll path may spend a request on this row, judged by the same policy the sync
+    /// step uses — hard failures never, soft ones after the retry window, a dropped corrupt BLOB
+    /// immediately.
+    /// </summary>
+    /// <remarks>
+    /// <c>force: false</c> is the whole point: this is the tile deciding on its own, not the user
+    /// asking. <see cref="TryDownloadMissingThumbnailAsync"/> — the one path a person initiates —
+    /// does not come through here at all, because a user who clicks "download the missing
+    /// thumbnail" has overruled every window by asking.
+    /// </remarks>
+    internal static bool IsScrollFetchDue(ModelImage image, DateTimeOffset now) =>
+        SyncRetryPolicy.Default.IsThumbnailDue(image.ThumbnailAttemptedAt, image.ThumbnailFailure, now, force: false);
+
+    /// <summary>
+    /// Whether a decode attempt means the stored BLOB is corrupt.
+    /// </summary>
+    /// <remarks>
+    /// Only <see cref="TileDecodeOutcome.NotAnImage"/> qualifies, and that is the whole point: the
+    /// verdict deletes the bytes, so it must follow from "these bytes are not an image" and never
+    /// from "we could not decode them right now". A decode can fail for reasons that are about this
+    /// moment rather than this row — an <see cref="OutOfMemoryException"/> on a multi-MB legacy
+    /// thumbnail under pressure is the obvious one — and the accepted trade in
+    /// <see cref="MarkThumbnailCorruptAsync"/> only holds while undecodable really means
+    /// undecodable. A hand-uploaded thumbnail sitting on a row whose civitai URL has since 404'd is
+    /// gone for good once this says yes.
+    /// <para>
+    /// The other two clauses are about which bytes can be judged at all. A row with none is a
+    /// missing thumbnail, which the fetch path answers; and the deferred sentinel is a one-byte
+    /// marker that never was an image, so it decodes to <c>NotAnImage</c> by construction —
+    /// mistaking that for corruption would null a row whose actual bytes are sitting in the
+    /// database, unread.
+    /// </para>
+    /// </remarks>
+    internal static bool ShouldMarkCorrupt(byte[]? data, TileDecodeOutcome outcome) =>
+        outcome == TileDecodeOutcome.NotAnImage
+        && data is { Length: > 0 }
+        && !ReferenceEquals(data, ModelImage.ThumbnailNotLoadedSentinel);
+
+    /// <summary>
+    /// Records that an existing BLOB could not be decoded: the bytes are dropped and the row is
+    /// stamped <see cref="ThumbnailFailureReason.Corrupt"/>, which is a soft failure, so the
+    /// pipeline fetches a replacement rather than writing the image off.
+    /// </summary>
+    /// <remarks>
+    /// Accepted edge: a user-uploaded thumbnail does not always live on a <c>user-thumbnail://</c>
+    /// row — the upload reuses the version's primary image slot when one exists, so its bytes can
+    /// sit on a row whose <c>Url</c> is a civitai address. If such a BLOB is undecodable this marks
+    /// it and the next fetch replaces the user's picture with the CDN's. That is the right trade:
+    /// an undecodable upload holds nothing recoverable, and the alternative is a permanently blank
+    /// tile the user cannot explain.
+    /// </remarks>
+    private async Task MarkThumbnailCorruptAsync(ModelImage image, byte[] data)
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        _logger?.Warn(LogCategory.General, "ThumbnailDecode", FormattableString.Invariant(
+            $"Stored thumbnail for '{DisplayName}' could not be decoded ({data.Length / 1024.0:F1} KB, ImageId={image.Id}) — dropped and marked for re-fetch"));
+
+        image.ThumbnailData = null;
+        ThumbnailWriter.ApplyFailure(image, ThumbnailFailureReason.Corrupt, now);
+
+        if (image.Id > 0)
+        {
+            await PersistThumbnailAsync(image.Id, stored =>
+            {
+                stored.ThumbnailData = null;
+                ThumbnailWriter.ApplyFailure(stored, ThumbnailFailureReason.Corrupt, now);
+            }, "Corrupt-thumbnail verdict").ConfigureAwait(false);
+        }
+    }
+
     /// <summary>Decode width for tile thumbnails: 250px tile at up to 200% display scaling.</summary>
     private const int TileDecodeWidth = 500;
+
+    /// <summary>What a decode attempt on stored thumbnail bytes actually established.</summary>
+    internal enum TileDecodeOutcome
+    {
+        /// <summary>A bitmap came back.</summary>
+        Decoded,
+
+        /// <summary>
+        /// SkiaSharp could build no image out of these bytes at all. A fact about the row, not
+        /// about this attempt — repeating it tomorrow gets the same answer.
+        /// </summary>
+        NotAnImage,
+
+        /// <summary>
+        /// The attempt failed and says nothing about the bytes: memory pressure, a decoder that
+        /// threw, a platform that is not there. The row is left exactly as it was.
+        /// </summary>
+        TransientFailure,
+    }
+
+    /// <summary>A decoded tile bitmap, or the reason there is none.</summary>
+    internal readonly record struct TileDecodeResult(Bitmap? Bitmap, TileDecodeOutcome Outcome);
 
     /// <summary>
     /// Decodes thumbnail bytes into a displayable Bitmap, downscaled to the tile
@@ -1347,29 +1489,91 @@ public partial class ModelTileViewModel : ViewModelBase
     /// may be created off the UI thread. Falls back to a Skia transcode for
     /// formats Avalonia's decoder rejects.
     /// </summary>
-    internal static Bitmap? CreateTileBitmap(byte[] data)
+    internal static Bitmap? CreateTileBitmap(byte[] data) => TryCreateTileBitmap(data).Bitmap;
+
+    /// <summary>
+    /// <see cref="CreateTileBitmap"/>, plus the distinction its callers need: whether a null
+    /// bitmap means these bytes are not an image, or merely that this attempt failed.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ShouldMarkCorrupt"/> deletes the stored BLOB on the strength of that answer, so
+    /// "the decoder said no" is not good enough. Avalonia's decoder rejecting the bytes proves
+    /// nothing on its own — it is the reason the Skia fallback exists — and an exception from
+    /// either path (<see cref="OutOfMemoryException"/> on a multi-MB legacy thumbnail is the case
+    /// that started this) is about the moment, not the row. The only authority for "not an image"
+    /// is <see cref="SKBitmap.Decode(byte[])"/> refusing the raw bytes, which is exactly the
+    /// authority <c>ThumbnailCodec.Encode</c> uses — including its quirk of throwing
+    /// <see cref="ArgumentNullException"/>, rather than returning null, when it cannot build a
+    /// codec for the bytes at all.
+    /// </remarks>
+    internal static TileDecodeResult TryCreateTileBitmap(byte[] data)
+        => TryCreateTileBitmap(data, DecodeWithAvalonia, SKBitmap.Decode);
+
+    /// <summary>
+    /// <see cref="TryCreateTileBitmap(byte[])"/> with both decoders injected, so a test can make
+    /// one of them throw. Neither failure mode is reachable on demand otherwise: memory pressure
+    /// cannot be summoned, and no byte sequence makes Skia raise <c>OutOfMemoryException</c> to
+    /// order.
+    /// </summary>
+    internal static TileDecodeResult TryCreateTileBitmap(
+        byte[] data, Func<byte[], Bitmap?> avaloniaDecode, Func<byte[], SKBitmap?> skiaDecode)
     {
         try
         {
-            using var stream = new MemoryStream(data);
-            return Bitmap.DecodeToWidth(stream, TileDecodeWidth);
+            var decoded = avaloniaDecode(data);
+            if (decoded is not null) return new TileDecodeResult(decoded, TileDecodeOutcome.Decoded);
         }
         catch
         {
-            try
+            // Deliberately swallowed and deliberately NOT a verdict: Avalonia's decoder is
+            // narrower than Skia's, which is the whole reason the fallback below exists.
+        }
+
+        SKBitmap? skBitmap;
+        try
+        {
+            skBitmap = skiaDecode(data);
+        }
+        catch (ArgumentNullException)
+        {
+            // How SkiaSharp reports "no codec for these bytes" — a handful of garbage with no
+            // recognisable header. ThumbnailCodec.Encode treats it as identical to a null return
+            // and so does this: it is a fact about the bytes.
+            return new TileDecodeResult(null, TileDecodeOutcome.NotAnImage);
+        }
+        catch
+        {
+            return new TileDecodeResult(null, TileDecodeOutcome.TransientFailure);
+        }
+
+        if (skBitmap is null) return new TileDecodeResult(null, TileDecodeOutcome.NotAnImage);
+
+        try
+        {
+            using (skBitmap)
             {
-                using var skBitmap = SKBitmap.Decode(data);
-                if (skBitmap is null) return null;
                 using var skImage = SKImage.FromBitmap(skBitmap);
+                if (skImage is null) return new TileDecodeResult(null, TileDecodeOutcome.TransientFailure);
+
                 using var encoded = skImage.Encode(SKEncodedImageFormat.Jpeg, 90);
+                if (encoded is null) return new TileDecodeResult(null, TileDecodeOutcome.TransientFailure);
+
                 using var stream = new MemoryStream(encoded.ToArray());
-                return new Bitmap(stream);
-            }
-            catch
-            {
-                return null;
+                return new TileDecodeResult(new Bitmap(stream), TileDecodeOutcome.Decoded);
             }
         }
+        catch
+        {
+            // Skia decoded the bytes, so they ARE an image; everything past that point is
+            // transcoding and allocation, and a failure there is this attempt's, not the row's.
+            return new TileDecodeResult(null, TileDecodeOutcome.TransientFailure);
+        }
+    }
+
+    private static Bitmap? DecodeWithAvalonia(byte[] data)
+    {
+        using var stream = new MemoryStream(data);
+        return Bitmap.DecodeToWidth(stream, TileDecodeWidth);
     }
 
     /// <summary>
@@ -1401,19 +1605,27 @@ public partial class ModelTileViewModel : ViewModelBase
 
             if (data is { Length: > 0 })
             {
-                // Gradual self-healing: resize legacy oversized BLOBs on first read
-                if (data.Length > MaxThumbnailBytes)
+                // Gradual self-healing for legacy oversized BLOBs, through the same codec every
+                // other producer uses — so a row written by the old naive fetch ends up
+                // indistinguishable from one written today. An undecodable oversize BLOB falls
+                // through unchanged and is handled below as what it is: corrupt; one that
+                // re-encodes no smaller is left alone (see ShouldPersistSelfHeal).
+                if (NeedsOversizeSelfHeal(data))
                 {
-                    var logger = _logger;
-                    var (resizedData, resizedMime) = ResizeIfOversized(
-                        data, mimeType ?? "image/jpeg", logger, $"ImageId={image.Id}");
-
-                    if (resizedData.Length < data.Length)
+                    var reencoded = ThumbnailCodec.Encode(data);
+                    if (ShouldPersistSelfHeal(data, reencoded))
                     {
-                        data = resizedData;
-                        mimeType = resizedMime;
-                        // Re-persist the smaller BLOB so subsequent loads are fast
-                        await PersistThumbnailAsync(image.Id, data, mimeType);
+                        var now = DateTimeOffset.UtcNow;
+                        _logger?.Info(LogCategory.General, "ThumbnailSelfHeal", FormattableString.Invariant(
+                            $"Re-encoded legacy thumbnail for '{DisplayName}' ({data.Length / 1024.0:F1} KB → {reencoded.Data.Length / 1024.0:F1} KB, ImageId={image.Id})"));
+
+                        data = reencoded.Data;
+                        mimeType = reencoded.MimeType;
+                        ThumbnailWriter.ApplySuccess(image, reencoded, now);
+                        await PersistThumbnailAsync(
+                            image.Id,
+                            stored => ThumbnailWriter.ApplySuccess(stored, reencoded, now),
+                            "Re-encoded legacy thumbnail").ConfigureAwait(false);
                     }
                 }
 
@@ -1423,19 +1635,29 @@ public partial class ModelTileViewModel : ViewModelBase
 
                 // Decode on this (pool) thread; only the bound-property
                 // assignment needs the UI thread.
-                var bitmap = CreateTileBitmap(data);
+                var decode = TryCreateTileBitmap(data);
                 ct.ThrowIfCancellationRequested();
-                await _uiScheduler.InvokeAsync(() => ThumbnailImage = bitmap);
+
+                if (ShouldMarkCorrupt(data, decode.Outcome))
+                {
+                    await MarkThumbnailCorruptAsync(image, data).ConfigureAwait(false);
+                    return;
+                }
+
+                await _uiScheduler.InvokeAsync(() => ThumbnailImage = decode.Bitmap);
             }
             else
             {
                 // Sentinel was wrong or data was deleted — clear it and fall through
                 image.ThumbnailData = null;
-                // Try download from URL as fallback
-                if (!string.IsNullOrEmpty(image.Url)
-                    && !image.Url.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
+                // Try fetching from the recorded URL as a fallback
+                if (IsFetchableUrl(image.Url))
                 {
-                    await DownloadThumbnailAsync(image, ct);
+                    // Ungated on purpose: this is the sentinel-was-wrong path — the row was
+                    // reported as having bytes and does not. That contradiction is not a failed
+                    // attempt whose window we should be waiting out, and a row that genuinely has
+                    // no bytes never reaches here: it takes the gated branch above instead.
+                    await DownloadThumbnailAsync(image, allowVideoDownload: false, ct);
                 }
             }
         }
@@ -1449,21 +1671,11 @@ public partial class ModelTileViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Image extensions to search for when looking for local preview images alongside model files.
-    /// Ordered by preference (preview-specific suffixes first, then common formats).
-    /// </summary>
-    private static readonly string[] LocalPreviewExtensions =
-    [
-        ".preview.png", ".preview.jpg", ".preview.jpeg", ".preview.webp",
-        ".thumb.jpg",
-        ".png", ".jpg", ".jpeg", ".webp"
-    ];
-
-    /// <summary>
     /// Searches for a local preview image next to the model's safetensors file, displays it,
-    /// and persists a resized thumbnail BLOB to the database so it loads instantly next time.
-    /// Looks for files sharing the same base name with common image extensions
-    /// (e.g., mymodel.preview.png, mymodel.jpg).
+    /// and persists the thumbnail BLOB to the database so it loads instantly next time.
+    /// Discovery is <see cref="LocalPreviewFiles.FindSibling"/> and the encode is
+    /// <see cref="ThumbnailCodec"/> — the same two the sidecar applier and the sync step use, so
+    /// a preview found here is byte-for-byte the one found there.
     /// </summary>
     private async Task TryLoadLocalPreviewAsync(CancellationToken ct = default)
     {
@@ -1472,63 +1684,35 @@ public partial class ModelTileViewModel : ViewModelBase
             var localPath = SelectedVersion?.PrimaryFile?.LocalPath;
             if (string.IsNullOrEmpty(localPath) || !File.Exists(localPath)) return;
 
-            var directory = Path.GetDirectoryName(localPath);
-            if (directory is null) return;
-
-            var baseName = Path.GetFileNameWithoutExtension(localPath);
-
-            // Search for local preview images by base name + known image extensions
-            string? localImagePath = null;
-            foreach (var ext in LocalPreviewExtensions)
-            {
-                var candidate = Path.Combine(directory, baseName + ext);
-                if (File.Exists(candidate))
-                {
-                    localImagePath = candidate;
-                    break;
-                }
-            }
-
+            var localImagePath = LocalPreviewFiles.FindSibling(localPath);
             if (localImagePath is null) return;
 
             var logger = _logger;
             logger?.Debug(LogCategory.General, "LocalPreview",
                 $"Found local preview for '{DisplayName}': {Path.GetFileName(localImagePath)}");
 
-            // Read and transcode to JPEG for BLOB storage + display
             var imageBytes = await File.ReadAllBytesAsync(localImagePath, ct);
             if (imageBytes.Length == 0) return;
 
             ct.ThrowIfCancellationRequested();
 
-            byte[] thumbnailBytes;
-            using (var skBitmap = SKBitmap.Decode(imageBytes))
+            var payload = ThumbnailCodec.Encode(imageBytes);
+            if (payload is null)
             {
-                if (skBitmap is null) return;
-
-                // Resize to thumbnail width (340px) to keep BLOB small
-                var targetWidth = 340;
-                var scale = (float)targetWidth / skBitmap.Width;
-                var targetHeight = (int)(skBitmap.Height * scale);
-                using var resized = skBitmap.Resize(new SKImageInfo(targetWidth, targetHeight), new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear));
-                if (resized is null) return;
-
-                using var skImage = SKImage.FromBitmap(resized);
-                using var encoded = skImage.Encode(SKEncodedImageFormat.Jpeg, 85);
-                thumbnailBytes = encoded.ToArray();
+                logger?.Debug(LogCategory.General, "LocalPreview",
+                    $"Local preview for '{DisplayName}' could not be decoded: {Path.GetFileName(localImagePath)}");
+                return;
             }
-
-            if (thumbnailBytes.Length == 0) return;
 
             ct.ThrowIfCancellationRequested();
 
             // Persist to DB: create or update the ModelImage entity with the thumbnail BLOB
             var version = SelectedVersion;
-            if (version is not null)
+            if (version is not null && _scopeFactory is not null)
             {
                 try
                 {
-                    using var scope = _scopeFactory!.CreateScope();
+                    using var scope = _scopeFactory.CreateScope();
                     var dbContext = scope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>();
 
                     var dbVersion = await dbContext.ModelVersions
@@ -1544,19 +1728,18 @@ public partial class ModelTileViewModel : ViewModelBase
                             primaryImage = new ModelImage
                             {
                                 ModelVersionId = dbVersion.Id,
-                                Url = $"file://{localImagePath}",
+                                Url = $"{LocalPreviewFiles.FileUrlPrefix}{localImagePath}",
                                 SortOrder = 0,
                             };
                             dbVersion.Images.Add(primaryImage);
                         }
 
-                        primaryImage.ThumbnailData = thumbnailBytes;
-                        primaryImage.ThumbnailMimeType = "image/jpeg";
+                        ThumbnailWriter.ApplySuccess(primaryImage, payload, DateTimeOffset.UtcNow);
 
                         await dbContext.SaveChangesAsync(ct);
 
-                        logger?.Debug(LogCategory.General, "LocalPreview",
-                            $"Persisted local thumbnail for '{DisplayName}' ({thumbnailBytes.Length / 1024.0:F1} KB)");
+                        logger?.Debug(LogCategory.General, "LocalPreview", FormattableString.Invariant(
+                            $"Persisted local thumbnail for '{DisplayName}' ({payload.Data.Length / 1024.0:F1} KB)"));
                     }
                 }
                 catch (OperationCanceledException)
@@ -1573,19 +1756,9 @@ public partial class ModelTileViewModel : ViewModelBase
 
             ct.ThrowIfCancellationRequested();
 
-            // Display the thumbnail immediately
-            await _uiScheduler.InvokeAsync(() =>
-            {
-                try
-                {
-                    using var stream = new MemoryStream(thumbnailBytes);
-                    ThumbnailImage = new Bitmap(stream);
-                }
-                catch
-                {
-                    ThumbnailImage = null;
-                }
-            });
+            // Decoded here, on the pool thread; only the property assignment needs the UI thread.
+            var bitmap = CreateTileBitmap(payload.Data);
+            await _uiScheduler.InvokeAsync(() => ThumbnailImage = bitmap);
         }
         catch (OperationCanceledException)
         {
@@ -1613,6 +1786,14 @@ public partial class ModelTileViewModel : ViewModelBase
     /// When the primary image is a video, prefers a static sibling image from the same
     /// version — Civitai CDN only serves resized images for static URLs, not for video URLs.
     /// </summary>
+    /// <remarks>
+    /// The one thumbnail path a person starts, and the only one allowed to download an original
+    /// video and cut a frame out of it with FFmpeg. That costs megabytes, which is exactly why the
+    /// scroll path never does it — but here somebody has asked for this model's thumbnail and is
+    /// waiting for it, so the price is theirs to pay. For the same reason the retry gate that
+    /// governs the scroll path (<see cref="IsScrollFetchDue"/>) is not consulted: a hard failure
+    /// recorded yesterday is not an answer to a request made today.
+    /// </remarks>
     public async Task TryDownloadMissingThumbnailAsync()
     {
         if (!IsThumbnailMissing) return;
@@ -1623,11 +1804,7 @@ public partial class ModelTileViewModel : ViewModelBase
         // reliable than FFmpeg extraction and avoids downloading the full video file.
         if (IsVideoPreview(primaryImage))
         {
-            var staticSibling = SelectedVersion.Images
-                .Where(i => !string.IsNullOrEmpty(i.Url) && !IsVideoPreview(i) && i.ThumbnailData is null)
-                .OrderBy(i => i.IsNsfw) // prefer SFW
-                .ThenBy(i => i.SortOrder)
-                .FirstOrDefault();
+            var staticSibling = PickStaticSibling(SelectedVersion.Images);
 
             if (staticSibling is not null)
             {
@@ -1635,80 +1812,145 @@ public partial class ModelTileViewModel : ViewModelBase
                 logger?.Debug(LogCategory.Network, "ThumbnailDownload",
                     $"Primary image for '{DisplayName}' is video — using static sibling (ImageId={staticSibling.Id})");
 
-                await DownloadThumbnailAsync(staticSibling);
+                await DownloadThumbnailAsync(staticSibling, allowVideoDownload: true);
                 return;
             }
         }
 
-        await DownloadThumbnailAsync(primaryImage);
+        // No sibling to borrow from — or the primary was never a video. Same guard as the sibling
+        // pick applies here too: a deferred primary already has its bytes in the database, only
+        // unloaded, so fetching would drive ApplySuccess straight over stored bytes that can be a
+        // thumbnail the user uploaded by hand. Load what is already there instead of the network.
+        if (ShouldLazyLoadInsteadOfFetch(primaryImage))
+        {
+            await LazyLoadThumbnailFromDbAsync(primaryImage, _thumbnailCts?.Token ?? CancellationToken.None);
+            return;
+        }
+
+        await DownloadThumbnailAsync(primaryImage, allowVideoDownload: true);
     }
 
     /// <summary>
-    /// Downloads a thumbnail from a Civitai image URL and caches it as a BLOB.
-    /// For video previews, downloads the video to a temp file and extracts the mid-frame.
+    /// True when <paramref name="image"/> is the deferred-sentinel row: its thumbnail bytes are
+    /// already sitting in the database (the lightweight bulk query simply didn't load them), so a
+    /// missing visual is answered by reading them, not by fetching from the network. A row with no
+    /// bytes at all — the sentinel cleared, or never set — still needs the network fetch.
     /// </summary>
-    private async Task DownloadThumbnailAsync(ModelImage image, CancellationToken ct = default)
+    internal static bool ShouldLazyLoadInsteadOfFetch(ModelImage image) => image.IsThumbnailDeferred;
+
+    /// <summary>
+    /// Picks the still image a video-primary version should borrow its thumbnail from: the first
+    /// non-video row with a URL and no displayable thumbnail, SFW before NSFW, then by sort order.
+    /// </summary>
+    /// <remarks>
+    /// "No displayable thumbnail" is two conditions, not one, and the old <c>ThumbnailData is
+    /// null</c> got both wrong in opposite directions. An empty BLOB — bytes present, thumbnail
+    /// absent — read as a thumbnail that exists, so a row this method should have found was
+    /// skipped: that is what <see cref="ModelImage.HasThumbnail"/> fixes. But <c>HasThumbnail</c>
+    /// alone is false for a <i>deferred</i> row too, and a deferred row's bytes are real and
+    /// simply unloaded — fetching one would drive <c>ApplySuccess</c> straight over stored bytes,
+    /// which on a version whose sort-0 row is not the primary image can be a thumbnail the user
+    /// uploaded by hand. Hence both clauses.
+    /// </remarks>
+    internal static ModelImage? PickStaticSibling(IEnumerable<ModelImage> images) =>
+        images
+            .Where(i => !string.IsNullOrEmpty(i.Url)
+                        && !IsVideoPreview(i)
+                        && !i.HasThumbnail
+                        && !i.IsThumbnailDeferred)
+            .OrderBy(i => i.IsNsfw) // prefer SFW
+            .ThenBy(i => i.SortOrder)
+            .FirstOrDefault();
+
+    /// <summary>
+    /// Fetches this image's thumbnail through <see cref="IThumbnailProvider"/> and records the
+    /// outcome — bytes, or the reason there are none — on the image row.
+    /// </summary>
+    /// <remarks>
+    /// The tile no longer knows how a thumbnail is obtained: the provider owns the ladder (local
+    /// file, video poster, still image), the codec owns what a thumbnail looks like, and the writer
+    /// owns which columns a verdict touches. What is left here is the tile's own two jobs — show
+    /// the result, and stop when the user has scrolled away.
+    /// <para>
+    /// On the scroll path a video costs one poster request and no more — callers there pass
+    /// <paramref name="allowVideoDownload"/> false, because the alternative is streaming the whole
+    /// clip to a temp file and running FFmpeg over it, for a tile the user is currently scrolling
+    /// past. That was the old behaviour, and it is the reason flinging through a video-heavy
+    /// library could pull hundreds of megabytes. Only
+    /// <see cref="TryDownloadMissingThumbnailAsync"/> passes true.
+    /// </para>
+    /// </remarks>
+    /// <param name="image">The row to fetch and stamp.</param>
+    /// <param name="allowVideoDownload">
+    /// Permission to fall back to downloading the original video and extracting a frame. True only
+    /// where a person asked for this thumbnail and is waiting for it.
+    /// </param>
+    /// <param name="ct">The tile's own token — cancelled when it scrolls away or switches version.</param>
+    private async Task DownloadThumbnailAsync(ModelImage image, bool allowVideoDownload, CancellationToken ct = default)
     {
+        if (_scopeFactory is null) return;
+
         var logger = _logger;
-        var isVideo = IsVideoPreview(image);
-        var previewType = isVideo ? "video" : "image";
         var displayName = DisplayName;
 
         logger?.Debug(LogCategory.Network, "ThumbnailDownload",
-            $"Downloading {previewType} thumbnail for '{displayName}'",
+            $"Fetching thumbnail for '{displayName}'",
             $"URL: {image.Url}\nMediaType: {image.MediaType ?? "(null)"}");
 
         IsLoading = true;
         try
         {
-            byte[] thumbnailBytes;
-            string mimeType;
+            // Resolved from a scope for the same reason every other DB/service touch in this class
+            // is: the tile holds the singleton factory, never a service instance.
+            using var scope = _scopeFactory.CreateScope();
+            var provider = scope.ServiceProvider.GetRequiredService<IThumbnailProvider>();
 
-            if (isVideo)
-            {
-                (thumbnailBytes, mimeType) = await DownloadVideoThumbnailAsync(image.Url, logger).ConfigureAwait(false);
-            }
-            else
-            {
-                (thumbnailBytes, mimeType) = await DownloadImageThumbnailAsync(image.Url, ct).ConfigureAwait(false);
-            }
+            var request = new ThumbnailRequest(
+                image.Url,
+                image.MediaType,
+                SelectedVersion?.PrimaryFile?.LocalPath,
+                AllowVideoDownload: allowVideoDownload);
 
-            ct.ThrowIfCancellationRequested();
-
-            if (thumbnailBytes.Length == 0)
-            {
-                logger?.Warn(LogCategory.Network, "ThumbnailDownload",
-                    $"No usable {previewType} thumbnail for '{displayName}' — download returned no data");
-                return;
-            }
-
-            // Transcode to JPEG if Avalonia can't decode the raw bytes (e.g., WebP from Civitai CDN).
-            // Also rejects video data that was mistakenly downloaded instead of an image.
-            (thumbnailBytes, mimeType) = EnsureDecodableBytes(thumbnailBytes, mimeType, logger, displayName);
-
-            if (thumbnailBytes.Length == 0)
-            {
-                // EnsureDecodableBytes already logged the specific reason (video data, corrupt, etc.)
-                return;
-            }
+            // ct is the tile's own token: Deactivate() cancels it, so scrolling away cancels the
+            // request in flight rather than finishing a download for a tile nobody is looking at.
+            var result = await provider.ProduceAsync(request, ct).ConfigureAwait(false);
 
             ct.ThrowIfCancellationRequested();
 
-            // Cap oversized thumbnails before persisting (Civitai CDN sometimes ignores
-            // the width=300 parameter and returns full-resolution images up to 25 MB).
-            (thumbnailBytes, mimeType) = ResizeIfOversized(thumbnailBytes, mimeType, logger, displayName);
+            var now = DateTimeOffset.UtcNow;
 
-            logger?.Info(LogCategory.Network, "ThumbnailDownload",
-                $"Thumbnail ready for '{displayName}' ({previewType}, {thumbnailBytes.Length / 1024.0:F1} KB, ImageId={image.Id})");
+            if (!result.Succeeded)
+            {
+                // Recorded, not merely reported — and now read: IsScrollFetchDue gates the scroll
+                // path on this stamp, so a hard failure (a 404 poster) costs one attempt rather
+                // than one per scroll past, and a soft one comes back after the retry window. The
+                // provider already logged what went wrong.
+                ThumbnailWriter.ApplyFailure(image, result.Failure!, now);
+                if (image.Id > 0)
+                {
+                    await PersistThumbnailAsync(
+                        image.Id,
+                        stored => ThumbnailWriter.ApplyFailure(stored, result.Failure!, now),
+                        $"Thumbnail failure ({result.Failure})").ConfigureAwait(false);
+                }
 
-            // Store in-memory for immediate display
-            image.ThumbnailData = thumbnailBytes;
-            image.ThumbnailMimeType = mimeType;
+                return; // the placeholder stays
+            }
 
-            // Persist BLOB to the database so next startup is instant
+            var payload = result.Payload!;
+
+            logger?.Info(LogCategory.Network, "ThumbnailDownload", FormattableString.Invariant(
+                $"Thumbnail ready for '{displayName}' ({payload.Width}x{payload.Height}, {payload.Data.Length / 1024.0:F1} KB, ImageId={image.Id})"));
+
+            // In-memory first so the tile is right even if the write below is not possible.
+            ThumbnailWriter.ApplySuccess(image, payload, now);
+
             if (image.Id > 0)
             {
-                await PersistThumbnailAsync(image.Id, thumbnailBytes, mimeType);
+                await PersistThumbnailAsync(
+                    image.Id,
+                    stored => ThumbnailWriter.ApplySuccess(stored, payload, now),
+                    "Thumbnail").ConfigureAwait(false);
             }
             else
             {
@@ -1718,38 +1960,20 @@ public partial class ModelTileViewModel : ViewModelBase
 
             ct.ThrowIfCancellationRequested();
 
-            // Display the downloaded thumbnail
-            await _uiScheduler.InvokeAsync(() =>
-            {
-                try
-                {
-                    using var stream = new MemoryStream(thumbnailBytes);
-                    ThumbnailImage = new Bitmap(stream);
-                }
-                catch (Exception ex)
-                {
-                    logger?.Warn(LogCategory.General, "ThumbnailDownload",
-                        $"Failed to decode thumbnail Bitmap for '{displayName}': {ex.Message}");
-                    ThumbnailImage = null;
-                }
-            });
+            var bitmap = CreateTileBitmap(payload.Data);
+            await _uiScheduler.InvokeAsync(() => ThumbnailImage = bitmap);
         }
         catch (OperationCanceledException)
         {
-            // Version changed while downloading — discard silently
-        }
-        catch (HttpRequestException ex)
-        {
-            // Civitai rotates/removes media; a 404 on a cached URL is a routine condition,
-            // not a bug. Log a single Warn line — no stack trace, no Error spam.
-            var statusText = ex.StatusCode.HasValue ? $"HTTP {(int)ex.StatusCode.Value}" : "HTTP error";
-            logger?.Warn(LogCategory.Network, "ThumbnailDownload",
-                $"{statusText} fetching {previewType} thumbnail for '{displayName}' — the source URL is no longer available on Civitai.");
+            // Scrolled away or the version changed — discard silently, and record nothing: nobody
+            // waited for this thumbnail, so nothing about it failed.
         }
         catch (Exception ex)
         {
+            // The provider answers expected faults with a reason rather than an exception, so
+            // anything arriving here is the unexpected kind and keeps its stack trace.
             logger?.Error(LogCategory.Network, "ThumbnailDownload",
-                $"Failed to create {previewType} thumbnail for '{displayName}': {ex.Message}", ex);
+                $"Failed to create thumbnail for '{displayName}': {ex.Message}", ex);
         }
         finally
         {
@@ -1758,299 +1982,49 @@ public partial class ModelTileViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Determines whether a preview image is a video based on MediaType or URL extension.
-    /// Falls back to URL extension for legacy records that don't have MediaType set.
+    /// Whether a preview image is a video — media type first, URL extension for legacy records that
+    /// carry no media type.
     /// </summary>
-    private static bool IsVideoPreview(ModelImage image)
-    {
-        if (image.IsVideo)
-            return true;
-
-        // Fallback: detect video by URL extension for legacy records without MediaType
-        if (image.MediaType is null && !string.IsNullOrEmpty(image.Url))
-        {
-            var extension = Path.GetExtension(new Uri(image.Url).AbsolutePath);
-            return extension is ".mp4" or ".webm" or ".mov" or ".avi" or ".mkv";
-        }
-
-        return false;
-    }
+    /// <remarks>
+    /// The rule itself lives on <see cref="ModelImage.IsVideoLike"/> and this is the delegation, not
+    /// a second copy. It used to be the only implementation of the extension fallback, which left
+    /// the sync pipeline's rung 3 — gated on the entity predicate — blind to exactly the rows this
+    /// method could see. Moving it down means the tile, the entity property and the SQL-side
+    /// candidate ranking cannot disagree about what a video is.
+    /// </remarks>
+    private static bool IsVideoPreview(ModelImage image) =>
+        ModelImage.IsVideoLike(image.MediaType, image.Url);
 
     /// <summary>
-    /// Downloads an image thumbnail from a Civitai URL.
+    /// Writes one thumbnail verdict to the stored row: a fresh scope, the tracked entity,
+    /// <paramref name="stamp"/>, one save.
     /// </summary>
-    private static async Task<(byte[] Data, string MimeType)> DownloadImageThumbnailAsync(string url, CancellationToken ct = default)
+    /// <remarks>
+    /// Both outcomes come through here, and both arrive as a <see cref="ThumbnailWriter"/> call the
+    /// caller has already applied to its in-memory entity — so the row and the tile always say the
+    /// same thing, and the six thumbnail columns are still only written in one place.
+    /// Persistence is best-effort by design: a thumbnail the database refused is still a thumbnail
+    /// on screen, and nothing the user is doing should fail because of it.
+    /// </remarks>
+    /// <param name="imageId">The row to stamp.</param>
+    /// <param name="stamp">The writer call to apply to it.</param>
+    /// <param name="outcome">What is being recorded, for the log line.</param>
+    private async Task PersistThumbnailAsync(int imageId, Action<ModelImage> stamp, string outcome)
     {
-        // Civitai supports width parameter for resized images
-        var thumbnailUrl = url.Contains('?')
-            ? $"{url}&width=300"
-            : $"{url}/width=300";
+        if (_scopeFactory is null) return;
 
-        var bytes = await s_thumbnailClient.GetByteArrayAsync(thumbnailUrl, ct).ConfigureAwait(false);
-        return (bytes, "image/jpeg");
-    }
-
-    /// <summary>
-    /// Gets a thumbnail for a video preview by extracting a frame via FFmpeg.
-    /// The Civitai CDN does not serve static poster images for video URLs;
-    /// the <c>/width=300</c> trick only works for image URLs.
-    /// </summary>
-    private async Task<(byte[] Data, string MimeType)> DownloadVideoThumbnailAsync(
-        string videoUrl, IUnifiedLogger? logger)
-    {
-        // FFmpeg frame extraction — the only reliable way to get a poster from a video URL
-        var videoThumbnailService = _videoThumbnailService;
-        if (videoThumbnailService is null)
-        {
-            logger?.Warn(LogCategory.General, "ThumbnailDownload",
-                "Video-only model: FFmpeg is required to generate thumbnails from video previews. " +
-                "Install FFmpeg and ensure it is on PATH, or wait until a static preview image is available on Civitai.");
-            return ([], string.Empty);
-        }
-
-        // Ensure FFmpeg is available BEFORE downloading the video — avoids wasting
-        // bandwidth on a multi-MB download when FFmpeg can't be found/downloaded.
-        try
-        {
-            await videoThumbnailService.EnsureFFmpegAvailableAsync().ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            logger?.Warn(LogCategory.General, "ThumbnailDownload",
-                $"FFmpeg is not available — video thumbnails cannot be generated: {ex.Message}");
-            return ([], string.Empty);
-        }
-
-        var tempVideoPath = Path.Combine(Path.GetTempPath(), $"dn_preview_{Guid.NewGuid():N}.mp4");
-        string? generatedThumbnailPath = null;
-        try
-        {
-            logger?.Debug(LogCategory.Network, "ThumbnailDownload",
-                $"Downloading video to temp: {tempVideoPath}",
-                $"URL: {videoUrl}");
-
-            // Stream directly to file — avoids holding the entire video (2-10 MB) in RAM
-            await using (var responseStream = await s_thumbnailClient.GetStreamAsync(videoUrl).ConfigureAwait(false))
-            await using (var fileStream = new FileStream(tempVideoPath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 81920, useAsync: true))
-            {
-                await responseStream.CopyToAsync(fileStream).ConfigureAwait(false);
-            }
-
-            var videoFileLength = new FileInfo(tempVideoPath).Length;
-            logger?.Debug(LogCategory.Network, "ThumbnailDownload",
-                $"Video downloaded ({videoFileLength / 1024.0:F0} KB), extracting mid-frame...");
-
-            var result = await videoThumbnailService.GenerateThumbnailAsync(
-                tempVideoPath,
-                new VideoThumbnailOptions { MaxWidth = 300, OutputFormat = ThumbnailFormat.WebP })
-                .ConfigureAwait(false);
-
-            if (!result.Success || string.IsNullOrEmpty(result.ThumbnailPath))
-            {
-                logger?.Warn(LogCategory.General, "ThumbnailDownload",
-                    $"FFmpeg frame extraction failed: {result.ErrorMessage ?? "unknown error"}");
-                return ([], string.Empty);
-            }
-
-            generatedThumbnailPath = result.ThumbnailPath;
-            var thumbnailBytes = await File.ReadAllBytesAsync(result.ThumbnailPath).ConfigureAwait(false);
-
-            logger?.Debug(LogCategory.General, "ThumbnailDownload",
-                $"Video frame extracted ({thumbnailBytes.Length / 1024.0:F1} KB, {result.Width}x{result.Height})",
-                $"Captured at {result.CapturePosition} of {result.VideoDuration}");
-
-            return (thumbnailBytes, "image/webp");
-        }
-        finally
-        {
-            // TODO: Linux Implementation for temp file cleanup
-            TryDeleteFile(tempVideoPath);
-            if (generatedThumbnailPath is not null)
-                TryDeleteFile(generatedThumbnailPath);
-        }
-    }
-
-    private static void TryDeleteFile(string path)
-    {
-        try { File.Delete(path); }
-        catch { /* Best-effort cleanup */ }
-    }
-
-    /// <summary>
-    /// Returns <c>true</c> when the byte payload looks like a video container (MP4/WebM/AVI/MKV)
-    /// rather than a decodable image. Used to reject CDN responses that return the full
-    /// video stream instead of a poster frame.
-    /// </summary>
-    private static bool IsVideoData(ReadOnlySpan<byte> data)
-    {
-        if (data.Length < 12)
-            return false;
-
-        // MP4 / MOV — "ftyp" box at offset 4
-        if (data[4] == (byte)'f' && data[5] == (byte)'t' && data[6] == (byte)'y' && data[7] == (byte)'p')
-            return true;
-
-        // WebM / MKV — EBML header (0x1A 0x45 0xDF 0xA3)
-        if (data[0] == 0x1A && data[1] == 0x45 && data[2] == 0xDF && data[3] == 0xA3)
-            return true;
-
-        // AVI — "RIFF....AVI "
-        if (data[0] == (byte)'R' && data[1] == (byte)'I' && data[2] == (byte)'F' && data[3] == (byte)'F'
-            && data[8] == (byte)'A' && data[9] == (byte)'V' && data[10] == (byte)'I')
-            return true;
-
-        return false;
-    }
-
-    /// <summary>
-    /// Ensures the thumbnail bytes are in a format Avalonia's <see cref="Bitmap"/> can decode.
-    /// Civitai's CDN often returns WebP for thumbnails, which Avalonia cannot decode
-    /// natively. This method detects the issue and transcodes to JPEG via SkiaSharp.
-    /// Returns empty data when the payload is video data (not an image at all).
-    /// </summary>
-    private static (byte[] Data, string MimeType) EnsureDecodableBytes(
-        byte[] data, string mimeType, IUnifiedLogger? logger, string displayName)
-    {
-        // Reject video data early — CDN may return the full MP4 instead of a poster frame
-        if (IsVideoData(data))
-        {
-            logger?.Warn(LogCategory.General, "ThumbnailDownload",
-                $"Downloaded data for '{displayName}' is video ({data.Length / 1024.0:F1} KB), not an image — cannot use as thumbnail");
-            return ([], string.Empty);
-        }
-
-        // Quick check: try Avalonia decode first — most JPEG/PNG will work
-        try
-        {
-            using var testStream = new MemoryStream(data);
-            _ = new Bitmap(testStream);
-            return (data, mimeType); // Already decodable
-        }
-        catch
-        {
-            // Fall through to SkiaSharp transcode
-        }
-
-        // Transcode via SkiaSharp (handles WebP, AVIF, etc.)
-        try
-        {
-            using var skBitmap = SKBitmap.Decode(data);
-            if (skBitmap is null)
-            {
-                logger?.Warn(LogCategory.General, "ThumbnailDownload",
-                    $"Neither Avalonia nor SkiaSharp can decode thumbnail for '{displayName}' " +
-                    $"({data.Length / 1024.0:F1} KB) — data may be corrupted or an unsupported format");
-                return ([], string.Empty);
-            }
-
-            using var skImage = SKImage.FromBitmap(skBitmap);
-            using var encoded = skImage.Encode(SKEncodedImageFormat.Jpeg, 90);
-            var jpegBytes = encoded.ToArray();
-
-            logger?.Debug(LogCategory.General, "ThumbnailDownload",
-                $"Transcoded thumbnail for '{displayName}' to JPEG ({data.Length / 1024.0:F1} KB → {jpegBytes.Length / 1024.0:F1} KB)");
-
-            return (jpegBytes, "image/jpeg");
-        }
-        catch (Exception ex)
-        {
-            logger?.Warn(LogCategory.General, "ThumbnailDownload",
-                $"SkiaSharp transcode failed for '{displayName}' ({data.Length / 1024.0:F1} KB): {ex.Message}");
-            return ([], string.Empty);
-        }
-    }
-
-    /// <summary>
-    /// Resizes thumbnail bytes if they exceed <see cref="MaxThumbnailBytes"/>.
-    /// Uses SkiaSharp to decode, scale to <see cref="MaxThumbnailWidth"/> pixels wide
-    /// (preserving aspect ratio), and re-encode as JPEG.
-    /// Returns the original bytes unchanged when already within the limit.
-    /// </summary>
-    private static (byte[] Data, string MimeType) ResizeIfOversized(
-        byte[] data, string mimeType, IUnifiedLogger? logger, string displayName)
-    {
-        if (data.Length <= MaxThumbnailBytes)
-            return (data, mimeType);
-
-        try
-        {
-            using var original = SKBitmap.Decode(data);
-            if (original is null)
-            {
-                logger?.Warn(LogCategory.General, "ThumbnailResize",
-                    $"Cannot resize oversized thumbnail for '{displayName}' ({data.Length / 1024.0:F1} KB) — SkiaSharp decode failed");
-                return (data, mimeType);
-            }
-
-            var scaleFactor = (float)MaxThumbnailWidth / original.Width;
-            var targetHeight = (int)(original.Height * scaleFactor);
-
-            // Only downscale; if the image is somehow already narrower, keep it as-is
-            if (scaleFactor >= 1.0f)
-            {
-                // Width is fine but bytes are huge — re-encode at lower quality
-                using var reEncoded = SKImage.FromBitmap(original);
-                using var reEncodedData = reEncoded.Encode(SKEncodedImageFormat.Jpeg, 80);
-                var reEncodedBytes = reEncodedData.ToArray();
-
-                logger?.Info(LogCategory.General, "ThumbnailResize",
-                    $"Re-encoded oversized thumbnail for '{displayName}' without scaling " +
-                    $"({data.Length / 1024.0:F1} KB → {reEncodedBytes.Length / 1024.0:F1} KB)");
-
-                return (reEncodedBytes, "image/jpeg");
-            }
-
-            using var resized = original.Resize(
-                new SKImageInfo(MaxThumbnailWidth, targetHeight),
-                new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear));
-            if (resized is null)
-            {
-                logger?.Warn(LogCategory.General, "ThumbnailResize",
-                    $"SkiaSharp resize failed for '{displayName}' — persisting original ({data.Length / 1024.0:F1} KB)");
-                return (data, mimeType);
-            }
-
-            using var image = SKImage.FromBitmap(resized);
-            using var encoded = image.Encode(SKEncodedImageFormat.Jpeg, 85);
-            var jpegBytes = encoded.ToArray();
-
-            logger?.Info(LogCategory.General, "ThumbnailResize",
-                $"Resized oversized thumbnail for '{displayName}': " +
-                $"{original.Width}x{original.Height} → {MaxThumbnailWidth}x{targetHeight}, " +
-                $"{data.Length / 1024.0:F1} KB → {jpegBytes.Length / 1024.0:F1} KB");
-
-            return (jpegBytes, "image/jpeg");
-        }
-        catch (Exception ex)
-        {
-            logger?.Warn(LogCategory.General, "ThumbnailResize",
-                $"Failed to resize oversized thumbnail for '{displayName}' ({data.Length / 1024.0:F1} KB): {ex.Message}");
-            return (data, mimeType);
-        }
-    }
-
-    /// <summary>
-    /// Persists downloaded thumbnail bytes to the database for a given ModelImage.
-    /// Applies <see cref="ResizeIfOversized"/> as a safety net before writing to DB.
-    /// </summary>
-    private async Task PersistThumbnailAsync(int imageId, byte[] thumbnailData, string mimeType)
-    {
         var logger = _logger;
         try
         {
-            // Safety net: resize if somehow oversized bytes reach persist directly
-            (thumbnailData, mimeType) = ResizeIfOversized(thumbnailData, mimeType, logger, $"ImageId={imageId}");
-
-            using var scope = _scopeFactory!.CreateScope();
+            using var scope = _scopeFactory.CreateScope();
             var dbContext = scope.ServiceProvider.GetRequiredService<DataAccess.Data.DiffusionNexusCoreDbContext>();
             var dbImage = await dbContext.ModelImages.FindAsync(imageId);
             if (dbImage is not null)
             {
-                dbImage.ThumbnailData = thumbnailData;
-                dbImage.ThumbnailMimeType = mimeType;
+                stamp(dbImage);
                 await dbContext.SaveChangesAsync();
                 logger?.Debug(LogCategory.General, "ThumbnailDownload",
-                    $"Thumbnail persisted to DB for ImageId={imageId} ({thumbnailData.Length / 1024.0:F1} KB)");
+                    $"{outcome} persisted to DB for ImageId={imageId}");
             }
             else
             {

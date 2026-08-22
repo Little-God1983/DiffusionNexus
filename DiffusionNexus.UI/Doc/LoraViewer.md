@@ -214,7 +214,7 @@ DownloadMissingMetadataAsync                      (both service calls run on Tas
 | `IdentifyModel` | The identity chain for one file: full-file SHA256 → Civitai `GET /model-versions/by-hash/{sha}` → on 404, the local `.civitai.info` / `.json` sidecar. Writes name, base model, trigger words, Civitai ids, image records — see *user edits* and *what counts as applied* below. |
 | `FetchTags` | For a model that has a Civitai id but no tags yet: `GET /models/{id}` and replace the tag set (reusing existing `Tag` rows by normalized name). |
 | `FetchImages` | For a version with a Civitai version id but no image records: `GET /model-versions/{id}` and persist the returned images. |
-| `Thumbnails` | Reserved. Not implemented yet (Plan B). Until it lands, tiles download their own preview when they scroll into view (`ModelTileViewModel.Activate()`), so nothing is missing on screen — only the bulk pre-fetch is gone. |
+| `Thumbnails` | For each version's due primary image: one CDN GET through `IThumbnailProvider`, never a full video — see §9 for the ladder, the failure/retry table, and the 0-video-bytes-in-bulk guarantee. |
 
 Civitai requests are paced ~1.5 s apart — per **request**, not per item, by the singleton
 `ICivitaiRequestPacer` awaited immediately before every call. One item is not one request: the
@@ -520,20 +520,150 @@ The toolbar's **Save filter** button (`SaveFilterCommand`) serializes the curren
 
 ## 9. Thumbnail Pipeline
 
+Thumbnails have one producer for every caller — bulk sync, a tile scrolling into view, the sidecar
+applier's local-preview probe, and the user's own "download the missing thumbnail" button all
+resolve bytes through `IThumbnailProvider` and record the outcome through `ThumbnailWriter`, the one
+place the six `ModelImage` thumbnail columns are written. What differs between callers is
+*permission* — whether a video may be downloaded in full — and *gating* — whether a due-ness check
+runs at all before the request goes out.
+
 ```
-LoadThumbnailFromVersion (called when SelectedVersion changes)
+IThumbnailProvider.ProduceAsync (the ladder — DiffusionNexus.Service/Services/Sync/Thumbnails)
 │
-├── Path 1: BLOB cached in DB (ModelImage.ThumbnailData)
-│   → Instant: new Bitmap(stream)
-│
-├── Path 2: No BLOB but has URL (Civitai image URL)
-│   → Fire-and-forget DownloadThumbnailAsync:
-│       ├── Image: GET {url}/width=300 → bytes → BLOB to DB → Bitmap
-│       └── Video: GET {url} → temp file → FFmpeg mid-frame → WebP → BLOB to DB → Bitmap
-│
-└── Path 3: No image data at all
-    → ThumbnailImage = null → ShowPlaceholder = true
+├── Rung 1: user-thumbnail:// url          → UnsupportedScheme (defensive; selection excludes these)
+├── Rung 2: file:// url, or a recorded      → decode from disk (sibling probe if the path moved)
+│           path has gone but a sibling
+│           preview sits next to the model
+├── Rung 3: IsVideoLike (type or .mp4 url) → CDN poster transform (width=450,anim=false,transcode=true
+│                                             + .jpeg extension); a 404 here is VideoNoPoster (soft),
+│                                             never Http404 — the transform may simply not exist yet
+├── Rung 4: an ordinary still image        → CDN transform (width=450); a response that turns out to
+│                                             BE a video (ThumbnailCodec.LooksLikeVideo) falls through
+│                                             to rung 3, once
+└── Rung 5: AllowVideoDownload only        → stream the original video, FFmpeg mid-frame, re-encode
+                                              (the one rung bulk and scroll never reach)
+
+ThumbnailCodec.Encode: SkiaSharp decode → resize to 450px wide if larger → JPEG q85. One codec,
+every producer — a thumbnail from the sync step, the tile, and the sidecar applier are byte-identical.
 ```
+
+### Bulk sync — `ThumbnailsStep`
+
+- **Selection is per *version*, not per image.** `SelectThumbnailCandidatesAsync` ranks each
+  version's images by the same preference `ModelVersion.PrimaryImage` uses (clean still = 0, any
+  still = 1, clean video = 2, anything else = 3) and keeps only the winner — a version whose winner
+  already carries bytes contributes nothing at all, and the loop never reaches the runner-up. Rows
+  with a blank URL or a `user-thumbnail://` one are dropped from the ranking itself, not merely from
+  the result — left in, either could win its version and hide the real image behind it.
+- **One item per due image, no pacer.** Unlike the other four steps this one never awaits
+  `ICivitaiRequestPacer` — the CDN is a static-asset host, not the rate-limited API, and pacing a
+  library's worth of ~65 KB GETs at API speed would turn a minute into an hour. The record of an
+  attempt lives on `ModelImage` itself, not on `ModelSyncStates`, because the unit of work is the
+  image: two versions of one model are two independent thumbnails, two requests, two outcomes.
+- **`AllowVideoDownload` is always `false`.** A video-primary row costs exactly one small poster GET
+  in bulk; if the CDN has no poster for it yet, the row fails soft (`VideoNoPoster`) and tries again
+  tomorrow — it never falls back to pulling the clip. That is the **0-video-bytes-in-bulk guarantee**:
+  watching the network (or the log — every video URL fetched carries `transcode=true`) during a bulk
+  run should show no MP4/WebM bytes at all. It covers more than rows typed `video`:
+  `ModelImage.IsVideoLike` — the predicate rung 3 is gated on — also reads a video *extension* off
+  the URL when `MediaType` is null, so the legacy sidecar rows that carry no `type` field reach the
+  poster rung too. What falls outside it is the genuinely undetectable case: a URL with no video
+  extension, on a row with no media type. See the 64 MB cap's tail below.
+
+### Failure reasons and retry windows (`SyncRetryPolicy.IsThumbnailDue`)
+
+| `ThumbnailFailure` | Kind | Re-checked |
+|---|---|---|
+| *(never attempted)* | — | Immediately |
+| `Corrupt` | — | Immediately — an existing BLOB was found unreadable and nulled; the row is thumbnail-less through no fault of the source |
+| `HttpError`, `VideoNoPoster` | Soft | After `ErrorRetryAfter` (1 day) — the CDN coming back is exactly the case this has to catch |
+| `Http404`, `NotDecodable`, `LocalFileMissing`, `UnsupportedScheme` | Hard | Force only — a final answer; asking again costs a request to learn nothing |
+
+Unlike the identify step there is no attempt counter to exhaust: a soft failure keeps re-attempting
+on the fixed 1-day cadence for as long as it keeps failing.
+
+**The 64 MB cap's tail.** The thumbnail `HttpClient` sets `MaxResponseContentBufferSize = 64 * 1024 *
+1024` (`SyncServiceCollectionExtensions`) — large enough for any legitimate poster or still, and a
+backstop against a "video in disguise": a row whose URL actually serves an MP4 while nothing about
+the record says so must not be buffered as an unbounded clip. Two shapes reach rung 4 that way — a
+row typed `image` whose type is simply wrong, and a row with no type whose URL carries no video
+extension either (a null-`MediaType` row with an `.mp4` URL is *not* one of them; `IsVideoLike`
+sends it to rung 3). Tripping that cap throws `HttpRequestException` inside
+`ThumbnailProvider.FetchAsync`, which is caught in the same place as every other transport failure
+and mapped to `HttpError` — **soft**, deliberately: it is re-asked after the ordinary 1-day window
+rather than being written off as a permanent verdict, because nothing about an oversized response
+proves the asset is unfetchable, only that this attempt's bytes were too many.
+
+### `user-thumbnail://` ownership
+
+`ModelImage.UserThumbnailScheme` (`"user-thumbnail://"`) marks a row whose bytes the user uploaded
+directly — there is nothing behind the URL to fetch, and nothing may overwrite it. Selection excludes
+these rows at the SQL level; the provider's rung 1 check is a defensive backstop in case one ever
+reaches it anyway (`UnsupportedScheme`). One accepted edge falls outside that clean split: an upload
+can also land on the version's *ordinary* primary-image row when one already existed, reusing its
+slot rather than creating a new `user-thumbnail://` one — so its `Url` still reads as a CDN address.
+If that BLOB turns out to be undecodable, it is marked `Corrupt` like any other row and the CDN's own
+image is fetched to replace it on the next pass. Nothing decodable is lost — the upload was
+unreadable to begin with — and the alternative is a tile that stays permanently blank with no way to
+explain why.
+
+### The tile — three on-demand paths, one gate
+
+`ModelTileViewModel.LoadThumbnailFromVersion` (fires on every `SelectedVersion` change):
+
+1. **BLOB cached** → decode off the UI thread. A BLOB larger than `MaxThumbnailBytes` (1 MB) is
+   legacy bloat from the old `width=300` fetch (which stored whatever the CDN returned, up to 25 MB)
+   — nothing written today can be that large, since every producer goes through the 450px/q85 codec.
+   Such a row **self-heals on this read**: re-encoded through `ThumbnailCodec`, and the result is
+   persisted only when `ShouldPersistSelfHeal` finds it actually smaller — an already-narrow BLOB
+   that simply can't shrink, or a photographic source whose JPEG is no smaller than its PNG, is left
+   alone rather than re-decoded and re-diffed on every future activation for no gain.
+2. **Deferred sentinel** (lightweight query didn't load the BLOB) → lazy-loads it, applying the same
+   self-heal on arrival.
+3. **No BLOB, fetchable URL** → gated by `IsScrollFetchDue`, which is `SyncRetryPolicy.IsThumbnailDue`
+   called with `force: false` — **the scroll path honors exactly the same retry windows as the sync
+   step.** A row stamped `Http404` yesterday is not re-asked on every pass through the viewport; a
+   soft failure waits out its 1-day window like it would in a bulk run. `AllowVideoDownload` is
+   `false` here too. Without this gate, flinging through a video-heavy library would cost one GET,
+   one DI scope and one `SaveChanges` per tile per scroll, forever.
+4. **Everything else** (no URL, a `file://` row, or a `user-thumbnail://` row that lost its BLOB) →
+   probes the model's own directory for a sibling preview file (`LocalPreviewFiles.FindSibling`),
+   same ladder and codec the sidecar applier uses.
+
+Any path that decodes a stored BLOB and gets nothing back marks the row `Corrupt` — bytes nulled,
+failure stamped immediately-due — rather than leaving a placeholder with no explanation and no way
+back in.
+
+**The user's per-tile button overrides the gate with force.** `TryDownloadMissingThumbnailAsync` —
+the one thumbnail path a person starts by clicking — does **not** consult `IsScrollFetchDue`: a hard
+failure recorded yesterday is not an answer to a request made today. It is also the only caller that
+passes `AllowVideoDownload: true`, so it is the only path ever allowed to reach rung 5 (the full
+video download + FFmpeg frame) — bulk and scroll never do. When the primary image is a video it
+first looks for a still sibling in the same version (`PickStaticSibling` — cheaper and more reliable
+than a video frame) and downloads that instead; a sibling that merely has its BLOB *deferred* (bytes
+real, unloaded) is correctly treated as already-has-a-thumbnail and skipped, not overwritten.
+
+### The sidecar rule
+
+`SidecarMetadataApplier.TryApplyLocalThumbnailAsync` produces thumbnails too — a `.preview.png`
+(or similar) sibling discovered next to a model file, same codec and writer as everywhere else. When
+that sibling exists but cannot be decoded, **the verdict belongs to that file, never to the version's
+Civitai image**: the applier stamps `NotDecodable` (hard) only when the first image row in the
+version's `Images` collection is itself a `file://` row
+(`LocalPreviewFiles.TryGetLocalPath(firstImage.Url, …)` succeeds — note this is the collection's
+first element, not the NSFW/video-aware `PrimaryImage` selector used elsewhere); a version whose
+first row is an ordinary CDN image is left completely untouched, and the sync step still fetches
+the real thumbnail for it on the next run. Nothing synthetic is invented to carry the failure
+either — a fake `file://` row created purely to hold a stamp would become the version's permanent
+primary image, pointing at something unreadable forever.
+
+### What this replaced
+
+The old per-caller `width=300` CDN fetch and the unbounded BLOB storage it produced are gone,
+replaced everywhere by the single `ThumbnailCodec` (450px, JPEG q85) reached through
+`IThumbnailProvider`. `MaxThumbnailBytes` (1 MB, above) is the only surviving trace of that regime —
+a threshold nothing produced today can cross, kept purely so a database upgraded from before this
+change repairs its old rows the first time each is read rather than needing a one-off migration.
 
 ---
 
@@ -603,6 +733,8 @@ BaseModelFilterItem
 ### Release note
 
 - **A model you have hand-edited is left out of the bulk run.** `Model.IsUserEdited` takes it out of the identify selection entirely, so a model the user renamed *before* it was ever matched never picks up a Civitai id from "Download Metadata" — and without an id the tags and images steps have nothing to ask about either. That is deliberate: a bulk pass has no way to tell "I renamed this" from "this is what it is called". The detail panel's per-LoRA button is the way in — it is a forced, single-model run, which is the user asking, and the appliers still protect every field they authored.
+
+- **The first sync after this update fetches thumbnails for every image that never had one.** The `Thumbnails` step (§9) is new: a library that previously relied on tiles fetching their own preview on scroll now gets a bulk pass too, and every version whose primary image has no BLOB yet is due. Expect a one-time cost of roughly *N* × 0.4 s, where *N* is the number of such versions (`ThumbnailsStep.EstimatedPerItem`) — a second run plans zero, because by then every reachable image has either succeeded or recorded a reason not to.
 
 ---
 

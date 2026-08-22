@@ -1,4 +1,3 @@
-using System.Reflection;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
@@ -6,7 +5,6 @@ using DiffusionNexus.Installer.SDK.Shared.Services;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
 using Moq;
-using SkiaSharp;
 
 namespace DiffusionNexus.Tests.ViewModels;
 
@@ -14,17 +12,18 @@ namespace DiffusionNexus.Tests.ViewModels;
 /// #438 regression + seam tests for <see cref="ModelTileViewModel"/>. The tile is now
 /// constructed with an injected <see cref="ModelTileDependencies"/> bundle instead of
 /// reaching into the <c>App.Services</c> static locator, so it can be exercised with
-/// mocks/fakes. These tests also guard the two historical production incident sites the
-/// issue calls out:
-/// <list type="bullet">
-///   <item>socket exhaustion from a fresh <c>HttpClient</c> per thumbnail download —
-///   the tile must keep a single shared static client;</item>
-///   <item>OOM / DB bloat from oversized thumbnail BLOBs — <c>ResizeIfOversized</c> must
-///   cap images that exceed the byte limit.</item>
-/// </list>
+/// mocks/fakes.
+/// <para>
+/// The two historical production incidents this class used to guard directly are still
+/// guarded, but the tile is no longer the place to do it — #521 Plan B moved both mechanisms
+/// out of it. Socket exhaustion (a fresh <c>HttpClient</c> per download) is now answered by
+/// the provider's typed client, pinned by
+/// <c>LibrarySyncServiceTests.AddLibrarySync_ResolvesServiceWithStepsInOrder</c>; OOM / DB
+/// bloat from oversized BLOBs is answered by the shared codec and the tile's self-heal,
+/// pinned by <c>ModelTileThumbnailTests.OversizeSelfHeal_*</c>.
+/// </para>
 /// No Avalonia platform is initialised (which would deadlock the suite): the clipboard,
-/// scheduler and dialog boundaries are all faked, and the thumbnail-resize guard runs on
-/// SkiaSharp alone.
+/// scheduler and dialog boundaries are all faked.
 /// </summary>
 public class ModelTileViewModelTests
 {
@@ -106,55 +105,4 @@ public class ModelTileViewModelTests
         clipboard.Copied.Should().ContainSingle().Which.Should().Be("my_cool_lora");
     }
 
-    [Fact]
-    public void ThumbnailDownloadsShareASingleStaticHttpClient()
-    {
-        // Socket-exhaustion incident: a `new HttpClient()` per download accumulated
-        // TIME_WAIT sockets until OOM. The fix is one shared static client — assert the
-        // field is still there, static and readonly (single shared instance).
-        var field = typeof(ModelTileViewModel).GetField(
-            "s_thumbnailClient", BindingFlags.NonPublic | BindingFlags.Static);
-
-        field.Should().NotBeNull("thumbnail downloads must reuse one shared HttpClient");
-        field!.IsInitOnly.Should().BeTrue("the shared client must be readonly so it can't be swapped per-call");
-        field.FieldType.Should().Be<HttpClient>();
-        field.GetValue(null).Should().NotBeNull();
-    }
-
-    [Fact]
-    public void ResizeIfOversizedCapsAThumbnailThatExceedsTheByteLimit()
-    {
-        // OOM / DB-bloat incident: Civitai's CDN sometimes ignores width= and returns a
-        // full-resolution image (up to 25 MB seen in prod). ResizeIfOversized must shrink
-        // anything over the ~1 MB limit before it is persisted / decoded.
-        var oversized = CreateNoisyPng(1200, 1200);
-        oversized.Length.Should().BeGreaterThan(1_048_576, "the test input must exceed the resize threshold");
-
-        var method = typeof(ModelTileViewModel).GetMethod(
-            "ResizeIfOversized", BindingFlags.NonPublic | BindingFlags.Static)!;
-
-        var result = ((byte[] Data, string MimeType))method.Invoke(
-            null, [oversized, "image/png", null, "IncidentTest"])!;
-
-        result.Data.Length.Should().BeLessThan(oversized.Length, "the oversized thumbnail must be shrunk");
-        result.Data.Length.Should().BeLessThanOrEqualTo(1_048_576, "the resized thumbnail must fit under the cap");
-    }
-
-    /// <summary>
-    /// Builds a PNG of random noise so it does not compress away — a reliable way to get a
-    /// decodable image comfortably over the 1 MB resize threshold without any test asset.
-    /// </summary>
-    private static byte[] CreateNoisyPng(int width, int height)
-    {
-        var info = new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul);
-        using var bitmap = new SKBitmap(info);
-
-        var pixels = new byte[info.BytesSize];
-        new Random(42).NextBytes(pixels);
-        System.Runtime.InteropServices.Marshal.Copy(pixels, 0, bitmap.GetPixels(), pixels.Length);
-
-        using var image = SKImage.FromBitmap(bitmap);
-        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
-        return data.ToArray();
-    }
 }

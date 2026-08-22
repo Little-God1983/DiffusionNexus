@@ -1,6 +1,7 @@
 using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Service.Services.Sync.Steps;
+using DiffusionNexus.Service.Services.Sync.Thumbnails;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace DiffusionNexus.Service.Services.Sync;
@@ -11,8 +12,8 @@ namespace DiffusionNexus.Service.Services.Sync;
 public static class SyncServiceCollectionExtensions
 {
     /// <summary>
-    /// Adds the metadata appliers, the state backfill, the four sync steps and the orchestrating
-    /// <see cref="ILibrarySyncService"/>.
+    /// Adds the metadata appliers, the state backfill, the five sync steps (the thumbnail provider
+    /// and its typed client included) and the orchestrating <see cref="ILibrarySyncService"/>.
     /// </summary>
     /// <remarks>
     /// Requires <c>ICivitaiClient</c> and <c>IAppSettingsService</c> to be registered by the host.
@@ -33,13 +34,27 @@ public static class SyncServiceCollectionExtensions
         services.AddTransient<SidecarMetadataApplier>();
         services.AddTransient<SyncStateInitializer>();
 
+        // The thumbnail ladder's HTTP is the image CDN, not the Civitai API: a different host with
+        // different rules, hence its own typed client rather than ICivitaiClient's. The response
+        // cap is the one thing here that is not a default — a "video in disguise" (an image record
+        // whose URL serves an MP4) must not be buffered as an unbounded clip; 64 MB covers every
+        // legitimate poster or still while bounding the pathological case.
+        services.AddHttpClient<IThumbnailProvider, ThumbnailProvider>(c =>
+        {
+            c.Timeout = TimeSpan.FromSeconds(30);
+            c.DefaultRequestHeaders.UserAgent.ParseAdd("DiffusionNexus/1.0");
+            c.MaxResponseContentBufferSize = 64 * 1024 * 1024;
+        });
+
         // Registration order IS execution order (IEnumerable<ISyncStep> preserves it): discovery
-        // must find a file before it can be identified, and only an identified model has the
-        // Civitai ids the tags and images steps need.
+        // must find a file before it can be identified, only an identified model has the Civitai
+        // ids the tags and images steps need, and only a fetched image record has a URL to make a
+        // thumbnail from.
         services.AddTransient<ISyncStep, DiscoverFilesStep>();
         services.AddTransient<ISyncStep, IdentifyModelStep>();
         services.AddTransient<ISyncStep, FetchTagsStep>();
         services.AddTransient<ISyncStep, FetchImagesStep>();
+        services.AddTransient<ISyncStep, ThumbnailsStep>();
 
         services.AddSingleton<ILibrarySyncService>(sp => new LibrarySyncService(
             sp.GetRequiredService<IEnumerable<ISyncStep>>(),

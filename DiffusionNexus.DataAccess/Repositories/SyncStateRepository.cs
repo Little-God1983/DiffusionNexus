@@ -429,4 +429,107 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
             .Select(r => new ImageCandidate(r.ModelId, r.VersionId, r.CivitaiVersionId, r.Name, r.ImagesCheckedAt))
             .ToList();
     }
+
+    /// <summary>
+    /// <see cref="ModelImage.UserThumbnailScheme"/> as a SQL <c>LIKE</c> prefix pattern. Built from
+    /// the constant so the two can never drift apart.
+    /// </summary>
+    private const string UserThumbnailUrlPattern = ModelImage.UserThumbnailScheme + "%";
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<ThumbnailCandidate>> SelectThumbnailCandidatesAsync(
+        SyncScope scope, IReadOnlyList<string> enabledSourceRoots, CancellationToken ct = default)
+    {
+        // No CivitaiId filter, deliberately unlike SelectImageCandidatesAsync: a local-only model
+        // whose preview is a file:// sibling on disk has a thumbnail to make and never had a
+        // Civitai id to lose.
+        var models = await ApplyScopeAsync(Context.Models, scope, enabledSourceRoots, ct).ConfigureAwait(false);
+
+        // Joined from the leaf table rather than SelectMany-ed off the navigations: see
+        // SelectIdentifyCandidatesAsync. Every column here is small; the BLOB appears only as the
+        // flag, and only ever inside SQLite.
+        var rows = await (from i in Context.ModelImages.AsNoTracking()
+                          join v in Context.ModelVersions on i.ModelVersionId equals v.Id
+                          join m in models on v.ModelId equals m.Id
+                          // Both exclusions are from the RANKING, not merely from the result. A
+                          // user's own thumbnail is not ours to replace, and a row with no URL has
+                          // nothing to fetch — but either one left in the ranking could WIN its
+                          // version and thereby suppress the real image behind it. A blank-URL row
+                          // flagged "video" would do it every run, failing soft as VideoNoPoster
+                          // forever while the version's actual image stayed blank.
+                          //
+                          // They execute HERE, in SQLite, rather than over the materialised rows,
+                          // and the result is identical: both run before the GroupBy either way, so
+                          // exactly the same rows leave exactly the same ranking. What changes is
+                          // the price — an excluded row is no longer transferred, and its correlated
+                          // LocalPath subquery is never evaluated. On a library with tens of
+                          // thousands of image rows this query runs twice per sync (plan, then
+                          // execute), so that is two full sweeps saved rather than one.
+                          //
+                          // LIKE, not StartsWith(StringComparison): EF Core cannot translate the
+                          // latter. SQLite's LIKE is case-insensitive for ASCII, which is a wider
+                          // net than the OrdinalIgnoreCase it replaces only in the sense that it
+                          // matches the same strings — the scheme is machine-written, always this
+                          // exact lowercase literal, and it contains no LIKE wildcard to escape.
+                          where !string.IsNullOrWhiteSpace(i.Url)
+                                && !EF.Functions.Like(i.Url, UserThumbnailUrlPattern)
+                          select new
+                          {
+                              ModelId = m.Id,
+                              VersionId = v.Id,
+                              ImageId = i.Id,
+                              v.Name,
+                              i.Url,
+                              i.MediaType,
+                              i.IsNsfw,
+                              HasThumbnail = i.ThumbnailData != null && i.ThumbnailData != ThumbnailBlobs.Empty,
+                              i.ThumbnailAttemptedAt,
+                              i.ThumbnailFailure,
+                              // ModelVersion.PrimaryFile, as a correlated subquery. Only the path is
+                              // wanted, and only so the provider can probe that directory for a
+                              // sibling preview when a recorded file:// path has moved.
+                              LocalPath = v.Files
+                                  .OrderByDescending(f => f.IsPrimary)
+                                  .ThenBy(f => f.Id)
+                                  .Select(f => f.LocalPath)
+                                  .FirstOrDefault(),
+                          })
+            .ToListAsync(ct).ConfigureAwait(false);
+
+        return rows
+            .GroupBy(r => r.VersionId)
+            .Select(g => g.OrderBy(r => PrimaryImageRank(r.IsNsfw, r.MediaType, r.Url)).ThenBy(r => r.ImageId).First())
+            // Asked of the primary only. The other images of the version are not work: the tile
+            // shows the primary, so bytes for the rest render nowhere and would multiply a
+            // library-wide run by the image count per version.
+            .Where(r => !r.HasThumbnail)
+            .OrderBy(r => r.ModelId).ThenBy(r => r.VersionId)
+            .Select(r => new ThumbnailCandidate(
+                r.ModelId, r.VersionId, r.ImageId, r.Name, r.Url, r.MediaType, r.LocalPath,
+                r.ThumbnailAttemptedAt, r.ThumbnailFailure))
+            .ToList();
+    }
+
+    /// <summary>
+    /// <see cref="ModelVersion.PrimaryImage"/>'s preference order as a sortable rank: a clean still
+    /// (0), then any still (1), then a clean video (2), then whatever is left (3).
+    /// </summary>
+    /// <remarks>
+    /// The property is four sequential <c>FirstOrDefault</c> passes over <c>Images</c>; taking the
+    /// lowest rank and, within a rank, the first element of the collection is the same answer,
+    /// because each pass is exactly one rank's membership test.
+    /// <para>
+    /// "First element of the collection" is ascending <c>Id</c> — nothing orders <c>Images</c>.
+    /// There is no configured ordering, and the SQL EF generates for the include orders by the
+    /// principal key alone, so the rows arrive in the order SQLite yields them from the
+    /// <c>ModelVersionId</c> index, i.e. by rowid. <c>SortOrder</c> is deliberately NOT a
+    /// tie-break here even though it reads like the natural one: the property does not use it, and
+    /// this selection has to name the same image the property does or the sync fills in a
+    /// thumbnail for something the tile never shows.
+    /// <c>SyncStateRepositoryThumbnailTests.ThumbnailCandidates_ParityWithPrimaryImageProperty</c>
+    /// pins that against the property itself.
+    /// </para>
+    /// </remarks>
+    private static int PrimaryImageRank(bool isNsfw, string? mediaType, string? url)
+        => (isNsfw ? 1 : 0) + (ModelImage.IsVideoLike(mediaType, url) ? 2 : 0);
 }

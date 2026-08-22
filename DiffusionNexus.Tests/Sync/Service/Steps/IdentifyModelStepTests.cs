@@ -580,13 +580,16 @@ public sealed class IdentifyModelStepTests : IDisposable
         state.MetadataCheckedAt.Should().NotBeNull();
 
         // The error is retried, but only after the short window — not on the very next run.
+        // Probe relative to the stamp the step actually wrote (its wall clock), not the fixture's
+        // fixed Now — anchoring on Now made this a date bomb that started failing 2026-08-22.
+        var checkedAt = state.MetadataCheckedAt!.Value;
         var policy = SyncRetryPolicy.Default;
-        policy.IsIdentifyDue(SyncOutcome.Error, state.MetadataCheckedAt, state.MetadataAttempts, Now, force: false)
+        policy.IsIdentifyDue(SyncOutcome.Error, checkedAt, state.MetadataAttempts, checkedAt.AddHours(1), force: false)
             .Should().BeFalse();
-        policy.IsIdentifyDue(SyncOutcome.Error, state.MetadataCheckedAt, state.MetadataAttempts, Now.AddDays(2), force: false)
+        policy.IsIdentifyDue(SyncOutcome.Error, checkedAt, state.MetadataAttempts, checkedAt.AddDays(2), force: false)
             .Should().BeTrue();
         // …and gives up after MaxErrorAttempts.
-        policy.IsIdentifyDue(SyncOutcome.Error, state.MetadataCheckedAt, policy.MaxErrorAttempts, Now.AddDays(2), force: false)
+        policy.IsIdentifyDue(SyncOutcome.Error, checkedAt, policy.MaxErrorAttempts, checkedAt.AddDays(2), force: false)
             .Should().BeFalse();
     }
 

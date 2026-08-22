@@ -3,7 +3,9 @@ using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Service.Services.Sync;
+using DiffusionNexus.Service.Services.Sync.Thumbnails;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -464,15 +466,24 @@ public sealed class SidecarMetadataApplierTests : IDisposable
         await AssertUserEditsSurvivedAsync(modelId, expectIds: false);
     }
 
+    /// <summary>
+    /// The applier no longer owns any of this: discovery is <c>LocalPreviewFiles.FindSibling</c>,
+    /// the transcode is <c>ThumbnailCodec</c>, and the six columns are written by
+    /// <c>ThumbnailWriter</c>. So a preview found here must come out as the same 450px JPEG the
+    /// sync step and the tile produce — width and height recorded, the attempt stamped, no failure
+    /// left standing next to the bytes.
+    /// </summary>
     [Fact]
     public async Task ApplyAsync_NoSidecarButLocalPreviewAppliesThumbnail()
     {
         var modelPath = NewModelFile("preview.safetensors");
         var modelId = await SeedAsync(modelPath);
+        var before = DateTimeOffset.UtcNow;
 
+        // Wider than the pipeline's target, so the resize is observable rather than a no-op.
         await File.WriteAllBytesAsync(
             Path.Combine(_tempDir.FullName, "preview.preview.png"),
-            EncodePng(64, 64));
+            EncodePng(1024, 768));
 
         using (var scope = NewScope())
         {
@@ -494,6 +505,155 @@ public sealed class SidecarMetadataApplierTests : IDisposable
             image.Url.Should().StartWith("file://");
             image.ThumbnailData.Should().NotBeNullOrEmpty();
             image.ThumbnailMimeType.Should().Be("image/jpeg");
+
+            image.ThumbnailWidth.Should().Be(ThumbnailCodec.TargetWidth,
+                "the applier shares one codec with every other producer — 450px, not its own 340");
+            image.ThumbnailWidth.Should().BeLessThanOrEqualTo(450);
+            // 768 * 450/1024 = 337.5, and the codec rounds rather than truncates.
+            image.ThumbnailHeight.Should().Be(338, "the aspect ratio of the source is preserved");
+
+            image.ThumbnailAttemptedAt.Should().NotBeNull("the retry policy reads the stamp, not the bytes")
+                .And.BeOnOrAfter(before);
+            image.ThumbnailFailure.Should().BeNull("a success that leaves yesterday's verdict standing is a lie");
+        }
+    }
+
+    /// <summary>
+    /// A <c>file://</c> row whose sibling cannot be decoded is a row whose own source is broken, and
+    /// saying so is what stops the next run — and the run after that — from reading and decoding the
+    /// same broken file again. <c>NotDecodable</c> is a hard reason, so only an explicit force comes
+    /// back to it.
+    /// </summary>
+    [Fact]
+    public async Task ApplyAsync_UndecodableSiblingStampsNotDecodable()
+    {
+        var modelPath = NewModelFile("broken.safetensors");
+        var siblingPath = Path.Combine(_tempDir.FullName, "broken.preview.png");
+
+        int modelId;
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = NewLocalModel("local", modelPath);
+            model.Versions.First().Images.Add(new ModelImage
+            {
+                // The row's own Url IS the sibling — so the sibling failing is this row failing.
+                Url = $"file://{siblingPath}",
+                SortOrder = 0,
+            });
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+        }
+
+        // A .preview.png that is not a PNG — the ladder finds it, the codec cannot use it.
+        await File.WriteAllBytesAsync(siblingPath, [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]);
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var result = await new SidecarMetadataApplier().ApplyAsync(uow, modelId, modelPath);
+            result.ThumbnailApplied.Should().BeFalse("nothing was applied — but something was learned");
+        }
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+
+            var image = saved!.Versions.Single().Images.Should().ContainSingle().Subject;
+            image.ThumbnailFailure.Should().Be(ThumbnailFailureReason.NotDecodable);
+            image.ThumbnailAttemptedAt.Should().NotBeNull();
+            image.ThumbnailData.Should().BeNull("a failure never invents bytes");
+            image.Url.Should().StartWith("file://", "the existing row is stamped, not replaced");
+        }
+    }
+
+    /// <summary>
+    /// The stamp names a row, and a row is a URL. A broken sibling on disk says nothing whatsoever
+    /// about the version's Civitai image — so stamping the CDN row with it would be a hard verdict
+    /// on the wrong thing, and a permanent one: the sync step skips hard failures and so does the
+    /// tile's scroll gate, leaving a tile that can only ever be filled by hand. That row stays
+    /// untouched, and the next sync fetches it exactly as it would have before.
+    /// </summary>
+    [Fact]
+    public async Task ApplyAsync_UndecodableSiblingLeavesACdnRowUnstamped()
+    {
+        var modelPath = NewModelFile("cdn-row.safetensors");
+
+        int modelId;
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = NewLocalModel("local", modelPath);
+            model.Versions.First().Images.Add(new ModelImage
+            {
+                Url = "https://image.civitai.com/abc/width=450/still.jpeg",
+                SortOrder = 0,
+            });
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+        }
+
+        await File.WriteAllBytesAsync(
+            Path.Combine(_tempDir.FullName, "cdn-row.preview.png"),
+            [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]);
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var result = await new SidecarMetadataApplier().ApplyAsync(uow, modelId, modelPath);
+            result.ThumbnailApplied.Should().BeFalse();
+        }
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+
+            var image = saved!.Versions.Single().Images.Should().ContainSingle().Subject;
+            image.Url.Should().Be("https://image.civitai.com/abc/width=450/still.jpeg");
+            image.ThumbnailFailure.Should().BeNull("the sibling file failed, not this URL");
+            image.ThumbnailAttemptedAt.Should().BeNull("nothing has been attempted against the CDN yet");
+
+            // Spelled out against the gate itself: unstamped is only worth anything if it means
+            // the next run still comes for this row.
+            SyncRetryPolicy.Default.IsThumbnailDue(
+                image.ThumbnailAttemptedAt, image.ThumbnailFailure, DateTimeOffset.UtcNow, force: false)
+                .Should().BeTrue("the next sync must still fetch the version's real thumbnail");
+        }
+    }
+
+    /// <summary>
+    /// The same broken sibling with no image row to stamp. Nothing is created for the sole purpose
+    /// of recording a failure — a synthetic <c>file://</c> row would then be the version's primary
+    /// image, permanently pointing at a file that is not usable. The sync step records
+    /// <c>LocalFileMissing</c> for the <c>file://</c> rows it selects; this is a plain false.
+    /// </summary>
+    [Fact]
+    public async Task ApplyAsync_UndecodableSiblingWithNoImageRowCreatesNothing()
+    {
+        var modelPath = NewModelFile("bare-broken.safetensors");
+        var modelId = await SeedAsync(modelPath);
+
+        await File.WriteAllBytesAsync(
+            Path.Combine(_tempDir.FullName, "bare-broken.preview.png"),
+            [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]);
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var result = await new SidecarMetadataApplier().ApplyAsync(uow, modelId, modelPath);
+            result.ThumbnailApplied.Should().BeFalse();
+        }
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+
+            saved!.Versions.Single().Images.Should().BeEmpty();
         }
     }
 

@@ -15,6 +15,33 @@ public sealed record TagCandidate(int ModelId, int CivitaiModelId, string Name, 
 public sealed record ImageCandidate(int ModelId, int VersionId, int CivitaiVersionId, string Name, DateTimeOffset? ImagesCheckedAt);
 
 /// <summary>
+/// One image eligible for the thumbnail step — the version's <i>primary</i> image, the one
+/// <see cref="Entities.ModelVersion.PrimaryImage"/> returns and the tile displays.
+/// </summary>
+/// <remarks>
+/// At most one per version: thumbnailing the rest would multiply a library-wide run by the image
+/// count and produce bytes nothing renders. The retry columns travel with the candidate because
+/// due-ness is the caller's decision (<see cref="SyncRetryPolicy.IsThumbnailDue"/>), exactly as it
+/// is for the other selections.
+/// </remarks>
+/// <param name="ModelId">The owning model.</param>
+/// <param name="VersionId">The owning version.</param>
+/// <param name="ImageId">The image row to fill in.</param>
+/// <param name="Name">The version's name, for progress reporting.</param>
+/// <param name="Url">Where the bytes come from. Never blank and never <c>user-thumbnail://</c> — selection drops both.</param>
+/// <param name="MediaType">Civitai's "image"/"video", or null on legacy rows.</param>
+/// <param name="LocalPath">
+/// The version's primary file on disk, or null when it has none. The provider probes its directory
+/// for a sibling preview when a recorded <c>file://</c> path has gone.
+/// </param>
+/// <param name="ThumbnailAttemptedAt">When the pipeline last tried this image, or null if it never has.</param>
+/// <param name="ThumbnailFailure">What the last attempt recorded — one of <see cref="Entities.ThumbnailFailureReason"/> — or null.</param>
+public sealed record ThumbnailCandidate(
+    int ModelId, int VersionId, int ImageId, string Name,
+    string Url, string? MediaType, string? LocalPath,
+    DateTimeOffset? ThumbnailAttemptedAt, string? ThumbnailFailure);
+
+/// <summary>
 /// Everything <see cref="SyncStateDeriver"/> needs about one legacy model, and nothing else.
 /// </summary>
 /// <remarks>
