@@ -47,7 +47,9 @@ public static class ThumbnailCodec
         }
 
         var scale = (float)TargetWidth / bitmap.Width;
-        var targetHeight = (int)MathF.Round(bitmap.Height * scale);
+        // An extreme aspect ratio (e.g. 9000x10) can round to 0; SKBitmap.Resize returns null
+        // for a zero-height target, which must not be mistaken for a genuine decode failure.
+        var targetHeight = Math.Max(1, (int)MathF.Round(bitmap.Height * scale));
 
         using var resized = bitmap.Resize(
             new SKImageInfo(TargetWidth, targetHeight),

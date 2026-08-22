@@ -43,6 +43,17 @@ public class ThumbnailCodecTests
     public void Encode_ReturnsNullForUndecodableBytes()
         => ThumbnailCodec.Encode([0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x01]).Should().BeNull();
 
+    [Fact]
+    public void Encode_ExtremeAspectRatioStillProducesAThumbnail()
+    {
+        // 9000x10 scales to a nominal height of round(10 * 450/9000) == 0; SKBitmap.Resize
+        // returns null for a zero-height target, which must not be mistaken for NotDecodable.
+        var payload = ThumbnailCodec.Encode(Png(9000, 10));
+        payload.Should().NotBeNull();
+        payload!.Width.Should().Be(450);
+        payload.Height.Should().Be(1);
+    }
+
     [Theory]
     [InlineData(new byte[] { 0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6F, 0x6D }, true)]  // ....ftypisom
     [InlineData(new byte[] { 0x1A, 0x45, 0xDF, 0xA3, 0, 0, 0, 0 }, true)]                             // EBML (webm)
