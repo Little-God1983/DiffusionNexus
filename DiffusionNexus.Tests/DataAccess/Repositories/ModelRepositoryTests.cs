@@ -522,6 +522,82 @@ public class ModelRepositoryTests : IDisposable
 
         withoutFlag.Should().NotContain("ThumbnailData",
             "anything left is the BLOB column in the SELECT list, and this query reads every image row in the library");
+
+        // And the whole column list, not just the one that hurts. Task 8 had to add two scalars
+        // (ThumbnailAttemptedAt, ThumbnailFailure) so the tile can honour the same retry window the
+        // sync step does; pinning the exact set is what stops the next such addition from being an
+        // `Include` or a whole-entity select nobody notices until the library is 4 000 models deep.
+        ImageColumnsTouchedBy(sql).Should().BeEquivalentTo(ExpectedLightImageColumns);
+    }
+
+    /// <summary>
+    /// Every column the image projection references, taken from the SQL the provider emitted.
+    /// Includes the one the has-a-thumbnail flag tests but never hands over.
+    /// </summary>
+    private static IReadOnlyCollection<string> ImageColumnsTouchedBy(IEnumerable<string> sql)
+    {
+        var imageQuery = sql.Single(s => s.Contains("FROM \"ModelImages\""));
+
+        return Regex.Matches(imageQuery, @"""\w+""\.""(\w+)""")
+            .Select(m => m.Groups[1].Value)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    private static readonly string[] ExpectedLightImageColumns =
+    [
+        "Id", "ModelVersionId", "CivitaiId", "Url", "MediaType", "IsNsfw", "NsfwLevel",
+        "Width", "Height", "BlurHash", "SortOrder", "CreatedAt", "PostId", "Username",
+        "ThumbnailMimeType", "ThumbnailWidth", "ThumbnailHeight",
+        "ThumbnailAttemptedAt", "ThumbnailFailure",
+        "LocalCachePath", "IsLocalCacheValid", "CachedAt", "CachedFileSize",
+        "Prompt", "NegativePrompt", "Seed", "Steps", "Sampler", "CfgScale",
+        "GenerationModel", "DenoisingStrength", "LikeCount", "HeartCount", "CommentCount",
+        // Tested for emptiness by the has-a-thumbnail flag, never selected — see the test above.
+        "ThumbnailData",
+    ];
+
+    /// <summary>
+    /// The tile's scroll path refuses to re-fetch a row whose last attempt says not to, and the
+    /// light query is where the tile gets its rows. A projection that dropped these two stamps
+    /// would hand every image a blank slate — which the retry policy reads as "never attempted",
+    /// putting the per-scroll re-fetch of a dead poster URL straight back.
+    /// </summary>
+    [Fact]
+    public async Task GetModelsWithLocalFilesLight_CarriesTheRetryStampsTheTileMustHonour()
+    {
+        var attemptedAt = new DateTimeOffset(2026, 8, 20, 9, 30, 0, TimeSpan.Zero);
+
+        using (var seedScope = _serviceProvider.CreateScope())
+        {
+            var seed = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+            var model = CreateModelWithLocalFile("Stamped", @"C:\m\stamped.safetensors");
+            var version = model.Versions.First();
+            version.Images.Add(new ModelImage
+            {
+                Url = "https://image.civitai.com/abc/width=450/gone.jpeg",
+                SortOrder = 0,
+                ThumbnailAttemptedAt = attemptedAt,
+                ThumbnailFailure = ThumbnailFailureReason.Http404,
+                ModelVersion = version,
+            });
+
+            await seed.Models.AddAsync(model);
+            await seed.SaveChangesAsync();
+        }
+
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var loaded = await uow.Models.GetModelsWithLocalFilesLightAsync();
+
+        var image = loaded.Should().ContainSingle().Subject
+            .Versions.Should().ContainSingle().Subject
+            .Images.Should().ContainSingle().Subject;
+
+        image.ThumbnailAttemptedAt.Should().Be(attemptedAt);
+        image.ThumbnailFailure.Should().Be(ThumbnailFailureReason.Http404);
+        image.ThumbnailData.Should().BeNull("a row that never got bytes is not deferred, it is empty");
     }
 
     public void Dispose()

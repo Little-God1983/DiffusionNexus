@@ -99,6 +99,12 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
                 i.ThumbnailMimeType,
                 i.ThumbnailWidth,
                 i.ThumbnailHeight,
+                // Two scalars, no BLOB: the tile refuses to re-fetch a row whose last attempt says
+                // not to, and without these it would see a blank slate on every row — which the
+                // retry policy reads as "never attempted", so a poster URL that 404s would be
+                // re-fetched on every scroll past the tile, forever.
+                i.ThumbnailAttemptedAt,
+                i.ThumbnailFailure,
                 i.LocalCachePath,
                 i.IsLocalCacheValid,
                 i.CachedAt,
@@ -153,6 +159,8 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
                     ThumbnailMimeType = i.ThumbnailMimeType,
                     ThumbnailWidth = i.ThumbnailWidth,
                     ThumbnailHeight = i.ThumbnailHeight,
+                    ThumbnailAttemptedAt = i.ThumbnailAttemptedAt,
+                    ThumbnailFailure = i.ThumbnailFailure,
                     LocalCachePath = i.LocalCachePath,
                     IsLocalCacheValid = i.IsLocalCacheValid,
                     CachedAt = i.CachedAt,
