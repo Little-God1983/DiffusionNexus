@@ -1713,8 +1713,26 @@ public partial class ModelTileViewModel : ViewModelBase
             }
         }
 
+        // No sibling to borrow from — or the primary was never a video. Same guard as the sibling
+        // pick applies here too: a deferred primary already has its bytes in the database, only
+        // unloaded, so fetching would drive ApplySuccess straight over stored bytes that can be a
+        // thumbnail the user uploaded by hand. Load what is already there instead of the network.
+        if (ShouldLazyLoadInsteadOfFetch(primaryImage))
+        {
+            await LazyLoadThumbnailFromDbAsync(primaryImage, _thumbnailCts?.Token ?? CancellationToken.None);
+            return;
+        }
+
         await DownloadThumbnailAsync(primaryImage, allowVideoDownload: true);
     }
+
+    /// <summary>
+    /// True when <paramref name="image"/> is the deferred-sentinel row: its thumbnail bytes are
+    /// already sitting in the database (the lightweight bulk query simply didn't load them), so a
+    /// missing visual is answered by reading them, not by fetching from the network. A row with no
+    /// bytes at all — the sentinel cleared, or never set — still needs the network fetch.
+    /// </summary>
+    internal static bool ShouldLazyLoadInsteadOfFetch(ModelImage image) => image.IsThumbnailDeferred;
 
     /// <summary>
     /// Picks the still image a video-primary version should borrow its thumbnail from: the first

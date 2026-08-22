@@ -564,7 +564,9 @@ every producer — a thumbnail from the sync step, the tile, and the sidecar app
   in bulk; if the CDN has no poster for it yet, the row fails soft (`VideoNoPoster`) and tries again
   tomorrow — it never falls back to pulling the clip. That is the **0-video-bytes-in-bulk guarantee**:
   watching the network (or the log — every video URL fetched carries `transcode=true`) during a bulk
-  run should show no MP4/WebM bytes at all.
+  run should show no MP4/WebM bytes at all, for every row typed `video`. A legacy row with
+  `MediaType == null` whose URL happens to serve video is not caught by this guarantee — see the
+  64 MB cap's tail below.
 
 ### Failure reasons and retry windows (`SyncRetryPolicy.IsThumbnailDue`)
 

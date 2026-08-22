@@ -296,6 +296,34 @@ public class ModelTileThumbnailTests
         ModelTileViewModel.PickStaticSibling([nsfwFirst]).Should().BeSameAs(nsfwFirst, "an NSFW still beats no still at all");
     }
 
+    // --------------------------------------------- the primary-image fetch-vs-lazy-load fix (F1)
+
+    /// <summary>
+    /// The bug <c>PickStaticSibling</c> was already guarding against for siblings, but the
+    /// fall-through when no sibling exists (or the primary image is not a video at all) skipped
+    /// the same guard: a deferred primary has its bytes sitting in the database, unloaded — not
+    /// missing. Routing it into a network fetch lets <c>ApplySuccess</c> overwrite those stored
+    /// bytes, which can be a thumbnail the user uploaded by hand.
+    /// </summary>
+    [Fact]
+    public void PrimaryImageDecision_DeferredSentinelLazyLoadsInsteadOfFetching()
+    {
+        var deferred = Still(id: 1, sortOrder: 0, thumbnail: ModelImage.ThumbnailNotLoadedSentinel);
+        deferred.IsThumbnailDeferred.Should().BeTrue("guard the fixture: reference equality, not content");
+
+        ModelTileViewModel.ShouldLazyLoadInsteadOfFetch(deferred).Should().BeTrue(
+            "the bytes already exist in the database — loading them is cheaper and safe");
+    }
+
+    [Fact]
+    public void PrimaryImageDecision_GenuinelyByteLessRowStillFetches()
+    {
+        var byteless = Still(id: 2, sortOrder: 0, thumbnail: null);
+
+        ModelTileViewModel.ShouldLazyLoadInsteadOfFetch(byteless).Should().BeFalse(
+            "nothing is stored for this row — only a network fetch can produce a thumbnail");
+    }
+
     private static ModelImage Still(int id, int sortOrder, byte[]? thumbnail = null, bool nsfw = false) => new()
     {
         Id = id,
