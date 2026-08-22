@@ -35,6 +35,14 @@ public class ModelImageIsVideoLikeTests
         => ModelImage.IsVideoLike("VIDEO", null).Should().BeTrue();
 
     /// <summary>
+    /// The extension fallback folds case too — a legacy row storing "clip.MP4" is the same video
+    /// as one storing "clip.mp4".
+    /// </summary>
+    [Fact]
+    public void IsVideoLike_UrlExtensionIsCaseInsensitive()
+        => ModelImage.IsVideoLike(null, "https://image.civitai.com/x/abc/width=450/clip.MP4").Should().BeTrue();
+
+    /// <summary>
     /// A recorded media type is an answer, and the URL does not get to argue with it. The extension
     /// fallback exists for rows that carry no answer, not to second-guess the ones that do.
     /// </summary>

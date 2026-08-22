@@ -226,7 +226,7 @@ public class ModelImage
 
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return false;
 
-        var extension = Path.GetExtension(uri.AbsolutePath);
+        var extension = Path.GetExtension(uri.AbsolutePath).ToLowerInvariant();
         return extension is ".mp4" or ".webm" or ".mov" or ".avi" or ".mkv";
     }
 
