@@ -97,4 +97,21 @@ public class ThumbnailWriterTests
         image.ThumbnailFailure.Should().Be(ThumbnailFailureReason.VideoNoPoster);
         image.ThumbnailAttemptedAt.Should().Be(Now);
     }
+
+    /// <summary>
+    /// A null/empty reason would stamp "attempted, no failure", which the retry policy reads as
+    /// success — a byte-less row frozen out of every future run. The writer must refuse it.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void ApplyFailure_RefusesAMissingReason(string? reason)
+    {
+        var image = new ModelImage { Url = "https://image.civitai.com/abc/width=450/a.jpeg" };
+
+        var act = () => ThumbnailWriter.ApplyFailure(image, reason!, Now);
+
+        act.Should().Throw<ArgumentException>();
+        image.ThumbnailAttemptedAt.Should().BeNull("a refused stamp must not half-apply");
+    }
 }

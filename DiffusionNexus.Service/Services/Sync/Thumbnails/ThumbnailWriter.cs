@@ -47,6 +47,9 @@ public static class ThumbnailWriter
     public static void ApplyFailure(ModelImage image, string reason, DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(image);
+        // A null/empty reason would stamp "attempted, no failure" — which the retry policy reads
+        // as success, freezing a byte-less row out of every future run. Refuse it loudly instead.
+        ArgumentException.ThrowIfNullOrEmpty(reason);
 
         image.ThumbnailAttemptedAt = now;
         image.ThumbnailFailure = reason;
