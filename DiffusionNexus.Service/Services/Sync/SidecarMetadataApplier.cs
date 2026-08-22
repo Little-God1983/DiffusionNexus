@@ -4,7 +4,7 @@ using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
-using SkiaSharp;
+using DiffusionNexus.Service.Services.Sync.Thumbnails;
 
 namespace DiffusionNexus.Service.Services.Sync;
 
@@ -124,13 +124,10 @@ public sealed class SidecarMetadataApplier
             var directory = fileInfo.Directory;
             if (directory is null || !directory.Exists) return notApplied;
 
-            var baseName = Path.GetFileNameWithoutExtension(fileInfo.Name);
-
             if (lookup.SidecarPath is null)
             {
                 // No sidecar metadata — still try local thumbnail
-                var thumbnailOnly = await TryApplyLocalThumbnailAsync(
-                    uow, modelId, modelFilePath, directory, baseName, ct);
+                var thumbnailOnly = await TryApplyLocalThumbnailAsync(uow, modelId, modelFilePath, ct);
                 return notApplied with { ThumbnailApplied = thumbnailOnly };
             }
 
@@ -181,8 +178,7 @@ public sealed class SidecarMetadataApplier
             }
 
             // Try to find and apply a local thumbnail image
-            var thumbnailApplied = await TryApplyLocalThumbnailAsync(
-                uow, modelId, modelFilePath, directory, baseName, ct);
+            var thumbnailApplied = await TryApplyLocalThumbnailAsync(uow, modelId, modelFilePath, ct);
 
             return new SidecarApplyResult(dirty, lookup.SidecarPath, lookup.Signature, thumbnailApplied);
         }
@@ -671,44 +667,30 @@ public sealed class SidecarMetadataApplier
     }
 
     /// <summary>
-    /// Image extensions to search for when looking for local preview images alongside model files.
-    /// Ordered by preference (preview-specific suffixes first, then common formats).
-    /// </summary>
-    private static readonly string[] LocalPreviewExtensions =
-    [
-        ".preview.png", ".preview.jpg", ".preview.jpeg", ".preview.webp",
-        ".thumb.jpg",
-        ".png", ".jpg", ".jpeg", ".webp"
-    ];
-
-    /// <summary>
     /// Searches for a local preview image next to the model file (same base name, image extension)
     /// and stores it as a thumbnail BLOB on the primary image entity.
     /// Never overwrites an existing thumbnail (spec S4).
     /// </summary>
+    /// <remarks>
+    /// The applier owns none of the byte-work any more: <see cref="LocalPreviewFiles.FindSibling"/>
+    /// is the extension ladder, <see cref="ThumbnailCodec"/> is what a thumbnail looks like, and
+    /// <see cref="ThumbnailWriter"/> is which of the six columns a verdict touches. Two consequences
+    /// of that, both intended: a preview found here is now the same 450px JPEG the sync step and the
+    /// tile produce (it used to be its own 340px transcode), and the attempt is stamped, so a sibling
+    /// that cannot be decoded is read and decoded once rather than on every run for the life of the
+    /// file. What stays local is the decision-making — spec S4, the synthetic row, and the contract
+    /// that nothing in here throws.
+    /// </remarks>
     /// <returns>True if a local thumbnail was found and applied.</returns>
     private async Task<bool> TryApplyLocalThumbnailAsync(
         IUnitOfWork uow,
         int modelId,
         string modelFilePath,
-        DirectoryInfo directory,
-        string baseName,
         CancellationToken ct)
     {
         try
         {
-            // Search for local preview images by base name + known image extensions
-            string? localImagePath = null;
-            foreach (var ext in LocalPreviewExtensions)
-            {
-                var candidate = Path.Combine(directory.FullName, baseName + ext);
-                if (File.Exists(candidate))
-                {
-                    localImagePath = candidate;
-                    break;
-                }
-            }
-
+            var localImagePath = LocalPreviewFiles.FindSibling(modelFilePath);
             if (localImagePath is null) return false;
 
             _logger?.Debug(LogCategory.FileSystem, LogSource,
@@ -728,45 +710,38 @@ public sealed class SidecarMetadataApplier
             // Spec S4 — never overwrite: a version that already carries a thumbnail keeps it.
             if (dbVersion.Images.Any(i => i.ThumbnailData is { Length: > 0 })) return false;
 
-            // Read and transcode the local image to JPEG for BLOB storage
             var imageBytes = await File.ReadAllBytesAsync(localImagePath, ct);
-            if (imageBytes.Length == 0) return false;
+            var payload = imageBytes.Length == 0 ? null : ThumbnailCodec.Encode(imageBytes);
+            var now = DateTimeOffset.UtcNow;
 
-            byte[] thumbnailBytes;
-            using (var skBitmap = SKBitmap.Decode(imageBytes))
+            var primaryImage = dbVersion.Images.FirstOrDefault();
+
+            if (payload is null)
             {
-                if (skBitmap is null) return false;
+                // The sibling is there and unusable. Worth recording — but only on a row that
+                // already exists. Inventing a file:// row purely to carry a failure would make the
+                // version's primary image a file nothing can read, and the sync step already
+                // records LocalFileMissing for the file:// rows it selects.
+                if (primaryImage is null) return false;
 
-                // Resize to thumbnail width (340px) to keep BLOB small
-                var targetWidth = 340;
-                var scale = (float)targetWidth / skBitmap.Width;
-                var targetHeight = (int)(skBitmap.Height * scale);
-                using var resized = skBitmap.Resize(new SKImageInfo(targetWidth, targetHeight), new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear));
-                if (resized is null) return false;
-
-                using var skImage = SKImage.FromBitmap(resized);
-                using var encoded = skImage.Encode(SKEncodedImageFormat.Jpeg, 85);
-                thumbnailBytes = encoded.ToArray();
+                ThumbnailWriter.ApplyFailure(primaryImage, ThumbnailFailureReason.NotDecodable, now);
+                await uow.SaveChangesAsync(ct);
+                return false;
             }
 
-            if (thumbnailBytes.Length == 0) return false;
-
-            // Store in DB on the primary image (create one if needed)
-            var primaryImage = dbVersion.Images.FirstOrDefault();
             if (primaryImage is null)
             {
                 // Create a new image entity for the local thumbnail
                 primaryImage = new ModelImage
                 {
                     ModelVersionId = dbVersion.Id,
-                    Url = $"file://{localImagePath}",
+                    Url = $"{LocalPreviewFiles.FileUrlPrefix}{localImagePath}",
                     SortOrder = 0,
                 };
                 dbVersion.Images.Add(primaryImage);
             }
 
-            primaryImage.ThumbnailData = thumbnailBytes;
-            primaryImage.ThumbnailMimeType = "image/jpeg";
+            ThumbnailWriter.ApplySuccess(primaryImage, payload, now);
 
             await uow.SaveChangesAsync(ct);
 
