@@ -186,6 +186,10 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
     }
 
     /// <inheritdoc />
+    public Task<ModelImage?> GetImageByIdAsync(int imageId, CancellationToken cancellationToken = default)
+        => Context.ModelImages.FirstOrDefaultAsync(i => i.Id == imageId, cancellationToken);
+
+    /// <inheritdoc />
     public async Task<Model?> GetByIdWithIncludesAsync(int id, CancellationToken cancellationToken = default)
     {
         return await Context.Models

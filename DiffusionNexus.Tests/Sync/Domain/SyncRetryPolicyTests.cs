@@ -1,3 +1,4 @@
+using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services.Sync;
 using FluentAssertions;
@@ -33,6 +34,46 @@ public class SyncRetryPolicyTests
         _p.IsFetchDue(Now.AddYears(-3), false).Should().BeFalse("checked-and-empty is final");
         _p.IsFetchDue(Now.AddYears(-3), true).Should().BeTrue();
     }
+    /// <summary>
+    /// The per-image thumbnail window. Unlike the model-level steps this one is keyed on a failure
+    /// <i>reason</i> rather than an outcome enum, and the reasons split three ways: none (nothing
+    /// went wrong — the row is not selected anyway), soft (retry once the error window has passed),
+    /// and hard (a final answer that only a force overturns).
+    /// </summary>
+    [Theory]
+    [InlineData(null, null, false, true)]                                       // never attempted
+    [InlineData(null, 0, false, false)]                                         // attempted, nothing recorded against it
+    [InlineData(ThumbnailFailureReason.HttpError, 0, false, false)]             // soft, inside the window
+    [InlineData(ThumbnailFailureReason.HttpError, -2, false, true)]             // soft, window passed
+    [InlineData(ThumbnailFailureReason.VideoNoPoster, -2, false, true)]         // soft, window passed
+    [InlineData(ThumbnailFailureReason.Http404, -2, false, false)]              // hard: a final answer
+    [InlineData(ThumbnailFailureReason.NotDecodable, -2, false, false)]         // hard
+    [InlineData(ThumbnailFailureReason.LocalFileMissing, -2, false, false)]     // hard
+    [InlineData(ThumbnailFailureReason.UnsupportedScheme, -2, false, false)]    // hard
+    [InlineData(ThumbnailFailureReason.Corrupt, 0, false, true)]                // self-heal: the BLOB was nulled, refetch now
+    [InlineData(ThumbnailFailureReason.Http404, 0, true, true)]                 // force overturns a hard failure
+    [InlineData(null, 0, true, true)]                                           // force overturns a success
+    public void ThumbnailDueness(string? failure, int? attemptedDaysAgo, bool force, bool expected)
+    {
+        DateTimeOffset? attemptedAt = attemptedDaysAgo is null ? null : Now.AddDays(attemptedDaysAgo.Value);
+
+        _p.IsThumbnailDue(attemptedAt, failure, Now, force).Should().Be(expected);
+    }
+
+    /// <summary>
+    /// The soft-failure boundary is the shared <c>ErrorRetryAfter</c> window rather than a second
+    /// constant — asserted against the policy's own value, so tuning it cannot silently
+    /// desynchronise the two.
+    /// </summary>
+    [Fact]
+    public void ThumbnailSoftFailureUsesTheSharedErrorWindow()
+    {
+        _p.IsThumbnailDue(Now - _p.ErrorRetryAfter + TimeSpan.FromMinutes(1), ThumbnailFailureReason.HttpError, Now, false)
+            .Should().BeFalse();
+        _p.IsThumbnailDue(Now - _p.ErrorRetryAfter, ThumbnailFailureReason.HttpError, Now, false)
+            .Should().BeTrue("the window is inclusive");
+    }
+
     [Fact] public void ScopeFactoriesCarryTheirArguments()
     {
         SyncScope.Library.Kind.Should().Be(SyncScopeKind.Library);

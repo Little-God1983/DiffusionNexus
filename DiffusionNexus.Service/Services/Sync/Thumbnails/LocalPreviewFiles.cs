@@ -16,10 +16,14 @@ public static class LocalPreviewFiles
 
     /// <summary>
     /// The scheme prefix written for user-uploaded thumbnails
-    /// (<see cref="System.ArgumentException"/>-free synthetic rows). Never fetchable — carried
-    /// here only so candidate-selection code has a single place to recognise and exclude it.
+    /// (<see cref="System.ArgumentException"/>-free synthetic rows). Never fetchable.
     /// </summary>
-    public const string UserThumbnailScheme = "user-thumbnail://";
+    /// <remarks>
+    /// The declaration itself lives on <see cref="DiffusionNexus.Domain.Entities.ModelImage"/>:
+    /// candidate selection has to exclude these rows too, and DataAccess cannot see this assembly.
+    /// Kept here as the Service-side spelling so the ladder reads in one namespace.
+    /// </remarks>
+    public const string UserThumbnailScheme = Domain.Entities.ModelImage.UserThumbnailScheme;
 
     /// <summary>
     /// Sibling preview-file extension ladder, in probe order. First match wins.

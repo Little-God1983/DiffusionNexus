@@ -17,6 +17,15 @@ public class ModelImage
     /// <summary>Parent model version ID.</summary>
     public int ModelVersionId { get; set; }
 
+    /// <summary>
+    /// The <see cref="Url"/> prefix written for a thumbnail the user uploaded themselves. Such a
+    /// row is the bytes: there is nothing behind the URL to fetch, and nothing may overwrite it.
+    /// Declared here, on the entity whose column carries it, because both the Service-side
+    /// pipeline (<c>LocalPreviewFiles.UserThumbnailScheme</c>, which forwards to this) and the
+    /// DataAccess-side candidate selection have to recognise it, and those two share only Domain.
+    /// </summary>
+    public const string UserThumbnailScheme = "user-thumbnail://";
+
     /// <summary>Image URL on Civitai (source of truth for re-download).</summary>
     public string Url { get; set; } = string.Empty;
 
