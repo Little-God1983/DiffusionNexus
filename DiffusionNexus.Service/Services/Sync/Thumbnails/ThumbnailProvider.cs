@@ -75,7 +75,7 @@ public sealed class ThumbnailProvider : IThumbnailProvider
 
         // Rung 3 — a known video: poster transform, never the original.
         if (ModelImage.IsVideoLike(request.MediaType, url))
-            return await ProduceFromVideoAsync(request, posterFailuresAreHttp: false, ct).ConfigureAwait(false);
+            return await ProduceFromVideoAsync(request, ct).ConfigureAwait(false);
 
         // Rung 4 — an ordinary still image.
         if (IsHttp(url))
@@ -119,45 +119,38 @@ public sealed class ThumbnailProvider : IThumbnailProvider
     }
 
     /// <summary>
-    /// Rung 3 (and rung 4's video-in-disguise retry). The CDN only yields a still frame when the
-    /// transform carries <c>transcode=true</c>; a non-CDN video has no derivable poster at all.
+    /// Rung 3, and rung 4's landing place once fetched bytes prove the asset is a video. The CDN
+    /// only yields a still frame when the transform carries <c>transcode=true</c>; a non-CDN video
+    /// has no derivable poster at all.
     /// </summary>
-    /// <param name="posterFailuresAreHttp">
-    /// How to name a poster fetch that fails. False for rung 3, where the honest answer is "this
-    /// video has no poster". True when rung 4 arrived here after an image URL served video bytes —
-    /// the brief keeps rung 4's failure mapping for that retry, so a 404 stays a hard
-    /// <see cref="ThumbnailFailureReason.Http404"/> rather than becoming a soft, forever-retried
-    /// <see cref="ThumbnailFailureReason.VideoNoPoster"/>.
-    /// </param>
-    private async Task<ThumbnailResult> ProduceFromVideoAsync(ThumbnailRequest request, bool posterFailuresAreHttp, CancellationToken ct)
+    /// <remarks>
+    /// Every way this rung can fail is named <see cref="ThumbnailFailureReason.VideoNoPoster"/>,
+    /// including a 404 on the poster URL and including arrival from rung 4. That is deliberate:
+    /// <see cref="ThumbnailFailureReason.Http404"/> is a hard, never-retried verdict, and the
+    /// CDN answering 404 for a transcode it has not produced yet must not freeze that thumbnail
+    /// permanently. <c>VideoNoPoster</c> is the soft reason precisely so tomorrow's run can ask again.
+    /// </remarks>
+    private async Task<ThumbnailResult> ProduceFromVideoAsync(ThumbnailRequest request, CancellationToken ct)
     {
         var posterUrl = CivitaiImageUrls.ToVideoPosterUrl(request.Url);
 
-        if (posterUrl is null)
+        // A null poster URL means a non-CDN video: there is no transform to ask for, so it is the
+        // original or nothing, and no HTTP is issued here at all.
+        if (posterUrl is not null)
         {
-            // Not a Civitai CDN URL: there is no transform to ask for, so it is the original or nothing.
-            return request.AllowVideoDownload
-                ? await ProduceFromVideoDownloadAsync(request, ct).ConfigureAwait(false)
-                : ThumbnailResult.Fail(ThumbnailFailureReason.VideoNoPoster);
-        }
+            var (bytes, _) = await FetchAsync(posterUrl, ct).ConfigureAwait(false);
 
-        var (bytes, httpFailure) = await FetchAsync(posterUrl, ct).ConfigureAwait(false);
-
-        if (bytes is not null && !ThumbnailCodec.LooksLikeVideo(bytes))
-        {
-            var payload = ThumbnailCodec.Encode(bytes);
-            if (payload is not null) return ThumbnailResult.Ok(payload);
+            if (bytes is not null && !ThumbnailCodec.LooksLikeVideo(bytes))
+            {
+                var payload = ThumbnailCodec.Encode(bytes);
+                if (payload is not null) return ThumbnailResult.Ok(payload);
+            }
         }
 
         // Permission granted beats any poster failure — the frame is still obtainable, just expensively.
-        if (request.AllowVideoDownload)
-            return await ProduceFromVideoDownloadAsync(request, ct).ConfigureAwait(false);
-
-        if (!posterFailuresAreHttp) return ThumbnailResult.Fail(ThumbnailFailureReason.VideoNoPoster);
-
-        // Rung 4's mapping: an HTTP fault keeps its own name; a body that arrived but would not
-        // decode (or was video a second time) is simply not decodable.
-        return ThumbnailResult.Fail(httpFailure ?? ThumbnailFailureReason.NotDecodable);
+        return request.AllowVideoDownload
+            ? await ProduceFromVideoDownloadAsync(request, ct).ConfigureAwait(false)
+            : ThumbnailResult.Fail(ThumbnailFailureReason.VideoNoPoster);
     }
 
     /// <summary>Rung 4. One GET of the 450px transform, with one allowance for the CDN handing back a video.</summary>
@@ -170,10 +163,11 @@ public sealed class ThumbnailProvider : IThumbnailProvider
         var (bytes, httpFailure) = await FetchAsync(thumbnailUrl, ct).ConfigureAwait(false);
         if (bytes is null) return ThumbnailResult.Fail(httpFailure!);
 
-        // The record said "image" but the bytes are a container: the media type was wrong, so
-        // re-run the video rung. Once — the poster fetch itself is not retried again from there.
+        // The record said "image" but the bytes are a container: the media type was wrong, so this
+        // is a video after all and rung 3 owns it from here — failures included. Once: rung 3 makes
+        // at most one poster request and does not come back.
         if (ThumbnailCodec.LooksLikeVideo(bytes))
-            return await ProduceFromVideoAsync(request, posterFailuresAreHttp: true, ct).ConfigureAwait(false);
+            return await ProduceFromVideoAsync(request, ct).ConfigureAwait(false);
 
         return Encode(bytes);
     }

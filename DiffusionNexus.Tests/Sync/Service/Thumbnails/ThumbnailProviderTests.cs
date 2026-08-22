@@ -1,8 +1,10 @@
 using System.Net;
 using System.Net.Http.Headers;
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Service.Services.Sync.Thumbnails;
 using FluentAssertions;
+using Moq;
 using SkiaSharp;
 
 namespace DiffusionNexus.Tests.Sync.Service.Thumbnails;
@@ -39,6 +41,13 @@ public class ThumbnailProviderTests
 
     /// <summary>MP4 magic: a "ftyp" box at offset 4 — what the CDN returns when it ignores a poster request.</summary>
     private static byte[] Mp4() => [0, 0, 0, 0x18, (byte)'f', (byte)'t', (byte)'y', (byte)'p', (byte)'i', (byte)'s', (byte)'o', (byte)'m'];
+
+    /// <summary>
+    /// Every temp file rung 5 could have left behind. Compared before/after rather than asserted
+    /// empty — the machine's temp directory is not ours alone, and a parallel test may hold one.
+    /// </summary>
+    private static string[] TempPreviewFiles() =>
+        Directory.GetFiles(Path.GetTempPath(), "dn_preview_*");
 
     private static HttpResponseMessage Bytes(byte[] data, string mime = "image/png") =>
         new(HttpStatusCode.OK) { Content = new ByteArrayContent(data) { Headers = { ContentType = new MediaTypeHeaderValue(mime) } } };
@@ -130,6 +139,72 @@ public class ThumbnailProviderTests
         result.Succeeded.Should().BeTrue();
         handler.Urls.Should().HaveCount(2);
         handler.Urls[1].Should().Contain("anim=false,transcode=true");
+    }
+
+    [Fact]
+    public async Task ImageBytesThatAreVideo_PosterFailureIsVideoNoPoster()
+    {
+        // Once the bytes prove the asset is a video, every later failure is a video failure:
+        // a transcode 404 is the CDN having no poster today, not the hard, never-retried Http404.
+        var calls = 0;
+        var handler = new FakeHandler(_ => calls++ == 0
+            ? Bytes(Mp4(), "video/mp4")
+            : new HttpResponseMessage(HttpStatusCode.NotFound));
+
+        var result = await Provider(handler).ProduceAsync(new(
+            "https://image.civitai.com/x/abc/width=450/clip.jpeg", "image", null));
+
+        result.Failure.Should().Be(ThumbnailFailureReason.VideoNoPoster);
+        ThumbnailFailureReason.IsHardFailure(result.Failure).Should().BeFalse("the poster may transcode tomorrow");
+    }
+
+    [Fact]
+    public async Task VideoFallback_UsesVideoServiceAndEncodesTheFrame()
+    {
+        // A non-CDN video: rung 3 has no poster transform to ask for, so permission sends it to
+        // rung 5 — download the original, let FFmpeg cut a frame, re-encode it like any other thumbnail.
+        var handler = new FakeHandler(_ => Bytes(Mp4(), "video/mp4"));
+        string? receivedVideoPath = null;
+        var video = new Mock<IVideoThumbnailService>();
+        video.Setup(v => v.EnsureFFmpegAvailableAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        video.Setup(v => v.GenerateThumbnailAsync(It.IsAny<string>(), It.IsAny<VideoThumbnailOptions>(), It.IsAny<CancellationToken>()))
+            .Returns((string videoPath, VideoThumbnailOptions? _, CancellationToken _) =>
+            {
+                // The provider leaves OutputPath unset, so the service picks the path itself — as
+                // the real one does. Stand in for FFmpeg by writing a decodable frame there.
+                receivedVideoPath = videoPath;
+                var framePath = videoPath + "_thumb.png";
+                File.WriteAllBytes(framePath, Png());
+                return Task.FromResult(VideoThumbnailResult.Succeeded(framePath, 64, 64, TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(2)));
+            });
+
+        var before = TempPreviewFiles();
+        var result = await new ThumbnailProvider(new HttpClient(handler), video.Object).ProduceAsync(new(
+            "https://example.com/clip.mp4", "video", null, AllowVideoDownload: true));
+
+        result.Succeeded.Should().BeTrue();
+        result.Payload!.MimeType.Should().Be("image/jpeg", "an extracted frame is stored like every other thumbnail");
+        receivedVideoPath.Should().NotBeNull();
+        Path.GetFileName(receivedVideoPath)!.Should().StartWith("dn_preview_", "FFmpeg is handed the downloaded temp file");
+        video.Verify(v => v.EnsureFFmpegAvailableAsync(It.IsAny<CancellationToken>()), Times.Once);
+        TempPreviewFiles().Except(before).Should().BeEmpty("both the temp video and the extracted frame are deleted");
+    }
+
+    [Fact]
+    public async Task VideoFallback_ServiceFailureIsVideoNoPoster()
+    {
+        var handler = new FakeHandler(_ => Bytes(Mp4(), "video/mp4"));
+        var video = new Mock<IVideoThumbnailService>();
+        video.Setup(v => v.EnsureFFmpegAvailableAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        video.Setup(v => v.GenerateThumbnailAsync(It.IsAny<string>(), It.IsAny<VideoThumbnailOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(VideoThumbnailResult.Failed("ffmpeg not found"));
+
+        var before = TempPreviewFiles();
+        var result = await new ThumbnailProvider(new HttpClient(handler), video.Object).ProduceAsync(new(
+            "https://example.com/clip.mp4", "video", null, AllowVideoDownload: true));
+
+        result.Failure.Should().Be(ThumbnailFailureReason.VideoNoPoster);
+        TempPreviewFiles().Except(before).Should().BeEmpty("the downloaded video is deleted even when extraction fails");
     }
 
     [Fact]
