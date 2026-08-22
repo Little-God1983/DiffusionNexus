@@ -9,6 +9,7 @@ using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Service.Services.Sync;
 using DiffusionNexus.Service.Services.Sync.Steps;
+using DiffusionNexus.Service.Services.Sync.Thumbnails;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -126,8 +127,8 @@ public sealed class LibrarySyncServiceTests : IDisposable
 
         var service = NewService([identify]);
 
-        // Thumbnails is a reserved kind with no implementation until Plan B: asking for it must be
-        // a no-op, not a crash.
+        // A kind this service has no step for — here because only the identify step was handed to
+        // it — must be a no-op, not a crash: the option set is a wish, not a contract.
         var plan = await service.PlanAsync(
             SyncScope.Library,
             OptionsFor(SyncStepKind.IdentifyModel, SyncStepKind.Thumbnails));
@@ -155,6 +156,26 @@ public sealed class LibrarySyncServiceTests : IDisposable
 
         static ImageCandidate Candidate(int modelId, int versionId) =>
             new(modelId, versionId, versionId + 1000, $"model-{modelId}", null);
+    }
+
+    /// <summary>
+    /// Thumbnails deliberately has no arm of its own in <c>BuildPlanStep</c>: one item is one image
+    /// is one request, so the default arm's "count items, scale by the per-item estimate" is already
+    /// the truth. Pinned here because the images step next door is the exception, and copying its
+    /// arm would double-count nothing while quietly breaking the estimate.
+    /// </summary>
+    [Fact]
+    public async Task Plan_CountsThumbnailsOnePerImage()
+    {
+        var thumbnails = new FakeStep(SyncStepKind.Thumbnails, "Fetch thumbnails", TimeSpan.FromSeconds(0.4))
+            .Selecting([Item(1, "a v1"), Item(1, "a v2"), Item(2, "b v1")]);
+
+        var plan = await NewService([thumbnails]).PlanAsync(SyncScope.Library, OptionsFor(SyncStepKind.Thumbnails));
+
+        var step = plan.Steps.Single();
+        step.Count.Should().Be(3, "two versions of one model are two thumbnails, not one item");
+        step.EstimatedDuration.Should().Be(TimeSpan.FromSeconds(1.2));
+        step.Description.Should().Be("Fetch thumbnails");
     }
 
     [Fact]
@@ -482,9 +503,15 @@ public sealed class LibrarySyncServiceTests : IDisposable
         provider.GetRequiredService<SidecarMetadataApplier>().Should().NotBeNull();
 
         // IEnumerable<ISyncStep> preserves registration order, and the pipeline depends on it:
-        // tags and images can only run on models identify has already matched.
+        // tags and images can only run on models identify has already matched, and thumbnails can
+        // only be made for image records the images step has already fetched.
         provider.GetRequiredService<IEnumerable<ISyncStep>>().Select(s => s.Kind).Should().Equal(
-            SyncStepKind.DiscoverFiles, SyncStepKind.IdentifyModel, SyncStepKind.FetchTags, SyncStepKind.FetchImages);
+            SyncStepKind.DiscoverFiles, SyncStepKind.IdentifyModel, SyncStepKind.FetchTags,
+            SyncStepKind.FetchImages, SyncStepKind.Thumbnails);
+
+        // The thumbnail step's provider is a typed client, so it only resolves if AddLibrarySync
+        // registered the HttpClient for it too.
+        provider.GetRequiredService<IThumbnailProvider>().Should().BeOfType<ThumbnailProvider>();
 
         // The gate is per-service, so the service itself must be a singleton.
         provider.GetRequiredService<ILibrarySyncService>().Should().BeSameAs(provider.GetRequiredService<ILibrarySyncService>());
