@@ -693,7 +693,6 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             Logger: _logger,
             ScopeFactory: sp?.GetService<IServiceScopeFactory>(),
             DialogService: TryResolveDialogService(sp),
-            VideoThumbnailService: sp?.GetService<IVideoThumbnailService>(),
             Clipboard: sp?.GetService<DiffusionNexus.Installer.SDK.Shared.Services.IClipboardService>(),
             UiScheduler: sp?.GetService<IUiScheduler>());
     }

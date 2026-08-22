@@ -8,6 +8,7 @@ using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Installer.SDK.Shared.Services;
 using DiffusionNexus.Service.Services.Sync.Thumbnails;
@@ -37,7 +38,6 @@ public partial class ModelTileViewModel : ViewModelBase
     private readonly IUnifiedLogger? _logger;
     private readonly IServiceScopeFactory? _scopeFactory;
     private readonly IDialogService? _dialogService;
-    private readonly IVideoThumbnailService? _videoThumbnailService;
     private readonly IClipboardService _clipboard = AvaloniaClipboardService.Instance;
     private readonly IUiScheduler _uiScheduler = AvaloniaUiScheduler.Instance;
 
@@ -60,7 +60,6 @@ public partial class ModelTileViewModel : ViewModelBase
             _logger = d.Logger;
             _scopeFactory = d.ScopeFactory;
             _dialogService = d.DialogService;
-            _videoThumbnailService = d.VideoThumbnailService;
             _clipboard = d.Clipboard ?? AvaloniaClipboardService.Instance;
             _uiScheduler = d.UiScheduler ?? AvaloniaUiScheduler.Instance;
         }
@@ -1324,9 +1323,13 @@ public partial class ModelTileViewModel : ViewModelBase
         }
         else if (primaryImage is not null && IsFetchableUrl(primaryImage.Url))
         {
-            // No BLOB cached yet — fetch through the provider in the background
+            // No BLOB cached yet — fetch through the provider in the background, but only if the
+            // last attempt on this row says another one is worth making. Scrolling is not a reason
+            // to retry: without this gate a poster that 404s costs a GET, a DI scope and a
+            // SaveChanges every single time the tile passes the viewport, forever.
             ThumbnailImage = null;
-            _ = DownloadThumbnailAsync(primaryImage, ct);
+            if (IsScrollFetchDue(primaryImage, DateTimeOffset.UtcNow))
+                _ = DownloadThumbnailAsync(primaryImage, allowVideoDownload: false, ct);
         }
         else
         {
@@ -1357,6 +1360,36 @@ public partial class ModelTileViewModel : ViewModelBase
     /// See <see cref="MaxThumbnailBytes"/> for why the tile is the only place this can happen.
     /// </summary>
     internal static bool NeedsOversizeSelfHeal(byte[]? data) => data is not null && data.Length > MaxThumbnailBytes;
+
+    /// <summary>
+    /// Whether a self-heal re-encode is worth writing back: only when it actually made the row
+    /// smaller.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="NeedsOversizeSelfHeal"/> measures the stored bytes, so a BLOB that cannot shrink
+    /// stays over the threshold and comes back through this path on every activation of the tile.
+    /// Without this check that means a decode, a JPEG encode, a scope and a SaveChanges each time,
+    /// forever, for a row that never changes. Such rows exist: an already-narrow image (under
+    /// <see cref="ThumbnailCodec.TargetWidth"/>, so no resize) that is simply enormous, and a
+    /// photographic source whose JPEG re-encode is no smaller than the PNG it came from.
+    /// </remarks>
+    internal static bool ShouldPersistSelfHeal(
+        byte[] original, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] ThumbnailPayload? reencoded) =>
+        reencoded is not null && reencoded.Data.Length < original.Length;
+
+    /// <summary>
+    /// Whether the scroll path may spend a request on this row, judged by the same policy the sync
+    /// step uses — hard failures never, soft ones after the retry window, a dropped corrupt BLOB
+    /// immediately.
+    /// </summary>
+    /// <remarks>
+    /// <c>force: false</c> is the whole point: this is the tile deciding on its own, not the user
+    /// asking. <see cref="TryDownloadMissingThumbnailAsync"/> — the one path a person initiates —
+    /// does not come through here at all, because a user who clicks "download the missing
+    /// thumbnail" has overruled every window by asking.
+    /// </remarks>
+    internal static bool IsScrollFetchDue(ModelImage image, DateTimeOffset now) =>
+        SyncRetryPolicy.Default.IsThumbnailDue(image.ThumbnailAttemptedAt, image.ThumbnailFailure, now, force: false);
 
     /// <summary>
     /// Whether a decode that produced no bitmap means the stored BLOB is corrupt.
@@ -1471,11 +1504,12 @@ public partial class ModelTileViewModel : ViewModelBase
                 // Gradual self-healing for legacy oversized BLOBs, through the same codec every
                 // other producer uses — so a row written by the old naive fetch ends up
                 // indistinguishable from one written today. An undecodable oversize BLOB falls
-                // through unchanged and is handled below as what it is: corrupt.
+                // through unchanged and is handled below as what it is: corrupt; one that
+                // re-encodes no smaller is left alone (see ShouldPersistSelfHeal).
                 if (NeedsOversizeSelfHeal(data))
                 {
                     var reencoded = ThumbnailCodec.Encode(data);
-                    if (reencoded is not null)
+                    if (ShouldPersistSelfHeal(data, reencoded))
                     {
                         var now = DateTimeOffset.UtcNow;
                         _logger?.Info(LogCategory.General, "ThumbnailSelfHeal", FormattableString.Invariant(
@@ -1515,7 +1549,11 @@ public partial class ModelTileViewModel : ViewModelBase
                 // Try fetching from the recorded URL as a fallback
                 if (IsFetchableUrl(image.Url))
                 {
-                    await DownloadThumbnailAsync(image, ct);
+                    // Ungated on purpose: this is the sentinel-was-wrong path — the row was
+                    // reported as having bytes and does not. That contradiction is not a failed
+                    // attempt whose window we should be waiting out, and a row that genuinely has
+                    // no bytes never reaches here: it takes the gated branch above instead.
+                    await DownloadThumbnailAsync(image, allowVideoDownload: false, ct);
                 }
             }
         }
@@ -1644,6 +1682,14 @@ public partial class ModelTileViewModel : ViewModelBase
     /// When the primary image is a video, prefers a static sibling image from the same
     /// version — Civitai CDN only serves resized images for static URLs, not for video URLs.
     /// </summary>
+    /// <remarks>
+    /// The one thumbnail path a person starts, and the only one allowed to download an original
+    /// video and cut a frame out of it with FFmpeg. That costs megabytes, which is exactly why the
+    /// scroll path never does it — but here somebody has asked for this model's thumbnail and is
+    /// waiting for it, so the price is theirs to pay. For the same reason the retry gate that
+    /// governs the scroll path (<see cref="IsScrollFetchDue"/>) is not consulted: a hard failure
+    /// recorded yesterday is not an answer to a request made today.
+    /// </remarks>
     public async Task TryDownloadMissingThumbnailAsync()
     {
         if (!IsThumbnailMissing) return;
@@ -1654,11 +1700,7 @@ public partial class ModelTileViewModel : ViewModelBase
         // reliable than FFmpeg extraction and avoids downloading the full video file.
         if (IsVideoPreview(primaryImage))
         {
-            var staticSibling = SelectedVersion.Images
-                .Where(i => !string.IsNullOrEmpty(i.Url) && !IsVideoPreview(i) && i.ThumbnailData is null)
-                .OrderBy(i => i.IsNsfw) // prefer SFW
-                .ThenBy(i => i.SortOrder)
-                .FirstOrDefault();
+            var staticSibling = PickStaticSibling(SelectedVersion.Images);
 
             if (staticSibling is not null)
             {
@@ -1666,13 +1708,31 @@ public partial class ModelTileViewModel : ViewModelBase
                 logger?.Debug(LogCategory.Network, "ThumbnailDownload",
                     $"Primary image for '{DisplayName}' is video — using static sibling (ImageId={staticSibling.Id})");
 
-                await DownloadThumbnailAsync(staticSibling);
+                await DownloadThumbnailAsync(staticSibling, allowVideoDownload: true);
                 return;
             }
         }
 
-        await DownloadThumbnailAsync(primaryImage);
+        await DownloadThumbnailAsync(primaryImage, allowVideoDownload: true);
     }
+
+    /// <summary>
+    /// Picks the still image a video-primary version should borrow its thumbnail from: the first
+    /// non-video row with a URL and no displayable thumbnail, SFW before NSFW, then by sort order.
+    /// </summary>
+    /// <remarks>
+    /// The filter asks <see cref="ModelImage.HasThumbnail"/> rather than <c>ThumbnailData is
+    /// null</c>, which is what it used to ask and which is wrong twice over. The light tile query
+    /// gives every row that has bytes in the database a one-byte sentinel instead of them, so a
+    /// merely-deferred sibling read as "already has a thumbnail"; and an empty BLOB — bytes
+    /// present, thumbnail absent — read the same way. Both are rows this method exists to find.
+    /// </remarks>
+    internal static ModelImage? PickStaticSibling(IEnumerable<ModelImage> images) =>
+        images
+            .Where(i => !string.IsNullOrEmpty(i.Url) && !IsVideoPreview(i) && !i.HasThumbnail)
+            .OrderBy(i => i.IsNsfw) // prefer SFW
+            .ThenBy(i => i.SortOrder)
+            .FirstOrDefault();
 
     /// <summary>
     /// Fetches this image's thumbnail through <see cref="IThumbnailProvider"/> and records the
@@ -1684,13 +1744,21 @@ public partial class ModelTileViewModel : ViewModelBase
     /// owns which columns a verdict touches. What is left here is the tile's own two jobs — show
     /// the result, and stop when the user has scrolled away.
     /// <para>
-    /// A video costs one poster request and no more. <c>AllowVideoDownload</c> is false: the
-    /// alternative is streaming the whole clip to a temp file and running FFmpeg over it, for a
-    /// tile the user is currently scrolling past. That was the old behaviour, and it is the reason
-    /// flinging through a video-heavy library could pull hundreds of megabytes.
+    /// On the scroll path a video costs one poster request and no more — callers there pass
+    /// <paramref name="allowVideoDownload"/> false, because the alternative is streaming the whole
+    /// clip to a temp file and running FFmpeg over it, for a tile the user is currently scrolling
+    /// past. That was the old behaviour, and it is the reason flinging through a video-heavy
+    /// library could pull hundreds of megabytes. Only
+    /// <see cref="TryDownloadMissingThumbnailAsync"/> passes true.
     /// </para>
     /// </remarks>
-    private async Task DownloadThumbnailAsync(ModelImage image, CancellationToken ct = default)
+    /// <param name="image">The row to fetch and stamp.</param>
+    /// <param name="allowVideoDownload">
+    /// Permission to fall back to downloading the original video and extracting a frame. True only
+    /// where a person asked for this thumbnail and is waiting for it.
+    /// </param>
+    /// <param name="ct">The tile's own token — cancelled when it scrolls away or switches version.</param>
+    private async Task DownloadThumbnailAsync(ModelImage image, bool allowVideoDownload, CancellationToken ct = default)
     {
         if (_scopeFactory is null) return;
 
@@ -1713,7 +1781,7 @@ public partial class ModelTileViewModel : ViewModelBase
                 image.Url,
                 image.MediaType,
                 SelectedVersion?.PrimaryFile?.LocalPath,
-                AllowVideoDownload: false);
+                AllowVideoDownload: allowVideoDownload);
 
             // ct is the tile's own token: Deactivate() cancels it, so scrolling away cancels the
             // request in flight rather than finishing a download for a tile nobody is looking at.
@@ -1725,8 +1793,10 @@ public partial class ModelTileViewModel : ViewModelBase
 
             if (!result.Succeeded)
             {
-                // Recorded, not merely reported. An unrecorded failure is re-attempted on every
-                // scroll past this tile, forever. The provider already logged what went wrong.
+                // Recorded, not merely reported — and now read: IsScrollFetchDue gates the scroll
+                // path on this stamp, so a hard failure (a 404 poster) costs one attempt rather
+                // than one per scroll past, and a soft one comes back after the retry window. The
+                // provider already logged what went wrong.
                 ThumbnailWriter.ApplyFailure(image, result.Failure!, now);
                 if (image.Id > 0)
                 {

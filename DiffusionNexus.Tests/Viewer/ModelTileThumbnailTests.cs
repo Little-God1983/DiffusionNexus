@@ -1,4 +1,5 @@
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Service.Services.Sync.Thumbnails;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
@@ -17,6 +18,12 @@ namespace DiffusionNexus.Tests.Viewer;
 /// oversized legacy BLOBs (up to 25 MB, written by the old naive <c>width=300</c> fetch) must still
 /// shrink on first read, and a BLOB that cannot be decoded must now be recorded rather than shown
 /// as an empty tile forever.
+/// <para>
+/// Task 8 adds three more: the self-heal may only persist a re-encode that actually shrank, the
+/// scroll path must consult the recorded failure before spending another request, and the
+/// user-initiated sibling pick must not mistake a deferred sentinel or an empty BLOB for a
+/// thumbnail that exists.
+/// </para>
 /// </remarks>
 public class ModelTileThumbnailTests
 {
@@ -121,6 +128,145 @@ public class ModelTileThumbnailTests
         reencoded.Data.Length.Should().BeLessThanOrEqualTo(1_048_576, "the re-encoded thumbnail must fit under the cap");
         reencoded.Width.Should().Be(ThumbnailCodec.TargetWidth, "the self-heal produces the same thumbnail as every other producer");
     }
+
+    /// <summary>
+    /// A re-encode that did not shrink the row must not be written back. Nothing else stops it:
+    /// the oversize check reads the stored length, so a BLOB that cannot get smaller stays over
+    /// the threshold and would be decoded, re-encoded and saved again on every single activation
+    /// of the tile — for the whole life of the row.
+    /// </summary>
+    [Fact]
+    public void SelfHealPersist_OnlyWhenTheReEncodeActuallyShrank()
+    {
+        var original = new byte[2_000_000];
+
+        ModelTileViewModel.ShouldPersistSelfHeal(original, Payload(1_999_999))
+            .Should().BeTrue("one byte smaller is still smaller — the row converges");
+
+        ModelTileViewModel.ShouldPersistSelfHeal(original, Payload(2_000_000))
+            .Should().BeFalse("a re-encode that changed nothing is a write, a save and a decode for nothing");
+
+        ModelTileViewModel.ShouldPersistSelfHeal(original, Payload(2_000_001))
+            .Should().BeFalse("a narrow-but-enormous BLOB can grow under JPEG — never persist that");
+    }
+
+    [Fact]
+    public void SelfHealPersist_NeverForAnUndecodableBlob()
+    {
+        ModelTileViewModel.ShouldPersistSelfHeal(new byte[2_000_000], null).Should().BeFalse(
+            "an oversize BLOB that will not decode is corrupt, and the corrupt path owns it");
+    }
+
+    // ------------------------------------------------- the scroll path's retry gate (Task 8, RC)
+
+    private static readonly DateTimeOffset Now = new(2026, 8, 22, 12, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public void ScrollFetch_IsDueForARowNothingHasEverTried()
+    {
+        ModelTileViewModel.IsScrollFetchDue(new ModelImage(), Now).Should().BeTrue();
+    }
+
+    /// <summary>
+    /// The incident this gate exists for: a poster URL that 404s was re-fetched on every scroll
+    /// past the tile — a GET, a DI scope and a SaveChanges each time — because the failure stamp
+    /// was written and then never read by anything on the UI side.
+    /// </summary>
+    [Fact]
+    public void ScrollFetch_IsNeverDueAgainForAHardFailure()
+    {
+        var image = new ModelImage
+        {
+            ThumbnailAttemptedAt = Now - TimeSpan.FromDays(365),
+            ThumbnailFailure = ThumbnailFailureReason.Http404,
+        };
+
+        ModelTileViewModel.IsScrollFetchDue(image, Now).Should().BeFalse(
+            "the asset is gone; asking again a year later costs a request to learn nothing");
+    }
+
+    [Fact]
+    public void ScrollFetch_ComesBackForASoftFailureOnceTheWindowHasPassed()
+    {
+        var image = new ModelImage
+        {
+            ThumbnailAttemptedAt = Now - SyncRetryPolicy.Default.ErrorRetryAfter + TimeSpan.FromMinutes(1),
+            ThumbnailFailure = ThumbnailFailureReason.HttpError,
+        };
+
+        ModelTileViewModel.IsScrollFetchDue(image, Now).Should().BeFalse("still inside the retry window");
+
+        image.ThumbnailAttemptedAt = Now - SyncRetryPolicy.Default.ErrorRetryAfter;
+
+        ModelTileViewModel.IsScrollFetchDue(image, Now).Should().BeTrue("the CDN coming back is exactly the case to catch");
+    }
+
+    [Fact]
+    public void ScrollFetch_IsDueImmediatelyAfterACorruptBlobWasDropped()
+    {
+        var image = new ModelImage { ThumbnailAttemptedAt = Now, ThumbnailFailure = ThumbnailFailureReason.Corrupt };
+
+        ModelTileViewModel.IsScrollFetchDue(image, Now).Should().BeTrue(
+            "nothing failed at the source — the row simply has no bytes any more");
+    }
+
+    // ------------------------------------------- the user-initiated static-sibling pick (Task 8)
+
+    /// <summary>
+    /// The sentinel bug. The filter asked <c>ThumbnailData is null</c>, and the light tile query
+    /// hands every row that has bytes a one-byte marker instead of them — so a sibling that was
+    /// merely deferred looked identical to one holding a real thumbnail, and an empty BLOB (bytes
+    /// present, thumbnail absent) was mistaken for a thumbnail outright.
+    /// </summary>
+    [Fact]
+    public void StaticSibling_TreatsAnEmptyBlobAsTheMissingThumbnailItIs()
+    {
+        var empty = Still(id: 1, sortOrder: 0, thumbnail: []);
+
+        ModelTileViewModel.PickStaticSibling([empty]).Should().BeSameAs(empty);
+    }
+
+    [Fact]
+    public void StaticSibling_SkipsARowThatCanAlreadyBeDisplayed()
+    {
+        var has = Still(id: 1, sortOrder: 0, thumbnail: [1, 2, 3]);
+        var hasnt = Still(id: 2, sortOrder: 1);
+
+        ModelTileViewModel.PickStaticSibling([has, hasnt]).Should().BeSameAs(hasnt);
+        ModelTileViewModel.PickStaticSibling([has]).Should().BeNull();
+    }
+
+    [Fact]
+    public void StaticSibling_IsNeverAnotherVideoAndNeverAUrllessRow()
+    {
+        var video = new ModelImage { Id = 1, Url = "https://image.civitai.com/abc/a.mp4", MediaType = "video", SortOrder = 0 };
+        var urlless = new ModelImage { Id = 2, Url = string.Empty, MediaType = "image", SortOrder = 1 };
+
+        ModelTileViewModel.PickStaticSibling([video, urlless]).Should().BeNull();
+    }
+
+    [Fact]
+    public void StaticSibling_PrefersSfwThenSortOrder()
+    {
+        var nsfwFirst = Still(id: 1, sortOrder: 0, nsfw: true);
+        var sfwLate = Still(id: 2, sortOrder: 9);
+        var sfwEarly = Still(id: 3, sortOrder: 4);
+
+        ModelTileViewModel.PickStaticSibling([nsfwFirst, sfwLate, sfwEarly]).Should().BeSameAs(sfwEarly);
+        ModelTileViewModel.PickStaticSibling([nsfwFirst]).Should().BeSameAs(nsfwFirst, "an NSFW still beats no still at all");
+    }
+
+    private static ModelImage Still(int id, int sortOrder, byte[]? thumbnail = null, bool nsfw = false) => new()
+    {
+        Id = id,
+        Url = FormattableString.Invariant($"https://image.civitai.com/abc/width=450/{id}.jpeg"),
+        MediaType = "image",
+        SortOrder = sortOrder,
+        IsNsfw = nsfw,
+        ThumbnailData = thumbnail,
+    };
+
+    private static ThumbnailPayload Payload(int size) => new(new byte[size], "image/jpeg", 450, 450);
 
     /// <summary>
     /// Builds a PNG of random noise so it does not compress away — a reliable way to get a
