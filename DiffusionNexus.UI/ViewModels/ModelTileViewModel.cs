@@ -1721,15 +1721,21 @@ public partial class ModelTileViewModel : ViewModelBase
     /// non-video row with a URL and no displayable thumbnail, SFW before NSFW, then by sort order.
     /// </summary>
     /// <remarks>
-    /// The filter asks <see cref="ModelImage.HasThumbnail"/> rather than <c>ThumbnailData is
-    /// null</c>, which is what it used to ask and which is wrong twice over. The light tile query
-    /// gives every row that has bytes in the database a one-byte sentinel instead of them, so a
-    /// merely-deferred sibling read as "already has a thumbnail"; and an empty BLOB — bytes
-    /// present, thumbnail absent — read the same way. Both are rows this method exists to find.
+    /// "No displayable thumbnail" is two conditions, not one, and the old <c>ThumbnailData is
+    /// null</c> got both wrong in opposite directions. An empty BLOB — bytes present, thumbnail
+    /// absent — read as a thumbnail that exists, so a row this method should have found was
+    /// skipped: that is what <see cref="ModelImage.HasThumbnail"/> fixes. But <c>HasThumbnail</c>
+    /// alone is false for a <i>deferred</i> row too, and a deferred row's bytes are real and
+    /// simply unloaded — fetching one would drive <c>ApplySuccess</c> straight over stored bytes,
+    /// which on a version whose sort-0 row is not the primary image can be a thumbnail the user
+    /// uploaded by hand. Hence both clauses.
     /// </remarks>
     internal static ModelImage? PickStaticSibling(IEnumerable<ModelImage> images) =>
         images
-            .Where(i => !string.IsNullOrEmpty(i.Url) && !IsVideoPreview(i) && !i.HasThumbnail)
+            .Where(i => !string.IsNullOrEmpty(i.Url)
+                        && !IsVideoPreview(i)
+                        && !i.HasThumbnail
+                        && !i.IsThumbnailDeferred)
             .OrderBy(i => i.IsNsfw) // prefer SFW
             .ThenBy(i => i.SortOrder)
             .FirstOrDefault();
@@ -1862,10 +1868,16 @@ public partial class ModelTileViewModel : ViewModelBase
         if (image.IsVideo)
             return true;
 
-        // Fallback: detect video by URL extension for legacy records without MediaType
-        if (image.MediaType is null && !string.IsNullOrEmpty(image.Url))
+        // Fallback: detect video by URL extension for legacy records without MediaType.
+        // TryCreate, never the throwing constructor: the database holds URLs nothing guarantees
+        // are parseable — a truncated download, a legacy relative path, a malformed bracket — and
+        // this runs behind the user's click on "download the missing thumbnail". A URL we cannot
+        // parse is simply not known to be a video, which is the same answer as before for every
+        // URL that does parse.
+        if (image.MediaType is null && !string.IsNullOrEmpty(image.Url)
+            && Uri.TryCreate(image.Url, UriKind.Absolute, out var uri))
         {
-            var extension = Path.GetExtension(new Uri(image.Url).AbsolutePath);
+            var extension = Path.GetExtension(uri.AbsolutePath);
             return extension is ".mp4" or ".webm" or ".mov" or ".avi" or ".mkv";
         }
 

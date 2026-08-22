@@ -236,6 +236,46 @@ public class ModelTileThumbnailTests
         ModelTileViewModel.PickStaticSibling([has]).Should().BeNull();
     }
 
+    /// <summary>
+    /// The other half of the sentinel, and the one that bites the other way. A deferred row has
+    /// real bytes sitting in the database — the light query simply did not load them — so selecting
+    /// it would send the download straight into <c>ApplySuccess</c>, overwriting stored bytes with
+    /// freshly fetched ones. Including, on a version whose sort-0 row is not the primary image,
+    /// a thumbnail the user uploaded by hand.
+    /// </summary>
+    [Fact]
+    public void StaticSibling_IsNeverADeferredRowWhoseBytesAreOnlyUnloaded()
+    {
+        var deferred = Still(id: 1, sortOrder: 0, thumbnail: ModelImage.ThumbnailNotLoadedSentinel);
+        var genuinelyEmpty = Still(id: 2, sortOrder: 1);
+
+        deferred.IsThumbnailDeferred.Should().BeTrue("guard the fixture: reference equality, not content");
+
+        ModelTileViewModel.PickStaticSibling([deferred]).Should().BeNull(
+            "those bytes exist and re-fetching would overwrite them");
+        ModelTileViewModel.PickStaticSibling([deferred, genuinelyEmpty]).Should().BeSameAs(genuinelyEmpty);
+    }
+
+    /// <summary>
+    /// A stored URL is not guaranteed to parse. A truncated download and a legacy relative path are
+    /// both in the wild, and the video test used to hand one straight to <c>new Uri(...)</c> —
+    /// which throws, out of the user's click on "download the missing thumbnail".
+    /// </summary>
+    [Theory]
+    [InlineData("https://")]                     // truncated: scheme, no host
+    [InlineData("images/preview.png")]           // legacy relative path: no scheme at all
+    [InlineData("https://[unclosed/a.png")]      // malformed IPv6 literal
+    public void StaticSibling_SurvivesAMalformedStoredUrl(string url)
+    {
+        // MediaType null, so the video test falls back to inspecting the URL.
+        var malformed = new ModelImage { Id = 1, Url = url, SortOrder = 0 };
+
+        var act = () => ModelTileViewModel.PickStaticSibling([malformed]);
+
+        act.Should().NotThrow("a URL nobody can parse is a bad candidate, not an exception");
+        act().Should().BeSameAs(malformed, "unparseable is not video — it stays eligible");
+    }
+
     [Fact]
     public void StaticSibling_IsNeverAnotherVideoAndNeverAUrllessRow()
     {
