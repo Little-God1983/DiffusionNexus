@@ -39,6 +39,20 @@ public class ThumbnailProviderTests
         return img.Encode(SKEncodedImageFormat.Png, 100).ToArray();
     }
 
+    /// <summary>
+    /// A real WebP frame — the format the provider actually asks FFmpeg for
+    /// (<see cref="ThumbnailFormat.WebP"/>), so the fallback test exercises the true WebP→JPEG
+    /// re-encode rather than a PNG that happens to decode.
+    /// </summary>
+    private static byte[] Webp()
+    {
+        using var bmp = new SKBitmap(64, 64);
+        using var canvas = new SKCanvas(bmp);
+        canvas.Clear(SKColors.Coral);
+        using var img = SKImage.FromBitmap(bmp);
+        return img.Encode(SKEncodedImageFormat.Webp, 90).ToArray();
+    }
+
     /// <summary>MP4 magic: a "ftyp" box at offset 4 — what the CDN returns when it ignores a poster request.</summary>
     private static byte[] Mp4() => [0, 0, 0, 0x18, (byte)'f', (byte)'t', (byte)'y', (byte)'p', (byte)'i', (byte)'s', (byte)'o', (byte)'m'];
 
@@ -88,6 +102,19 @@ public class ThumbnailProviderTests
 
         result.Failure.Should().Be(ThumbnailFailureReason.HttpError);
         ThumbnailFailureReason.IsHardFailure(result.Failure).Should().BeFalse("a 503 is worth retrying");
+    }
+
+    [Fact]
+    public async Task MalformedUrl_IsSoftHttpError()
+    {
+        // A garbage Url in one row must fail that row, not abort the caller's whole run:
+        // HttpClient.GetAsync throws UriFormatException before any handler is consulted.
+        var handler = new FakeHandler(_ => Bytes(Png()));
+
+        var result = await Provider(handler).ProduceAsync(new("https://exa mple .com/a.png", "image", null));
+
+        result.Failure.Should().Be(ThumbnailFailureReason.HttpError);
+        handler.Urls.Should().BeEmpty();
     }
 
     [Fact]
@@ -165,16 +192,19 @@ public class ThumbnailProviderTests
         // rung 5 — download the original, let FFmpeg cut a frame, re-encode it like any other thumbnail.
         var handler = new FakeHandler(_ => Bytes(Mp4(), "video/mp4"));
         string? receivedVideoPath = null;
+        VideoThumbnailOptions? receivedOptions = null;
         var video = new Mock<IVideoThumbnailService>();
         video.Setup(v => v.EnsureFFmpegAvailableAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         video.Setup(v => v.GenerateThumbnailAsync(It.IsAny<string>(), It.IsAny<VideoThumbnailOptions>(), It.IsAny<CancellationToken>()))
-            .Returns((string videoPath, VideoThumbnailOptions? _, CancellationToken _) =>
+            .Returns((string videoPath, VideoThumbnailOptions? options, CancellationToken _) =>
             {
+                receivedOptions = options;
                 // The provider leaves OutputPath unset, so the service picks the path itself — as
-                // the real one does. Stand in for FFmpeg by writing a decodable frame there.
+                // the real one does, naming it {videoname}_thumb.{format}. Stand in for FFmpeg by
+                // writing a real WebP frame there, the format the provider asked for.
                 receivedVideoPath = videoPath;
-                var framePath = videoPath + "_thumb.png";
-                File.WriteAllBytes(framePath, Png());
+                var framePath = videoPath + "_thumb.webp";
+                File.WriteAllBytes(framePath, Webp());
                 return Task.FromResult(VideoThumbnailResult.Succeeded(framePath, 64, 64, TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(2)));
             });
 
@@ -186,6 +216,9 @@ public class ThumbnailProviderTests
         result.Payload!.MimeType.Should().Be("image/jpeg", "an extracted frame is stored like every other thumbnail");
         receivedVideoPath.Should().NotBeNull();
         Path.GetFileName(receivedVideoPath)!.Should().StartWith("dn_preview_", "FFmpeg is handed the downloaded temp file");
+        receivedOptions.Should().NotBeNull();
+        receivedOptions!.OutputFormat.Should().Be(ThumbnailFormat.WebP, "the frame the mock wrote is the format actually requested");
+        receivedOptions.MaxWidth.Should().Be(ThumbnailCodec.TargetWidth, "not the view model's hard-coded 300");
         video.Verify(v => v.EnsureFFmpegAvailableAsync(It.IsAny<CancellationToken>()), Times.Once);
         TempPreviewFiles().Except(before).Should().BeEmpty("both the temp video and the extracted frame are deleted");
     }

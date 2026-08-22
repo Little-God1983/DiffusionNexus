@@ -46,8 +46,10 @@ public sealed class ThumbnailProvider : IThumbnailProvider
         // whichever rung answered — including the rungs that fall through to one another.
         if (result.Succeeded)
         {
-            _logger?.Debug(LogCategory.Network, LogSource,
-                $"Thumbnail {result.Payload!.Width}x{result.Payload.Height} ({result.Payload.Data.Length / 1024.0:F1} KB) for {Describe(request.Url)}");
+            // Invariant: a log line is read by developers and diffed across machines, so the size
+            // must not render "12,3 KB" here and "12.3 KB" in the next engineer's log.
+            _logger?.Debug(LogCategory.Network, LogSource, FormattableString.Invariant(
+                $"Thumbnail {result.Payload!.Width}x{result.Payload.Height} ({result.Payload.Data.Length / 1024.0:F1} KB) for {Describe(request.Url)}"));
         }
         else
         {
@@ -266,6 +268,13 @@ public sealed class ThumbnailProvider : IThumbnailProvider
         }
         catch (HttpRequestException)
         {
+            return (null, ThumbnailFailureReason.HttpError);
+        }
+        catch (UriFormatException)
+        {
+            // Thrown by HttpClient before the request is ever sent, for a Url the database happily
+            // stored — an empty scheme, embedded spaces, an unclosed bracket. One unusable row must
+            // fail that row, not take down the caller's whole run.
             return (null, ThumbnailFailureReason.HttpError);
         }
     }
