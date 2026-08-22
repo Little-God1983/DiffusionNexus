@@ -136,9 +136,9 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
     /// None of it is an indexed lookup: <c>lower(LocalPath)</c> is a function of the column, so no
     /// index on <c>LocalPath</c> can serve it and SQLite scans the file rows either way. What the
     /// SQL buys is that the rows are discarded inside the engine instead of being materialised into
-    /// the process. And because EF renders a captured-variable <c>StartsWith</c> as a parameterised
-    /// comparison rather than a literal <c>LIKE</c> pattern, <c>%</c> and <c>_</c> occurring in a
-    /// source folder's name are ordinary characters here, not wildcards.
+    /// the process. And because EF renders a captured-variable <c>StartsWith</c> as
+    /// <c>LIKE @p ESCAPE '\'</c> with <c>%</c>, <c>_</c> and <c>\</c> escaped into the parameter at
+    /// runtime, those occurring in a source folder's name are ordinary characters here, not wildcards.
     /// </para>
     /// </remarks>
     private async Task<Expression<Func<Model, bool>>> HasFileUnderAnyAsync(

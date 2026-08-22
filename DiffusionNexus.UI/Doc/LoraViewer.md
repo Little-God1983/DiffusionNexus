@@ -330,9 +330,10 @@ instead, narrowed first by that root's leading run of ASCII characters (`E:\ÖFF
 
 Two things that comment used to get wrong. None of this is an indexed lookup: `lower(LocalPath)` is
 a function of the column, so SQLite scans the file rows either way — what the SQL buys is that they
-are discarded inside the engine rather than materialised into the process. And it is not a literal
-`LIKE` pattern: EF renders a captured-variable `StartsWith` as a parameterised comparison, so `%`
-and `_` in a source folder's name are ordinary characters here, not wildcards.
+are discarded inside the engine rather than materialised into the process. And the `LIKE` it emits
+is safe by escaping, not by absence: EF renders a captured-variable `StartsWith` as
+`LIKE @p ESCAPE '\'` with `%`, `_` and `\` escaped into the parameter at runtime, so those in a
+source folder's name are ordinary characters here, not wildcards.
 
 Forcing also widens *selection*, not just due-ness: `SelectIdentifyCandidatesAsync` takes an
 `includeMatched` flag (`ForceIdentify || scope.Kind == Models`) that drops the

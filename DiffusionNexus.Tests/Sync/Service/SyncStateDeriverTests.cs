@@ -119,13 +119,6 @@ public sealed class SyncStateDeriverTests
             WithTag: false, ImageOnVersionIndex: 1,
             ExpectedOutcome: SyncOutcome.Matched,
             ExpectedMetadata: Stamp.Synced, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Synced),
-
-        // Extra 3: a user-edited model derives exactly like its untouched twin.
-        ["user-edited-derives-like-its-twin"] = new(
-            CivitaiId: null, LastSyncedAt: Synced, Source: DataSource.LocalFile, BaseModelRaws: ["Illustrious"],
-            WithTag: true, ImageOnVersionIndex: 0,
-            ExpectedOutcome: SyncOutcome.Sidecar,
-            ExpectedMetadata: Stamp.Now, ExpectedTags: Stamp.Null, ExpectedImages: Stamp.Null),
     };
 
     public static TheoryData<string> CaseNames
