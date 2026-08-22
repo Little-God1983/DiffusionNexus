@@ -1434,9 +1434,20 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             return TileMetadataSyncResult.NotRun;
         }
 
+        // Discovery is left out — one tile is not a reason to rescan every LoRA source — but the
+        // thumbnail is in: "download metadata for this model" is, to the person pressing it, a
+        // request for the picture too. Both Force flags are set for the same reason: the press is
+        // an explicit re-fetch, so a stored "already checked" or "already failed" verdict must not
+        // make the button do nothing. Forcing thumbnails only retries failures, because selection
+        // still skips any image that already has bytes.
         var options = new SyncOptions(
-            new HashSet<SyncStepKind> { SyncStepKind.IdentifyModel, SyncStepKind.FetchTags, SyncStepKind.FetchImages },
-            ForceIdentify: true);
+            new HashSet<SyncStepKind>
+            {
+                SyncStepKind.IdentifyModel, SyncStepKind.FetchTags, SyncStepKind.FetchImages,
+                SyncStepKind.Thumbnails,
+            },
+            ForceIdentify: true,
+            ForceThumbnails: true);
 
         SyncPlan plan;
         SyncReport report;

@@ -303,10 +303,14 @@ public class LoraViewerViewModelSyncTests
         scope.ModelIds.Should().Equal(42);
         options!.ForceIdentify.Should().BeTrue(
             "the per-tile button is an explicit re-fetch request, so a stored 'already checked' verdict must not skip it");
+        options.ForceThumbnails.Should().BeTrue(
+            "same request, same reasoning: a stored failure verdict must not make the button do nothing. " +
+            "Selection still skips images that already have bytes, so forcing only retries failures");
         options.Steps.Should().BeEquivalentTo(new[]
         {
             SyncStepKind.IdentifyModel, SyncStepKind.FetchTags, SyncStepKind.FetchImages,
-        }, "one tile never triggers a library-wide discovery pass");
+            SyncStepKind.Thumbnails,
+        }, "one tile never triggers a library-wide discovery pass, but the thumbnail is half of what the user pressed the button for");
     }
 
     [Fact]
