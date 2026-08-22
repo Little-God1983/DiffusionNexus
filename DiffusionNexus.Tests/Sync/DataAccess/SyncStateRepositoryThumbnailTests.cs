@@ -360,6 +360,15 @@ public sealed class SyncStateRepositoryThumbnailTests : IDisposable
             "<has-thumbnail-flag>");
 
         withoutFlag.Should().NotContain("ThumbnailData");
+
+        // The same discipline applied to the two exclusions: they belong in the WHERE, where an
+        // excluded row costs nothing at all — no transfer, and no evaluation of the correlated
+        // LocalPath subquery. Filtering them out of the materialised list instead pulled every
+        // in-scope image row into the process first, twice per sync (plan pass, then execute).
+        captured.Should().Contain("user-thumbnail://%",
+            "the user-upload exclusion is a SQL LIKE, not a post-materialisation Where");
+        captured.Should().MatchRegex(@"trim\(""\w+""\.""Url""\) <> ''",
+            "the blank-URL exclusion is translated too, not evaluated in the CLR");
     }
 
     /// <summary>
