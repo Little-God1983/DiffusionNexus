@@ -169,6 +169,19 @@ public partial class ModelDetailViewModel : ViewModelBase
     private bool _isLoading;
 
     /// <summary>
+    /// Whether a library metadata sync is running somewhere else. Set by
+    /// <c>LoraViewerViewModel</c>, which owns the runs (R10).
+    /// </summary>
+    /// <remarks>
+    /// The sync service is single-flight: a second run throws rather than queueing. The button
+    /// therefore has to be off while one is going, or pressing it produces an exception message
+    /// about something the user had no way of knowing was in progress.
+    /// </remarks>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(DownloadMetadataCommand))]
+    private bool _isLibrarySyncRunning;
+
+    /// <summary>
     /// Status/error message.
     /// </summary>
     [ObservableProperty]
@@ -333,7 +346,8 @@ public partial class ModelDetailViewModel : ViewModelBase
     /// and persistence logic shared with the bulk "Download Metadata" flow): it hashes
     /// the LoRA file, looks it up on Civitai, persists the returned metadata, and then
     /// reloads this detail view so the new description/tags/images/versions appear.
-    /// Disabled while a load or fetch is already in flight.
+    /// Disabled while a load or fetch is already in flight, and while a library-wide sync is
+    /// running — the sync service admits one run at a time and refuses a second outright.
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanDownloadMetadata))]
     private void DownloadMetadata()
@@ -341,7 +355,7 @@ public partial class ModelDetailViewModel : ViewModelBase
         MetadataDownloadRequested?.Invoke(this, EventArgs.Empty);
     }
 
-    private bool CanDownloadMetadata() => !IsLoading;
+    private bool CanDownloadMetadata() => !IsLoading && !IsLibrarySyncRunning;
 
     /// <summary>
     /// Copies trigger words to clipboard.
@@ -679,7 +693,7 @@ public partial class ModelDetailViewModel : ViewModelBase
     /// <para>
     /// Only fetches the full <see cref="CivitaiModel"/> when a modelId is available, to get
     /// model-level fields (description, tags, license) — same call the "Download Metadata"
-    /// button uses via <c>UpdateModelFromCivitaiAsync</c> in <c>LoraViewerViewModel</c>.
+    /// button uses via <c>CivitaiMetadataApplier</c> in the library sync pipeline.
     /// </para>
     /// Uses a scoped <see cref="IUnitOfWork"/> to avoid DbContext conflicts.
     /// </summary>
@@ -836,7 +850,7 @@ public partial class ModelDetailViewModel : ViewModelBase
                 }
             }
 
-            // --- Version (same fields as UpdateModelFromCivitaiAsync) ---
+            // --- Version (same fields as CivitaiMetadataApplier writes) ---
 
             var version = new ModelVersion
             {
@@ -862,7 +876,7 @@ public partial class ModelDetailViewModel : ViewModelBase
                 version.TriggerWords.Add(new TriggerWord { Word = word, Order = order++ });
             }
 
-            // Images (same structure as UpdateModelFromCivitaiAsync)
+            // Images (same structure as CivitaiMetadataApplier writes)
             var sortOrder = 0;
             foreach (var civImage in bestVersion.Images)
             {

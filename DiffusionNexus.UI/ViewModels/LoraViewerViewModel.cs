@@ -1,20 +1,19 @@
 using System.Collections.ObjectModel;
-using System.Security.Cryptography;
 using System.Text.Json;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Civitai;
-using DiffusionNexus.Civitai.Models;
-using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Infrastructure;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.Service.Services.IO;
+using DiffusionNexus.Service.Services.Sync;
 using DiffusionNexus.UI.Models;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.CivitaiBrowser;
@@ -22,7 +21,6 @@ using DiffusionNexus.UI.Services.Lora.Sorting;
 using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.UI.ViewModels.CivitaiBrowser;
 using Microsoft.Extensions.DependencyInjection;
-using SkiaSharp;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -40,6 +38,23 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     private readonly ILoraUpdateChecker? _updateChecker;
 
     /// <summary>
+    /// The metadata sync pipeline (#521 WP2). The viewer plans a run, shows the outcome and
+    /// rebuilds its grid; selecting, hashing, calling Civitai and persisting all live in the
+    /// service, which is why this ViewModel no longer owns any sync phase of its own.
+    /// </summary>
+    private readonly ILibrarySyncService? _librarySync;
+
+    /// <summary>UI-thread marshalling seam (#437). Null only in the design-time ctor.</summary>
+    private readonly IUiScheduler? _uiScheduler;
+
+    /// <summary>
+    /// Scope factory for the fresh-<c>DbContext</c> reads (tile rebuild, API key, sorter
+    /// file list). Injected so those paths are reachable in tests; falls back to
+    /// <c>App.Services</c> exactly as the direct locator calls did.
+    /// </summary>
+    private readonly IServiceScopeFactory? _scopeFactory;
+
+    /// <summary>
     /// Cancels the in-flight update-check batch when the visible tile set changes
     /// (filter edits, refreshes, page navigation). A fresh token is issued
     /// every time a new batch starts.
@@ -48,6 +63,17 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
     /// <summary>Cancels the in-flight "Download Metadata" sync; null when idle.</summary>
     private CancellationTokenSource? _metadataSyncCts;
+
+    /// <summary>
+    /// True from the moment this ViewModel starts a run — bulk or per-tile — until it finishes.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="_metadataSyncCts"/> because the per-tile flow has no CTS of its
+    /// own, and separate from <c>ILibrarySyncService.IsRunning</c> because that only turns true
+    /// once <c>ExecuteAsync</c> is reached on a pool thread — the planning before it is already
+    /// work the user must not be able to start twice.
+    /// </remarks>
+    private bool _localSyncActive;
 
     /// <summary>
     /// Debounces search-text keystrokes. Every edit cancels the previous pending
@@ -173,6 +199,47 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     [ObservableProperty]
     private ModelDetailViewModel? _detailViewModel;
 
+    /// <summary>
+    /// Whether a metadata sync is running — this ViewModel's own, or anyone else's.
+    /// </summary>
+    /// <remarks>
+    /// The sync service is single-flight and throws on a second run rather than queueing it, so
+    /// both buttons that can start one are disabled while it is true (R10). Kept in step by
+    /// <see cref="RefreshSyncRunning"/> at every point a run starts or ends.
+    /// </remarks>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(DownloadMissingMetadataCommand))]
+    private bool _isSyncRunning;
+
+    /// <summary>
+    /// Re-reads the two sources of "a sync is running" and pushes the answer at the detail panel,
+    /// whose own button is the other way to start one.
+    /// </summary>
+    private void RefreshSyncRunning()
+    {
+        IsSyncRunning = SyncInFlight;
+        if (DetailViewModel is not null) DetailViewModel.IsLibrarySyncRunning = IsSyncRunning;
+    }
+
+    /// <summary>
+    /// The live answer to "is a run going?", read straight from its three sources rather than from
+    /// the observable mirror.
+    /// </summary>
+    /// <remarks>
+    /// One composite, used by both entry guards and by <see cref="RefreshSyncRunning"/> (F2). The
+    /// bulk guard used to ask only about its own CTS and the service's flag, and the service does
+    /// not raise that flag until <c>ExecuteAsync</c> — so a bulk press landing while a per-tile
+    /// fetch was still <i>planning</i> passed the guard and met the service's throw instead.
+    /// </remarks>
+    private bool SyncInFlight
+        => _localSyncActive || _metadataSyncCts is not null || (_librarySync?.IsRunning ?? false);
+
+    /// <summary>Keeps a detail panel opened mid-run from showing an enabled button.</summary>
+    partial void OnDetailViewModelChanged(ModelDetailViewModel? value)
+    {
+        if (value is not null) value.IsLibrarySyncRunning = IsSyncRunning;
+    }
+
     #endregion
 
     #region Collections
@@ -280,6 +347,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         _logger = null;
         _baseModelCatalog = null;
         _updateChecker = null;
+        _librarySync = null;
+        _uiScheduler = null;
+        _scopeFactory = null;
         UnknownBaseModelItem.SelectionChanged += OnBaseModelFilterChanged;
         BrowserViewModel = new CivitaiBrowserViewModel();
         SorterViewModel = new LoraSorterViewModel();
@@ -297,7 +367,10 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         ISecureStorage? secureStorage = null,
         IUnifiedLogger? logger = null,
         ICivitaiBaseModelCatalog? baseModelCatalog = null,
-        ILoraUpdateChecker? updateChecker = null)
+        ILoraUpdateChecker? updateChecker = null,
+        ILibrarySyncService? librarySync = null,
+        IUiScheduler? uiScheduler = null,
+        IServiceScopeFactory? scopeFactory = null)
     {
         _selectedSortOption = SortOptions[0];
         UnknownBaseModelItem.SelectionChanged += OnBaseModelFilterChanged;
@@ -308,6 +381,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         _logger = logger;
         _baseModelCatalog = baseModelCatalog;
         _updateChecker = updateChecker;
+        // Optional collaborators: injected by the DI factory, resolved from the locator only as
+        // a fallback so a hand-constructed viewer (tools, tests) still behaves like the real one.
+        _librarySync = librarySync ?? App.Services?.GetService<ILibrarySyncService>();
+        _uiScheduler = uiScheduler ?? App.Services?.GetService<IUiScheduler>();
+        _scopeFactory = scopeFactory ?? App.Services?.GetService<IServiceScopeFactory>();
 
         // Live-update the base-model filter whenever the catalog is force-refreshed
         // (e.g. from the "Update base-model filter" button in Settings). Both the
@@ -330,17 +408,16 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         // LoRA Sorter sub-tab. Same DB-backed source of truth as the Installed tab;
         // disk seams are the production implementations.
-        var scopeFactory = App.Services?.GetService<IServiceScopeFactory>();
-        SorterViewModel = scopeFactory is null
+        SorterViewModel = _scopeFactory is null
             ? new LoraSorterViewModel()
             : new LoraSorterViewModel(
                 _settingsService, _syncService, _logger,
-                new DbLocalPathUpdater(scopeFactory, _logger),
+                new DbLocalPathUpdater(_scopeFactory, _logger),
                 new SorterMetadataResolver(_civitaiClient, GetApiKeyForSorterAsync,
-                    SorterMetadataResolver.DefaultCacheDirectory, ComputeFullSha256, _logger),
+                    SorterMetadataResolver.DefaultCacheDirectory, FileHasher.Sha256Upper, _logger),
                 new FileOperations(),
                 DiskUtility.GetAvailableSpace,
-                ComputeFullSha256,
+                FileHasher.Sha256Upper,
                 File.Exists,
                 SortHistoryWriter.DefaultHistoryDirectory,
                 loadCachedFiles: LoadCachedFilesForSorterAsync);
@@ -634,112 +711,101 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     }
 
     /// <summary>
-    /// Download missing metadata from Civitai for models that were discovered locally.
-    /// Discovers new files first, then uses full-file SHA256 hash to find matching Civitai model versions.
-    /// Automatically re-fetches missing image data and downloads thumbnails afterward.
-    /// Heavy I/O runs on a background thread so the UI stays responsive.
+    /// Runs a full library metadata sync through <see cref="ILibrarySyncService"/>: plans the
+    /// work (discover new files, identify unknown ones, fetch tags and images), executes the
+    /// plan, then rebuilds the grid once from the database.
     /// </summary>
-    [RelayCommand]
+    /// <remarks>
+    /// The viewer owns none of the sync logic any more (#521 WP2) — no hashing, no Civitai
+    /// calls, no per-tile persistence. Everything the old phases did is a step in the service,
+    /// which records per-model state so a second run skips what has already been checked
+    /// instead of re-asking Civitai about the whole library. Thumbnails are not a step yet
+    /// (Plan B); on-screen tiles keep pulling their own preview on activation.
+    /// </remarks>
+    [RelayCommand(CanExecute = nameof(CanStartMetadataSync))]
     private async Task DownloadMissingMetadataAsync()
     {
-        if (_civitaiClient is null || _settingsService is null)
+        if (_librarySync is null)
         {
-            SyncStatus = "Civitai client not available.";
+            SyncStatus = "Library sync not available.";
             return;
         }
 
-        _metadataSyncCts = new CancellationTokenSource();
-        var ct = _metadataSyncCts.Token;
+        // Before the CTS is assigned, not after (R10). The service admits one run at a time and
+        // throws on the second; overwriting the field first would also have stranded the first
+        // run's token, so Cancel would then have cancelled nothing the user could see stop.
+        // CanExecute already greys the button out — this is the guard for every other route in
+        // (a keyboard binding, a test, a second window sharing the service).
+        if (SyncInFlight)
+        {
+            SyncStatus = AlreadyRunningStatus;
+            return;
+        }
+
+        var cts = new CancellationTokenSource();
+        _metadataSyncCts = cts;
+        _localSyncActive = true;
+        RefreshSyncRunning();
+
+        var ct = cts.Token;
         try
         {
             IsBusy = true;
             IsCancellable = true;
             BusyMessage = "Syncing with Civitai...";
+            SyncStatus = "Planning sync...";
 
-            // Get API key — use a fresh DI scope so we read the latest value
-            // from the database, avoiding stale EF Core tracked entities.
-            string? apiKey;
+            // The first plan after the upgrade also backfills a state row for every model that
+            // predates the table, which over a real library is the slowest thing this button ever
+            // does — and it happens before any progress is reported, so without a word the app looks
+            // hung. Two COUNT(*)s are a cheap way to know whether that is what is about to happen.
+            if (await Task.Run(() => HasPendingSyncStateBackfillAsync(ct), ct))
+                SyncStatus = "Preparing sync state — first run after update may take a moment…";
+
+            // Task.Run, not a bare await: SQLite has no true async, so the planning pass (the
+            // first-run state backfill plus every step's selection query) and the discovery scan
+            // both run to completion inline before anything yields — on the UI thread that means a
+            // frozen overlay and a dead Cancel button, which is exactly what the old phase code
+            // used a background thread to avoid. Every UI touch below the await hops back through
+            // PostToUi / InvokeOnUiAsync.
+            var plan = await Task.Run(() => _librarySync.PlanAsync(SyncScope.Library, SyncOptions.All, ct), ct);
+
+            // Correct only when the caller excluded discovery: a plan that still carries the
+            // Discover step always reports work, because nobody knows what a scan will find until
+            // it has run. The honest "nothing to do" verdict is the report's, below.
+            if (!plan.HasWork)
             {
-                using var keyScope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
-                var freshSettings = keyScope.ServiceProvider.GetRequiredService<IAppSettingsService>();
-                apiKey = await freshSettings.GetCivitaiApiKeyAsync();
+                SyncStatus = UpToDateStatus;
+                _logger?.Info(LogCategory.Network, "CivitaiSync", "Sync plan is empty — nothing to do");
+                return;
             }
 
+            // Plan B replaces this with a confirmation dialog showing the same numbers.
             _logger?.Info(LogCategory.Network, "CivitaiSync",
-                $"Starting metadata sync (API key: {(string.IsNullOrEmpty(apiKey) ? "NOT SET" : "configured")})");
+                $"Starting sync: {string.Join(" · ", plan.Steps.Select(s => $"{SyncReport.Label(s.Kind)} {s.Count}"))}");
 
-            // Per-LoRA trigger logging is intentionally suppressed for this path —
-            // a single batch entry is logged at the start so the log file isn't
-            // flooded with 10K identical "trigger=DownloadMetadataButton" lines.
-            _logger?.Debug(LogCategory.Network, "LoraUpdateChecker",
-                $"Update batch started (trigger={LoraUpdateTriggerSource.DownloadMetadataButton})");
+            var progress = new UiProgress<LibrarySyncProgress>(this, p =>
+                SyncStatus = $"{SyncReport.Label(p.Step)} [{p.Index}/{p.Total}] {p.CurrentItem}");
 
-            // ── Phase 0: Discover new files and rebuild tiles so all models are visible ──
-            // Without this, only previously loaded tiles are processed.
-            var tiles = await Task.Run(async () =>
-            {
-                Dispatcher.UIThread.Post(() => SyncStatus = "Discovering new files...");
-                await DiscoverNewFilesAsync();
-                await BackfillCivitaiModelPageIdAsync();
+            var report = await Task.Run(() => _librarySync.ExecuteAsync(plan, progress, ct), ct);
 
-                Dispatcher.UIThread.Post(() => SyncStatus = "Loading models from database...");
+            // One rebuild, at the end: the service wrote straight to the database, so the
+            // in-memory tiles are stale until they are re-projected from it.
+            //
+            // Inside Task.Run for the same reason the plan and the run are (R7): the await above
+            // resumes on the UI thread, and this reads every visible file row out of SQLite — which
+            // has no true async, so it runs inline and freezes the overlay it is meant to be
+            // dismissing. RebuildTilesFromDatabaseAsync marshals its own tile swap through
+            // InvokeOnUiAsync, so calling it from the pool is what it is built for.
+            //
+            // Deliberately WITHOUT the run's token (F1). Cancelling is not failing: the service
+            // stops cooperatively and returns a report for the models it did finish, and those are
+            // already committed — passing the by-then-signalled token here made Task.Run throw
+            // before the rebuild, so the work landed in the database and stayed invisible in the
+            // grid, and the report was swallowed by the cancellation catch below.
+            await Task.Run(RebuildTilesFromDatabaseAsync);
 
-                using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
-                var freshSyncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
-                // Issue #380: per-location fan-out (see RefreshAsync for the rationale).
-                var files = await freshSyncService.LoadCachedFilesAsync();
-                return BuildPerLocationTiles(files);
-            });
-
-            // Update UI with discovered tiles
-            foreach (var oldTile in AllTiles)
-            {
-                oldTile.Deleted -= OnTileDeleted;
-                oldTile.DetailRequested -= OnTileDetailRequested;
-            }
-
-            AllTiles.Clear();
-            foreach (var tile in tiles)
-            {
-                tile.Deleted += OnTileDeleted;
-                tile.DetailRequested += OnTileDetailRequested;
-                AllTiles.Add(tile);
-            }
-
-            TotalModelCount = AllTiles.Sum(t => t.ModelCount);
-            RebuildAvailableBaseModels();
-            ApplyFilters();
-
-            // ── Run sync phases (network + file I/O — awaits release the UI thread) ──
-            var statusParts = new List<string>();
-
-            // ── Phase 1: Sync metadata via Civitai API hash lookup (freshly discovered models) ──
-            // Must run before Phase 1b so the API gets first chance at providing rich metadata.
-            // Phase 1 already falls back to local sidecar files when the API returns 404.
-            await SyncMetadataPhaseAsync(apiKey, statusParts, ct);
-
-            // ── Phase 1b: Re-process historical LocalFile models with sidecar fallback ──
-            // Targets models synced before sidecar parsing was added (already have LastSyncedAt
-            // but still have placeholder BaseModelRaw). Phase 1 handles fresh models.
-            await ReprocessLocalFileModelsPhaseAsync(statusParts, ct);
-
-            // ── Phase 2: Re-fetch images for synced models that have no preview images ──
-            await RefetchMissingImagesPhaseAsync(apiKey, statusParts, ct);
-
-            // ── Phase 3: Backfill tags for models synced before tag persistence was added ──
-            await BackfillMissingTagsPhaseAsync(apiKey, statusParts, ct);
-
-            // ── Rebuild tiles so Phase 4 operates on fresh DB-backed tiles ──
-            await RebuildTilesFromDatabaseAsync();
-
-            // ── Phase 4: Download thumbnails for tiles still showing "No Preview" ──
-            await DownloadMissingThumbnailsPhaseAsync(statusParts, ct);
-
-            // Final status
-            if (statusParts.Count == 0)
-                statusParts.Add("Everything up to date");
-
-            var statusText = string.Join(" · ", statusParts);
+            var statusText = DescribeOutcome(report);
             _logger?.Info(LogCategory.Network, "CivitaiSync", statusText);
             SyncStatus = statusText;
         }
@@ -758,10 +824,19 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             IsBusy = false;
             IsCancellable = false;
             BusyMessage = null;
-            _metadataSyncCts?.Dispose();
-            _metadataSyncCts = null;
+
+            // Only the CTS this call created: clearing the field unconditionally would let a
+            // late-finishing run dispose a newer run's token source out from under it.
+            cts.Dispose();
+            if (ReferenceEquals(_metadataSyncCts, cts)) _metadataSyncCts = null;
+
+            _localSyncActive = false;
+            RefreshSyncRunning();
         }
     }
+
+    /// <summary>Both buttons that can start a run are off while one is running — the service takes one at a time.</summary>
+    private bool CanStartMetadataSync() => !IsSyncRunning;
 
     /// <summary>
     /// Requests cancellation of the in-flight metadata sync. Safe no-op when idle.
@@ -900,16 +975,101 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             .ToList();
     }
 
+    /// <summary>
+    /// The scope factory for fresh-<c>DbContext</c> reads: the injected one when present,
+    /// otherwise the locator — same failure mode as before when neither exists.
+    /// </summary>
+    private IServiceScopeFactory RequireScopeFactory()
+        => _scopeFactory ?? App.Services!.GetRequiredService<IServiceScopeFactory>();
+
+    /// <summary>Status shown when a run had genuinely nothing left to do.</summary>
+    private const string UpToDateStatus = "Library is up to date — nothing to do";
+
+    /// <summary>
+    /// Status shown when a second run is asked for while one is going. The service refuses it, so
+    /// this says why rather than letting an exception message stand in for an explanation (R10).
+    /// </summary>
+    private const string AlreadyRunningStatus = "A metadata sync is already running.";
+
+    /// <summary>
+    /// Whether models are still waiting for a <c>ModelSyncState</c> row — i.e. whether the next
+    /// plan will pay for the one-time backfill. Two counts rather than a new repository seam: the
+    /// answer only decides a status line, and it is wrong in the harmless direction (a model deleted
+    /// between the counts) rather than in the direction that would skip work.
+    /// </summary>
+    private async Task<bool> HasPendingSyncStateBackfillAsync(CancellationToken ct)
+    {
+        using var scope = RequireScopeFactory().CreateScope();
+        var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var models = await unitOfWork.Models.CountAsync(_ => true, ct);
+        if (models == 0) return false;
+
+        return await unitOfWork.SyncStates.CountAsync(_ => true, ct) < models;
+    }
+
+    /// <summary>
+    /// The status line for a finished run. A run that discovered no new file and had nothing
+    /// planned in any step did no work at all, and <see cref="SyncReport.Summary"/> would report
+    /// that as "Discovered 0" — technically true, and useless to read.
+    /// </summary>
+    /// <remarks>
+    /// Items that failed with an exception no step claimed are called out separately (R5). They
+    /// are bugs, not "Civitai said no", and the run no longer dies on them — so unless the status
+    /// line says so, the only trace they leave is a log entry nobody opens.
+    /// </remarks>
+    private static string DescribeOutcome(SyncReport report)
+    {
+        if (report.NewFilesDiscovered == 0 && report.Steps.All(s => s.Planned == 0))
+            return UpToDateStatus;
+
+        var status = report.Failures.Count > 0
+            ? $"{report.Summary} · {report.Failures.Count} failed"
+            : report.Summary;
+
+        if (report.UnexpectedFailures > 0)
+        {
+            var item = report.UnexpectedFailures == 1 ? "item" : "items";
+            status += $" · {report.UnexpectedFailures} {item} failed unexpectedly (see log)";
+        }
+
+        return status;
+    }
+
+    /// <summary>
+    /// Progress sink that marshals through this ViewModel's UI-thread seam — deliberately not
+    /// <see cref="Progress{T}"/>, which captures the <c>SynchronizationContext</c> at construction
+    /// and would add a second, invisible hop on top of the one the ViewModel already owns (and in
+    /// a unit test, with no context to capture, would deliver on the thread pool instead).
+    /// </summary>
+    private sealed class UiProgress<T>(LoraViewerViewModel owner, Action<T> onReport) : IProgress<T>
+    {
+        public void Report(T value) => owner.PostToUi(() => onReport(value));
+    }
+
+    /// <summary>Fire-and-forget hop to the UI thread, through the scheduler seam when injected.</summary>
+    private void PostToUi(Action action)
+    {
+        if (_uiScheduler is not null) _uiScheduler.Post(action);
+        else Dispatcher.UIThread.Post(action);
+    }
+
+    /// <summary>Awaitable hop to the UI thread, through the scheduler seam when injected.</summary>
+    private Task InvokeOnUiAsync(Action action)
+        => _uiScheduler is not null
+            ? _uiScheduler.InvokeAsync(action)
+            : Dispatcher.UIThread.InvokeAsync(action).GetTask();
+
     private async Task RebuildTilesFromDatabaseAsync()
     {
-        using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+        using var scope = RequireScopeFactory().CreateScope();
         var syncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
 
         // Issue #380: per-location fan-out — one tile per (Model, LoRA-source).
         var files = await syncService.LoadCachedFilesAsync();
         var tiles = BuildPerLocationTiles(files);
 
-        await Dispatcher.UIThread.InvokeAsync(() =>
+        await InvokeOnUiAsync(() =>
         {
             // Unsubscribe from old tiles
             foreach (var oldTile in AllTiles)
@@ -934,394 +1094,10 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     }
 
     /// <summary>
-    /// Phase 1b: Re-process historical LocalFile models that were synced before sidecar parsing was added.
-    /// Targets models with Source=LocalFile, no CivitaiId, placeholder BaseModelRaw, AND LastSyncedAt
-    /// already set (meaning Phase 1 already ran on them in a previous session but found no API match).
-    /// Fresh models (LastSyncedAt=null) are handled by Phase 1 which includes its own sidecar fallback.
-    /// </summary>
-    private async Task ReprocessLocalFileModelsPhaseAsync(List<string> statusParts, CancellationToken ct)
-    {
-        var tilesNeedingReprocess = AllTiles
-            .Where(t => t.ModelEntity is { CivitaiId: null, Source: DataSource.LocalFile, LastSyncedAt: not null }
-                        && IsPlaceholderBaseModel(t.SelectedVersion?.BaseModelRaw))
-            .ToList();
-
-        if (tilesNeedingReprocess.Count == 0)
-        {
-            _logger?.Debug(LogCategory.General, "CivitaiSync",
-                "No historical LocalFile models with placeholder metadata — skipping Phase 1b");
-            return;
-        }
-
-        _logger?.Info(LogCategory.General, "CivitaiSync",
-            $"Phase 1b: {tilesNeedingReprocess.Count} historical LocalFile models need sidecar re-processing");
-
-        var reprocessed = 0;
-        var skipped = 0;
-
-        for (var i = 0; i < tilesNeedingReprocess.Count; i++)
-        {
-            ct.ThrowIfCancellationRequested();
-            var tile = tilesNeedingReprocess[i];
-            var file = tile.SelectedVersion?.PrimaryFile;
-            var localPath = file?.LocalPath;
-
-            if (string.IsNullOrEmpty(localPath) || !File.Exists(localPath))
-            {
-                skipped++;
-                continue;
-            }
-
-            Dispatcher.UIThread.Post(() =>
-                SyncStatus = $"[{i + 1}/{tilesNeedingReprocess.Count}] Re-reading sidecar for {tile.DisplayName}...");
-
-            try
-            {
-                var applied = await TryApplyLocalMetadataFallbackAsync(tile, localPath);
-                if (applied) reprocessed++;
-                else skipped++;
-            }
-            catch (Exception ex)
-            {
-                _logger?.Warn(LogCategory.General, "CivitaiSync",
-                    $"Sidecar re-process failed for '{tile.DisplayName}': {ex.Message}");
-                skipped++;
-            }
-        }
-
-        if (reprocessed > 0)
-            statusParts.Add($"Sidecar re-processed: {reprocessed}");
-    }
-
-    /// <summary>
     /// Returns true if the base model string is a placeholder value ('???' or null/empty).
     /// </summary>
     private static bool IsPlaceholderBaseModel(string? baseModel)
         => string.IsNullOrWhiteSpace(baseModel) || baseModel == "???";
-
-    /// <summary>
-    /// Phase 1: Sync metadata for models that have never been synced.
-    /// </summary>
-    private async Task SyncMetadataPhaseAsync(string? apiKey, List<string> statusParts, CancellationToken ct)
-    {
-        var tilesNeedingMetadata = AllTiles
-            .Where(t => t.ModelEntity is { CivitaiId: null, LastSyncedAt: null }
-                        && !(t.ModelEntity?.IsUserEdited ?? false))
-            .ToList();
-
-        if (tilesNeedingMetadata.Count == 0)
-        {
-            _logger?.Debug(LogCategory.Network, "CivitaiSync", "All models already have metadata — skipping Phase 1");
-            return;
-        }
-
-        _logger?.Info(LogCategory.Network, "CivitaiSync",
-            $"Phase 1: {tilesNeedingMetadata.Count} models need metadata");
-
-        var updated = 0;
-        var notFound = 0;
-        var localFallback = 0;
-        var skipped = 0;
-        var errors = 0;
-
-        for (var i = 0; i < tilesNeedingMetadata.Count; i++)
-        {
-            ct.ThrowIfCancellationRequested();
-            var tile = tilesNeedingMetadata[i];
-            var file = tile.SelectedVersion?.PrimaryFile;
-            if (file is null)
-            {
-                _logger?.Debug(LogCategory.Network, "CivitaiSync",
-                    $"SKIP [{i + 1}/{tilesNeedingMetadata.Count}] {tile.DisplayName}: no primary file");
-                skipped++;
-                continue;
-            }
-
-            var localPath = file.LocalPath;
-            if (string.IsNullOrEmpty(localPath) || !File.Exists(localPath))
-            {
-                _logger?.Debug(LogCategory.Network, "CivitaiSync",
-                    $"SKIP [{i + 1}/{tilesNeedingMetadata.Count}] {tile.DisplayName}: file not found at {localPath}");
-                skipped++;
-                continue;
-            }
-
-            Dispatcher.UIThread.Post(() =>
-                SyncStatus = $"[{i + 1}/{tilesNeedingMetadata.Count}] Hashing {tile.DisplayName}...");
-
-            try
-            {
-                // Compute full-file SHA256 — same method as the proven old ComputeSHA256
-                var hash = await Task.Run(() => ComputeFullSha256(localPath));
-
-                _logger?.Info(LogCategory.Network, "CivitaiSync",
-                    $"[{i + 1}/{tilesNeedingMetadata.Count}] {file.FileName}",
-                    $"SHA256: {hash}\nPath: {localPath}\nURL: https://civitai.com/api/v1/model-versions/by-hash/{hash}");
-
-                Dispatcher.UIThread.Post(() =>
-                    SyncStatus = $"[{i + 1}/{tilesNeedingMetadata.Count}] Looking up {tile.DisplayName}...");
-
-                // Send API key — authenticated requests get higher rate limits
-                var civitaiVersion = await _civitaiClient!.GetModelVersionByHashAsync(hash, apiKey);
-                if (civitaiVersion is null)
-                {
-                    _logger?.Warn(LogCategory.Network, "CivitaiSync",
-                        $"NOT FOUND [{i + 1}/{tilesNeedingMetadata.Count}] {file.FileName}",
-                        $"Hash {hash} returned 404 from Civitai");
-                    notFound++;
-
-                    // Fallback: try to read local .civitai.info / .json metadata files
-                    var localFallbackApplied = await TryApplyLocalMetadataFallbackAsync(tile, localPath);
-                    if (localFallbackApplied)
-                    {
-                        _logger?.Info(LogCategory.Network, "CivitaiSync",
-                            $"LOCAL FALLBACK [{i + 1}/{tilesNeedingMetadata.Count}] {file.FileName}",
-                            "Applied metadata from local .civitai.info / .json file");
-                        localFallback++;
-                    }
-
-                    // Mark as synced so this model is not retried on every run
-                    await MarkModelSyncedAsync(tile.ModelEntity);
-                    continue;
-                }
-
-                _logger?.Info(LogCategory.Network, "CivitaiSync",
-                    $"MATCHED [{i + 1}/{tilesNeedingMetadata.Count}] {file.FileName}",
-                    $"→ Model {civitaiVersion.ModelId}, Version {civitaiVersion.Id} ({civitaiVersion.Name})\n" +
-                    $"  Base: {civitaiVersion.BaseModel}, Images: {civitaiVersion.Images.Count}, Files: {civitaiVersion.Files.Count}");
-
-                // Update model entity with Civitai data
-                await UpdateModelFromCivitaiAsync(tile, civitaiVersion, apiKey);
-                updated++;
-
-                _logger?.Info(LogCategory.Network, "CivitaiSync",
-                    $"SAVED [{i + 1}/{tilesNeedingMetadata.Count}] {tile.DisplayName} → DB updated");
-
-                Dispatcher.UIThread.Post(() =>
-                    SyncStatus = $"[{i + 1}/{tilesNeedingMetadata.Count}] ✓ {tile.DisplayName} ({updated} updated)");
-            }
-            catch (HttpRequestException ex)
-            {
-                _logger?.Error(LogCategory.Network, "CivitaiSync",
-                    $"HTTP ERROR [{i + 1}/{tilesNeedingMetadata.Count}] {tile.DisplayName}: " +
-                    $"Status={ex.StatusCode}, {ex.Message}", ex);
-                errors++;
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(LogCategory.Network, "CivitaiSync",
-                    $"ERROR [{i + 1}/{tilesNeedingMetadata.Count}] {tile.DisplayName}: {ex.Message}", ex);
-                errors++;
-            }
-
-            // Civitai rate limit: ~2 requests/sec for authenticated, less for anonymous.
-            // The CivitaiClient handles 429 retries internally, but we still pace requests.
-            await Task.Delay(1500, ct);
-        }
-
-        var parts = new List<string>();
-        if (updated > 0) parts.Add($"{updated} updated");
-        if (localFallback > 0) parts.Add($"{localFallback} from local files");
-        if (notFound > 0) parts.Add($"{notFound} not on Civitai");
-        if (errors > 0) parts.Add($"{errors} errors");
-        if (skipped > 0) parts.Add($"{skipped} skipped");
-        statusParts.Add($"Metadata: {string.Join(", ", parts)}");
-    }
-
-    /// <summary>
-    /// Phase 2: Re-fetch image data from Civitai for models that were synced but have no preview images.
-    /// This happens when the initial sync didn't receive image data (empty images array from the API).
-    /// </summary>
-    private async Task RefetchMissingImagesPhaseAsync(string? apiKey, List<string> statusParts, CancellationToken ct)
-    {
-        var tilesNeedingImages = AllTiles
-            .Where(t => t.IsImageDataMissing)
-            .ToList();
-
-        if (tilesNeedingImages.Count == 0)
-        {
-            _logger?.Debug(LogCategory.Network, "CivitaiSync", "No synced models missing images — skipping Phase 2");
-            return;
-        }
-
-        _logger?.Info(LogCategory.Network, "CivitaiSync",
-            $"Phase 2: {tilesNeedingImages.Count} synced models have no preview images, re-fetching from Civitai");
-
-        var fetched = 0;
-        var fetchErrors = 0;
-
-        for (var i = 0; i < tilesNeedingImages.Count; i++)
-        {
-            ct.ThrowIfCancellationRequested();
-            var tile = tilesNeedingImages[i];
-            var versionCivitaiId = tile.SelectedVersion?.CivitaiId;
-            if (versionCivitaiId is null) continue;
-
-            Dispatcher.UIThread.Post(() =>
-                SyncStatus = $"Re-fetching images [{i + 1}/{tilesNeedingImages.Count}] {tile.DisplayName}...");
-
-            try
-            {
-                var civitaiVersion = await _civitaiClient!.GetModelVersionAsync(versionCivitaiId.Value, apiKey);
-                if (civitaiVersion is not null && civitaiVersion.Images.Count > 0)
-                {
-                    _logger?.Info(LogCategory.Network, "CivitaiSync",
-                        $"Re-fetched {civitaiVersion.Images.Count} images for '{tile.DisplayName}'");
-
-                    await UpdateModelFromCivitaiAsync(tile, civitaiVersion, apiKey);
-                    fetched++;
-                }
-                else
-                {
-                    _logger?.Debug(LogCategory.Network, "CivitaiSync",
-                        $"No images available for '{tile.DisplayName}' on Civitai");
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(LogCategory.Network, "CivitaiSync",
-                    $"Failed to re-fetch images for '{tile.DisplayName}': {ex.Message}", ex);
-                fetchErrors++;
-            }
-
-            await Task.Delay(1500, ct);
-        }
-
-        if (fetched > 0 || fetchErrors > 0)
-        {
-            var part = $"Images re-fetched: {fetched}";
-            if (fetchErrors > 0) part += $", {fetchErrors} errors";
-            statusParts.Add(part);
-        }
-    }
-
-    /// <summary>
-    /// Phase 3: Backfill tags for models that were synced before tag persistence was added.
-    /// Uses the existing CivitaiId to fetch from Civitai — no file hashing needed.
-    /// Once all models have tags this phase becomes a no-op.
-    /// </summary>
-    private async Task BackfillMissingTagsPhaseAsync(string? apiKey, List<string> statusParts, CancellationToken ct)
-    {
-        var tilesNeedingTags = AllTiles
-            .Where(t => t.ModelEntity?.CivitaiId is not null and not 0
-                        && t.TagNames.Count == 0
-                        && t.SelectedVersion?.CivitaiId is not null
-                        && !(t.ModelEntity?.IsUserEdited ?? false))
-            .ToList();
-
-        if (tilesNeedingTags.Count == 0)
-        {
-            _logger?.Debug(LogCategory.Network, "CivitaiSync",
-                "All synced models already have tags — skipping Phase 3");
-            return;
-        }
-
-        _logger?.Info(LogCategory.Network, "CivitaiSync",
-            $"Phase 3: {tilesNeedingTags.Count} synced models need tag backfill");
-
-        var backfilled = 0;
-        var errors = 0;
-
-        for (var i = 0; i < tilesNeedingTags.Count; i++)
-        {
-            ct.ThrowIfCancellationRequested();
-            var tile = tilesNeedingTags[i];
-            var versionCivitaiId = tile.SelectedVersion!.CivitaiId!.Value;
-
-            Dispatcher.UIThread.Post(() =>
-                SyncStatus = $"Backfilling tags [{i + 1}/{tilesNeedingTags.Count}] {tile.DisplayName}...");
-
-            try
-            {
-                var civitaiVersion = await _civitaiClient!.GetModelVersionAsync(versionCivitaiId, apiKey);
-                if (civitaiVersion is not null)
-                {
-                    await UpdateModelFromCivitaiAsync(tile, civitaiVersion, apiKey);
-                    backfilled++;
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(LogCategory.Network, "CivitaiSync",
-                    $"Failed to backfill tags for '{tile.DisplayName}': {ex.Message}", ex);
-                errors++;
-            }
-
-            // Civitai rate limit pacing
-            await Task.Delay(1500, ct);
-        }
-
-        if (backfilled > 0 || errors > 0)
-        {
-            var part = $"Tags backfilled: {backfilled}";
-            if (errors > 0) part += $", {errors} errors";
-            statusParts.Add(part);
-        }
-    }
-
-    /// <summary>
-    /// Phase 4: Download thumbnails for tiles still showing "No Preview" that have image URLs.
-    /// </summary>
-    private async Task DownloadMissingThumbnailsPhaseAsync(List<string> statusParts, CancellationToken ct)
-    {
-        var tilesNeedingThumbs = AllTiles
-            .Where(t => t.IsThumbnailMissing)
-            .ToList();
-
-        if (tilesNeedingThumbs.Count == 0)
-        {
-            _logger?.Debug(LogCategory.General, "CivitaiSync", "No tiles with downloadable but missing thumbnails — skipping Phase 4");
-            return;
-        }
-
-        _logger?.Info(LogCategory.General, "CivitaiSync",
-            $"Phase 4: {tilesNeedingThumbs.Count} tiles need thumbnail download");
-
-        var thumbSuccess = 0;
-        var thumbFailed = 0;
-
-        for (var i = 0; i < tilesNeedingThumbs.Count; i++)
-        {
-            ct.ThrowIfCancellationRequested();
-            var tile = tilesNeedingThumbs[i];
-            Dispatcher.UIThread.Post(() =>
-                SyncStatus = $"Downloading thumbnail [{i + 1}/{tilesNeedingThumbs.Count}] {tile.DisplayName}...");
-
-            try
-            {
-                await tile.TryDownloadMissingThumbnailAsync();
-
-                if (!tile.IsThumbnailMissing)
-                    thumbSuccess++;
-                else
-                    thumbFailed++;
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(LogCategory.General, "CivitaiSync",
-                    $"Failed thumbnail for '{tile.DisplayName}': {ex.Message}", ex);
-                thumbFailed++;
-            }
-
-            await Task.Delay(500, ct);
-        }
-
-        var thumbPart = $"Thumbnails: {thumbSuccess} downloaded";
-        if (thumbFailed > 0) thumbPart += $", {thumbFailed} failed";
-        statusParts.Add(thumbPart);
-    }
-
-    /// <summary>
-    /// Computes the full-file SHA256 hash for Civitai API lookup.
-    /// Uses the exact same approach as the proven old LoraMetadataDownloadService.ComputeSHA256.
-    /// </summary>
-    private static string ComputeFullSha256(string filePath)
-    {
-        using var stream = File.OpenRead(filePath);
-        using var sha256 = SHA256.Create();
-        var hash = sha256.ComputeHash(stream);
-        return Convert.ToHexStringLower(hash);
-    }
 
     /// <summary>
     /// Loads the installed-file rows for the LoRA Sorter from a fresh DI scope, the same pattern
@@ -1332,9 +1108,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// "A second operation was started on this context instance before a previous operation
     /// completed" on a big library.
     /// </summary>
-    private static async Task<IReadOnlyList<InstalledModelFile>> LoadCachedFilesForSorterAsync(CancellationToken ct)
+    private async Task<IReadOnlyList<InstalledModelFile>> LoadCachedFilesForSorterAsync(CancellationToken ct)
     {
-        using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+        using var scope = RequireScopeFactory().CreateScope();
         var freshSyncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
         return await freshSyncService.LoadCachedFilesAsync(ct);
     }
@@ -1347,666 +1123,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// </summary>
     private async Task<string?> GetApiKeyForSorterAsync()
     {
-        using var keyScope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+        using var keyScope = RequireScopeFactory().CreateScope();
         var freshSettings = keyScope.ServiceProvider.GetRequiredService<IAppSettingsService>();
         return await freshSettings.GetCivitaiApiKeyAsync();
-    }
-
-    /// <summary>
-    /// Marks a model as synced (sets LastSyncedAt) so it is not retried on subsequent runs.
-    /// Used when the hash lookup returns 404 or the CivitaiId cannot be assigned.
-    /// </summary>
-    private static async Task MarkModelSyncedAsync(Model? model)
-    {
-        if (model is null) return;
-
-        try
-        {
-            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
-            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-            var dbModel = await unitOfWork.Models.GetByIdAsync(model.Id);
-            if (dbModel is not null)
-            {
-                dbModel.LastSyncedAt = DateTimeOffset.UtcNow;
-                await unitOfWork.SaveChangesAsync();
-            }
-        }
-        catch (Exception ex)
-        {
-            Serilog.Log.Warning(ex, "Failed to mark model {Id} as synced", model.Id);
-        }
-    }
-
-    /// <summary>
-    /// Fallback: reads local .civitai.info or .json metadata files next to the safetensors file
-    /// and applies the discovered metadata to the model entity in the database.
-    /// Also discovers local preview images (same base name, image extension) and stores
-    /// them as thumbnail BLOBs so tiles show a preview without Civitai.
-    /// <para>
-    /// Two sidecar formats are supported:
-    /// <list type="bullet">
-    ///   <item><c>.civitai.info</c> — version-level Civitai response (top-level: id, modelId, baseModel, trainedWords, model{}, images[], files[])</item>
-    ///   <item><c>.json</c> — model-level Civitai response (top-level: id, name, type, nsfw, modelVersions[]) OR simple metadata (sd version, tags)</item>
-    /// </list>
-    /// </para>
-    /// </summary>
-    /// <returns>True if any local metadata was found and applied.</returns>
-    private async Task<bool> TryApplyLocalMetadataFallbackAsync(ModelTileViewModel tile, string localPath)
-    {
-        try
-        {
-            var fileInfo = new FileInfo(localPath);
-            var directory = fileInfo.Directory;
-            if (directory is null || !directory.Exists) return false;
-
-            var baseName = Path.GetFileNameWithoutExtension(fileInfo.Name);
-
-            // Look for .civitai.info or .json sidecar files
-            var civitaiInfoFile = directory.GetFiles($"{baseName}.civitai.info").FirstOrDefault();
-            var jsonFile = directory.GetFiles($"{baseName}.json").FirstOrDefault();
-
-            if (civitaiInfoFile is null && jsonFile is null)
-            {
-                // No sidecar metadata — still try local thumbnail
-                var thumbnailApplied = await TryApplyLocalThumbnailAsync(tile, directory, baseName);
-                return thumbnailApplied;
-            }
-
-            // Parse the sidecar file — prefer .civitai.info (richer version-level data)
-            var metadataFile = civitaiInfoFile ?? jsonFile!;
-            var isCivitaiInfoFormat = civitaiInfoFile is not null;
-            var json = await File.ReadAllTextAsync(metadataFile.FullName);
-            using var doc = System.Text.Json.JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            // Use a fresh DI scope for DB writes
-            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
-            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-
-            var model = tile.ModelEntity;
-            if (model is null) return false;
-
-            // Load ONLY the target model — not the entire database
-            var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
-            if (dbModel is null) return false;
-
-            var dirty = false;
-
-            // Locate the DB version that owns the file at localPath
-            var dbVersion = dbModel.Versions.FirstOrDefault(v =>
-                v.Files.Any(f => string.Equals(f.LocalPath, localPath, StringComparison.OrdinalIgnoreCase)));
-
-            if (isCivitaiInfoFormat)
-            {
-                dirty = await ApplyCivitaiInfoFormatAsync(root, dbModel, dbVersion, unitOfWork.Models, localPath);
-            }
-            else
-            {
-                // .json may be model-level (has "modelVersions") or simple metadata (has "sd version")
-                dirty = root.TryGetProperty("modelVersions", out _)
-                    ? await ApplyModelLevelJsonFormatAsync(root, dbModel, dbVersion, unitOfWork.Models, localPath)
-                    : ApplySimpleJsonFormat(root, dbModel, dbVersion);
-            }
-
-            // Always mark source and sync time
-            dbModel.Source = DataSource.LocalFile;
-            dbModel.LastSyncedAt = DateTimeOffset.UtcNow;
-            dirty = true;
-
-            if (dirty)
-            {
-                await unitOfWork.SaveChangesAsync();
-
-                // Reload ONLY this model after save
-                var refreshedModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
-                if (refreshedModel is not null)
-                {
-                    await Dispatcher.UIThread.InvokeAsync(() => tile.RefreshModelData(refreshedModel));
-                }
-            }
-
-            // Try to find and apply a local thumbnail image
-            await TryApplyLocalThumbnailAsync(tile, directory, baseName);
-
-            return dirty;
-        }
-        catch (Exception ex)
-        {
-            _logger?.Warn(LogCategory.General, "LocalFallback",
-                $"Failed to read local metadata for '{tile.DisplayName}': {ex.Message}");
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Applies metadata from a .civitai.info sidecar (version-level Civitai response).
-    /// Extracts: model name, NSFW, modelId → CivitaiId/CivitaiModelPageId,
-    /// version id → CivitaiId, baseModel, trainedWords, image URLs, file hashes.
-    /// </summary>
-    private async Task<bool> ApplyCivitaiInfoFormatAsync(
-        System.Text.Json.JsonElement root,
-        Model dbModel,
-        ModelVersion? dbVersion,
-        IModelRepository modelRepo,
-        string localPath)
-    {
-        var dirty = false;
-
-        // ── Model-level fields from nested "model" object ──
-        if (root.TryGetProperty("model", out var modelProp))
-        {
-            if (modelProp.TryGetProperty("name", out var name) && name.GetString() is { } nameStr)
-            {
-                dbModel.Name = nameStr;
-                dirty = true;
-            }
-
-            if (modelProp.TryGetProperty("nsfw", out var nsfw)
-                && nsfw.ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False)
-            {
-                dbModel.IsNsfw = nsfw.GetBoolean();
-                dirty = true;
-            }
-        }
-
-        // ── CivitaiId / CivitaiModelPageId from "modelId" ──
-        if (root.TryGetProperty("modelId", out var modelIdProp) && modelIdProp.TryGetInt32(out var civitaiModelId))
-        {
-            dbModel.CivitaiModelPageId = civitaiModelId;
-
-            var civitaiIdTaken = await modelRepo.IsCivitaiIdTakenAsync(civitaiModelId, dbModel.Id);
-            if (!civitaiIdTaken)
-            {
-                dbModel.CivitaiId = civitaiModelId;
-            }
-
-            dirty = true;
-        }
-
-        // ── Version-level fields ──
-        if (dbVersion is not null)
-        {
-            // Version CivitaiId from top-level "id"
-            if (root.TryGetProperty("id", out var versionIdProp) && versionIdProp.TryGetInt32(out var civitaiVersionId))
-            {
-                var versionIdTaken = await modelRepo.IsVersionCivitaiIdTakenAsync(civitaiVersionId, dbVersion.Id);
-                if (!versionIdTaken)
-                {
-                    dbVersion.CivitaiId = civitaiVersionId;
-                    dirty = true;
-                }
-            }
-
-            // Version name
-            if (root.TryGetProperty("name", out var vName) && vName.GetString() is { } vNameStr)
-            {
-                dbVersion.Name = vNameStr;
-                dirty = true;
-            }
-
-            // Base model
-            if (root.TryGetProperty("baseModel", out var baseModel) && baseModel.GetString() is { } baseModelStr)
-            {
-                dbVersion.BaseModelRaw = baseModelStr;
-                dirty = true;
-            }
-
-            // Trained words / trigger words
-            if (root.TryGetProperty("trainedWords", out var trained) && trained.ValueKind == System.Text.Json.JsonValueKind.Array)
-            {
-                dbVersion.TriggerWords.Clear();
-                var order = 0;
-                foreach (var wordElement in trained.EnumerateArray())
-                {
-                    if (wordElement.ValueKind == System.Text.Json.JsonValueKind.String && wordElement.GetString() is { } word)
-                    {
-                        dbVersion.TriggerWords.Add(new TriggerWord { Word = word, Order = order++ });
-                        dirty = true;
-                    }
-                }
-            }
-
-            // Download URL
-            if (root.TryGetProperty("downloadUrl", out var dlUrl) && dlUrl.GetString() is { } dlUrlStr)
-            {
-                dbVersion.DownloadUrl = dlUrlStr;
-                dirty = true;
-            }
-
-            // ── Image URLs from "images" array ──
-            if (root.TryGetProperty("images", out var images) && images.ValueKind == System.Text.Json.JsonValueKind.Array)
-            {
-                dirty |= ApplyImagesFromJson(dbVersion, images);
-            }
-
-            // ── File hashes from "files" array ──
-            if (root.TryGetProperty("files", out var files) && files.ValueKind == System.Text.Json.JsonValueKind.Array)
-            {
-                dirty |= ApplyFileHashesFromJson(dbVersion, files, localPath);
-            }
-        }
-
-        return dirty;
-    }
-
-    /// <summary>
-    /// Applies metadata from a .json sidecar that is a model-level Civitai response
-    /// (has top-level id, name, type, nsfw, modelVersions[]).
-    /// Finds the matching version by filename in the modelVersions array.
-    /// </summary>
-    private async Task<bool> ApplyModelLevelJsonFormatAsync(
-        System.Text.Json.JsonElement root,
-        Model dbModel,
-        ModelVersion? dbVersion,
-        IModelRepository modelRepo,
-        string localPath)
-    {
-        var dirty = false;
-        var localFileName = Path.GetFileName(localPath);
-
-        // ── Model-level fields ──
-        if (root.TryGetProperty("name", out var name) && name.GetString() is { } nameStr)
-        {
-            dbModel.Name = nameStr;
-            dirty = true;
-        }
-
-        if (root.TryGetProperty("nsfw", out var nsfw)
-            && nsfw.ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False)
-        {
-            dbModel.IsNsfw = nsfw.GetBoolean();
-            dirty = true;
-        }
-
-        // CivitaiId / CivitaiModelPageId from top-level "id"
-        if (root.TryGetProperty("id", out var modelIdProp) && modelIdProp.TryGetInt32(out var civitaiModelId))
-        {
-            dbModel.CivitaiModelPageId = civitaiModelId;
-
-            var civitaiIdTaken = await modelRepo.IsCivitaiIdTakenAsync(civitaiModelId, dbModel.Id);
-            if (!civitaiIdTaken)
-            {
-                dbModel.CivitaiId = civitaiModelId;
-            }
-
-            dirty = true;
-        }
-
-        // ── Find the matching version in modelVersions[] by filename ──
-        if (dbVersion is not null
-            && root.TryGetProperty("modelVersions", out var versions)
-            && versions.ValueKind == System.Text.Json.JsonValueKind.Array)
-        {
-            foreach (var versionElement in versions.EnumerateArray())
-            {
-                // Match by filename in the "files" array
-                var matchedByFile = false;
-                if (versionElement.TryGetProperty("files", out var vFiles) && vFiles.ValueKind == System.Text.Json.JsonValueKind.Array)
-                {
-                    foreach (var fileElement in vFiles.EnumerateArray())
-                    {
-                        if (fileElement.TryGetProperty("name", out var fName)
-                            && string.Equals(fName.GetString(), localFileName, StringComparison.OrdinalIgnoreCase))
-                        {
-                            matchedByFile = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (!matchedByFile) continue;
-
-                // Found the matching version — extract all data
-                if (versionElement.TryGetProperty("id", out var vIdProp) && vIdProp.TryGetInt32(out var civitaiVersionId))
-                {
-                    var versionIdTaken = await modelRepo.IsVersionCivitaiIdTakenAsync(civitaiVersionId, dbVersion.Id);
-                    if (!versionIdTaken)
-                    {
-                        dbVersion.CivitaiId = civitaiVersionId;
-                        dirty = true;
-                    }
-                }
-
-                if (versionElement.TryGetProperty("name", out var vName) && vName.GetString() is { } vNameStr)
-                {
-                    dbVersion.Name = vNameStr;
-                    dirty = true;
-                }
-
-                if (versionElement.TryGetProperty("baseModel", out var baseModel) && baseModel.GetString() is { } baseModelStr)
-                {
-                    dbVersion.BaseModelRaw = baseModelStr;
-                    dirty = true;
-                }
-
-                if (versionElement.TryGetProperty("trainedWords", out var trained) && trained.ValueKind == System.Text.Json.JsonValueKind.Array)
-                {
-                    dbVersion.TriggerWords.Clear();
-                    var order = 0;
-                    foreach (var wordElement in trained.EnumerateArray())
-                    {
-                        if (wordElement.ValueKind == System.Text.Json.JsonValueKind.String && wordElement.GetString() is { } word)
-                        {
-                            dbVersion.TriggerWords.Add(new TriggerWord { Word = word, Order = order++ });
-                            dirty = true;
-                        }
-                    }
-                }
-
-                if (versionElement.TryGetProperty("downloadUrl", out var dlUrl) && dlUrl.GetString() is { } dlUrlStr)
-                {
-                    dbVersion.DownloadUrl = dlUrlStr;
-                    dirty = true;
-                }
-
-                // Images from this version
-                if (versionElement.TryGetProperty("images", out var images) && images.ValueKind == System.Text.Json.JsonValueKind.Array)
-                {
-                    dirty |= ApplyImagesFromJson(dbVersion, images);
-                }
-
-                // File hashes from this version
-                if (versionElement.TryGetProperty("files", out var filesArr) && filesArr.ValueKind == System.Text.Json.JsonValueKind.Array)
-                {
-                    dirty |= ApplyFileHashesFromJson(dbVersion, filesArr, localPath);
-                }
-
-                break; // Only match one version per file
-            }
-        }
-
-        return dirty;
-    }
-
-    /// <summary>
-    /// Applies metadata from a simple .json sidecar (has "sd version", "type", "tags" — not a full Civitai response).
-    /// </summary>
-    private static bool ApplySimpleJsonFormat(
-        System.Text.Json.JsonElement root,
-        Model dbModel,
-        ModelVersion? dbVersion)
-    {
-        var dirty = false;
-
-        if (root.TryGetProperty("model", out var modelProp))
-        {
-            if (modelProp.TryGetProperty("name", out var name) && name.GetString() is { } nameStr)
-            {
-                dbModel.Name = nameStr;
-                dirty = true;
-            }
-
-            if (modelProp.TryGetProperty("nsfw", out var nsfw)
-                && nsfw.ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False)
-            {
-                dbModel.IsNsfw = nsfw.GetBoolean();
-                dirty = true;
-            }
-        }
-
-        if (dbVersion is not null)
-        {
-            if (root.TryGetProperty("baseModel", out var baseModel) && baseModel.GetString() is { } baseModelStr)
-            {
-                dbVersion.BaseModelRaw = baseModelStr;
-                dirty = true;
-            }
-
-            // Fallback: "sd version" for very old sidecar format
-            if (dbVersion.BaseModelRaw is null or "???"
-                && root.TryGetProperty("sd version", out var sdVer) && sdVer.GetString() is { } sdVerStr)
-            {
-                dbVersion.BaseModelRaw = sdVerStr;
-                dirty = true;
-            }
-
-            if (root.TryGetProperty("trainedWords", out var trained) && trained.ValueKind == System.Text.Json.JsonValueKind.Array)
-            {
-                dbVersion.TriggerWords.Clear();
-                var order = 0;
-                foreach (var wordElement in trained.EnumerateArray())
-                {
-                    if (wordElement.ValueKind == System.Text.Json.JsonValueKind.String && wordElement.GetString() is { } word)
-                    {
-                        dbVersion.TriggerWords.Add(new TriggerWord { Word = word, Order = order++ });
-                        dirty = true;
-                    }
-                }
-            }
-        }
-
-        return dirty;
-    }
-
-    /// <summary>
-    /// Creates <see cref="ModelImage"/> entities from a JSON "images" array found in sidecar files.
-    /// Skips images that already exist by CivitaiId or URL.
-    /// </summary>
-    private static bool ApplyImagesFromJson(ModelVersion dbVersion, System.Text.Json.JsonElement imagesArray)
-    {
-        var dirty = false;
-        var existingUrls = dbVersion.Images
-            .Select(i => i.Url)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        var sortOrder = dbVersion.Images.Count;
-
-        foreach (var imgEl in imagesArray.EnumerateArray())
-        {
-            var url = imgEl.TryGetProperty("url", out var urlProp) ? urlProp.GetString() : null;
-            if (string.IsNullOrEmpty(url)) continue;
-
-            // Skip if we already have this URL
-            if (existingUrls.Contains(url)) continue;
-
-            var image = new ModelImage
-            {
-                ModelVersionId = dbVersion.Id,
-                Url = url,
-                SortOrder = sortOrder++,
-            };
-
-            if (imgEl.TryGetProperty("width", out var w) && w.TryGetInt32(out var width)) image.Width = width;
-            if (imgEl.TryGetProperty("height", out var h) && h.TryGetInt32(out var height)) image.Height = height;
-            if (imgEl.TryGetProperty("hash", out var hash) && hash.GetString() is { } hashStr) image.BlurHash = hashStr;
-            if (imgEl.TryGetProperty("type", out var type) && type.GetString() is { } typeStr) image.MediaType = typeStr;
-
-            if (imgEl.TryGetProperty("nsfwLevel", out var nsfwLvl) && nsfwLvl.TryGetInt32(out var nsfwLevel))
-            {
-                image.IsNsfw = nsfwLevel > 1;
-            }
-
-            dbVersion.Images.Add(image);
-            existingUrls.Add(url);
-            dirty = true;
-        }
-
-        return dirty;
-    }
-
-    /// <summary>
-    /// Applies file hashes from a JSON "files" array to the matching <see cref="ModelFile"/> entity.
-    /// Matches by filename comparison with the local file.
-    /// </summary>
-    private static bool ApplyFileHashesFromJson(
-        ModelVersion dbVersion,
-        System.Text.Json.JsonElement filesArray,
-        string localPath)
-    {
-        var dirty = false;
-        var localFileName = Path.GetFileName(localPath);
-
-        foreach (var fileEl in filesArray.EnumerateArray())
-        {
-            var fileName = fileEl.TryGetProperty("name", out var fName) ? fName.GetString() : null;
-            if (!string.Equals(fileName, localFileName, StringComparison.OrdinalIgnoreCase)) continue;
-
-            var dbFile = dbVersion.Files.FirstOrDefault(f =>
-                string.Equals(f.FileName, localFileName, StringComparison.OrdinalIgnoreCase))
-                ?? dbVersion.PrimaryFile;
-
-            if (dbFile is null) break;
-
-            // File CivitaiId
-            if (fileEl.TryGetProperty("id", out var fId) && fId.TryGetInt32(out var fileId))
-            {
-                dbFile.CivitaiId = fileId;
-                dirty = true;
-            }
-
-            // File size
-            if (fileEl.TryGetProperty("sizeKB", out var sizeKb) && sizeKb.TryGetDouble(out var sizeVal))
-            {
-                dbFile.SizeKB = sizeVal;
-                dirty = true;
-            }
-
-            // Hashes
-            if (fileEl.TryGetProperty("hashes", out var hashes))
-            {
-                if (hashes.TryGetProperty("SHA256", out var sha256) && sha256.GetString() is { } sha256Str)
-                { dbFile.HashSHA256 ??= sha256Str; dirty = true; }
-
-                if (hashes.TryGetProperty("AutoV2", out var autoV2) && autoV2.GetString() is { } autoV2Str)
-                { dbFile.HashAutoV2 ??= autoV2Str; dirty = true; }
-
-                if (hashes.TryGetProperty("CRC32", out var crc32) && crc32.GetString() is { } crc32Str)
-                { dbFile.HashCRC32 ??= crc32Str; dirty = true; }
-
-                if (hashes.TryGetProperty("BLAKE3", out var blake3) && blake3.GetString() is { } blake3Str)
-                { dbFile.HashBLAKE3 ??= blake3Str; dirty = true; }
-
-                if (hashes.TryGetProperty("AutoV1", out var autoV1) && autoV1.GetString() is { } autoV1Str)
-                { dbFile.HashAutoV1 ??= autoV1Str; dirty = true; }
-            }
-
-            // Download URL
-            if (fileEl.TryGetProperty("downloadUrl", out var dlUrl) && dlUrl.GetString() is { } dlUrlStr)
-            {
-                dbFile.DownloadUrl ??= dlUrlStr;
-                dirty = true;
-            }
-
-            break; // Only match one file entry per local file
-        }
-
-        return dirty;
-    }
-
-    /// <summary>
-    /// Image extensions to search for when looking for local preview images alongside model files.
-    /// Ordered by preference (preview-specific suffixes first, then common formats).
-    /// </summary>
-    private static readonly string[] LocalPreviewExtensions =
-    [
-        ".preview.png", ".preview.jpg", ".preview.jpeg", ".preview.webp",
-        ".thumb.jpg",
-        ".png", ".jpg", ".jpeg", ".webp"
-    ];
-
-    /// <summary>
-    /// Searches for a local preview image next to the model file (same base name, image extension)
-    /// and stores it as a thumbnail BLOB on the primary image entity.
-    /// </summary>
-    /// <returns>True if a local thumbnail was found and applied.</returns>
-    private async Task<bool> TryApplyLocalThumbnailAsync(ModelTileViewModel tile, DirectoryInfo directory, string baseName)
-    {
-        try
-        {
-            // Search for local preview images by base name + known image extensions
-            string? localImagePath = null;
-            foreach (var ext in LocalPreviewExtensions)
-            {
-                var candidate = Path.Combine(directory.FullName, baseName + ext);
-                if (File.Exists(candidate))
-                {
-                    localImagePath = candidate;
-                    break;
-                }
-            }
-
-            if (localImagePath is null) return false;
-
-            _logger?.Debug(LogCategory.General, "LocalFallback",
-                $"Found local preview for '{tile.DisplayName}': {Path.GetFileName(localImagePath)}");
-
-            // Read and transcode the local image to JPEG for BLOB storage
-            var imageBytes = await File.ReadAllBytesAsync(localImagePath);
-            if (imageBytes.Length == 0) return false;
-
-            byte[] thumbnailBytes;
-            using (var skBitmap = SKBitmap.Decode(imageBytes))
-            {
-                if (skBitmap is null) return false;
-
-                // Resize to thumbnail width (340px) to keep BLOB small
-                var targetWidth = 340;
-                var scale = (float)targetWidth / skBitmap.Width;
-                var targetHeight = (int)(skBitmap.Height * scale);
-                using var resized = skBitmap.Resize(new SKImageInfo(targetWidth, targetHeight), new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear));
-                if (resized is null) return false;
-
-                using var skImage = SKImage.FromBitmap(resized);
-                using var encoded = skImage.Encode(SKEncodedImageFormat.Jpeg, 85);
-                thumbnailBytes = encoded.ToArray();
-            }
-
-            if (thumbnailBytes.Length == 0) return false;
-
-            // Store in DB on the primary image (create one if needed)
-            var version = tile.SelectedVersion;
-            if (version is null) return false;
-
-            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
-            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-            var modelId = tile.ModelEntity?.Id;
-            if (modelId is null or 0) return false;
-            var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(modelId.Value);
-            var dbVersion = dbModel?.Versions.FirstOrDefault(v =>
-                v.Files.Any(f => string.Equals(f.LocalPath, tile.SelectedVersion?.PrimaryFile?.LocalPath, StringComparison.OrdinalIgnoreCase)));
-
-            if (dbVersion is null) return false;
-
-            var primaryImage = dbVersion.Images.FirstOrDefault();
-            if (primaryImage is null)
-            {
-                // Create a new image entity for the local thumbnail
-                primaryImage = new ModelImage
-                {
-                    ModelVersionId = dbVersion.Id,
-                    Url = $"file://{localImagePath}",
-                    SortOrder = 0,
-                };
-                dbVersion.Images.Add(primaryImage);
-            }
-
-            primaryImage.ThumbnailData = thumbnailBytes;
-            primaryImage.ThumbnailMimeType = "image/jpeg";
-
-            await unitOfWork.SaveChangesAsync();
-
-            // Display the thumbnail immediately
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                try
-                {
-                    using var stream = new MemoryStream(thumbnailBytes);
-                    tile.ThumbnailImage = new Avalonia.Media.Imaging.Bitmap(stream);
-                }
-                catch
-                {
-                    // Decode failure — not critical
-                }
-            });
-
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _logger?.Debug(LogCategory.General, "LocalFallback",
-                $"Failed to apply local thumbnail for '{tile.DisplayName}': {ex.Message}");
-            return false;
-        }
     }
 
     /// <summary>
@@ -2069,241 +1188,6 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         {
             _logger?.Warn(LogCategory.General, "Backfill",
                 $"CivitaiModelPageId backfill failed: {ex.Message}");
-        }
-    }
-
-    /// <summary>
-    /// Updates a model entity from Civitai API response data.
-    /// </summary>
-    private async Task UpdateModelFromCivitaiAsync(
-        ModelTileViewModel tile,
-        CivitaiModelVersion civitaiVersion,
-        string? apiKey)
-    {
-        // Fetch the full model to get all versions (richer data including images)
-        CivitaiModel? civitaiModel = null;
-        if (civitaiVersion.ModelId > 0)
-        {
-            civitaiModel = await _civitaiClient!.GetModelAsync(civitaiVersion.ModelId, apiKey);
-        }
-
-        // Resolve the best image source: the full model response is more reliable than
-        // the hash-lookup response which often returns an empty images array.
-        var bestCivitaiVersion = civitaiModel?.ModelVersions
-            .FirstOrDefault(v => v.Id == civitaiVersion.Id) ?? civitaiVersion;
-
-        // Use a fresh DI scope for DB writes to avoid concurrent DbContext access
-        using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
-        var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-
-        var model = tile.ModelEntity;
-        if (model is null) return;
-
-        // Load ONLY the target model — not the entire database (was the #1 cause of OOM)
-        var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
-        if (dbModel is null) return;
-
-        // Update model-level fields from Civitai
-        // Skip overwriting user-edited fields (description, tags, etc.) — IsUserEdited is sticky.
-        var preserveModelEdits = dbModel.IsUserEdited;
-        if (civitaiModel is not null)
-        {
-            // Always set the grouping key — not unique, safe for all models sharing the same Civitai page
-            dbModel.CivitaiModelPageId = civitaiModel.Id;
-
-            // Only assign CivitaiId if no other model already owns it (prevents UNIQUE constraint violation)
-            var civitaiIdTaken = await unitOfWork.Models.IsCivitaiIdTakenAsync(civitaiModel.Id, dbModel.Id);
-            if (!civitaiIdTaken)
-            {
-                dbModel.CivitaiId = civitaiModel.Id;
-            }
-            else
-            {
-                _logger?.Warn(LogCategory.Network, "CivitaiSync",
-                    $"Skipping CivitaiId {civitaiModel.Id} for model '{dbModel.Name}' (Id={dbModel.Id}): " +
-                    "already assigned to another model");
-            }
-
-            if (!preserveModelEdits)
-            {
-                dbModel.Name = civitaiModel.Name;
-                dbModel.Description = civitaiModel.Description;
-            }
-            dbModel.IsNsfw = civitaiModel.Nsfw;
-            dbModel.IsPoi = civitaiModel.Poi;
-            dbModel.Source = DataSource.CivitaiApi;
-            dbModel.LastSyncedAt = DateTimeOffset.UtcNow;
-            // Capture version-availability data from the same response so the
-            // "+N more versions" badge can be shown without an additional HTTP call.
-            dbModel.TotalVersionCount = civitaiModel.ModelVersions?.Count ?? 0;
-            dbModel.LastCheckedForUpdatesUtc = DateTime.UtcNow;
-            dbModel.AllowNoCredit = civitaiModel.AllowNoCredit;
-            dbModel.AllowDerivatives = civitaiModel.AllowDerivatives;
-            dbModel.AllowDifferentLicense = civitaiModel.AllowDifferentLicense;
-
-            // Update or create creator — reuse existing Creator entity by
-            // Username to avoid UNIQUE constraint violations.
-            if (civitaiModel.Creator is not null)
-            {
-                if (dbModel.Creator is not null)
-                {
-                    dbModel.Creator.Username = civitaiModel.Creator.Username;
-                    dbModel.Creator.AvatarUrl ??= civitaiModel.Creator.Image;
-                }
-                else
-                {
-                    var existingCreator = await unitOfWork.Models
-                        .FindCreatorByUsernameAsync(civitaiModel.Creator.Username);
-
-                    dbModel.Creator = existingCreator ?? new Creator
-                    {
-                        Username = civitaiModel.Creator.Username,
-                        AvatarUrl = civitaiModel.Creator.Image,
-                    };
-                }
-            }
-        }
-
-        // Update version-level fields for the matched version
-        var dbVersion = dbModel.Versions.FirstOrDefault(v =>
-            v.Files.Any(f => f.Id == tile.SelectedVersion?.PrimaryFile?.Id));
-
-        if (dbVersion is not null)
-        {
-            // Only assign CivitaiId if no other version already owns it (prevents UNIQUE constraint violation)
-            var versionIdTaken = await unitOfWork.Models
-                .IsVersionCivitaiIdTakenAsync(bestCivitaiVersion.Id, dbVersion.Id);
-            if (!versionIdTaken)
-            {
-                dbVersion.CivitaiId = bestCivitaiVersion.Id;
-            }
-            else
-            {
-                _logger?.Warn(LogCategory.Network, "CivitaiSync",
-                    $"Skipping CivitaiId {bestCivitaiVersion.Id} for version '{dbVersion.Name}' (Id={dbVersion.Id}): " +
-                    "already assigned to another version");
-            }
-
-            dbVersion.Name = bestCivitaiVersion.Name;
-            dbVersion.Description = bestCivitaiVersion.Description;
-            dbVersion.BaseModelRaw = bestCivitaiVersion.BaseModel;
-            dbVersion.DownloadUrl = bestCivitaiVersion.DownloadUrl;
-            dbVersion.DownloadCount = bestCivitaiVersion.Stats?.DownloadCount ?? 0;
-            dbVersion.PublishedAt = bestCivitaiVersion.PublishedAt;
-            dbVersion.EarlyAccessDays = bestCivitaiVersion.EarlyAccessTimeFrame;
-
-            // Update trigger words — skip when this version was user-edited
-            if (!dbVersion.IsUserEdited)
-            {
-                dbVersion.TriggerWords.Clear();
-                var order = 0;
-                foreach (var word in bestCivitaiVersion.TrainedWords)
-                {
-                    dbVersion.TriggerWords.Add(new TriggerWord
-                    {
-                        Word = word,
-                        Order = order++
-                    });
-                }
-            }
-
-            // Add images from Civitai (use the version with the richest data)
-            var existingImageIds = dbVersion.Images
-                .Where(i => i.CivitaiId.HasValue)
-                .Select(i => i.CivitaiId!.Value)
-                .ToHashSet();
-            var sortOrder = dbVersion.Images.Count;
-            foreach (var civImage in bestCivitaiVersion.Images)
-            {
-                if (string.IsNullOrEmpty(civImage.Url))
-                    continue;
-
-                if (civImage.Id.HasValue && existingImageIds.Contains(civImage.Id.Value))
-                    continue;
-
-                dbVersion.Images.Add(new ModelImage
-                {
-                    ModelVersionId = dbVersion.Id,
-                    CivitaiId = civImage.Id,
-                    Url = civImage.Url,
-                    MediaType = civImage.Type,
-                    IsNsfw = civImage.Nsfw,
-                    Width = civImage.Width ?? 0,
-                    Height = civImage.Height ?? 0,
-                    BlurHash = civImage.Hash,
-                    SortOrder = sortOrder++,
-                    CreatedAt = civImage.CreatedAt,
-                    PostId = civImage.PostId,
-                    Username = civImage.Username,
-                    Prompt = civImage.Meta?.Prompt,
-                    NegativePrompt = civImage.Meta?.NegativePrompt,
-                    Seed = civImage.Meta?.Seed,
-                    Steps = civImage.Meta?.Steps,
-                    Sampler = civImage.Meta?.Sampler,
-                    CfgScale = civImage.Meta?.CfgScale,
-                });
-            }
-
-            // Update file hashes from Civitai data
-            var civFile = bestCivitaiVersion.Files.FirstOrDefault(f => f.Primary == true);
-            if (civFile?.Hashes is not null)
-            {
-                var dbFile = dbVersion.PrimaryFile;
-                if (dbFile is not null)
-                {
-                    dbFile.CivitaiId = civFile.Id;
-                    dbFile.HashSHA256 ??= civFile.Hashes.SHA256;
-                    dbFile.HashAutoV2 ??= civFile.Hashes.AutoV2;
-                    dbFile.HashCRC32 ??= civFile.Hashes.CRC32;
-                    dbFile.HashBLAKE3 ??= civFile.Hashes.BLAKE3;
-                }
-            }
-        }
-
-        // Sync tags from Civitai model response (skip when user has edited tags)
-        if (!preserveModelEdits && civitaiModel?.Tags is { Count: > 0 } civitaiTags)
-        {
-            var tagLookup = await unitOfWork.Models.GetAllTagsLookupAsync();
-            SyncTagsFromCivitai(dbModel, civitaiTags, tagLookup);
-        }
-
-        await unitOfWork.SaveChangesAsync();
-
-        // Reload ONLY this model after save to get generated IDs on new images
-        var refreshedModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
-
-        // Refresh tile on UI thread with updated data — use RefreshModelData to
-        // properly update _allGroupedModels and re-pick the primary entity.
-        await Dispatcher.UIThread.InvokeAsync(() =>
-        {
-            tile.RefreshModelData(refreshedModel ?? dbModel);
-        });
-    }
-
-    /// <summary>
-    /// Replaces a model's tags with the Civitai tag list, reusing existing <see cref="Tag"/>
-    /// rows by <see cref="Tag.NormalizedName"/> to avoid duplicates in the Tags table.
-    /// </summary>
-    private static void SyncTagsFromCivitai(
-        Model dbModel,
-        IReadOnlyList<string> civitaiTags,
-        Dictionary<string, Tag> knownTags)
-    {
-        dbModel.Tags.Clear();
-
-        foreach (var tagName in civitaiTags)
-        {
-            if (string.IsNullOrWhiteSpace(tagName)) continue;
-
-            var normalized = tagName.Trim().ToLowerInvariant();
-
-            if (!knownTags.TryGetValue(normalized, out var tag))
-            {
-                tag = new Tag { Name = tagName, NormalizedName = normalized };
-                knownTags[normalized] = tag;
-            }
-
-            dbModel.Tags.Add(new ModelTag { Tag = tag });
         }
     }
 
@@ -2474,18 +1358,26 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         try
         {
-            var applied = await DownloadMetadataForTileAsync(tile);
+            var outcome = await DownloadMetadataForTileAsync(tile);
 
-            if (applied)
+            if (outcome.Applied)
             {
-                // UpdateModelFromCivitaiAsync already refreshed the in-memory tile (it now
+                // DownloadMetadataForTileAsync already refreshed the in-memory tile (it now
                 // carries a CivitaiId), so reloading the detail re-fetches the full version
                 // list and repaints description/tags/images.
                 await detail.LoadAsync(tile);
+                // LoadAsync ends by clearing StatusMessage, so a successful refresh used to
+                // leave no trace at all — the bar just closed. Say what happened.
+                detail.StatusMessage = "Metadata refreshed from Civitai.";
             }
             else
             {
-                detail.StatusMessage = "No metadata found on Civitai for this file.";
+                // "Nothing found" is a claim about Civitai, so it may only be made when we
+                // actually asked. A forced run that planned no identify item asked nobody —
+                // saying "not on Civitai" there is how a selection bug reads as a verdict.
+                detail.StatusMessage = outcome.IdentifyPlanned > 0
+                    ? "No metadata found on Civitai for this file."
+                    : "Nothing to refresh for this model.";
             }
         }
         catch (Exception ex)
@@ -2502,51 +1394,90 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     }
 
     /// <summary>
-    /// Downloads Civitai metadata for a single LoRA (the detail-view "Download Metadata"
-    /// button). Mirrors Phase 1 of <see cref="DownloadMissingMetadataAsync"/> scoped to one
-    /// tile: hashes the primary file, looks it up on Civitai by hash, and persists the
-    /// returned metadata via <see cref="UpdateModelFromCivitaiAsync"/> (which also refreshes
-    /// the in-memory tile). Falls back to local <c>.civitai.info</c>/<c>.json</c> sidecars on
-    /// a 404. Unlike the bulk flow this runs even for already-synced models, so the user can
-    /// force a re-fetch. Returns <c>true</c> when metadata (remote or local) was applied.
+    /// Downloads metadata for a single LoRA (the detail-view "Download Metadata" button) by
+    /// running the same <see cref="ILibrarySyncService"/> pipeline as the bulk flow, scoped to
+    /// this one model: identify (hash → Civitai by hash → sidecar), then tags and images.
+    /// Discovery is not part of it — the file is already in the library.
     /// </summary>
-    public async Task<bool> DownloadMetadataForTileAsync(ModelTileViewModel tile)
+    /// <remarks>
+    /// <c>ForceIdentify</c> is set because pressing the button IS the user asking for another
+    /// look, and a forced step ignores both the stored verdict and the retry window: neither a
+    /// "checked, not on Civitai" outcome nor an already-matched model may make the button appear
+    /// to do nothing.
+    /// </remarks>
+    /// <returns>
+    /// Whether anything was applied — which is what tells the detail view to reload — together
+    /// with the report it came from, so the caller can tell "we asked and Civitai has nothing"
+    /// apart from "there was nothing to ask about".
+    /// </returns>
+    public async Task<TileMetadataSyncResult> DownloadMetadataForTileAsync(ModelTileViewModel tile)
     {
-        if (_civitaiClient is null)
+        if (_librarySync is null)
         {
-            SyncStatus = "Civitai client not available.";
-            return false;
+            SyncStatus = "Library sync not available.";
+            return TileMetadataSyncResult.NotRun;
         }
 
-        var file = tile.SelectedVersion?.PrimaryFile;
-        var localPath = file?.LocalPath;
-        if (string.IsNullOrEmpty(localPath) || !File.Exists(localPath))
+        var modelId = tile.ModelEntity?.Id ?? 0;
+        if (modelId == 0)
         {
             _logger?.Warn(LogCategory.Network, "CivitaiSync",
-                $"Cannot download metadata for '{tile.DisplayName}': no local file on disk.");
-            return false;
+                $"Cannot download metadata for '{tile.DisplayName}': the tile has no persisted model.");
+            return TileMetadataSyncResult.NotRun;
         }
 
-        // Fresh DI scope so we read the latest API key from the database, not a stale
-        // tracked entity (same approach as the bulk DownloadMissingMetadataAsync).
-        var apiKey = await GetApiKeyForSorterAsync();
-
-        var hash = await Task.Run(() => ComputeFullSha256(localPath));
-        _logger?.Info(LogCategory.Network, "CivitaiSync",
-            $"Metadata download for '{tile.DisplayName}'",
-            $"SHA256: {hash}\nPath: {localPath}\nURL: https://civitai.com/api/v1/model-versions/by-hash/{hash}");
-
-        var civitaiVersion = await _civitaiClient.GetModelVersionByHashAsync(hash, apiKey);
-        if (civitaiVersion is null)
+        // The service admits one run at a time (R10): while this one is going, the bulk button is
+        // off too, and the detail panel's own button is off from the moment the flag flips.
+        if (SyncInFlight)
         {
-            // 404 on Civitai — try the local .civitai.info / .json sidecar, then mark
-            // synced so the bulk flow doesn't keep retrying it.
-            var localApplied = await TryApplyLocalMetadataFallbackAsync(tile, localPath);
-            await MarkModelSyncedAsync(tile.ModelEntity);
-            return localApplied;
+            SyncStatus = AlreadyRunningStatus;
+            return TileMetadataSyncResult.NotRun;
         }
 
-        await UpdateModelFromCivitaiAsync(tile, civitaiVersion, apiKey);
+        var options = new SyncOptions(
+            new HashSet<SyncStepKind> { SyncStepKind.IdentifyModel, SyncStepKind.FetchTags, SyncStepKind.FetchImages },
+            ForceIdentify: true);
+
+        SyncPlan plan;
+        SyncReport report;
+        _localSyncActive = true;
+        RefreshSyncRunning();
+        try
+        {
+            // Off the UI thread for the same reason the bulk run is (see DownloadMissingMetadataAsync):
+            // the selection queries and the file hash both run inline until the first real yield.
+            plan = await Task.Run(() => _librarySync.PlanAsync(SyncScope.ForModels(modelId), options));
+            report = await Task.Run(() => _librarySync.ExecuteAsync(plan));
+        }
+        finally
+        {
+            _localSyncActive = false;
+            RefreshSyncRunning();
+        }
+
+        var applied = report.Steps.Any(s => s.Succeeded > 0);
+        if (!applied)
+        {
+            _logger?.Info(LogCategory.Network, "CivitaiSync",
+                $"No metadata applied for '{tile.DisplayName}': {report.Summary}");
+            return new TileMetadataSyncResult(Applied: false, report);
+        }
+
+        // Re-read the one model the run touched so the tile (and the detail view behind it)
+        // shows what was just written, without rebuilding the whole grid.
+        //
+        // The read is on the pool (R7): it is five split queries and the version's thumbnail BLOBs,
+        // and SQLite has no true async, so on the UI thread it blocks the frame. Only the tile
+        // update goes back to the UI thread, where it belongs.
+        var refreshedModel = await Task.Run(async () =>
+        {
+            using var scope = RequireScopeFactory().CreateScope();
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            return await unitOfWork.Models.GetByIdWithIncludesAsync(modelId);
+        });
+
+        if (refreshedModel is not null)
+            await InvokeOnUiAsync(() => tile.RefreshModelData(refreshedModel));
 
         // Pull a preview thumbnail if the tile still lacks one after the metadata sync.
         if (tile.IsThumbnailMissing)
@@ -2562,7 +1493,24 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             }
         }
 
-        return true;
+        return new TileMetadataSyncResult(Applied: true, report);
+    }
+
+    /// <summary>
+    /// The outcome of one per-tile metadata fetch. <paramref name="Report"/> is null only when the
+    /// run never started (no sync service, or a tile with no persisted model).
+    /// </summary>
+    public sealed record TileMetadataSyncResult(bool Applied, SyncReport? Report)
+    {
+        /// <summary>A fetch that never reached the service.</summary>
+        public static readonly TileMetadataSyncResult NotRun = new(Applied: false, Report: null);
+
+        /// <summary>
+        /// How many models the identify step planned. Zero means it asked Civitai nothing at all,
+        /// so nothing it reports is a verdict about Civitai.
+        /// </summary>
+        public int IdentifyPlanned
+            => Report?.Steps.FirstOrDefault(s => s.Kind == SyncStepKind.IdentifyModel)?.Planned ?? 0;
     }
 
     /// <summary>

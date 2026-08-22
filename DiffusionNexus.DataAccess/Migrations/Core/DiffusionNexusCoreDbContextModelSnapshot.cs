@@ -803,8 +803,15 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                     b.Property<int?>("Steps")
                         .HasColumnType("INTEGER");
 
+                    b.Property<DateTimeOffset?>("ThumbnailAttemptedAt")
+                        .HasColumnType("TEXT");
+
                     b.Property<byte[]>("ThumbnailData")
                         .HasColumnType("BLOB");
+
+                    b.Property<string>("ThumbnailFailure")
+                        .HasMaxLength(30)
+                        .HasColumnType("TEXT");
 
                     b.Property<int?>("ThumbnailHeight")
                         .HasColumnType("INTEGER");
@@ -837,6 +844,47 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                     b.HasIndex("ModelVersionId", "SortOrder");
 
                     b.ToTable("ModelImages", (string)null);
+                });
+
+            modelBuilder.Entity("DiffusionNexus.Domain.Entities.ModelSyncState", b =>
+                {
+                    b.Property<int>("ModelId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset?>("HeaderCheckedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("ImagesCheckedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("MetadataAttempts")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset?>("MetadataCheckedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MetadataOutcome")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SidecarSignature")
+                        .HasMaxLength(1100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("TagsCheckedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("ModelId");
+
+                    b.ToTable("ModelSyncStates", (string)null);
                 });
 
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.ModelTag", b =>
@@ -1091,6 +1139,17 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                     b.Navigation("ModelVersion");
                 });
 
+            modelBuilder.Entity("DiffusionNexus.Domain.Entities.ModelSyncState", b =>
+                {
+                    b.HasOne("DiffusionNexus.Domain.Entities.Model", "Model")
+                        .WithOne("SyncState")
+                        .HasForeignKey("DiffusionNexus.Domain.Entities.ModelSyncState", "ModelId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Model");
+                });
+
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.ModelTag", b =>
                 {
                     b.HasOne("DiffusionNexus.Domain.Entities.Model", "Model")
@@ -1165,6 +1224,8 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
 
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.Model", b =>
                 {
+                    b.Navigation("SyncState");
+
                     b.Navigation("Tags");
 
                     b.Navigation("Versions");

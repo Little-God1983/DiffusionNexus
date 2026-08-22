@@ -27,6 +27,7 @@ internal sealed class ModelImageConfiguration : IEntityTypeConfiguration<ModelIm
         // Thumbnail BLOB
         entity.Property(e => e.ThumbnailData).HasColumnType("BLOB");
         entity.Property(e => e.ThumbnailMimeType).HasMaxLength(50);
+        entity.Property(e => e.ThumbnailFailure).HasMaxLength(30);
 
         // Generation metadata
         entity.Property(e => e.Prompt).HasColumnType("TEXT");

@@ -1,0 +1,103 @@
+using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.Sync;
+using DiffusionNexus.Service.Services.Sync.Steps;
+using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
+using Moq;
+
+namespace DiffusionNexus.Tests.Sync.Service.Steps;
+
+/// <summary>
+/// Covers <see cref="DiscoverFilesStep"/> — the thin adapter that lets the existing
+/// <see cref="IModelSyncService.DiscoverNewFilesAsync"/> disk scan participate in a sync run,
+/// including the discovered count the report reads back off the step (#521 WP2).
+/// </summary>
+public sealed class DiscoverFilesStepTests
+{
+    private static Model NewModel(string name) => new() { Name = name, Type = ModelType.LORA, Source = DataSource.LocalFile };
+
+    /// <summary>Builds a provider whose only registration is the (scoped) sync-service mock.</summary>
+    private static (DiscoverFilesStep Step, ServiceProvider Provider) NewStep(Mock<IModelSyncService> sync)
+    {
+        var services = new ServiceCollection();
+        services.AddScoped(_ => sync.Object);
+        var provider = services.BuildServiceProvider();
+        return (new DiscoverFilesStep(provider.GetRequiredService<IServiceScopeFactory>()), provider);
+    }
+
+    private static SyncOptions Options() => new(new HashSet<SyncStepKind> { SyncStepKind.DiscoverFiles });
+
+    [Fact]
+    public async Task Select_ReturnsASinglePseudoItemBecauseTheCountIsUnknownUntilTheScanRuns()
+    {
+        var sync = new Mock<IModelSyncService>();
+        var (step, provider) = NewStep(sync);
+        using var _ = provider;
+
+        var items = await step.SelectAsync(SyncScope.Library, Options(), DateTimeOffset.UtcNow, CancellationToken.None);
+
+        items.Should().ContainSingle();
+        items[0].ModelId.Should().Be(0);
+        items[0].Payload.Should().Be(SyncScope.Library);
+        step.Kind.Should().Be(SyncStepKind.DiscoverFiles);
+        step.EstimatedPerItem.Should().Be(TimeSpan.FromSeconds(2));
+        step.Description.Should().NotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public async Task Execute_StoresTheDiscoveredCountForTheReport()
+    {
+        var sync = new Mock<IModelSyncService>();
+        sync.Setup(s => s.DiscoverNewFilesAsync(It.IsAny<IProgress<SyncProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([NewModel("a"), NewModel("b"), NewModel("c")]);
+        var (step, provider) = NewStep(sync);
+        using var _ = provider;
+
+        var items = await step.SelectAsync(SyncScope.Library, Options(), DateTimeOffset.UtcNow, CancellationToken.None);
+        var result = await step.ExecuteOneAsync(items[0], apiKey: null, CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+        step.DiscoveredCount.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task Execute_FailureReportsTheReasonAndLeavesNoStaleCount()
+    {
+        var sync = new Mock<IModelSyncService>();
+        sync.SetupSequence(s => s.DiscoverNewFilesAsync(It.IsAny<IProgress<SyncProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([NewModel("a")])
+            .ThrowsAsync(new IOException("source folder unavailable"));
+        var (step, provider) = NewStep(sync);
+        using var _ = provider;
+
+        var items = await step.SelectAsync(SyncScope.Library, Options(), DateTimeOffset.UtcNow, CancellationToken.None);
+
+        (await step.ExecuteOneAsync(items[0], apiKey: null, CancellationToken.None)).Succeeded.Should().BeTrue();
+        step.DiscoveredCount.Should().Be(1);
+
+        var failure = await step.ExecuteOneAsync(items[0], apiKey: null, CancellationToken.None);
+
+        failure.Succeeded.Should().BeFalse();
+        failure.FailureReason.Should().Contain("source folder unavailable");
+        step.DiscoveredCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Execute_CancellationPropagates()
+    {
+        using var cts = new CancellationTokenSource();
+        var sync = new Mock<IModelSyncService>();
+        sync.Setup(s => s.DiscoverNewFilesAsync(It.IsAny<IProgress<SyncProgress>?>(), It.IsAny<CancellationToken>()))
+            .Callback(() => cts.Cancel())
+            .ThrowsAsync(new OperationCanceledException());
+        var (step, provider) = NewStep(sync);
+        using var _ = provider;
+
+        var items = await step.SelectAsync(SyncScope.Library, Options(), DateTimeOffset.UtcNow, CancellationToken.None);
+        var act = () => step.ExecuteOneAsync(items[0], apiKey: null, cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+}

@@ -1,5 +1,7 @@
 using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
+using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
@@ -41,6 +43,72 @@ public class CoreDbMigrationTests
                 var settings = ctx.AppSettings.Single();
                 Assert.True(settings.BackupDatasetImagesEnabled);
                 Assert.False(settings.BackupDatabaseEnabled);
+            }
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            tempDir.Delete(recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The ModelSyncStates table added by AddModelSyncStateAndThumbnailAttempts is reachable through
+    /// the DbSet, stores the outcome enum as text, and disappears with its model (PK == FK, cascade).
+    /// </summary>
+    [Fact]
+    public void ModelSyncState_RoundTripsThroughDbSet_AndCascadeDeletesWithItsModel()
+    {
+        var tempDir = Directory.CreateTempSubdirectory();
+        var dbPath = Path.Combine(tempDir.FullName, "syncstate-test.db");
+        try
+        {
+            var options = new DbContextOptionsBuilder<DiffusionNexusCoreDbContext>()
+                .UseSqlite($"Data Source={dbPath};Pooling=False")
+                .Options;
+
+            using (var ctx = new DiffusionNexusCoreDbContext(options))
+            {
+                ctx.Database.Migrate();
+                ctx.Models.Add(new Model
+                {
+                    Name = "sync-state-model",
+                    SyncState = new ModelSyncState
+                    {
+                        MetadataOutcome = SyncOutcome.NotIdentified,
+                        MetadataAttempts = 2,
+                        LastError = "no source identified the model",
+                    }
+                });
+                ctx.SaveChanges();
+            }
+
+            int modelId;
+            using (var ctx = new DiffusionNexusCoreDbContext(options))
+            {
+                var model = ctx.Models.Include(m => m.SyncState).Single();
+                modelId = model.Id;
+                model.SyncState.Should().NotBeNull();
+                model.SyncState!.ModelId.Should().Be(modelId);
+                model.SyncState.MetadataOutcome.Should().Be(SyncOutcome.NotIdentified);
+                model.SyncState.MetadataAttempts.Should().Be(2);
+                model.SyncState.LastError.Should().Be("no source identified the model");
+
+                // Stored as text, not as the enum's ordinal.
+                var stored = ctx.Database.SqlQueryRaw<string>(
+                    "SELECT MetadataOutcome AS Value FROM ModelSyncStates").Single();
+                stored.Should().Be(nameof(SyncOutcome.NotIdentified));
+            }
+
+            using (var ctx = new DiffusionNexusCoreDbContext(options))
+            {
+                ctx.Models.Remove(ctx.Models.Single(m => m.Id == modelId));
+                ctx.SaveChanges();
+            }
+
+            using (var ctx = new DiffusionNexusCoreDbContext(options))
+            {
+                ctx.ModelSyncStates.Should().BeEmpty("the state row cascades with its model");
             }
         }
         finally

@@ -100,7 +100,7 @@ In most cases both hold the same integer (the Civitai page ID). The split exists
 | `TotalVersionCount` | Number of versions that exist on Civitai for this model page, captured during the most recent sync. Default `0`. |
 | `LastCheckedForUpdatesUtc` | UTC timestamp of the last successful Civitai check. `null` = never checked — the "more versions available" badge is hidden in this case. |
 
-These are populated **for free** during the existing first-time metadata download in `LoraViewerViewModel.UpdateModelFromCivitaiAsync` (no extra HTTP request — the version list is already in the `/api/v1/models/{id}` response).
+These are populated **for free** by the sync pipeline's `CivitaiMetadataApplier` when a model is identified (no extra HTTP request — the version list is already in the `/api/v1/models/{id}` response).
 
 The "+N more versions" tile badge is computed as
 `max(TotalVersionCount − ownedLocalVersionsForSameCivitaiPage, 0)`. It is intentionally informational only: with this minimal schema the app does **not** distinguish a "newer version exists" badge from a generic "other versions exist" badge — adding a true *Update available* badge would require also storing the latest version id / publish date.
@@ -168,79 +168,209 @@ RefreshAsync
 
 ---
 
-## 4. Data Flow — "Download Metadata" (Civitai Enrichment)
+## 4. Data Flow — "Download Metadata" (Library Sync)
 
-`LoraViewerViewModel.DownloadMissingMetadataAsync` runs in 3 phases:
-
-### Phase 1: Sync metadata for unsynced models
-
-```
-For each tile where Model.CivitaiId == null AND Model.LastSyncedAt == null:
-│
-├── Get primary file's LocalPath
-├── Compute full-file SHA256 hash (entire file, not partial)
-├── Call CivitaiClient.GetModelVersionByHashAsync(hash)
-│   │   Endpoint: GET /api/v1/model-versions/by-hash/{sha256}
-│   │   Returns: CivitaiModelVersion (includes modelId, versionId, files, etc.)
-│   │
-│   ├── NOT FOUND (404):
-│   │   Model is not on Civitai (custom LoRA, private, etc.)
-│   │   → Mark LastSyncedAt = now (so it's not retried)
-│   │
-│   └── FOUND:
-│       ├── Fetch full model: GET /api/v1/models/{modelId}
-│       │   Returns: CivitaiModel (all versions, images, tags, creator, description)
-│       │
-│       └── UpdateModelFromCivitaiAsync:
-│           ├── Set CivitaiModelPageId = civitaiModel.Id (grouping key)
-│           ├── Set CivitaiId (only if no other DB row owns it — UNIQUE constraint)
-│           ├── Update: Name, Description, IsNsfw, Creator, Tags, License fields
-│           ├── Update matched version: CivitaiId, BaseModelRaw, TriggerWords, Images, Hashes
-│           └── SaveChangesAsync → refresh tile on UI thread
-│
-├── Rate limit: 1.5s delay between requests
-```
-
-### Phase 2: Re-fetch missing images
+The viewer owns none of this logic. The toolbar button and the detail panel's per-LoRA
+button both drive `ILibrarySyncService` (`DiffusionNexus.Service/Services/Sync/`), which
+plans a run, executes it step by step and records **per-model state** so a second run only
+does what is genuinely outstanding. `LoraViewerViewModel` just starts the run, shows
+progress, and rebuilds its grid once at the end.
 
 ```
-For tiles where CivitaiId is set but Images array is empty:
-│   (This happens when the hash-lookup returned no images in the response)
+DownloadMissingMetadataAsync                      (both service calls run on Task.Run —
+│                                                  SQLite is synchronous, and the planning
+├── PlanAsync(SyncScope.Library, SyncOptions.All)   pass + the folder scan would otherwise
+│     → SyncPlan: one SyncPlanStep per step         freeze the overlay and the Cancel button)
+│       (Kind, Count, EstimatedDuration, Description)
+│     → plan.HasWork == false ⇒ "Library is up to date — nothing to do", no run.
+│       Only reachable for an option set WITHOUT DiscoverFiles: a plan carrying the
+│       discovery step always reports work, because nobody knows what a scan will
+│       find until it has run.
+│     (Plan B puts a confirmation dialog here; for now the plan is logged and started)
 │
-├── Call GetModelVersionAsync(versionCivitaiId)
-│   Endpoint: GET /api/v1/model-versions/{id}
-│   Usually returns the images that were missing from the hash response
+├── ExecuteAsync(plan, progress, ct)
+│     progress → status bar: "{Label} [{index}/{total}] {currentItem}"
+│     steps run in registration order — a file must be discovered before it can be
+│     identified, and only an identified model has the ids tags/images need
 │
-└── UpdateModelFromCivitaiAsync (same as Phase 1)
+├── RebuildTilesFromDatabaseAsync()   ← exactly once, after the run — including after a
+│                                       CANCELLED one: those models are already committed,
+│                                       and the run's (signalled) token is deliberately not
+│                                       passed here, or the rebuild would be skipped and the
+│                                       report thrown away with it
+│
+└── SyncStatus:
+      report.NewFilesDiscovered == 0 && every step Planned == 0
+        ⇒ "Library is up to date — nothing to do"   ← the honest verdict, from the report
+      otherwise report.Summary (+ " · N failed" when report.Failures is non-empty)
+        (+ " · N items failed unexpectedly (see log)" when report.UnexpectedFailures > 0)
 ```
 
-### Phase 3: Download missing thumbnails
+### The steps
 
-```
-For tiles where ThumbnailImage is null but an image URL exists:
-│
-├── Image preview:
-│   ├── Append /width=300 to Civitai URL (server-side resize)
-│   ├── Download bytes → store in ModelImage.ThumbnailData (BLOB)
-│   └── Persist BLOB to DB for instant display on next startup
-│
-└── Video preview (.mp4, .webm):
-    ├── Download full video to temp file
-    ├── Extract mid-frame using FFmpeg (via IVideoThumbnailService)
-    ├── Store extracted frame as WebP thumbnail BLOB
-    └── Clean up temp files
-```
+| Step | What it does |
+|------|--------------|
+| `DiscoverFiles` | Walks every enabled LoRA source folder and inserts rows for files that are not in the DB yet. It ignores the scope — a folder- or model-scoped run that *includes* this step still scans everything — but it is only in the run at all when the caller asks for it, and the per-LoRA button does not. |
+| `IdentifyModel` | The identity chain for one file: full-file SHA256 → Civitai `GET /model-versions/by-hash/{sha}` → on 404, the local `.civitai.info` / `.json` sidecar. Writes name, base model, trigger words, Civitai ids, image records — see *user edits* and *what counts as applied* below. |
+| `FetchTags` | For a model that has a Civitai id but no tags yet: `GET /models/{id}` and replace the tag set (reusing existing `Tag` rows by normalized name). |
+| `FetchImages` | For a version with a Civitai version id but no image records: `GET /model-versions/{id}` and persist the returned images. |
+| `Thumbnails` | Reserved. Not implemented yet (Plan B). Until it lands, tiles download their own preview when they scroll into view (`ModelTileViewModel.Activate()`), so nothing is missing on screen — only the bulk pre-fetch is gone. |
+
+Civitai requests are paced ~1.5 s apart — per **request**, not per item, by the singleton
+`ICivitaiRequestPacer` awaited immediately before every call. One item is not one request: the
+images step calls once per *version* and identify calls twice (hash lookup, model page), so pacing
+between items left those bursts unpaced. The pacer measures from the last call, so the first
+request of a run never waits. Cancellation is cooperative: a cancelled run still reports what it
+completed, because those stamps are already committed.
+
+**User edits are never overwritten.** A model the user has edited (`Model.IsUserEdited`) is not
+even offered to a bulk identify run — nothing upstream is more authoritative than what the user
+typed. A *forced* run (the per-LoRA button, or an explicit id scope) does select it, because that
+is the user asking; what protects them there is the appliers, which decide "may I write this
+text?" in one place each (`CanWriteModelText` / `CanWriteVersionText`) and reference it from every
+write site, all three sidecar formats included. Model name, description and tags hang off
+`Model.IsUserEdited`; version name, description, trigger words **and base model** off
+`ModelVersion.IsUserEdited` — the detail view lets the user pick a base model and stamps the
+version as edited, so a refresh that rewrote it undid that choice. Every write of `BaseModelRaw`
+also writes the `BaseModel` enum (`BaseModelTypeExtensions.ParseCivitai`, the same helper the
+editor uses), so the viewer's base-model filter and the label the detail view shows never disagree —
+and a *blank* upstream base model is treated as a missing answer rather than an instruction to
+forget the stored one (Civitai's `baseModel` is a non-nullable string that defaults to `""`, so an
+omitted field and an empty one are the same value).
+Facts nobody authored locally — Civitai ids, download URL, file hashes, images, NSFW — are applied
+either way.
+
+**One bug does not cost the run.** An exception no step claimed used to escape to the caller: the
+tally of everything already synced was thrown away and the user saw a raw exception message where
+the report should have been. Such an item is now failed, logged at Error with the exception, and
+counted in `SyncReport.UnexpectedFailures` / `FirstUnexpectedError` so the status line says so out
+loud. A real cancellation — `OperationCanceledException` while the run's own token is cancelled —
+still unwinds; a `TaskCanceledException` carrying somebody else's token is a timeout, not the user.
+
+**Hashes are stored uppercase, by whoever writes them.** Civitai and the sidecars answer in
+lowercase; both appliers put `ModelFile.HashSHA256` through `FileHasher.NormalizeSha256` on the way
+in, because a single lowercase row breaks SQL equality against every digest the app computes itself
+and gives the startup repair pass real work to do forever. That pass
+(`DatabaseRecoveryService.NormalizeModelFileHashCasing`) now runs only on a start that applied or
+stamped migrations — the only kind on which a migration body can have been skipped — and asks a
+read-only `EXISTS` before it writes anything. Only SHA256: the other hash columns carry no such
+invariant.
+
+**What counts as applied.** A sidecar is `Sidecar` only when metadata actually came out of it. A
+`.json` next to a LoRA is as often a kohya training config as it is metadata, and a `.civitai.info`
+can be truncated; either way the outcome is `NotIdentified`, `Source`/`LastSyncedAt` are left
+alone, and the file's real signature is still stored — so it is not read again until it changes (or
+the 30-day window comes round), rather than costing a re-hash and a Civitai request on every run.
+
+### Where the state lives
+
+One `ModelSyncStates` row per model (PK = FK to `Model`), so *"checked and genuinely
+empty"* is distinguishable from *"never checked"* — the distinction the old
+`LastSyncedAt`-only flag could not express:
+
+| Field | Meaning |
+|-------|---------|
+| `MetadataOutcome` | `None`, `Matched`, `Sidecar`, `Header`, `Heuristic`, `NotIdentified`, `Error` |
+| `MetadataCheckedAt` / `MetadataAttempts` | When identity was last attempted, and how many consecutive failures |
+| `LastError` | One-line reason for the last failure (never a stack trace) |
+| `TagsCheckedAt` / `ImagesCheckedAt` | Stamped **even when the result was empty** — that is what makes "no tags" final |
+| `SidecarSignature` | `{path}|{lastWriteUtcTicks}|{length}` of the sidecar last **looked at**, so an unchanged sidecar is not re-read and a changed one is. Recorded whether or not anything was applied. `""` = looked, no sidecar; `null` = never recorded |
+| `HeaderCheckedAt` | Safetensors header read (WP4) |
+
+Models that predate the table get a row derived from data already in the database
+(`SyncStateDeriver`, via `SyncStateInitializer`) on the first plan — never by calling
+the network.
+
+**Checked-and-empty is final.** A model whose tags were fetched and came back empty is
+never re-fetched; only an explicit Force re-asks.
+
+### Retry windows (`SyncRetryPolicy.Default`)
+
+| Stored outcome | Re-checked |
+|----------------|-----------|
+| `Matched` | Never (only Force) |
+| `NotIdentified`, `Sidecar`, `Header`, `Heuristic` | After 30 days — a better source may have appeared |
+| `Error` | After 1 day, at most 3 consecutive attempts |
+| `None` / no row | Immediately |
+| Tags / images already stamped | Never (only Force) |
+
+What counts as an answer worth stamping, for the tags and images steps:
+
+| Civitai's reply | Recorded as |
+|-----------------|-------------|
+| Data, or an empty list | Checked (stamped) |
+| 404 (`GetAsync` returns null) | Checked (stamped), item skipped |
+| 401/403 and the rest of 4xx except 429 | Checked (stamped), item skipped — a refusal is the same refusal tomorrow |
+| 429, 5xx, connection/TLS failure, timeout | Not stamped — the item returns on the next run |
+
+A rejected database write (`DbUpdateException`, its unit-of-work translation, or a change-tracker
+conflict) is a fault of **one item**, not of the run: the tracker is dropped, identify stamps
+`Error` and the fetch steps stamp nothing, and the run carries on. Before that it aborted the whole
+sync, so every model queued behind the bad one went unchecked.
+
+### Forcing a re-check
+
+`SyncOptions` carries `ForceIdentify`, `ForceTags`, `ForceImages`, `ForceThumbnails`.
+A forced step ignores the stored verdict and the retry window. The per-LoRA button in the
+detail panel is exactly this: `DownloadMetadataForTileAsync` plans
+`SyncScope.ForModels(modelId)` with `IdentifyModel + FetchTags + FetchImages` and
+`ForceIdentify: true` — same service, same steps, one model — then re-reads that model and
+refreshes the tile.
+
+**The scope predicate is the viewer's predicate.** "In the library" means "owns a local file
+the user can still see, under an enabled LoRA source" — and that is decided by one shared
+function, `LocalPathRoots.IsUnder` in Domain, which `ModelFileSyncService.MatchEnabledRoot`
+(the grid) and `SyncStateRepository` (the sync) both call. They used to answer it separately:
+the viewer accepted `\` or `/` at the root boundary and compared `OrdinalIgnoreCase`, while the
+repository baked in `Path.DirectorySeparatorChar` and folded ASCII only, so a grid full of
+models could produce a plan with nothing in it. SQL still does the narrowing — a `lower(LocalPath)`
+prefix comparison per root, now emitting both separator spellings — and a root containing non-ASCII
+characters, which SQLite's ICU-less `lower()` cannot fold, is resolved by an in-memory id set
+instead, narrowed first by that root's leading run of ASCII characters (`E:\ÖFFENTLICH\Loras` → `e:\`).
+
+Two things that comment used to get wrong. None of this is an indexed lookup: `lower(LocalPath)` is
+a function of the column, so SQLite scans the file rows either way — what the SQL buys is that they
+are discarded inside the engine rather than materialised into the process. And the `LIKE` it emits
+is safe by escaping, not by absence: EF renders a captured-variable `StartsWith` as
+`LIKE @p ESCAPE '\'` with `%`, `_` and `\` escaped into the parameter at runtime, so those in a
+source folder's name are ordinary characters here, not wildcards.
+
+Forcing also widens *selection*, not just due-ness: `SelectIdentifyCandidatesAsync` takes an
+`includeMatched` flag (`ForceIdentify || scope.Kind == Models`) that drops the
+"no `CivitaiId` yet" predicate, and an explicit id scope additionally drops the LoRA-family
+type filter. Without that, a forced run over an already-matched model planned zero items and
+the detail panel reported "No metadata found on Civitai for this file." about a model Civitai
+knows — for most of the library.
+
+The method returns `TileMetadataSyncResult(Applied, Report)`: `Applied` (any step succeeded)
+tells the detail view to reload; `IdentifyPlanned` is what separates the two failure
+wordings — "No metadata found on Civitai for this file." when the step ran and found nothing,
+"Nothing to refresh for this model." when it planned nothing and therefore asked nobody.
+
+**One run at a time, and the buttons say so.** The service is single-flight and *throws* on a
+second run rather than queueing it, so both ways in are switched off while one is going:
+`LoraViewerViewModel.IsSyncRunning` (its own bulk run, its own per-tile run, or
+`ILibrarySyncService.IsRunning` — someone else's) gates the toolbar command's `CanExecute` and is
+mirrored onto `ModelDetailViewModel.IsLibrarySyncRunning`, which gates the detail panel's button.
+Both entry points still check before they start, for the routes that do not go through a button,
+and both ask the same composite (`SyncInFlight`) — the service raises `IsRunning` only once
+`ExecuteAsync` is reached, so a bulk press landing while a per-tile fetch was still *planning* would
+otherwise pass a guard that only knew about that flag. The refusal answers "A metadata sync is
+already running." The bulk run's `finally` disposes only the
+`CancellationTokenSource` that call created — clearing the field blind let a late-finishing run
+dispose the *next* run's token source, after which Cancel cancelled nothing.
 
 ### Fallbacks
 
 | Situation | Fallback |
 |-----------|----------|
-| No API key configured | Requests still work (public models), but lower rate limit |
-| Hash lookup returns 404 | Model marked as synced (not retried), shows filename only |
-| Hash lookup returns version but no images | Phase 2 re-fetches via version endpoint |
-| Image download fails | Tile shows "No Preview" placeholder |
-| Video preview but no FFmpeg | Warning logged, no thumbnail generated |
-| CivitaiId already owned by another DB row | Only CivitaiModelPageId set (grouping still works), warning logged |
+| No API key configured | Requests still work (public models), but at a lower rate limit |
+| Hash lookup returns 404 | Sidecar is tried; outcome recorded as `Sidecar` when metadata came out of it, `NotIdentified` otherwise (unreadable, or not metadata at all), re-checked after 30 days |
+| Hash returns a version but no images | The `FetchImages` step covers it via the version endpoint |
+| Network/disk failure on one item | Recorded as a `SyncFailure` (step, model, reason) and counted in the report; the run continues |
+| `CivitaiId` already owned by another DB row | Only `CivitaiModelPageId` is set (grouping still works), warning logged |
+| A second run started while one is going | Refused before it starts: "A metadata sync is already running." (`ExecuteAsync` would throw — the service is single-flight process-wide) |
+| Service not registered | Button reports "Library sync not available." |
 
 ---
 
@@ -296,7 +426,7 @@ ModelDetailViewModel.DownloadSelectedVersionAsync
 
 | Class | Responsibility |
 |-------|---------------|
-| **`LoraViewerViewModel`** | Top-level orchestrator. Owns `AllTiles` and `FilteredTiles` collections. Coordinates refresh (discover → backfill → load → group → display). Drives "Download Metadata" (3-phase Civitai sync). Manages detail panel lifecycle. Handles filtering (search text, NSFW toggle, base model multi-select). |
+| **`LoraViewerViewModel`** | Top-level orchestrator. Owns `AllTiles` and `FilteredTiles` collections. Coordinates refresh (discover → backfill → load → group → display). Starts a library sync through `ILibrarySyncService` and shows its plan / progress / report (§4) — it owns no sync logic itself. Manages detail panel lifecycle. Handles filtering (search text, NSFW toggle, base model multi-select). |
 | **`ModelTileViewModel`** | Represents one tile in the grid. May group multiple `Model` entities (same Civitai page). Manages version buttons, thumbnail loading (image + video), clipboard operations, "Open on Civitai", "Open Folder", deletion (single + multi-version picker). Factory methods: `FromModel`, `FromModelGroup`. |
 | **`ModelDetailViewModel`** | Right-side detail panel. Shows all versions (local = blue, remote = yellow tabs). Fetches full version list from Civitai API. Handles downloading new versions with progress. Manages `PersistDownloadedModelAsync` for DB persistence after download. |
 | **`CivitaiVersionTabItem`** | One version tab in the detail panel. Wraps `CivitaiModelVersion` (API data) + optional `ModelVersion` (local data). `IsDownloaded` = has local version. |
@@ -309,6 +439,7 @@ ModelDetailViewModel.DownloadSelectedVersionAsync
 | Class | Responsibility |
 |-------|---------------|
 | **`ModelFileSyncService`** (`IModelSyncService`) | Database-first sync engine. `LoadCachedModelsAsync`: fast path for cached data. `DiscoverNewFilesAsync`: scans folders, creates stub Model entities for new files, detects moved files by hash. `VerifyAndSyncFilesAsync`: background verification of file existence. |
+| **`LibrarySyncService`** (`ILibrarySyncService`) | The metadata sync pipeline (§4). `PlanAsync` reports what a run would do; `ExecuteAsync` runs the steps under a process-wide single-flight gate, stamping `ModelSyncStates` as it goes. Steps: `DiscoverFilesStep`, `IdentifyModelStep`, `FetchTagsStep`, `FetchImagesStep`; persistence lives in `CivitaiMetadataApplier` / `SidecarMetadataApplier`. |
 | **`CivitaiClient`** (`ICivitaiClient`) | HTTP client for Civitai REST API. `GetModelAsync`: full model with all versions. `GetModelVersionAsync`: single version by ID. `GetModelVersionByHashAsync`: version lookup by file hash. Handles auth headers, JSON deserialization. |
 | **`IAppSettingsService`** | Provides configured LoRA source folder paths, API key storage, and general app settings. |
 | **`ISecureStorage`** | Encrypts/decrypts the Civitai API key (stored as `EncryptedCivitaiApiKey` in settings). |
@@ -469,6 +600,10 @@ BaseModelFilterItem
 
 3. **No version-level CivitaiId → model page ID lookup in FetchCivitaiDataAsync**: If a model has no `CivitaiId`/`CivitaiModelPageId` but its version has a `CivitaiId`, the detail panel could call `GET /api/v1/model-versions/{versionId}` to discover the `modelId` and then fetch the full model. Currently it shows "No Civitai ID" instead.
 
+### Release note
+
+- **A model you have hand-edited is left out of the bulk run.** `Model.IsUserEdited` takes it out of the identify selection entirely, so a model the user renamed *before* it was ever matched never picks up a Civitai id from "Download Metadata" — and without an id the tags and images steps have nothing to ask about either. That is deliberate: a bulk pass has no way to tell "I renamed this" from "this is what it is called". The detail panel's per-LoRA button is the way in — it is a forced, single-model run, which is the user asking, and the appliers still protect every field they authored.
+
 ---
 
 ## 13. LoRA Sorter tab
@@ -523,7 +658,7 @@ Files not yet in the database (when browsing arbitrary folders) are resolved via
 
 DB rows are matched by path earlier, when the cached library is loaded; there is no by-hash DB lookup (descoped from the spec). A file that cannot be hashed or an API shape change resolves as unknown rather than failing the pass, and the API key is read once per pass, not once per file.
 
-Downloaded metadata is cached in `%LocalAppData%\DiffusionNexus\SorterCache\{sha256}.json` so a re-run or re-preview of the same file normally costs no network call at all. One exception is deliberate: an entry whose tag lookup never succeeded is stored as *unresolved* rather than as "this model has no tags", so the next pass retries it — that is what stops one transient Civitai failure from leaving a file category-less forever. Within a single pass the tag lookup is also memoized per model id, so a folder full of versions of the same model costs one `/models/{id}` call, not one per file. The cache is a lookup cache only — the DB is never polluted with unregistered folders.
+Downloaded metadata is cached in `%LocalAppData%\DiffusionNexus\SorterCache\{sha256}.json` (file name always lower-cased, so the store survived the switch to the library-wide uppercase `FileHasher.Sha256Upper`) so a re-run or re-preview of the same file normally costs no network call at all. One exception is deliberate: an entry whose tag lookup never succeeded is stored as *unresolved* rather than as "this model has no tags", so the next pass retries it — that is what stops one transient Civitai failure from leaving a file category-less forever. Within a single pass the tag lookup is also memoized per model id, so a folder full of versions of the same model costs one `/models/{id}` call, not one per file. The cache is a lookup cache only — the DB is never polluted with unregistered folders.
 
 ### Execution
 

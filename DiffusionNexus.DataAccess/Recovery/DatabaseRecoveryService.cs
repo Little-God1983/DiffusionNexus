@@ -50,6 +50,14 @@ public sealed class DatabaseRecoveryService
             var dbPath = dbContext.Database.GetConnectionString();
             _log.Information($"InitializeDatabase: Connection string: {dbPath}");
 
+            // Capture whether a database file already existed BEFORE any connection is opened.
+            // CanConnect() below eagerly creates an empty file for a SQLite ReadWriteCreate
+            // connection string, so checking File.Exists() after that point is always true —
+            // even on a genuine first-ever launch — which would make PreMigrationBackup back up
+            // a schema-less stub instead of skipping a brand new install as intended.
+            var dbFile = TryGetDatabaseFilePath(dbContext);
+            var dbFileExistedBeforeConnect = dbFile is not null && File.Exists(dbFile);
+
             // First verify we can connect
             _log.Information("InitializeDatabase: Testing connection...");
             if (!dbContext.Database.CanConnect())
@@ -72,6 +80,10 @@ public sealed class DatabaseRecoveryService
                     _log.Information($"InitializeDatabase:   - {migration}");
                 }
 
+                // Spec #521 S2: a consistent copy next to the DB before any schema change.
+                if (dbFileExistedBeforeConnect && dbFile is not null)
+                    PreMigrationBackup.TryCreate(dbFile, pendingMigrations[0], _log);
+
                 _log.Information("InitializeDatabase: Running Migrate()...");
                 dbContext.Database.Migrate();
                 _log.Information("InitializeDatabase: Migration completed successfully");
@@ -81,9 +93,12 @@ public sealed class DatabaseRecoveryService
                 _log.Information("InitializeDatabase: No pending migrations - SKIPPING Migrate()");
             }
 
-            // Post-migration verification to catch schema gaps
+            // Post-migration verification to catch schema gaps. The data repair inside it is only
+            // needed when a migration body could have been skipped this start — on a launch with
+            // nothing pending, everything it would fix was already fixed by the launch that
+            // applied (or stamped) the migration, and probing for it is a table scan per start.
             _log.Information("InitializeDatabase: Post-migration schema verification...");
-            CheckAndRepairSchema(dbContext);
+            CheckAndRepairSchema(dbContext, migrationsTouchedThisStart: pendingMigrations.Count > 0);
 
             // WAL: readers no longer block behind writers (e.g. the end-of-backup
             // LastBackupAt write). Persistent — set once per launch is idempotent.
@@ -148,6 +163,23 @@ public sealed class DatabaseRecoveryService
     }
 
     /// <summary>
+    /// Extracts the SQLite file path a context is opened against, for use by
+    /// <see cref="PreMigrationBackup"/>. Returns null for an in-memory or unresolvable
+    /// connection string instead of throwing.
+    /// </summary>
+    private static string? TryGetDatabaseFilePath(DiffusionNexusCoreDbContext dbContext)
+    {
+        try
+        {
+            var cs = dbContext.Database.GetConnectionString();
+            if (string.IsNullOrWhiteSpace(cs)) return null;
+            var path = new SqliteConnectionStringBuilder(cs).DataSource;
+            return string.IsNullOrWhiteSpace(path) || path == ":memory:" ? null : path;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
     /// Removes entries from <c>__EFMigrationsHistory</c> that no longer have a corresponding
     /// migration class in the assembly, preventing EF Core from failing when migrations are removed.
     /// </summary>
@@ -207,7 +239,15 @@ public sealed class DatabaseRecoveryService
     /// <c>AppSettings</c> and <c>Models</c> tables actually exists, adding any that are missing.
     /// This is safer than waiting for a crash.
     /// </summary>
-    public void CheckAndRepairSchema(DiffusionNexusCoreDbContext dbContext)
+    /// <param name="dbContext">The context whose database is checked.</param>
+    /// <param name="migrationsTouchedThisStart">
+    /// Whether this start applied migrations or stamped them as applied. Only then can a migration
+    /// body have been skipped, so only then is the <i>data</i> repair
+    /// (<see cref="NormalizeModelFileHashCasing"/>) worth its table scan; the column repairs above
+    /// it are PRAGMA reads and run unconditionally. Defaults to <c>true</c> because every caller
+    /// that is not the clean startup path is by definition such a start.
+    /// </param>
+    public void CheckAndRepairSchema(DiffusionNexusCoreDbContext dbContext, bool migrationsTouchedThisStart = true)
     {
         try
         {
@@ -272,6 +312,9 @@ public sealed class DatabaseRecoveryService
             // ALTER TABLE never actually executed — leaving queries to fail with
             // "no such column: …". Mirrors the AppSettings repair above.
             RepairModelsTableColumns(dbContext, connection);
+            RepairModelImagesTableColumns(dbContext, connection);
+            EnsureModelSyncStatesTable(dbContext);
+            if (migrationsTouchedThisStart) NormalizeModelFileHashCasing(dbContext, connection);
         }
         catch (Exception ex)
         {
@@ -288,25 +331,7 @@ public sealed class DatabaseRecoveryService
     /// </summary>
     private void RepairModelsTableColumns(DiffusionNexusCoreDbContext dbContext, DbConnection connection)
     {
-        var wasOpen = connection.State == ConnectionState.Open;
-        if (!wasOpen) connection.Open();
-
-        var existingColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        try
-        {
-            using var command = connection.CreateCommand();
-            command.CommandText = "PRAGMA table_info('Models');";
-            using var reader = command.ExecuteReader();
-            while (reader.Read())
-            {
-                var name = reader["name"].ToString();
-                if (!string.IsNullOrEmpty(name)) existingColumns.Add(name);
-            }
-        }
-        finally
-        {
-            if (!wasOpen) connection.Close();
-        }
+        var existingColumns = ReadColumnNames(connection, "Models");
 
         if (existingColumns.Count == 0)
         {
@@ -336,6 +361,162 @@ public sealed class DatabaseRecoveryService
                 _log.Error(ex, $"CheckAndRepairSchema: Failed to add Models.'{col.Key}'");
             }
         }
+    }
+
+    /// <summary>
+    /// Mirror of <see cref="RepairModelsTableColumns"/> for the <c>ModelImages</c> table.
+    /// Add entries here whenever a migration adds nullable columns there.
+    /// </summary>
+    private void RepairModelImagesTableColumns(DiffusionNexusCoreDbContext dbContext, DbConnection connection)
+    {
+        var existingColumns = ReadColumnNames(connection, "ModelImages");
+
+        if (existingColumns.Count == 0)
+        {
+            // Table doesn't exist yet — initial migration will create it.
+            return;
+        }
+
+        // Migration 20260821112114_AddModelSyncStateAndThumbnailAttempts
+        var requiredColumns = new Dictionary<string, string>
+        {
+            { "ThumbnailAttemptedAt", "ALTER TABLE ModelImages ADD COLUMN ThumbnailAttemptedAt TEXT" },
+            { "ThumbnailFailure",     "ALTER TABLE ModelImages ADD COLUMN ThumbnailFailure TEXT" },
+        };
+
+        foreach (var col in requiredColumns)
+        {
+            if (existingColumns.Contains(col.Key)) continue;
+
+            _log.Warning($"CheckAndRepairSchema: Missing ModelImages.'{col.Key}' column. Attempting to add...");
+            try
+            {
+                dbContext.Database.ExecuteSqlRaw(col.Value);
+                _log.Information($"CheckAndRepairSchema: Successfully added ModelImages.'{col.Key}'");
+            }
+            catch (Exception ex)
+            {
+                _log.Error(ex, $"CheckAndRepairSchema: Failed to add ModelImages.'{col.Key}'");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Recreates the <c>ModelSyncStates</c> table when a migration row was force-marked as applied
+    /// without the CREATE TABLE ever running. Column types must stay in sync with migration
+    /// 20260821112114_AddModelSyncStateAndThumbnailAttempts.
+    /// </summary>
+    private void EnsureModelSyncStatesTable(DiffusionNexusCoreDbContext dbContext)
+    {
+        try
+        {
+            dbContext.Database.ExecuteSqlRaw(
+                "CREATE TABLE IF NOT EXISTS ModelSyncStates (" +
+                "ModelId INTEGER NOT NULL CONSTRAINT PK_ModelSyncStates PRIMARY KEY, " +
+                "MetadataCheckedAt TEXT NULL, MetadataOutcome TEXT NOT NULL, MetadataAttempts INTEGER NOT NULL, " +
+                "LastError TEXT NULL, TagsCheckedAt TEXT NULL, ImagesCheckedAt TEXT NULL, SidecarSignature TEXT NULL, " +
+                "HeaderCheckedAt TEXT NULL, UpdatedAt TEXT NOT NULL, " +
+                "CONSTRAINT FK_ModelSyncStates_Models_ModelId FOREIGN KEY (ModelId) REFERENCES Models (Id) ON DELETE CASCADE);");
+        }
+        catch (Exception ex)
+        {
+            _log.Error(ex, "CheckAndRepairSchema: Failed to ensure ModelSyncStates table");
+        }
+    }
+
+    /// <summary>
+    /// Re-runs the hash-casing normalization from migration
+    /// 20260821112114_AddModelSyncStateAndThumbnailAttempts. The migration's <c>Up()</c> body never
+    /// executes on a database that reached <see cref="MarkPendingMigrationsAsApplied"/> — the row is
+    /// stamped in <c>__EFMigrationsHistory</c> without the SQL running — which would leave
+    /// <c>ModelFiles.HashSHA256</c> mixed-case forever and break SQL equality against the uppercase
+    /// hashes the downloader writes.
+    /// </summary>
+    /// <remarks>
+    /// Two things keep this off the critical path of every launch. Its caller only reaches it when
+    /// migrations were applied or stamped this start — the only way a migration body can have been
+    /// skipped — and once here it asks <c>EXISTS</c> before it writes. The probe still scans, but it
+    /// is read-only and stops at the first offending row, where the bare <c>UPDATE</c> took a write
+    /// lock and walked the whole table to update nothing. Writers stay honest at the source:
+    /// everything that stores a SHA256 uppercases it first, so on a healthy database the probe
+    /// answers no.
+    /// </remarks>
+    private void NormalizeModelFileHashCasing(DiffusionNexusCoreDbContext dbContext, DbConnection connection)
+    {
+        if (ReadColumnNames(connection, "ModelFiles").Count == 0)
+        {
+            // Table doesn't exist yet — initial migration will create it.
+            return;
+        }
+
+        try
+        {
+            if (!AnyLowercaseHash(connection))
+            {
+                _log.Information("CheckAndRepairSchema: ModelFiles.HashSHA256 casing already normalized — nothing written");
+                return;
+            }
+
+            var updated = dbContext.Database.ExecuteSqlRaw(
+                "UPDATE ModelFiles SET HashSHA256 = upper(HashSHA256) WHERE HashSHA256 IS NOT NULL AND HashSHA256 <> upper(HashSHA256);");
+            _log.Information($"CheckAndRepairSchema: Normalized {updated} lowercase ModelFiles.HashSHA256 value(s) to uppercase");
+        }
+        catch (Exception ex)
+        {
+            _log.Error(ex, "CheckAndRepairSchema: Failed to normalize ModelFiles.HashSHA256 casing");
+        }
+    }
+
+    /// <summary>
+    /// Whether any <c>ModelFiles.HashSHA256</c> is not already uppercase. Read-only, and
+    /// <c>EXISTS</c> stops SQLite at the first hit rather than counting them all.
+    /// </summary>
+    private static bool AnyLowercaseHash(DbConnection connection)
+    {
+        var wasOpen = connection.State == ConnectionState.Open;
+        if (!wasOpen) connection.Open();
+
+        try
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText =
+                "SELECT EXISTS(SELECT 1 FROM ModelFiles WHERE HashSHA256 IS NOT NULL AND HashSHA256 <> upper(HashSHA256) LIMIT 1);";
+            return Convert.ToInt64(command.ExecuteScalar() ?? 0L) != 0L;
+        }
+        finally
+        {
+            if (!wasOpen) connection.Close();
+        }
+    }
+
+    /// <summary>
+    /// Reads the column names of <paramref name="table"/> via <c>PRAGMA table_info</c>.
+    /// Returns an empty set when the table does not exist. Leaves the connection in the
+    /// state it was found in.
+    /// </summary>
+    private static HashSet<string> ReadColumnNames(DbConnection connection, string table)
+    {
+        var wasOpen = connection.State == ConnectionState.Open;
+        if (!wasOpen) connection.Open();
+
+        var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = $"PRAGMA table_info('{table}');";
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                var name = reader["name"].ToString();
+                if (!string.IsNullOrEmpty(name)) columns.Add(name);
+            }
+        }
+        finally
+        {
+            if (!wasOpen) connection.Close();
+        }
+
+        return columns;
     }
 
     /// <summary>

@@ -57,6 +57,47 @@ public sealed class SorterMetadataResolverTests : IDisposable
         File.Exists(In(Path.Combine("cache", "abc123.json"))).Should().BeTrue();
     }
 
+    /// <summary>
+    /// The hasher is now <c>FileHasher.Sha256Upper</c> (uppercase, the library-wide convention),
+    /// while every cache entry an earlier build wrote is named in lowercase. Keying the store on
+    /// the digest as-is would orphan all of them and silently re-fetch the whole library, so the
+    /// file name is lower-cased on write...
+    /// </summary>
+    [Fact]
+    public async Task CacheFileNameIsLowercasedForAnUppercaseDigest()
+    {
+        var model = WriteModel();
+        const string upper = "ABC123DEF";
+        _client.Setup(c => c.GetModelVersionByHashAsync(upper, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CivitaiModelVersion { Id = 777, BaseModel = "SDXL 1.0" });
+
+        var meta = await Resolver(_client.Object, sha: upper).ResolveAsync(model);
+
+        meta.Sha256.Should().Be(upper, "the digest itself is passed through as the hasher produced it");
+        // Assert on the real directory entry, not File.Exists: NTFS is case-insensitive, so
+        // File.Exists("ABC123DEF.json") is true either way and would prove nothing.
+        Directory.EnumerateFiles(In("cache")).Select(Path.GetFileName).Should().ContainSingle()
+            .Which.Should().Be("abc123def.json",
+                "the cache file name must be lower-cased so the store is case-insensitive");
+    }
+
+    /// <summary>...and on read, so a cache written by an older (lowercase) build is still served.</summary>
+    [Fact]
+    public async Task LowercaseCacheEntryIsServedForAnUppercaseDigest()
+    {
+        var model = WriteModel();
+        const string upper = "ABC123DEF";
+        Directory.CreateDirectory(In("cache"));
+        File.WriteAllText(In(Path.Combine("cache", "abc123def.json")),
+            """{"baseModel": "Illustrious", "versionId": 42, "tags": ["anime"]}""");
+
+        var meta = await Resolver(_client.Object, sha: upper).ResolveAsync(model);
+
+        meta.BaseModelRaw.Should().Be("Illustrious");
+        meta.CivitaiVersionId.Should().Be(42);
+        _client.VerifyNoOtherCalls(); // a cache hit must not reach Civitai
+    }
+
     [Fact]
     public async Task SecondResolveIsServedFromCacheWithoutApiCall()
     {
