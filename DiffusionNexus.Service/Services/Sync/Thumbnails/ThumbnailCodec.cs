@@ -18,6 +18,16 @@ public static class ThumbnailCodec
     /// and re-encodes as JPEG. Returns <c>null</c> when the bytes are not a decodable image —
     /// callers map that to <c>ThumbnailFailureReason.NotDecodable</c>.
     /// </summary>
+    /// <remarks>
+    /// Never throws, and the <c>is null</c> checks around <see cref="SKImage.FromBitmap"/> and
+    /// <see cref="SKImage.Encode(SKEncodedImageFormat, int)"/> are what make that true: both are
+    /// declared to return null, and an unguarded dereference would send a
+    /// <see cref="NullReferenceException"/> out through <c>ThumbnailProvider.ProduceAsync</c> —
+    /// whose contract is bytes-or-reason — and on past <c>SyncFaults.IsItemFault</c>, which does
+    /// not classify it, so the row would never be stamped and would come back as a candidate on
+    /// every subsequent run. A null from either is answered the same way a null decode is:
+    /// no payload, hence <c>NotDecodable</c>.
+    /// </remarks>
     public static ThumbnailPayload? Encode(byte[] source)
     {
         // SKBitmap.Decode throws (rather than returning null) when SkiaSharp can't build a
@@ -39,7 +49,11 @@ public static class ThumbnailCodec
         if (bitmap.Width <= TargetWidth)
         {
             using var originalImage = SKImage.FromBitmap(bitmap);
+            if (originalImage is null) return null;
+
             using var originalEncoded = originalImage.Encode(SKEncodedImageFormat.Jpeg, JpegQuality);
+            if (originalEncoded is null) return null;
+
             var originalBytes = originalEncoded.ToArray();
             if (originalBytes.Length == 0) return null;
 
@@ -57,7 +71,11 @@ public static class ThumbnailCodec
         if (resized is null) return null;
 
         using var resizedImage = SKImage.FromBitmap(resized);
+        if (resizedImage is null) return null;
+
         using var resizedEncoded = resizedImage.Encode(SKEncodedImageFormat.Jpeg, JpegQuality);
+        if (resizedEncoded is null) return null;
+
         var resizedBytes = resizedEncoded.ToArray();
         if (resizedBytes.Length == 0) return null;
 
