@@ -676,10 +676,11 @@ public sealed class SidecarMetadataApplier
     /// is the extension ladder, <see cref="ThumbnailCodec"/> is what a thumbnail looks like, and
     /// <see cref="ThumbnailWriter"/> is which of the six columns a verdict touches. Two consequences
     /// of that, both intended: a preview found here is now the same 450px JPEG the sync step and the
-    /// tile produce (it used to be its own 340px transcode), and the attempt is stamped, so a sibling
-    /// that cannot be decoded is read and decoded once rather than on every run for the life of the
-    /// file. What stays local is the decision-making — spec S4, the synthetic row, and the contract
-    /// that nothing in here throws.
+    /// tile produce (it used to be its own 340px transcode), and the attempt is stamped — on the
+    /// row the sibling actually belongs to — so a <c>file://</c> preview that cannot be decoded is
+    /// read and decoded once rather than on every run for the life of the file. What stays local is
+    /// the decision-making — spec S4, the synthetic row, whose row a failure may name, and the
+    /// contract that nothing in here throws.
     /// </remarks>
     /// <returns>True if a local thumbnail was found and applied.</returns>
     private async Task<bool> TryApplyLocalThumbnailAsync(
@@ -718,11 +719,21 @@ public sealed class SidecarMetadataApplier
 
             if (payload is null)
             {
-                // The sibling is there and unusable. Worth recording — but only on a row that
-                // already exists. Inventing a file:// row purely to carry a failure would make the
-                // version's primary image a file nothing can read, and the sync step already
-                // records LocalFileMissing for the file:// rows it selects.
-                if (primaryImage is null) return false;
+                // The sibling is there and unusable. Recording that is only honest on a row whose
+                // own Url IS the sibling: a stamp names a row, and a row is a URL. The version's
+                // Civitai row failed at nothing — a broken PNG on disk says nothing whatsoever
+                // about it — and NotDecodable is a HARD reason, so stamping it there would be a
+                // permanent verdict on the wrong thing. The sync step skips hard failures and so
+                // does the tile's scroll gate, which leaves a tile only the manual button can ever
+                // fill. Any other row is left exactly as it was, and the next sync fetches the real
+                // thumbnail as it always would have.
+                //
+                // Nothing is created here either. A synthetic file:// row invented purely to carry
+                // a failure would become the version's primary image, permanently pointing at
+                // something unreadable; the sync step already records LocalFileMissing for the
+                // file:// rows it selects.
+                if (primaryImage is null || !LocalPreviewFiles.TryGetLocalPath(primaryImage.Url, out _))
+                    return false;
 
                 ThumbnailWriter.ApplyFailure(primaryImage, ThumbnailFailureReason.NotDecodable, now);
                 await uow.SaveChangesAsync(ct);
