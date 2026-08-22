@@ -1290,15 +1290,6 @@ public partial class ModelTileViewModel : ViewModelBase
 
         if (primaryImage?.ThumbnailData is { Length: > 0 } data && !primaryImage.IsThumbnailDeferred)
         {
-            // Cleared up front, exactly like the two branches below. On a first load there is
-            // nothing here anyway, but on a version switch there is the previous version's
-            // picture — and the paths that return before the Post below (a corrupt BLOB, a
-            // decode that failed) would otherwise leave it on screen as this version's art.
-            // Worse, with the in-memory bytes nulled but ThumbnailImage still set,
-            // IsThumbnailMissing reads false and the repair affordance never appears: a
-            // plausible-looking tile showing the wrong model, with nothing to say so.
-            ThumbnailImage = null;
-
             // Thumbnail BLOB already in memory — decode off the UI thread (downscaled,
             // no JPEG round-trip), then marshal only the property assignment back.
             // Guard with `ct` since Activate/Deactivate/version-switch can make this
