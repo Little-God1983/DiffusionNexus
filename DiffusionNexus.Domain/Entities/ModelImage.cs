@@ -182,7 +182,17 @@ public class ModelImage
     public bool HasThumbnail => ThumbnailData is { Length: > 0 } && !IsThumbnailDeferred;
 
     /// <summary>Whether the preview is a video (MP4, WebM, etc.).</summary>
-    public bool IsVideo => string.Equals(MediaType, "video", StringComparison.OrdinalIgnoreCase);
+    public bool IsVideo => IsVideoLike(MediaType, Url);
+
+    /// <summary>
+    /// Whether a preview described by <paramref name="mediaType"/>/<paramref name="url"/> is a
+    /// video. Extracted from <see cref="IsVideo"/> so SQL-side candidate selection can apply the
+    /// exact same rule. Today this only inspects <paramref name="mediaType"/> — the URL is
+    /// accepted for future extension-based fallback but not yet consulted, matching the
+    /// pre-extraction behaviour of <see cref="IsVideo"/> exactly.
+    /// </summary>
+    public static bool IsVideoLike(string? mediaType, string? url) =>
+        string.Equals(mediaType, "video", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Whether a full-resolution cached image is available.</summary>
     public bool HasLocalCache => IsLocalCacheValid && !string.IsNullOrEmpty(LocalCachePath);
