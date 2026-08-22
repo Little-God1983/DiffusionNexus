@@ -534,7 +534,7 @@ IThumbnailProvider.ProduceAsync (the ladder — DiffusionNexus.Service/Services/
 ├── Rung 2: file:// url, or a recorded      → decode from disk (sibling probe if the path moved)
 │           path has gone but a sibling
 │           preview sits next to the model
-├── Rung 3: MediaType == "video"           → CDN poster transform (width=450,anim=false,transcode=true
+├── Rung 3: IsVideoLike (type or .mp4 url) → CDN poster transform (width=450,anim=false,transcode=true
 │                                             + .jpeg extension); a 404 here is VideoNoPoster (soft),
 │                                             never Http404 — the transform may simply not exist yet
 ├── Rung 4: an ordinary still image        → CDN transform (width=450); a response that turns out to
@@ -564,9 +564,11 @@ every producer — a thumbnail from the sync step, the tile, and the sidecar app
   in bulk; if the CDN has no poster for it yet, the row fails soft (`VideoNoPoster`) and tries again
   tomorrow — it never falls back to pulling the clip. That is the **0-video-bytes-in-bulk guarantee**:
   watching the network (or the log — every video URL fetched carries `transcode=true`) during a bulk
-  run should show no MP4/WebM bytes at all, for every row typed `video`. A legacy row with
-  `MediaType == null` whose URL happens to serve video is not caught by this guarantee — see the
-  64 MB cap's tail below.
+  run should show no MP4/WebM bytes at all. It covers more than rows typed `video`:
+  `ModelImage.IsVideoLike` — the predicate rung 3 is gated on — also reads a video *extension* off
+  the URL when `MediaType` is null, so the legacy sidecar rows that carry no `type` field reach the
+  poster rung too. What falls outside it is the genuinely undetectable case: a URL with no video
+  extension, on a row with no media type. See the 64 MB cap's tail below.
 
 ### Failure reasons and retry windows (`SyncRetryPolicy.IsThumbnailDue`)
 
@@ -582,8 +584,11 @@ on the fixed 1-day cadence for as long as it keeps failing.
 
 **The 64 MB cap's tail.** The thumbnail `HttpClient` sets `MaxResponseContentBufferSize = 64 * 1024 *
 1024` (`SyncServiceCollectionExtensions`) — large enough for any legitimate poster or still, and a
-backstop against a "video in disguise": an image-media-type row whose URL actually serves an MP4
-must not be buffered as an unbounded clip. Tripping that cap throws `HttpRequestException` inside
+backstop against a "video in disguise": a row whose URL actually serves an MP4 while nothing about
+the record says so must not be buffered as an unbounded clip. Two shapes reach rung 4 that way — a
+row typed `image` whose type is simply wrong, and a row with no type whose URL carries no video
+extension either (a null-`MediaType` row with an `.mp4` URL is *not* one of them; `IsVideoLike`
+sends it to rung 3). Tripping that cap throws `HttpRequestException` inside
 `ThumbnailProvider.FetchAsync`, which is caught in the same place as every other transport failure
 and mapped to `HttpError` — **soft**, deliberately: it is re-asked after the ordinary 1-day window
 rather than being written off as a permanent verdict, because nothing about an oversized response

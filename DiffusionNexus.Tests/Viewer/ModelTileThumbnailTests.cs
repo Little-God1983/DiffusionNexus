@@ -29,11 +29,78 @@ public class ModelTileThumbnailTests
 {
     private static readonly byte[] Garbage = [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
 
+    private const ModelTileViewModel.TileDecodeOutcome NotAnImage =
+        ModelTileViewModel.TileDecodeOutcome.NotAnImage;
+
+    /// <summary>
+    /// End to end through the real decode path — no injection: eight bytes with no header are put
+    /// to SkiaSharp, the only authority the corrupt verdict accepts, and come back
+    /// <see cref="ModelTileViewModel.TileDecodeOutcome.NotAnImage"/>.
+    /// </summary>
     [Fact]
     public void CorruptMarking_TriggersWhenStoredBytesCannotBeDecoded()
     {
-        ModelTileViewModel.ShouldMarkCorrupt(Garbage, decoded: false).Should().BeTrue(
+        var decode = ModelTileViewModel.TryCreateTileBitmap(Garbage);
+
+        decode.Outcome.Should().Be(ModelTileViewModel.TileDecodeOutcome.NotAnImage);
+        ModelTileViewModel.ShouldMarkCorrupt(Garbage, decode.Outcome).Should().BeTrue(
             "bytes are in the database and nothing can render them — that is a fact about the row, not about this tile");
+    }
+
+    /// <summary>
+    /// The finding this file's corrupt path was rewritten for. The verdict deletes the BLOB, and a
+    /// hand-uploaded thumbnail can be sitting on a row whose civitai URL has since 404'd — so it
+    /// must follow from "these bytes are not an image" and never from "we could not decode them
+    /// right now". An <see cref="OutOfMemoryException"/> decoding a multi-MB legacy thumbnail under
+    /// pressure is exactly the one-off that used to land in the same place and null the row.
+    /// </summary>
+    [Fact]
+    public void CorruptMarking_NeverFromADecodeThatMerelyFailedThisTime()
+    {
+        var decode = ModelTileViewModel.TryCreateTileBitmap(
+            Garbage,
+            _ => throw new OutOfMemoryException(),
+            _ => throw new OutOfMemoryException());
+
+        decode.Bitmap.Should().BeNull();
+        decode.Outcome.Should().Be(ModelTileViewModel.TileDecodeOutcome.TransientFailure);
+        ModelTileViewModel.ShouldMarkCorrupt(Garbage, decode.Outcome).Should().BeFalse(
+            "nothing was learned about these bytes, and the verdict deletes them");
+    }
+
+    /// <summary>
+    /// Avalonia's decoder is narrower than Skia's — that asymmetry is the whole reason the fallback
+    /// exists — so its refusal is never the verdict. Skia's answer is, either way.
+    /// </summary>
+    [Fact]
+    public void CorruptMarking_AvaloniaRefusingTheBytesIsNotTheVerdict()
+    {
+        var real = CreateNoisyPng(8, 8);
+
+        ModelTileViewModel.TryCreateTileBitmap(real, _ => throw new NotSupportedException(), SKBitmap.Decode)
+            .Outcome.Should().NotBe(ModelTileViewModel.TileDecodeOutcome.NotAnImage,
+                "Skia decodes this PNG perfectly well — only the transcode past that point can fail here");
+
+        ModelTileViewModel.TryCreateTileBitmap(Garbage, _ => throw new NotSupportedException(), SKBitmap.Decode)
+            .Outcome.Should().Be(ModelTileViewModel.TileDecodeOutcome.NotAnImage,
+                "and when Skia refuses them too, that IS the verdict");
+    }
+
+    /// <summary>
+    /// The property that matters for the user's own uploads: a genuine image is never eligible for
+    /// deletion, whatever the tile's decode did with it. (Headless, the transcode's final
+    /// <c>new Bitmap(...)</c> has no Avalonia platform to run on, so this really does exercise the
+    /// "decoded, then something failed" branch rather than the happy path.)
+    /// </summary>
+    [Fact]
+    public void CorruptMarking_NeverForBytesSkiaCanDecode()
+    {
+        var real = CreateNoisyPng(8, 8);
+
+        var decode = ModelTileViewModel.TryCreateTileBitmap(real);
+
+        decode.Outcome.Should().NotBe(ModelTileViewModel.TileDecodeOutcome.NotAnImage);
+        ModelTileViewModel.ShouldMarkCorrupt(real, decode.Outcome).Should().BeFalse();
     }
 
     /// <summary>
@@ -46,13 +113,13 @@ public class ModelTileThumbnailTests
     {
         var image = new ModelImage { Url = "https://image.civitai.com/abc/width=450/still.jpeg", ThumbnailData = Garbage };
 
-        ModelTileViewModel.ShouldMarkCorrupt(image.ThumbnailData, decoded: false).Should().BeTrue();
+        ModelTileViewModel.ShouldMarkCorrupt(image.ThumbnailData, NotAnImage).Should().BeTrue();
 
         // What the marking site does to the entity.
         image.ThumbnailData = null;
         ThumbnailWriter.ApplyFailure(image, ThumbnailFailureReason.Corrupt, DateTimeOffset.UtcNow);
 
-        ModelTileViewModel.ShouldMarkCorrupt(image.ThumbnailData, decoded: false).Should().BeFalse(
+        ModelTileViewModel.ShouldMarkCorrupt(image.ThumbnailData, NotAnImage).Should().BeFalse(
             "one tile activation marks at most once");
         image.ThumbnailFailure.Should().Be(ThumbnailFailureReason.Corrupt);
     }
@@ -60,14 +127,15 @@ public class ModelTileThumbnailTests
     [Fact]
     public void CorruptMarking_LeavesADecodedThumbnailAlone()
     {
-        ModelTileViewModel.ShouldMarkCorrupt(Garbage, decoded: true).Should().BeFalse();
+        ModelTileViewModel.ShouldMarkCorrupt(Garbage, ModelTileViewModel.TileDecodeOutcome.Decoded)
+            .Should().BeFalse();
     }
 
     [Fact]
     public void CorruptMarking_SaysNothingAboutARowThatHasNoBytes()
     {
-        ModelTileViewModel.ShouldMarkCorrupt(null, decoded: false).Should().BeFalse();
-        ModelTileViewModel.ShouldMarkCorrupt([], decoded: false).Should().BeFalse(
+        ModelTileViewModel.ShouldMarkCorrupt(null, NotAnImage).Should().BeFalse();
+        ModelTileViewModel.ShouldMarkCorrupt([], NotAnImage).Should().BeFalse(
             "an empty BLOB is a missing thumbnail, which the fetch path answers — not a corrupt one");
     }
 
@@ -78,7 +146,10 @@ public class ModelTileThumbnailTests
     [Fact]
     public void CorruptMarking_NeverMistakesTheDeferredSentinelForCorruption()
     {
-        ModelTileViewModel.ShouldMarkCorrupt(ModelImage.ThumbnailNotLoadedSentinel, decoded: false)
+        ModelTileViewModel.TryCreateTileBitmap(ModelImage.ThumbnailNotLoadedSentinel).Outcome
+            .Should().Be(NotAnImage, "one byte is not an image — the guard below is the only thing between it and deletion");
+
+        ModelTileViewModel.ShouldMarkCorrupt(ModelImage.ThumbnailNotLoadedSentinel, NotAnImage)
             .Should().BeFalse();
     }
 

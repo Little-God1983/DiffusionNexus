@@ -195,13 +195,40 @@ public class ModelImage
 
     /// <summary>
     /// Whether a preview described by <paramref name="mediaType"/>/<paramref name="url"/> is a
-    /// video. Extracted from <see cref="IsVideo"/> so SQL-side candidate selection can apply the
-    /// exact same rule. Today this only inspects <paramref name="mediaType"/> — the URL is
-    /// accepted for future extension-based fallback but not yet consulted, matching the
-    /// pre-extraction behaviour of <see cref="IsVideo"/> exactly.
+    /// video. The single source for that question: <see cref="IsVideo"/>, the tile's own video test,
+    /// and the SQL-side candidate ranking are all this call.
     /// </summary>
-    public static bool IsVideoLike(string? mediaType, string? url) =>
-        string.Equals(mediaType, "video", StringComparison.OrdinalIgnoreCase);
+    /// <remarks>
+    /// A recorded <paramref name="mediaType"/> is an answer and the URL does not get to argue with
+    /// it; the extension fallback applies only to rows that carry no answer at all. Those exist in
+    /// quantity — anything imported from a <c>.civitai.info</c> sidecar without a <c>type</c> field
+    /// has a null media type and, often enough, an <c>.mp4</c> URL.
+    /// <para>
+    /// The fallback is not cosmetic. This predicate gates rung 3 of the thumbnail ladder (the CDN
+    /// poster transform, a few KB); a video row that misses it falls to rung 4, which GETs the URL
+    /// and buffers the response whole — up to the client's 64 MB cap — before the byte sniffer
+    /// recognises a container and hands it back to rung 3 anyway. Without this the bulk sync pulled
+    /// and discarded one full preview clip per such row, every run, on the one path that is
+    /// otherwise careful never to download a video nobody asked for.
+    /// </para>
+    /// <para>
+    /// <see cref="Uri.TryCreate(string?, UriKind, out Uri?)"/>, never the throwing constructor: the
+    /// database holds URLs nothing guarantees are parseable — a truncated download, a legacy
+    /// relative path, an unclosed bracket. One that cannot be parsed is simply not known to be a
+    /// video, which is the answer it already had.
+    /// </para>
+    /// </remarks>
+    public static bool IsVideoLike(string? mediaType, string? url)
+    {
+        if (string.Equals(mediaType, "video", StringComparison.OrdinalIgnoreCase)) return true;
+
+        if (mediaType is not null || string.IsNullOrEmpty(url)) return false;
+
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return false;
+
+        var extension = Path.GetExtension(uri.AbsolutePath);
+        return extension is ".mp4" or ".webm" or ".mov" or ".avi" or ".mkv";
+    }
 
     /// <summary>Whether a full-resolution cached image is available.</summary>
     public bool HasLocalCache => IsLocalCacheValid && !string.IsNullOrEmpty(LocalCachePath);

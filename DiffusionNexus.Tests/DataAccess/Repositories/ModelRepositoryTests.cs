@@ -377,11 +377,14 @@ public class ModelRepositoryTests : IDisposable
     }
 
     [Fact]
-    public void WhenMediaTypeIsNullAndUrlHasMp4ExtensionThenIsVideoReturnsFalse()
+    public void WhenMediaTypeIsNullAndUrlHasMp4ExtensionThenIsVideoReturnsTrue()
     {
-        // IsVideo only checks MediaType, not URL — URL fallback is in the ViewModel
+        // Was ReturnsFalse: the URL fallback used to live only in the ViewModel. It moved onto
+        // ModelImage.IsVideoLike for the Plan B thumbnail ladder, where this exact row — a legacy
+        // sidecar import with no `type` field — otherwise skips the poster rung and gets its full
+        // clip downloaded and thrown away. See ModelImageIsVideoLikeTests for the whole rule.
         var image = new ModelImage { Url = "https://example.com/preview.mp4" };
-        image.IsVideo.Should().BeFalse();
+        image.IsVideo.Should().BeTrue();
     }
 
     [Fact]

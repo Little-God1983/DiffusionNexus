@@ -1290,6 +1290,15 @@ public partial class ModelTileViewModel : ViewModelBase
 
         if (primaryImage?.ThumbnailData is { Length: > 0 } data && !primaryImage.IsThumbnailDeferred)
         {
+            // Cleared up front, exactly like the two branches below. On a first load there is
+            // nothing here anyway, but on a version switch there is the previous version's
+            // picture — and the paths that return before the Post below (a corrupt BLOB, a
+            // decode that failed) would otherwise leave it on screen as this version's art.
+            // Worse, with the in-memory bytes nulled but ThumbnailImage still set,
+            // IsThumbnailMissing reads false and the repair affordance never appears: a
+            // plausible-looking tile showing the wrong model, with nothing to say so.
+            ThumbnailImage = null;
+
             // Thumbnail BLOB already in memory — decode off the UI thread (downscaled,
             // no JPEG round-trip), then marshal only the property assignment back.
             // Guard with `ct` since Activate/Deactivate/version-switch can make this
@@ -1297,10 +1306,10 @@ public partial class ModelTileViewModel : ViewModelBase
             var image = primaryImage;
             _ = Task.Run(async () =>
             {
-                var bitmap = CreateTileBitmap(data);
+                var decode = TryCreateTileBitmap(data);
                 if (ct.IsCancellationRequested) return;
 
-                if (ShouldMarkCorrupt(data, bitmap is not null))
+                if (ShouldMarkCorrupt(data, decode.Outcome))
                 {
                     // The placeholder stays: there is nothing to show, and now there is a record
                     // of why. The next activation takes the fetch branch, because the bytes are gone.
@@ -1311,7 +1320,7 @@ public partial class ModelTileViewModel : ViewModelBase
                 _uiScheduler.Post(() =>
                 {
                     if (ct.IsCancellationRequested) return;
-                    ThumbnailImage = bitmap;
+                    ThumbnailImage = decode.Bitmap;
                 });
             });
         }
@@ -1392,16 +1401,27 @@ public partial class ModelTileViewModel : ViewModelBase
         SyncRetryPolicy.Default.IsThumbnailDue(image.ThumbnailAttemptedAt, image.ThumbnailFailure, now, force: false);
 
     /// <summary>
-    /// Whether a decode that produced no bitmap means the stored BLOB is corrupt.
+    /// Whether a decode attempt means the stored BLOB is corrupt.
     /// </summary>
     /// <remarks>
-    /// Only real bytes can be corrupt. A row with none is a missing thumbnail, which the fetch path
-    /// answers; and the deferred sentinel is a one-byte marker that never was an image, so decoding
-    /// it fails by construction — mistaking that for corruption would null a row whose actual bytes
-    /// are sitting in the database, unread.
+    /// Only <see cref="TileDecodeOutcome.NotAnImage"/> qualifies, and that is the whole point: the
+    /// verdict deletes the bytes, so it must follow from "these bytes are not an image" and never
+    /// from "we could not decode them right now". A decode can fail for reasons that are about this
+    /// moment rather than this row — an <see cref="OutOfMemoryException"/> on a multi-MB legacy
+    /// thumbnail under pressure is the obvious one — and the accepted trade in
+    /// <see cref="MarkThumbnailCorruptAsync"/> only holds while undecodable really means
+    /// undecodable. A hand-uploaded thumbnail sitting on a row whose civitai URL has since 404'd is
+    /// gone for good once this says yes.
+    /// <para>
+    /// The other two clauses are about which bytes can be judged at all. A row with none is a
+    /// missing thumbnail, which the fetch path answers; and the deferred sentinel is a one-byte
+    /// marker that never was an image, so it decodes to <c>NotAnImage</c> by construction —
+    /// mistaking that for corruption would null a row whose actual bytes are sitting in the
+    /// database, unread.
+    /// </para>
     /// </remarks>
-    internal static bool ShouldMarkCorrupt(byte[]? data, bool decoded) =>
-        !decoded
+    internal static bool ShouldMarkCorrupt(byte[]? data, TileDecodeOutcome outcome) =>
+        outcome == TileDecodeOutcome.NotAnImage
         && data is { Length: > 0 }
         && !ReferenceEquals(data, ModelImage.ThumbnailNotLoadedSentinel);
 
@@ -1441,35 +1461,119 @@ public partial class ModelTileViewModel : ViewModelBase
     /// <summary>Decode width for tile thumbnails: 250px tile at up to 200% display scaling.</summary>
     private const int TileDecodeWidth = 500;
 
+    /// <summary>What a decode attempt on stored thumbnail bytes actually established.</summary>
+    internal enum TileDecodeOutcome
+    {
+        /// <summary>A bitmap came back.</summary>
+        Decoded,
+
+        /// <summary>
+        /// SkiaSharp could build no image out of these bytes at all. A fact about the row, not
+        /// about this attempt — repeating it tomorrow gets the same answer.
+        /// </summary>
+        NotAnImage,
+
+        /// <summary>
+        /// The attempt failed and says nothing about the bytes: memory pressure, a decoder that
+        /// threw, a platform that is not there. The row is left exactly as it was.
+        /// </summary>
+        TransientFailure,
+    }
+
+    /// <summary>A decoded tile bitmap, or the reason there is none.</summary>
+    internal readonly record struct TileDecodeResult(Bitmap? Bitmap, TileDecodeOutcome Outcome);
+
     /// <summary>
     /// Decodes thumbnail bytes into a displayable Bitmap, downscaled to the tile
     /// width. Safe to call from any thread — Avalonia Bitmaps are immutable and
     /// may be created off the UI thread. Falls back to a Skia transcode for
     /// formats Avalonia's decoder rejects.
     /// </summary>
-    internal static Bitmap? CreateTileBitmap(byte[] data)
+    internal static Bitmap? CreateTileBitmap(byte[] data) => TryCreateTileBitmap(data).Bitmap;
+
+    /// <summary>
+    /// <see cref="CreateTileBitmap"/>, plus the distinction its callers need: whether a null
+    /// bitmap means these bytes are not an image, or merely that this attempt failed.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ShouldMarkCorrupt"/> deletes the stored BLOB on the strength of that answer, so
+    /// "the decoder said no" is not good enough. Avalonia's decoder rejecting the bytes proves
+    /// nothing on its own — it is the reason the Skia fallback exists — and an exception from
+    /// either path (<see cref="OutOfMemoryException"/> on a multi-MB legacy thumbnail is the case
+    /// that started this) is about the moment, not the row. The only authority for "not an image"
+    /// is <see cref="SKBitmap.Decode(byte[])"/> refusing the raw bytes, which is exactly the
+    /// authority <c>ThumbnailCodec.Encode</c> uses — including its quirk of throwing
+    /// <see cref="ArgumentNullException"/>, rather than returning null, when it cannot build a
+    /// codec for the bytes at all.
+    /// </remarks>
+    internal static TileDecodeResult TryCreateTileBitmap(byte[] data)
+        => TryCreateTileBitmap(data, DecodeWithAvalonia, SKBitmap.Decode);
+
+    /// <summary>
+    /// <see cref="TryCreateTileBitmap(byte[])"/> with both decoders injected, so a test can make
+    /// one of them throw. Neither failure mode is reachable on demand otherwise: memory pressure
+    /// cannot be summoned, and no byte sequence makes Skia raise <c>OutOfMemoryException</c> to
+    /// order.
+    /// </summary>
+    internal static TileDecodeResult TryCreateTileBitmap(
+        byte[] data, Func<byte[], Bitmap?> avaloniaDecode, Func<byte[], SKBitmap?> skiaDecode)
     {
         try
         {
-            using var stream = new MemoryStream(data);
-            return Bitmap.DecodeToWidth(stream, TileDecodeWidth);
+            var decoded = avaloniaDecode(data);
+            if (decoded is not null) return new TileDecodeResult(decoded, TileDecodeOutcome.Decoded);
         }
         catch
         {
-            try
+            // Deliberately swallowed and deliberately NOT a verdict: Avalonia's decoder is
+            // narrower than Skia's, which is the whole reason the fallback below exists.
+        }
+
+        SKBitmap? skBitmap;
+        try
+        {
+            skBitmap = skiaDecode(data);
+        }
+        catch (ArgumentNullException)
+        {
+            // How SkiaSharp reports "no codec for these bytes" — a handful of garbage with no
+            // recognisable header. ThumbnailCodec.Encode treats it as identical to a null return
+            // and so does this: it is a fact about the bytes.
+            return new TileDecodeResult(null, TileDecodeOutcome.NotAnImage);
+        }
+        catch
+        {
+            return new TileDecodeResult(null, TileDecodeOutcome.TransientFailure);
+        }
+
+        if (skBitmap is null) return new TileDecodeResult(null, TileDecodeOutcome.NotAnImage);
+
+        try
+        {
+            using (skBitmap)
             {
-                using var skBitmap = SKBitmap.Decode(data);
-                if (skBitmap is null) return null;
                 using var skImage = SKImage.FromBitmap(skBitmap);
+                if (skImage is null) return new TileDecodeResult(null, TileDecodeOutcome.TransientFailure);
+
                 using var encoded = skImage.Encode(SKEncodedImageFormat.Jpeg, 90);
+                if (encoded is null) return new TileDecodeResult(null, TileDecodeOutcome.TransientFailure);
+
                 using var stream = new MemoryStream(encoded.ToArray());
-                return new Bitmap(stream);
-            }
-            catch
-            {
-                return null;
+                return new TileDecodeResult(new Bitmap(stream), TileDecodeOutcome.Decoded);
             }
         }
+        catch
+        {
+            // Skia decoded the bytes, so they ARE an image; everything past that point is
+            // transcoding and allocation, and a failure there is this attempt's, not the row's.
+            return new TileDecodeResult(null, TileDecodeOutcome.TransientFailure);
+        }
+    }
+
+    private static Bitmap? DecodeWithAvalonia(byte[] data)
+    {
+        using var stream = new MemoryStream(data);
+        return Bitmap.DecodeToWidth(stream, TileDecodeWidth);
     }
 
     /// <summary>
@@ -1531,16 +1635,16 @@ public partial class ModelTileViewModel : ViewModelBase
 
                 // Decode on this (pool) thread; only the bound-property
                 // assignment needs the UI thread.
-                var bitmap = CreateTileBitmap(data);
+                var decode = TryCreateTileBitmap(data);
                 ct.ThrowIfCancellationRequested();
 
-                if (ShouldMarkCorrupt(data, bitmap is not null))
+                if (ShouldMarkCorrupt(data, decode.Outcome))
                 {
                     await MarkThumbnailCorruptAsync(image, data).ConfigureAwait(false);
                     return;
                 }
 
-                await _uiScheduler.InvokeAsync(() => ThumbnailImage = bitmap);
+                await _uiScheduler.InvokeAsync(() => ThumbnailImage = decode.Bitmap);
             }
             else
             {
@@ -1878,29 +1982,18 @@ public partial class ModelTileViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Determines whether a preview image is a video based on MediaType or URL extension.
-    /// Falls back to URL extension for legacy records that don't have MediaType set.
+    /// Whether a preview image is a video — media type first, URL extension for legacy records that
+    /// carry no media type.
     /// </summary>
-    private static bool IsVideoPreview(ModelImage image)
-    {
-        if (image.IsVideo)
-            return true;
-
-        // Fallback: detect video by URL extension for legacy records without MediaType.
-        // TryCreate, never the throwing constructor: the database holds URLs nothing guarantees
-        // are parseable — a truncated download, a legacy relative path, a malformed bracket — and
-        // this runs behind the user's click on "download the missing thumbnail". A URL we cannot
-        // parse is simply not known to be a video, which is the same answer as before for every
-        // URL that does parse.
-        if (image.MediaType is null && !string.IsNullOrEmpty(image.Url)
-            && Uri.TryCreate(image.Url, UriKind.Absolute, out var uri))
-        {
-            var extension = Path.GetExtension(uri.AbsolutePath);
-            return extension is ".mp4" or ".webm" or ".mov" or ".avi" or ".mkv";
-        }
-
-        return false;
-    }
+    /// <remarks>
+    /// The rule itself lives on <see cref="ModelImage.IsVideoLike"/> and this is the delegation, not
+    /// a second copy. It used to be the only implementation of the extension fallback, which left
+    /// the sync pipeline's rung 3 — gated on the entity predicate — blind to exactly the rows this
+    /// method could see. Moving it down means the tile, the entity property and the SQL-side
+    /// candidate ranking cannot disagree about what a video is.
+    /// </remarks>
+    private static bool IsVideoPreview(ModelImage image) =>
+        ModelImage.IsVideoLike(image.MediaType, image.Url);
 
     /// <summary>
     /// Writes one thumbnail verdict to the stored row: a fresh scope, the tracked entity,

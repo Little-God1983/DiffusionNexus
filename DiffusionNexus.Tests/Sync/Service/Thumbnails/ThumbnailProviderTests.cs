@@ -129,6 +129,27 @@ public class ThumbnailProviderTests
         handler.Urls.Should().ContainSingle().Which.Should().Contain("anim=false,transcode=true").And.EndWith("clip.jpeg");
     }
 
+    /// <summary>
+    /// The legacy row: written from a <c>.civitai.info</c> sidecar that carried no <c>type</c>
+    /// field, so <c>MediaType</c> is null while the URL is plainly an MP4. Rung 3 has to claim it,
+    /// because rung 4 would GET the URL and buffer the whole clip — up to the 64 MB
+    /// <c>MaxResponseContentBufferSize</c> — only for <c>LooksLikeVideo</c> to throw it away and
+    /// hand it back to rung 3 anyway. One discarded preview clip per such row, every library-wide
+    /// run, on the one path that is otherwise careful never to download a video unasked.
+    /// </summary>
+    [Fact]
+    public async Task LegacyNullMediaTypeVideoUrl_TakesThePosterRung()
+    {
+        var handler = new FakeHandler(_ => Bytes(Png()));
+
+        var result = await Provider(handler).ProduceAsync(new(
+            "https://image.civitai.com/x/abc/width=450/clip.mp4", null, null));
+
+        result.Succeeded.Should().BeTrue();
+        handler.Urls.Should().ContainSingle("the full-body GET rung 4 would have issued never happens")
+            .Which.Should().Contain("anim=false,transcode=true").And.EndWith("clip.jpeg");
+    }
+
     [Fact]
     public async Task Video_PosterFailureWithoutPermissionIsVideoNoPoster()
     {
