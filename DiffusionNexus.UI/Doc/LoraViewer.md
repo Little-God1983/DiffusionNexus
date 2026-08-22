@@ -641,10 +641,12 @@ real, unloaded) is correctly treated as already-has-a-thumbnail and skipped, not
 `SidecarMetadataApplier.TryApplyLocalThumbnailAsync` produces thumbnails too — a `.preview.png`
 (or similar) sibling discovered next to a model file, same codec and writer as everywhere else. When
 that sibling exists but cannot be decoded, **the verdict belongs to that file, never to the version's
-Civitai image**: the applier stamps `NotDecodable` (hard) only when the version's own primary image
-*is* that same `file://` row (`LocalPreviewFiles.TryGetLocalPath(primaryImage.Url, …)` succeeds); a
-version whose primary is an ordinary CDN image is left completely untouched, and the sync step still
-fetches the real thumbnail for it on the next run. Nothing synthetic is invented to carry the failure
+Civitai image**: the applier stamps `NotDecodable` (hard) only when the first image row in the
+version's `Images` collection is itself a `file://` row
+(`LocalPreviewFiles.TryGetLocalPath(firstImage.Url, …)` succeeds — note this is the collection's
+first element, not the NSFW/video-aware `PrimaryImage` selector used elsewhere); a version whose
+first row is an ordinary CDN image is left completely untouched, and the sync step still fetches
+the real thumbnail for it on the next run. Nothing synthetic is invented to carry the failure
 either — a fake `file://` row created purely to hold a stamp would become the version's permanent
 primary image, pointing at something unreadable forever.
 
