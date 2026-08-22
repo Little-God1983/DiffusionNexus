@@ -114,8 +114,12 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
                 i.LikeCount,
                 i.HeartCount,
                 i.CommentCount,
-                // ThumbnailData deliberately EXCLUDED — loaded per-tile on demand
-                HasThumbnailInDb = i.ThumbnailData != null && i.ThumbnailData.Length > 0,
+                // ThumbnailData is answered, never selected. Compared against the empty BLOB
+                // rather than measured with .Length, which SQLite cannot translate: EF would
+                // answer the != null half in SQL, add the column to the SELECT list, and finish
+                // the comparison in memory — handing this query every thumbnail in the library,
+                // which is the exact cost the light load exists to avoid. See ThumbnailBlobs.Empty.
+                HasThumbnailInDb = i.ThumbnailData != null && i.ThumbnailData != ThumbnailBlobs.Empty,
             })
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);

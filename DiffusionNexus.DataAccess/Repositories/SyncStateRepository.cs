@@ -430,15 +430,6 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
             .ToList();
     }
 
-    /// <summary>
-    /// The empty BLOB, compared against rather than measured. <c>ThumbnailData.Length</c> has no
-    /// SQLite translation: EF answers the <c>!= null</c> half in SQL, then <b>projects the column
-    /// itself</b> to finish the comparison in memory — which is the one thing this selection must
-    /// never do (see the remarks on the method below). <c>&lt;&gt; X''</c> is the same question
-    /// answered entirely inside the engine.
-    /// </summary>
-    private static readonly byte[] EmptyThumbnail = [];
-
     /// <inheritdoc />
     public async Task<IReadOnlyList<ThumbnailCandidate>> SelectThumbnailCandidatesAsync(
         SyncScope scope, IReadOnlyList<string> enabledSourceRoots, CancellationToken ct = default)
@@ -463,7 +454,7 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
                               i.Url,
                               i.MediaType,
                               i.IsNsfw,
-                              HasThumbnail = i.ThumbnailData != null && i.ThumbnailData != EmptyThumbnail,
+                              HasThumbnail = i.ThumbnailData != null && i.ThumbnailData != ThumbnailBlobs.Empty,
                               i.ThumbnailAttemptedAt,
                               i.ThumbnailFailure,
                               // ModelVersion.PrimaryFile, as a correlated subquery. Only the path is

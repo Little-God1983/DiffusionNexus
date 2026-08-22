@@ -1,4 +1,6 @@
+using System.Text.RegularExpressions;
 using DiffusionNexus.DataAccess;
+using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
@@ -6,6 +8,7 @@ using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace DiffusionNexus.Tests.DataAccess.Repositories;
 
@@ -440,6 +443,85 @@ public class ModelRepositoryTests : IDisposable
         var sameGroup = all.Where(m => m.CivitaiModelPageId == 100).ToList();
 
         sameGroup.Should().HaveCount(2);
+    }
+
+    /// <summary>
+    /// The "light" tile load exists precisely so that opening the LoRA viewer does not pull every
+    /// thumbnail BLOB in the library into memory — the projection says as much in a comment. It did
+    /// it anyway: <c>ThumbnailData.Length</c> has no SQLite translation, so EF answered the
+    /// <c>!= null</c> half in SQL, <b>selected the column</b>, and finished the comparison in
+    /// process. Asserted against the SQL the provider actually emitted, the same way
+    /// <c>SyncStateRepositoryThumbnailTests.ThumbnailCandidates_NeverSelectTheBlobColumn</c> does:
+    /// the flag needs the column, so the SQL mentions it — but only inside <c>IS NOT NULL</c> and
+    /// <c>&lt;&gt; X''</c>, neither of which hands the bytes over. Neutralise exactly those two
+    /// forms and nothing may be left.
+    /// </summary>
+    [Fact]
+    public async Task GetModelsWithLocalFilesLight_NeverSelectsTheThumbnailBlob()
+    {
+        var sql = new List<string>();
+
+        using var connection = new SqliteConnection("DataSource=:memory:");
+        connection.Open();
+
+        var services = new ServiceCollection();
+        services.AddDataAccessLayer(options => options
+            .UseSqlite(connection)
+            .LogTo(sql.Add, [DbLoggerCategory.Database.Command.Name], LogLevel.Information));
+
+        using var provider = services.BuildServiceProvider();
+
+        using (var seedScope = provider.CreateScope())
+        {
+            seedScope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>().Database.EnsureCreated();
+
+            var uow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+            var model = CreateModelWithLocalFile("Heavy", @"C:\m\heavy.safetensors");
+            var version = model.Versions.First();
+            version.Images.Add(new ModelImage
+            {
+                Url = "https://image.civitai.com/abc/width=450/still.jpeg",
+                SortOrder = 0,
+                // A megabyte of it, so a projection that dragged it along would be unmistakable.
+                ThumbnailData = new byte[1024 * 1024],
+                ThumbnailMimeType = "image/jpeg",
+                ModelVersion = version,
+            });
+
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+        }
+
+        sql.Clear();
+
+        using (var scope = provider.CreateScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+            var models = await uow.Models.GetModelsWithLocalFilesLightAsync();
+
+            var image = models.Should().ContainSingle().Subject
+                .Versions.Should().ContainSingle().Subject
+                .Images.Should().ContainSingle().Subject;
+
+            image.IsThumbnailDeferred.Should().BeTrue(
+                "the tile is told a thumbnail exists so it can lazy-load it, and told nothing more");
+        }
+
+        var captured = string.Join("\n", sql);
+
+        // Positive first: if the flag ever stopped being computed in SQL the assertion below would
+        // pass for the wrong reason.
+        captured.Should().Contain("ThumbnailData", "the has-a-thumbnail flag is answered inside SQLite");
+
+        var withoutFlag = Regex.Replace(
+            captured,
+            @"""\w+""\.""ThumbnailData"" (IS NOT NULL|<> X'')",
+            "<has-thumbnail-flag>");
+
+        withoutFlag.Should().NotContain("ThumbnailData",
+            "anything left is the BLOB column in the SELECT list, and this query reads every image row in the library");
     }
 
     public void Dispose()
