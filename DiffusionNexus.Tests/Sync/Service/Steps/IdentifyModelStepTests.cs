@@ -545,6 +545,13 @@ public sealed class IdentifyModelStepTests : IDisposable
         saved!.Versions.Single().BaseModelRaw.Should().Be("SDXL 1.0");
         saved.Versions.Single().BaseModel.Should().Be(BaseModelType.SDXL10);
 
+        // C2: the write landed, so the model is stamped exactly like the sidecar branch stamps it —
+        // no longer "never synced" to anything that reads LastSyncedAt (TileGroupingHelper's tile
+        // ordering among them). Compared against the stamp the step actually wrote (its wall clock,
+        // ExecuteOneAsync's own `now`), not the fixture's fixed `Now` used only for due-ness.
+        saved.Source.Should().Be(DataSource.LocalFile);
+        saved.LastSyncedAt.Should().Be(state.MetadataCheckedAt);
+
         // Stamped at Now like everything else — the same run's clock is not due again immediately.
         var again = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
         again.Select(i => i.ModelId).Should().NotContain(modelId);
@@ -611,6 +618,9 @@ public sealed class IdentifyModelStepTests : IDisposable
         var readUow = readScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
         var saved = await readUow.Models.GetByIdWithIncludesAsync(modelId);
         saved!.Versions.Single().BaseModelRaw.Should().Be("Flux.1 D");
+
+        // C2: no write, no sync stamp either.
+        saved.LastSyncedAt.Should().BeNull();
     }
 
     /// <summary>
@@ -775,6 +785,10 @@ public sealed class IdentifyModelStepTests : IDisposable
         var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
         var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
         saved!.Versions.Single().BaseModelRaw.Should().Be("Pony");
+
+        // C2: the heuristic rung's write is stamped exactly like the header rung's.
+        saved.Source.Should().Be(DataSource.LocalFile);
+        saved.LastSyncedAt.Should().Be(state.MetadataCheckedAt);
     }
 
     /// <summary>
@@ -823,6 +837,9 @@ public sealed class IdentifyModelStepTests : IDisposable
         var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
         var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
         saved!.Versions.Single().BaseModelRaw.Should().Be("???", "nothing in the chain identified it");
+
+        // C2: nothing was written, so the model must not be stamped as synced either.
+        saved.LastSyncedAt.Should().BeNull();
     }
 
     /// <summary>

@@ -157,7 +157,8 @@ public sealed class IdentifyModelStep : ISyncStep
         // rejected by SaveChanges. That rejection is survivable now (see the catch below), but a
         // failure row for a model the user deliberately deleted is noise, and hashing a
         // multi-gigabyte file for a model that no longer exists is wasted work on top of it.
-        if (await uow.Models.GetByIdAsync(candidate.ModelId, ct).ConfigureAwait(false) is null)
+        var dbModel = await uow.Models.GetByIdAsync(candidate.ModelId, ct).ConfigureAwait(false);
+        if (dbModel is null)
         {
             _logger?.Debug(LogCategory.General, LogSource,
                 $"Skipped '{candidate.Name}': model {candidate.ModelId} was deleted before the run reached it");
@@ -217,6 +218,13 @@ public sealed class IdentifyModelStep : ISyncStep
                 {
                     // The rung that actually set the value is the one that gets credit for it.
                     outcome = rung!.Value;
+
+                    // Mirrors SidecarMetadataApplier's own stamp the instant its write lands (~171-176):
+                    // a version whose base model was just filled from its own file is no longer
+                    // "unsynced", and several tile orderings (TileGroupingHelper) read LastSyncedAt to
+                    // mean exactly that.
+                    dbModel.Source = DataSource.LocalFile;
+                    dbModel.LastSyncedAt = now;
                 }
                 else
                 {
