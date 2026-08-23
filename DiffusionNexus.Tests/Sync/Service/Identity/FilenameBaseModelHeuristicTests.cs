@@ -1,5 +1,3 @@
-using System.Reflection;
-using DiffusionNexus.Civitai;
 using DiffusionNexus.Service.Services.Sync.Identity;
 using FluentAssertions;
 
@@ -69,21 +67,17 @@ public class FilenameBaseModelHeuristicTests
     }
 
     /// <summary>
-    /// Reflects over <see cref="CivitaiBaseModelCatalog"/>'s private bundled snapshot (rather than
-    /// duplicating the label list here) and asserts every label the heuristic can ever return is a
-    /// real Civitai display label, not a typo'd string nobody's dropdown recognizes. Mirrors
+    /// Reflects over <see cref="DiffusionNexus.Civitai.CivitaiBaseModelCatalog"/>'s private bundled
+    /// snapshot (via <see cref="SafetensorsFixture.CatalogLabels"/>, rather than duplicating the
+    /// label list here) and asserts every label the heuristic can ever return is a real Civitai
+    /// display label, not a typo'd string nobody's dropdown recognizes. Mirrors
     /// <c>BaseModelHeaderMapTests.Map_EveryOutputIsACatalogLabel</c> so a future catalog edit can't
     /// silently orphan a heuristic label either.
     /// </summary>
     [Fact]
     public void Guess_EveryOutputIsACatalogLabel()
     {
-        var bundledSnapshotField = typeof(CivitaiBaseModelCatalog)
-            .GetField("BundledSnapshot", BindingFlags.NonPublic | BindingFlags.Static);
-        bundledSnapshotField.Should().NotBeNull(
-            "CivitaiBaseModelCatalog.BundledSnapshot must exist for this check to mean anything");
-
-        var bundledSnapshot = (IReadOnlyList<string>)bundledSnapshotField!.GetValue(null)!;
+        var bundledSnapshot = SafetensorsFixture.CatalogLabels;
 
         FilenameBaseModelHeuristic.AllLabels.Should().NotBeEmpty();
         foreach (var label in FilenameBaseModelHeuristic.AllLabels)

@@ -1,7 +1,7 @@
 using System.Buffers.Binary;
-using System.Text;
 using DiffusionNexus.Service.Services.Sync.Identity;
 using FluentAssertions;
+using static DiffusionNexus.Tests.Sync.Service.Identity.SafetensorsFixture;
 
 namespace DiffusionNexus.Tests.Sync.Service.Identity;
 
@@ -15,23 +15,6 @@ public class SafetensorsHeaderReaderTests : IDisposable
         Path.Combine(Path.GetTempPath(), "dn-shr-" + Guid.NewGuid().ToString("N"))).FullName;
 
     public void Dispose() { try { Directory.Delete(_dir, true); } catch { } }
-
-    private static byte[] Safetensors(string headerJson, int trailingTensorBytes = 16)
-    {
-        var json = Encoding.UTF8.GetBytes(headerJson);
-        var buffer = new byte[8 + json.Length + trailingTensorBytes];
-        BinaryPrimitives.WriteUInt64LittleEndian(buffer, (ulong)json.Length);
-        json.CopyTo(buffer, 8);
-        return buffer;   // trailing zeros stand in for tensor data
-    }
-
-    // A raw-string interpolation of this shape (adjacent literal brace immediately touching the
-    // hole delimiter, twice) cannot be made to compile at any $ count: the literal `{`/`}` next
-    // to the hole always merges into one run that either collides with the delimiter count or
-    // exceeds it (CS9007). Plain concatenation produces byte-identical JSON without the ambiguity.
-    private static string Meta(params (string Key, string Value)[] pairs) =>
-        "{\"__metadata__\":{" + string.Join(",", pairs.Select(p => $"\"{p.Key}\":\"{p.Value}\"")) +
-        "},\"tensor.weight\":{\"dtype\":\"F16\",\"shape\":[4],\"data_offsets\":[0,8]}}";
 
     private string WriteFile(string name, byte[] bytes)
     {

@@ -1,5 +1,3 @@
-using System.Buffers.Binary;
-using System.Text;
 using System.Text.Json;
 using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
@@ -18,6 +16,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
+using static DiffusionNexus.Tests.Sync.Service.Identity.SafetensorsFixture;
 
 namespace DiffusionNexus.Tests.Sync.Service.Steps;
 
@@ -73,28 +72,10 @@ public sealed class IdentifyModelStepTests : IDisposable
     /// <summary>A path inside the temp dir that deliberately does not exist on disk.</summary>
     private string MissingModelFile(string fileName) => Path.Combine(_tempDir.FullName, fileName);
 
-    /// <summary>
-    /// Builds a minimal real safetensors byte layout (8-byte little-endian header length, then the
-    /// header JSON, then a few bytes standing in for tensor data) — copied from
-    /// <c>SafetensorsHeaderReaderTests</c> so this class can exercise <see cref="IdentifyModelStep"/>'s
-    /// header rung against a file <see cref="SafetensorsHeaderReader"/> actually parses.
-    /// </summary>
-    private static byte[] Safetensors(string headerJson, int trailingTensorBytes = 16)
-    {
-        var json = Encoding.UTF8.GetBytes(headerJson);
-        var buffer = new byte[8 + json.Length + trailingTensorBytes];
-        BinaryPrimitives.WriteUInt64LittleEndian(buffer, (ulong)json.Length);
-        json.CopyTo(buffer, 8);
-        return buffer;   // trailing zeros stand in for tensor data
-    }
-
-    // A raw-string interpolation of this shape (adjacent literal brace immediately touching the
-    // hole delimiter, twice) cannot be made to compile at any $ count: the literal `{`/`}` next
-    // to the hole always merges into one run that either collides with the delimiter count or
-    // exceeds it (CS9007). Plain concatenation produces byte-identical JSON without the ambiguity.
-    private static string Meta(params (string Key, string Value)[] pairs) =>
-        "{\"__metadata__\":{" + string.Join(",", pairs.Select(p => $"\"{p.Key}\":\"{p.Value}\"")) +
-        "},\"tensor.weight\":{\"dtype\":\"F16\",\"shape\":[4],\"data_offsets\":[0,8]}}";
+    // Safetensors(...) / Meta(...) — the safetensors byte-layout builders this class uses to
+    // exercise IdentifyModelStep's header rung against a file SafetensorsHeaderReader actually
+    // parses — come from the shared SafetensorsFixture (see the using static above), so this
+    // class's copy can never drift from SafetensorsHeaderReaderTests'.
 
     /// <summary>
     /// Seeds a LoRA-family model with one version and one primary local file, plus (optionally)
