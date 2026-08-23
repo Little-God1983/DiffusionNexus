@@ -508,16 +508,12 @@ public sealed class SidecarMetadataApplier
     /// A blank <c>baseModel</c> is a missing answer, not an instruction to forget the stored one
     /// (F6). The call sites only rejected an <i>absent</i> key, so a sidecar carrying
     /// <c>"baseModel": ""</c> blanked the raw string and set the enum to <c>Unknown</c> on a version
-    /// nobody had edited. The check lives here so all four of them inherit it.
+    /// nobody had edited. The check lives here so all four of them inherit it. Delegates to
+    /// <see cref="BaseModelWriter.Write"/>, the same rule the identify step's header/heuristic
+    /// rungs use so every source agrees on what counts as an answer.
     /// </remarks>
-    private static bool WriteBaseModel(ModelVersion dbVersion, string? baseModelRaw)
-    {
-        if (string.IsNullOrWhiteSpace(baseModelRaw)) return false;
-
-        dbVersion.BaseModelRaw = baseModelRaw;
-        dbVersion.BaseModel = BaseModelTypeExtensions.ParseCivitai(baseModelRaw);
-        return true;
-    }
+    private static bool WriteBaseModel(ModelVersion dbVersion, string? baseModelRaw) =>
+        BaseModelWriter.Write(dbVersion, baseModelRaw);
 
     /// <summary>
     /// Replaces a version's trigger words with the sidecar's <c>trainedWords</c>, returning whether

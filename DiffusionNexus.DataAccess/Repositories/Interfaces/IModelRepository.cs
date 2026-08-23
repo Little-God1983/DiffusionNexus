@@ -49,6 +49,19 @@ public interface IModelRepository : IRepository<Model>
     Task<ModelImage?> GetImageByIdAsync(int imageId, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Loads a single <see cref="ModelVersion"/> by id, <b>tracked</b> — the identify step's
+    /// header/heuristic rungs write the base model straight onto the row they get back and save
+    /// through the same unit of work.
+    /// </summary>
+    /// <remarks>
+    /// Returns null when the row is gone, which is an ordinary outcome rather than an error: the
+    /// step selects its work in one scope and executes each item in another, and a version can be
+    /// deleted in between. No Includes — do NOT widen <see cref="GetByIdWithIncludesAsync"/> for
+    /// this instead, it carries image BLOBs.
+    /// </remarks>
+    Task<ModelVersion?> GetVersionByIdAsync(int versionId, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Loads a single model by ID with its full navigation graph.
     /// Much more memory-efficient than <see cref="GetAllWithIncludesAsync"/> when only one model is needed.
     /// </summary>

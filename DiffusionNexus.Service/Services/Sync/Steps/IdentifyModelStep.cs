@@ -6,6 +6,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Service.Services.Sync.Identity;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace DiffusionNexus.Service.Services.Sync.Steps;
@@ -59,7 +60,7 @@ public sealed class IdentifyModelStep : ISyncStep
     public SyncStepKind Kind => SyncStepKind.IdentifyModel;
 
     /// <inheritdoc />
-    public string Description => "Identify models on Civitai";
+    public string Description => "Identify models (Civitai, sidecar, file header, filename)";
 
     /// <summary>Hash (large files) + two API calls (hash lookup, model page) with 1.5 s pacing between them.</summary>
     public TimeSpan EstimatedPerItem => TimeSpan.FromSeconds(3);
@@ -130,7 +131,7 @@ public sealed class IdentifyModelStep : ISyncStep
 
         // A sidecar that appeared or changed since the last look is new evidence, so it beats the
         // retry window: the user just dropped a .civitai.info next to the file and expects it read.
-        if (candidate.Outcome is not (SyncOutcome.Sidecar or SyncOutcome.NotIdentified)) return false;
+        if (candidate.Outcome is not (SyncOutcome.Sidecar or SyncOutcome.Header or SyncOutcome.Heuristic or SyncOutcome.NotIdentified)) return false;
         if (candidate.SidecarSignature is null) return false;
 
         var signature = SidecarMetadataApplier.Find(candidate.LocalPath).Signature;
@@ -180,11 +181,32 @@ public sealed class IdentifyModelStep : ISyncStep
             // cancelled out of would be stamped NotIdentified and then left alone for 30 days.
             ct.ThrowIfCancellationRequested();
 
-            var outcome = sidecar.Applied ? SyncOutcome.Sidecar : SyncOutcome.NotIdentified;
-            await StampAsync(uow, candidate.ModelId, outcome, now, sidecar.Signature, error: null, ct).ConfigureAwait(false);
+            if (sidecar.Applied)
+            {
+                await StampAsync(uow, candidate.ModelId, SyncOutcome.Sidecar, now, sidecar.Signature, error: null, ct).ConfigureAwait(false);
+                return SyncItemResult.Success;
+            }
+
+            // No Civitai match, no sidecar — read the file's own header, then guess from its name.
+            var header = SafetensorsHeaderReader.TryRead(candidate.LocalPath);
+            ct.ThrowIfCancellationRequested();
+            var headerCheckedAt = header is not null ? now : (DateTimeOffset?)null;
+            var label = header is not null ? BaseModelHeaderMap.Map(header) : null;
+            var outcome = label is not null ? SyncOutcome.Header : SyncOutcome.NotIdentified;
+            if (label is null)
+            {
+                label = FilenameBaseModelHeuristic.Guess(Path.GetFileNameWithoutExtension(candidate.LocalPath));
+                if (label is not null) outcome = SyncOutcome.Heuristic;
+            }
+            if (label is not null)
+            {
+                var dbVersion = await uow.Models.GetVersionByIdAsync(candidate.VersionId, ct).ConfigureAwait(false);
+                if (dbVersion is not null && BaseModelWriter.CanFill(dbVersion)) BaseModelWriter.Write(dbVersion, label);
+            }
+            await StampAsync(uow, candidate.ModelId, outcome, now, sidecar.Signature, error: null, ct, headerCheckedAt).ConfigureAwait(false);
 
             _logger?.Debug(LogCategory.Network, LogSource,
-                $"'{candidate.Name}' not on Civitai → {outcome}", sidecar.SidecarPath);
+                $"'{candidate.Name}' not on Civitai → {outcome}" + (label is not null ? $" ({label})" : string.Empty), sidecar.SidecarPath);
             return SyncItemResult.Success;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -300,7 +322,7 @@ public sealed class IdentifyModelStep : ISyncStep
 
     private static async Task StampAsync(
         IUnitOfWork uow, int modelId, SyncOutcome outcome, DateTimeOffset now,
-        string? signature, string? error, CancellationToken ct)
+        string? signature, string? error, CancellationToken ct, DateTimeOffset? headerCheckedAt = null)
     {
         var state = await uow.SyncStates.GetOrCreateAsync(modelId, ct).ConfigureAwait(false);
 
@@ -322,6 +344,11 @@ public sealed class IdentifyModelStep : ISyncStep
         // Only the sidecar paths know the signature; Matched leaves the stored one alone so a later
         // fallback still notices whether that sidecar has changed.
         if (signature is not null) state.SidecarSignature = signature;
+
+        // Only the miss-branch ever reads the header, and only when the file itself could be
+        // opened as one — a non-safetensors file or a 404 that never reaches this stamp leaves the
+        // stored value alone rather than overwriting it with null.
+        if (headerCheckedAt is not null) state.HeaderCheckedAt = headerCheckedAt;
 
         await uow.SaveChangesAsync(ct).ConfigureAwait(false);
     }
