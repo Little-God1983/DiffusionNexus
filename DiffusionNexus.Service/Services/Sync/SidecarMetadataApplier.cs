@@ -464,9 +464,12 @@ public sealed class SidecarMetadataApplier
                 dirty |= WriteBaseModel(dbVersion, baseModelStr);
             }
 
-            // Fallback: "sd version" for very old sidecar format
+            // Fallback: "sd version" for very old sidecar format. Only when "baseModel" above left
+            // nothing real behind — SyncStateDeriver.IsPlaceholder is the one place that rule
+            // lives (it used to be a local `is null or "???"` copy that, unlike the real rule,
+            // didn't treat a blank string as a placeholder).
             if (CanWriteVersionText(dbVersion)
-                && dbVersion.BaseModelRaw is null or "???"
+                && SyncStateDeriver.IsPlaceholder(dbVersion.BaseModelRaw)
                 && root.TryGetProperty("sd version", out var sdVer) && sdVer.GetString() is { } sdVerStr)
             {
                 dirty |= WriteBaseModel(dbVersion, sdVerStr);

@@ -39,9 +39,9 @@ public static class BaseModelWriter
     /// sidecar can also rename the version or replace its trigger words), the header/heuristic
     /// rungs write nothing but the base model, so the narrower placeholder check is the correct
     /// gate for them: a version whose base model already says something real is left alone even if
-    /// other fields on it are still blank.
+    /// other fields on it are still blank. "Placeholder" is <see cref="SyncStateDeriver.IsPlaceholder"/> —
+    /// the one place that rule lives, so this and the retry-selection logic can never drift apart.
     /// </summary>
     public static bool CanFill(ModelVersion dbVersion) =>
-        !dbVersion.IsUserEdited &&
-        (string.IsNullOrWhiteSpace(dbVersion.BaseModelRaw) || dbVersion.BaseModelRaw == "???");
+        !dbVersion.IsUserEdited && SyncStateDeriver.IsPlaceholder(dbVersion.BaseModelRaw);
 }
