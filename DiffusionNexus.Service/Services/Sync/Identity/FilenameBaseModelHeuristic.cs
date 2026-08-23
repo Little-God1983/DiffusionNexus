@@ -56,6 +56,17 @@ public static partial class FilenameBaseModelHeuristic
         ("noob", "NoobAI"),
     };
 
+    /// <summary>
+    /// Every label this heuristic can ever return. Test-only seam (DiffusionNexus.Tests,
+    /// InternalsVisibleTo) used to verify each label is a real Civitai display label — mirrors
+    /// <see cref="BaseModelHeaderMap.AllLabels"/>.
+    /// </summary>
+    internal static IReadOnlyCollection<string> AllLabels { get; } = WholeNameSubstrings.Select(s => s.Label)
+        .Concat(ExactTokenOrPairMap.Values)
+        .Concat(TokenPrefixes.Select(p => p.Label))
+        .Distinct(StringComparer.Ordinal)
+        .ToArray();
+
     /// <summary>Civitai display label guessed from a model FILE NAME (no directory, extension ignored), or null.</summary>
     public static string? Guess(string? fileName)
     {

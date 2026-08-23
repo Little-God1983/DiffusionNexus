@@ -1,3 +1,5 @@
+using System.Reflection;
+using DiffusionNexus.Civitai;
 using DiffusionNexus.Service.Services.Sync.Identity;
 using FluentAssertions;
 
@@ -28,6 +30,7 @@ public class FilenameBaseModelHeuristicTests
     [InlineData("mySd150Style", null)]       // 'sd15' inside a longer merged token must NOT match
     [InlineData("", null)]
     [InlineData(null, null)]
+    [InlineData(".safetensors", null)]       // extension-only filename must not crash or match
     public void Guess_MatchesExpectedLabel(string? fileName, string? expected)
     {
         FilenameBaseModelHeuristic.Guess(fileName).Should().Be(expected);
@@ -44,5 +47,29 @@ public class FilenameBaseModelHeuristicTests
     public void Guess_StripsKnownModelExtensionsBeforeMatching(string fileName, string expected)
     {
         FilenameBaseModelHeuristic.Guess(fileName).Should().Be(expected);
+    }
+
+    /// <summary>
+    /// Reflects over <see cref="CivitaiBaseModelCatalog"/>'s private bundled snapshot (rather than
+    /// duplicating the label list here) and asserts every label the heuristic can ever return is a
+    /// real Civitai display label, not a typo'd string nobody's dropdown recognizes. Mirrors
+    /// <c>BaseModelHeaderMapTests.Map_EveryOutputIsACatalogLabel</c> so a future catalog edit can't
+    /// silently orphan a heuristic label either.
+    /// </summary>
+    [Fact]
+    public void Guess_EveryOutputIsACatalogLabel()
+    {
+        var bundledSnapshotField = typeof(CivitaiBaseModelCatalog)
+            .GetField("BundledSnapshot", BindingFlags.NonPublic | BindingFlags.Static);
+        bundledSnapshotField.Should().NotBeNull(
+            "CivitaiBaseModelCatalog.BundledSnapshot must exist for this check to mean anything");
+
+        var bundledSnapshot = (IReadOnlyList<string>)bundledSnapshotField!.GetValue(null)!;
+
+        FilenameBaseModelHeuristic.AllLabels.Should().NotBeEmpty();
+        foreach (var label in FilenameBaseModelHeuristic.AllLabels)
+        {
+            bundledSnapshot.Should().Contain(label, $"'{label}' must be a real Civitai base-model label");
+        }
     }
 }
