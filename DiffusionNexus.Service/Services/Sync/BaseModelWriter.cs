@@ -42,5 +42,6 @@ public static class BaseModelWriter
     /// other fields on it are still blank.
     /// </summary>
     public static bool CanFill(ModelVersion dbVersion) =>
-        !dbVersion.IsUserEdited && dbVersion.BaseModelRaw is null or "???";
+        !dbVersion.IsUserEdited &&
+        (string.IsNullOrWhiteSpace(dbVersion.BaseModelRaw) || dbVersion.BaseModelRaw == "???");
 }

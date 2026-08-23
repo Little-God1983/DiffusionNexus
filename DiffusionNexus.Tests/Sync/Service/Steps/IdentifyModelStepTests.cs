@@ -610,6 +610,40 @@ public sealed class IdentifyModelStepTests : IDisposable
     }
 
     /// <summary>
+    /// SF2. A legacy row blanked by the pre-F6 sidecar-blanking bug carries <c>""</c>, not
+    /// <c>"???"</c> — <see cref="SyncStateDeriver.IsPlaceholder"/> already treats that as "carries
+    /// no information" and selects it for identification, so <see cref="BaseModelWriter.CanFill"/>
+    /// must agree, or the header rung finds the answer, stamps <see cref="SyncOutcome.Header"/> (a
+    /// chip that reads as resolved), and never actually writes it.
+    /// </summary>
+    [Fact]
+    public async Task Execute_HeaderFillsALegacyBlankBaseModelRaw()
+    {
+        var path = NewModelFile("header-blank.safetensors",
+            Safetensors(Meta(("modelspec.architecture", "stable-diffusion-xl-v1-base"))));
+        var (modelId, _) = await SeedAsync("header-blank", path);
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = await uow.Models.GetByIdWithIncludesAsync(modelId);
+            model!.Versions.Single().BaseModelRaw = string.Empty;
+            await uow.SaveChangesAsync();
+        }
+
+        var step = NewNotFoundStep();
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        (await ReadStateAsync(modelId))!.MetadataOutcome.Should().Be(SyncOutcome.Header);
+
+        using var readScope = NewScope();
+        var readUow = readScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var saved = await readUow.Models.GetByIdWithIncludesAsync(modelId);
+        saved!.Versions.Single().BaseModelRaw.Should().Be("SDXL 1.0", "a blank string is a missing answer, same as \"???\"");
+    }
+
+    /// <summary>
     /// The header rung honors <see cref="ModelVersion.IsUserEdited"/> exactly like the sidecar
     /// formats do — a user's own edit is never overwritten, even when the stored value is still the
     /// legacy placeholder.
