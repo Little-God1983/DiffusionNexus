@@ -57,6 +57,29 @@ public class SafetensorsHeaderReaderTests : IDisposable
         info.ModelNameHint.Should().Be("ponyDiffusionV6XL");
     }
 
+    /// <summary>
+    /// B1. <c>.sft</c> is the standard short alias for the same container —
+    /// <see cref="DiffusionNexus.Service.Services.Sync.Identity.FilenameBaseModelHeuristic"/>'s own
+    /// known-model-extension list already treats it as one — so a readable header under that
+    /// extension must not fall through to the filename guess.
+    /// </summary>
+    [Fact]
+    public void TryRead_SftExtensionExtractsTheThreeMetadataKeys()
+    {
+        var bytes = Safetensors(Meta(
+            ("ss_base_model_version", "sdxl_base_v1-0"),
+            ("modelspec.architecture", "stable-diffusion-xl-v1-base/lora"),
+            ("ss_sd_model_name", "ponyDiffusionV6XL")));
+        var path = WriteFile("model.sft", bytes);
+
+        var info = SafetensorsHeaderReader.TryRead(path);
+
+        info.Should().NotBeNull();
+        info!.BaseModelVersion.Should().Be("sdxl_base_v1-0");
+        info.Architecture.Should().Be("stable-diffusion-xl-v1-base/lora");
+        info.ModelNameHint.Should().Be("ponyDiffusionV6XL");
+    }
+
     [Fact]
     public void TryRead_HeaderWithoutMetadataBlockIsASuccessfulEmptyRead()
     {
