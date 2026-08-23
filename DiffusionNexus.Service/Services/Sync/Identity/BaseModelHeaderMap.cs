@@ -12,12 +12,23 @@ namespace DiffusionNexus.Service.Services.Sync.Identity;
 /// </remarks>
 public static class BaseModelHeaderMap
 {
-    // Rung 1: ss_sd_model_name substring hints. Checked first — see class remarks.
+    // Rung 1: ss_sd_model_name substring hints. Checked first — see class remarks. kohya writes a
+    // full file PATH into this field, not a bare file name, so only the file-name portion (see
+    // ExtractFileNameHint) is needle-matched: a directory segment (e.g.
+    // "...\noobs\base.safetensors") must never decide the label.
     private static readonly (string Needle, string Label)[] NameHints =
     {
         ("pony", "Pony"),
         ("illustrious", "Illustrious"),
         ("noob", "NoobAI"),
+    };
+
+    // Extensions ExtractFileNameHint will drop from the file-name portion of the hint. Mirrors
+    // FilenameBaseModelHeuristic.KnownModelExtensions (kept separate rather than shared — this
+    // class doesn't otherwise depend on that one, and the list is small).
+    private static readonly string[] KnownModelExtensions =
+    {
+        ".safetensors", ".pt", ".ckpt", ".bin", ".sft", ".gguf",
     };
 
     // Rung 2: modelspec.architecture, lowercased, with everything from the first '/' stripped
@@ -63,7 +74,7 @@ public static class BaseModelHeaderMap
 
         if (!string.IsNullOrEmpty(info.ModelNameHint))
         {
-            var hint = info.ModelNameHint.ToLowerInvariant();
+            var hint = ExtractFileNameHint(info.ModelNameHint).ToLowerInvariant();
             foreach (var (needle, label) in NameHints)
             {
                 if (hint.Contains(needle, StringComparison.Ordinal))
@@ -93,5 +104,26 @@ public static class BaseModelHeaderMap
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Strips a directory prefix and a known trailing extension from an <c>ss_sd_model_name</c>
+    /// hint, so rung 1 needle-matches only the actual file name — never a directory segment.
+    /// Checks '/' and '\' explicitly rather than calling <see cref="Path.GetFileName(string)"/>,
+    /// which strips only the platform's own separator and would leave a Windows-style prefix
+    /// intact on a non-Windows build/CI runner.
+    /// </summary>
+    private static string ExtractFileNameHint(string hint)
+    {
+        var separatorIndex = Math.Max(hint.LastIndexOf('/'), hint.LastIndexOf('\\'));
+        var fileName = separatorIndex >= 0 ? hint[(separatorIndex + 1)..] : hint;
+
+        foreach (var extension in KnownModelExtensions)
+        {
+            if (fileName.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
+                return fileName[..^extension.Length];
+        }
+
+        return fileName;
     }
 }

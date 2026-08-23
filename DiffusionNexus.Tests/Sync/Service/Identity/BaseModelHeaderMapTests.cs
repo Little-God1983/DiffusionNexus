@@ -27,6 +27,34 @@ public class BaseModelHeaderMapTests
         BaseModelHeaderMap.Map(NameHint(hint)).Should().Be(expected);
     }
 
+    // --- A5: kohya writes a full PATH into ss_sd_model_name, not a bare file name — only the
+    // file-name portion (extension dropped) may be needle-matched, or a directory segment like
+    // "...\noobs\base.safetensors" decides the answer instead of the actual base model. ---
+    [Theory]
+    [InlineData("E:/checkpoints/noobs/base.safetensors")]
+    [InlineData(@"E:\checkpoints\noobs\base.safetensors")]
+    public void Map_NameHintRungIgnoresDirectorySegments(string hint)
+    {
+        BaseModelHeaderMap.Map(NameHint(hint)).Should().BeNull();
+    }
+
+    [Fact]
+    public void Map_NameHintRungPathDirectorySegmentFallsThroughToArchitecture()
+    {
+        var info = new SafetensorsHeaderInfo(null, "stable-diffusion-xl-v1-base", @"C:\models\ponys\base.safetensors");
+
+        BaseModelHeaderMap.Map(info).Should().Be("SDXL 1.0");
+    }
+
+    [Theory]
+    [InlineData("ponyDiffusionV6XL")]
+    [InlineData(@"E:\Models\Lora\ponyDiffusionV6XL.safetensors")]
+    [InlineData("E:/Models/Lora/ponyDiffusionV6XL.safetensors")]
+    public void Map_NameHintRungMatchesFileNamePortionRegardlessOfPathStyle(string hint)
+    {
+        BaseModelHeaderMap.Map(NameHint(hint)).Should().Be("Pony");
+    }
+
     // --- Rung 2: modelspec.architecture, everything from the first '/' stripped ---
     [Theory]
     [InlineData("stable-diffusion-xl-v1-base", "SDXL 1.0")]
