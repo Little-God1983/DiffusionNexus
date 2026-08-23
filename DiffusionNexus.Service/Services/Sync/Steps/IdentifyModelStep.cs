@@ -13,15 +13,18 @@ namespace DiffusionNexus.Service.Services.Sync.Steps;
 
 /// <summary>
 /// Step 1 — establishes what a local file actually <i>is</i>: stored/computed SHA256 →
-/// Civitai hash lookup → local sidecar fallback. Replaces the ViewModel's Phase 1 / 1b and
-/// its per-tile metadata copy (#521 WP2).
+/// Civitai hash lookup → local sidecar fallback → the file's own safetensors header →
+/// a guess from the filename. Replaces the ViewModel's Phase 1 / 1b and its per-tile
+/// metadata copy (#521 WP2, WP4).
 /// </summary>
 /// <remarks>
 /// Every path stamps <c>ModelSyncState</c>, which is the whole point of the overhaul: a run that
 /// found nothing must be distinguishable from a run that never looked, or the next run repeats
 /// the same 2 500 fruitless requests. Successful outcomes (<see cref="SyncOutcome.Matched"/>,
-/// <see cref="SyncOutcome.Sidecar"/>, <see cref="SyncOutcome.NotIdentified"/>) reset the attempt
-/// counter; only <see cref="SyncOutcome.Error"/> increments it, which is what bounds retries.
+/// <see cref="SyncOutcome.Sidecar"/>, <see cref="SyncOutcome.Header"/>,
+/// <see cref="SyncOutcome.Heuristic"/>, <see cref="SyncOutcome.NotIdentified"/>) reset the
+/// attempt counter; only <see cref="SyncOutcome.Error"/> increments it, which is what bounds
+/// retries.
 /// </remarks>
 public sealed class IdentifyModelStep : ISyncStep
 {
