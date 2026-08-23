@@ -202,8 +202,8 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
         => Context.ModelImages.FirstOrDefaultAsync(i => i.Id == imageId, cancellationToken);
 
     /// <inheritdoc />
-    public Task<ModelVersion?> GetVersionByIdAsync(int versionId, CancellationToken cancellationToken = default)
-        => Context.ModelVersions.FirstOrDefaultAsync(v => v.Id == versionId, cancellationToken);
+    public async Task<ModelVersion?> GetVersionByIdAsync(int versionId, CancellationToken cancellationToken = default)
+        => await Context.ModelVersions.FindAsync([versionId], cancellationToken).ConfigureAwait(false);
 
     /// <inheritdoc />
     public async Task<Model?> GetByIdWithIncludesAsync(int id, CancellationToken cancellationToken = default)
