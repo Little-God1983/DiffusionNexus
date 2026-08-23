@@ -1,5 +1,6 @@
 using System.Reflection;
 using DiffusionNexus.Civitai;
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Installer.SDK.Shared.Services;
@@ -98,5 +99,24 @@ public class ModelDetailViewModelTests
         field!.IsInitOnly.Should().BeTrue("the shared client must be readonly so it can't be swapped per-call");
         field.FieldType.Should().Be<HttpClient>();
         field.GetValue(null).Should().NotBeNull();
+    }
+
+    /// <summary>
+    /// The "Identity source:" row's label mapping (metadata-sync-overhaul Plan C, WP4 follow-up).
+    /// Only the four outcomes that actually name a source get a label; the rest say nothing rather
+    /// than something scary — <c>None</c> (never attempted), <c>NotIdentified</c> (every source was
+    /// tried and none worked) and <c>Error</c> (the attempt itself failed) are not sources at all.
+    /// </summary>
+    [Theory]
+    [InlineData(SyncOutcome.Matched, "Civitai")]
+    [InlineData(SyncOutcome.Sidecar, "sidecar file")]
+    [InlineData(SyncOutcome.Header, "file header")]
+    [InlineData(SyncOutcome.Heuristic, "guessed from filename")]
+    [InlineData(SyncOutcome.None, null)]
+    [InlineData(SyncOutcome.NotIdentified, null)]
+    [InlineData(SyncOutcome.Error, null)]
+    public void DescribeIdentitySourceMapsEverySyncOutcome(SyncOutcome outcome, string? expected)
+    {
+        ModelDetailViewModel.DescribeIdentitySource(outcome).Should().Be(expected);
     }
 }

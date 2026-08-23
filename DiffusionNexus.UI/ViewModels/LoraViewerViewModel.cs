@@ -1367,7 +1367,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                 await detail.LoadAsync(tile);
                 // LoadAsync ends by clearing StatusMessage, so a successful refresh used to
                 // leave no trace at all — the bar just closed. Say what happened.
-                detail.StatusMessage = "Metadata refreshed from Civitai.";
+                detail.StatusMessage = "Metadata refreshed.";
             }
             else
             {
