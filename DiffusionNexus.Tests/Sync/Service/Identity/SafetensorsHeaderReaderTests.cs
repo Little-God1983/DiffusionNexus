@@ -41,7 +41,7 @@ public class SafetensorsHeaderReaderTests : IDisposable
     }
 
     [Fact]
-    public void TryRead_ExtractsTheThreeMetadataKeys()
+    public async Task TryReadAsync_ExtractsTheThreeMetadataKeys()
     {
         var bytes = Safetensors(Meta(
             ("ss_base_model_version", "sdxl_base_v1-0"),
@@ -49,7 +49,7 @@ public class SafetensorsHeaderReaderTests : IDisposable
             ("ss_sd_model_name", "ponyDiffusionV6XL")));
         var path = WriteFile("model.safetensors", bytes);
 
-        var info = SafetensorsHeaderReader.TryRead(path);
+        var info = await SafetensorsHeaderReader.TryReadAsync(path);
 
         info.Should().NotBeNull();
         info!.BaseModelVersion.Should().Be("sdxl_base_v1-0");
@@ -64,7 +64,7 @@ public class SafetensorsHeaderReaderTests : IDisposable
     /// extension must not fall through to the filename guess.
     /// </summary>
     [Fact]
-    public void TryRead_SftExtensionExtractsTheThreeMetadataKeys()
+    public async Task TryReadAsync_SftExtensionExtractsTheThreeMetadataKeys()
     {
         var bytes = Safetensors(Meta(
             ("ss_base_model_version", "sdxl_base_v1-0"),
@@ -72,7 +72,7 @@ public class SafetensorsHeaderReaderTests : IDisposable
             ("ss_sd_model_name", "ponyDiffusionV6XL")));
         var path = WriteFile("model.sft", bytes);
 
-        var info = SafetensorsHeaderReader.TryRead(path);
+        var info = await SafetensorsHeaderReader.TryReadAsync(path);
 
         info.Should().NotBeNull();
         info!.BaseModelVersion.Should().Be("sdxl_base_v1-0");
@@ -81,12 +81,12 @@ public class SafetensorsHeaderReaderTests : IDisposable
     }
 
     [Fact]
-    public void TryRead_HeaderWithoutMetadataBlockIsASuccessfulEmptyRead()
+    public async Task TryReadAsync_HeaderWithoutMetadataBlockIsASuccessfulEmptyRead()
     {
         var bytes = Safetensors("""{"tensor.weight":{"dtype":"F16","shape":[4],"data_offsets":[0,8]}}""");
         var path = WriteFile("nometa.safetensors", bytes);
 
-        var info = SafetensorsHeaderReader.TryRead(path);
+        var info = await SafetensorsHeaderReader.TryReadAsync(path);
 
         info.Should().NotBeNull();
         info!.BaseModelVersion.Should().BeNull();
@@ -95,36 +95,36 @@ public class SafetensorsHeaderReaderTests : IDisposable
     }
 
     [Fact]
-    public void TryRead_TruncatedFileReturnsNull()
+    public async Task TryReadAsync_TruncatedFileReturnsNull()
     {
         var buffer = new byte[40];
         BinaryPrimitives.WriteUInt64LittleEndian(buffer, 500UL);
         var path = WriteFile("truncated.safetensors", buffer);
 
-        SafetensorsHeaderReader.TryRead(path).Should().BeNull();
+        (await SafetensorsHeaderReader.TryReadAsync(path)).Should().BeNull();
     }
 
     [Fact]
-    public void TryRead_OversizedHeaderReturnsNull()
+    public async Task TryReadAsync_OversizedHeaderReturnsNull()
     {
         var buffer = new byte[16];
         BinaryPrimitives.WriteUInt64LittleEndian(buffer, (ulong)(SafetensorsHeaderReader.MaxHeaderBytes + 1));
         var path = WriteFile("oversized.safetensors", buffer);
 
-        SafetensorsHeaderReader.TryRead(path).Should().BeNull();
+        (await SafetensorsHeaderReader.TryReadAsync(path)).Should().BeNull();
     }
 
     [Fact]
-    public void TryRead_GarbageJsonReturnsNull()
+    public async Task TryReadAsync_GarbageJsonReturnsNull()
     {
         var bytes = Safetensors("not json{{");
         var path = WriteFile("garbage.safetensors", bytes);
 
-        SafetensorsHeaderReader.TryRead(path).Should().BeNull();
+        (await SafetensorsHeaderReader.TryReadAsync(path)).Should().BeNull();
     }
 
     [Fact]
-    public void TryRead_WrongExtensionReturnsNull()
+    public async Task TryReadAsync_WrongExtensionReturnsNull()
     {
         var bytes = Safetensors(Meta(
             ("ss_base_model_version", "sdxl_base_v1-0"),
@@ -132,23 +132,42 @@ public class SafetensorsHeaderReaderTests : IDisposable
             ("ss_sd_model_name", "ponyDiffusionV6XL")));
         var path = WriteFile("model.ckpt", bytes);
 
-        SafetensorsHeaderReader.TryRead(path).Should().BeNull();
+        (await SafetensorsHeaderReader.TryReadAsync(path)).Should().BeNull();
     }
 
     [Fact]
-    public void TryRead_MissingFileReturnsNull()
+    public async Task TryReadAsync_MissingFileReturnsNull()
     {
         var path = Path.Combine(_dir, "gone.safetensors");
 
-        SafetensorsHeaderReader.TryRead(path).Should().BeNull();
+        (await SafetensorsHeaderReader.TryReadAsync(path)).Should().BeNull();
     }
 
     [Fact]
-    public void TryRead_EmptyLengthReturnsNull()
+    public async Task TryReadAsync_EmptyLengthReturnsNull()
     {
         var buffer = new byte[8];
         var path = WriteFile("empty.safetensors", buffer);
 
-        SafetensorsHeaderReader.TryRead(path).Should().BeNull();
+        (await SafetensorsHeaderReader.TryReadAsync(path)).Should().BeNull();
+    }
+
+    /// <summary>
+    /// B2. A cancellation must surface as <see cref="OperationCanceledException"/> rather than being
+    /// swallowed into <c>null</c> by the catch-all — the identify step needs to tell "cancelled" apart
+    /// from "unreadable".
+    /// </summary>
+    [Fact]
+    public async Task TryReadAsync_CancellationPropagates()
+    {
+        var bytes = Safetensors(Meta(("ss_base_model_version", "sdxl_base_v1-0")));
+        var path = WriteFile("cancelled.safetensors", bytes);
+
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await FluentActions
+            .Awaiting(() => SafetensorsHeaderReader.TryReadAsync(path, cts.Token))
+            .Should().ThrowAsync<OperationCanceledException>("a cancelled read is not an unreadable file");
     }
 }

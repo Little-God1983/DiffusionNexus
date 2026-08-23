@@ -25,8 +25,18 @@ public static class SafetensorsHeaderReader
     private static readonly string[] SafetensorsExtensions = { ".safetensors", ".sft" };
     private const int LengthPrefixBytes = 8;
 
-    /// <summary>Best-effort read of the safetensors header; null on ANY failure, never throws.</summary>
-    public static SafetensorsHeaderInfo? TryRead(string filePath)
+    /// <summary>
+    /// Best-effort read of the safetensors header; null on ANY failure, never throws — except a
+    /// cancellation via <paramref name="ct"/>, which surfaces as <see cref="OperationCanceledException"/>
+    /// so the caller can tell "cancelled" apart from "unreadable".
+    /// </summary>
+    /// <remarks>
+    /// Async so a whole-library scan doesn't block a thread-pool thread per item on a read of up to
+    /// <see cref="MaxHeaderBytes"/> — real on a NAS or spinning disk, and items run back to back. The
+    /// stream opens with <see cref="FileOptions.Asynchronous"/> and every read is cancellable, so a
+    /// caller can actually interrupt a slow read instead of only checking before and after it.
+    /// </remarks>
+    public static async Task<SafetensorsHeaderInfo?> TryReadAsync(string filePath, CancellationToken ct = default)
     {
         try
         {
@@ -36,10 +46,11 @@ public static class SafetensorsHeaderReader
             // FileShare.ReadWrite (not the house FileShare.Read from FileHasher.cs:23) because a
             // trainer mid-checkpoint holds the file write-shared; a read-only share would fail to
             // open it and we'd never get a chance at the header.
-            using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 81920);
+            await using var stream = new FileStream(
+                filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 81920, FileOptions.Asynchronous);
 
-            Span<byte> lengthBuffer = stackalloc byte[LengthPrefixBytes];
-            stream.ReadExactly(lengthBuffer);
+            var lengthBuffer = new byte[LengthPrefixBytes];
+            await stream.ReadExactlyAsync(lengthBuffer, ct).ConfigureAwait(false);
             var headerLength = BinaryPrimitives.ReadUInt64LittleEndian(lengthBuffer);
 
             if (headerLength == 0 || headerLength > MaxHeaderBytes)
@@ -48,7 +59,7 @@ public static class SafetensorsHeaderReader
                 return null;
 
             var headerBytes = new byte[headerLength];
-            stream.ReadExactly(headerBytes);
+            await stream.ReadExactlyAsync(headerBytes, ct).ConfigureAwait(false);
 
             using var document = JsonDocument.Parse(headerBytes);
             if (document.RootElement.ValueKind != JsonValueKind.Object)
@@ -67,6 +78,12 @@ public static class SafetensorsHeaderReader
             }
 
             return new SafetensorsHeaderInfo(baseModelVersion, architecture, modelNameHint);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Let it through — a cancelled read is not "unreadable" and the caller (the identify
+            // step) needs to be able to tell the two apart.
+            throw;
         }
         catch
         {

@@ -191,7 +191,7 @@ public sealed class IdentifyModelStep : ISyncStep
             }
 
             // No Civitai match, no sidecar — read the file's own header, then guess from its name.
-            var header = SafetensorsHeaderReader.TryRead(candidate.LocalPath);
+            var header = await SafetensorsHeaderReader.TryReadAsync(candidate.LocalPath, ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
             var headerCheckedAt = header is not null ? now : (DateTimeOffset?)null;
             var label = header is not null ? BaseModelHeaderMap.Map(header) : null;
