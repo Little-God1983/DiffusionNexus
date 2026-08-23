@@ -306,15 +306,33 @@ gate than the sidecar formats' own guard (`CanWriteVersionText`, which is simply
 `BaseModelWriter.CanFill` additionally requires the field to still be blank (`BaseModelRaw` is `null`
 or the discovery placeholder `"???"`). A version whose base model already says something real —
 Civitai-sourced, sidecar-sourced, or hand-typed — is left alone even when the rest of the version is
-untouched. The outcome is still stamped as whichever rung actually answered even when the write
-itself was skipped: a model that already has a real base model but whose header would have echoed
-the same family still records `Header`, not `NotIdentified` — the identity source the detail view
-shows is about what the file *said*, not about what got written as a result.
+untouched.
+
+**The outcome names the rung that wrote the value, never one that merely echoed it.** A rung is
+credited (`Header`/`Heuristic`) only when its label actually lands on the row — i.e. `CanFill` said
+yes. When `CanFill` says no (the value is already real, or the version is user-edited), stamping the
+rung anyway would misreport provenance: the detail panel's "Identity source: file header" row would
+describe a Base Model the header had nothing to do with. So a skipped write instead *preserves*
+whatever settled identity the model already carried — `Matched`, `Sidecar`, `Header` or `Heuristic`,
+read off the row **before** this run touched it — and falls back to `NotIdentified` only when there
+was no settled identity to preserve (a fresh row, or one that last recorded `Error`). Concretely: a
+sidecar identifies a model (`Sidecar`), the user deletes the `.civitai.info`, and the next run's
+header rereads the same file as plain SDXL — the outcome stays `Sidecar`, not `Header`, because
+nothing new was actually written. Preserving rather than re-deriving also keeps the retry window and
+the sidecar-evidence bypass (below) tracking whatever they already were, instead of resetting a
+model's due-ness every time a rung merely reconfirms an existing answer.
+
+When the write *does* land, `Model.Source` and `Model.LastSyncedAt` are stamped to `LocalFile` and
+the run's own clock — mirroring the sidecar branch's stamp (*What counts as applied*, above) — so a
+model whose base model was just filled from its own file no longer reads as "never synced" to
+anything that orders or filters on `LastSyncedAt` (`TileGroupingHelper`'s tile ordering among them).
+Nothing is stamped when the write is skipped, same as the sidecar branch.
 
 `HeaderCheckedAt` is stamped whenever the header could be parsed at all, even when it carried no
-usable `__metadata__` fields and `BaseModelHeaderMap.Map` returned nothing. It stays `null` for
-anything that never reached that point — a non-safetensors file, a hash match, or a sidecar hit —
-because the header rung only runs on the shared miss branch, after both of those have already failed.
+usable `__metadata__` fields and `BaseModelHeaderMap.Map` returned nothing, independently of whether
+anything above ended up written. It stays `null` for anything that never reached that point — a
+non-safetensors file, a hash match, or a sidecar hit — because the header rung only runs on the
+shared miss branch, after both of those have already failed.
 
 **Identity source is per model; base model is per version.** The detail panel's "Identity source:"
 row (`ModelDetailViewModel.DescribeIdentitySource`) reads the single `ModelSyncState.MetadataOutcome`
