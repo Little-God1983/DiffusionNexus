@@ -1,5 +1,8 @@
 using System.Reflection;
 using DiffusionNexus.Civitai;
+using DiffusionNexus.DataAccess.Repositories.Interfaces;
+using DiffusionNexus.DataAccess.UnitOfWork;
+using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
@@ -36,14 +39,15 @@ public class ModelDetailViewModelTests
 
     private static ModelDetailViewModel CreateVm(
         IClipboardService? clipboard = null,
-        IUiScheduler? scheduler = null)
+        IUiScheduler? scheduler = null,
+        IServiceScopeFactory? scopeFactory = null)
         => new(
             civitaiClient: new Mock<ICivitaiClient>().Object,
             settingsService: new Mock<IAppSettingsService>().Object,
             secureStorage: new Mock<ISecureStorage>().Object,
             logger: new Mock<IUnifiedLogger>().Object,
             baseModelCatalog: null,
-            scopeFactory: new Mock<IServiceScopeFactory>().Object,
+            scopeFactory: scopeFactory ?? new Mock<IServiceScopeFactory>().Object,
             dialogService: new Mock<IDialogService>().Object,
             downloadService: null,
             downloadCoordinator: new Mock<IDownloadCoordinator>().Object,
@@ -118,5 +122,59 @@ public class ModelDetailViewModelTests
     public void DescribeIdentitySourceMapsEverySyncOutcome(SyncOutcome outcome, string? expected)
     {
         ModelDetailViewModel.DescribeIdentitySource(outcome).Should().Be(expected);
+    }
+
+    /// <summary>
+    /// Review fix (Task 4 round 1): <c>LoadIdentitySourceAsync</c> is keyed to a specific model,
+    /// unlike the model-invariant <c>LoadBaseModelCatalogAsync</c> it was modelled on. If the user
+    /// switches tiles A→B before A's DB lookup returns, A's loader must not be able to complete
+    /// after B's and overwrite B's correct chip with A's stale value. Drives both calls directly
+    /// against a real <see cref="IServiceScopeFactory"/> (mocked repository underneath, same
+    /// pattern as <c>LoraViewerViewModelSyncTests</c>) with model A's lookup gated behind a
+    /// <see cref="TaskCompletionSource"/> so the test controls completion order deterministically
+    /// instead of racing real timing.
+    /// </summary>
+    [Fact]
+    public async Task LoadIdentitySourceAsyncDropsAStaleWriteFromAnOlderGeneration()
+    {
+        const int modelA = 101;
+        const int modelB = 202;
+        var stateA = new ModelSyncState { ModelId = modelA, MetadataOutcome = SyncOutcome.Matched };
+        var stateB = new ModelSyncState { ModelId = modelB, MetadataOutcome = SyncOutcome.Sidecar };
+
+        var slowLookupForA = new TaskCompletionSource<ModelSyncState?>();
+        var syncStates = new Mock<ISyncStateRepository>();
+        syncStates.Setup(s => s.GetByModelIdAsync(modelA, It.IsAny<CancellationToken>()))
+            .Returns(slowLookupForA.Task);
+        syncStates.Setup(s => s.GetByModelIdAsync(modelB, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stateB);
+
+        var unitOfWork = new Mock<IUnitOfWork>();
+        unitOfWork.SetupGet(u => u.SyncStates).Returns(syncStates.Object);
+
+        var services = new ServiceCollection();
+        services.AddSingleton(unitOfWork.Object);
+        var provider = services.BuildServiceProvider();
+
+        var vm = CreateVm(scopeFactory: provider.GetRequiredService<IServiceScopeFactory>());
+        var generationField = typeof(ModelDetailViewModel).GetField(
+            "_identityLoadGeneration", BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+        // Tile A's LoadAsync fires the slow lookup at generation 1 and does not await it (mirrors
+        // the real fire-and-forget call site).
+        generationField.SetValue(vm, 1);
+        var taskA = vm.LoadIdentitySourceAsync(modelA, generation: 1);
+
+        // The user switches to tile B before A resolves: generation advances to 2 and B's lookup
+        // — which resolves immediately — completes and stamps the chip.
+        generationField.SetValue(vm, 2);
+        await vm.LoadIdentitySourceAsync(modelB, generation: 2);
+        vm.IdentitySourceDisplay.Should().Be("sidecar file", "B's fast lookup is the current tile and must win");
+
+        // A's slow lookup finally resolves. Its generation (1) no longer matches the VM's current
+        // generation (2), so its write must be dropped rather than clobbering B's chip.
+        slowLookupForA.SetResult(stateA);
+        await taskA;
+        vm.IdentitySourceDisplay.Should().Be("sidecar file", "a stale lookup for the previous tile must not overwrite the current tile's chip");
     }
 }
