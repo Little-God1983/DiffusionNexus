@@ -4,10 +4,20 @@ using DiffusionNexus.Domain.Enums;
 namespace DiffusionNexus.Service.Services.Sync;
 
 /// <summary>
-/// The single rule for writing a version's base model, shared by every source that can propose
-/// one — sidecar (<see cref="SidecarMetadataApplier"/>), safetensors header and filename heuristic
+/// The single rule for writing a version's base model from an automatic source, shared by every
+/// one that can propose an answer — sidecar (<see cref="SidecarMetadataApplier"/>), Civitai
+/// (<see cref="CivitaiMetadataApplier"/>), and the safetensors header / filename heuristic
 /// (<see cref="Steps.IdentifyModelStep"/>'s miss-branch) — so all of them agree on what counts as
 /// an answer and who is allowed to overwrite what.
+/// <para>
+/// The detail view's inline editor (<c>ModelDetailViewModel.Editing.SaveSelectedBaseModelAsync</c>)
+/// is a deliberate exception, not an oversight. It is the one place a user is allowed to blank a
+/// version's base model outright, which <see cref="Write"/> refuses by design — a blank is "no new
+/// answer", never "forget the old one" (see <see cref="Write"/>'s remarks). Routing a clearing UI
+/// through a method that cannot clear would mean either losing that ability or growing a second
+/// flag no automatic caller needs, so the editor keeps its own two-line write of the same two
+/// spellings instead of calling in here.
+/// </para>
 /// </summary>
 public static class BaseModelWriter
 {
