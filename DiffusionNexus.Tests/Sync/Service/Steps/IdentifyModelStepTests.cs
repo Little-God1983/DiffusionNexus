@@ -599,9 +599,13 @@ public sealed class IdentifyModelStepTests : IDisposable
         var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
         await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
 
-        // The outcome still reflects the best source that answered this run, even though the write
-        // itself was skipped — the value was already real.
-        (await ReadStateAsync(modelId))!.MetadataOutcome.Should().Be(SyncOutcome.Header);
+        // C1: the write was skipped, so the outcome must NOT claim the header rung — that would
+        // read as "Identity source: file header" directly under a Base Model the header never
+        // actually supplied. There was no settled identity to preserve (a fresh row), so it falls
+        // back to NotIdentified. The header WAS still read, though — HeaderCheckedAt says so.
+        var state = await ReadStateAsync(modelId);
+        state!.MetadataOutcome.Should().Be(SyncOutcome.NotIdentified);
+        state.HeaderCheckedAt.Should().NotBeNull();
 
         using var readScope = NewScope();
         var readUow = readScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
@@ -667,12 +671,83 @@ public sealed class IdentifyModelStepTests : IDisposable
         var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
         await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
 
-        (await ReadStateAsync(modelId))!.MetadataOutcome.Should().Be(SyncOutcome.Header);
+        // C1: same reasoning as Execute_HeaderDoesNotOverwriteARealBaseModel — CanFill said no
+        // (the version is user-edited), so the header rung is not credited with a value it never
+        // actually wrote.
+        (await ReadStateAsync(modelId))!.MetadataOutcome.Should().Be(SyncOutcome.NotIdentified);
 
         using var readScope = NewScope();
         var readUow = readScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
         var saved = await readUow.Models.GetByIdWithIncludesAsync(modelId);
         saved!.Versions.Single().BaseModelRaw.Should().Be("???");
+    }
+
+    /// <summary>
+    /// C1, the reviewer's exact scenario. Run 1: a sidecar identifies the model as Pony. The user
+    /// then deletes the <c>.civitai.info</c>. Run 2: 404, no sidecar, and the file's own header
+    /// parses as plain SDXL — a real value, but <see cref="BaseModelWriter.CanFill"/> says no
+    /// (Pony is already real), so nothing is written. Before this fix the outcome was stamped
+    /// <see cref="SyncOutcome.Header"/> anyway, purely because the header *said* something —
+    /// leaving the detail panel's "Identity source: file header" row directly under a Base Model
+    /// of Pony the header never actually supplied. Both the value and the <c>Sidecar</c> outcome
+    /// must survive the header run untouched, and a third run must not churn — the sidecar's
+    /// disappearance was already recorded as new evidence and consumed.
+    /// </summary>
+    [Fact]
+    public async Task Execute_SidecarDeletedThenHeaderRunPreservesSidecarOutcome()
+    {
+        var path = NewModelFile("sidecar-then-header.safetensors",
+            Safetensors(Meta(("modelspec.architecture", "stable-diffusion-xl-v1-base"))));
+        var (modelId, _) = await SeedAsync("sidecar-then-header", path);
+
+        // Deliberately no "modelId": setting Model.CivitaiId would exclude the model from the next
+        // ordinary (non-forced) Library selection entirely — a real effect, but not the one this
+        // test is about — so run 2 would never even see it as a candidate.
+        var sidecarPath = Path.Combine(_tempDir.FullName, "sidecar-then-header.civitai.info");
+        var sidecarJson = """
+        {"id":700,"baseModel":"Pony","trainedWords":["x"],
+         "model":{"name":"N","nsfw":false},
+         "files":[{"name":"sidecar-then-header.safetensors","primary":true,"hashes":{"SHA256":"ABC"}}],
+         "images":[]}
+        """;
+        await File.WriteAllTextAsync(sidecarPath, sidecarJson);
+
+        var step = NewNotFoundStep();
+
+        // Run 1: the sidecar identifies the model as Pony.
+        var run1Items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        await step.ExecuteOneAsync(run1Items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        (await ReadStateAsync(modelId))!.MetadataOutcome.Should().Be(SyncOutcome.Sidecar);
+
+        // The user deletes the sidecar.
+        File.Delete(sidecarPath);
+
+        // Run 2: the sidecar's disappearance is new evidence, so this is due immediately — no need
+        // to wait out the 30-day window (the same bypass Select_ANewSidecarMakesAHeaderIdentifiedModelDue
+        // exercises for a sidecar *appearing*).
+        var run2Items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        run2Items.Select(i => i.ModelId).Should().Contain(modelId);
+
+        await step.ExecuteOneAsync(run2Items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        var state = await ReadStateAsync(modelId);
+        state!.MetadataOutcome.Should().Be(SyncOutcome.Sidecar,
+            "the header never actually wrote anything, so the prior settled identity must be preserved");
+        state.HeaderCheckedAt.Should().NotBeNull("the header WAS read this run, even though nothing came of it");
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+            saved!.Versions.Single().BaseModelRaw.Should().Be(
+                "Pony", "the sidecar's value must survive a header run that found nothing new to say");
+        }
+
+        // A third run must not churn: the deletion was already consumed as evidence on run 2, and
+        // run 2's stamp recorded the file's current (sidecar-less) signature.
+        var run3Items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        run3Items.Select(i => i.ModelId).Should().NotContain(modelId);
     }
 
     /// <summary>

@@ -195,17 +195,46 @@ public sealed class IdentifyModelStep : ISyncStep
             ct.ThrowIfCancellationRequested();
             var headerCheckedAt = header is not null ? now : (DateTimeOffset?)null;
             var label = header is not null ? BaseModelHeaderMap.Map(header) : null;
-            var outcome = label is not null ? SyncOutcome.Header : SyncOutcome.NotIdentified;
+            var rung = label is not null ? SyncOutcome.Header : (SyncOutcome?)null;
             if (label is null)
             {
                 label = FilenameBaseModelHeuristic.Guess(Path.GetFileNameWithoutExtension(candidate.LocalPath));
-                if (label is not null) outcome = SyncOutcome.Heuristic;
+                if (label is not null) rung = SyncOutcome.Heuristic;
             }
-            if (label is not null)
+
+            SyncOutcome outcome;
+            if (label is null)
+            {
+                // Nothing proposed a value at all.
+                outcome = SyncOutcome.NotIdentified;
+            }
+            else
             {
                 var dbVersion = await uow.Models.GetVersionByIdAsync(candidate.VersionId, ct).ConfigureAwait(false);
-                if (dbVersion is not null && BaseModelWriter.CanFill(dbVersion)) BaseModelWriter.Write(dbVersion, label);
+                var written = dbVersion is not null && BaseModelWriter.CanFill(dbVersion) && BaseModelWriter.Write(dbVersion, label);
+
+                if (written)
+                {
+                    // The rung that actually set the value is the one that gets credit for it.
+                    outcome = rung!.Value;
+                }
+                else
+                {
+                    // A label was produced, but CanFill said no — the value is already real, or the
+                    // version is user-edited — so the write never happened. Stamping the rung anyway
+                    // would be a lie: the detail panel's "Identity source: file header" row would be
+                    // describing the provenance of a Base Model the header had nothing to do with.
+                    // Preserve whatever settled identity the model already carried instead, so the
+                    // retry window and the sidecar-evidence bypass (IsDue, below) keep tracking the
+                    // real source rather than being reset by a rung that only reconfirmed it; fall
+                    // back to NotIdentified only when there was no settled identity to preserve.
+                    outcome = candidate.Outcome is SyncOutcome.Matched or SyncOutcome.Sidecar
+                        or SyncOutcome.Header or SyncOutcome.Heuristic
+                        ? candidate.Outcome
+                        : SyncOutcome.NotIdentified;
+                }
             }
+
             await StampAsync(uow, candidate.ModelId, outcome, now, sidecar.Signature, error: null, ct, headerCheckedAt).ConfigureAwait(false);
 
             _logger?.Debug(LogCategory.General, LogSource,
