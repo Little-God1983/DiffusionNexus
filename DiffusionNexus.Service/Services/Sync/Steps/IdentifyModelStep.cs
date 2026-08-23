@@ -208,7 +208,7 @@ public sealed class IdentifyModelStep : ISyncStep
             }
             await StampAsync(uow, candidate.ModelId, outcome, now, sidecar.Signature, error: null, ct, headerCheckedAt).ConfigureAwait(false);
 
-            _logger?.Debug(LogCategory.Network, LogSource,
+            _logger?.Debug(LogCategory.General, LogSource,
                 $"'{candidate.Name}' not on Civitai → {outcome}" + (label is not null ? $" ({label})" : string.Empty), sidecar.SidecarPath);
             return SyncItemResult.Success;
         }
