@@ -211,7 +211,7 @@ DownloadMissingMetadataAsync                      (both service calls run on Tas
 | Step | What it does |
 |------|--------------|
 | `DiscoverFiles` | Walks every enabled LoRA source folder and inserts rows for files that are not in the DB yet. It ignores the scope — a folder- or model-scoped run that *includes* this step still scans everything — but it is only in the run at all when the caller asks for it, and the per-LoRA button does not. |
-| `IdentifyModel` | The identity chain for one file: full-file SHA256 → Civitai `GET /model-versions/by-hash/{sha}` → on 404, the local `.civitai.info` / `.json` sidecar. Writes name, base model, trigger words, Civitai ids, image records — see *user edits* and *what counts as applied* below. |
+| `IdentifyModel` | The identity chain for one file: full-file SHA256 → Civitai `GET /model-versions/by-hash/{sha}` → on 404, the local `.civitai.info` / `.json` sidecar → the file's own safetensors header → a guess from the filename. Writes name, base model, trigger words, Civitai ids, image records — see *user edits*, *what counts as applied* and **The identity chain** below. |
 | `FetchTags` | For a model that has a Civitai id but no tags yet: `GET /models/{id}` and replace the tag set (reusing existing `Tag` rows by normalized name). |
 | `FetchImages` | For a version with a Civitai version id but no image records: `GET /model-versions/{id}` and persist the returned images. |
 | `Thumbnails` | For each version's due primary image: one CDN GET through `IThumbnailProvider`, never a full video — see §9 for the ladder, the failure/retry table, and the 0-video-bytes-in-bulk guarantee. |
@@ -262,6 +262,82 @@ can be truncated; either way the outcome is `NotIdentified`, `Source`/`LastSynce
 alone, and the file's real signature is still stored — so it is not read again until it changes (or
 the 30-day window comes round), rather than costing a re-hash and a Civitai request on every run.
 
+### The identity chain
+
+`IdentifyModel` is four rungs, tried in order — the first one that answers wins, and nothing below
+it runs:
+
+1. **Civitai by hash** — `GetModelVersionByHashAsync` on the file's SHA256. A hit applies the full
+   Civitai response (above) and stamps `Matched`.
+2. **Sidecar** — on a 404, the local `.civitai.info` / `.json` next to the file
+   (`SidecarMetadataApplier`). Stamps `Sidecar` only when metadata actually came out of it; a kohya
+   training config or a truncated `.civitai.info` falls through to the next rung instead (*what
+   counts as applied*, above).
+3. **Safetensors header** (`SafetensorsHeaderReader` + `BaseModelHeaderMap`) — reads the file's own
+   length-prefixed JSON header (capped at 16 MB, the tensor payload itself is never touched) and
+   maps its `__metadata__` fields to a Civitai display label: the `ss_sd_model_name` hint is checked
+   *first*, because Pony / Illustrious / NoobAI checkpoints are all SDXL-architecture and would
+   otherwise all collapse into plain "SDXL 1.0"; `modelspec.architecture` and the coarser
+   `ss_base_model_version` (kohya only ever writes `sd_v1`/`sd_v2`, so both 1.x and both 2.x minor
+   versions collapse to one label each) are checked after. Any file that isn't a readable safetensors
+   header — wrong extension, corrupt, truncated, an oversized header — yields nothing here and falls
+   through.
+4. **Filename heuristic** (`FilenameBaseModelHeuristic`) — last resort: distinctive whole-name
+   substrings, then exact tokens (`sd15`, `pdxl`, `wan`, …), then distinctive token prefixes, run
+   against the filename with the directory and a known model extension stripped. The lowest-confidence
+   rung of the four, which is why the UI calls it a guess rather than stating it as fact.
+
+Nothing answering at all is `NotIdentified`. A fault anywhere in the attempt (timeout, a Civitai
+response shape change, a rejected database save) is `Error` instead and does not fall through to the
+rungs below it — the failure itself is the outcome.
+
+| Outcome | Meaning |
+|---|---|
+| `Matched` | Civitai recognised the file's hash |
+| `Sidecar` | No Civitai hit; a local `.civitai.info` / `.json` supplied metadata |
+| `Header` | No Civitai hit, no usable sidecar; the safetensors header named a base model |
+| `Heuristic` | Nothing above answered; the filename suggested one |
+| `NotIdentified` | None of the four rungs produced anything |
+| `Error` | The attempt itself failed (network, parsing, a rejected save) |
+
+**Only the placeholder gets filled, never a user's edit.** The header and filename rungs write
+*nothing but the base model* — no name, no trigger words, no description — so they use a narrower
+gate than the sidecar formats' own guard (`CanWriteVersionText`, which is simply "not user-edited"):
+`BaseModelWriter.CanFill` additionally requires the field to still be blank (`BaseModelRaw` is `null`
+or the discovery placeholder `"???"`). A version whose base model already says something real —
+Civitai-sourced, sidecar-sourced, or hand-typed — is left alone even when the rest of the version is
+untouched. The outcome is still stamped as whichever rung actually answered even when the write
+itself was skipped: a model that already has a real base model but whose header would have echoed
+the same family still records `Header`, not `NotIdentified` — the identity source the detail view
+shows is about what the file *said*, not about what got written as a result.
+
+`HeaderCheckedAt` is stamped whenever the header could be parsed at all, even when it carried no
+usable `__metadata__` fields and `BaseModelHeaderMap.Map` returned nothing. It stays `null` for
+anything that never reached that point — a non-safetensors file, a hash match, or a sidecar hit —
+because the header rung only runs on the shared miss branch, after both of those have already failed.
+
+**Identity source is per model; base model is per version.** The detail panel's "Identity source:"
+row (`ModelDetailViewModel.DescribeIdentitySource`) reads the single `ModelSyncState.MetadataOutcome`
+for the whole model — "Civitai", "sidecar file", "file header", "guessed from filename" — while the
+**Base Model** field shown just above it (§10) is per *version*. A model with several versions shows
+one identity-source verdict describing how the model as a whole was last resolved, which is not
+necessarily how any one version's base model value came to be. `None`, `NotIdentified` and `Error`
+show nothing in that row rather than a discouraging label.
+
+**Correcting a guess sticks.** Picking a value from the detail panel's Base Model dropdown sets
+`ModelVersion.IsUserEdited` — exactly the flag `BaseModelWriter.CanFill` checks — so a future sync,
+however it identifies the model, never overwrites that choice again. That is what the row's tooltip
+means by "'Guessed from filename' is the lowest-confidence source — correct it via the Base Model
+dropdown and your choice is kept."
+
+**Retry.** All four non-`Matched`, non-`Error` outcomes — `Sidecar`, `Header`, `Heuristic`,
+`NotIdentified` — share the 30-day catch-all in `SyncRetryPolicy.IsIdentifyDue` (a better source may
+have appeared since). Independent of that window, a sidecar that appears or changes next to the file
+makes any of those four due *immediately*: `IdentifyModelStep.IsDue` compares the file's current
+sidecar signature against the one stored on the last check, and a mismatch wins over the 30-day
+clock — dropping a `.civitai.info` next to a `NotIdentified` file is picked up on the very next run,
+not a month from now.
+
 ### Where the state lives
 
 One `ModelSyncStates` row per model (PK = FK to `Model`), so *"checked and genuinely
@@ -275,7 +351,7 @@ empty"* is distinguishable from *"never checked"* — the distinction the old
 | `LastError` | One-line reason for the last failure (never a stack trace) |
 | `TagsCheckedAt` / `ImagesCheckedAt` | Stamped **even when the result was empty** — that is what makes "no tags" final |
 | `SidecarSignature` | `{path}|{lastWriteUtcTicks}|{length}` of the sidecar last **looked at**, so an unchanged sidecar is not re-read and a changed one is. Recorded whether or not anything was applied. `""` = looked, no sidecar; `null` = never recorded |
-| `HeaderCheckedAt` | Safetensors header read (WP4) |
+| `HeaderCheckedAt` | Safetensors header read (see **The identity chain** above) |
 
 Models that predate the table get a row derived from data already in the database
 (`SyncStateDeriver`, via `SyncStateInitializer`) on the first plan — never by calling
@@ -679,7 +755,11 @@ User clicks tile → ModelTileViewModel.OpenDetails()
            ├── ModelIdDisplay, VersionIdDisplay, BaseModel, FileName
            ├── Description (HTML→text), TriggerWords, Tags
            └── BuildLocalVersionTabs (blue tabs from local versions)
-        
+
+        1a. LoadIdentitySourceAsync(tile)  — fire-and-forget, from ModelSyncState
+            └── "Identity source:" row — see §4 "The identity chain" for what it shows
+                and why it is per model, not per version
+
         2. FetchCivitaiDataAsync(tile)     — async, from API
            ├── Requires Model.CivitaiId or CivitaiModelPageId > 0
            ├── GET /api/v1/models/{modelId}
