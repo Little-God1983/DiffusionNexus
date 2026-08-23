@@ -1,0 +1,48 @@
+using DiffusionNexus.Service.Services.Sync.Identity;
+using FluentAssertions;
+
+namespace DiffusionNexus.Tests.Sync.Service.Identity;
+
+/// <summary>
+/// Covers <see cref="FilenameBaseModelHeuristic"/> — guessing a Civitai base-model label from a
+/// model file name when no header/sidecar metadata is available. Match order is most-specific
+/// first (whole-name substring, then exact token/pair, then token prefix) so short, common
+/// fragments like "il" or "wan" can't false-positive inside longer unrelated words.
+/// </summary>
+public class FilenameBaseModelHeuristicTests
+{
+    [Theory]
+    [InlineData("MyChar_Pony_v2", "Pony")]
+    [InlineData("ponyxl-style", "Pony")]
+    [InlineData("sdxl_lineart", "SDXL 1.0")]
+    [InlineData("myIllustriousMix", "Illustrious")]
+    [InlineData("style-il", "Illustrious")]
+    [InlineData("detailer_sd15", "SD 1.5")]
+    [InlineData("detailer_sd1.5", "SD 1.5")]
+    [InlineData("wan21_motion", "Wan Video")]
+    [InlineData("flux_dev_char", "Flux.1 D")]
+    [InlineData("noob_artist", "NoobAI")]
+    [InlineData("harmony_lora", null)]       // 'pony' inside a token must NOT match
+    [InlineData("wander_style", null)]       // 'wan' prefix of a longer token must NOT match
+    [InlineData("family_car", null)]         // 'il' inside a token must NOT match
+    [InlineData("mySd150Style", null)]       // 'sd15' inside a longer merged token must NOT match
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    public void Guess_MatchesExpectedLabel(string? fileName, string? expected)
+    {
+        FilenameBaseModelHeuristic.Guess(fileName).Should().Be(expected);
+    }
+
+    // Ruling 1: extension stripping only fires for a KNOWN model-file extension, so
+    // "detailer_sd1.5" above (no recognized extension) is tokenized whole rather than having its
+    // ".5" eaten by a blind Path.GetFileNameWithoutExtension call. These confirm the real-file
+    // path still strips a genuine extension correctly.
+    [Theory]
+    [InlineData("ponyDiffusionV6XL.safetensors", "Pony")]
+    [InlineData("detailer_sd15.pt", "SD 1.5")]
+    [InlineData("noob_artist.ckpt", "NoobAI")]
+    public void Guess_StripsKnownModelExtensionsBeforeMatching(string fileName, string expected)
+    {
+        FilenameBaseModelHeuristic.Guess(fileName).Should().Be(expected);
+    }
+}
