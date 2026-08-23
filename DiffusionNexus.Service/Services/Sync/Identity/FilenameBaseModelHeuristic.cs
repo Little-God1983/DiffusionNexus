@@ -22,16 +22,42 @@ public static partial class FilenameBaseModelHeuristic
     [GeneratedRegex("[^a-z0-9]+")]
     private static partial Regex TokenSplitRegex();
 
-    // Rung 1: distinctive whole-name substrings — safe because they're long/specific enough not
-    // to false-positive inside an unrelated word.
+    // Rung 1: distinctive whole-name substrings for architectures whose full name is itself
+    // unambiguous — safe because they're long/specific enough not to false-positive inside an
+    // unrelated word.
     private static readonly (string Needle, string Label)[] WholeNameSubstrings =
     {
         ("illustrious", "Illustrious"),
         ("noobai", "NoobAI"),
-        ("sdxl", "SDXL 1.0"),
     };
 
-    // Rung 2: exact token, or exact adjacent-pair concatenation (handles a version number split
+    // Rung 2: refinement token signals. MUST be checked — and win — before the generic "sdxl"
+    // whole-name substring in rung 3, mirroring BaseModelHeaderMap's own class remarks: Pony,
+    // Illustrious and NoobAI checkpoints are all trained on the SDXL architecture, so a filename
+    // carrying both the refinement name and the literal word "sdxl" (extremely common for Pony
+    // LoRAs, e.g. "stylemix_pony_sdxl_v1") must label as the refinement, not the architecture it
+    // was built on. Token-level (StartsWith on a split token, or an exact token for "pdxl"), not a
+    // raw substring test against the whole name, because "pony"/"illust"/"noob" are short enough
+    // to false-positive inside an unrelated word if matched that way — the negative-case tests
+    // pin exactly this ("harmony_lora" -> null).
+    private static readonly (string Prefix, string Label)[] RefinementTokenPrefixes =
+    {
+        ("pony", "Pony"),
+        ("illust", "Illustrious"),
+        ("noob", "NoobAI"),
+    };
+
+    private static readonly Dictionary<string, string> RefinementExactTokens = new(StringComparer.Ordinal)
+    {
+        ["pdxl"] = "Pony",
+    };
+
+    // Rung 3: generic architecture whole-name substring — checked only after every refinement
+    // above has had its chance, so a refinement name never loses to the architecture it's built on.
+    private const string SdxlNeedle = "sdxl";
+    private const string SdxlLabel = "SDXL 1.0";
+
+    // Rung 4: exact token, or exact adjacent-pair concatenation (handles a version number split
     // across a separator, e.g. "sd_15" or "sd1.5" tokenizing to "sd1" + "5").
     private static readonly Dictionary<string, string> ExactTokenOrPairMap = new(StringComparer.Ordinal)
     {
@@ -39,21 +65,17 @@ public static partial class FilenameBaseModelHeuristic
         ["sd21"] = "SD 2.1",
         ["sd35"] = "SD 3.5",
         ["sd3"] = "SD 3",
-        ["pdxl"] = "Pony",
         ["il"] = "Illustrious",
         ["wan"] = "Wan Video",
         ["wan21"] = "Wan Video",
         ["wan22"] = "Wan Video",
     };
 
-    // Rung 3: token prefix match — last resort, so only distinctive prefixes that won't collide
+    // Rung 5: token prefix match — last resort, so only distinctive prefixes that won't collide
     // with common English words belong here.
     private static readonly (string Prefix, string Label)[] TokenPrefixes =
     {
-        ("pony", "Pony"),
         ("flux", "Flux.1 D"),
-        ("illust", "Illustrious"),
-        ("noob", "NoobAI"),
     };
 
     /// <summary>
@@ -62,6 +84,9 @@ public static partial class FilenameBaseModelHeuristic
     /// <see cref="BaseModelHeaderMap.AllLabels"/>.
     /// </summary>
     internal static IReadOnlyCollection<string> AllLabels { get; } = WholeNameSubstrings.Select(s => s.Label)
+        .Concat(RefinementTokenPrefixes.Select(p => p.Label))
+        .Concat(RefinementExactTokens.Values)
+        .Concat(new[] { SdxlLabel })
         .Concat(ExactTokenOrPairMap.Values)
         .Concat(TokenPrefixes.Select(p => p.Label))
         .Distinct(StringComparer.Ordinal)
@@ -86,6 +111,24 @@ public static partial class FilenameBaseModelHeuristic
         var tokens = TokenSplitRegex().Split(name).Where(t => t.Length > 0).ToArray();
         if (tokens.Length == 0)
             return null;
+
+        // Refinement rung — see the field's remarks. Must run before the "sdxl" substring check
+        // below, or a Pony/Illustrious/NoobAI filename that also carries the literal word "sdxl"
+        // would always collapse to the generic architecture label.
+        foreach (var token in tokens)
+        {
+            if (RefinementExactTokens.TryGetValue(token, out var refinementLabel))
+                return refinementLabel;
+
+            foreach (var (prefix, label) in RefinementTokenPrefixes)
+            {
+                if (token.StartsWith(prefix, StringComparison.Ordinal))
+                    return label;
+            }
+        }
+
+        if (name.Contains(SdxlNeedle, StringComparison.Ordinal))
+            return SdxlLabel;
 
         foreach (var token in tokens)
         {

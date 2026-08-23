@@ -8,8 +8,10 @@ namespace DiffusionNexus.Tests.Sync.Service.Identity;
 /// <summary>
 /// Covers <see cref="FilenameBaseModelHeuristic"/> — guessing a Civitai base-model label from a
 /// model file name when no header/sidecar metadata is available. Match order is most-specific
-/// first (whole-name substring, then exact token/pair, then token prefix) so short, common
-/// fragments like "il" or "wan" can't false-positive inside longer unrelated words.
+/// first, with refinement names (Pony/Illustrious/NoobAI) checked before the generic "sdxl"
+/// substring so a name carrying both (e.g. a Pony LoRA) labels as the refinement, then exact
+/// token/pair, then token prefix — so short, common fragments like "il" or "wan" can't
+/// false-positive inside longer unrelated words.
 /// </summary>
 public class FilenameBaseModelHeuristicTests
 {
@@ -24,6 +26,8 @@ public class FilenameBaseModelHeuristicTests
     [InlineData("wan21_motion", "Wan Video")]
     [InlineData("flux_dev_char", "Flux.1 D")]
     [InlineData("noob_artist", "NoobAI")]
+    [InlineData("stylemix_pony_sdxl_v1", "Pony")]    // refinement must beat the generic "sdxl" substring
+    [InlineData("noob_sdxl_mix", "NoobAI")]          // same principle for the NoobAI refinement
     [InlineData("harmony_lora", null)]       // 'pony' inside a token must NOT match
     [InlineData("wander_style", null)]       // 'wan' prefix of a longer token must NOT match
     [InlineData("family_car", null)]         // 'il' inside a token must NOT match
