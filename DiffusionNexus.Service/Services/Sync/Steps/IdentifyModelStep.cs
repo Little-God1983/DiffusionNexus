@@ -187,7 +187,7 @@ public sealed class IdentifyModelStep : ISyncStep
 
             if (sidecar.Applied)
             {
-                await StampAsync(uow, candidate.ModelId, SyncOutcome.Sidecar, now, sidecar.Signature, error: null, ct).ConfigureAwait(false);
+                await StampAsync(uow, candidate.ModelId, SyncOutcome.Sidecar, now, sidecar.Signature, error: null, headerCheckedAt: null, ct).ConfigureAwait(false);
                 return SyncItemResult.Success;
             }
 
@@ -243,7 +243,7 @@ public sealed class IdentifyModelStep : ISyncStep
                 }
             }
 
-            await StampAsync(uow, candidate.ModelId, outcome, now, sidecar.Signature, error: null, ct, headerCheckedAt).ConfigureAwait(false);
+            await StampAsync(uow, candidate.ModelId, outcome, now, sidecar.Signature, error: null, headerCheckedAt, ct).ConfigureAwait(false);
 
             _logger?.Debug(LogCategory.General, LogSource,
                 $"'{candidate.Name}' not on Civitai → {outcome}" + (label is not null ? $" ({label})" : string.Empty), sidecar.SidecarPath);
@@ -272,7 +272,7 @@ public sealed class IdentifyModelStep : ISyncStep
 
             try
             {
-                await StampAsync(uow, candidate.ModelId, SyncOutcome.Error, now, signature: null, ex.Message, ct).ConfigureAwait(false);
+                await StampAsync(uow, candidate.ModelId, SyncOutcome.Error, now, signature: null, ex.Message, headerCheckedAt: null, ct).ConfigureAwait(false);
             }
             catch (Exception stampEx) when (stampEx is not OperationCanceledException && SyncFaults.IsItemFault(stampEx))
             {
@@ -321,13 +321,13 @@ public sealed class IdentifyModelStep : ISyncStep
         if (!applied || modelLevelDataMissing)
         {
             var reason = $"Civitai match applied nothing (model {candidate.ModelId}, version {version.Id})";
-            await StampAsync(uow, candidate.ModelId, SyncOutcome.Error, now, signature: null, reason, ct).ConfigureAwait(false);
+            await StampAsync(uow, candidate.ModelId, SyncOutcome.Error, now, signature: null, reason, headerCheckedAt: null, ct).ConfigureAwait(false);
 
             _logger?.Warn(LogCategory.Network, LogSource, $"Identify failed for '{candidate.Name}': {reason}");
             return SyncItemResult.Failure(reason);
         }
 
-        await StampAsync(uow, candidate.ModelId, SyncOutcome.Matched, now, signature: null, error: null, ct).ConfigureAwait(false);
+        await StampAsync(uow, candidate.ModelId, SyncOutcome.Matched, now, signature: null, error: null, headerCheckedAt: null, ct).ConfigureAwait(false);
 
         _logger?.Debug(LogCategory.Network, LogSource, $"Identified '{candidate.Name}' on Civitai", $"versionId={version.Id}");
         return SyncItemResult.Success;
@@ -362,7 +362,7 @@ public sealed class IdentifyModelStep : ISyncStep
 
     private static async Task StampAsync(
         IUnitOfWork uow, int modelId, SyncOutcome outcome, DateTimeOffset now,
-        string? signature, string? error, CancellationToken ct, DateTimeOffset? headerCheckedAt = null)
+        string? signature, string? error, DateTimeOffset? headerCheckedAt, CancellationToken ct)
     {
         var state = await uow.SyncStates.GetOrCreateAsync(modelId, ct).ConfigureAwait(false);
 
