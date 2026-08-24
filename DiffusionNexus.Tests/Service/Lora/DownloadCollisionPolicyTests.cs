@@ -7,7 +7,7 @@ namespace DiffusionNexus.Tests.Service.Lora;
 
 /// <summary>
 /// Covers <see cref="DownloadCollisionPolicy.ResolveAsync"/> — the one collision policy for
-/// every Civitai download path (spec §4.4, S4), moved from
+/// every Civitai download path (spec §4.4, S4), moved out of the (now-deleted)
 /// <c>CivitaiDownloadQueue.ResolveCollisionFreeTargetPathAsync</c>. Civitai file names are
 /// frequently generic ("V1.safetensors"), so two unrelated models routed to the same
 /// BaseModel/Category folder collide: the second download overwrote the first model's weights

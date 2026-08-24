@@ -1,3 +1,4 @@
+using Avalonia.Threading;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.UI.Services.CivitaiBrowser;
 using DiffusionNexus.UI.Services.Download;
@@ -12,6 +13,12 @@ namespace DiffusionNexus.Tests.Viewer;
 /// returned <see cref="DownloadOutcome"/> onto <see cref="JobStatus"/>. Covers that mapping table
 /// plus the D3 guarantee that the queue never wraps the call in an <c>IDownloadCoordinator</c>
 /// enqueue itself (the downloader owns that).
+/// <para>
+/// The terminal-state assignment is posted through <c>Dispatcher.UIThread.Post</c> (review fix:
+/// same queue as the progress adapter, so a late progress update can never land after and
+/// clobber it) — this test host never pumps that queue on its own, so every test that inspects
+/// job state after the awaited call drains it once with <c>Dispatcher.UIThread.RunJobs()</c>.
+/// </para>
 /// </summary>
 public sealed class CivitaiDownloadQueueOutcomeMappingTests : IDisposable
 {
@@ -84,11 +91,13 @@ public sealed class CivitaiDownloadQueueOutcomeMappingTests : IDisposable
         queue.Jobs.Add(job);
 
         await queue.StartAllAsync();
+        Dispatcher.UIThread.RunJobs();
 
         job.Status.Should().Be(JobStatus.Completed);
         job.StatusMessage.Should().Be("Done");
         job.TargetPath.Should().Be("final.safetensors");
         job.ActualSha256.Should().Be("AAAA1111BBBB2222", "the downloader already verified the hash");
+        job.ProgressPercent.Should().Be(100, "the throttled progress adapter's last report may sit below 100");
     }
 
     [Fact]
@@ -103,10 +112,12 @@ public sealed class CivitaiDownloadQueueOutcomeMappingTests : IDisposable
         queue.Jobs.Add(job);
 
         await queue.StartAllAsync();
+        Dispatcher.UIThread.RunJobs();
 
         job.Status.Should().Be(JobStatus.Completed);
         job.StatusMessage.Should().Be("Done — no metadata");
         job.ActualSha256.Should().Be("AAAA1111");
+        job.ProgressPercent.Should().Be(100);
     }
 
     [Fact]
@@ -121,10 +132,13 @@ public sealed class CivitaiDownloadQueueOutcomeMappingTests : IDisposable
         queue.Jobs.Add(job);
 
         await queue.StartAllAsync();
+        Dispatcher.UIThread.RunJobs();
 
         job.Status.Should().Be(JobStatus.Completed);
         job.StatusMessage.Should().Be("Already downloaded");
         job.ActualSha256.Should().BeNull("no fresh transfer happened, so nothing was verified this run");
+        job.ProgressPercent.Should().Be(100,
+            "no transfer means the throttled progress adapter never reported anything — the tile must not sit at 0% next to 'Already downloaded'");
     }
 
     [Fact]
@@ -139,6 +153,7 @@ public sealed class CivitaiDownloadQueueOutcomeMappingTests : IDisposable
         queue.Jobs.Add(job);
 
         await queue.StartAllAsync();
+        Dispatcher.UIThread.RunJobs();
 
         job.Status.Should().Be(JobStatus.Failed);
         job.StatusMessage.Should().Contain("Hash mismatch");
@@ -157,6 +172,7 @@ public sealed class CivitaiDownloadQueueOutcomeMappingTests : IDisposable
         queue.Jobs.Add(job);
 
         await queue.StartAllAsync();
+        Dispatcher.UIThread.RunJobs();
 
         job.Status.Should().Be(JobStatus.Cancelled);
         job.StatusMessage.Should().Be("Cancelled");
@@ -177,6 +193,7 @@ public sealed class CivitaiDownloadQueueOutcomeMappingTests : IDisposable
         queue.Jobs.Add(job);
 
         await queue.StartAllAsync();
+        Dispatcher.UIThread.RunJobs();
 
         job.Status.Should().Be(JobStatus.Cancelled);
         job.StatusMessage.Should().Be("Cancelled");
@@ -194,6 +211,7 @@ public sealed class CivitaiDownloadQueueOutcomeMappingTests : IDisposable
         queue.Jobs.Add(job);
 
         await queue.StartAllAsync();
+        Dispatcher.UIThread.RunJobs();
 
         job.Status.Should().Be(JobStatus.Failed);
         job.StatusMessage.Should().Be("no download URL",
@@ -212,6 +230,7 @@ public sealed class CivitaiDownloadQueueOutcomeMappingTests : IDisposable
         queue.Jobs.Add(job);
 
         await queue.StartAllAsync();
+        Dispatcher.UIThread.RunJobs();
 
         downloader.CallCount.Should().Be(1);
         downloader.LastRequest.Should().NotBeNull();
@@ -234,6 +253,7 @@ public sealed class CivitaiDownloadQueueOutcomeMappingTests : IDisposable
         queue.Jobs.Add(job);
 
         await queue.RetryJobAsync(job);
+        Dispatcher.UIThread.RunJobs();
 
         job.Status.Should().Be(JobStatus.Completed);
         downloader.CallCount.Should().Be(1);

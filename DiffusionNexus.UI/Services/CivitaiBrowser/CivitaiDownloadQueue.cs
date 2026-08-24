@@ -544,8 +544,14 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             // The one Civitai download path (spec §4.4 / D3): collision policy, coordinator
             // enqueue, SHA256 verification, persistence and the Tags+Thumbnails completion
             // sync all live inside the downloader now — the queue only reports outcomes.
+            // File is passed explicitly (rather than left for the downloader to re-pick) so
+            // the enqueue-time ExpectedSha256/FileName snapshot on the job and the file the
+            // downloader actually fetches agree by construction — after a restart-rehydration
+            // the two picks could otherwise diverge if Civitai's file list changed in between.
+            var primaryFile = CivitaiVersionFiles.PickPrimary(civVersion);
             var request = new DownloadRequest(civVersion!, targetDir, DownloadTrigger.BrowseQueue)
             {
+                File = primaryFile,
                 FileNameOverride = job.FileName,
                 TaskName = $"Download {job.ModelName} ({job.VersionName})",
             };
@@ -563,55 +569,66 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                     $"File name collision in {targetDir}: '{job.FileName}' already belongs to a different download — saved as '{Path.GetFileName(outcome.FinalPath)}' instead.");
             }
 
-            if (outcome.Status == DownloadStatus.Cancelled || job.WasCancelledByUser)
+            // Posted through the same dispatcher queue as the progress adapter above (FIFO),
+            // so a progress update still in flight when the download finishes can never be
+            // processed after — and clobber — this terminal state.
+            Dispatcher.UIThread.Post(() =>
             {
-                job.Status = JobStatus.Cancelled;
-                job.StatusMessage = "Cancelled";
-                return;
-            }
+                if (outcome.Status == DownloadStatus.Cancelled || job.WasCancelledByUser)
+                {
+                    job.Status = JobStatus.Cancelled;
+                    job.StatusMessage = "Cancelled";
+                    return;
+                }
 
-            switch (outcome.Status)
-            {
-                case DownloadStatus.Completed:
-                    job.ActualSha256 ??= job.ExpectedSha256; // verified inside the downloader
-                    job.Status = JobStatus.Completed;
-                    job.StatusMessage = "Done";
-                    break;
+                switch (outcome.Status)
+                {
+                    case DownloadStatus.Completed:
+                        job.ProgressPercent = 100; // the throttled progress adapter's last report may sit below 100
+                        job.ActualSha256 ??= job.ExpectedSha256; // verified inside the downloader
+                        job.Status = JobStatus.Completed;
+                        job.StatusMessage = "Done";
+                        break;
 
-                case DownloadStatus.CompletedMetadataIncomplete:
-                    // The file can land perfectly while its Civitai metadata fetch fails. That
-                    // used to finish as a plain "Done", leaving the LoRA with no description,
-                    // tags or preview and no hint of why.
-                    job.ActualSha256 ??= job.ExpectedSha256; // verified inside the downloader
-                    job.Status = JobStatus.Completed;
-                    job.StatusMessage = "Done — no metadata";
-                    _logger?.Warn(LogCategory.Download, "CivitaiQueue",
-                        $"{job.ModelName} — {job.VersionName} downloaded, but its Civitai metadata could not be fetched. "
-                        + "Use Download Metadata on the model in the Installed tab to fill it in.",
-                        $"VersionId: {job.VersionId}\nFile: {job.TargetPath}");
-                    break;
+                    case DownloadStatus.CompletedMetadataIncomplete:
+                        // The file can land perfectly while its Civitai metadata fetch fails. That
+                        // used to finish as a plain "Done", leaving the LoRA with no description,
+                        // tags or preview and no hint of why.
+                        job.ProgressPercent = 100;
+                        job.ActualSha256 ??= job.ExpectedSha256; // verified inside the downloader
+                        job.Status = JobStatus.Completed;
+                        job.StatusMessage = "Done — no metadata";
+                        _logger?.Warn(LogCategory.Download, "CivitaiQueue",
+                            $"{job.ModelName} — {job.VersionName} downloaded, but its Civitai metadata could not be fetched. "
+                            + "Use Download Metadata on the model in the Installed tab to fill it in.",
+                            $"VersionId: {job.VersionId}\nFile: {job.TargetPath}");
+                        break;
 
-                case DownloadStatus.ReusedExisting:
-                    job.Status = JobStatus.Completed;
-                    job.StatusMessage = "Already downloaded";
-                    break;
+                    case DownloadStatus.ReusedExisting:
+                        // No transfer happened, so the throttled adapter never reported anything —
+                        // without this the tile would sit at 0% next to "Already downloaded".
+                        job.ProgressPercent = 100;
+                        job.Status = JobStatus.Completed;
+                        job.StatusMessage = "Already downloaded";
+                        break;
 
-                case DownloadStatus.HashMismatch:
-                    job.Status = JobStatus.Failed;
-                    job.StatusMessage = job.ExpectedSha256 is { Length: >= 8 }
-                        ? $"Hash mismatch (expected {job.ExpectedSha256[..8]}…)"
-                        : "Hash mismatch";
-                    _logger?.Warn(LogCategory.Download, "CivitaiQueue",
-                        $"SHA256 mismatch for {job.TargetPath}: {outcome.Error}");
-                    break;
+                    case DownloadStatus.HashMismatch:
+                        job.Status = JobStatus.Failed;
+                        job.StatusMessage = job.ExpectedSha256 is { Length: >= 8 }
+                            ? $"Hash mismatch (expected {job.ExpectedSha256[..8]}…)"
+                            : "Hash mismatch";
+                        _logger?.Warn(LogCategory.Download, "CivitaiQueue",
+                            $"SHA256 mismatch for {job.TargetPath}: {outcome.Error}");
+                        break;
 
-                case DownloadStatus.Failed:
-                default:
-                    job.Status = JobStatus.Failed;
-                    if (string.IsNullOrEmpty(job.StatusMessage) || job.StatusMessage == "Connecting...")
-                        job.StatusMessage = outcome.Error ?? "Failed";
-                    break;
-            }
+                    case DownloadStatus.Failed:
+                    default:
+                        job.Status = JobStatus.Failed;
+                        if (string.IsNullOrEmpty(job.StatusMessage) || job.StatusMessage == "Connecting...")
+                            job.StatusMessage = outcome.Error ?? "Failed";
+                        break;
+                }
+            });
         }
         catch (OperationCanceledException)
         {
@@ -856,16 +873,18 @@ public partial class CivitaiDownloadJob : ObservableObject
 
     /// <summary>
     /// Where the job is expected to land on disk, resolved from the shared destination
-    /// at enqueue time (and recomputed when destination settings change). Once the job
-    /// actually starts, <see cref="TargetPath"/> takes over as the authoritative path.
+    /// at enqueue time (and recomputed when destination settings change). Superseded by
+    /// <see cref="TargetPath"/> once the downloader reports where the file actually landed —
+    /// that only happens once, when <c>DownloadAsync</c> returns, not progressively while
+    /// downloading is in flight.
     /// </summary>
     [ObservableProperty]
     private string? _expectedTargetDir;
 
     /// <summary>
     /// Final-or-planned path to show on the queue tile. Prefers the on-disk
-    /// <see cref="TargetPath"/> once downloading has started, falling back to
-    /// <see cref="ExpectedTargetDir"/>.
+    /// <see cref="TargetPath"/> once the downloader has reported it, falling back to
+    /// <see cref="ExpectedTargetDir"/> while the job is still queued or downloading.
     /// </summary>
     public string? DisplayPath => TargetPath ?? ExpectedTargetDir;
 

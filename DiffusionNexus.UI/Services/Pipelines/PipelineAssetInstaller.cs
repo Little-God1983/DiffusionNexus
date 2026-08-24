@@ -408,10 +408,13 @@ public sealed class PipelineAssetInstaller : IPipelineAssetInstaller, IDisposabl
 
         if (!outcome.Success)
         {
+            // Compose, don't replace: outcome.Error is non-null on every non-success path
+            // (e.g. "transfer failed"), so an `??` here silently ate the EA/API-key guidance
+            // on every gated-LoRA 401 — the exact case that guidance exists for.
             var hint = earlyAccess
                 ? " This version is Early Access — it needs a Civitai membership/Supporter API key."
                 : " Check your Civitai API key in Settings.";
-            throw new InvalidOperationException(outcome.Error ?? $"{asset.Name}: download failed.{hint}");
+            throw new InvalidOperationException($"{asset.Name}: {outcome.Error ?? "download failed"}.{hint}");
         }
 
         // Link the file to its Civitai model so the readiness check (sidecar modelId scan)

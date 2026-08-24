@@ -30,9 +30,11 @@ public sealed class LoraSortPlanner
 
         // A hash we cannot read is not "no collision" — it is a file we cannot prove is
         // identical, so it must be treated as different content (rename, never overwrite).
-        // Same guard CivitaiDownloadQueue.ResolveCollisionFreeTargetPathAsync carries; the
-        // sorter dropped it while claiming to mirror the convention, so one .safetensors
-        // held open by a running backend killed the entire preview.
+        // Same guard DownloadCollisionPolicy.ResolveAsync carries (the algorithm formerly
+        // lived on CivitaiDownloadQueue.ResolveCollisionFreeTargetPathAsync, since deleted
+        // in the Task 7 downloader migration); the sorter dropped it while claiming to
+        // mirror the convention, so one .safetensors held open by a running backend killed
+        // the entire preview.
         string? HashOfFile(string path)
         {
             if (hashCache.TryGetValue(path, out var cached)) return cached;

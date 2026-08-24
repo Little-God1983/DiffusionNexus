@@ -292,4 +292,78 @@ public sealed class PipelineAssetInstallerTests : IDisposable
         errors[0].Should().StartWith("Gated LoRA:");
         errors[1].Should().StartWith("Public LoRA:");
     }
+
+    // ── Failure message composes the downloader's error with the EA/API-key hint ──
+    // (regression: outcome.Error is non-null on every non-success path, so an earlier
+    // `outcome.Error ?? hintedMessage` silently dropped the hint on every real failure —
+    // a gated LoRA's 401 read as a bare "transfer failed" instead of guiding the user to
+    // add an API key. Assert the actual hint substring, not just the asset-name prefix,
+    // which is how the bug stayed invisible in InstallAssets_ContinuesWithRemainingAssets.)
+
+    [Fact]
+    public async Task InstallCivitaiLora_ThrowsWithOutcomeErrorAndEarlyAccessHint_WhenGatedVersionFails()
+    {
+        var manifest = ManifestWithLora(1934100, "anime2real");
+        var gatedModel = new CivitaiModel
+        {
+            Id = 1934100,
+            Name = "Anime2Real",
+            ModelVersions =
+            [
+                new CivitaiModelVersion
+                {
+                    Id = 2674717,
+                    ModelId = 1934100,
+                    Name = "Klein9B",
+                    EarlyAccessTimeFrame = 5, // gated — IsEarlyAccessActive() == true
+                    Files =
+                    [
+                        new CivitaiModelFile
+                        {
+                            Id = 1,
+                            Name = "A2R_Klein_Standard.safetensors",
+                            Primary = true,
+                            DownloadUrl = "https://civitai.com/api/download/models/2674717",
+                        },
+                    ],
+                },
+            ],
+        };
+        _civitai.Setup(c => c.GetModelAsync(1934100, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(gatedModel);
+        _modelDownloader.Setup(d => d.DownloadAsync(
+                It.IsAny<DownloadRequest>(), It.IsAny<IProgress<DownloadProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DownloadOutcome(DownloadStatus.Failed, FinalPath: null, ModelId: null, RenamedForCollision: false, Error: "transfer failed"));
+
+        var installer = CreateInstaller();
+
+        var errors = await installer.InstallAssetsAsync(
+            manifest, ["Test LoRA"], _root, vramGb: 0, hfToken: null, civitaiKey: null, CancellationToken.None);
+
+        errors.Should().ContainSingle();
+        errors[0].Should().Contain("transfer failed",
+            "the downloader's own error must survive, not be silently swallowed by the hint");
+        errors[0].Should().Contain("Early Access",
+            "a gated version's failure must still surface the EA/API-key guidance, not just the raw transport error");
+    }
+
+    [Fact]
+    public async Task InstallCivitaiLora_ThrowsWithOutcomeErrorAndSettingsHint_WhenNonGatedVersionFails()
+    {
+        var manifest = ManifestWithLora(1934100, "anime2real");
+        _civitai.Setup(c => c.GetModelAsync(1934100, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CivitaiModelWithFile(2674717, "A2R_Klein_Standard.safetensors", modelId: 1934100));
+        _modelDownloader.Setup(d => d.DownloadAsync(
+                It.IsAny<DownloadRequest>(), It.IsAny<IProgress<DownloadProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DownloadOutcome(DownloadStatus.Failed, FinalPath: null, ModelId: null, RenamedForCollision: false, Error: "no download service"));
+
+        var installer = CreateInstaller();
+
+        var errors = await installer.InstallAssetsAsync(
+            manifest, ["Test LoRA"], _root, vramGb: 0, hfToken: null, civitaiKey: null, CancellationToken.None);
+
+        errors.Should().ContainSingle();
+        errors[0].Should().Contain("no download service");
+        errors[0].Should().Contain("Check your Civitai API key in Settings");
+    }
 }
