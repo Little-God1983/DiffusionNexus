@@ -23,13 +23,8 @@ public static class BaseModelHeaderMap
         ("noob", "NoobAI"),
     };
 
-    // Extensions ExtractFileNameHint will drop from the file-name portion of the hint. Mirrors
-    // FilenameBaseModelHeuristic.KnownModelExtensions (kept separate rather than shared — this
-    // class doesn't otherwise depend on that one, and the list is small).
-    private static readonly string[] KnownModelExtensions =
-    {
-        ".safetensors", ".pt", ".ckpt", ".bin", ".sft", ".gguf",
-    };
+    // Extensions ExtractFileNameHint will drop from the file-name portion of the hint.
+    private static readonly string[] KnownModelExtensions = ModelFileExtensions.All;
 
     // Rung 2: modelspec.architecture, lowercased, with everything from the first '/' stripped
     // (drops suffixes such as "/lora").

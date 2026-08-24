@@ -34,6 +34,15 @@ public sealed class LoraSorterViewModelTests : IDisposable
         return path;
     }
 
+    /// <summary>A model file with a real safetensors header, for the rungs that read one.</summary>
+    private string WriteSafetensors(string relative, string headerJson)
+    {
+        var path = Path.Combine(SourceRoot, relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(path, SafetensorsFixture.Safetensors(headerJson));
+        return path;
+    }
+
     private static InstalledModelFile Installed(string path, string baseModel, string tag)
     {
         var model = new Model { Tags = { new ModelTag { Tag = new Tag { Name = tag } } } };
@@ -240,37 +249,104 @@ public sealed class LoraSorterViewModelTests : IDisposable
 
         await vm.InitializeAsync();
 
-        vm.PreviewRoots.Single(n => n.Name == "SDXL 1.0").IsFullyIdentified.Should().BeTrue();
+        vm.PreviewRoots.Single(n => n.Name == "SDXL 1.0").IsIdentified.Should().BeTrue();
 
         var unknownFolder = vm.PreviewRoots.Single(n => n.Name == SorterPathBuilder.UnknownFolderName);
-        unknownFolder.IsFullyIdentified.Should().BeFalse();
+        unknownFolder.IsUnidentified.Should().BeTrue();
         unknownFolder.StatusTooltip.Should().Contain("sort into Unknown");
 
         // ...and through the category level too, not just at the root.
         unknownFolder.Children.Where(c => !c.IsFile)
-            .Should().OnlyContain(c => !c.IsFullyIdentified);
+            .Should().OnlyContain(c => c.IsUnidentified);
     }
 
     /// <summary>
-    /// "Identified" has to mean what the tree is actually drawing. With the name rung on, a LoRA
-    /// named into a real folder is finished; with it off, the same file sits in Unknown and is not.
+    /// "Identified" has to mean what the tree is actually drawing — and a file the name rung placed
+    /// is NOT identified, it is guessed. Marking it ✓ under "every file here has a base model"
+    /// turned the one screen that could audit the lowest-confidence rung into an endorsement of it.
     /// </summary>
     [Fact]
-    public async Task TurningOnNameSortingAlsoFinishesTheFolder()
+    public async Task TurningOnNameSortingMarksTheFolderGuessedNotIdentified()
     {
         var path = WriteLora(@"flat\MyChar_Pony_v2.safetensors");
         var vm = CreateVm(cached: [Installed(path, "???", "character")]);
         await vm.InitializeAsync();
 
         vm.PreviewRoots.Single(n => n.Name == SorterPathBuilder.UnknownFolderName)
-            .IsFullyIdentified.Should().BeFalse();
+            .IsUnidentified.Should().BeTrue();
 
         vm.GuessBaseModelFromFileName = true;
         await vm.RecomputePreviewCommand.ExecuteAsync(null);
 
         var pony = vm.PreviewRoots.Single(n => n.Name == "Pony");
-        pony.IsFullyIdentified.Should().BeTrue();
+        pony.IsGuessed.Should().BeTrue();
+        pony.IsIdentified.Should().BeFalse("a name is not a reading of the file");
+        pony.StatusTooltip.Should().Contain("named, not read");
         pony.AssetKinds.Should().ContainSingle().Which.Should().Be("LoRA");
+    }
+
+    /// <summary>
+    /// The other side of the same rule: a file whose header answered is marked read, not guessed,
+    /// even while the name rung is on and its name would have produced the same label. Comparing
+    /// BaseModelRaw against NameGuess would have called this one guessed.
+    /// </summary>
+    [Fact]
+    public async Task AHeaderReadStaysIdentifiedWhileTheNameRungIsOn()
+    {
+        var path = WriteSafetensors(@"flat\MyChar_Pony_v2.safetensors",
+            SafetensorsFixture.Meta(("ss_base_model_version", "sdxl_base_v1-0")));
+        var vm = CreateVm(cached: [Installed(path, "???", "character")]);
+        vm.GuessBaseModelFromFileName = true;
+
+        await vm.InitializeAsync();
+
+        var node = vm.PreviewRoots.Single(n => n.Name == "SDXL 1.0");
+        node.IsIdentified.Should().BeTrue();
+        node.StatusTooltip.Should().Be("Every file here has a base model.");
+    }
+
+    /// <summary>
+    /// A folder's mark is the WORST thing under it: one unidentified file outranks any number of
+    /// guessed ones, which outrank read ones. Otherwise "some files here" would depend on the order
+    /// files happened to arrive in.
+    /// </summary>
+    [Fact]
+    public async Task AFolderTakesTheWorstMarkBeneathIt()
+    {
+        var read = WriteSafetensors(@"flat\a_pony.safetensors",
+            SafetensorsFixture.Meta(("ss_base_model_version", "sdxl_base_v1-0")));
+        var guessed = WriteLora(@"flat\b_sdxl_style.safetensors");
+        var vm = CreateVm(cached:
+        [
+            Installed(read, "???", "character"),
+            Installed(guessed, "???", "character"),
+        ]);
+        vm.GuessBaseModelFromFileName = true;
+
+        await vm.InitializeAsync();
+
+        // Both land in SDXL 1.0 — one because its header said so, one because its name did.
+        var node = vm.PreviewRoots.Single(n => n.Name == "SDXL 1.0");
+        node.IsGuessed.Should().BeTrue("the guessed file drags the folder off ✓");
+    }
+
+    /// <summary>
+    /// The hint's numbers belong to one folder. Deselecting the source clears the tree, the summary
+    /// and the plan — leaving the hint behind advertised "5 LoRAs could not be identified…" over an
+    /// empty tree, for a library that is no longer selected.
+    /// </summary>
+    [Fact]
+    public async Task DeselectingTheSourceClearsTheHintWithTheTree()
+    {
+        var vm = CreateVm(cached: [Installed(WriteLora(@"flat\MyChar_Pony_v2.safetensors"), "???", "character")]);
+        await vm.InitializeAsync();
+        vm.NameGuessHint.Should().NotBeNull();
+
+        vm.SelectedSourceFolder = null;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        vm.PreviewRoots.Should().BeEmpty();
+        vm.NameGuessHint.Should().BeNull();
     }
 
     /// <summary>A file node carries its own kind and its own mark, so expanding an unfinished folder
@@ -289,7 +365,7 @@ public sealed class LoraSorterViewModelTests : IDisposable
             .Single(c => c.IsFile);
 
         fileNode.AssetKinds.Should().ContainSingle().Which.Should().Be("VAE");
-        fileNode.IsFullyIdentified.Should().BeFalse();
+        fileNode.IsUnidentified.Should().BeTrue();
         fileNode.StatusTooltip.Should().Contain("This file has no base model");
     }
 

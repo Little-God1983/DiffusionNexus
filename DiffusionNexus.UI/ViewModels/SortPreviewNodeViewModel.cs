@@ -41,26 +41,52 @@ public partial class SortPreviewNodeViewModel : ObservableObject
     public ObservableCollection<string> AssetKinds { get; } = [];
 
     /// <summary>
-    /// False when anything under this node has no base model — the ✗ state. Aggregates by AND
-    /// through the whole subtree, so a base-model folder is only "finished" when every category
-    /// folder beneath it is.
+    /// The worst identity state under this node — <see cref="SortPreviewIdentity.Unidentified"/>
+    /// beats <see cref="SortPreviewIdentity.Guessed"/> beats
+    /// <see cref="SortPreviewIdentity.Identified"/>. Aggregated through the whole subtree, so a
+    /// base-model folder is only "finished" when every category folder beneath it is.
     /// </summary>
+    /// <remarks>
+    /// Three states, not two, because with <i>Sort by name</i> on there is a real difference the
+    /// tree must not paper over: a file whose base model was read from its header or confirmed by
+    /// Civitai, and one whose only evidence is that its name contains "pony", both end up with a
+    /// non-placeholder base model at this point. Marking the second ✓ under "Every file here has a
+    /// base model" made the one screen where a user could audit the lowest-confidence rung assert
+    /// the opposite of what it does.
+    /// </remarks>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsIdentified))]
+    [NotifyPropertyChangedFor(nameof(IsGuessed))]
+    [NotifyPropertyChangedFor(nameof(IsUnidentified))]
     [NotifyPropertyChangedFor(nameof(StatusTooltip))]
-    private bool _isFullyIdentified = true;
+    private SortPreviewIdentity _identity = SortPreviewIdentity.Identified;
 
-    public string StatusTooltip => IsFullyIdentified
-        ? "Every file here has a base model."
-        : IsFile
+    /// <summary>✓ — everything here was read or confirmed, not guessed.</summary>
+    public bool IsIdentified => Identity == SortPreviewIdentity.Identified;
+
+    /// <summary>~ — something here is filed on its file name alone.</summary>
+    public bool IsGuessed => Identity == SortPreviewIdentity.Guessed;
+
+    /// <summary>✗ — something here has no base model and sorts into Unknown.</summary>
+    public bool IsUnidentified => Identity == SortPreviewIdentity.Unidentified;
+
+    public string StatusTooltip => Identity switch
+    {
+        SortPreviewIdentity.Identified => "Every file here has a base model.",
+        SortPreviewIdentity.Guessed => IsFile
+            ? "This file was named, not read — its folder comes from its file name."
+            : "Some files here were named, not read — their folder comes from their file name.",
+        _ => IsFile
             ? "This file has no base model — it sorts into Unknown."
-            : "Some files here have no base model and sort into Unknown.";
+            : "Some files here have no base model and sort into Unknown.",
+    };
 
     /// <summary>
-    /// Folds one file into this node: its kind joins the chip set, and its identified state ANDs
-    /// into <see cref="IsFullyIdentified"/>. Called for the file's own node and for every ancestor,
-    /// which is what makes both values subtree-wide.
+    /// Folds one file into this node: its kind joins the chip set, and its identity state is kept
+    /// at the worst seen so far. Called for the file's own node and for every ancestor, which is
+    /// what makes both values subtree-wide.
     /// </summary>
-    public void Absorb(SorterAssetKind kind, bool isIdentified)
+    public void Absorb(SorterAssetKind kind, SortPreviewIdentity identity)
     {
         if (_kinds.Add(kind))
         {
@@ -72,7 +98,24 @@ public partial class SortPreviewNodeViewModel : ObservableObject
                 AssetKinds.Add(SorterAssetKindClassifier.DisplayName(known));
         }
 
-        if (!isIdentified)
-            IsFullyIdentified = false;
+        if (identity > Identity)
+            Identity = identity;
     }
+}
+
+/// <summary>
+/// How well a preview node's base model is known. Ordered worst-last on purpose: the rollup in
+/// <see cref="SortPreviewNodeViewModel.Absorb"/> keeps the maximum, so adding a state means placing
+/// it correctly in this order rather than editing the rollup.
+/// </summary>
+public enum SortPreviewIdentity
+{
+    /// <summary>Read from the file's header, or confirmed by Civitai or a sidecar.</summary>
+    Identified,
+
+    /// <summary>Filed on the file name alone, via the opt-in name rung.</summary>
+    Guessed,
+
+    /// <summary>No base model at all — sorts into Unknown.</summary>
+    Unidentified,
 }

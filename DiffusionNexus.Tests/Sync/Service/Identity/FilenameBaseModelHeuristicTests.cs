@@ -73,14 +73,6 @@ public class FilenameBaseModelHeuristicTests
     }
 
     /// <summary>
-    /// Reflects over <see cref="DiffusionNexus.Civitai.CivitaiBaseModelCatalog"/>'s private bundled
-    /// snapshot (via <see cref="SafetensorsFixture.CatalogLabels"/>, rather than duplicating the
-    /// label list here) and asserts every label the heuristic can ever return is a real Civitai
-    /// display label, not a typo'd string nobody's dropdown recognizes. Mirrors
-    /// <c>BaseModelHeaderMapTests.Map_EveryOutputIsACatalogLabel</c> so a future catalog edit can't
-    /// silently orphan a heuristic label either.
-    /// </summary>
-    /// <summary>
     /// Real names taken from a live library where the pre-expansion table identified 6 of 328
     /// files. LTX alone accounted for 64 of the misses, which is why the family carries three
     /// spellings and relies on the longest-key-first ordering to keep them apart.
@@ -98,6 +90,10 @@ public class FilenameBaseModelHeuristicTests
     [InlineData("kontext-turnaround-sheet-v1.safetensors", "Flux.1 Kontext")]
     [InlineData("Flux2-Klein-9B-True-v2-bf16.safetensors", "Flux.2 Klein 9B")]
     [InlineData("hidream_o1_image_bf16.safetensors", "HiDream")]
+    // The "-base" variants are their own catalog labels and 10 versions in the reference library
+    // carry one, so the precise key beats the coarse "flux2" that used to answer for this name.
+    [InlineData("flux-2-klein-base-9b-fp8.safetensors", "Flux.2 Klein 9B-base")]
+    [InlineData("hunyuan_video_20s_horror_900.safetensors", "Hunyuan Video")]
     public void Guess_IdentifiesTheFamiliesARealLibraryActuallyContains(string fileName, string expected)
         => FilenameBaseModelHeuristic.Guess(fileName).Should().Be(expected);
 
@@ -110,8 +106,30 @@ public class FilenameBaseModelHeuristicTests
     [InlineData("latex_dress_v3.safetensors")]
     [InlineData("obi_wan_kenobi.safetensors")]
     [InlineData("wan_kenobi_portrait.safetensors")]
+    // The rows above cannot fail: no wan key matches a name with no version-shaped token at all.
+    // These can — the candidate set synthesizes "wan2"/"wan25"/"wan21" from a version suffix on a
+    // character LoRA, which is at least as common as the names the guard was written for.
+    [InlineData("obi_wan_2.safetensors")]
+    [InlineData("Obi Wan 2.5 - portrait.safetensors")]
+    [InlineData("kenobi_wan_21.safetensors")]
+    // "hunyuan" alone cannot pick between HunyuanDiT ("Hunyuan 1") and Hunyuan Video.
+    [InlineData("hunyuan_style_v3.safetensors")]
     public void Guess_DoesNotMatchWordsThatMerelyLookLikeAFamily(string fileName)
         => FilenameBaseModelHeuristic.Guess(fileName).Should().BeNull();
+
+    /// <summary>
+    /// A bare digit after a family word is a version suffix, not a different family. "flux" is the
+    /// only key stem that is a standalone word, so it is the only one where the pair synthesis had
+    /// to be given up; the glued spelling still matches.
+    /// </summary>
+    [Theory]
+    [InlineData("portrait_flux_2.safetensors", "Flux.1 D")]
+    [InlineData("mystyle_flux_2_final.safetensors", "Flux.1 D")]
+    [InlineData("mystyle_flux_v2.safetensors", "Flux.1 D")]
+    [InlineData("flux2-vae.safetensors", "Flux.2 D")]
+    [InlineData("mistral_3_small_flux2_fp8.safetensors", "Flux.2 D")]
+    public void Guess_ReadsAVersionSuffixAsAVersionNotAFamily(string fileName, string expected)
+        => FilenameBaseModelHeuristic.Guess(fileName).Should().Be(expected);
 
     /// <summary>
     /// A coarse key must never win over a finer one just because of where separators fall — the
@@ -123,6 +141,14 @@ public class FilenameBaseModelHeuristicTests
     public void Guess_PrefersTheLongestFamilyKey(string fileName, string expected)
         => FilenameBaseModelHeuristic.Guess(fileName).Should().Be(expected);
 
+    /// <summary>
+    /// Reflects over <see cref="DiffusionNexus.Civitai.CivitaiBaseModelCatalog"/>'s private bundled
+    /// snapshot (via <see cref="SafetensorsFixture.CatalogLabels"/>, rather than duplicating the
+    /// label list here) and asserts every label the heuristic can ever return is a real Civitai
+    /// display label, not a typo'd string nobody's dropdown recognizes. Mirrors
+    /// <c>BaseModelHeaderMapTests.Map_EveryOutputIsACatalogLabel</c> so a future catalog edit can't
+    /// silently orphan a heuristic label either.
+    /// </summary>
     [Fact]
     public void Guess_EveryOutputIsACatalogLabel()
     {

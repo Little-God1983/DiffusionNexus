@@ -38,17 +38,31 @@ public static class SorterAssetKindClassifier
 
     private static readonly string[] TextEncoderTokens =
     {
-        "t5", "t5xxl", "umt5", "mistral", "llava", "vl", "textencoder",
+        "t5", "t5xxl", "umt5", "mistral", "llava", "textencoder",
     };
 
+    // "vl" is two characters and reads perfectly well inside a LoRA name ("anime_vl_style"), so it
+    // sits below the bar the class remarks set and cannot stand alone. It counts only alongside the
+    // family that names its encoders that way — the real file is "qwen_2.5_vl_7b_fp8_scaled", where
+    // "qwen" and "vl" are not adjacent, so a pair rule would not reach it either.
+    private const string ShortEncoderToken = "vl";
+    private const string ShortEncoderQualifier = "qwen";
+
+    // IP-Adapter is not literally a ControlNet, but it is shelved with them everywhere and no one
+    // names a LoRA "ipadapter", so it stays. "redux" was dropped: it fails twice over — Redux is an
+    // image-variation adapter rather than a ControlNet, AND Flux Redux LoRAs exist, so the marker
+    // could put a wrong chip on a real LoRA.
     private static readonly string[] ControlNetTokens =
     {
-        "controlnet", "ipadapter", "instantx", "redux",
+        "controlnet", "ipadapter", "instantx",
     };
 
+    // "upscale" was dropped: "hires_upscale_helper", "detail_upscale_v2" are ordinary LoRA names,
+    // and it never earned its place — zero files in the reference library carry it as a token,
+    // while the longer "upscaler" matches every real upscaler there.
     private static readonly string[] UpscalerTokens =
     {
-        "ultrasharp", "esrgan", "realesrgan", "lsdirplus", "lsdir", "swinir", "upscaler", "upscale",
+        "ultrasharp", "esrgan", "realesrgan", "lsdirplus", "lsdir", "swinir", "upscaler",
     };
 
     /// <summary>Asset kind for a file name, defaulting to <see cref="SorterAssetKind.Lora"/>.</summary>
@@ -71,6 +85,8 @@ public static class SorterAssetKindClassifier
         // Leading "clip" only — see class remarks.
         if (string.Equals(tokens[0], "clip", StringComparison.Ordinal)) return SorterAssetKind.TextEncoder;
         if (ContainsAny(tokens, TextEncoderTokens)) return SorterAssetKind.TextEncoder;
+        if (ContainsAny(tokens, [ShortEncoderToken]) && ContainsAny(tokens, [ShortEncoderQualifier]))
+            return SorterAssetKind.TextEncoder;
 
         if (ContainsAny(tokens, UpscalerTokens)) return SorterAssetKind.Upscaler;
 
@@ -109,8 +125,10 @@ public static class SorterAssetKindClassifier
 
     /// <summary>
     /// A digit run followed by 'x', then either nothing ("4x", from "4x-UltraSharp") or a remainder
-    /// containing a letter ("4xlsdirplus"). The letter is what separates an upscaler from a
-    /// dimension: "4x4" is a remainder of pure digits and must not match.
+    /// carrying a letter that is not itself another 'x' ("4xlsdirplus"). That letter is what
+    /// separates an upscaler from a dimension: "4x4" is a remainder of pure digits and must not
+    /// match — nor may "2x2x2", which the plain is-there-a-letter test used to accept because 'x'
+    /// is a letter, contradicting the very rule this comment states.
     /// </summary>
     private static bool LeadsWithAScaleFactor(string token)
     {
@@ -127,7 +145,7 @@ public static class SorterAssetKindClassifier
 
         foreach (var ch in remainder)
         {
-            if (char.IsAsciiLetter(ch))
+            if (char.IsAsciiLetter(ch) && ch != 'x')
                 return true;
         }
 

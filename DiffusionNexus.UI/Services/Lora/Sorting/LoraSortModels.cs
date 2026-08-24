@@ -19,7 +19,13 @@ public sealed record SortCandidate(
 
     // What this file actually is. Never decides where it goes — it drives the preview's per-folder
     // labels, so a base-model folder about to receive a VAE says so before anything moves.
-    SorterAssetKind AssetKind = SorterAssetKind.Lora);
+    SorterAssetKind AssetKind = SorterAssetKind.Lora,
+
+    // True once "sort by name" has folded NameGuess into BaseModelRaw. Comparing the two strings
+    // would answer the same question most of the time and silently wrongly the rest: a header and a
+    // name can agree, and then a read file would be reported as a guessed one. The preview needs
+    // the distinction to mark guessed rows apart from confirmed ones.
+    bool BaseModelIsGuess = false);
 
 public enum PlannedAction { Transfer, AlreadyInPlace, SkippedDuplicate }
 

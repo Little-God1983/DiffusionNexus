@@ -7,6 +7,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Service.Services.IO;
+using DiffusionNexus.Service.Services.Sync.Identity;
 using DiffusionNexus.UI.Helpers;
 using DiffusionNexus.UI.Services.Lora.Sorting;
 using DiffusionNexus.UI.Utilities;
@@ -27,10 +28,10 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// <summary>Heartbeat cadence for the unknown-file resolution loop's progress log line.</summary>
     private const int ResolveLogInterval = 50;
 
-    // ".sft" is the standard short alias for a safetensors container — SafetensorsHeaderReader
-    // reads it, FilenameBaseModelHeuristic strips it, and ImageResourceHasher enumerates it; only
-    // this list left it out, so a .sft file in a browsed folder was invisible to the whole sorter.
-    private static readonly string[] ModelExtensions = [".safetensors", ".ckpt", ".pt", ".pth", ".sft"];
+    // The shared list, not a fourth private copy. Patching this one to add ".sft" left ".bin" and
+    // ".gguf" invisible to the sorter for precisely the reason ".sft" had been — see
+    // ModelFileExtensions.
+    private static readonly string[] ModelExtensions = ModelFileExtensions.All;
 
     private readonly IAppSettingsService? _settingsService;
     private readonly IUnifiedLogger? _logger;
@@ -442,6 +443,10 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             StatusMessage = null;
             _statusMessageIsWarning = false;
             TransferCount = 0;
+            // The hint's numbers describe the folder that was selected. Over an empty tree they
+            // advertise a library that is no longer on screen, which is the one thing a "what this
+            // option is worth on YOUR library" line must never do.
+            NameGuessHint = null;
             return;
         }
 
@@ -687,6 +692,10 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             PreviewRoots.Clear();
             PreviewSummary = null;
             DiskSummary = null;
+            // Goes with the tree, for the same reason: after "Preview failed: …" there are no
+            // candidates behind these numbers. A keepTree disarm (the disk-space gate) leaves a
+            // real tree standing, and the hint still describes it.
+            NameGuessHint = null;
         }
         BlockReason = reason;
     }
@@ -721,6 +730,12 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         var knownSkipped = 0;
         var unknownAdded = 0;
         var unknownSkipped = 0;
+
+        // ModelFileSyncService stamps every locally-discovered model "???", so on a registered root
+        // the header reads below are not a rare row — they can be most of the library. Counted up
+        // front so the progress line can say how far through them the pass is.
+        var placeholderRows = cached.Count(f => SorterPathBuilder.IsPlaceholderBaseModel(f.Version.BaseModelRaw));
+        var headersRead = 0;
 
         foreach (var f in cached)
         {
@@ -788,9 +803,24 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 string? nameGuess = null;
                 if (SorterPathBuilder.IsPlaceholderBaseModel(baseModelRaw))
                 {
-                    var identity = await _metadataResolver.IdentifyFromFileAsync(path, ct);
-                    baseModelRaw = identity.FromHeader ?? baseModelRaw;
-                    nameGuess = identity.FromName;
+                    // Real I/O — a FileStream open plus up to SafetensorsHeaderReader.MaxHeaderBytes
+                    // of reads, serially, over what may well be a NAS. Reported for the same reason
+                    // the unknown-file loop below reports: without it the overlay sits on the static
+                    // "Computing preview…" for the whole phase and an exported log has nothing
+                    // between the enumeration line and the end of the pass, so slow and hung look
+                    // identical.
+                    headersRead++;
+                    progress?.Report($"Reading headers {headersRead}/{placeholderRows}…");
+                    if (headersRead % ResolveLogInterval == 0)
+                    {
+                        _logger?.Info(LogCategory.FileSystem, LogSource,
+                            $"Read {headersRead}/{placeholderRows} headers for rows with no base model " +
+                            $"({stopwatch.ElapsedMilliseconds} ms elapsed)");
+                    }
+
+                    var fileIdentity = await _metadataResolver.IdentifyFromFileAsync(path, ct);
+                    baseModelRaw = fileIdentity.FromHeader ?? baseModelRaw;
+                    nameGuess = fileIdentity.FromName;
                 }
 
                 candidates.Add(new SortCandidate(path, baseModelRaw, category,
@@ -901,7 +931,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     private List<SortCandidate> ApplyNameGuesses(List<SortCandidate> candidates)
         => GuessBaseModelFromFileName
             ? candidates.Select(c => c.NameGuess is not null && SorterPathBuilder.IsPlaceholderBaseModel(c.BaseModelRaw)
-                    ? c with { BaseModelRaw = c.NameGuess }
+                    ? c with { BaseModelRaw = c.NameGuess, BaseModelIsGuess = true }
                     : c)
                 .ToList()
             : candidates;
@@ -930,6 +960,12 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     }
 
     private static string LoraWord(int count) => count == 1 ? "LoRA" : "LoRAs";
+
+    /// <summary>How well this candidate's destination folder is known, as the tree reports it.</summary>
+    private static SortPreviewIdentity IdentityOf(SortCandidate candidate)
+        => SorterPathBuilder.IsPlaceholderBaseModel(candidate.BaseModelRaw) ? SortPreviewIdentity.Unidentified
+            : candidate.BaseModelIsGuess ? SortPreviewIdentity.Guessed
+            : SortPreviewIdentity.Identified;
 
     /// <summary>Result of one resolution pass: the candidates and how many files it had to skip.</summary>
     private sealed record CandidateResolution(List<SortCandidate> Candidates, int SkippedCount);
@@ -970,7 +1006,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         {
             foreach (var path in Directory.EnumerateFiles(root, "*", RecursiveSafe))
             {
-                if (ModelExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase))
+                if (ModelFileExtensions.Matches(path, ModelExtensions))
                     files.Add(path);
             }
         }
@@ -1274,18 +1310,19 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 IsRenamed = move.WasRenamed
             };
 
-            // Read from the candidate as planned, so a base model supplied by the name rung counts
-            // as identified exactly when the user turned that rung on — the tree agrees with the
-            // folders it is drawing rather than with some other definition of "known".
-            var isIdentified = !SorterPathBuilder.IsPlaceholderBaseModel(move.Candidate.BaseModelRaw);
-            fileNode.Absorb(move.Candidate.AssetKind, isIdentified);
+            // Read from the candidate as planned, so the tree agrees with the folders it is drawing
+            // rather than with some other definition of "known" — and a base model supplied by the
+            // name rung is reported as guessed rather than as read, because it is the difference
+            // between a folder the file earned and one its file name suggested.
+            var identity = IdentityOf(move.Candidate);
+            fileNode.Absorb(move.Candidate.AssetKind, identity);
             siblings.Add(fileNode);
 
             foreach (var ancestor in chain)
             {
                 ancestor.LoraCount += 1;
                 ancestor.TotalBytes += move.Candidate.FileSizeBytes;
-                ancestor.Absorb(move.Candidate.AssetKind, isIdentified);
+                ancestor.Absorb(move.Candidate.AssetKind, identity);
             }
         }
 

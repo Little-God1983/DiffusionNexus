@@ -200,10 +200,10 @@ public sealed class SorterMetadataResolver
     /// DB-known branch needs the same two rungs for rows still carrying the <c>"???"</c> placeholder
     /// <c>ModelFileSyncService</c> stamps on locally-discovered models; that branch already has the
     /// database's answer and must not re-hash or re-call the API to get these.
-    /// </remarks>
-    /// <remarks>
+    /// <para>
     /// Both rungs emit verbatim Civitai display labels, so a file identified this way lands in the
     /// same base-model folder as a Civitai-identified one instead of a folder only it uses.
+    /// </para>
     /// <para>
     /// The answer is deliberately NOT written to the per-hash cache. That cache means "what Civitai
     /// said for this hash", and the API-failure path writes no entry precisely so the next pass can
@@ -283,7 +283,8 @@ public sealed class SorterMetadataResolver
         // failed — carries no tag list at all, which is not the same as "this model has no tags".
         // Serving it would make a category-less result permanent for that hash, so it is re-resolved
         // once a client is available; a resolved-but-empty list is served as-is and never re-fetched.
-        if (TryReadCache(sha, out var cached, out var tagsResolved) && (tagsResolved || _civitaiClient is null))
+        var hasCached = TryReadCache(sha, out var cached, out var tagsResolved);
+        if (hasCached && (tagsResolved || _civitaiClient is null))
         {
             // A negatively cached hash IS an answer: Civitai was asked once and returned 404.
             var fromCache = cached! with { Sha256 = sha };
@@ -318,6 +319,23 @@ public sealed class SorterMetadataResolver
         {
             _logger?.Warn(LogCategory.Network, LogSource,
                 $"Civitai by-hash lookup failed for {filePath}: {ex.Message}");
+
+            // A refresh attempted ONLY for a missing tag list must not cost the base model the
+            // entry already carried. Every tag-less entry — written whenever TryReadModelTagsAsync
+            // failed, plus every entry written before tag caching existed — reaches this call with
+            // a perfectly good answer on record, and returning a blank record here both threw that
+            // answer away and downgraded the verdict, which stopped the header rung from putting it
+            // back. During the outage this branch is about ("one 429 tends to mean every file after
+            // it") that moved a whole library of them into Unknown\.
+            //
+            // The recorded answer keeps its own verdict: a real base model is still an answer, and
+            // a recorded blank is still Civitai saying so, which leaves the file's own rungs
+            // licensed. The tag list stays unresolved either way, so the next pass retries it.
+            if (hasCached)
+            {
+                var onRecord = cached! with { Sha256 = sha };
+                return (onRecord, VerdictFor(onRecord.BaseModelRaw));
+            }
 
             // CouldNotAsk. CivitaiClient.GetAsync returns null ONLY for a 404; a rate limit that
             // survived its three retries, an outage, a non-transient 4xx/5xx and a response-shape

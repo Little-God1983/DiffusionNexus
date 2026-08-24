@@ -19,10 +19,6 @@ public static class SafetensorsHeaderReader
     // spec §4.5: cap 16 MB, never the tensors.
     public const long MaxHeaderBytes = 16 * 1024 * 1024;
 
-    // ".sft" is the standard short alias for the same container (also listed in
-    // FilenameBaseModelHeuristic.KnownModelExtensions) — a readable header under either spelling
-    // must not fall through to the lower-confidence filename guess.
-    private static readonly string[] SafetensorsExtensions = { ".safetensors", ".sft" };
     private const int LengthPrefixBytes = 8;
 
     /// <summary>
@@ -93,15 +89,7 @@ public static class SafetensorsHeaderReader
     }
 
     private static bool IsSafetensorsExtension(string filePath)
-    {
-        var extension = Path.GetExtension(filePath);
-        foreach (var candidate in SafetensorsExtensions)
-        {
-            if (string.Equals(extension, candidate, StringComparison.OrdinalIgnoreCase))
-                return true;
-        }
-        return false;
-    }
+        => ModelFileExtensions.Matches(filePath, ModelFileExtensions.SafetensorsContainers);
 
     private static string? ReadStringProperty(JsonElement obj, string propertyName) =>
         obj.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String

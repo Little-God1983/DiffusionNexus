@@ -660,6 +660,49 @@ public sealed class SorterMetadataResolverTests : IDisposable
         _client.VerifyNoOtherCalls();
     }
 
+    /// <summary>
+    /// A cache entry whose tag list never resolved is deliberately re-queried for the tags — but the
+    /// base model it already carries is an answer Civitai gave once, and a refresh that fails must
+    /// not cost it. Discarding it also downgraded the verdict to <c>CouldNotAsk</c>, which stopped
+    /// the file's own header from putting the value back, so a rate limit turned a library of
+    /// tag-less entries into a mass move into <c>Unknown\</c>.
+    /// </summary>
+    [Fact]
+    public async Task AFailedTagRefreshKeepsTheBaseModelTheCacheAlreadyHad()
+    {
+        var model = WriteModel();
+        Directory.CreateDirectory(In("cache"));
+        File.WriteAllText(In(Path.Combine("cache", "abc123.json")),
+            Sidecar(@"""baseModel"": ""Illustrious"", ""versionId"": 777, ""tags"": null"));
+        _client.Setup(c => c.GetModelVersionByHashAsync("abc123", null, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("429 Too Many Requests"));
+
+        var meta = await Resolver(_client.Object).ResolveAsync(model);
+
+        meta.BaseModelRaw.Should().Be("Illustrious");
+        meta.CivitaiVersionId.Should().Be(777);
+    }
+
+    /// <summary>
+    /// The other half of the same rule: an entry that recorded a blank base model recorded an
+    /// <i>answer</i>, so a failed refresh of its tags still leaves the file's own rungs licensed.
+    /// </summary>
+    [Fact]
+    public async Task AFailedTagRefreshOnABlankCachedAnswerStillLetsTheFileSpeak()
+    {
+        var model = WriteSafetensors("unknown_thing.safetensors",
+            SafetensorsFixture.Meta(("modelspec.architecture", "stable-diffusion-xl-v1-base")));
+        Directory.CreateDirectory(In("cache"));
+        File.WriteAllText(In(Path.Combine("cache", "abc123.json")),
+            Sidecar(@"""baseModel"": null, ""versionId"": 777, ""tags"": null"));
+        _client.Setup(c => c.GetModelVersionByHashAsync("abc123", null, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("503"));
+
+        var meta = await Resolver(_client.Object).ResolveAsync(model);
+
+        meta.BaseModelRaw.Should().Be("SDXL 1.0", "the header answers what the recorded answer left blank");
+    }
+
     /// <summary>The header read is the only cancellable step in the fallback, and the doc promises
     /// cancellation unwinds the pass instead of being reported as one more unreadable file.</summary>
     [Fact]

@@ -1093,10 +1093,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     }
 
     /// <summary>
-    /// Returns true if the base model string is a placeholder value ('???' or null/empty).
+    /// Returns true if the base model string is a placeholder value ('???' or null/empty). One
+    /// implementation, in <see cref="SyncStateDeriver.IsPlaceholder"/> — the rule has to be the same
+    /// here, in the sorter, and in the sync step that writes the label.
     /// </summary>
-    private static bool IsPlaceholderBaseModel(string? baseModel)
-        => string.IsNullOrWhiteSpace(baseModel) || baseModel == "???";
+    private static bool IsPlaceholderBaseModel(string? baseModel) => SyncStateDeriver.IsPlaceholder(baseModel);
 
     /// <summary>
     /// Loads the installed-file rows for the LoRA Sorter from a fresh DI scope, the same pattern

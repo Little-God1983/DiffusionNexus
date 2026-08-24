@@ -56,6 +56,16 @@ public sealed class SorterAssetKindClassifierTests
     [InlineData("BRFHE7KV2VWXY8N3D4SXR4XCT0.safetensors")]
     [InlineData("LTX2.3-MysticXXX.safetensors")]
     [InlineData("Dunking_Basketball_HighNoise.safetensors")]
+    // Markers that sat below the bar and had no row proving it. "upscale" and "redux" are gone
+    // outright; "vl" survives only next to the family whose encoders spell it that way.
+    [InlineData("hires_upscale_helper.safetensors")]
+    [InlineData("detail_upscale_v2.safetensors")]
+    [InlineData("flux_redux_style_lora.safetensors")]
+    [InlineData("anime_vl_style.safetensors")]
+    // A chained dimension is not a scale factor: 'x' is a letter, so the remainder test used to
+    // accept this one while correctly rejecting "4x4".
+    [InlineData("2x2x2_grid_lora.safetensors")]
+    [InlineData("4x4_tiles.safetensors")]
     public void Classify_DefaultsToLora(string fileName)
         => SorterAssetKindClassifier.Classify(fileName).Should().Be(SorterAssetKind.Lora);
 
