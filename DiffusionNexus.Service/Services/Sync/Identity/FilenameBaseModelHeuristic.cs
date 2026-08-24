@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using DiffusionNexus.Domain.Utilities;
 
 namespace DiffusionNexus.Service.Services.Sync.Identity;
 
@@ -14,7 +15,7 @@ public static partial class FilenameBaseModelHeuristic
     // into "detailer_sd1" and losing the version digit the token match below depends on), and the
     // Task 3 caller already pre-strips real extensions before calling in — so a second, unguarded
     // strip here would be the live failure path, not a defensive no-op.
-    private static readonly string[] KnownModelExtensions = ModelFileExtensions.All;
+    private static readonly string[] KnownModelExtensions = ModelFileExtensions.Recognized;
 
     [GeneratedRegex("[^a-z0-9]+")]
     private static partial Regex TokenSplitRegex();

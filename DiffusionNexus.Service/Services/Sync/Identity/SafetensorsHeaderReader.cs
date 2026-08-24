@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Text.Json;
+using DiffusionNexus.Domain.Utilities;
 
 namespace DiffusionNexus.Service.Services.Sync.Identity;
 

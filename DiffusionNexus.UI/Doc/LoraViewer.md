@@ -117,7 +117,7 @@ RefreshAsync
 ├── 1. DiscoverNewFilesAsync (background thread)
 │   │   Calls ModelFileSyncService.DiscoverNewFilesAsync:
 │   │   ├── Gets enabled LoRA source folders from IAppSettingsService
-│   │   ├── Scans folders for .safetensors / .pt / .ckpt / .pth files
+│   │   ├── Scans folders for ModelFileExtensions.Sortable (.safetensors / .sft / .ckpt / .pt / .pth)
 │   │   ├── Filters out files already in DB (by LocalPath)
 │   │   ├── For each new file:
 │   │   │   ├── TryMatchByHashAndSize → if a DB record exists with same hash
@@ -910,6 +910,8 @@ Each node in the preview tree carries two things beyond its name and size:
 
 - **Asset-kind chips** — `[LoRA]`, `[VAE]`, `[Text Encoder]`, `[ControlNet]`, `[Upscaler]`. A folder's chips are the union of everything beneath it, not just its direct children. The library scan enumerates by extension, so a LoRA folder routinely also holds the VAEs, text encoders and upscalers a workflow needs — on one real library, 35 of 328 unidentified files were one of these. A chip other than `[LoRA]` on a base-model folder is the signal that something which is not a LoRA is about to be filed as one.
 - **A ✓ / ~ / ✗ mark** — ✓ when everything under the node was read or confirmed, `~` when something was filed on its file name alone, ✗ when something has no base model at all. The node keeps the *worst* state beneath it, so a base-model folder is finished only when every category folder under it is. Three states rather than two because *Sort by name* gives a guessed file a real folder: a ✓ under "every file here has a base model" would then be a claim the preview cannot back, on the one screen where the lowest-confidence rung could be audited before anything moves.
+
+**One extension list, split by the question.** `ModelFileExtensions` (Domain) has `Sortable` — what the app enumerates, discovers into the library, and physically **moves** — and the wider `Recognized`, for deciding whether a *name* reads as a model's (stripping an extension before a name hint, spotting a model reference while hashing). The distinction is load-bearing: over-recognizing costs nothing, but every entry in `Sortable` is a file the sorter will relocate, which is why `.bin` and `.gguf` are recognized and not sortable. Discovery and the sorter read the same `Sortable` set, so a file the sorter would file can never be one the library refuses to discover.
 
 `SorterAssetKindClassifier` names the kind from the file name alone and is therefore fallible, which is why nothing it decides moves a file — it drives the label only. Its markers are drawn from names observed in a real library, and the bar for adding one is that it cannot plausibly occur in a LoRA's own name: `clip` counts only as the first token (`clip_g_hidream` leads with it, `hair_clip_v1` does not), a bare `.pth` is not an upscaler (`Chris.pth` is an ordinary model), and a leading scale factor is (`4x-UltraSharp`, `4xLSDIRplus`) — but neither `4x4` nor `2x2x2` is, because a chained dimension is not a scale factor. Markers that failed that bar were removed rather than kept: `upscale` (`detail_upscale_v2` is an ordinary LoRA, and no real file needed it), `redux` (Redux is an adapter rather than a ControlNet, *and* Flux Redux LoRAs exist), and bare `vl`, which is two characters and now counts only alongside `qwen`, the family whose encoders spell it that way.
 

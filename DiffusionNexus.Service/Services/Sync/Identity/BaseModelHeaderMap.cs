@@ -1,3 +1,5 @@
+using DiffusionNexus.Domain.Utilities;
+
 namespace DiffusionNexus.Service.Services.Sync.Identity;
 
 /// <summary>
@@ -24,7 +26,7 @@ public static class BaseModelHeaderMap
     };
 
     // Extensions ExtractFileNameHint will drop from the file-name portion of the hint.
-    private static readonly string[] KnownModelExtensions = ModelFileExtensions.All;
+    private static readonly string[] KnownModelExtensions = ModelFileExtensions.Recognized;
 
     // Rung 2: modelspec.architecture, lowercased, with everything from the first '/' stripped
     // (drops suffixes such as "/lora").

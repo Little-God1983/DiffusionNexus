@@ -12,6 +12,7 @@ using DiffusionNexus.UI.Helpers;
 using DiffusionNexus.UI.Services.Lora.Sorting;
 using DiffusionNexus.UI.Utilities;
 using Microsoft.Extensions.DependencyInjection;
+using DiffusionNexus.Domain.Utilities;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -28,10 +29,10 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// <summary>Heartbeat cadence for the unknown-file resolution loop's progress log line.</summary>
     private const int ResolveLogInterval = 50;
 
-    // The shared list, not a fourth private copy. Patching this one to add ".sft" left ".bin" and
-    // ".gguf" invisible to the sorter for precisely the reason ".sft" had been — see
-    // ModelFileExtensions.
-    private static readonly string[] ModelExtensions = ModelFileExtensions.All;
+    // Sortable, NOT Recognized: everything this list yields becomes a planned MOVE, so it must stay
+    // the narrow set. Briefly pointing it at the merged list widened the sorter to .bin and .gguf
+    // and would have relocated a pytorch_model.bin into a base-model folder.
+    private static readonly string[] ModelExtensions = ModelFileExtensions.Sortable;
 
     private readonly IAppSettingsService? _settingsService;
     private readonly IUnifiedLogger? _logger;

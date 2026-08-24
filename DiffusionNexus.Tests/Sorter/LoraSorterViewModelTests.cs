@@ -349,6 +349,36 @@ public sealed class LoraSorterViewModelTests : IDisposable
         vm.NameGuessHint.Should().BeNull();
     }
 
+    /// <summary>
+    /// The sorter physically relocates everything its enumeration yields, so the scan list is not
+    /// the place to be generous. Routing it at the merged extension set widened it to .bin and
+    /// .gguf — a root holding pytorch_model.bin would have had it filed into a base-model folder,
+    /// wearing a [LoRA] chip because the classifier is name-based and nothing would flag it.
+    /// </summary>
+    [Fact]
+    public async Task WeightFormatsTheSorterDoesNotOwnAreNotPlannedForAMove()
+    {
+        WriteLora(@"flat\pytorch_model.bin");
+        WriteLora(@"flat\quantized.gguf");
+        var moved = WriteLora(@"flat\MyChar.sft");
+
+        var vm = CreateVm();
+        await vm.InitializeAsync();
+
+        var planned = vm.PreviewRoots
+            .SelectMany(Flatten)
+            .Where(n => n.IsFile)
+            .Select(n => n.Name)
+            .ToList();
+
+        planned.Should().Contain(Path.GetFileName(moved),
+            "the short safetensors spelling is the same container the header reader already reads");
+        planned.Should().NotContain("pytorch_model.bin").And.NotContain("quantized.gguf");
+    }
+
+    private static IEnumerable<SortPreviewNodeViewModel> Flatten(SortPreviewNodeViewModel node)
+        => new[] { node }.Concat(node.Children.SelectMany(Flatten));
+
     /// <summary>A file node carries its own kind and its own mark, so expanding an unfinished folder
     /// shows which files are the problem rather than only that some are.</summary>
     [Fact]

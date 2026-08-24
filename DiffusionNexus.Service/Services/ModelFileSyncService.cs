@@ -22,9 +22,11 @@ public class ModelFileSyncService : IModelSyncService
     private const int PartialHashBytes = 10 * 1024 * 1024;
 
     /// <summary>
-    /// Supported model file extensions.
+    /// Supported model file extensions — the shared Sortable set, so what the library DISCOVERS and
+    /// what the sorter enumerates cannot diverge. They had: a ".sft" was visible to the sorter and
+    /// still never got a DB row, so the sorter would file a model the Viewer could never show.
     /// </summary>
-    private static readonly string[] ModelExtensions = [".safetensors", ".pt", ".ckpt", ".pth"];
+    private static readonly string[] ModelExtensions = ModelFileExtensions.Sortable;
 
     public ModelFileSyncService(IUnitOfWork unitOfWork, IAppSettingsService settingsService)
     {
@@ -236,7 +238,7 @@ public class ModelFileSyncService : IModelSyncService
             if (Directory.Exists(folder))
             {
                 var files = Directory.EnumerateFiles(folder, "*.*", SearchOption.AllDirectories)
-                    .Where(f => ModelExtensions.Any(ext => f.EndsWith(ext, StringComparison.OrdinalIgnoreCase)));
+                    .Where(f => ModelFileExtensions.Matches(f, ModelExtensions));
                 allFiles.AddRange(files);
                 
                 progress?.Report(new SyncProgress
