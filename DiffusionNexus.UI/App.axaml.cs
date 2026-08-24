@@ -967,7 +967,9 @@ public partial class App : Application
             sp.GetService<Civitai.ICivitaiClient>(),
             sp.GetService<IAppSettingsService>(),
             sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>(),
-            apiKeyProvider: sp.GetRequiredService<ICivitaiApiKeyProvider>()));
+            apiKeyProvider: sp.GetRequiredService<ICivitaiApiKeyProvider>(),
+            scopeFactory: sp.GetService<IServiceScopeFactory>()));
+        services.AddScoped<ILoraDownloadService>(sp => sp.GetRequiredService<LoraDownloadService>());
 
         // Reusable LoRA catalog for the Multi-LoRA Picker (same sources as the LoRA Viewer Installed tab).
         services.AddSingleton<Services.Lora.ILoraCatalog, Services.Lora.LoraCatalog>();
