@@ -26,10 +26,11 @@ public sealed record ResolvedLoraMetadata(string? BaseModelRaw, int? CivitaiVers
 /// (spec §3): a local <c>.civitai.info</c> sidecar wins outright (no hashing
 /// needed), otherwise the file is hashed and looked up in a per-hash disk
 /// cache, falling back to the Civitai by-hash API and caching that result
-/// (including negative results, so a 404 stays resolved offline). Never
-/// throws for a 404 or offline API — callers get metadata with a null
-/// <see cref="ResolvedLoraMetadata.BaseModelRaw"/> so the file sorts into
-/// Unknown.
+/// (including negative results, so a 404 stays resolved offline). When none of
+/// those knows the file, it is asked to identify itself — its safetensors
+/// header, then its file name. Never throws for a 404 or an offline API: a file
+/// nothing can identify comes back with a null
+/// <see cref="ResolvedLoraMetadata.BaseModelRaw"/> and sorts into Unknown.
 /// </summary>
 public sealed class SorterMetadataResolver
 {
@@ -109,11 +110,17 @@ public sealed class SorterMetadataResolver
     /// precisely for the files that have none. Without them a self-trained LoRA in a browsed folder
     /// was sorted into <c>Unknown\</c> even though its own header names the architecture it was
     /// trained on.
+    /// <para>
+    /// They run only when the authoritative rungs came up empty <i>with an answer</i> — see
+    /// <see cref="AuthorityVerdict"/>. A file the API could not be asked about stays unresolved,
+    /// because the sorter acts on this value by moving or copying bytes, and a wrong folder is
+    /// worse than Unknown: Unknown is where the user looks.
+    /// </para>
     /// </remarks>
     public async Task<ResolvedLoraMetadata> ResolveAsync(string filePath, CancellationToken ct = default)
     {
-        var resolved = await ResolveFromSidecarCacheOrApiAsync(filePath, ct);
-        if (!string.IsNullOrWhiteSpace(resolved.BaseModelRaw))
+        var (resolved, verdict) = await ResolveFromSidecarCacheOrApiAsync(filePath, ct);
+        if (verdict != AuthorityVerdict.NotKnown)
             return resolved;
 
         var guess = await GuessBaseModelFromFileAsync(filePath, ct);
@@ -121,10 +128,54 @@ public sealed class SorterMetadataResolver
     }
 
     /// <summary>
-    /// What the file says about itself, asked only once every authoritative source has come up
-    /// empty — so a sidecar or Civitai answer is never overruled by a guess about it. The header
-    /// goes first because it read the actual weights; the file name is a guess about them.
+    /// Why the authoritative rungs did not produce a base model. The distinction is what licenses a
+    /// guess: "Civitai does not know this file" is an answer; "we never got to ask" is not, and the
+    /// sorter moves or copies bytes off this value.
     /// </summary>
+    private enum AuthorityVerdict
+    {
+        /// <summary>An authoritative source supplied a base model. Nothing may overrule it.</summary>
+        Answered,
+
+        /// <summary>
+        /// Everything that could answer did, and none of them knows this file: a Civitai 404 (live
+        /// or negatively cached), a sidecar carrying no base model, or no client to ask at all.
+        /// Guessing is licensed here — nothing better is coming.
+        /// </summary>
+        NotKnown,
+
+        /// <summary>
+        /// We could not ask: the file would not hash, or the call failed (rate limit, outage,
+        /// response-shape change). A file left unresolved sorts into Unknown, which is the honest
+        /// bucket for "not known yet" — and unlike a wrong folder, it is where the user looks.
+        /// </summary>
+        CouldNotAsk,
+    }
+
+    /// <summary>
+    /// Whether an authoritative source actually supplied a base model. Uses
+    /// <see cref="SorterPathBuilder.IsPlaceholderBaseModel"/> — the same predicate
+    /// <c>BuildTargetDirectory</c> uses to pick the Unknown bucket — so "resolved enough to skip the
+    /// file's own rungs" and "resolved enough to earn a real folder" cannot drift apart. A "???"
+    /// arriving from a sidecar or an older cache entry is a placeholder to both, not just to one.
+    /// </summary>
+    private static AuthorityVerdict VerdictFor(string? baseModelRaw)
+        => SorterPathBuilder.IsPlaceholderBaseModel(baseModelRaw)
+            ? AuthorityVerdict.NotKnown
+            : AuthorityVerdict.Answered;
+
+    /// <summary>
+    /// What the file says about itself: its safetensors header first (it read the actual weights),
+    /// then its file name (a guess about them). Null when neither says anything usable.
+    /// </summary>
+    /// <remarks>
+    /// Asked only once every authoritative source has come up empty — and only when they came up
+    /// empty with an <i>answer</i> rather than a failure (see <see cref="AuthorityVerdict"/>) — so a
+    /// sidecar or Civitai answer is never overruled by a guess about it. Public because the sorter's
+    /// DB-known branch needs the same two rungs for rows still carrying the <c>"???"</c> placeholder
+    /// <c>ModelFileSyncService</c> stamps on locally-discovered models; that branch already has the
+    /// database's answer and must not re-hash or re-call the API to get these.
+    /// </remarks>
     /// <remarks>
     /// Both rungs emit verbatim Civitai display labels, so a file identified this way lands in the
     /// same base-model folder as a Civitai-identified one instead of a folder only it uses.
@@ -135,7 +186,7 @@ public sealed class SorterMetadataResolver
     /// though it were an answer. Re-deriving it each pass costs one size-capped header read.
     /// </para>
     /// </remarks>
-    private async Task<string?> GuessBaseModelFromFileAsync(string filePath, CancellationToken ct)
+    public async Task<string?> GuessBaseModelFromFileAsync(string filePath, CancellationToken ct = default)
     {
         var fileName = Path.GetFileName(filePath);
 
@@ -144,15 +195,20 @@ public sealed class SorterMetadataResolver
         if (fromHeader is not null)
         {
             _logger?.Debug(LogCategory.FileSystem, LogSource,
-                $"{fileName}: no sidecar and no Civitai match; its safetensors header says {fromHeader}.");
+                $"{fileName}: nothing on record knows this file; its own safetensors header says {fromHeader}.");
             return fromHeader;
         }
 
-        var fromName = FilenameBaseModelHeuristic.Guess(fileName);
+        // GetFileNameWithoutExtension, matching IdentifyModelStep's call site exactly. The heuristic
+        // strips a KNOWN model extension itself and ".pth" is not one of them, so passing the full
+        // name would leave a stray "pth" token the database-side path never sees. Stripping here is
+        // safe precisely because these paths always carry a real extension — they were enumerated by
+        // one — so the double-strip that would eat the ".5" off "detailer_sd1.5" cannot arise.
+        var fromName = FilenameBaseModelHeuristic.Guess(Path.GetFileNameWithoutExtension(filePath));
         if (fromName is not null)
         {
             _logger?.Debug(LogCategory.FileSystem, LogSource,
-                $"{fileName}: no sidecar, no Civitai match and no usable header; guessing {fromName} from the file name.");
+                $"{fileName}: no usable header either; guessing {fromName} from the file name.");
         }
 
         return fromName;
@@ -160,14 +216,20 @@ public sealed class SorterMetadataResolver
 
     /// <summary>
     /// The authoritative rungs: local <c>.civitai.info</c> sidecar → per-hash disk cache → Civitai
-    /// by-hash API (result cached). A null <see cref="ResolvedLoraMetadata.BaseModelRaw"/> here
-    /// means none of them could answer, which is what sends <see cref="ResolveAsync"/> on to the
-    /// file itself.
+    /// by-hash API (result cached), paired with a verdict saying whether an empty answer means
+    /// "nothing knows this file" or "we could not ask" — only the first licenses a guess.
     /// </summary>
-    private async Task<ResolvedLoraMetadata> ResolveFromSidecarCacheOrApiAsync(string filePath, CancellationToken ct)
+    private async Task<(ResolvedLoraMetadata Metadata, AuthorityVerdict Verdict)> ResolveFromSidecarCacheOrApiAsync(
+        string filePath, CancellationToken ct)
     {
+        // A sidecar carrying only an "id" (or a blank baseModel) is a hit that answers a different
+        // question. It ends the chain without hashing or calling anything, so nothing better is
+        // coming for the base model and the file itself may speak. Such a file does reach the
+        // planner with an empty Sha256 — but it is perfectly hashable, and the planner hashes
+        // lazily, so its duplicate guard still works. That is what separates this from the
+        // could-not-hash branch below.
         if (TryReadSidecar(filePath, out var sidecarMeta))
-            return sidecarMeta!;
+            return (sidecarMeta!, VerdictFor(sidecarMeta!.BaseModelRaw));
 
         string sha;
         try
@@ -181,7 +243,15 @@ public sealed class SorterMetadataResolver
             // the pass — it just sorts as unresolved.
             _logger?.Warn(LogCategory.FileSystem, LogSource,
                 $"Could not hash {filePath}: {ex.Message}");
-            return new ResolvedLoraMetadata(null, null, string.Empty);
+
+            // CouldNotAsk, not NotKnown. No hash means the by-hash lookup never happened — and the
+            // file also reaches the planner with an empty Sha256, the one value its "identical
+            // content is already there, skip it" guard needs, with no second chance if the lock
+            // outlives the pass. The header opens FileShare.ReadWrite and so reads happily off a
+            // file a trainer holds mid-checkpoint, which is exactly when the hasher's FileShare.Read
+            // fails: guessing here would file that file into the populated folder where its twin
+            // actually lives, turning a skip into a renamed duplicate. Unknown is the honest bucket.
+            return (new ResolvedLoraMetadata(null, null, string.Empty), AuthorityVerdict.CouldNotAsk);
         }
 
         // A cache entry written before the model lookup existed — or by a pass whose model lookup
@@ -189,10 +259,18 @@ public sealed class SorterMetadataResolver
         // Serving it would make a category-less result permanent for that hash, so it is re-resolved
         // once a client is available; a resolved-but-empty list is served as-is and never re-fetched.
         if (TryReadCache(sha, out var cached, out var tagsResolved) && (tagsResolved || _civitaiClient is null))
-            return cached! with { Sha256 = sha };
+        {
+            // A negatively cached hash IS an answer: Civitai was asked once and returned 404.
+            var fromCache = cached! with { Sha256 = sha };
+            return (fromCache, VerdictFor(fromCache.BaseModelRaw));
+        }
 
         if (_civitaiClient is null)
-            return new ResolvedLoraMetadata(null, null, sha);
+        {
+            // Permanent, not transient: no later pass will ask either, so the file itself is the
+            // only thing that can ever answer for it.
+            return (new ResolvedLoraMetadata(null, null, sha), AuthorityVerdict.NotKnown);
+        }
 
         CivitaiModelVersion? version;
         try
@@ -215,7 +293,14 @@ public sealed class SorterMetadataResolver
         {
             _logger?.Warn(LogCategory.Network, LogSource,
                 $"Civitai by-hash lookup failed for {filePath}: {ex.Message}");
-            return new ResolvedLoraMetadata(null, null, sha);
+
+            // CouldNotAsk. CivitaiClient.GetAsync returns null ONLY for a 404; a rate limit that
+            // survived its three retries, an outage, a non-transient 4xx/5xx and a response-shape
+            // change all arrive here instead, and used to be indistinguishable from "Civitai does
+            // not know this file". This path is serial and unpaced, so one 429 tends to mean every
+            // file after it — and a guess acted on by a move is not undone by "the next pass
+            // retries", because in move mode the file has already left the source folder.
+            return (new ResolvedLoraMetadata(null, null, sha), AuthorityVerdict.CouldNotAsk);
         }
 
         if (version is null)
@@ -223,12 +308,16 @@ public sealed class SorterMetadataResolver
             // Fully resolved negative result: nothing to look tags up for, so the empty list is
             // final and this hash is never re-queried.
             WriteCache(sha, new CacheEntry(null, null, []));
-            return new ResolvedLoraMetadata(null, null, sha);
+            return (new ResolvedLoraMetadata(null, null, sha), AuthorityVerdict.NotKnown);
         }
 
         var tags = await TryReadModelTagsAsync(version.ModelId, ct);
         WriteCache(sha, new CacheEntry(version.BaseModel, version.Id, tags));
-        return new ResolvedLoraMetadata(version.BaseModel, version.Id, sha) { Tags = tags ?? [] };
+        var resolved = new ResolvedLoraMetadata(version.BaseModel, version.Id, sha) { Tags = tags ?? [] };
+
+        // Civitai can answer with a blank baseModel. It answered, so nothing better is coming — and
+        // the file may still be able to say what the response did not.
+        return (resolved, VerdictFor(resolved.BaseModelRaw));
     }
 
     /// <summary>

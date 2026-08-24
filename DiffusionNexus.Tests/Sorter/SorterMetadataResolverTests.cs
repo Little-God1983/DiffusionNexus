@@ -432,6 +432,10 @@ public sealed class SorterMetadataResolverTests : IDisposable
 
     // ---- Identity fallback: the header and filename rungs (added with #524) ----
 
+    /// <summary>Wraps a JSON body in braces — keeps the sidecar/cache fixtures below free of
+    /// raw-string brace-counting.</summary>
+    private static string Sidecar(string body) => "{" + body + "}";
+
     private string WriteSafetensors(string name, string headerJson)
     {
         var path = In(name);
@@ -524,28 +528,142 @@ public sealed class SorterMetadataResolverTests : IDisposable
     }
 
     /// <summary>
-    /// The per-hash cache means "what Civitai said for this hash", so a guess must never be written
-    /// into it. The API-failure path deliberately writes no entry precisely so the next pass retries
-    /// Civitai — caching a guess there would silently kill that retry forever and freeze a guess as
-    /// though it were an answer.
+    /// The per-hash cache means <i>what Civitai said for this hash</i>. A guess must never be
+    /// written into it, or the cache would start reporting a filename match as an API answer.
     /// </summary>
     [Fact]
-    public async Task AGuessIsNotCachedSoALaterCivitaiHitStillWins()
+    public async Task AGuessIsNeverWrittenIntoTheByHashCache()
     {
         var model = WriteSafetensors("unknown_thing.safetensors",
             SafetensorsFixture.Meta(("modelspec.architecture", "stable-diffusion-v1")));
-        _client.SetupSequence(c => c.GetModelVersionByHashAsync("abc123", null, It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new HttpRequestException("offline"))
-            .ReturnsAsync(new CivitaiModelVersion { Id = 777, BaseModel = "Pony" });
-        var resolver = Resolver(_client.Object);
+        _client.Setup(c => c.GetModelVersionByHashAsync("abc123", null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CivitaiModelVersion?)null);
 
-        var offline = await resolver.ResolveAsync(model);
+        var meta = await Resolver(_client.Object).ResolveAsync(model);
 
-        offline.BaseModelRaw.Should().Be("SD 1.5", "the file still answers when the API does not");
-        Directory.Exists(In("cache")).Should().BeFalse("a guess must not be written to the by-hash cache");
+        meta.BaseModelRaw.Should().Be("SD 1.5", "a 404 is an answer, so the file itself may speak");
 
-        var online = await resolver.ResolveAsync(model);
+        using var cached = JsonDocument.Parse(File.ReadAllText(In(Path.Combine("cache", "abc123.json"))));
+        cached.RootElement.GetProperty("baseModel").ValueKind.Should().Be(JsonValueKind.Null,
+            "the cache records what Civitai said, not what was guessed from the file");
+    }
 
-        online.BaseModelRaw.Should().Be("Pony", "the Civitai retry must still be able to overwrite a guess");
+    /// <summary>
+    /// <c>CivitaiClient.GetAsync</c> returns null ONLY for a 404. A rate limit that survived its
+    /// three retries, an outage, a non-transient 4xx/5xx and a response-shape change all throw, and
+    /// used to be indistinguishable from "Civitai does not know this file". The sorter acts on this
+    /// value by moving bytes, and "the next pass retries" does not reach the file system: in move
+    /// mode the file has already left the source folder by then. This path is also serial and
+    /// unpaced, so one 429 tends to mean every file after it.
+    /// </summary>
+    [Fact]
+    public async Task AFailedLookupIsNotALicenceToGuess()
+    {
+        var model = WriteSafetensors("MyChar_Pony_v2.safetensors",
+            SafetensorsFixture.Meta(("modelspec.architecture", "stable-diffusion-xl-v1-base")));
+        _client.Setup(c => c.GetModelVersionByHashAsync("abc123", null, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("rate limited after 3 retries"));
+
+        var meta = await Resolver(_client.Object).ResolveAsync(model);
+
+        meta.BaseModelRaw.Should().BeNull(
+            "both rungs would have answered, but nothing authoritative was actually asked");
+    }
+
+    /// <summary>
+    /// A file that will not hash reaches the planner with an empty <c>Sha256</c> — the one value its
+    /// "identical content is already there, skip it" guard needs, with no second chance if the lock
+    /// outlives the pass. The header opens <c>FileShare.ReadWrite</c> and so reads happily off a file
+    /// a trainer holds mid-checkpoint, which is exactly when the hasher's <c>FileShare.Read</c>
+    /// fails: filing it into the populated folder where its twin lives would turn a skip into a
+    /// renamed duplicate.
+    /// </summary>
+    [Fact]
+    public async Task AFileThatCannotBeHashedIsNotGuessedIntoARealFolder()
+    {
+        var model = WriteSafetensors("MyChar_Pony_v2.safetensors",
+            SafetensorsFixture.Meta(("modelspec.architecture", "stable-diffusion-xl-v1-base")));
+        var resolver = new SorterMetadataResolver(_client.Object, () => Task.FromResult<string?>(null),
+            In("cache"), _ => throw new IOException("held open by a trainer"), logger: null);
+
+        var meta = await resolver.ResolveAsync(model);
+
+        meta.BaseModelRaw.Should().BeNull();
+        meta.Sha256.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// <c>"???"</c> is what <c>ModelFileSyncService</c> stamps on a locally-discovered model, and it
+    /// reaches here through a <c>.civitai.info</c> written from such a row.
+    /// <c>SorterPathBuilder.IsPlaceholderBaseModel</c> — the predicate that picks the Unknown
+    /// folder — treats it as no answer, so the gate deciding whether to ask the file has to agree:
+    /// otherwise the file is "resolved" enough to skip its own header yet still lands in Unknown.
+    /// </summary>
+    [Fact]
+    public async Task APlaceholderBaseModelStillReachesTheFilesOwnRungs()
+    {
+        var model = WriteSafetensors("unknown_thing.safetensors",
+            SafetensorsFixture.Meta(("modelspec.architecture", "stable-diffusion-xl-v1-base")));
+        File.WriteAllText(In("unknown_thing.civitai.info"), Sidecar(@"""id"": 555, ""baseModel"": ""???"""));
+
+        var meta = await Resolver(_client.Object).ResolveAsync(model);
+
+        meta.BaseModelRaw.Should().Be("SDXL 1.0");
+        meta.CivitaiVersionId.Should().Be(555, "the sidecar's other fields survive");
+    }
+
+    /// <summary>
+    /// <c>TryReadSidecar</c> reports a hit when EITHER <c>baseModel</c> or <c>id</c> is present, so a
+    /// sidecar carrying only an id used to end the chain with nothing to sort on. It now falls
+    /// through to the file — a real change to "a sidecar wins outright", pinned here. The empty
+    /// <c>Sha256</c> is safe in this case and not in the could-not-hash one: nothing tried to hash
+    /// this file, so the planner's lazy hash still succeeds.
+    /// </summary>
+    [Fact]
+    public async Task ASidecarCarryingOnlyAnIdFallsThroughToTheFile()
+    {
+        var model = WriteSafetensors("unknown_thing.safetensors",
+            SafetensorsFixture.Meta(("modelspec.architecture", "stable-diffusion-xl-v1-base")));
+        File.WriteAllText(In("unknown_thing.civitai.info"), Sidecar(@"""id"": 555"));
+
+        var meta = await Resolver(_client.Object).ResolveAsync(model);
+
+        meta.BaseModelRaw.Should().Be("SDXL 1.0");
+        meta.CivitaiVersionId.Should().Be(555);
+        meta.Sha256.Should().BeEmpty("the sidecar branch never hashes");
+        _client.VerifyNoOtherCalls();
+    }
+
+    /// <summary>A base model already on record blocks the guess even when it came from the cache
+    /// rather than a live call — the cache is Civitai's answer, just stored.</summary>
+    [Fact]
+    public async Task ACachedBaseModelBlocksTheGuess()
+    {
+        var model = WriteSafetensors("MyChar_Pony_v2.safetensors",
+            SafetensorsFixture.Meta(("modelspec.architecture", "stable-diffusion-xl-v1-base")));
+        Directory.CreateDirectory(In("cache"));
+        File.WriteAllText(In(Path.Combine("cache", "abc123.json")),
+            Sidecar(@"""baseModel"": ""Flux.1 D"", ""versionId"": 777, ""tags"": []"));
+
+        var meta = await Resolver(_client.Object).ResolveAsync(model);
+
+        meta.BaseModelRaw.Should().Be("Flux.1 D");
+        _client.VerifyNoOtherCalls();
+    }
+
+    /// <summary>The header read is the only cancellable step in the fallback, and the doc promises
+    /// cancellation unwinds the pass instead of being reported as one more unreadable file.</summary>
+    [Fact]
+    public async Task CancellationDuringTheHeaderReadPropagates()
+    {
+        var model = WriteSafetensors("unknown_thing.safetensors",
+            SafetensorsFixture.Meta(("modelspec.architecture", "stable-diffusion-xl-v1-base")));
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        // No client, so the chain reaches the fallback with no network step to swallow the token.
+        var act = () => Resolver(client: null).ResolveAsync(model, cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
     }
 }

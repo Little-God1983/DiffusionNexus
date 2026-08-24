@@ -3,6 +3,7 @@ using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.Lora.Sorting;
+using DiffusionNexus.Tests.Sync.Service.Identity;
 using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
@@ -89,6 +90,32 @@ public sealed class LoraSorterViewModelTests : IDisposable
         rootNames.Should().Contain(["SDXL 1.0", "Illustrious"]);
         vm.PreviewRoots.First(n => n.Name == "SDXL 1.0")
             .Children.Select(c => c.Name).Should().Contain("Character");
+    }
+
+    /// <summary>
+    /// ModelFileSyncService stamps every locally-discovered model BaseModelRaw = "???", and
+    /// IdentifyModelStep only clears that when a library sync actually runs — it is due-gated on
+    /// 30-day windows and attempt caps. Pointing the sorter at a registered LoRA root takes the
+    /// DB-known branch for nearly every file, so without asking the file here the feature would do
+    /// almost nothing for exactly the self-trained LoRAs it exists for: the same file would be
+    /// identified from its header while sitting in an unregistered folder, and dumped into Unknown
+    /// the moment it was registered.
+    /// </summary>
+    [Fact]
+    public async Task APlaceholderBaseModelOnADbKnownRowIsIdentifiedFromTheFile()
+    {
+        var path = Path.Combine(SourceRoot, "flat", "selftrained.safetensors");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(path, SafetensorsFixture.Safetensors(
+            SafetensorsFixture.Meta(("modelspec.architecture", "stable-diffusion-xl-v1-base"))));
+
+        var vm = CreateVm(cached: [Installed(path, "???", "character")]);
+
+        await vm.InitializeAsync();
+
+        vm.PreviewRoots.Select(n => n.Name).Should()
+            .Contain("SDXL 1.0", "the row says \"???\", but the file itself does not")
+            .And.NotContain(SorterPathBuilder.UnknownFolderName);
     }
 
     [Fact]

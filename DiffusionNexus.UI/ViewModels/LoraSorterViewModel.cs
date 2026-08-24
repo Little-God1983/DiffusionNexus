@@ -27,7 +27,10 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// <summary>Heartbeat cadence for the unknown-file resolution loop's progress log line.</summary>
     private const int ResolveLogInterval = 50;
 
-    private static readonly string[] ModelExtensions = [".safetensors", ".ckpt", ".pt", ".pth"];
+    // ".sft" is the standard short alias for a safetensors container — SafetensorsHeaderReader
+    // reads it, FilenameBaseModelHeuristic strips it, and ImageResourceHasher enumerates it; only
+    // this list left it out, so a .sft file in a browsed folder was invisible to the whole sorter.
+    private static readonly string[] ModelExtensions = [".safetensors", ".ckpt", ".pt", ".pth", ".sft"];
 
     private readonly IAppSettingsService? _settingsService;
     private readonly IUnifiedLogger? _logger;
@@ -738,7 +741,20 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 
                 var category = SorterCategoryResolver.ToFolderName(SorterCategoryResolver.ResolveForModel(f.Model));
                 var sizeBytes = f.File.FileSizeBytes ?? new FileInfo(path).Length;
-                candidates.Add(new SortCandidate(path, f.Version.BaseModelRaw, category,
+
+                // ModelFileSyncService stamps every locally-discovered model BaseModelRaw = "???",
+                // and IdentifyModelStep only clears that when a library sync actually runs — it is
+                // due-gated on 30-day windows and attempt caps. Until then the row says nothing, so
+                // ask the file the same two questions the unknown-file branch asks. Without this the
+                // very same LoRA would be identified from its header while sitting in an
+                // unregistered folder and dumped into Unknown\ the moment it is registered, which
+                // is backwards. Costs one size-capped header read per placeholder row; a row that
+                // already carries a base model pays nothing.
+                var baseModelRaw = f.Version.BaseModelRaw;
+                if (SorterPathBuilder.IsPlaceholderBaseModel(baseModelRaw))
+                    baseModelRaw = await _metadataResolver.GuessBaseModelFromFileAsync(path, ct) ?? baseModelRaw;
+
+                candidates.Add(new SortCandidate(path, baseModelRaw, category,
                     f.Version.CivitaiId, f.File.HashSHA256, sizeBytes, SidecarLocator.FindSidecars(path)));
                 knownAdded++;
             }
