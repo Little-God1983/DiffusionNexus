@@ -9,6 +9,7 @@ using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Infrastructure.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.CivitaiBrowser;
 using DiffusionNexus.UI.Utilities;
@@ -27,6 +28,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     private readonly IUnifiedLogger? _logger;
     private readonly CivitaiDownloadQueue _queue;
     private readonly CivitaiWaitlist _waitlist;
+    private ICivitaiApiKeyProvider? _apiKeyProvider;
     private Avalonia.Threading.DispatcherTimer? _waitlistCountdownTimer;
 
     private CancellationTokenSource? _searchCts;
@@ -50,13 +52,15 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         IUnifiedLogger? logger,
         CivitaiDownloadQueue queue,
         CivitaiWaitlist waitlist,
-        ObservableCollection<BaseModelFilterItem>? sharedBaseModelSource)
+        ObservableCollection<BaseModelFilterItem>? sharedBaseModelSource,
+        ICivitaiApiKeyProvider? apiKeyProvider = null)
     {
         _civitaiClient = civitaiClient;
         _settingsService = settingsService;
         _logger = logger;
         _queue = queue;
         _waitlist = waitlist;
+        _apiKeyProvider = apiKeyProvider;
         StartWaitlistCountdownTimer();
 
         SortOptions = new ObservableCollection<string>
@@ -1142,19 +1146,10 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         }
     }
 
-    private async Task<string?> GetApiKeyAsync()
+    private Task<string?> GetApiKeyAsync()
     {
-        if (App.Services is not null)
-        {
-            using var scope = App.Services.GetRequiredService<IServiceScopeFactory>().CreateScope();
-            var settingsService = scope.ServiceProvider.GetService<IAppSettingsService>();
-            if (settingsService is not null)
-                return await settingsService.GetCivitaiApiKeyAsync();
-        }
-
-        return _settingsService is not null
-            ? await _settingsService.GetCivitaiApiKeyAsync()
-            : null;
+        _apiKeyProvider ??= new CivitaiApiKeyProvider(App.Services?.GetService<IServiceScopeFactory>(), _settingsService);
+        return _apiKeyProvider.GetApiKeyAsync();
     }
 }
 

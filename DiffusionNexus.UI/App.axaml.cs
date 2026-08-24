@@ -8,6 +8,7 @@ using DiffusionNexus.DataAccess.Recovery;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Infrastructure;
+using DiffusionNexus.Infrastructure.Services;
 using DiffusionNexus.Installer.SDK.DataAccess;
 using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.Installer.SDK.Services.Installation;
@@ -946,6 +947,10 @@ public partial class App : Application
 
         services.AddSingleton<ILoraUpdateChecker, LoraUpdateChecker>();
 
+        // The one Civitai API-key lookup (spec §1 RC5) — replaces five verbatim copies.
+        services.AddSingleton<ICivitaiApiKeyProvider>(sp =>
+            new CivitaiApiKeyProvider(sp.GetRequiredService<IServiceScopeFactory>()));
+
         services.AddScoped<LoraViewerViewModel>(sp => new LoraViewerViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IModelSyncService>(),
@@ -956,11 +961,13 @@ public partial class App : Application
             sp.GetService<ILoraUpdateChecker>(),
             sp.GetService<Domain.Services.Sync.ILibrarySyncService>(),
             sp.GetService<IUiScheduler>(),
-            sp.GetService<IServiceScopeFactory>()));
+            sp.GetService<IServiceScopeFactory>(),
+            apiKeyProvider: sp.GetRequiredService<ICivitaiApiKeyProvider>()));
         services.AddScoped<LoraDownloadService>(sp => new LoraDownloadService(
             sp.GetService<Civitai.ICivitaiClient>(),
             sp.GetService<IAppSettingsService>(),
-            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>(),
+            apiKeyProvider: sp.GetRequiredService<ICivitaiApiKeyProvider>()));
 
         // Reusable LoRA catalog for the Multi-LoRA Picker (same sources as the LoRA Viewer Installed tab).
         services.AddSingleton<Services.Lora.ILoraCatalog, Services.Lora.LoraCatalog>();

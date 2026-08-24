@@ -12,6 +12,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Infrastructure;
+using DiffusionNexus.Infrastructure.Services;
 using DiffusionNexus.Installer.SDK.Shared.Services;
 using DiffusionNexus.UI.Helpers;
 using DiffusionNexus.UI.Services;
@@ -44,6 +45,7 @@ public partial class ModelDetailViewModel : ViewModelBase
     private readonly IActivityLogService? _activityLog;
     private readonly IClipboardService _clipboard = AvaloniaClipboardService.Instance;
     private readonly IUiScheduler _uiScheduler = AvaloniaUiScheduler.Instance;
+    private ICivitaiApiKeyProvider? _apiKeyProvider;
 
     /// <summary>
     /// Cached Civitai model data from the initial API fetch.
@@ -292,7 +294,8 @@ public partial class ModelDetailViewModel : ViewModelBase
         ITaskTracker? taskTracker = null,
         IActivityLogService? activityLog = null,
         IClipboardService? clipboard = null,
-        IUiScheduler? uiScheduler = null)
+        IUiScheduler? uiScheduler = null,
+        ICivitaiApiKeyProvider? apiKeyProvider = null)
     {
         _civitaiClient = civitaiClient;
         _settingsService = settingsService;
@@ -307,6 +310,7 @@ public partial class ModelDetailViewModel : ViewModelBase
         _activityLog = activityLog;
         _clipboard = clipboard ?? AvaloniaClipboardService.Instance;
         _uiScheduler = uiScheduler ?? AvaloniaUiScheduler.Instance;
+        _apiKeyProvider = apiKeyProvider;
     }
 
     #endregion
@@ -1600,16 +1604,14 @@ public partial class ModelDetailViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Retrieves the Civitai API key using a fresh DI scope to avoid stale EF Core tracked entities.
-    /// The injected <c>_settingsService</c> may hold a cached <see cref="AppSettings"/> entity from
-    /// a long-lived DbContext that was loaded before the key was saved via the Settings view.
+    /// Retrieves the Civitai API key via <see cref="ICivitaiApiKeyProvider"/> — see its doc
+    /// comment for why a fresh DI scope is used instead of the constructor-injected
+    /// <c>_settingsService</c>.
     /// </summary>
-    private async Task<string?> GetApiKeyAsync()
+    private Task<string?> GetApiKeyAsync()
     {
-        if (_scopeFactory is null) return null;
-        using var scope = _scopeFactory.CreateScope();
-        var settingsService = scope.ServiceProvider.GetRequiredService<IAppSettingsService>();
-        return await settingsService.GetCivitaiApiKeyAsync();
+        _apiKeyProvider ??= new CivitaiApiKeyProvider(_scopeFactory);
+        return _apiKeyProvider.GetApiKeyAsync();
     }
 
     /// <summary>

@@ -7,6 +7,7 @@ using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Infrastructure.Services;
 using DiffusionNexus.Service.Services.Lora;
 using DiffusionNexus.UI.Helpers;
 using DiffusionNexus.UI.Services;
@@ -23,6 +24,7 @@ public partial class DownloadLoraDialogViewModel : ObservableObject
     private readonly IAppSettingsService? _settingsService;
     private readonly IDialogService? _dialogService;
     private readonly IUnifiedLogger? _logger;
+    private ICivitaiApiKeyProvider? _apiKeyProvider;
 
     [ObservableProperty]
     private string _urlText = string.Empty;
@@ -126,12 +128,14 @@ public partial class DownloadLoraDialogViewModel : ObservableObject
         ICivitaiClient? civitaiClient,
         IAppSettingsService? settingsService,
         IDialogService? dialogService,
-        IUnifiedLogger? logger)
+        IUnifiedLogger? logger,
+        ICivitaiApiKeyProvider? apiKeyProvider = null)
     {
         _civitaiClient = civitaiClient;
         _settingsService = settingsService;
         _dialogService = dialogService;
         _logger = logger;
+        _apiKeyProvider = apiKeyProvider;
     }
 
     public async Task InitializeAsync(IReadOnlyList<string> sourceFolders, string? favoriteFolder = null)
@@ -337,18 +341,10 @@ public partial class DownloadLoraDialogViewModel : ObservableObject
         }
     }
 
-    private async Task<string?> GetApiKeyAsync()
+    private Task<string?> GetApiKeyAsync()
     {
-        if (App.Services is not null)
-        {
-            using var scope = App.Services.GetRequiredService<IServiceScopeFactory>().CreateScope();
-            var settingsService = scope.ServiceProvider.GetRequiredService<IAppSettingsService>();
-            return await settingsService.GetCivitaiApiKeyAsync();
-        }
-
-        return _settingsService is not null
-            ? await _settingsService.GetCivitaiApiKeyAsync()
-            : null;
+        _apiKeyProvider ??= new CivitaiApiKeyProvider(App.Services?.GetService<IServiceScopeFactory>(), _settingsService);
+        return _apiKeyProvider.GetApiKeyAsync();
     }
 
     /// <summary>

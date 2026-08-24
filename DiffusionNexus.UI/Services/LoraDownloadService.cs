@@ -6,6 +6,7 @@ using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Infrastructure.Services;
 using DiffusionNexus.Service.Services.Sync;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -31,15 +32,18 @@ public sealed class LoraDownloadService
     private readonly ICivitaiClient? _civitaiClient;
     private readonly IAppSettingsService? _settingsService;
     private readonly IUnifiedLogger? _logger;
+    private ICivitaiApiKeyProvider? _apiKeyProvider;
 
     public LoraDownloadService(
         ICivitaiClient? civitaiClient,
         IAppSettingsService? settingsService,
-        IUnifiedLogger? logger)
+        IUnifiedLogger? logger,
+        ICivitaiApiKeyProvider? apiKeyProvider = null)
     {
         _civitaiClient = civitaiClient;
         _settingsService = settingsService;
         _logger = logger;
+        _apiKeyProvider = apiKeyProvider;
     }
 
     /// <summary>
@@ -683,18 +687,10 @@ public sealed class LoraDownloadService
         }
     }
 
-    private async Task<string?> GetApiKeyAsync()
+    private Task<string?> GetApiKeyAsync()
     {
-        if (App.Services is not null)
-        {
-            using var scope = App.Services.GetRequiredService<IServiceScopeFactory>().CreateScope();
-            var settingsService = scope.ServiceProvider.GetRequiredService<IAppSettingsService>();
-            return await settingsService.GetCivitaiApiKeyAsync();
-        }
-
-        return _settingsService is not null
-            ? await _settingsService.GetCivitaiApiKeyAsync()
-            : null;
+        _apiKeyProvider ??= new CivitaiApiKeyProvider(App.Services?.GetService<IServiceScopeFactory>(), _settingsService);
+        return _apiKeyProvider.GetApiKeyAsync();
     }
 
     /// <summary>

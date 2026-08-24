@@ -11,6 +11,7 @@ using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Infrastructure;
+using DiffusionNexus.Infrastructure.Services;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.Service.Services.IO;
 using DiffusionNexus.Service.Services.Sync;
@@ -53,6 +54,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// <c>App.Services</c> exactly as the direct locator calls did.
     /// </summary>
     private readonly IServiceScopeFactory? _scopeFactory;
+
+    /// <summary>
+    /// Civitai API-key lookup shared with the hand-constructed <see cref="CivitaiBrowserViewModel"/>
+    /// and <see cref="ModelDetailViewModel"/> sub-VMs and the LoRA Sorter's metadata resolver.
+    /// Lazily built (and cached) from <see cref="_scopeFactory"/> when not DI-injected.
+    /// </summary>
+    private ICivitaiApiKeyProvider? _apiKeyProvider;
 
     /// <summary>
     /// Cancels the in-flight update-check batch when the visible tile set changes
@@ -350,6 +358,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         _librarySync = null;
         _uiScheduler = null;
         _scopeFactory = null;
+        _apiKeyProvider = null;
         UnknownBaseModelItem.SelectionChanged += OnBaseModelFilterChanged;
         BrowserViewModel = new CivitaiBrowserViewModel();
         SorterViewModel = new LoraSorterViewModel();
@@ -370,7 +379,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         ILoraUpdateChecker? updateChecker = null,
         ILibrarySyncService? librarySync = null,
         IUiScheduler? uiScheduler = null,
-        IServiceScopeFactory? scopeFactory = null)
+        IServiceScopeFactory? scopeFactory = null,
+        ICivitaiApiKeyProvider? apiKeyProvider = null)
     {
         _selectedSortOption = SortOptions[0];
         UnknownBaseModelItem.SelectionChanged += OnBaseModelFilterChanged;
@@ -386,6 +396,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         _librarySync = librarySync ?? App.Services?.GetService<ILibrarySyncService>();
         _uiScheduler = uiScheduler ?? App.Services?.GetService<IUiScheduler>();
         _scopeFactory = scopeFactory ?? App.Services?.GetService<IServiceScopeFactory>();
+        _apiKeyProvider = apiKeyProvider ?? App.Services?.GetService<ICivitaiApiKeyProvider>();
 
         // Live-update the base-model filter whenever the catalog is force-refreshed
         // (e.g. from the "Update base-model filter" button in Settings). Both the
@@ -404,7 +415,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         var destination = new DownloadDestinationViewModel(dialogService);
         var queue = new CivitaiDownloadQueue(downloadService, _logger, _civitaiClient, destination);
         var waitlist = new CivitaiWaitlist(_civitaiClient, _logger);
-        BrowserViewModel = new CivitaiBrowserViewModel(_civitaiClient, _settingsService, _logger, queue, waitlist, AvailableBaseModels);
+        BrowserViewModel = new CivitaiBrowserViewModel(_civitaiClient, _settingsService, _logger, queue, waitlist, AvailableBaseModels,
+            apiKeyProvider: _apiKeyProvider);
 
         // LoRA Sorter sub-tab. Same DB-backed source of truth as the Installed tab;
         // disk seams are the production implementations.
@@ -895,7 +907,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         var targetPath = Path.Combine(result.TargetFolder, fileName);
 
         var downloadService = App.Services?.GetService<LoraDownloadService>()
-                              ?? new LoraDownloadService(_civitaiClient, _settingsService, _logger);
+                              ?? new LoraDownloadService(_civitaiClient, _settingsService, _logger, apiKeyProvider: _apiKeyProvider);
 
         SyncStatus = $"Downloading {fileName}...";
         // Route through IDownloadCoordinator so this download aggregates with any
@@ -1116,16 +1128,14 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     }
 
     /// <summary>
-    /// Reads the Civitai API key from a fresh DI scope so callers always see the latest
-    /// database value rather than a stale EF Core tracked entity. Extracted from the
-    /// by-hash metadata lookup (<see cref="DownloadMetadataForTileAsync"/>); also handed to
-    /// <see cref="SorterMetadataResolver"/> for the LoRA Sorter's unknown-file resolution.
+    /// Civitai API key handed to <see cref="SorterMetadataResolver"/> for the LoRA Sorter's
+    /// unknown-file resolution. Delegates to <see cref="ICivitaiApiKeyProvider"/> — see its doc
+    /// comment for why a fresh DI scope is used rather than a long-lived settings instance.
     /// </summary>
-    private async Task<string?> GetApiKeyForSorterAsync()
+    private Task<string?> GetApiKeyForSorterAsync()
     {
-        using var keyScope = RequireScopeFactory().CreateScope();
-        var freshSettings = keyScope.ServiceProvider.GetRequiredService<IAppSettingsService>();
-        return await freshSettings.GetCivitaiApiKeyAsync();
+        _apiKeyProvider ??= new CivitaiApiKeyProvider(_scopeFactory);
+        return _apiKeyProvider.GetApiKeyAsync();
     }
 
     /// <summary>
@@ -1299,7 +1309,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             sp?.GetService<ITaskTracker>(),
             sp?.GetService<IActivityLogService>(),
             sp?.GetService<DiffusionNexus.Installer.SDK.Shared.Services.IClipboardService>(),
-            sp?.GetService<IUiScheduler>());
+            sp?.GetService<IUiScheduler>(),
+            apiKeyProvider: _apiKeyProvider);
 
         detailVm.CloseRequested += OnDetailCloseRequested;
         detailVm.DownloadCompleted += OnDetailDownloadCompleted;
