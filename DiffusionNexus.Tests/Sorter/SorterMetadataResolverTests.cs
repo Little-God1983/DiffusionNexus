@@ -467,10 +467,14 @@ public sealed class SorterMetadataResolverTests : IDisposable
         meta.CivitaiVersionId.Should().BeNull("a header cannot supply a Civitai version id");
     }
 
-    /// <summary>Not a safetensors byte layout at all, so the header rung returns null and the name
-    /// is all that is left — the "MyChar_Pony_v2" case the design calls out by name.</summary>
+    /// <summary>
+    /// Not a safetensors byte layout at all, so the header rung returns null and the name is all
+    /// that is left — the "MyChar_Pony_v2" case the design calls out by name. It is OFFERED, not
+    /// applied: the planner turns BaseModelRaw into a physical move, and the sorter's "sort by name"
+    /// option is what folds this in once the user has seen how many files it would resolve.
+    /// </summary>
     [Fact]
-    public async Task FilenameGuessIsTheLastResortWhenTheHeaderSaysNothing()
+    public async Task AFilenameGuessIsOfferedRatherThanApplied()
     {
         var model = WriteModel("MyChar_Pony_v2.safetensors");
         _client.Setup(c => c.GetModelVersionByHashAsync("abc123", null, It.IsAny<CancellationToken>()))
@@ -478,7 +482,8 @@ public sealed class SorterMetadataResolverTests : IDisposable
 
         var meta = await Resolver(_client.Object).ResolveAsync(model);
 
-        meta.BaseModelRaw.Should().Be("Pony");
+        meta.NameGuess.Should().Be("Pony");
+        meta.BaseModelRaw.Should().BeNull("a name is a guess about a file, not a reading of it");
     }
 
     /// <summary>
@@ -496,6 +501,7 @@ public sealed class SorterMetadataResolverTests : IDisposable
         var meta = await Resolver(_client.Object).ResolveAsync(model);
 
         meta.BaseModelRaw.Should().Be("SD 1.5");
+        meta.NameGuess.Should().BeNull("the header answered, so there is nothing left to offer");
     }
 
     /// <summary>Civitai is rung 1 and stays rung 1: this file's name says Pony and its header says
@@ -568,6 +574,8 @@ public sealed class SorterMetadataResolverTests : IDisposable
 
         meta.BaseModelRaw.Should().BeNull(
             "both rungs would have answered, but nothing authoritative was actually asked");
+        meta.NameGuess.Should().BeNull(
+            "not even as an offer — the user opting into name sorting did not opt into acting on an outage");
     }
 
     /// <summary>
@@ -589,6 +597,7 @@ public sealed class SorterMetadataResolverTests : IDisposable
         var meta = await resolver.ResolveAsync(model);
 
         meta.BaseModelRaw.Should().BeNull();
+        meta.NameGuess.Should().BeNull();
         meta.Sha256.Should().BeEmpty();
     }
 

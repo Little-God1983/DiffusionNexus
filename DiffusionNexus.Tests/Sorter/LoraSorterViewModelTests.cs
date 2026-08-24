@@ -118,6 +118,95 @@ public sealed class LoraSorterViewModelTests : IDisposable
             .And.NotContain(SorterPathBuilder.UnknownFolderName);
     }
 
+    /// <summary>
+    /// The name rung is off by default, so a LoRA only its name can identify sits in Unknown — and
+    /// the hint tells the user, in numbers taken from their own library, what turning it on buys.
+    /// </summary>
+    [Fact]
+    public async Task ANameOnlyLoraStaysUnknownAndTheHintOffersTheFix()
+    {
+        var path = WriteLora(@"flat\MyChar_Pony_v2.safetensors");
+        var vm = CreateVm(cached: [Installed(path, "???", "character")]);
+
+        await vm.InitializeAsync();
+
+        vm.GuessBaseModelFromFileName.Should().BeFalse("the lowest-confidence rung is opt-in");
+        vm.PreviewRoots.Select(n => n.Name).Should().Contain(SorterPathBuilder.UnknownFolderName);
+        vm.NameGuessHint.Should().Be(
+            "1 LoRA could not be identified — sorting by name will fix 1 of them.");
+    }
+
+    /// <summary>Turning it on files the LoRA by its name and says so in the past tense.</summary>
+    [Fact]
+    public async Task TurningOnNameSortingFilesTheLoraAndRewordsTheHint()
+    {
+        var path = WriteLora(@"flat\MyChar_Pony_v2.safetensors");
+        var vm = CreateVm(cached: [Installed(path, "???", "character")]);
+        await vm.InitializeAsync();
+
+        vm.GuessBaseModelFromFileName = true;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        vm.PreviewRoots.Select(n => n.Name).Should()
+            .Contain("Pony").And.NotContain(SorterPathBuilder.UnknownFolderName);
+        vm.NameGuessHint.Should().Be(
+            "Sorting by name identified 1 of 1 otherwise-unidentified LoRA.");
+    }
+
+    /// <summary>
+    /// A file the name cannot help with is counted as unidentified but not as fixable, so the offer
+    /// never overstates itself — "will fix 4 of them" has to be 4, not "some of them".
+    /// </summary>
+    [Fact]
+    public async Task TheHintCountsOnlyTheFilesTheNameCanActuallyFix()
+    {
+        var named = WriteLora(@"flat\MyChar_Pony_v2.safetensors");
+        var mute = WriteLora(@"flat\untitled_final.safetensors");
+        var vm = CreateVm(cached: [Installed(named, "???", "character"), Installed(mute, "???", "character")]);
+
+        await vm.InitializeAsync();
+
+        vm.NameGuessHint.Should().Be(
+            "2 LoRAs could not be identified — sorting by name will fix 1 of them.");
+    }
+
+    /// <summary>Nothing to offer, nothing said — the hint is not a permanent fixture of the panel.</summary>
+    [Fact]
+    public async Task TheHintIsSilentWhenTheNameRungWouldChangeNothing()
+    {
+        var path = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(path, "SDXL 1.0", "character")]);
+
+        await vm.InitializeAsync();
+
+        vm.NameGuessHint.Should().BeNull();
+    }
+
+    /// <summary>
+    /// The guess travels on the candidate rather than being baked into its base model, so toggling
+    /// the option re-plans off the candidate cache instead of re-walking the disk. On a browsed
+    /// folder of thousands of unknown files that is the difference between an instant checkbox and
+    /// a full re-resolve, so it is pinned by counting hashes: resolution hashes, planning does not
+    /// (these candidates carry no colliding names).
+    /// </summary>
+    [Fact]
+    public async Task TogglingNameSortingDoesNotReResolveCandidates()
+    {
+        WriteLora(@"flat\MyChar_Pony_v2.safetensors");
+        var hashCalls = 0;
+        var vm = CreateVm(cached: [], resolverHash: _ => { hashCalls++; return "hash"; });
+        await vm.InitializeAsync();
+
+        var afterFirstPass = hashCalls;
+        afterFirstPass.Should().BeGreaterThan(0, "the unknown file was resolved from disk");
+
+        vm.GuessBaseModelFromFileName = true;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        vm.PreviewRoots.Select(n => n.Name).Should().Contain("Pony");
+        hashCalls.Should().Be(afterFirstPass, "toggling the option must re-plan, not re-resolve");
+    }
+
     [Fact]
     public async Task BaseModelOnlyModeFlattensCategoryLevel()
     {

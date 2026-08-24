@@ -19,6 +19,25 @@ public sealed record ResolvedLoraMetadata(string? BaseModelRaw, int? CivitaiVers
     /// or when nothing could be resolved at all.
     /// </summary>
     public IReadOnlyList<string> Tags { get; init; } = [];
+
+    /// <summary>
+    /// What the file NAME suggests, set only when nothing authoritative and no safetensors header
+    /// could answer. Deliberately NOT folded into <see cref="BaseModelRaw"/>: the sorter turns that
+    /// value into a physical move, and a name is a guess about a file rather than a reading of it.
+    /// The caller decides whether to use it — the sorter does so behind an opt-in that tells the
+    /// user how many files it would resolve.
+    /// </summary>
+    public string? NameGuess { get; init; }
+}
+
+/// <summary>
+/// What a file says about itself, with the two rungs kept apart because they do not carry the same
+/// weight: <paramref name="FromHeader"/> read the actual weights, <paramref name="FromName"/> is a
+/// guess about them. At most one is ever set — the header wins outright.
+/// </summary>
+public sealed record FileIdentity(string? FromHeader, string? FromName)
+{
+    public static FileIdentity None { get; } = new(null, null);
 }
 
 /// <summary>
@@ -123,8 +142,12 @@ public sealed class SorterMetadataResolver
         if (verdict != AuthorityVerdict.NotKnown)
             return resolved;
 
-        var guess = await GuessBaseModelFromFileAsync(filePath, ct);
-        return guess is null ? resolved : resolved with { BaseModelRaw = guess };
+        var identity = await IdentifyFromFileAsync(filePath, ct);
+
+        // The header is applied outright; the name is only offered. See FileIdentity.
+        return identity.FromHeader is not null
+            ? resolved with { BaseModelRaw = identity.FromHeader }
+            : resolved with { NameGuess = identity.FromName };
     }
 
     /// <summary>
@@ -166,7 +189,9 @@ public sealed class SorterMetadataResolver
 
     /// <summary>
     /// What the file says about itself: its safetensors header first (it read the actual weights),
-    /// then its file name (a guess about them). Null when neither says anything usable.
+    /// then its file name (a guess about them). <see cref="FileIdentity.None"/> when neither says
+    /// anything usable. The two are returned separately, not resolved into one answer, because only
+    /// the caller knows whether a guess is allowed to move a file.
     /// </summary>
     /// <remarks>
     /// Asked only once every authoritative source has come up empty — and only when they came up
@@ -186,7 +211,7 @@ public sealed class SorterMetadataResolver
     /// though it were an answer. Re-deriving it each pass costs one size-capped header read.
     /// </para>
     /// </remarks>
-    public async Task<string?> GuessBaseModelFromFileAsync(string filePath, CancellationToken ct = default)
+    public async Task<FileIdentity> IdentifyFromFileAsync(string filePath, CancellationToken ct = default)
     {
         var fileName = Path.GetFileName(filePath);
 
@@ -196,7 +221,7 @@ public sealed class SorterMetadataResolver
         {
             _logger?.Debug(LogCategory.FileSystem, LogSource,
                 $"{fileName}: nothing on record knows this file; its own safetensors header says {fromHeader}.");
-            return fromHeader;
+            return new FileIdentity(fromHeader, null);
         }
 
         // GetFileNameWithoutExtension, matching IdentifyModelStep's call site exactly. The heuristic
@@ -208,10 +233,10 @@ public sealed class SorterMetadataResolver
         if (fromName is not null)
         {
             _logger?.Debug(LogCategory.FileSystem, LogSource,
-                $"{fileName}: no usable header either; guessing {fromName} from the file name.");
+                $"{fileName}: no usable header either; its name suggests {fromName} — offered, not applied.");
         }
 
-        return fromName;
+        return fromName is null ? FileIdentity.None : new FileIdentity(null, fromName);
     }
 
     /// <summary>

@@ -235,6 +235,22 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     [ObservableProperty]
     private bool _deleteEmptySourceFolders;
 
+    /// <summary>
+    /// Opt-in for the lowest-confidence rung: filing a LoRA by what its NAME suggests when nothing
+    /// authoritative and no safetensors header could identify it. Off by default, and deliberately
+    /// a user decision rather than a silent default — FilenameBaseModelHeuristic was tuned for a
+    /// reversible database write, not for relocating files, and its shortest tokens (<c>il</c> →
+    /// Illustrious) match words that occur in ordinary names. <see cref="NameGuessHint"/> tells the
+    /// user how many files it would actually resolve before they turn it on.
+    /// </summary>
+    [ObservableProperty]
+    private bool _guessBaseModelFromFileName;
+
+    /// <summary>How many unidentified LoRAs the name rung would resolve — or did. Null when there
+    /// is nothing to say: no unidentified files, or none the name could help with.</summary>
+    [ObservableProperty]
+    private string? _nameGuessHint;
+
     public ObservableCollection<SortPreviewNodeViewModel> PreviewRoots { get; } = [];
 
     [ObservableProperty]
@@ -269,6 +285,18 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     }
 
     partial void OnIsMoveChanged(bool value)
+    {
+        ClearRunResultBanner();
+        if (_isInitializing) return;
+        _ = RecomputePreviewAsync();
+    }
+
+    /// <summary>
+    /// Re-plans without re-resolving: the name guess travels on the candidate
+    /// (<see cref="SortCandidate.NameGuess"/>) rather than being baked into its base model, so the
+    /// candidate cache stays valid and toggling this on a 3000-file library costs no disk at all.
+    /// </summary>
+    partial void OnGuessBaseModelFromFileNameChanged(bool value)
     {
         ClearRunResultBanner();
         if (_isInitializing) return;
@@ -526,13 +554,19 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 _candidateCacheSkippedCount = resolution.SkippedCount;
             }
 
+            // Counted from the candidates as resolved, BEFORE any name guess is folded in, so the
+            // two wordings share one pair of numbers and the count does not change when the option
+            // is ticked — only the sentence does.
+            UpdateNameGuessHint(candidates);
+            var plannable = ApplyNameGuesses(candidates);
+
             // BuildPlan also touches disk (lazy hashing on collisions), so it's offloaded too. The
             // options snapshot is read here — on the calling (UI) context — not from inside the
             // Task.Run body.
             var options = BuildOptions();
             var planStopwatch = Stopwatch.StartNew();
             var plan = await Task.Run(
-                () => new LoraSortPlanner(_hashFile, _fileExistsOnDisk).BuildPlan(candidates, options, passCts.Token),
+                () => new LoraSortPlanner(_hashFile, _fileExistsOnDisk).BuildPlan(plannable, options, passCts.Token),
                 passCts.Token);
             planStopwatch.Stop();
 
@@ -751,11 +785,16 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 // is backwards. Costs one size-capped header read per placeholder row; a row that
                 // already carries a base model pays nothing.
                 var baseModelRaw = f.Version.BaseModelRaw;
+                string? nameGuess = null;
                 if (SorterPathBuilder.IsPlaceholderBaseModel(baseModelRaw))
-                    baseModelRaw = await _metadataResolver.GuessBaseModelFromFileAsync(path, ct) ?? baseModelRaw;
+                {
+                    var identity = await _metadataResolver.IdentifyFromFileAsync(path, ct);
+                    baseModelRaw = identity.FromHeader ?? baseModelRaw;
+                    nameGuess = identity.FromName;
+                }
 
                 candidates.Add(new SortCandidate(path, baseModelRaw, category,
-                    f.Version.CivitaiId, f.File.HashSHA256, sizeBytes, SidecarLocator.FindSidecars(path)));
+                    f.Version.CivitaiId, f.File.HashSHA256, sizeBytes, SidecarLocator.FindSidecars(path), nameGuess));
                 knownAdded++;
             }
             catch (Exception ex) when (IsSkippableFileFailure(ex))
@@ -805,7 +844,8 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 var category = SorterCategoryResolver.InferFolderName(metadata.Tags)
                     ?? SorterPathBuilder.UnknownFolderName;
                 candidates.Add(new SortCandidate(path, metadata.BaseModelRaw, category,
-                    metadata.CivitaiVersionId, metadata.Sha256, sizeBytes, SidecarLocator.FindSidecars(path)));
+                    metadata.CivitaiVersionId, metadata.Sha256, sizeBytes, SidecarLocator.FindSidecars(path),
+                    metadata.NameGuess));
                 unknownAdded++;
             }
             catch (Exception ex) when (IsSkippableFileFailure(ex))
@@ -851,6 +891,44 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// </remarks>
     private static bool IsSkippableFileFailure(Exception ex)
         => ex is IOException or UnauthorizedAccessException or JsonException;
+
+    /// <summary>
+    /// Folds each candidate's name guess into its base model, but only when the user asked for it
+    /// and only where nothing better answered. Returns the input list unchanged when the option is
+    /// off, so the common path allocates nothing.
+    /// </summary>
+    private List<SortCandidate> ApplyNameGuesses(List<SortCandidate> candidates)
+        => GuessBaseModelFromFileName
+            ? candidates.Select(c => c.NameGuess is not null && SorterPathBuilder.IsPlaceholderBaseModel(c.BaseModelRaw)
+                    ? c with { BaseModelRaw = c.NameGuess }
+                    : c)
+                .ToList()
+            : candidates;
+
+    /// <summary>
+    /// "5 LoRAs could not be identified — sorting by name will fix 4 of them." Shown before the user
+    /// commits to anything, because the whole point of the opt-in is that they can see what it buys
+    /// on THEIR library rather than guess at it. Silent when there is nothing to offer.
+    /// </summary>
+    private void UpdateNameGuessHint(IReadOnlyList<SortCandidate> candidates)
+    {
+        var unidentified = 0;
+        var fixable = 0;
+        foreach (var candidate in candidates)
+        {
+            if (!SorterPathBuilder.IsPlaceholderBaseModel(candidate.BaseModelRaw)) continue;
+            unidentified++;
+            if (candidate.NameGuess is not null) fixable++;
+        }
+
+        NameGuessHint = fixable == 0
+            ? null
+            : GuessBaseModelFromFileName
+                ? $"Sorting by name identified {fixable} of {unidentified} otherwise-unidentified {LoraWord(unidentified)}."
+                : $"{unidentified} {LoraWord(unidentified)} could not be identified — sorting by name will fix {fixable} of them.";
+    }
+
+    private static string LoraWord(int count) => count == 1 ? "LoRA" : "LoRAs";
 
     /// <summary>Result of one resolution pass: the candidates and how many files it had to skip.</summary>
     private sealed record CandidateResolution(List<SortCandidate> Candidates, int SkippedCount);

@@ -8,7 +8,14 @@ public sealed record SortCandidate(
     int? CivitaiVersionId,
     string? Sha256,              // stored DB hash when known; null → hash lazily on collision
     long FileSizeBytes,
-    IReadOnlyList<string> SidecarPaths);
+    IReadOnlyList<string> SidecarPaths,
+
+    // What the file NAME suggests, when nothing authoritative and no safetensors header could
+    // answer. Kept OUT of BaseModelRaw on purpose: the planner turns that value into a physical
+    // move, and a name is a guess about a file rather than a reading of it. The sorter's
+    // "sort by name" option is what folds this in, and it can be toggled without re-resolving
+    // because the guess travels with the candidate instead of being baked into it.
+    string? NameGuess = null);
 
 public enum PlannedAction { Transfer, AlreadyInPlace, SkippedDuplicate }
 

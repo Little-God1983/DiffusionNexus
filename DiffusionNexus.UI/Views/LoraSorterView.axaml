@@ -90,6 +90,15 @@
           </StackPanel>
 
           <StackPanel Spacing="4">
+            <TextBlock Classes="fieldLabel" Text="UNIDENTIFIED LORAS" FontSize="11" Opacity="0.6"/>
+            <CheckBox Content="Sort by name when nothing else identifies a LoRA"
+                      IsChecked="{Binding GuessBaseModelFromFileName}" FontSize="12"/>
+            <TextBlock Text="{Binding NameGuessHint}" FontSize="11.5" Opacity="0.75"
+                       TextWrapping="Wrap"
+                       IsVisible="{Binding NameGuessHint, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+          </StackPanel>
+
+          <StackPanel Spacing="4">
             <TextBlock Classes="fieldLabel" Text="OPERATION" FontSize="11" Opacity="0.6"/>
             <RadioButton GroupName="Operation" Content="Move (reorganize)" IsChecked="{Binding IsMove}"/>
             <RadioButton GroupName="Operation" Content="Copy (duplicate)" IsChecked="{Binding !IsMove}"/>
