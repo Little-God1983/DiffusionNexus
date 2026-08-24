@@ -109,7 +109,7 @@ public sealed class LoraDownloadServicePersistTests : IDisposable
         return model;
     }
 
-    private static CivitaiModelVersion NewCivitaiVersion(int id = 700, int modelId = 77) => new()
+    private static CivitaiModelVersion NewCivitaiVersion(int id = 700, int modelId = 77, string sha256 = "ABC") => new()
     {
         Id = id,
         ModelId = modelId,
@@ -125,7 +125,7 @@ public sealed class LoraDownloadServicePersistTests : IDisposable
             {
                 Id = 900,
                 Primary = true,
-                Hashes = new CivitaiFileHashes { SHA256 = "ABC" },
+                Hashes = new CivitaiFileHashes { SHA256 = sha256 },
             },
         ],
         Stats = new CivitaiVersionStats { DownloadCount = 123 },
@@ -277,6 +277,82 @@ public sealed class LoraDownloadServicePersistTests : IDisposable
         version.Description.Should().Be("my version description");
 
         // Files are facts about disk, not user text — the new download's file must still attach.
+        version.Files.Select(f => f.LocalPath).Should().BeEquivalentTo(new[] { oldPath, newPath });
+    }
+
+    /// <summary>
+    /// Review finding: the hash-fallback duplicate match can land on a version that already
+    /// carries a DIFFERENT non-null CivitaiId — the same bytes re-listed upstream under a new
+    /// version id. That version is already linked (frozen), so a re-download matched to it by
+    /// hash must never bleed the new version's Name/BaseModel onto it, even though it isn't
+    /// <c>IsUserEdited</c>. Locks in the "linkage null-check gates the whole block, including
+    /// text" restructuring — a decoupled text-write guarded only by <c>IsUserEdited</c> would
+    /// wrongly refresh this row.
+    /// </summary>
+    [Fact]
+    public async Task Persist_HashFallbackMatchOnAlreadyLinkedVersion_DoesNotBleedTextAcrossVersions()
+    {
+        const string oldPath = @"C:\m\v500.safetensors";
+        const string sharedHash = "SHAREDHASH123";
+
+        int modelId;
+        using (var seedScope = NewScope())
+        {
+            var uow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = new Model
+            {
+                Name = "local model",
+                Type = ModelType.LORA,
+                Source = DataSource.LocalFile,
+                IsUserEdited = false,
+            };
+            var seedVersion = new ModelVersion
+            {
+                CivitaiId = 500, // already linked to a DIFFERENT version id than the one we persist below.
+                Name = "v500 name",
+                Description = "v500 description",
+                BaseModelRaw = "Pony",
+                BaseModel = BaseModelType.Pony,
+                IsUserEdited = false,
+            };
+            seedVersion.Files.Add(new ModelFile
+            {
+                FileName = Path.GetFileName(oldPath),
+                LocalPath = oldPath,
+                IsLocalFileValid = true,
+                IsPrimary = true,
+                HashSHA256 = sharedHash, // same bytes as the version we persist below, re-listed under CivitaiId 700 upstream.
+            });
+            model.Versions.Add(seedVersion);
+
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+        }
+
+        // Downloaded as a DIFFERENT Civitai version id (700), but the file's SHA256 matches the
+        // already-linked version 500's file — this is what routes to it via the hash fallback
+        // instead of the (non-matching) direct CivitaiId lookup.
+        var civVersion = NewCivitaiVersion(id: 700, sha256: sharedHash);
+        var service = NewService(NewCivitaiModel(civVersion));
+        var newPath = NewRealFile("v700-bytes.safetensors");
+
+        var outcome = await service.PersistDownloadedModelAsync(newPath, civVersion, existingModelId: modelId);
+
+        outcome.Should().Be(MetadataPersistOutcome.Complete);
+
+        using var scope = NewScope();
+        var check = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var saved = await check.Models.GetByIdWithIncludesAsync(modelId);
+
+        saved.Should().NotBeNull();
+        var version = saved!.Versions.Should().ContainSingle().Which;
+
+        version.CivitaiId.Should().Be(500, "a version already linked to one Civitai id must never be relinked to another via a hash-fallback match");
+        version.Name.Should().Be("v500 name", "text must stay frozen once a version is linked, matching pre-task behavior");
+        version.BaseModelRaw.Should().Be("Pony");
+
+        // The new file is still a fact about disk — it attaches even though the metadata froze.
         version.Files.Select(f => f.LocalPath).Should().BeEquivalentTo(new[] { oldPath, newPath });
     }
 

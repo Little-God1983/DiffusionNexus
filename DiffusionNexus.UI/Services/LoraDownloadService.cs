@@ -590,34 +590,39 @@ public sealed class LoraDownloadService : ILoraDownloadService
                 // Backfill Civitai linkage onto an orphan version we just matched
                 // by hash, so future installed-checks work via CivitaiId (the
                 // hash-fallback path is a safety net, not a permanent crutch).
-                // CivitaiId is UNIQUE — guard before assigning. This is linkage, not
-                // user text, so it is guarded only by the uniqueness check — never
-                // by IsUserEdited — and separately from the text backfill below.
+                // CivitaiId is UNIQUE — guard before assigning. Once a version is
+                // linked (non-null CivitaiId) this whole block — linkage AND text —
+                // stays frozen: the hash-fallback match can land on a version that
+                // already carries a DIFFERENT non-null CivitaiId (the same bytes
+                // re-listed upstream under a new version id), and only the orphan
+                // (unlinked) case is safe to backfill from `version` at all.
                 if (duplicateVersion.CivitaiId is null && version.CivitaiId.HasValue
                     && !await unitOfWork.Models.IsVersionCivitaiIdTakenAsync(version.CivitaiId.Value, duplicateVersion.Id))
                 {
+                    // Linkage is not user text, so it is always allowed once we're here.
                     duplicateVersion.CivitaiId = version.CivitaiId;
-                }
 
-                // S5: name/description/base model and the stats-ish fields below are the
-                // version's user-editable text — never overwrite them once the user has
-                // touched this version. File attachment above is a fact about disk, not
-                // user text, so it always happens regardless of this guard.
-                if (!duplicateVersion.IsUserEdited)
-                {
-                    duplicateVersion.Name = version.Name;
-                    duplicateVersion.Description ??= version.Description;
-                    duplicateVersion.BaseModel = version.BaseModel;
-                    duplicateVersion.BaseModelRaw = version.BaseModelRaw;
-                    duplicateVersion.DownloadUrl ??= version.DownloadUrl;
-                    duplicateVersion.PublishedAt ??= version.PublishedAt;
-                    duplicateVersion.EarlyAccessDays = version.EarlyAccessDays;
-                    duplicateVersion.DownloadCount = version.DownloadCount;
-                }
-                else
-                {
-                    _logger?.Debug(LogCategory.Download, "LoraDownload",
-                        $"Version '{duplicateVersion.Name}' (Id={duplicateVersion.Id}) is user-edited — keeping its name/description/base model, only attaching the new file");
+                    // S5: name/description/base model and the stats-ish fields below
+                    // are the version's user-editable text — never overwrite them once
+                    // the user has touched this version. File attachment above is a
+                    // fact about disk, not user text, so it already happened regardless
+                    // of this guard.
+                    if (!duplicateVersion.IsUserEdited)
+                    {
+                        duplicateVersion.Name = version.Name;
+                        duplicateVersion.Description ??= version.Description;
+                        duplicateVersion.BaseModel = version.BaseModel;
+                        duplicateVersion.BaseModelRaw = version.BaseModelRaw;
+                        duplicateVersion.DownloadUrl ??= version.DownloadUrl;
+                        duplicateVersion.PublishedAt ??= version.PublishedAt;
+                        duplicateVersion.EarlyAccessDays = version.EarlyAccessDays;
+                        duplicateVersion.DownloadCount = version.DownloadCount;
+                    }
+                    else
+                    {
+                        _logger?.Debug(LogCategory.Download, "LoraDownload",
+                            $"Version '{duplicateVersion.Name}' (Id={duplicateVersion.Id}) is user-edited — keeping its name/description/base model, only attaching the new file");
+                    }
                 }
             }
             else
