@@ -15,7 +15,11 @@ public sealed record SortCandidate(
     // move, and a name is a guess about a file rather than a reading of it. The sorter's
     // "sort by name" option is what folds this in, and it can be toggled without re-resolving
     // because the guess travels with the candidate instead of being baked into it.
-    string? NameGuess = null);
+    string? NameGuess = null,
+
+    // What this file actually is. Never decides where it goes — it drives the preview's per-folder
+    // labels, so a base-model folder about to receive a VAE says so before anything moves.
+    SorterAssetKind AssetKind = SorterAssetKind.Lora);
 
 public enum PlannedAction { Transfer, AlreadyInPlace, SkippedDuplicate }
 

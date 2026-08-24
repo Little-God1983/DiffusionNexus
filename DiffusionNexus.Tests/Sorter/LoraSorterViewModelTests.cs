@@ -207,6 +207,92 @@ public sealed class LoraSorterViewModelTests : IDisposable
         hashCalls.Should().Be(afterFirstPass, "toggling the option must re-plan, not re-resolve");
     }
 
+    /// <summary>
+    /// A folder's chips are the union of everything beneath it, so a base-model folder about to
+    /// receive a VAE alongside its LoRAs says so before anything moves — that mixing is invisible
+    /// today and only shows up as a stray file after the sort.
+    /// </summary>
+    [Fact]
+    public async Task AFolderIsLabelledWithEveryAssetKindBeneathIt()
+    {
+        var lora = WriteLora(@"flat\MyChar.safetensors");
+        var vae = WriteLora(@"flat\qwen_image_vae.safetensors");
+        var vm = CreateVm(cached: [Installed(lora, "Qwen", "character"), Installed(vae, "Qwen", "character")]);
+
+        await vm.InitializeAsync();
+
+        var qwen = vm.PreviewRoots.Single(n => n.Name == "Qwen");
+        qwen.AssetKinds.Should().BeEquivalentTo(["LoRA", "VAE"], o => o.WithStrictOrdering());
+    }
+
+    /// <summary>The mark is subtree-wide: a base-model folder is finished only when everything
+    /// under it is, which is the whole point of rolling it up rather than reading one node.</summary>
+    [Fact]
+    public async Task AFolderIsUnfinishedWhenAnythingBeneathItIsUnidentified()
+    {
+        var known = WriteLora(@"flat\a.safetensors");
+        var unknown = WriteLora(@"flat\BRFHE7KV2VWXY8N3D4SXR4XCT0.safetensors");
+        var vm = CreateVm(cached:
+        [
+            Installed(known, "SDXL 1.0", "character"),
+            Installed(unknown, "???", "character"),
+        ]);
+
+        await vm.InitializeAsync();
+
+        vm.PreviewRoots.Single(n => n.Name == "SDXL 1.0").IsFullyIdentified.Should().BeTrue();
+
+        var unknownFolder = vm.PreviewRoots.Single(n => n.Name == SorterPathBuilder.UnknownFolderName);
+        unknownFolder.IsFullyIdentified.Should().BeFalse();
+        unknownFolder.StatusTooltip.Should().Contain("sort into Unknown");
+
+        // ...and through the category level too, not just at the root.
+        unknownFolder.Children.Where(c => !c.IsFile)
+            .Should().OnlyContain(c => !c.IsFullyIdentified);
+    }
+
+    /// <summary>
+    /// "Identified" has to mean what the tree is actually drawing. With the name rung on, a LoRA
+    /// named into a real folder is finished; with it off, the same file sits in Unknown and is not.
+    /// </summary>
+    [Fact]
+    public async Task TurningOnNameSortingAlsoFinishesTheFolder()
+    {
+        var path = WriteLora(@"flat\MyChar_Pony_v2.safetensors");
+        var vm = CreateVm(cached: [Installed(path, "???", "character")]);
+        await vm.InitializeAsync();
+
+        vm.PreviewRoots.Single(n => n.Name == SorterPathBuilder.UnknownFolderName)
+            .IsFullyIdentified.Should().BeFalse();
+
+        vm.GuessBaseModelFromFileName = true;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        var pony = vm.PreviewRoots.Single(n => n.Name == "Pony");
+        pony.IsFullyIdentified.Should().BeTrue();
+        pony.AssetKinds.Should().ContainSingle().Which.Should().Be("LoRA");
+    }
+
+    /// <summary>A file node carries its own kind and its own mark, so expanding an unfinished folder
+    /// shows which files are the problem rather than only that some are.</summary>
+    [Fact]
+    public async Task AFileNodeCarriesItsOwnKindAndMark()
+    {
+        var vae = WriteLora(@"flat\sdxl_vae.safetensors");
+        var vm = CreateVm(cached: [Installed(vae, "???", "character")]);
+
+        await vm.InitializeAsync();
+
+        var fileNode = vm.PreviewRoots
+            .Single(n => n.Name == SorterPathBuilder.UnknownFolderName)
+            .Children.SelectMany(c => c.IsFile ? [c] : c.Children)
+            .Single(c => c.IsFile);
+
+        fileNode.AssetKinds.Should().ContainSingle().Which.Should().Be("VAE");
+        fileNode.IsFullyIdentified.Should().BeFalse();
+        fileNode.StatusTooltip.Should().Contain("This file has no base model");
+    }
+
     [Fact]
     public async Task BaseModelOnlyModeFlattensCategoryLevel()
     {

@@ -904,6 +904,15 @@ DB rows are matched by path earlier, when the cached library is loaded; there is
 
 Downloaded metadata is cached in `%LocalAppData%\DiffusionNexus\SorterCache\{sha256}.json` (file name always lower-cased, so the store survived the switch to the library-wide uppercase `FileHasher.Sha256Upper`) so a re-run or re-preview of the same file normally costs no network call at all. One exception is deliberate: an entry whose tag lookup never succeeded is stored as *unresolved* rather than as "this model has no tags", so the next pass retries it — that is what stops one transient Civitai failure from leaving a file category-less forever. Within a single pass the tag lookup is also memoized per model id, so a folder full of versions of the same model costs one `/models/{id}` call, not one per file. Rungs 4 and 5 are deliberately never written to that cache: it means *what Civitai said for this hash*, and the API-failure path writes no entry precisely so the next pass retries — a cached guess would kill that retry permanently and freeze the guess as though it were an answer. They are re-derived each pass instead, at the cost of one size-capped header read. The cache is a lookup cache only — the DB is never polluted with unregistered folders.
 
+### Folder labels in the preview
+
+Each node in the preview tree carries two things beyond its name and size:
+
+- **Asset-kind chips** — `[LoRA]`, `[VAE]`, `[Text Encoder]`, `[ControlNet]`, `[Upscaler]`. A folder's chips are the union of everything beneath it, not just its direct children. The library scan enumerates by extension, so a LoRA folder routinely also holds the VAEs, text encoders and upscalers a workflow needs — on one real library, 35 of 328 unidentified files were one of these. A chip other than `[LoRA]` on a base-model folder is the signal that something which is not a LoRA is about to be filed as one.
+- **A ✓ / ✗ mark** — ✓ when everything under the node has a base model, ✗ when anything does not. It aggregates by AND through the whole subtree, so a base-model folder is finished only when every category folder beneath it is. "Identified" means what the tree is actually drawing: with *Sort by name* on, a LoRA named into a real folder counts as finished.
+
+`SorterAssetKindClassifier` names the kind from the file name alone and is therefore fallible, which is why nothing it decides moves a file — it drives the label only. Its markers are drawn from names observed in a real library, and the bar for adding one is that it cannot plausibly occur in a LoRA's own name: `clip` counts only as the first token (`clip_g_hidream` leads with it, `hair_clip_v1` does not), a bare `.pth` is not an upscaler (`Chris.pth` is an ordinary model), and a leading scale factor is (`4x-UltraSharp`, `4xLSDIRplus`) — but `4x4` is not, because its remainder is pure digits.
+
 ### Execution
 
 1. **Confirm step** summarizes: operation, file count, total size, target root, how many files will auto-rename or skip as duplicates.

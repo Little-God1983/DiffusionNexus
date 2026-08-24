@@ -794,7 +794,8 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 }
 
                 candidates.Add(new SortCandidate(path, baseModelRaw, category,
-                    f.Version.CivitaiId, f.File.HashSHA256, sizeBytes, SidecarLocator.FindSidecars(path), nameGuess));
+                    f.Version.CivitaiId, f.File.HashSHA256, sizeBytes, SidecarLocator.FindSidecars(path), nameGuess,
+                    SorterAssetKindClassifier.Classify(Path.GetFileName(path))));
                 knownAdded++;
             }
             catch (Exception ex) when (IsSkippableFileFailure(ex))
@@ -845,7 +846,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                     ?? SorterPathBuilder.UnknownFolderName;
                 candidates.Add(new SortCandidate(path, metadata.BaseModelRaw, category,
                     metadata.CivitaiVersionId, metadata.Sha256, sizeBytes, SidecarLocator.FindSidecars(path),
-                    metadata.NameGuess));
+                    metadata.NameGuess, SorterAssetKindClassifier.Classify(Path.GetFileName(path))));
                 unknownAdded++;
             }
             catch (Exception ex) when (IsSkippableFileFailure(ex))
@@ -1272,12 +1273,19 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 IsAlreadyInPlace = move.Action == PlannedAction.AlreadyInPlace,
                 IsRenamed = move.WasRenamed
             };
+
+            // Read from the candidate as planned, so a base model supplied by the name rung counts
+            // as identified exactly when the user turned that rung on — the tree agrees with the
+            // folders it is drawing rather than with some other definition of "known".
+            var isIdentified = !SorterPathBuilder.IsPlaceholderBaseModel(move.Candidate.BaseModelRaw);
+            fileNode.Absorb(move.Candidate.AssetKind, isIdentified);
             siblings.Add(fileNode);
 
             foreach (var ancestor in chain)
             {
                 ancestor.LoraCount += 1;
                 ancestor.TotalBytes += move.Candidate.FileSizeBytes;
+                ancestor.Absorb(move.Candidate.AssetKind, isIdentified);
             }
         }
 
