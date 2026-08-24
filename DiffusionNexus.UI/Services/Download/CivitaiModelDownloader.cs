@@ -69,6 +69,10 @@ public sealed class CivitaiModelDownloader : ICivitaiModelDownloader
 
         _logger?.Info(LogCategory.Download, LogSource,
             $"Download requested: {fileName} → {request.TargetDirectory} [{request.Trigger}]");
+        _logger?.Debug(LogCategory.Download, LogSource,
+            $"Step 1: version {request.Version.Id}, file '{file?.Name ?? "(none)"}' " +
+            $"({(request.File is null ? "picked" : "caller-supplied")}), url {url ?? "(none)"}");
+        _logger?.Debug(LogCategory.Download, LogSource, $"Step 2: file name '{fileName}', task '{taskName}'");
 
         if (url is null)
             return Finish(new DownloadOutcome(DownloadStatus.Failed, null, null, false, "no download URL"), fileName);
@@ -103,6 +107,12 @@ public sealed class CivitaiModelDownloader : ICivitaiModelDownloader
                 $"File name collision in {request.TargetDirectory}: '{fileName}' already belongs to a different " +
                 $"download — saving as '{finalName}' instead.");
         }
+        else
+        {
+            _logger?.Debug(LogCategory.Download, LogSource,
+                $"Step 4: no collision — target stays {resolution.TargetPath} " +
+                $"(existing bytes match: {resolution.ExistingContentMatches})");
+        }
 
         DownloadStatus status;
         string? error = null;
@@ -129,7 +139,28 @@ public sealed class CivitaiModelDownloader : ICivitaiModelDownloader
             var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             var metadataComplete = true;
 
+            // The coordinator runs the work against a token LINKED to ours, which the flyout's
+            // per-task Cancel button and app shutdown also signal — and it swallows the resulting
+            // OperationCanceledException and just returns false. So the caller's ct alone cannot
+            // tell a user-initiated cancel from a real failure. Capture the run token's state here,
+            // inside the work, because the coordinator disposes its CTS the moment it returns.
+            var runCancelled = false;
+            var transferStarted = false;
+
             async Task<bool> RunAsync(IProgress<DownloadTaskProgress>? coordinatorProgress, CancellationToken runCt)
+            {
+                transferStarted = true;
+                try
+                {
+                    return await TransferAsync(coordinatorProgress, runCt).ConfigureAwait(false);
+                }
+                finally
+                {
+                    runCancelled |= runCt.IsCancellationRequested;
+                }
+            }
+
+            async Task<bool> TransferAsync(IProgress<DownloadTaskProgress>? coordinatorProgress, CancellationToken runCt)
             {
                 await _downloadService.DownloadFileAsync(
                     url, resolution.TargetPath, request.Version, taskName,
@@ -169,7 +200,10 @@ public sealed class CivitaiModelDownloader : ICivitaiModelDownloader
 
             if (!ok)
             {
-                var cancelled = ct.IsCancellationRequested;
+                // `!transferStarted` means the coordinator gave up before it ever called the work —
+                // its only pre-work await is the slot wait on the linked token, i.e. a task the user
+                // cancelled while it was still queued.
+                var cancelled = ct.IsCancellationRequested || runCancelled || !transferStarted;
                 return Finish(
                     new DownloadOutcome(
                         cancelled ? DownloadStatus.Cancelled : DownloadStatus.Failed,
@@ -180,7 +214,11 @@ public sealed class CivitaiModelDownloader : ICivitaiModelDownloader
             status = metadataComplete ? DownloadStatus.Completed : DownloadStatus.CompletedMetadataIncomplete;
 
             // 7 — verify. Non-fatal by queue parity: a mismatched file is kept for inspection.
-            if (expectedSha256 is not null && File.Exists(resolution.TargetPath))
+            if (expectedSha256 is null)
+            {
+                _logger?.Debug(LogCategory.Download, LogSource, "Step 7: no expected SHA256 — verification skipped");
+            }
+            else if (File.Exists(resolution.TargetPath))
             {
                 try
                 {
@@ -191,6 +229,11 @@ public sealed class CivitaiModelDownloader : ICivitaiModelDownloader
                             $"SHA256 mismatch for {resolution.TargetPath} — got {actual}, expected {expectedSha256}");
                         status = DownloadStatus.HashMismatch;
                         error = "hash mismatch";
+                    }
+                    else
+                    {
+                        _logger?.Debug(LogCategory.Download, LogSource,
+                            $"Step 7: SHA256 verified for {resolution.TargetPath} ({actual})");
                     }
                 }
                 catch (Exception ex)
@@ -218,6 +261,9 @@ public sealed class CivitaiModelDownloader : ICivitaiModelDownloader
         }
 
         // 11 — done.
+        _logger?.Debug(LogCategory.Download, LogSource,
+            $"Step 11: {status} at {resolution.TargetPath} (model id {modelId?.ToString() ?? "(none)"}, " +
+            $"renamed: {renamed})");
         return Finish(new DownloadOutcome(status, resolution.TargetPath, modelId, renamed, error), fileName);
     }
 

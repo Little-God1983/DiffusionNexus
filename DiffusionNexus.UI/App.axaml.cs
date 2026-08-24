@@ -975,12 +975,12 @@ public partial class App : Application
         // raises it (spec §4.4 / D3) — callers must never wrap DownloadAsync in the coordinator.
         services.AddSingleton<Domain.Services.ILibraryChangeNotifier, Infrastructure.Services.LibraryChangeNotifier>();
         services.AddScoped<Services.Download.ICivitaiModelDownloader>(sp => new Services.Download.CivitaiModelDownloader(
-            sp.GetRequiredService<ILoraDownloadService>(),
-            sp.GetService<IDownloadCoordinator>(),
-            sp.GetService<Domain.Services.Sync.ILibrarySyncService>(),
-            sp.GetService<Domain.Services.ILibraryChangeNotifier>(),
-            sp.GetService<IServiceScopeFactory>(),
-            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+            downloadService: sp.GetRequiredService<ILoraDownloadService>(),
+            coordinator: sp.GetService<IDownloadCoordinator>(),
+            librarySync: sp.GetService<Domain.Services.Sync.ILibrarySyncService>(),
+            notifier: sp.GetService<Domain.Services.ILibraryChangeNotifier>(),
+            scopeFactory: sp.GetService<IServiceScopeFactory>(),
+            logger: sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
 
         // Reusable LoRA catalog for the Multi-LoRA Picker (same sources as the LoRA Viewer Installed tab).
         services.AddSingleton<Services.Lora.ILoraCatalog, Services.Lora.LoraCatalog>();

@@ -338,6 +338,85 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
     }
 
     [Fact]
+    public async Task CoordinatorSideCancel_YieldsCancelled_EvenThoughTheCallersTokenIsUntouched()
+    {
+        // The real DownloadCoordinator runs the work against a token LINKED to the caller's, which
+        // the flyout Cancel button and shutdown also signal, then swallows the cancellation and
+        // returns false. Deciding from the caller's ct alone reported a user cancel as "Failed".
+        var dir = NewTempDir();
+        using var linked = new CancellationTokenSource();
+        var transport = new Mock<ILoraDownloadService>();
+        transport
+            .Setup(t => t.DownloadFileAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CivitaiModelVersion>(), It.IsAny<string>(),
+                It.IsAny<Action<double, string>?>(), It.IsAny<Action?>(), It.IsAny<Action?>(),
+                It.IsAny<int?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>(), It.IsAny<Action?>()))
+            .Callback<string, string, CivitaiModelVersion, string, Action<double, string>?, Action?, Action?, int?, CancellationToken, bool, Action?>(
+                (_, _, _, _, _, _, failed, _, _, _, _) =>
+                {
+                    linked.Cancel();
+                    failed?.Invoke();
+                })
+            .Returns(Task.CompletedTask);
+        var coordinator = new Mock<IDownloadCoordinator>();
+        coordinator
+            .Setup(c => c.EnqueueAsync(
+                It.IsAny<string>(),
+                It.IsAny<Func<IProgress<DownloadTaskProgress>, CancellationToken, Task<bool>>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(async (string _, Func<IProgress<DownloadTaskProgress>, CancellationToken, Task<bool>> work, CancellationToken _) =>
+            {
+                try
+                {
+                    return await work(new Progress<DownloadTaskProgress>(), linked.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    return false; // exactly what DownloadCoordinator does
+                }
+            });
+        var notifier = new LibraryChangeNotifier();
+        var notified = 0;
+        notifier.ModelDownloaded += (_, _) => notified++;
+
+        using var callerCts = new CancellationTokenSource();
+        var downloader = new CivitaiModelDownloader(
+            transport.Object, coordinator.Object, Sync().Object, notifier, ScopeFactory(17));
+
+        var outcome = await downloader.DownloadAsync(
+            new DownloadRequest(Version(), dir, DownloadTrigger.BrowseQueue), progress: null, ct: callerCts.Token);
+
+        callerCts.IsCancellationRequested.Should().BeFalse("only the coordinator's linked token was cancelled");
+        outcome.Status.Should().Be(DownloadStatus.Cancelled);
+        outcome.Error.Should().Be("cancelled");
+        outcome.ModelId.Should().BeNull();
+        notified.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task CancelledWhileStillQueued_YieldsCancelled()
+    {
+        // A queued task cancelled before a slot frees up never reaches the work delegate: the
+        // coordinator's only pre-work await is the slot wait on that same linked token.
+        var dir = NewTempDir();
+        var coordinator = new Mock<IDownloadCoordinator>();
+        coordinator
+            .Setup(c => c.EnqueueAsync(
+                It.IsAny<string>(),
+                It.IsAny<Func<IProgress<DownloadTaskProgress>, CancellationToken, Task<bool>>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        var downloader = new CivitaiModelDownloader(
+            Transport().Object, coordinator.Object, Sync().Object, new LibraryChangeNotifier(), ScopeFactory(2));
+
+        var outcome = await downloader.DownloadAsync(new DownloadRequest(Version(), dir, DownloadTrigger.BrowseQueue));
+
+        outcome.Status.Should().Be(DownloadStatus.Cancelled);
+        outcome.ModelId.Should().BeNull();
+    }
+
+    [Fact]
     public async Task WrittenBytesDoNotMatchExpectedHash_YieldsHashMismatch_AndLeavesFileOnDisk()
     {
         var dir = NewTempDir();
