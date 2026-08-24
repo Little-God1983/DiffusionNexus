@@ -464,10 +464,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         // Civitai browser sub-tab. Reuses the same ICivitaiClient and settings service.
         // The base-model filter list is mirrored from AvailableBaseModels which is itself
         // sourced from the full Civitai catalog (with distinct-from-installed as fallback).
-        var downloadService = App.Services?.GetService<LoraDownloadService>();
         var dialogService = App.Services?.GetService<IDialogService>();
         var destination = new DownloadDestinationViewModel(dialogService);
-        var queue = new CivitaiDownloadQueue(downloadService, _logger, _civitaiClient, destination);
+        var queue = new CivitaiDownloadQueue(_modelDownloader, _logger, _civitaiClient, destination);
         var waitlist = new CivitaiWaitlist(_civitaiClient, _logger);
         BrowserViewModel = new CivitaiBrowserViewModel(_civitaiClient, _settingsService, _logger, queue, waitlist, AvailableBaseModels,
             apiKeyProvider: _apiKeyProvider);

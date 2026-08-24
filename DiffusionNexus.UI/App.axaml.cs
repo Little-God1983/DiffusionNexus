@@ -990,12 +990,12 @@ public partial class App : Application
         // Pipelines: app-side manifest provider + asset installer + module ViewModel.
         services.AddSingleton<Services.Pipelines.IPipelineManifestProvider, Services.Pipelines.PipelineManifestProvider>();
         services.AddScoped<Services.Pipelines.IPipelineAssetInstaller>(sp => new Services.Pipelines.PipelineAssetInstaller(
-            sp.GetRequiredService<IDownloadCoordinator>(),
-            sp.GetRequiredService<Civitai.ICivitaiClient>(),
-            sp.GetRequiredService<LoraDownloadService>(),
-            sp.GetRequiredService<IAppSettingsService>(),
-            sp.GetRequiredService<Services.Diffusion.LocalDiffusionBackendProvider>(),
-            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+            coordinator: sp.GetRequiredService<IDownloadCoordinator>(),
+            civitai: sp.GetRequiredService<Civitai.ICivitaiClient>(),
+            modelDownloader: sp.GetRequiredService<Services.Download.ICivitaiModelDownloader>(),
+            settings: sp.GetRequiredService<IAppSettingsService>(),
+            backendProvider: sp.GetRequiredService<Services.Diffusion.LocalDiffusionBackendProvider>(),
+            unifiedLogger: sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
 
         // Pipeline run UI: output writer + a tile-id -> run-ViewModel factory.
         services.AddScoped<Services.Pipelines.IPipelineOutputWriter, Services.Pipelines.PipelineOutputWriter>();

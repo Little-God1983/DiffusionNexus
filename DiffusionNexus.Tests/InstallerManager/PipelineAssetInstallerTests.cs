@@ -4,6 +4,7 @@ using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Models.Pipelines;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.Diffusion;
+using DiffusionNexus.UI.Services.Download;
 using DiffusionNexus.UI.Services.Pipelines;
 using FluentAssertions;
 using Moq;
@@ -24,6 +25,7 @@ public sealed class PipelineAssetInstallerTests : IDisposable
     private readonly Mock<IDownloadCoordinator> _coordinator = new();
     private readonly Mock<ICivitaiClient> _civitai = new();
     private readonly Mock<IAppSettingsService> _settings = new();
+    private readonly Mock<ICivitaiModelDownloader> _modelDownloader = new();
 
     public PipelineAssetInstallerTests()
     {
@@ -41,7 +43,7 @@ public sealed class PipelineAssetInstallerTests : IDisposable
         return new PipelineAssetInstaller(
             _coordinator.Object,
             _civitai.Object,
-            new LoraDownloadService(null, null, null),
+            _modelDownloader.Object,
             _settings.Object,
             new LocalDiffusionBackendProvider(new Mock<IServiceProvider>().Object));
     }
@@ -176,10 +178,8 @@ public sealed class PipelineAssetInstallerTests : IDisposable
             manifest, ["Test LoRA"], _root, vramGb: 0, hfToken: null, civitaiKey: null, CancellationToken.None);
 
         errors.Should().BeEmpty();
-        _coordinator.Verify(
-            c => c.EnqueueAsync(It.IsAny<string>(),
-                It.IsAny<Func<IProgress<DownloadTaskProgress>, CancellationToken, Task<bool>>>(),
-                It.IsAny<CancellationToken>()),
+        _modelDownloader.Verify(
+            d => d.DownloadAsync(It.IsAny<DownloadRequest>(), It.IsAny<IProgress<DownloadProgress>?>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "the weights already exist, so nothing should be re-downloaded");
 
@@ -202,10 +202,9 @@ public sealed class PipelineAssetInstallerTests : IDisposable
         _settings.Setup(s => s.GetCivitaiApiKeyAsync(It.IsAny<CancellationToken>())).ReturnsAsync((string?)null);
 
         // Simulate a successful download without invoking the real download delegate.
-        _coordinator.Setup(c => c.EnqueueAsync(It.IsAny<string>(),
-                It.IsAny<Func<IProgress<DownloadTaskProgress>, CancellationToken, Task<bool>>>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+        _modelDownloader.Setup(d => d.DownloadAsync(
+                It.IsAny<DownloadRequest>(), It.IsAny<IProgress<DownloadProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DownloadOutcome(DownloadStatus.Completed, FinalPath: null, ModelId: null, RenamedForCollision: false, Error: null));
 
         var installer = CreateInstaller();
         var manifest = ManifestWithLora(1934100, "anime2real");
@@ -274,13 +273,12 @@ public sealed class PipelineAssetInstallerTests : IDisposable
             .ReturnsAsync(CivitaiModelWithFile(2674717, "Public.safetensors"));
 
         var enqueued = new List<string>();
-        _coordinator.Setup(c => c.EnqueueAsync(It.IsAny<string>(),
-                It.IsAny<Func<IProgress<DownloadTaskProgress>, CancellationToken, Task<bool>>>(),
-                It.IsAny<CancellationToken>()))
-            .Callback<string, Func<IProgress<DownloadTaskProgress>, CancellationToken, Task<bool>>, CancellationToken>(
-                (name, _, _) => enqueued.Add(name))
+        _modelDownloader.Setup(d => d.DownloadAsync(
+                It.IsAny<DownloadRequest>(), It.IsAny<IProgress<DownloadProgress>?>(), It.IsAny<CancellationToken>()))
+            .Callback<DownloadRequest, IProgress<DownloadProgress>?, CancellationToken>(
+                (request, _, _) => enqueued.Add(request.TaskName!))
             // Simulate the download failing (e.g. HTTP 401 because no Civitai API key is configured).
-            .ReturnsAsync(false);
+            .ReturnsAsync(new DownloadOutcome(DownloadStatus.Failed, FinalPath: null, ModelId: null, RenamedForCollision: false, Error: "download failed"));
 
         var installer = CreateInstaller();
 

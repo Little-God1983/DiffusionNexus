@@ -15,6 +15,7 @@ using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Installer.SDK.Models.Entities;
 using DiffusionNexus.UI.Models.Pipelines;
 using DiffusionNexus.UI.Services.Diffusion;
+using DiffusionNexus.UI.Services.Download;
 using Serilog;
 using SdkVramSelector = DiffusionNexus.Installer.SDK.Services.Installation.Utilities.VramProfileHelper;
 using VramConvert = DiffusionNexus.Installer.SDK.Models.Helpers.VramProfileHelper;
@@ -23,10 +24,11 @@ namespace DiffusionNexus.UI.Services.Pipelines;
 
 /// <summary>
 /// Default <see cref="IPipelineAssetInstaller"/>. HuggingFace assets are streamed directly
-/// (attaching the user's HF token as a Bearer header for gated repos); Civitai LoRAs are
-/// resolved via <see cref="ICivitaiClient"/> and downloaded through <see cref="LoraDownloadService"/>.
-/// Every download is routed through <see cref="IDownloadCoordinator"/> so the status-bar flyout
-/// and cancel button work for free.
+/// (attaching the user's HF token as a Bearer header for gated repos); Civitai LoRAs go through
+/// <see cref="ICivitaiModelDownloader"/> — the one Civitai download path (spec §4.4) — which owns
+/// its own <see cref="IDownloadCoordinator"/> enqueue (D3: callers must never wrap it in one).
+/// Non-Civitai (HuggingFace) assets still use <see cref="IDownloadCoordinator"/> directly here so
+/// the status-bar flyout and cancel button work for free.
 /// </summary>
 public sealed class PipelineAssetInstaller : IPipelineAssetInstaller, IDisposable
 {
@@ -41,7 +43,7 @@ public sealed class PipelineAssetInstaller : IPipelineAssetInstaller, IDisposabl
 
     private readonly IDownloadCoordinator _coordinator;
     private readonly ICivitaiClient _civitai;
-    private readonly LoraDownloadService _loraDownloadService;
+    private readonly ICivitaiModelDownloader _modelDownloader;
     private readonly IAppSettingsService _settings;
     private readonly LocalDiffusionBackendProvider _backendProvider;
     private readonly IUnifiedLogger? _unifiedLogger;
@@ -50,14 +52,14 @@ public sealed class PipelineAssetInstaller : IPipelineAssetInstaller, IDisposabl
     public PipelineAssetInstaller(
         IDownloadCoordinator coordinator,
         ICivitaiClient civitai,
-        LoraDownloadService loraDownloadService,
+        ICivitaiModelDownloader modelDownloader,
         IAppSettingsService settings,
         LocalDiffusionBackendProvider backendProvider,
         IUnifiedLogger? unifiedLogger = null)
     {
         _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
         _civitai = civitai ?? throw new ArgumentNullException(nameof(civitai));
-        _loraDownloadService = loraDownloadService ?? throw new ArgumentNullException(nameof(loraDownloadService));
+        _modelDownloader = modelDownloader ?? throw new ArgumentNullException(nameof(modelDownloader));
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         _backendProvider = backendProvider ?? throw new ArgumentNullException(nameof(backendProvider));
         _unifiedLogger = unifiedLogger;
@@ -394,40 +396,27 @@ public sealed class PipelineAssetInstaller : IPipelineAssetInstaller, IDisposabl
 
         var earlyAccess = version.IsEarlyAccessActive();
 
-        var taskName = $"{asset.Name} — {fileName}";
-        string? lastError = null;
-
-        var ok = await _coordinator.EnqueueAsync(taskName, (progress, downloadCt) =>
+        // The one Civitai download path (spec §4.4). It owns its own coordinator enqueue, SHA256
+        // verification and persistence — D3: never wrap this call in _coordinator.EnqueueAsync too.
+        var request = new DownloadRequest(version, targetDir, DownloadTrigger.Pipeline)
         {
-            var tcs = new TaskCompletionSource<bool>();
-            // LoraDownloadService handles the Civitai 401/403 token retry itself and reports
-            // outcome via the completed/failed callbacks (it never throws). reportToActivityLog
-            // is false so we don't fight the coordinator for the single status slot.
-            _ = _loraDownloadService.DownloadFileAsync(
-                downloadUrl: url,
-                targetPath: target,
-                civitaiVersion: version,
-                taskName: taskName,
-                reportProgress: (fraction, message) =>
-                    progress.Report(new DownloadTaskProgress((int)(fraction * 100), message)),
-                completed: () => tcs.TrySetResult(true),
-                failed: () => tcs.TrySetResult(false),
-                externalCancellationToken: downloadCt,
-                reportToActivityLog: false);
-            return tcs.Task;
-        }, ct).ConfigureAwait(false);
+            File = primary,
+            FileNameOverride = fileName,
+            TaskName = $"{asset.Name} — {fileName}",
+        };
+        var outcome = await _modelDownloader.DownloadAsync(request, progress: null, ct).ConfigureAwait(false);
 
-        if (!ok)
+        if (!outcome.Success)
         {
             var hint = earlyAccess
                 ? " This version is Early Access — it needs a Civitai membership/Supporter API key."
                 : " Check your Civitai API key in Settings.";
-            throw new InvalidOperationException(lastError ?? $"{asset.Name}: download failed.{hint}");
+            throw new InvalidOperationException(outcome.Error ?? $"{asset.Name}: download failed.{hint}");
         }
 
         // Link the file to its Civitai model so the readiness check (sidecar modelId scan)
         // and the run screen's LoRA lookup can find it again.
-        WriteCivitaiInfoSidecar(target, version, modelId);
+        WriteCivitaiInfoSidecar(outcome.FinalPath ?? target, version, modelId);
 
         _unifiedLogger?.Info(LogCategory.Download, "Pipelines", $"Downloaded {fileName} for pipeline LoRA '{asset.Name}'.");
     }

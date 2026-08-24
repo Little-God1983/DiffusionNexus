@@ -10,8 +10,7 @@ using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
-using DiffusionNexus.Service.Services.Lora;
-using DiffusionNexus.Service.Services.Sync;
+using DiffusionNexus.UI.Services.Download;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.ViewModels.CivitaiBrowser;
 using Microsoft.Extensions.DependencyInjection;
@@ -33,27 +32,27 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     /// </summary>
     private readonly string? _persistPathOverride;
 
-    private readonly LoraDownloadService? _downloadService;
+    private readonly ICivitaiModelDownloader? _downloader;
     private readonly IUnifiedLogger? _logger;
     private readonly ICivitaiClient? _civitaiClient;
     private SemaphoreSlim _gate = new(2);
     private int _maxConcurrency = 2;
     private CancellationTokenSource? _runCts;
 
-    public CivitaiDownloadQueue(LoraDownloadService? downloadService)
-        : this(downloadService, null, null, null)
+    public CivitaiDownloadQueue(ICivitaiModelDownloader? downloader)
+        : this(downloader, null, null, null)
     {
     }
 
     public CivitaiDownloadQueue(
-        LoraDownloadService? downloadService,
+        ICivitaiModelDownloader? downloader,
         IUnifiedLogger? logger,
         ICivitaiClient? civitaiClient,
         DownloadDestinationViewModel? destination,
         string? persistPathOverride = null)
     {
         _persistPathOverride = persistPathOverride;
-        _downloadService = downloadService;
+        _downloader = downloader;
         _logger = logger;
         _civitaiClient = civitaiClient;
         Destination = destination ?? new DownloadDestinationViewModel();
@@ -348,7 +347,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     public async Task RetryJobAsync(CivitaiDownloadJob job)
     {
         if (job.Status is JobStatus.Downloading or JobStatus.Completed) return;
-        if (_downloadService is null) return;
+        if (_downloader is null) return;
 
         job.ResetForRetry();
         Persist();
@@ -429,10 +428,10 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     /// </summary>
     public async Task StartAllAsync()
     {
-        if (_downloadService is null)
+        if (_downloader is null)
         {
             _logger?.Warn(LogCategory.Download, "CivitaiQueue",
-                "StartAll aborted: LoraDownloadService unavailable. Marking queued jobs as failed.");
+                "StartAll aborted: ICivitaiModelDownloader unavailable. Marking queued jobs as failed.");
             foreach (var job in Jobs.Where(j => j.Status == JobStatus.Queued))
             {
                 job.Status = JobStatus.Failed;
@@ -522,14 +521,6 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             targetDir = Path.Combine(folders[0], string.IsNullOrWhiteSpace(job.BaseModel) ? "Unsorted" : job.BaseModel);
         }
         Directory.CreateDirectory(targetDir);
-        var target = await ResolveCollisionFreeTargetPathAsync(
-            targetDir, job.FileName, job.VersionId, job.ExpectedSha256, ct);
-        if (!string.Equals(Path.GetFileName(target), job.FileName, StringComparison.OrdinalIgnoreCase))
-        {
-            _logger?.Warn(LogCategory.Download, "CivitaiQueue",
-                $"File name collision in {targetDir}: '{job.FileName}' already belongs to a different download — saving as '{Path.GetFileName(target)}' instead.");
-        }
-        job.TargetPath = target;
 
         try
         {
@@ -550,125 +541,76 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                 return;
             }
 
-            var tcs = new TaskCompletionSource<bool>();
-            var taskName = $"Download {job.ModelName} ({job.VersionName})";
-            var coordinator = App.Services?.GetService<IDownloadCoordinator>();
-
-            // The file can land perfectly while its Civitai metadata fetch fails. That
-            // used to finish as a plain "Done", leaving the LoRA with no description,
-            // tags or preview and no hint of why.
-            var metadataComplete = true;
-
-            // Local function — the actual download. The Coordinator wraps this and
-            // pushes the aggregated "N downloads in progress" view to the activity log,
-            // so we explicitly tell the download service NOT to also publish progress
-            // there (otherwise concurrent downloads fight over the single status slot).
-            async Task<bool> RunDownloadAsync(IProgress<DownloadTaskProgress>? coordinatorProgress, CancellationToken coordCt)
+            // The one Civitai download path (spec §4.4 / D3): collision policy, coordinator
+            // enqueue, SHA256 verification, persistence and the Tags+Thumbnails completion
+            // sync all live inside the downloader now — the queue only reports outcomes.
+            var request = new DownloadRequest(civVersion!, targetDir, DownloadTrigger.BrowseQueue)
             {
-                await _downloadService!.DownloadFileAsync(
-                    downloadUrl: job.DownloadUrl,
-                    targetPath: target,
-                    civitaiVersion: civVersion!,
-                    taskName: taskName,
-                    reportProgress: (pct, msg) =>
-                    {
-                        Dispatcher.UIThread.Post(() =>
-                        {
-                            job.ProgressPercent = pct * 100;
-                            job.StatusMessage = msg;
-                        });
-                        // Forward to the coordinator so the status bar reflects this
-                        // job's contribution to the aggregate.
-                        coordinatorProgress?.Report(new DownloadTaskProgress((int)(pct * 100), msg));
-                    },
-                    completed: () => Dispatcher.UIThread.Post(() =>
-                    {
-                        job.ProgressPercent = 100;
-                        job.StatusMessage = "Verifying...";
-                        tcs.TrySetResult(true);
-                    }),
-                    failed: () => Dispatcher.UIThread.Post(() =>
-                    {
-                        if (job.WasCancelledByUser)
-                        {
-                            job.Status = JobStatus.Cancelled;
-                            job.StatusMessage = "Cancelled";
-                        }
-                        else
-                        {
-                            job.Status = JobStatus.Failed;
-                            if (string.IsNullOrEmpty(job.StatusMessage) || job.StatusMessage == "Connecting...")
-                                job.StatusMessage = "Failed";
-                        }
-                        tcs.TrySetResult(false);
-                    }),
-                    externalCancellationToken: coordCt,
-                    reportToActivityLog: coordinator is null,
-                    metadataIncomplete: () => metadataComplete = false);
-
-                // The completed/failed callbacks above set the TCS. Wait on it for
-                // the boolean result that the coordinator wants.
-                return await tcs.Task.ConfigureAwait(false);
-            }
-
-            if (coordinator is not null)
+                FileNameOverride = job.FileName,
+                TaskName = $"Download {job.ModelName} ({job.VersionName})",
+            };
+            var progressAdapter = new Progress<DownloadProgress>(p => Dispatcher.UIThread.Post(() =>
             {
-                // Run through the shared coordinator. It already has a concurrency gate
-                // (typically 3) so it'll queue beyond that — that's fine because our
-                // own _gate already throttles to 2. The coordinator's slot is acquired
-                // immediately since we're well under its cap.
-                await coordinator.EnqueueAsync(taskName, RunDownloadAsync, ct).ConfigureAwait(false);
-            }
-            else
-            {
-                // No coordinator available (design-time / unusual DI). Fall back to a
-                // direct call — the download service then DOES report to the activity
-                // log so the user at least sees one download's progress.
-                await RunDownloadAsync(null, ct).ConfigureAwait(false);
-            }
+                job.ProgressPercent = p.Percent;
+                job.StatusMessage = p.Message;
+            }));
+            var outcome = await _downloader!.DownloadAsync(request, progressAdapter, ct).ConfigureAwait(false);
+            job.TargetPath = outcome.FinalPath;
 
-            var ok = await tcs.Task.ConfigureAwait(false);
-            if (!ok) return;
-
-            // SHA256 verification — non-fatal: log warning, mark as completed-with-warning.
-            if (!string.IsNullOrWhiteSpace(job.ExpectedSha256) && File.Exists(target))
+            if (outcome.RenamedForCollision)
             {
-                try
-                {
-                    var actual = await ComputeSha256Async(target, ct);
-                    if (!string.Equals(actual, job.ExpectedSha256, StringComparison.OrdinalIgnoreCase))
-                    {
-                        job.Status = JobStatus.Failed;
-                        job.StatusMessage = $"Hash mismatch (got {actual[..8]}…, expected {job.ExpectedSha256[..8]}…)";
-                        _logger?.Warn(LogCategory.Download, "CivitaiQueue",
-                            $"SHA256 mismatch for {target} — got {actual}, expected {job.ExpectedSha256}");
-                        return;
-                    }
-                    job.ActualSha256 = actual;
-                }
-                catch (Exception ex)
-                {
-                    _logger?.Warn(LogCategory.Download, "CivitaiQueue", $"SHA256 verification failed: {ex.Message}");
-                }
-            }
-
-            // No sidecar files. All Civitai metadata is persisted to the database by
-            // LoraDownloadService.PersistDownloadedModelAsync, and thumbnails are
-            // stored in ModelImage.ThumbnailData. Writing .civitai.json / .preview.png
-            // would be redundant and nothing in the app reads them back.
-
-            job.Status = JobStatus.Completed;
-            if (metadataComplete)
-            {
-                job.StatusMessage = "Done";
-            }
-            else
-            {
-                job.StatusMessage = "Done — no metadata";
                 _logger?.Warn(LogCategory.Download, "CivitaiQueue",
-                    $"{job.ModelName} — {job.VersionName} downloaded, but its Civitai metadata could not be fetched. "
-                    + "Use Download Metadata on the model in the Installed tab to fill it in.",
-                    $"VersionId: {job.VersionId}\nFile: {job.TargetPath}");
+                    $"File name collision in {targetDir}: '{job.FileName}' already belongs to a different download — saved as '{Path.GetFileName(outcome.FinalPath)}' instead.");
+            }
+
+            if (outcome.Status == DownloadStatus.Cancelled || job.WasCancelledByUser)
+            {
+                job.Status = JobStatus.Cancelled;
+                job.StatusMessage = "Cancelled";
+                return;
+            }
+
+            switch (outcome.Status)
+            {
+                case DownloadStatus.Completed:
+                    job.ActualSha256 ??= job.ExpectedSha256; // verified inside the downloader
+                    job.Status = JobStatus.Completed;
+                    job.StatusMessage = "Done";
+                    break;
+
+                case DownloadStatus.CompletedMetadataIncomplete:
+                    // The file can land perfectly while its Civitai metadata fetch fails. That
+                    // used to finish as a plain "Done", leaving the LoRA with no description,
+                    // tags or preview and no hint of why.
+                    job.ActualSha256 ??= job.ExpectedSha256; // verified inside the downloader
+                    job.Status = JobStatus.Completed;
+                    job.StatusMessage = "Done — no metadata";
+                    _logger?.Warn(LogCategory.Download, "CivitaiQueue",
+                        $"{job.ModelName} — {job.VersionName} downloaded, but its Civitai metadata could not be fetched. "
+                        + "Use Download Metadata on the model in the Installed tab to fill it in.",
+                        $"VersionId: {job.VersionId}\nFile: {job.TargetPath}");
+                    break;
+
+                case DownloadStatus.ReusedExisting:
+                    job.Status = JobStatus.Completed;
+                    job.StatusMessage = "Already downloaded";
+                    break;
+
+                case DownloadStatus.HashMismatch:
+                    job.Status = JobStatus.Failed;
+                    job.StatusMessage = job.ExpectedSha256 is { Length: >= 8 }
+                        ? $"Hash mismatch (expected {job.ExpectedSha256[..8]}…)"
+                        : "Hash mismatch";
+                    _logger?.Warn(LogCategory.Download, "CivitaiQueue",
+                        $"SHA256 mismatch for {job.TargetPath}: {outcome.Error}");
+                    break;
+
+                case DownloadStatus.Failed:
+                default:
+                    job.Status = JobStatus.Failed;
+                    if (string.IsNullOrEmpty(job.StatusMessage) || job.StatusMessage == "Connecting...")
+                        job.StatusMessage = outcome.Error ?? "Failed";
+                    break;
             }
         }
         catch (OperationCanceledException)
@@ -681,25 +623,6 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             job.Status = JobStatus.Failed;
             job.StatusMessage = ex.Message;
         }
-    }
-
-    // Deleted along with the queue itself in the Task 7 migration — kept as a thin
-    // delegate to the shared hasher until then.
-    private static Task<string> ComputeSha256Async(string path, CancellationToken ct)
-        => FileHasher.Sha256UpperAsync(path, ct);
-
-    /// <summary>
-    /// Picks the on-disk target for a job, refusing to overwrite a different model's file.
-    /// Thin delegate to <see cref="DownloadCollisionPolicy.ResolveAsync"/> — the generalized,
-    /// Service-layer version of this algorithm every Civitai download path now shares. Deleted
-    /// along with the queue itself in the Task 7 migration.
-    /// </summary>
-    internal static async Task<string> ResolveCollisionFreeTargetPathAsync(
-        string targetDir, string fileName, int versionId, string? expectedSha256, CancellationToken ct)
-    {
-        var resolution = await DownloadCollisionPolicy.ResolveAsync(
-            targetDir, fileName, versionId, expectedSha256, ct).ConfigureAwait(false);
-        return resolution.TargetPath;
     }
 
     #region Persistence
