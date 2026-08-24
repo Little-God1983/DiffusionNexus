@@ -1,3 +1,4 @@
+using DiffusionNexus.Domain.Utilities;
 using DiffusionNexus.Service.Classes;
 using DiffusionNexus.Service.Enums;
 using DiffusionNexus.Service.Helper;
@@ -30,7 +31,7 @@ public class JsonInfoFileReaderService
         foreach (ModelClass model in models)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            FileInfo? safetensors = model.AssociatedFilesInfo.FirstOrDefault(f => f.Extension == ".safetensors" || f.Extension == ".pt");
+            FileInfo? safetensors = model.AssociatedFilesInfo.FirstOrDefault(f => ModelFileExtensions.Matches(f.FullName, ModelFileExtensions.Sortable));
             if (safetensors == null)
             {
                 model.NoMetaData = true;

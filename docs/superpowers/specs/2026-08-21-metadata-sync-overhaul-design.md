@@ -180,11 +180,11 @@ Result is written to `ModelVersion.BaseModelRaw` + `ModelSyncState.MetadataOutco
 
 ## 5. Work breakdown (one branch `feature/metadata-sync-overhaul`, ordered, each package reviewed and green before the next)
 
-- [ ] **WP1 — Schema + sync state + derivation** · `ModelSyncState` entity/table, `ModelImage` columns, EF migration, pre-migration VACUUM INTO backup (S2), `SyncStateDeriver` (S3) with table-driven tests, downgrade test (S6).
-- [ ] **WP2 — `LibrarySyncService`** · plan/execute, steps 0–3, retry windows, single-flight guard, logging; `LoraViewerViewModel` wired to it; tile-based phases + per-tile copy deleted; tests with in-memory SQLite per test conventions.
+- [x] **WP1 — Schema + sync state + derivation** · `ModelSyncState` entity/table, `ModelImage` columns, EF migration, pre-migration VACUUM INTO backup (S2), `SyncStateDeriver` (S3) with table-driven tests, downgrade test (S6).
+- [x] **WP2 — `LibrarySyncService`** · plan/execute, steps 0–3, retry windows, single-flight guard, logging; `LoraViewerViewModel` wired to it; tile-based phases + per-tile copy deleted; tests with in-memory SQLite per test conventions.
 - [x] **WP3 — Thumbnails** · `IThumbnailProvider`, CDN poster rewrite (+ online canary), `file://`/sibling handling, attempt/failure recording, corrupt-on-decode marking, one BLOB writer, bounded parallelism; step 4.
 - [x] **WP4 — Identity chain** · `SafetensorsHeaderReader` + mapping table (fixture headers), filename heuristic, sidecar signature; chain folded into `IdentifyModelStep` (no separate `IModelIdentityResolver` — the Sorter will consume the DB in a follow-up); detail view shows the source.
-- [ ] **WP5 — One download path** · `ICivitaiModelDownloader`, `LoraPathBuilder` + `CollisionPolicy` moved to Service, all five callers migrated, post-download completion, `ILibraryChangeNotifier`, clones deleted (§4.4 list), `IsUserEdited` in the persister, card-handler bug, `FileHasher` casing (+ D2 data migration if approved).
+- [x] **WP5 — One download path** · `ICivitaiModelDownloader`, `LoraPathBuilder` + `CollisionPolicy` moved to Service, all five callers migrated, post-download completion, `ILibraryChangeNotifier`, clones deleted (§4.4 list), `IsUserEdited` in the persister, card-handler bug, `FileHasher` casing (+ D2 data migration if approved). (Plan D — this branch)
 - [ ] **WP6 — UI** · `SyncPlanDialog`, report view, settings, Unified Console polish, docs (`Doc/LoraViewer.md`).
 - [ ] **WP7 — Acceptance on the reference library** (§6) + PR.
 - [ ] **Follow-up (separate PR)** — rebase #520's Sorter onto this: drop its private resolver chain, consume DB identity, then the preview-UI rework.
