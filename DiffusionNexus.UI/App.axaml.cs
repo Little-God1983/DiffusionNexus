@@ -971,6 +971,17 @@ public partial class App : Application
             scopeFactory: sp.GetService<IServiceScopeFactory>()));
         services.AddScoped<ILoraDownloadService>(sp => sp.GetRequiredService<LoraDownloadService>());
 
+        // The cross-module "library gained a model" signal, and the ONE Civitai download path that
+        // raises it (spec §4.4 / D3) — callers must never wrap DownloadAsync in the coordinator.
+        services.AddSingleton<Domain.Services.ILibraryChangeNotifier, Infrastructure.Services.LibraryChangeNotifier>();
+        services.AddScoped<Services.Download.ICivitaiModelDownloader>(sp => new Services.Download.CivitaiModelDownloader(
+            sp.GetRequiredService<ILoraDownloadService>(),
+            sp.GetService<IDownloadCoordinator>(),
+            sp.GetService<Domain.Services.Sync.ILibrarySyncService>(),
+            sp.GetService<Domain.Services.ILibraryChangeNotifier>(),
+            sp.GetService<IServiceScopeFactory>(),
+            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+
         // Reusable LoRA catalog for the Multi-LoRA Picker (same sources as the LoRA Viewer Installed tab).
         services.AddSingleton<Services.Lora.ILoraCatalog, Services.Lora.LoraCatalog>();
 
