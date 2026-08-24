@@ -1,6 +1,7 @@
 using System.Text.Json;
 using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
+using DiffusionNexus.Tests.Sync.Service.Identity;
 using DiffusionNexus.UI.Services.Lora.Sorting;
 using FluentAssertions;
 using Moq;
@@ -427,5 +428,124 @@ public sealed class SorterMetadataResolverTests : IDisposable
         _client.Verify(c => c.GetModelVersionByHashAsync(It.IsAny<string>(), It.IsAny<string?>(),
             It.IsAny<CancellationToken>()), Times.Once);
         _client.Verify(c => c.GetModelAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ---- Identity fallback: the header and filename rungs (added with #524) ----
+
+    private string WriteSafetensors(string name, string headerJson)
+    {
+        var path = In(name);
+        File.WriteAllBytes(path, SafetensorsFixture.Safetensors(headerJson));
+        return path;
+    }
+
+    /// <summary>
+    /// The sidecar/cache/by-hash chain answers for files Civitai knows about. For everything else —
+    /// self-trained LoRAs, anything trained or fetched outside Civitai — the file itself is still
+    /// readable, and the two rungs the DB-side identity chain shipped in #524
+    /// (<c>SafetensorsHeaderReader</c> + <c>BaseModelHeaderMap</c>, then
+    /// <c>FilenameBaseModelHeuristic</c>) answer where this resolver used to give up and dump the
+    /// file into <c>Unknown\</c>.
+    /// </summary>
+    [Fact]
+    public async Task HeaderIdentifiesAFileCivitaiDoesNotKnow()
+    {
+        // The name says nothing on purpose, so the header is the only thing that can have answered.
+        var model = WriteSafetensors("unknown_thing.safetensors",
+            SafetensorsFixture.Meta(("modelspec.architecture", "stable-diffusion-xl-v1-base")));
+        _client.Setup(c => c.GetModelVersionByHashAsync("abc123", null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CivitaiModelVersion?)null);
+
+        var meta = await Resolver(_client.Object).ResolveAsync(model);
+
+        meta.BaseModelRaw.Should().Be("SDXL 1.0");
+        meta.Sha256.Should().Be("abc123", "the fallback fills the base model without discarding what the chain did resolve");
+        meta.CivitaiVersionId.Should().BeNull("a header cannot supply a Civitai version id");
+    }
+
+    /// <summary>Not a safetensors byte layout at all, so the header rung returns null and the name
+    /// is all that is left — the "MyChar_Pony_v2" case the design calls out by name.</summary>
+    [Fact]
+    public async Task FilenameGuessIsTheLastResortWhenTheHeaderSaysNothing()
+    {
+        var model = WriteModel("MyChar_Pony_v2.safetensors");
+        _client.Setup(c => c.GetModelVersionByHashAsync("abc123", null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CivitaiModelVersion?)null);
+
+        var meta = await Resolver(_client.Object).ResolveAsync(model);
+
+        meta.BaseModelRaw.Should().Be("Pony");
+    }
+
+    /// <summary>
+    /// The header read the actual weights; the name is only a guess about them. Same precedence as
+    /// the DB-side chain in <c>IdentifyModelStep</c>.
+    /// </summary>
+    [Fact]
+    public async Task TheHeaderBeatsTheFilenameWhenBothCouldAnswer()
+    {
+        var model = WriteSafetensors("MyChar_Pony_v2.safetensors",
+            SafetensorsFixture.Meta(("modelspec.architecture", "stable-diffusion-v1")));
+        _client.Setup(c => c.GetModelVersionByHashAsync("abc123", null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CivitaiModelVersion?)null);
+
+        var meta = await Resolver(_client.Object).ResolveAsync(model);
+
+        meta.BaseModelRaw.Should().Be("SD 1.5");
+    }
+
+    /// <summary>Civitai is rung 1 and stays rung 1: this file's name says Pony and its header says
+    /// SDXL, and neither gets to overrule what the API actually answered.</summary>
+    [Fact]
+    public async Task ACivitaiAnswerIsNeverOverriddenByTheFileItself()
+    {
+        var model = WriteSafetensors("MyChar_Pony_v2.safetensors",
+            SafetensorsFixture.Meta(("modelspec.architecture", "stable-diffusion-xl-v1-base")));
+        _client.Setup(c => c.GetModelVersionByHashAsync("abc123", null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CivitaiModelVersion { Id = 777, BaseModel = "Flux.1 D" });
+
+        var meta = await Resolver(_client.Object).ResolveAsync(model);
+
+        meta.BaseModelRaw.Should().Be("Flux.1 D");
+    }
+
+    /// <summary>Same for a sidecar, which wins outright without hashing or calling anything.</summary>
+    [Fact]
+    public async Task ASidecarAnswerIsNeverOverriddenByTheFileItself()
+    {
+        var model = WriteSafetensors("MyChar_Pony_v2.safetensors",
+            SafetensorsFixture.Meta(("modelspec.architecture", "stable-diffusion-xl-v1-base")));
+        File.WriteAllText(In("MyChar_Pony_v2.civitai.info"), """{"id": 555, "baseModel": "Illustrious"}""");
+
+        var meta = await Resolver(_client.Object).ResolveAsync(model);
+
+        meta.BaseModelRaw.Should().Be("Illustrious");
+        _client.VerifyNoOtherCalls();
+    }
+
+    /// <summary>
+    /// The per-hash cache means "what Civitai said for this hash", so a guess must never be written
+    /// into it. The API-failure path deliberately writes no entry precisely so the next pass retries
+    /// Civitai — caching a guess there would silently kill that retry forever and freeze a guess as
+    /// though it were an answer.
+    /// </summary>
+    [Fact]
+    public async Task AGuessIsNotCachedSoALaterCivitaiHitStillWins()
+    {
+        var model = WriteSafetensors("unknown_thing.safetensors",
+            SafetensorsFixture.Meta(("modelspec.architecture", "stable-diffusion-v1")));
+        _client.SetupSequence(c => c.GetModelVersionByHashAsync("abc123", null, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("offline"))
+            .ReturnsAsync(new CivitaiModelVersion { Id = 777, BaseModel = "Pony" });
+        var resolver = Resolver(_client.Object);
+
+        var offline = await resolver.ResolveAsync(model);
+
+        offline.BaseModelRaw.Should().Be("SD 1.5", "the file still answers when the API does not");
+        Directory.Exists(In("cache")).Should().BeFalse("a guess must not be written to the by-hash cache");
+
+        var online = await resolver.ResolveAsync(model);
+
+        online.BaseModelRaw.Should().Be("Pony", "the Civitai retry must still be able to overwrite a guess");
     }
 }

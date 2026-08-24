@@ -2,6 +2,7 @@ using System.Text.Json;
 using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Service.Services.Sync.Identity;
 
 namespace DiffusionNexus.UI.Services.Lora.Sorting;
 
@@ -91,11 +92,79 @@ public sealed class SorterMetadataResolver
         _modelTagsMemo.Clear();
     }
 
-    /// <summary>Resolution chain per spec §3: local .civitai.info sidecar → per-hash disk
-    /// cache → Civitai by-hash API (result cached). Never throws for a 404/offline, an
-    /// unreadable file or a Civitai shape change — returns metadata with null
-    /// BaseModelRaw so the file sorts into Unknown.</summary>
+    /// <summary>
+    /// Resolution chain for one on-disk file: local <c>.civitai.info</c> sidecar → per-hash disk
+    /// cache → Civitai by-hash API (result cached) → the file's own safetensors header → a guess
+    /// from its file name. Never throws for a 404, an offline API, an unreadable file or a Civitai
+    /// shape change — a file nothing can identify comes back with a null
+    /// <see cref="ResolvedLoraMetadata.BaseModelRaw"/> and sorts into Unknown. Cancellation is the
+    /// one thing that does propagate: it has to unwind the pass rather than be reported as one more
+    /// unreadable file.
+    /// </summary>
+    /// <remarks>
+    /// The last two rungs are the same ones the database-side identity chain uses
+    /// (<see cref="SafetensorsHeaderReader"/> → <see cref="BaseModelHeaderMap"/>, then
+    /// <see cref="FilenameBaseModelHeuristic"/>), called here directly rather than through
+    /// <c>IdentifyModelStep</c>: that step is driven by database rows, and this resolver exists
+    /// precisely for the files that have none. Without them a self-trained LoRA in a browsed folder
+    /// was sorted into <c>Unknown\</c> even though its own header names the architecture it was
+    /// trained on.
+    /// </remarks>
     public async Task<ResolvedLoraMetadata> ResolveAsync(string filePath, CancellationToken ct = default)
+    {
+        var resolved = await ResolveFromSidecarCacheOrApiAsync(filePath, ct);
+        if (!string.IsNullOrWhiteSpace(resolved.BaseModelRaw))
+            return resolved;
+
+        var guess = await GuessBaseModelFromFileAsync(filePath, ct);
+        return guess is null ? resolved : resolved with { BaseModelRaw = guess };
+    }
+
+    /// <summary>
+    /// What the file says about itself, asked only once every authoritative source has come up
+    /// empty — so a sidecar or Civitai answer is never overruled by a guess about it. The header
+    /// goes first because it read the actual weights; the file name is a guess about them.
+    /// </summary>
+    /// <remarks>
+    /// Both rungs emit verbatim Civitai display labels, so a file identified this way lands in the
+    /// same base-model folder as a Civitai-identified one instead of a folder only it uses.
+    /// <para>
+    /// The answer is deliberately NOT written to the per-hash cache. That cache means "what Civitai
+    /// said for this hash", and the API-failure path writes no entry precisely so the next pass can
+    /// retry — caching a guess there would kill that retry permanently and freeze the guess as
+    /// though it were an answer. Re-deriving it each pass costs one size-capped header read.
+    /// </para>
+    /// </remarks>
+    private async Task<string?> GuessBaseModelFromFileAsync(string filePath, CancellationToken ct)
+    {
+        var fileName = Path.GetFileName(filePath);
+
+        var header = await SafetensorsHeaderReader.TryReadAsync(filePath, ct);
+        var fromHeader = header is null ? null : BaseModelHeaderMap.Map(header);
+        if (fromHeader is not null)
+        {
+            _logger?.Debug(LogCategory.FileSystem, LogSource,
+                $"{fileName}: no sidecar and no Civitai match; its safetensors header says {fromHeader}.");
+            return fromHeader;
+        }
+
+        var fromName = FilenameBaseModelHeuristic.Guess(fileName);
+        if (fromName is not null)
+        {
+            _logger?.Debug(LogCategory.FileSystem, LogSource,
+                $"{fileName}: no sidecar, no Civitai match and no usable header; guessing {fromName} from the file name.");
+        }
+
+        return fromName;
+    }
+
+    /// <summary>
+    /// The authoritative rungs: local <c>.civitai.info</c> sidecar → per-hash disk cache → Civitai
+    /// by-hash API (result cached). A null <see cref="ResolvedLoraMetadata.BaseModelRaw"/> here
+    /// means none of them could answer, which is what sends <see cref="ResolveAsync"/> on to the
+    /// file itself.
+    /// </summary>
+    private async Task<ResolvedLoraMetadata> ResolveFromSidecarCacheOrApiAsync(string filePath, CancellationToken ct)
     {
         if (TryReadSidecar(filePath, out var sidecarMeta))
             return sidecarMeta!;

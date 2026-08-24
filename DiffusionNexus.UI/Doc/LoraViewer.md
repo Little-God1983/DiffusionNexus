@@ -878,17 +878,21 @@ If `free < required + 1 GB` safety margin, the available-space bar turns red and
 
 Every run writes a full plan to `%LocalAppData%\DiffusionNexus\SortHistory\{timestamp}.json` — one record per file with old path → new path, operation, sizes, and each sidecar's source/target. Completion is journalled separately, one appended line per finished file, into `{timestamp}.completed.jsonl`: appending is O(1) and a killed run costs at most the last line, whereas rewriting the plan file per file was O(n²) and left truncated JSON. This enables a future "Restore previous structure" UI (not v1). If the history directory cannot be written the run continues without a restore point.
 
-### Metadata cache
+### Metadata resolution and cache
 
 Files not yet in the database (when browsing arbitrary folders) are resolved via:
 
 1. Local `.civitai.info` sidecar next to the file (also the source of the tags used for category inference).
 2. Per-hash disk cache (below).
 3. Civitai hash lookup API call (same as the sync pipeline), followed by a `/models/{id}` call for the owning model's **tags** — the by-hash response is a model *version* and carries none, so without this second call every sidecar-less file would sort without a category. A failed tag call is non-fatal: the base model and version id are kept and cached, and the tag list is left unresolved so a later pass retries it (an empty-but-resolved list is never re-fetched).
+4. The file's own **safetensors header** (`SafetensorsHeaderReader` → `BaseModelHeaderMap`).
+5. A guess from the **file name** (`FilenameBaseModelHeuristic`).
+
+Rungs 4 and 5 are the same two the database-side identity chain uses, called directly rather than through `IdentifyModelStep` — that step is driven by database rows and these files have none. They run only after everything authoritative has come up empty, so a sidecar or Civitai answer is never overruled by a guess about it, and the header goes before the file name because it read the actual weights. Both emit verbatim Civitai display labels, so a file identified this way lands in the *same* base-model folder as a Civitai-identified one. Before they existed, a self-trained LoRA in a browsed folder was sorted into `Unknown\` even though its own header names the architecture it was trained on.
 
 DB rows are matched by path earlier, when the cached library is loaded; there is no by-hash DB lookup (descoped from the spec). A file that cannot be hashed or an API shape change resolves as unknown rather than failing the pass, and the API key is read once per pass, not once per file.
 
-Downloaded metadata is cached in `%LocalAppData%\DiffusionNexus\SorterCache\{sha256}.json` (file name always lower-cased, so the store survived the switch to the library-wide uppercase `FileHasher.Sha256Upper`) so a re-run or re-preview of the same file normally costs no network call at all. One exception is deliberate: an entry whose tag lookup never succeeded is stored as *unresolved* rather than as "this model has no tags", so the next pass retries it — that is what stops one transient Civitai failure from leaving a file category-less forever. Within a single pass the tag lookup is also memoized per model id, so a folder full of versions of the same model costs one `/models/{id}` call, not one per file. The cache is a lookup cache only — the DB is never polluted with unregistered folders.
+Downloaded metadata is cached in `%LocalAppData%\DiffusionNexus\SorterCache\{sha256}.json` (file name always lower-cased, so the store survived the switch to the library-wide uppercase `FileHasher.Sha256Upper`) so a re-run or re-preview of the same file normally costs no network call at all. One exception is deliberate: an entry whose tag lookup never succeeded is stored as *unresolved* rather than as "this model has no tags", so the next pass retries it — that is what stops one transient Civitai failure from leaving a file category-less forever. Within a single pass the tag lookup is also memoized per model id, so a folder full of versions of the same model costs one `/models/{id}` call, not one per file. Rungs 4 and 5 are deliberately never written to that cache: it means *what Civitai said for this hash*, and the API-failure path writes no entry precisely so the next pass retries — a cached guess would kill that retry permanently and freeze the guess as though it were an answer. They are re-derived each pass instead, at the cost of one size-capped header read. The cache is a lookup cache only — the DB is never polluted with unregistered folders.
 
 ### Execution
 
