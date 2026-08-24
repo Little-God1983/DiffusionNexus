@@ -117,4 +117,55 @@ public class CoreDbMigrationTests
             tempDir.Delete(recursive: true);
         }
     }
+
+    /// <summary>
+    /// Mirrors the <see cref="SyncOutcome.NotIdentified"/> string round-trip above for
+    /// <see cref="SyncOutcome.Header"/> (Plan C) — the identify chain's safetensors-header rung —
+    /// so a future member rename cannot silently change what is stored on disk for it either.
+    /// </summary>
+    [Fact]
+    public void ModelSyncState_HeaderOutcome_RoundTripsAsStoredString()
+    {
+        var tempDir = Directory.CreateTempSubdirectory();
+        var dbPath = Path.Combine(tempDir.FullName, "syncstate-header-test.db");
+        try
+        {
+            var options = new DbContextOptionsBuilder<DiffusionNexusCoreDbContext>()
+                .UseSqlite($"Data Source={dbPath};Pooling=False")
+                .Options;
+
+            using (var ctx = new DiffusionNexusCoreDbContext(options))
+            {
+                ctx.Database.Migrate();
+                ctx.Models.Add(new Model
+                {
+                    Name = "header-outcome-model",
+                    SyncState = new ModelSyncState
+                    {
+                        MetadataOutcome = SyncOutcome.Header,
+                        HeaderCheckedAt = DateTimeOffset.UtcNow,
+                    }
+                });
+                ctx.SaveChanges();
+            }
+
+            using (var ctx = new DiffusionNexusCoreDbContext(options))
+            {
+                var model = ctx.Models.Include(m => m.SyncState).Single();
+                model.SyncState.Should().NotBeNull();
+                model.SyncState!.MetadataOutcome.Should().Be(SyncOutcome.Header);
+                model.SyncState.HeaderCheckedAt.Should().NotBeNull();
+
+                // Stored as text, not as the enum's ordinal.
+                var stored = ctx.Database.SqlQueryRaw<string>(
+                    "SELECT MetadataOutcome AS Value FROM ModelSyncStates").Single();
+                stored.Should().Be(nameof(SyncOutcome.Header));
+            }
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            tempDir.Delete(recursive: true);
+        }
+    }
 }

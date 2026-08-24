@@ -6,21 +6,25 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Service.Services.Sync.Identity;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace DiffusionNexus.Service.Services.Sync.Steps;
 
 /// <summary>
 /// Step 1 — establishes what a local file actually <i>is</i>: stored/computed SHA256 →
-/// Civitai hash lookup → local sidecar fallback. Replaces the ViewModel's Phase 1 / 1b and
-/// its per-tile metadata copy (#521 WP2).
+/// Civitai hash lookup → local sidecar fallback → the file's own safetensors header →
+/// a guess from the filename. Replaces the ViewModel's Phase 1 / 1b and its per-tile
+/// metadata copy (#521 WP2, WP4).
 /// </summary>
 /// <remarks>
 /// Every path stamps <c>ModelSyncState</c>, which is the whole point of the overhaul: a run that
 /// found nothing must be distinguishable from a run that never looked, or the next run repeats
 /// the same 2 500 fruitless requests. Successful outcomes (<see cref="SyncOutcome.Matched"/>,
-/// <see cref="SyncOutcome.Sidecar"/>, <see cref="SyncOutcome.NotIdentified"/>) reset the attempt
-/// counter; only <see cref="SyncOutcome.Error"/> increments it, which is what bounds retries.
+/// <see cref="SyncOutcome.Sidecar"/>, <see cref="SyncOutcome.Header"/>,
+/// <see cref="SyncOutcome.Heuristic"/>, <see cref="SyncOutcome.NotIdentified"/>) reset the
+/// attempt counter; only <see cref="SyncOutcome.Error"/> increments it, which is what bounds
+/// retries.
 /// </remarks>
 public sealed class IdentifyModelStep : ISyncStep
 {
@@ -59,7 +63,7 @@ public sealed class IdentifyModelStep : ISyncStep
     public SyncStepKind Kind => SyncStepKind.IdentifyModel;
 
     /// <inheritdoc />
-    public string Description => "Identify models on Civitai";
+    public string Description => "Identify models (Civitai, sidecar, file header, filename)";
 
     /// <summary>Hash (large files) + two API calls (hash lookup, model page) with 1.5 s pacing between them.</summary>
     public TimeSpan EstimatedPerItem => TimeSpan.FromSeconds(3);
@@ -130,7 +134,7 @@ public sealed class IdentifyModelStep : ISyncStep
 
         // A sidecar that appeared or changed since the last look is new evidence, so it beats the
         // retry window: the user just dropped a .civitai.info next to the file and expects it read.
-        if (candidate.Outcome is not (SyncOutcome.Sidecar or SyncOutcome.NotIdentified)) return false;
+        if (candidate.Outcome is not (SyncOutcome.Sidecar or SyncOutcome.Header or SyncOutcome.Heuristic or SyncOutcome.NotIdentified)) return false;
         if (candidate.SidecarSignature is null) return false;
 
         var signature = SidecarMetadataApplier.Find(candidate.LocalPath).Signature;
@@ -153,7 +157,8 @@ public sealed class IdentifyModelStep : ISyncStep
         // rejected by SaveChanges. That rejection is survivable now (see the catch below), but a
         // failure row for a model the user deliberately deleted is noise, and hashing a
         // multi-gigabyte file for a model that no longer exists is wasted work on top of it.
-        if (await uow.Models.GetByIdAsync(candidate.ModelId, ct).ConfigureAwait(false) is null)
+        var dbModel = await uow.Models.GetByIdAsync(candidate.ModelId, ct).ConfigureAwait(false);
+        if (dbModel is null)
         {
             _logger?.Debug(LogCategory.General, LogSource,
                 $"Skipped '{candidate.Name}': model {candidate.ModelId} was deleted before the run reached it");
@@ -180,11 +185,77 @@ public sealed class IdentifyModelStep : ISyncStep
             // cancelled out of would be stamped NotIdentified and then left alone for 30 days.
             ct.ThrowIfCancellationRequested();
 
-            var outcome = sidecar.Applied ? SyncOutcome.Sidecar : SyncOutcome.NotIdentified;
-            await StampAsync(uow, candidate.ModelId, outcome, now, sidecar.Signature, error: null, ct).ConfigureAwait(false);
+            if (sidecar.Applied)
+            {
+                await StampAsync(uow, candidate.ModelId, SyncOutcome.Sidecar, now, sidecar.Signature, error: null, headerCheckedAt: null, ct).ConfigureAwait(false);
+                return SyncItemResult.Success;
+            }
 
-            _logger?.Debug(LogCategory.Network, LogSource,
-                $"'{candidate.Name}' not on Civitai → {outcome}", sidecar.SidecarPath);
+            // No Civitai match, no sidecar — read the file's own header, then guess from its name.
+            var header = await SafetensorsHeaderReader.TryReadAsync(candidate.LocalPath, ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            var headerCheckedAt = header is not null ? now : (DateTimeOffset?)null;
+            var label = header is not null ? BaseModelHeaderMap.Map(header) : null;
+            var rung = label is not null ? SyncOutcome.Header : (SyncOutcome?)null;
+            if (label is null)
+            {
+                label = FilenameBaseModelHeuristic.Guess(Path.GetFileNameWithoutExtension(candidate.LocalPath));
+                if (label is not null) rung = SyncOutcome.Heuristic;
+            }
+
+            SyncOutcome outcome;
+            if (label is null)
+            {
+                // Nothing proposed a value at all.
+                outcome = SyncOutcome.NotIdentified;
+            }
+            else
+            {
+                var dbVersion = await uow.Models.GetVersionByIdAsync(candidate.VersionId, ct).ConfigureAwait(false);
+                var written = dbVersion is not null && BaseModelWriter.CanFill(dbVersion) && BaseModelWriter.Write(dbVersion, label);
+
+                if (written)
+                {
+                    // The rung that actually set the value is the one that gets credit for it.
+                    outcome = rung!.Value;
+
+                    // Mirrors SidecarMetadataApplier's own stamp the instant its write lands (~171-176):
+                    // a version whose base model was just filled from its own file is no longer
+                    // "unsynced", and several tile orderings (TileGroupingHelper) read LastSyncedAt to
+                    // mean exactly that.
+                    //
+                    // Source is deliberately NOT mirrored as unconditionally as the sidecar's. This
+                    // rung supplies one field, not a model's metadata set: a model whose name, tags,
+                    // images and CivitaiId all came from Civitai has not become locally sourced
+                    // because we read its header once after the upstream page 404'd. A sidecar
+                    // genuinely carries the whole set, which is why that branch may claim the model
+                    // outright and this one may only claim a model nothing else has claimed.
+                    if (dbModel.Source != DataSource.CivitaiApi)
+                        dbModel.Source = DataSource.LocalFile;
+
+                    dbModel.LastSyncedAt = now;
+                }
+                else
+                {
+                    // A label was produced, but CanFill said no — the value is already real, or the
+                    // version is user-edited — so the write never happened. Stamping the rung anyway
+                    // would be a lie: the detail panel's "Identity source: file header" row would be
+                    // describing the provenance of a Base Model the header had nothing to do with.
+                    // Preserve whatever settled identity the model already carried instead, so the
+                    // retry window and the sidecar-evidence bypass (IsDue, below) keep tracking the
+                    // real source rather than being reset by a rung that only reconfirmed it; fall
+                    // back to NotIdentified only when there was no settled identity to preserve.
+                    outcome = candidate.Outcome is SyncOutcome.Matched or SyncOutcome.Sidecar
+                        or SyncOutcome.Header or SyncOutcome.Heuristic
+                        ? candidate.Outcome
+                        : SyncOutcome.NotIdentified;
+                }
+            }
+
+            await StampAsync(uow, candidate.ModelId, outcome, now, sidecar.Signature, error: null, headerCheckedAt, ct).ConfigureAwait(false);
+
+            _logger?.Debug(LogCategory.General, LogSource,
+                $"'{candidate.Name}' not on Civitai → {outcome}" + (label is not null ? $" ({label})" : string.Empty), sidecar.SidecarPath);
             return SyncItemResult.Success;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -210,7 +281,7 @@ public sealed class IdentifyModelStep : ISyncStep
 
             try
             {
-                await StampAsync(uow, candidate.ModelId, SyncOutcome.Error, now, signature: null, ex.Message, ct).ConfigureAwait(false);
+                await StampAsync(uow, candidate.ModelId, SyncOutcome.Error, now, signature: null, ex.Message, headerCheckedAt: null, ct).ConfigureAwait(false);
             }
             catch (Exception stampEx) when (stampEx is not OperationCanceledException && SyncFaults.IsItemFault(stampEx))
             {
@@ -259,13 +330,13 @@ public sealed class IdentifyModelStep : ISyncStep
         if (!applied || modelLevelDataMissing)
         {
             var reason = $"Civitai match applied nothing (model {candidate.ModelId}, version {version.Id})";
-            await StampAsync(uow, candidate.ModelId, SyncOutcome.Error, now, signature: null, reason, ct).ConfigureAwait(false);
+            await StampAsync(uow, candidate.ModelId, SyncOutcome.Error, now, signature: null, reason, headerCheckedAt: null, ct).ConfigureAwait(false);
 
             _logger?.Warn(LogCategory.Network, LogSource, $"Identify failed for '{candidate.Name}': {reason}");
             return SyncItemResult.Failure(reason);
         }
 
-        await StampAsync(uow, candidate.ModelId, SyncOutcome.Matched, now, signature: null, error: null, ct).ConfigureAwait(false);
+        await StampAsync(uow, candidate.ModelId, SyncOutcome.Matched, now, signature: null, error: null, headerCheckedAt: null, ct).ConfigureAwait(false);
 
         _logger?.Debug(LogCategory.Network, LogSource, $"Identified '{candidate.Name}' on Civitai", $"versionId={version.Id}");
         return SyncItemResult.Success;
@@ -300,7 +371,7 @@ public sealed class IdentifyModelStep : ISyncStep
 
     private static async Task StampAsync(
         IUnitOfWork uow, int modelId, SyncOutcome outcome, DateTimeOffset now,
-        string? signature, string? error, CancellationToken ct)
+        string? signature, string? error, DateTimeOffset? headerCheckedAt, CancellationToken ct)
     {
         var state = await uow.SyncStates.GetOrCreateAsync(modelId, ct).ConfigureAwait(false);
 
@@ -322,6 +393,11 @@ public sealed class IdentifyModelStep : ISyncStep
         // Only the sidecar paths know the signature; Matched leaves the stored one alone so a later
         // fallback still notices whether that sidecar has changed.
         if (signature is not null) state.SidecarSignature = signature;
+
+        // Only the miss-branch ever reads the header, and only when the file itself could be
+        // opened as one — a non-safetensors file or a 404 that never reaches this stamp leaves the
+        // stored value alone rather than overwriting it with null.
+        if (headerCheckedAt is not null) state.HeaderCheckedAt = headerCheckedAt;
 
         await uow.SaveChangesAsync(ct).ConfigureAwait(false);
     }

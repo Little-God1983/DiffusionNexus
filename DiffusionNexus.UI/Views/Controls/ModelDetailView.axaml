@@ -234,7 +234,7 @@
               <!-- Metadata -->
               <StackPanel Grid.Column="1" Spacing="8" VerticalAlignment="Top">
                 <Grid ColumnDefinitions="Auto,*"
-                      RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto"
+                      RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto"
                       Margin="0">
 
                   <TextBlock Grid.Row="0" Grid.Column="0"
@@ -273,33 +273,47 @@
                             ToolTip.Tip="Override the base model for the currently selected version (saved per-version)"/>
 
                   <TextBlock Grid.Row="3" Grid.Column="0"
+                             Text="Identity source:"
+                             Foreground="#FF66AA"
+                             FontWeight="SemiBold"
+                             Margin="0,0,12,6"
+                             IsVisible="{Binding HasIdentitySource}"
+                             ToolTip.Tip="How the base model was determined. 'Guessed from filename' is the lowest-confidence source — correct it via the Base Model dropdown and your choice is kept."/>
+                  <TextBlock Grid.Row="3" Grid.Column="1"
+                             Text="{Binding IdentitySourceDisplay}"
+                             Foreground="White"
+                             Margin="0,0,0,6"
+                             IsVisible="{Binding HasIdentitySource}"
+                             ToolTip.Tip="How the base model was determined. 'Guessed from filename' is the lowest-confidence source — correct it via the Base Model dropdown and your choice is kept."/>
+
+                  <TextBlock Grid.Row="4" Grid.Column="0"
                              Text="File:"
                              Foreground="#FF66AA"
                              FontWeight="SemiBold"
                              Margin="0,0,12,6"/>
-                  <TextBlock Grid.Row="3" Grid.Column="1"
+                  <TextBlock Grid.Row="4" Grid.Column="1"
                              Text="{Binding FileNameDisplay}"
                              Foreground="White"
                              TextWrapping="Wrap"
                              Margin="0,0,0,6"/>
 
-                  <TextBlock Grid.Row="4" Grid.Column="0"
+                  <TextBlock Grid.Row="5" Grid.Column="0"
                              Text="Type:"
                              Foreground="#FF66AA"
                              FontWeight="SemiBold"
                              Margin="0,0,12,6"/>
-                  <TextBlock Grid.Row="4" Grid.Column="1"
+                  <TextBlock Grid.Row="5" Grid.Column="1"
                              Text="{Binding ModelTypeDisplay}"
                              Foreground="White"
                              Margin="0,0,0,6"/>
 
-                  <TextBlock Grid.Row="5" Grid.Column="0"
+                  <TextBlock Grid.Row="6" Grid.Column="0"
                              Text="Category:"
                              Foreground="#FF66AA"
                              FontWeight="SemiBold"
                              Margin="0,0,12,6"
                              VerticalAlignment="Center"/>
-                  <ComboBox Grid.Row="5" Grid.Column="1"
+                  <ComboBox Grid.Row="6" Grid.Column="1"
                             ItemsSource="{Binding AvailableCategories}"
                             SelectedItem="{Binding SelectedCategory, Mode=TwoWay}"
                             Background="#1A1A1A"
@@ -308,22 +322,22 @@
                             HorizontalAlignment="Stretch"
                             ToolTip.Tip="Select a category (overrides tag-based inference)"/>
 
-                  <TextBlock Grid.Row="6" Grid.Column="0"
+                  <TextBlock Grid.Row="7" Grid.Column="0"
                              Text="Creator:"
                              Foreground="#FF66AA"
                              FontWeight="SemiBold"
                              Margin="0,0,12,6"/>
-                  <TextBlock Grid.Row="6" Grid.Column="1"
+                  <TextBlock Grid.Row="7" Grid.Column="1"
                              Text="{Binding CreatorDisplay}"
                              Foreground="White"
                              Margin="0,0,0,6"/>
 
-                  <TextBlock Grid.Row="7" Grid.Column="0"
+                  <TextBlock Grid.Row="8" Grid.Column="0"
                              Text="Folder:"
                              Foreground="#FF66AA"
                              FontWeight="SemiBold"
                              Margin="0,0,12,0"/>
-                  <SelectableTextBlock Grid.Row="7" Grid.Column="1"
+                  <SelectableTextBlock Grid.Row="8" Grid.Column="1"
                                        Text="{Binding FolderPathDisplay}"
                                        Foreground="White"
                                        TextWrapping="Wrap"

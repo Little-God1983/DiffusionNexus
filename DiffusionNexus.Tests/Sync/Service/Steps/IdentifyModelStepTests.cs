@@ -9,12 +9,14 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Service.Services.Sync;
+using DiffusionNexus.Service.Services.Sync.Identity;
 using DiffusionNexus.Service.Services.Sync.Steps;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
+using static DiffusionNexus.Tests.Sync.Service.Identity.SafetensorsFixture;
 
 namespace DiffusionNexus.Tests.Sync.Service.Steps;
 
@@ -69,6 +71,11 @@ public sealed class IdentifyModelStepTests : IDisposable
 
     /// <summary>A path inside the temp dir that deliberately does not exist on disk.</summary>
     private string MissingModelFile(string fileName) => Path.Combine(_tempDir.FullName, fileName);
+
+    // Safetensors(...) / Meta(...) — the safetensors byte-layout builders this class uses to
+    // exercise IdentifyModelStep's header rung against a file SafetensorsHeaderReader actually
+    // parses — come from the shared SafetensorsFixture (see the using static above), so this
+    // class's copy can never drift from SafetensorsHeaderReaderTests'.
 
     /// <summary>
     /// Seeds a LoRA-family model with one version and one primary local file, plus (optionally)
@@ -490,6 +497,455 @@ public sealed class IdentifyModelStepTests : IDisposable
         state.MetadataAttempts.Should().Be(0);
         // "" is the signature of "no sidecar exists" — stored so the next run can notice one appearing.
         state.SidecarSignature.Should().Be(string.Empty);
+    }
+
+    /// <summary>
+    /// Plan C. No Civitai match, no sidecar, but the file's own safetensors header names its
+    /// architecture — the identify chain's second rung.
+    /// </summary>
+    [Fact]
+    public async Task Execute_HeaderIdentifiesAnSdxlLora()
+    {
+        var path = NewModelFile("header-sdxl.safetensors",
+            Safetensors(Meta(("modelspec.architecture", "stable-diffusion-xl-v1-base"))));
+        var (modelId, _) = await SeedAsync("header-sdxl", path);
+
+        var step = NewNotFoundStep();
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        var result = await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+
+        var state = await ReadStateAsync(modelId);
+        state!.MetadataOutcome.Should().Be(SyncOutcome.Header);
+        state.HeaderCheckedAt.Should().Be(state.MetadataCheckedAt);
+
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+        saved!.Versions.Single().BaseModelRaw.Should().Be("SDXL 1.0");
+        saved.Versions.Single().BaseModel.Should().Be(BaseModelType.SDXL10);
+
+        // C2: the write landed, so the model is stamped exactly like the sidecar branch stamps it —
+        // no longer "never synced" to anything that reads LastSyncedAt (TileGroupingHelper's tile
+        // ordering among them). Compared against the stamp the step actually wrote (its wall clock,
+        // ExecuteOneAsync's own `now`), not the fixture's fixed `Now` used only for due-ness.
+        saved.Source.Should().Be(DataSource.LocalFile);
+        saved.LastSyncedAt.Should().Be(state.MetadataCheckedAt);
+
+        // Stamped at Now like everything else — the same run's clock is not due again immediately.
+        var again = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        again.Select(i => i.ModelId).Should().NotContain(modelId);
+    }
+
+    /// <summary>
+    /// The header rung supplies ONE field, so it may claim a model nothing else has claimed — but
+    /// it must not relabel a model whose name, tags, images and CivitaiId all came from Civitai.
+    /// A taken-down upstream page (404) next to a still-readable header is exactly that case.
+    /// </summary>
+    [Fact]
+    public async Task Execute_HeaderWriteDoesNotRelabelACivitaiSourcedModel()
+    {
+        var path = NewModelFile("civitai-sourced.safetensors",
+            Safetensors(Meta(("modelspec.architecture", "stable-diffusion-xl-v1-base"))));
+        var (modelId, _) = await SeedAsync("civitai-sourced", path);
+
+        // This model came out of Civitai in an earlier life; its page 404s now.
+        using (var seedScope = NewScope())
+        {
+            var seedUow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var seeded = await seedUow.Models.GetByIdAsync(modelId);
+            seeded!.Source = DataSource.CivitaiApi;
+            await seedUow.SaveChangesAsync();
+        }
+
+        var step = NewNotFoundStep();
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        var state = await ReadStateAsync(modelId);
+
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+
+        // The write lands...
+        saved!.Versions.Single().BaseModelRaw.Should().Be("SDXL 1.0");
+
+        // ...and the freshness stamp lands with it, because something really was applied...
+        saved.LastSyncedAt.Should().Be(state!.MetadataCheckedAt);
+
+        // ...but one locally-read field does not make a Civitai-sourced model locally sourced.
+        saved.Source.Should().Be(DataSource.CivitaiApi);
+    }
+
+    /// <summary>
+    /// Pony/Illustrious/NoobAI checkpoints are all trained on plain SDXL architecture, so the
+    /// model-name hint must win over the coarser architecture reading — <see cref="BaseModelHeaderMap"/>'s
+    /// own evaluation order, exercised here through the step.
+    /// </summary>
+    [Fact]
+    public async Task Execute_NameHintBeatsArchitecture()
+    {
+        var path = NewModelFile("header-pony.safetensors",
+            Safetensors(Meta(
+                ("modelspec.architecture", "stable-diffusion-xl-v1-base"),
+                ("ss_sd_model_name", "ponyDiffusionV6XL"))));
+        var (modelId, _) = await SeedAsync("header-pony", path);
+
+        var step = NewNotFoundStep();
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        (await ReadStateAsync(modelId))!.MetadataOutcome.Should().Be(SyncOutcome.Header);
+
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+        saved!.Versions.Single().BaseModelRaw.Should().Be("Pony");
+    }
+
+    /// <summary>
+    /// The header rung only fills a placeholder — a version that already carries a real base model
+    /// (from an earlier sidecar apply, say) is left exactly as it was.
+    /// </summary>
+    [Fact]
+    public async Task Execute_HeaderDoesNotOverwriteARealBaseModel()
+    {
+        var path = NewModelFile("header-real.safetensors",
+            Safetensors(Meta(("modelspec.architecture", "stable-diffusion-xl-v1-base"))));
+        var (modelId, _) = await SeedAsync("header-real", path);
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = await uow.Models.GetByIdWithIncludesAsync(modelId);
+            model!.Versions.Single().BaseModelRaw = "Flux.1 D";
+            await uow.SaveChangesAsync();
+        }
+
+        var step = NewNotFoundStep();
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        // C1: the write was skipped, so the outcome must NOT claim the header rung — that would
+        // read as "Identity source: file header" directly under a Base Model the header never
+        // actually supplied. There was no settled identity to preserve (a fresh row), so it falls
+        // back to NotIdentified. The header WAS still read, though — HeaderCheckedAt says so.
+        var state = await ReadStateAsync(modelId);
+        state!.MetadataOutcome.Should().Be(SyncOutcome.NotIdentified);
+        state.HeaderCheckedAt.Should().NotBeNull();
+
+        using var readScope = NewScope();
+        var readUow = readScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var saved = await readUow.Models.GetByIdWithIncludesAsync(modelId);
+        saved!.Versions.Single().BaseModelRaw.Should().Be("Flux.1 D");
+
+        // C2: no write, no sync stamp either.
+        saved.LastSyncedAt.Should().BeNull();
+    }
+
+    /// <summary>
+    /// SF2. A legacy row blanked by the pre-F6 sidecar-blanking bug carries <c>""</c>, not
+    /// <c>"???"</c> — <see cref="SyncStateDeriver.IsPlaceholder"/> already treats that as "carries
+    /// no information" and selects it for identification, so <see cref="BaseModelWriter.CanFill"/>
+    /// must agree, or the header rung finds the answer, stamps <see cref="SyncOutcome.Header"/> (a
+    /// chip that reads as resolved), and never actually writes it.
+    /// </summary>
+    [Fact]
+    public async Task Execute_HeaderFillsALegacyBlankBaseModelRaw()
+    {
+        var path = NewModelFile("header-blank.safetensors",
+            Safetensors(Meta(("modelspec.architecture", "stable-diffusion-xl-v1-base"))));
+        var (modelId, _) = await SeedAsync("header-blank", path);
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = await uow.Models.GetByIdWithIncludesAsync(modelId);
+            model!.Versions.Single().BaseModelRaw = string.Empty;
+            await uow.SaveChangesAsync();
+        }
+
+        var step = NewNotFoundStep();
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        (await ReadStateAsync(modelId))!.MetadataOutcome.Should().Be(SyncOutcome.Header);
+
+        using var readScope = NewScope();
+        var readUow = readScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var saved = await readUow.Models.GetByIdWithIncludesAsync(modelId);
+        saved!.Versions.Single().BaseModelRaw.Should().Be("SDXL 1.0", "a blank string is a missing answer, same as \"???\"");
+    }
+
+    /// <summary>
+    /// The header rung honors <see cref="ModelVersion.IsUserEdited"/> exactly like the sidecar
+    /// formats do — a user's own edit is never overwritten, even when the stored value is still the
+    /// legacy placeholder.
+    /// </summary>
+    [Fact]
+    public async Task Execute_HeaderRespectsUserEditedVersion()
+    {
+        var path = NewModelFile("header-useredited.safetensors",
+            Safetensors(Meta(("modelspec.architecture", "stable-diffusion-xl-v1-base"))));
+        var (modelId, _) = await SeedAsync("header-useredited", path);
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = await uow.Models.GetByIdWithIncludesAsync(modelId);
+            model!.Versions.Single().IsUserEdited = true;
+            await uow.SaveChangesAsync();
+        }
+
+        var step = NewNotFoundStep();
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        // C1: same reasoning as Execute_HeaderDoesNotOverwriteARealBaseModel — CanFill said no
+        // (the version is user-edited), so the header rung is not credited with a value it never
+        // actually wrote.
+        (await ReadStateAsync(modelId))!.MetadataOutcome.Should().Be(SyncOutcome.NotIdentified);
+
+        using var readScope = NewScope();
+        var readUow = readScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var saved = await readUow.Models.GetByIdWithIncludesAsync(modelId);
+        saved!.Versions.Single().BaseModelRaw.Should().Be("???");
+    }
+
+    /// <summary>
+    /// C1, the reviewer's exact scenario. Run 1: a sidecar identifies the model as Pony. The user
+    /// then deletes the <c>.civitai.info</c>. Run 2: 404, no sidecar, and the file's own header
+    /// parses as plain SDXL — a real value, but <see cref="BaseModelWriter.CanFill"/> says no
+    /// (Pony is already real), so nothing is written. Before this fix the outcome was stamped
+    /// <see cref="SyncOutcome.Header"/> anyway, purely because the header *said* something —
+    /// leaving the detail panel's "Identity source: file header" row directly under a Base Model
+    /// of Pony the header never actually supplied. Both the value and the <c>Sidecar</c> outcome
+    /// must survive the header run untouched, and a third run must not churn — the sidecar's
+    /// disappearance was already recorded as new evidence and consumed.
+    /// </summary>
+    [Fact]
+    public async Task Execute_SidecarDeletedThenHeaderRunPreservesSidecarOutcome()
+    {
+        var path = NewModelFile("sidecar-then-header.safetensors",
+            Safetensors(Meta(("modelspec.architecture", "stable-diffusion-xl-v1-base"))));
+        var (modelId, _) = await SeedAsync("sidecar-then-header", path);
+
+        // Deliberately no "modelId": setting Model.CivitaiId would exclude the model from the next
+        // ordinary (non-forced) Library selection entirely — a real effect, but not the one this
+        // test is about — so run 2 would never even see it as a candidate.
+        var sidecarPath = Path.Combine(_tempDir.FullName, "sidecar-then-header.civitai.info");
+        var sidecarJson = """
+        {"id":700,"baseModel":"Pony","trainedWords":["x"],
+         "model":{"name":"N","nsfw":false},
+         "files":[{"name":"sidecar-then-header.safetensors","primary":true,"hashes":{"SHA256":"ABC"}}],
+         "images":[]}
+        """;
+        await File.WriteAllTextAsync(sidecarPath, sidecarJson);
+
+        var step = NewNotFoundStep();
+
+        // Run 1: the sidecar identifies the model as Pony.
+        var run1Items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        await step.ExecuteOneAsync(run1Items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        (await ReadStateAsync(modelId))!.MetadataOutcome.Should().Be(SyncOutcome.Sidecar);
+
+        // The user deletes the sidecar.
+        File.Delete(sidecarPath);
+
+        // Run 2: the sidecar's disappearance is new evidence, so this is due immediately — no need
+        // to wait out the 30-day window (the same bypass Select_ANewSidecarMakesAHeaderIdentifiedModelDue
+        // exercises for a sidecar *appearing*).
+        var run2Items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        run2Items.Select(i => i.ModelId).Should().Contain(modelId);
+
+        await step.ExecuteOneAsync(run2Items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        var state = await ReadStateAsync(modelId);
+        state!.MetadataOutcome.Should().Be(SyncOutcome.Sidecar,
+            "the header never actually wrote anything, so the prior settled identity must be preserved");
+        state.HeaderCheckedAt.Should().NotBeNull("the header WAS read this run, even though nothing came of it");
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+            saved!.Versions.Single().BaseModelRaw.Should().Be(
+                "Pony", "the sidecar's value must survive a header run that found nothing new to say");
+        }
+
+        // A third run must not churn: the deletion was already consumed as evidence on run 2, and
+        // run 2's stamp recorded the file's current (sidecar-less) signature.
+        var run3Items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        run3Items.Select(i => i.ModelId).Should().NotContain(modelId);
+    }
+
+    /// <summary>
+    /// A safetensors file whose header parses fine but carries none of the three metadata keys —
+    /// the header rung reads it (and stamps <c>HeaderCheckedAt</c>), finds nothing, and the
+    /// filename heuristic is the last resort before giving up.
+    /// </summary>
+    [Fact]
+    public async Task Execute_FilenameHeuristicIsTheLastResortBeforeNotIdentified()
+    {
+        var path = NewModelFile("MyChar_Pony_v2.safetensors",
+            Safetensors("""{"tensor.weight":{"dtype":"F16","shape":[4],"data_offsets":[0,8]}}"""));
+        var (modelId, _) = await SeedAsync("MyChar_Pony_v2", path);
+
+        var step = NewNotFoundStep();
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        var state = await ReadStateAsync(modelId);
+        state!.MetadataOutcome.Should().Be(SyncOutcome.Heuristic);
+        // The header WAS read — it just said nothing usable.
+        state.HeaderCheckedAt.Should().NotBeNull();
+
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+        saved!.Versions.Single().BaseModelRaw.Should().Be("Pony");
+
+        // C2: the heuristic rung's write is stamped exactly like the header rung's.
+        saved.Source.Should().Be(DataSource.LocalFile);
+        saved.LastSyncedAt.Should().Be(state.MetadataCheckedAt);
+    }
+
+    /// <summary>
+    /// A non-safetensors model file (a raw <c>.pt</c> checkpoint) never reaches
+    /// <see cref="SafetensorsHeaderReader"/>'s successful path — <c>TryRead</c> rejects the
+    /// extension outright — so the step must skip straight to the filename heuristic without
+    /// stamping a header check that never happened.
+    /// </summary>
+    [Fact]
+    public async Task Execute_NonSafetensorsFileSkipsStraightToHeuristic()
+    {
+        var path = NewModelFile("style_sdxl.pt");
+        var (modelId, _) = await SeedAsync("style_sdxl", path);
+
+        var step = NewNotFoundStep();
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        var state = await ReadStateAsync(modelId);
+        state!.MetadataOutcome.Should().Be(SyncOutcome.Heuristic);
+        state.HeaderCheckedAt.Should().BeNull();
+
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+        saved!.Versions.Single().BaseModelRaw.Should().Be("SDXL 1.0");
+    }
+
+    /// <summary>
+    /// Every rung — Civitai, sidecar, header, filename — comes up empty: the file is genuinely
+    /// unidentifiable and no base model is written.
+    /// </summary>
+    [Fact]
+    public async Task Execute_NothingMatchesStampsNotIdentified()
+    {
+        var path = NewModelFile("totally_random_name.pt");
+        var (modelId, _) = await SeedAsync("totally_random_name", path);
+
+        var step = NewNotFoundStep();
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        (await ReadStateAsync(modelId))!.MetadataOutcome.Should().Be(SyncOutcome.NotIdentified);
+
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+        saved!.Versions.Single().BaseModelRaw.Should().Be("???", "nothing in the chain identified it");
+
+        // C2: nothing was written, so the model must not be stamped as synced either.
+        saved.LastSyncedAt.Should().BeNull();
+    }
+
+    /// <summary>
+    /// A sidecar still wins over the header even when the header would have named something
+    /// different — the sidecar branch returns before the header is ever read.
+    /// </summary>
+    [Fact]
+    public async Task Execute_SidecarStillBeatsTheHeader()
+    {
+        var path = NewModelFile("sidecar-vs-header.safetensors",
+            Safetensors(Meta(("modelspec.architecture", "stable-diffusion-xl-v1-base"))));
+        var (modelId, _) = await SeedAsync("sidecar-vs-header", path);
+
+        var sidecar = """
+        {"id":700,"modelId":77,"baseModel":"Pony","trainedWords":["x"],
+         "model":{"name":"N","nsfw":false},
+         "files":[{"name":"sidecar-vs-header.safetensors","primary":true,"hashes":{"SHA256":"ABC"}}],
+         "images":[]}
+        """;
+        await File.WriteAllTextAsync(Path.Combine(_tempDir.FullName, "sidecar-vs-header.civitai.info"), sidecar);
+
+        var step = NewNotFoundStep();
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        (await ReadStateAsync(modelId))!.MetadataOutcome.Should().Be(SyncOutcome.Sidecar);
+    }
+
+    /// <summary>
+    /// A Civitai hash hit never falls through to the header/heuristic rungs at all — the response's
+    /// own <c>baseModel</c> wins even when the file's header would have said something else.
+    /// </summary>
+    [Fact]
+    public async Task Execute_CivitaiHitNeverConsultsTheHeader()
+    {
+        var path = NewModelFile("matched-header.safetensors",
+            Safetensors(Meta(("ss_sd_model_name", "ponyDiffusionV6XL"))));
+        var (modelId, _) = await SeedAsync("matched-header", path);
+
+        var civVersion = NewCivitaiVersion();
+        var step = NewStep(c =>
+        {
+            c.Setup(x => x.GetModelVersionByHashAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(civVersion);
+            c.Setup(x => x.GetModelAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(NewCivitaiModel(civVersion));
+        });
+
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        var result = await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+        (await ReadStateAsync(modelId))!.MetadataOutcome.Should().Be(SyncOutcome.Matched);
+
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+        saved!.Versions.Single().BaseModelRaw.Should().Be("SDXL 1.0", "the civitai response's baseModel, not the header's Pony hint");
+    }
+
+    /// <summary>
+    /// Extends the signature-evidence test family (<see cref="Select_ChangedSidecarMakesCandidateDueImmediately"/>)
+    /// to the Header outcome: a sidecar dropped in after a header-only identification is new
+    /// evidence and beats the 30-day window exactly the way it does for Sidecar/NotIdentified.
+    /// </summary>
+    [Fact]
+    public async Task Select_ANewSidecarMakesAHeaderIdentifiedModelDue()
+    {
+        var path = NewModelFile("header-then-sidecar.safetensors",
+            Safetensors(Meta(("modelspec.architecture", "stable-diffusion-xl-v1-base"))));
+        var (modelId, _) = await SeedAsync("header-then-sidecar", path);
+
+        var step = NewNotFoundStep();
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        var state = await ReadStateAsync(modelId);
+        state!.MetadataOutcome.Should().Be(SyncOutcome.Header);
+        state.SidecarSignature.Should().Be(string.Empty);
+
+        await File.WriteAllTextAsync(Path.Combine(_tempDir.FullName, "header-then-sidecar.civitai.info"), "{}");
+
+        var again = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        again.Select(i => i.ModelId).Should().Contain(modelId);
     }
 
     /// <summary>

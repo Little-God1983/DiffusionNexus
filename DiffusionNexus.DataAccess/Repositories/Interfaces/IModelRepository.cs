@@ -49,6 +49,24 @@ public interface IModelRepository : IRepository<Model>
     Task<ModelImage?> GetImageByIdAsync(int imageId, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Loads a single <see cref="ModelVersion"/> by id, <b>tracked</b> — the identify step's
+    /// header/heuristic rungs write the base model straight onto the row they get back and save
+    /// through the same unit of work.
+    /// </summary>
+    /// <remarks>
+    /// Returns null when the row is gone, which is an ordinary outcome rather than an error: the
+    /// step selects its work in one scope and executes each item in another, and a version can be
+    /// deleted in between. Backed by <c>FindAsync</c>, which answers from the change tracker's
+    /// identity map before it ever queries — on the path where a sidecar was found and parsed, the
+    /// sidecar applier already pulled the whole model graph (<see cref="GetByIdWithIncludesAsync"/>)
+    /// onto this same unit of work moments earlier, so this call costs nothing further there. No
+    /// Includes here even so — do NOT widen <see cref="GetByIdWithIncludesAsync"/> for this instead:
+    /// on the no-sidecar path nothing has necessarily been loaded yet, and that method always runs a
+    /// query (five split queries) and drags in every version's image BLOBs, just to fetch one row by id.
+    /// </remarks>
+    Task<ModelVersion?> GetVersionByIdAsync(int versionId, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Loads a single model by ID with its full navigation graph.
     /// Much more memory-efficient than <see cref="GetAllWithIncludesAsync"/> when only one model is needed.
     /// </summary>

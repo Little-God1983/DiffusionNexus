@@ -57,6 +57,16 @@ public partial class ModelDetailViewModel : ViewModelBase
     private CancellationTokenSource? _detailThumbnailCts;
 
     /// <summary>
+    /// Monotonic counter bumped on every <see cref="LoadAsync"/> call and captured by
+    /// <see cref="LoadIdentitySourceAsync"/> before it awaits. If the panel has since moved on to
+    /// a different tile (the counter no longer matches), the loader's final write is dropped
+    /// instead of stamping the previous tile's stale identity source over the current one —
+    /// guards against a slow-to-resolve model's lookup completing after a faster one for the
+    /// tile the user switched to in the meantime.
+    /// </summary>
+    private int _identityLoadGeneration;
+
+    /// <summary>
     /// Shared HttpClient for Civitai version-thumbnail downloads (see
     /// <see cref="LoadCivitaiThumbnailAsync"/>). Reusing a single instance avoids the
     /// socket exhaustion (TIME_WAIT accumulation) that a fresh <c>new HttpClient()</c> per
@@ -209,6 +219,19 @@ public partial class ModelDetailViewModel : ViewModelBase
     [ObservableProperty]
     private string _versionIdDisplay = string.Empty;
 
+    /// <summary>
+    /// How this model's identity was last resolved ("Civitai", "sidecar file", "file header",
+    /// "guessed from filename"), or <c>null</c> when nothing meaningful can be said (never
+    /// checked, checked and nothing found, or the last check errored). See
+    /// <see cref="LoadIdentitySourceAsync"/> for the granularity caveat.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasIdentitySource))]
+    private string? _identitySourceDisplay;
+
+    /// <summary>Whether the "Identity source:" row has anything to show.</summary>
+    public bool HasIdentitySource => IdentitySourceDisplay is not null;
+
     #endregion
 
     #region Collections
@@ -314,6 +337,16 @@ public partial class ModelDetailViewModel : ViewModelBase
         // falls back to a bundled snapshot when offline). Fire-and-forget so a
         // slow first fetch never blocks the detail view from rendering.
         _ = LoadBaseModelCatalogAsync();
+
+        // Look up how this model was identified for the "Identity source:" row. Reset first so
+        // a stale value from the previously displayed tile never lingers while the fresh lookup
+        // is in flight, then fire-and-forget for the same reason as the catalog load above.
+        // Bump the generation counter so a still-in-flight lookup from a previous tile can tell,
+        // when it finally completes, that it is no longer the current one and must not overwrite
+        // this tile's chip.
+        IdentitySourceDisplay = null;
+        var identityLoadGeneration = ++_identityLoadGeneration;
+        _ = LoadIdentitySourceAsync(tile.ModelEntity?.Id ?? 0, identityLoadGeneration);
 
         // Try to fetch from Civitai API for the full version list
         await FetchCivitaiDataAsync(tile);
@@ -1049,6 +1082,78 @@ public partial class ModelDetailViewModel : ViewModelBase
     #endregion
 
     #region Private Methods
+
+    /// <summary>
+    /// Looks up how this model's identity was last resolved and maps it to the short display
+    /// string shown in the "Identity source:" row. Fire-and-forget from <see cref="LoadAsync"/>,
+    /// same pattern as <see cref="LoadBaseModelCatalogAsync"/> — a slow lookup must not block the
+    /// rest of the detail view from rendering. Swallow-and-log on failure, same as that loader.
+    /// </summary>
+    /// <param name="modelId">The model whose identity source is being looked up.</param>
+    /// <param name="generation">
+    /// The <see cref="_identityLoadGeneration"/> value captured by the caller at the moment this
+    /// lookup was fired. Unlike <see cref="LoadBaseModelCatalogAsync"/> (model-invariant — any
+    /// result is valid for any tile), this loader is keyed to the specific model passed in, so a
+    /// slow call for a previous tile must not stamp its result over a newer tile's chip once the
+    /// user has switched. Checked right before the final write; a mismatch means the panel has
+    /// since moved on and the result is discarded.
+    /// </param>
+    /// <remarks>
+    /// The source tracked here is <b>per model</b> — one <c>ModelSyncState</c> row — while the
+    /// base model shown just above it in the view is <b>per version</b>. On a model with several
+    /// versions this row describes how the model as a whole was identified, not necessarily how
+    /// any one version's base model value came to be.
+    /// <c>internal</c> (rather than <c>private</c>) so the cross-model race guard on
+    /// <paramref name="generation"/> is directly unit-testable — same rationale as
+    /// <see cref="DescribeIdentitySource"/>.
+    /// </remarks>
+    internal async Task LoadIdentitySourceAsync(int modelId, int generation)
+    {
+        if (modelId <= 0 || _scopeFactory is null)
+        {
+            await _uiScheduler.InvokeAsync(() =>
+            {
+                if (generation == _identityLoadGeneration) IdentitySourceDisplay = null;
+            });
+            return;
+        }
+
+        string? display;
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var state = await unitOfWork.SyncStates.GetByModelIdAsync(modelId);
+            display = state is not null ? DescribeIdentitySource(state.MetadataOutcome) : null;
+        }
+        catch (Exception ex)
+        {
+            _logger?.Debug(LogCategory.General, "ModelDetail",
+                $"Failed to load identity source for model {modelId}: {ex.Message}");
+            display = null;
+        }
+
+        await _uiScheduler.InvokeAsync(() =>
+        {
+            // Drop the write if a newer LoadAsync call has since fired for a different tile —
+            // otherwise a slow lookup for the previous model could overwrite the current tile's
+            // correct chip with stale data (see _identityLoadGeneration).
+            if (generation == _identityLoadGeneration) IdentitySourceDisplay = display;
+        });
+    }
+
+    /// <summary>
+    /// Maps a <see cref="SyncOutcome"/> to the short label shown in the "Identity source:" row.
+    /// <c>internal static</c> so it is directly unit-testable.
+    /// </summary>
+    internal static string? DescribeIdentitySource(SyncOutcome outcome) => outcome switch
+    {
+        SyncOutcome.Matched => "Civitai",
+        SyncOutcome.Sidecar => "sidecar file",
+        SyncOutcome.Header => "file header",
+        SyncOutcome.Heuristic => "guessed from filename",
+        _ => null,   // None, NotIdentified, Error — say nothing rather than something scary
+    };
 
     private void PopulateFromLocalVersion(ModelTileViewModel tile)
     {
