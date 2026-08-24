@@ -721,8 +721,9 @@ public partial class ModelDetailViewModel : ViewModelBase
     /// </summary>
     internal static (string Display, bool Has) ComputeCategoryDisplay(Model? model)
     {
-        var category = Services.Lora.Sorting.SorterCategoryResolver.Resolve(
-            model?.UserCategory, model?.Tags.Select(t => t.Tag?.Name) ?? []);
+        var category = model is null
+            ? Domain.Enums.CivitaiCategory.Unknown
+            : Services.Lora.Sorting.SorterCategoryResolver.ResolveForModel(model);
 
         return category == Domain.Enums.CivitaiCategory.Unknown
             ? (string.Empty, false)

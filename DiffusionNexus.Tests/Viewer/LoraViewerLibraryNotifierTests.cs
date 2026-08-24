@@ -89,6 +89,28 @@ public class LoraViewerLibraryNotifierTests
     }
 
     [Fact]
+    public async Task AnArrivalDuringTheRebuildTriggersExactlyOneMoreRebuild()
+    {
+        var vm = CreateViewModel(new FakeLibraryChangeNotifier());
+
+        // The trailing edge: the last file of a batch is persisted while the rebuild covering its
+        // predecessors is already reading the database, so that read cannot contain it. Re-enter
+        // from inside the first rebuild to reproduce exactly that timing.
+        var calls = 0;
+        _modelSync.Setup(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()))
+            .Callback(() =>
+            {
+                if (Interlocked.Increment(ref calls) == 1) _ = vm.CoalesceRebuildAsync();
+            })
+            .ReturnsAsync(Array.Empty<InstalledModelFile>());
+
+        await vm.CoalesceRebuildAsync();
+
+        _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2),
+            "an arrival that landed mid-read must get one more pass — and only one");
+    }
+
+    [Fact]
     public async Task AnArrivalAfterTheWindowClosesRebuildsAgain()
     {
         var vm = CreateViewModel(new FakeLibraryChangeNotifier());

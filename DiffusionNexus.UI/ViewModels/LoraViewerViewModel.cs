@@ -80,10 +80,23 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     private readonly ILibraryChangeNotifier? _changeNotifier;
 
     /// <summary>
-    /// True while a notifier-triggered rebuild is waiting out its debounce window. A 20-job
-    /// queue batch raises 20 signals; one rebuild covers all of them.
+    /// True while a notifier-triggered rebuild is scheduled or running. A 20-job queue batch
+    /// raises 20 signals; one rebuild covers all of them.
     /// </summary>
     private bool _rebuildQueued;
+
+    /// <summary>
+    /// True only while the scheduled rebuild is actually reading the database — the window in
+    /// which a fresh arrival may have persisted too late to be in that read.
+    /// </summary>
+    private bool _rebuildRunning;
+
+    /// <summary>
+    /// Set when a signal arrives during <see cref="_rebuildRunning"/>: the trailing edge. The
+    /// last file of a batch is persisted while the rebuild for its predecessors is mid-read, so
+    /// without one more pass it would stay invisible until the next manual refresh.
+    /// </summary>
+    private bool _rebuildRequestedDuringRun;
 
     /// <summary>
     /// How long a notifier-triggered rebuild waits for further arrivals before running.
@@ -970,9 +983,16 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
             var outcome = await downloader.DownloadAsync(request, progress).ConfigureAwait(false);
 
-            Dispatcher.UIThread.Post(() => SyncStatus = outcome.Success
-                ? $"Downloaded {fileName}"
-                : $"Download failed: {fileName}");
+            // Cancelling is not failing, and a hash mismatch is not a clean download: Task 5 made
+            // those distinguishable, so don't collapse them back into one red line here.
+            Dispatcher.UIThread.Post(() => SyncStatus = outcome.Status switch
+            {
+                DownloadStatus.ReusedExisting => $"Already downloaded: {fileName}",
+                DownloadStatus.HashMismatch => $"Downloaded {fileName} — hash mismatch, file kept for inspection",
+                DownloadStatus.Cancelled => $"Download cancelled: {fileName}",
+                DownloadStatus.Failed => $"Download failed: {fileName}",
+                _ => $"Downloaded {fileName}",
+            });
         });
     }
 
@@ -994,16 +1014,51 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// </summary>
     internal async Task CoalesceRebuildAsync()
     {
-        if (_rebuildQueued) return;
+        if (_rebuildQueued)
+        {
+            // Still inside the debounce window: the scheduled rebuild has not read the database
+            // yet, so it will pick this arrival up too. Once it IS reading, this one may have
+            // persisted after the read began — remember it and run one more pass afterwards.
+            if (_rebuildRunning) _rebuildRequestedDuringRun = true;
+            return;
+        }
+
         _rebuildQueued = true;
         try
         {
-            await Task.Delay(RebuildCoalesceDelay);
-            await RebuildTilesFromDatabaseAsync();
+            do
+            {
+                _rebuildRequestedDuringRun = false;
+                await Task.Delay(RebuildCoalesceDelay);
+                _rebuildRunning = true;
+                try
+                {
+                    // Inside Task.Run for the same reason the bulk-sync call site is (R7): the
+                    // await above resumes on the UI thread, and this reads every visible file row
+                    // out of SQLite — which has no true async, so it runs inline and freezes the
+                    // grid. RebuildTilesFromDatabaseAsync marshals its own tile swap through
+                    // InvokeOnUiAsync, so calling it from the pool is what it is built for.
+                    await Task.Run(RebuildTilesFromDatabaseAsync);
+                }
+                catch (Exception ex)
+                {
+                    // Background refresh — a failed rebuild must not take the viewer down with
+                    // it, but it must not disappear silently either.
+                    _logger?.Warn(LogCategory.General, "LoraLibraryChanged",
+                        $"Rebuild after download failed: {ex.Message}");
+                }
+                finally
+                {
+                    _rebuildRunning = false;
+                }
+            }
+            while (_rebuildRequestedDuringRun);
         }
         finally
         {
             _rebuildQueued = false;
+            _rebuildRunning = false;
+            _rebuildRequestedDuringRun = false;
         }
     }
 
