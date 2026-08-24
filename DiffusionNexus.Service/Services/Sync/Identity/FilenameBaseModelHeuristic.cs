@@ -85,18 +85,52 @@ public static partial class FilenameBaseModelHeuristic
     // key like "sd3" can never win over a finer one like "sd35" just because of where the
     // separators happened to fall — see the longest-key-first loop in Guess().
     //
-    // No "wan"/"wan21"/"wan22" here, deliberately: "Wan Video" is a real Civitai catalog label,
-    // but BaseModelTypeExtensions.ParseCivitai normalizes it (by stripping spaces) to "WanVideo",
-    // which is not a BaseModelType member — only WanVideo21/WanVideo22 exist — so it always ends
-    // up stored as Other. The bare "wan" token is also a false-positive magnet on its own:
-    // Star Wars character LoRAs ("obi_wan_kenobi") are extremely common. Do not re-add any of the
-    // three without also adding a representable BaseModelType member.
+    // The bare "wan" token is NOT here and must not be added: Star Wars character LoRAs
+    // ("obi_wan_kenobi") are extremely common. The version-qualified spellings are safe.
+    //
+    // Several labels here (LTXV*, Wan Video, Qwen, Chroma, HiDream, Flux.2*) are real Civitai
+    // catalog labels that BaseModelTypeExtensions.ParseCivitai cannot map to a BaseModelType
+    // member, so they store as Other. That is a gap in the ENUM, not a reason to withhold the
+    // label: a Civitai-identified model of the same family already stores exactly this raw label
+    // and exactly that Other, so emitting it here changes nothing for the worse — while the sorter,
+    // which files by the raw string, gets a correct folder instead of dumping the file into
+    // Unknown. Tracked separately; do not "fix" it by deleting these keys.
     private static readonly Dictionary<string, string> ExactTokenOrPairMap = new(StringComparer.Ordinal)
     {
         ["sd15"] = "SD 1.5",
         ["sd21"] = "SD 2.1",
         ["sd35"] = "SD 3.5",
         ["sd3"] = "SD 3",
+
+        // LTX. Longest-key-first ordering is what keeps "ltx" from eating "ltx23" — see Guess().
+        // "latex" does not contain the token "ltx" (l-a-t-e-x), so the bare key is safe.
+        ["ltxv23"] = "LTXV 2.3",
+        ["ltx23"] = "LTXV 2.3",
+        ["ltxv2"] = "LTXV2",
+        ["ltx2"] = "LTXV2",
+        ["ltxv"] = "LTXV",
+        ["ltx"] = "LTXV",
+
+        // Wan. Every version-qualified spelling collapses to the family label: the finer catalog
+        // entries encode t2v/i2v and parameter count, which a file name reports too unreliably to
+        // act on — and a wrong "Wan Video 2.2 I2V-A14B" folder is worse than a right "Wan Video".
+        ["wan25"] = "Wan Video",
+        ["wan22"] = "Wan Video",
+        ["wan21"] = "Wan Video",
+        ["wan2"] = "Wan Video",
+
+        ["qwen"] = "Qwen",
+        ["hunyuan"] = "Hunyuan Video",
+        ["chroma"] = "Chroma",
+        ["hidream"] = "HiDream",
+
+        // Flux beyond 1.D/1.S. "kontext" and "klein" are distinctive enough to stand alone;
+        // a bare "klein" is not, because 4B and 9B are different base models and the file name is
+        // the only thing that says which — so only the size-qualified pairs map.
+        ["kontext"] = "Flux.1 Kontext",
+        ["klein9b"] = "Flux.2 Klein 9B",
+        ["klein4b"] = "Flux.2 Klein 4B",
+        ["flux2"] = "Flux.2 D",
     };
 
     // Rung 5: token prefix match — last resort, so only distinctive prefixes that won't collide
