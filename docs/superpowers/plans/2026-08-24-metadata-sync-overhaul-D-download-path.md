@@ -191,6 +191,8 @@ public static class FileFormatMapper
 
 `FileSizeFormatter.FormatKilobytes(double sizeKb)`: `sizeKb <= 0 → "Unknown"`, else `Format((long)(sizeKb * 1024))`. (Display delta accepted: the old clones rendered GB with `:F1`; the shared formatter uses `:F2`, which is the standard the sorter already consolidated onto.)
 
+(Accepted drift, found in review round 1: the KB rendering itself also drifted. One or more of the old clones rendered KB with `:F0` or with no decimal at all; the shared formatter always renders `:F1` for KB, same as MB. Accepted for the same reason as the GB delta above — one consistent rule beats three divergent ones.)
+
 - [ ] **Step 4: Route the copies** (mechanical; no behavior change beyond the named F1→F2 delta):
   - `GetFileFormat` bodies in `LoraDownloadService`, `ModelDetailViewModel`, `ModelFileSyncService` → delegate to `FileFormatMapper.FromExtension` (keep thin private wrappers only if a rename would churn many lines; prefer inlining the call and deleting the wrapper).
   - `FormatFileSize` in `DownloadLoraDialogViewModel`, `DownloadLoraVersionDialogViewModel`, `SelectLoraVersionsToDeleteDialog.axaml.cs` → `FileSizeFormatter.FormatKilobytes`.

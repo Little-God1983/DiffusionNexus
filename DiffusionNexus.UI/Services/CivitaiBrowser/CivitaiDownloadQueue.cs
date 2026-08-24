@@ -630,6 +630,12 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                 }
             });
         }
+        // These two catches write terminal state synchronously, unlike the happy path above which
+        // posts through the dispatcher — that's fine here because an exception this far out means
+        // `_downloader.DownloadAsync` itself threw, which happens before any progress report could
+        // still be in flight on the dispatcher queue (OperationCanceledException in particular is
+        // swallowed inside the downloader itself and surfaces as a Cancelled/Failed outcome, not a
+        // throw, in the ordinary case), so there is nothing racing this write to clobber.
         catch (OperationCanceledException)
         {
             job.Status = job.WasCancelledByUser ? JobStatus.Cancelled : JobStatus.Failed;

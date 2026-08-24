@@ -202,7 +202,10 @@ public sealed class CivitaiModelDownloader : ICivitaiModelDownloader
             {
                 // `!transferStarted` means the coordinator gave up before it ever called the work —
                 // its only pre-work await is the slot wait on the linked token, i.e. a task the user
-                // cancelled while it was still queued.
+                // cancelled while it was still queued. (A throwing IActivityLogService used to be a
+                // second way to land here — UpdateActivityLog could fail before the work ran and get
+                // reported as this same term. DownloadCoordinator now guards that call, so the term
+                // is once again equivalent to "cancelled while queued".)
                 var cancelled = ct.IsCancellationRequested || runCancelled || !transferStarted;
                 return Finish(
                     new DownloadOutcome(
