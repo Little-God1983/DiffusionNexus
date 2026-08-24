@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Civitai.Models;
+using DiffusionNexus.Service.Services.Lora;
 using DiffusionNexus.UI.Helpers;
 using DiffusionNexus.UI.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -118,15 +119,8 @@ public partial class DownloadLoraVersionDialogViewModel : ObservableObject
     {
         get
         {
-            if (!IsDownloadToExisting || string.IsNullOrWhiteSpace(SelectedSourceFolder))
-                return string.Empty;
-
-            var path = SelectedSourceFolder;
-            if (CreateBaseModelFolder && !string.IsNullOrWhiteSpace(BaseModel))
-                path = Path.Combine(path, BaseModel);
-            if (CreateCategoryFolder && !string.IsNullOrWhiteSpace(Category))
-                path = Path.Combine(path, Category);
-            return path;
+            if (!IsDownloadToExisting) return string.Empty;
+            return BuildExistingSourceTargetDirectory() ?? string.Empty;
         }
     }
 
@@ -269,18 +263,22 @@ public partial class DownloadLoraVersionDialogViewModel : ObservableObject
     /// </summary>
     public string? GetTargetFolder()
     {
-        if (IsDownloadToExisting && !string.IsNullOrWhiteSpace(SelectedSourceFolder))
-        {
-            var path = SelectedSourceFolder;
-            if (CreateBaseModelFolder && !string.IsNullOrWhiteSpace(BaseModel))
-                path = Path.Combine(path, BaseModel);
-            if (CreateCategoryFolder && !string.IsNullOrWhiteSpace(Category))
-                path = Path.Combine(path, Category);
-            return path;
-        }
-
+        if (IsDownloadToExisting) return BuildExistingSourceTargetDirectory();
         if (IsDownloadToFolder) return CustomFolderPath;
         return null;
+    }
+
+    /// <summary>
+    /// The "download to existing source folder" branch shared by <see cref="PreviewPath"/> and
+    /// <see cref="GetTargetFolder"/> — both used to hand-roll the same base-model/category
+    /// combine, which is exactly the folder-toggle drift spec §4.4 exists to kill.
+    /// </summary>
+    private string? BuildExistingSourceTargetDirectory()
+    {
+        if (string.IsNullOrWhiteSpace(SelectedSourceFolder)) return null;
+        return LoraPathBuilder.BuildTargetDirectory(
+            SelectedSourceFolder, BaseModel, Category,
+            includeBaseModel: CreateBaseModelFolder, includeCategory: CreateCategoryFolder);
     }
 
     #endregion

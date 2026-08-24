@@ -1,14 +1,14 @@
 using DiffusionNexus.Service.Services.Sync;
-namespace DiffusionNexus.UI.Services.Lora.Sorting;
+namespace DiffusionNexus.Service.Services.Lora;
 
 /// <summary>
 /// Pure path construction for the LoRA Sorter: folder naming, sanitization
 /// (nothing in the download path sanitizes — this is deliberately new), and the
 /// deterministic collision rename convention shared with
-/// CivitaiDownloadQueue.ResolveCollisionFreeTargetPathAsync
+/// DownloadCollisionPolicy
 /// ({stem}_{versionId}{ext}), so re-runs are idempotent.
 /// </summary>
-public static class SorterPathBuilder
+public static class LoraPathBuilder
 {
     public const string UnknownFolderName = "Unknown";
 
@@ -57,11 +57,29 @@ public static class SorterPathBuilder
     /// </summary>
     public static string BuildTargetDirectory(
         string targetRoot, string? baseModelRaw, string? categoryFolderName, bool includeCategory)
+        => BuildTargetDirectory(targetRoot, baseModelRaw, categoryFolderName, includeBaseModel: true, includeCategory);
+
+    /// <summary>
+    /// Same directory construction, with the base-model segment itself optional. When
+    /// <paramref name="includeBaseModel"/> is false, no base-model segment is added — not even the
+    /// <see cref="UnknownFolderName"/> fallback — which is what a picker whose "create base model
+    /// folder" toggle is off needs: previously the download pickers built this path by hand and
+    /// simply omitted the segment for a blank base model while leaving it toggle-gated for a real
+    /// one, so turning the toggle ON with an unresolved base model silently produced no segment at
+    /// all instead of the sorter's <c>Unknown\</c> bucket — see spec §4.4.
+    /// </summary>
+    public static string BuildTargetDirectory(
+        string targetRoot, string? baseModelRaw, string? categoryFolderName,
+        bool includeBaseModel, bool includeCategory)
     {
-        var baseFolder = IsPlaceholderBaseModel(baseModelRaw)
-            ? UnknownFolderName
-            : SanitizeFolderName(baseModelRaw!);
-        var path = Path.Combine(targetRoot, baseFolder);
+        var path = targetRoot;
+        if (includeBaseModel)
+        {
+            var baseFolder = IsPlaceholderBaseModel(baseModelRaw)
+                ? UnknownFolderName
+                : SanitizeFolderName(baseModelRaw!);
+            path = Path.Combine(path, baseFolder);
+        }
         if (includeCategory && !IsUnresolvedCategory(categoryFolderName))
             path = Path.Combine(path, SanitizeFolderName(categoryFolderName!));
         return path;

@@ -1,3 +1,5 @@
+using DiffusionNexus.Service.Services.Lora;
+
 namespace DiffusionNexus.UI.Services.Lora.Sorting;
 
 /// <summary>
@@ -55,7 +57,7 @@ public sealed class LoraSortPlanner
         {
             ct.ThrowIfCancellationRequested();
 
-            var targetDir = SorterPathBuilder.BuildTargetDirectory(
+            var targetDir = LoraPathBuilder.BuildTargetDirectory(
                 options.TargetRoot, candidate.BaseModelRaw, candidate.CategoryFolderName, options.IncludeCategory);
             var names = claimed.TryGetValue(targetDir, out var existing)
                 ? existing
@@ -103,7 +105,7 @@ public sealed class LoraSortPlanner
 
             string? freeName = null;
             string? duplicateOf = null;
-            foreach (var name in SorterPathBuilder.EnumerateCandidateNames(fileName, candidate.CivitaiVersionId))
+            foreach (var name in LoraPathBuilder.EnumerateCandidateNames(fileName, candidate.CivitaiVersionId))
             {
                 ct.ThrowIfCancellationRequested();
                 if (!NameIsTaken(name))

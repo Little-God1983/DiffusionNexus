@@ -10,6 +10,7 @@ using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Service.Services.Lora;
 using DiffusionNexus.Service.Services.Sync;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.ViewModels.CivitaiBrowser;
@@ -688,41 +689,17 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         => FileHasher.Sha256UpperAsync(path, ct);
 
     /// <summary>
-    /// Picks the on-disk target for a job, refusing to overwrite a different
-    /// model's file. Civitai file names are frequently generic ("V1.safetensors"),
-    /// so two unrelated models routed to the same BaseModel/Category folder
-    /// collide: the second download replaced the first model's weights on disk
-    /// and the path-based DB dedup then skipped registering it — downloaded to
-    /// 100% yet never installed. When the existing file's SHA256 matches the
-    /// job's expected hash it IS this download (re-download over self) and the
-    /// plain name is kept; otherwise the Civitai version id is appended — unique
-    /// per version and stable across retries, so a suffixed target that already
-    /// exists can only be this same version's earlier bytes and is safe to
-    /// overwrite.
+    /// Picks the on-disk target for a job, refusing to overwrite a different model's file.
+    /// Thin delegate to <see cref="DownloadCollisionPolicy.ResolveAsync"/> — the generalized,
+    /// Service-layer version of this algorithm every Civitai download path now shares. Deleted
+    /// along with the queue itself in the Task 7 migration.
     /// </summary>
     internal static async Task<string> ResolveCollisionFreeTargetPathAsync(
         string targetDir, string fileName, int versionId, string? expectedSha256, CancellationToken ct)
     {
-        var plain = Path.Combine(targetDir, fileName);
-        if (!File.Exists(plain)) return plain;
-
-        if (!string.IsNullOrWhiteSpace(expectedSha256))
-        {
-            try
-            {
-                var existingHash = await ComputeSha256Async(plain, ct).ConfigureAwait(false);
-                if (string.Equals(existingHash, expectedSha256, StringComparison.OrdinalIgnoreCase))
-                    return plain;
-            }
-            catch (IOException)
-            {
-                // Unreadable/locked — can't prove it's ours, so don't overwrite it.
-            }
-        }
-
-        var stem = Path.GetFileNameWithoutExtension(fileName);
-        var extension = Path.GetExtension(fileName);
-        return Path.Combine(targetDir, $"{stem}_{versionId}{extension}");
+        var resolution = await DownloadCollisionPolicy.ResolveAsync(
+            targetDir, fileName, versionId, expectedSha256, ct).ConfigureAwait(false);
+        return resolution.TargetPath;
     }
 
     #region Persistence

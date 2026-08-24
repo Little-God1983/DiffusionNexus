@@ -604,7 +604,7 @@ public sealed class SorterMetadataResolverTests : IDisposable
     /// <summary>
     /// <c>"???"</c> is what <c>ModelFileSyncService</c> stamps on a locally-discovered model, and it
     /// reaches here through a <c>.civitai.info</c> written from such a row.
-    /// <c>SorterPathBuilder.IsPlaceholderBaseModel</c> — the predicate that picks the Unknown
+    /// <c>LoraPathBuilder.IsPlaceholderBaseModel</c> — the predicate that picks the Unknown
     /// folder — treats it as no answer, so the gate deciding whether to ask the file has to agree:
     /// otherwise the file is "resolved" enough to skip its own header yet still lands in Unknown.
     /// </summary>
