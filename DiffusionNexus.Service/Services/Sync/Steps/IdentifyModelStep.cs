@@ -223,7 +223,16 @@ public sealed class IdentifyModelStep : ISyncStep
                     // a version whose base model was just filled from its own file is no longer
                     // "unsynced", and several tile orderings (TileGroupingHelper) read LastSyncedAt to
                     // mean exactly that.
-                    dbModel.Source = DataSource.LocalFile;
+                    //
+                    // Source is deliberately NOT mirrored as unconditionally as the sidecar's. This
+                    // rung supplies one field, not a model's metadata set: a model whose name, tags,
+                    // images and CivitaiId all came from Civitai has not become locally sourced
+                    // because we read its header once after the upstream page 404'd. A sidecar
+                    // genuinely carries the whole set, which is why that branch may claim the model
+                    // outright and this one may only claim a model nothing else has claimed.
+                    if (dbModel.Source != DataSource.CivitaiApi)
+                        dbModel.Source = DataSource.LocalFile;
+
                     dbModel.LastSyncedAt = now;
                 }
                 else

@@ -539,6 +539,47 @@ public sealed class IdentifyModelStepTests : IDisposable
     }
 
     /// <summary>
+    /// The header rung supplies ONE field, so it may claim a model nothing else has claimed — but
+    /// it must not relabel a model whose name, tags, images and CivitaiId all came from Civitai.
+    /// A taken-down upstream page (404) next to a still-readable header is exactly that case.
+    /// </summary>
+    [Fact]
+    public async Task Execute_HeaderWriteDoesNotRelabelACivitaiSourcedModel()
+    {
+        var path = NewModelFile("civitai-sourced.safetensors",
+            Safetensors(Meta(("modelspec.architecture", "stable-diffusion-xl-v1-base"))));
+        var (modelId, _) = await SeedAsync("civitai-sourced", path);
+
+        // This model came out of Civitai in an earlier life; its page 404s now.
+        using (var seedScope = NewScope())
+        {
+            var seedUow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var seeded = await seedUow.Models.GetByIdAsync(modelId);
+            seeded!.Source = DataSource.CivitaiApi;
+            await seedUow.SaveChangesAsync();
+        }
+
+        var step = NewNotFoundStep();
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        var state = await ReadStateAsync(modelId);
+
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
+
+        // The write lands...
+        saved!.Versions.Single().BaseModelRaw.Should().Be("SDXL 1.0");
+
+        // ...and the freshness stamp lands with it, because something really was applied...
+        saved.LastSyncedAt.Should().Be(state!.MetadataCheckedAt);
+
+        // ...but one locally-read field does not make a Civitai-sourced model locally sourced.
+        saved.Source.Should().Be(DataSource.CivitaiApi);
+    }
+
+    /// <summary>
     /// Pony/Illustrious/NoobAI checkpoints are all trained on plain SDXL architecture, so the
     /// model-name hint must win over the coarser architecture reading — <see cref="BaseModelHeaderMap"/>'s
     /// own evaluation order, exercised here through the step.
