@@ -49,10 +49,6 @@ public class ModelDetailViewModelTests
             baseModelCatalog: null,
             scopeFactory: scopeFactory ?? new Mock<IServiceScopeFactory>().Object,
             dialogService: new Mock<IDialogService>().Object,
-            downloadService: null,
-            downloadCoordinator: new Mock<IDownloadCoordinator>().Object,
-            taskTracker: new Mock<ITaskTracker>().Object,
-            activityLog: new Mock<IActivityLogService>().Object,
             clipboard: clipboard,
             uiScheduler: scheduler ?? new Helpers.ImmediateUiScheduler());
 

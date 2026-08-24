@@ -18,6 +18,7 @@ using DiffusionNexus.Service.Services.Sync;
 using DiffusionNexus.UI.Models;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.CivitaiBrowser;
+using DiffusionNexus.UI.Services.Download;
 using DiffusionNexus.UI.Services.Lora.Sorting;
 using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.UI.ViewModels.CivitaiBrowser;
@@ -61,6 +62,35 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// Lazily built (and cached) from <see cref="_scopeFactory"/> when not DI-injected.
     /// </summary>
     private ICivitaiApiKeyProvider? _apiKeyProvider;
+
+    /// <summary>
+    /// The one Civitai download path (spec §4.4). The toolbar's "Download LoRA" dialog and the
+    /// detail panel both hand their request to it instead of driving
+    /// <see cref="LoraDownloadService"/> + <see cref="IDownloadCoordinator"/> themselves — it
+    /// owns the coordinator enqueue, so callers must never wrap <c>DownloadAsync</c> in one.
+    /// </summary>
+    private readonly ICivitaiModelDownloader? _modelDownloader;
+
+    /// <summary>
+    /// The "library gained a model" signal every download path raises. Subscribed for the
+    /// lifetime of the viewer (one scoped instance per app session, resolved at startup) so the
+    /// Installed tab rebuilds no matter which surface downloaded — including the Browse queue,
+    /// which never told it anything before (spec RC5).
+    /// </summary>
+    private readonly ILibraryChangeNotifier? _changeNotifier;
+
+    /// <summary>
+    /// True while a notifier-triggered rebuild is waiting out its debounce window. A 20-job
+    /// queue batch raises 20 signals; one rebuild covers all of them.
+    /// </summary>
+    private bool _rebuildQueued;
+
+    /// <summary>
+    /// How long a notifier-triggered rebuild waits for further arrivals before running.
+    /// Long enough that a queue batch collapses into one rebuild, short enough that a single
+    /// download still shows up on its own.
+    /// </summary>
+    private static readonly TimeSpan RebuildCoalesceDelay = TimeSpan.FromSeconds(1.5);
 
     /// <summary>
     /// Cancels the in-flight update-check batch when the visible tile set changes
@@ -380,7 +410,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         ILibrarySyncService? librarySync = null,
         IUiScheduler? uiScheduler = null,
         IServiceScopeFactory? scopeFactory = null,
-        ICivitaiApiKeyProvider? apiKeyProvider = null)
+        ICivitaiApiKeyProvider? apiKeyProvider = null,
+        ICivitaiModelDownloader? modelDownloader = null,
+        ILibraryChangeNotifier? changeNotifier = null)
     {
         _selectedSortOption = SortOptions[0];
         UnknownBaseModelItem.SelectionChanged += OnBaseModelFilterChanged;
@@ -397,6 +429,15 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         _uiScheduler = uiScheduler ?? App.Services?.GetService<IUiScheduler>();
         _scopeFactory = scopeFactory ?? App.Services?.GetService<IServiceScopeFactory>();
         _apiKeyProvider = apiKeyProvider ?? App.Services?.GetService<ICivitaiApiKeyProvider>();
+        _modelDownloader = modelDownloader ?? App.Services?.GetService<ICivitaiModelDownloader>();
+        _changeNotifier = changeNotifier ?? App.Services?.GetService<ILibraryChangeNotifier>();
+
+        // Every download path raises this after persisting, so the Installed tab no longer
+        // depends on the downloading surface remembering to tell it.
+        if (_changeNotifier is not null)
+        {
+            _changeNotifier.ModelDownloaded += OnLibraryModelDownloaded;
+        }
 
         // Live-update the base-model filter whenever the catalog is force-refreshed
         // (e.g. from the "Update base-model filter" button in Settings). Both the
@@ -904,56 +945,66 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         var fileName = !string.IsNullOrWhiteSpace(result.FileName)
             ? result.FileName
             : $"{result.ModelName}_{result.Version.Name}.safetensors";
-        var targetPath = Path.Combine(result.TargetFolder, fileName);
 
-        var downloadService = App.Services?.GetService<LoraDownloadService>()
-                              ?? new LoraDownloadService(_civitaiClient, _settingsService, _logger, apiKeyProvider: _apiKeyProvider);
+        if (_modelDownloader is null)
+        {
+            SyncStatus = "Download service not available.";
+            return;
+        }
 
         SyncStatus = $"Downloading {fileName}...";
-        // Route through IDownloadCoordinator so this download aggregates with any
-        // concurrent Civitai-browser-queue downloads in the status bar (otherwise
-        // they fight over the single-slot activity-log progress field).
-        var coordinator = App.Services?.GetService<IDownloadCoordinator>();
-        var taskName = $"Downloading {fileName}";
 
+        // The one download path (spec §4.4) owns the coordinator enqueue — so this must NOT
+        // wrap it in one — plus verification, persistence and the library-changed signal.
+        // The Installed tab rebuilds off that signal, so there is no manual refresh here.
+        var downloader = _modelDownloader;
         _ = Task.Run(async () =>
         {
-            var tcs = new TaskCompletionSource<bool>();
+            var progress = new Progress<DownloadProgress>(p =>
+                Dispatcher.UIThread.Post(() => SyncStatus = $"Downloading {fileName}: {p.Message}"));
 
-            async Task<bool> RunAsync(IProgress<DownloadTaskProgress>? progress, CancellationToken ct)
+            var request = new DownloadRequest(result.Version, result.TargetFolder, DownloadTrigger.Dialog)
             {
-                await downloadService.DownloadFileAsync(
-                    result.DownloadUrl,
-                    targetPath,
-                    result.Version,
-                    taskName,
-                    reportProgress: (pct, message) =>
-                    {
-                        Dispatcher.UIThread.Post(() => SyncStatus = $"Downloading {fileName}: {message}");
-                        progress?.Report(new DownloadTaskProgress((int)(pct * 100), message));
-                    },
-                    completed: () => Dispatcher.UIThread.Post(async () =>
-                    {
-                        SyncStatus = $"Downloaded {fileName}";
-                        await RebuildTilesFromDatabaseAsync();
-                        tcs.TrySetResult(true);
-                    }),
-                    failed: () => Dispatcher.UIThread.Post(() =>
-                    {
-                        SyncStatus = $"Download failed: {fileName}";
-                        tcs.TrySetResult(false);
-                    }),
-                    externalCancellationToken: ct,
-                    reportToActivityLog: coordinator is null);
+                FileNameOverride = fileName,
+            };
 
-                return await tcs.Task.ConfigureAwait(false);
-            }
+            var outcome = await downloader.DownloadAsync(request, progress).ConfigureAwait(false);
 
-            if (coordinator is not null)
-                await coordinator.EnqueueAsync(taskName, RunAsync, CancellationToken.None).ConfigureAwait(false);
-            else
-                await RunAsync(null, CancellationToken.None).ConfigureAwait(false);
+            Dispatcher.UIThread.Post(() => SyncStatus = outcome.Success
+                ? $"Downloaded {fileName}"
+                : $"Download failed: {fileName}");
         });
+    }
+
+    /// <summary>
+    /// Rebuilds the Installed tab whenever any surface adds a model to the library — the
+    /// toolbar dialog, the detail panel, the Browse queue (which never notified anything
+    /// before, spec RC5), the waitlist. Coalesced: a queue batch raises one signal per file,
+    /// and a full rebuild per file would make a 20-item batch unusable, so the first arrival
+    /// schedules a rebuild ~1.5s out and every arrival during that window rides along with it.
+    /// </summary>
+    private void OnLibraryModelDownloaded(object? sender, ModelDownloadedEventArgs e)
+        // Raised on the notifying thread — marshal before touching the flag or the tiles, so
+        // the coalescing flag is only ever read and written on one thread.
+        => Dispatcher.UIThread.Post(() => _ = CoalesceRebuildAsync());
+
+    /// <summary>
+    /// The coalescing half of <see cref="OnLibraryModelDownloaded"/>, split out so it can be
+    /// driven in tests without an Avalonia dispatcher. Must be called on the UI thread.
+    /// </summary>
+    internal async Task CoalesceRebuildAsync()
+    {
+        if (_rebuildQueued) return;
+        _rebuildQueued = true;
+        try
+        {
+            await Task.Delay(RebuildCoalesceDelay);
+            await RebuildTilesFromDatabaseAsync();
+        }
+        finally
+        {
+            _rebuildQueued = false;
+        }
     }
 
     /// <summary>
@@ -1288,7 +1339,6 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         if (DetailViewModel is not null)
         {
             DetailViewModel.CloseRequested -= OnDetailCloseRequested;
-            DetailViewModel.DownloadCompleted -= OnDetailDownloadCompleted;
             DetailViewModel.MetadataDeleted -= OnDetailMetadataDeleted;
             DetailViewModel.MetadataDownloadRequested -= OnDetailMetadataDownloadRequested;
         }
@@ -1304,16 +1354,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             _baseModelCatalog,
             sp?.GetService<IServiceScopeFactory>(),
             sp?.GetService<IDialogService>(),
-            sp?.GetService<LoraDownloadService>(),
-            sp?.GetService<IDownloadCoordinator>(),
-            sp?.GetService<ITaskTracker>(),
-            sp?.GetService<IActivityLogService>(),
             sp?.GetService<DiffusionNexus.Installer.SDK.Shared.Services.IClipboardService>(),
             sp?.GetService<IUiScheduler>(),
-            apiKeyProvider: _apiKeyProvider);
+            apiKeyProvider: _apiKeyProvider,
+            modelDownloader: _modelDownloader);
 
         detailVm.CloseRequested += OnDetailCloseRequested;
-        detailVm.DownloadCompleted += OnDetailDownloadCompleted;
         detailVm.MetadataDeleted += OnDetailMetadataDeleted;
         detailVm.MetadataDownloadRequested += OnDetailMetadataDownloadRequested;
         DetailViewModel = detailVm;
@@ -1331,7 +1377,6 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         if (DetailViewModel is not null)
         {
             DetailViewModel.CloseRequested -= OnDetailCloseRequested;
-            DetailViewModel.DownloadCompleted -= OnDetailDownloadCompleted;
             DetailViewModel.MetadataDeleted -= OnDetailMetadataDeleted;
             DetailViewModel.MetadataDownloadRequested -= OnDetailMetadataDownloadRequested;
         }
@@ -1345,10 +1390,6 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         CloseDetail();
     }
 
-    private async void OnDetailDownloadCompleted(object? sender, EventArgs e)
-    {
-        await RebuildTilesFromDatabaseAsync();
-    }
 
     /// <summary>
     /// Handles <see cref="ModelDetailViewModel.MetadataDownloadRequested"/> (the

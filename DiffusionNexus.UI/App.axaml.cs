@@ -962,7 +962,9 @@ public partial class App : Application
             sp.GetService<Domain.Services.Sync.ILibrarySyncService>(),
             sp.GetService<IUiScheduler>(),
             sp.GetService<IServiceScopeFactory>(),
-            apiKeyProvider: sp.GetRequiredService<ICivitaiApiKeyProvider>()));
+            apiKeyProvider: sp.GetRequiredService<ICivitaiApiKeyProvider>(),
+            modelDownloader: sp.GetService<Services.Download.ICivitaiModelDownloader>(),
+            changeNotifier: sp.GetService<Domain.Services.ILibraryChangeNotifier>()));
         services.AddScoped<LoraDownloadService>(sp => new LoraDownloadService(
             sp.GetService<Civitai.ICivitaiClient>(),
             sp.GetService<IAppSettingsService>(),
