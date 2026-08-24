@@ -7,6 +7,7 @@ using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.UI.Helpers;
 using DiffusionNexus.UI.Services;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -251,8 +252,7 @@ public partial class DownloadLoraDialogViewModel : ObservableObject
                 return;
             }
 
-            var primaryFile = version.Files.FirstOrDefault(f => f.Primary == true)
-                              ?? version.Files.FirstOrDefault();
+            var primaryFile = CivitaiVersionFiles.PickPrimary(version);
             var downloadUrl = primaryFile?.DownloadUrl ?? version.DownloadUrl;
             if (string.IsNullOrWhiteSpace(downloadUrl))
             {
@@ -308,7 +308,7 @@ public partial class DownloadLoraDialogViewModel : ObservableObject
         PreviewCreator = $"Creator: {model.Creator?.Username ?? "Unknown"}";
         PreviewIds = $"Model ID: {model.Id}    Version ID: {version.Id}";
         FileName = primaryFile?.Name ?? "unknown.safetensors";
-        FileSizeDisplay = FormatFileSize(primaryFile?.SizeKB ?? 0);
+        FileSizeDisplay = FileSizeFormatter.FormatKilobytes(primaryFile?.SizeKB ?? 0);
     }
 
     private async Task LoadPreviewImageAsync(CivitaiModel model, CivitaiModelVersion version)
@@ -359,17 +359,6 @@ public partial class DownloadLoraDialogViewModel : ObservableObject
     /// </summary>
     private static string? InferCategoryFromTags(IReadOnlyList<string> tags)
         => Services.Lora.Sorting.SorterCategoryResolver.InferFolderName(tags);
-
-    private static string FormatFileSize(double sizeKb)
-    {
-        return sizeKb switch
-        {
-            >= 1_048_576 => $"{sizeKb / 1_048_576:F1} GB",
-            >= 1_024 => $"{sizeKb / 1_024:F1} MB",
-            > 0 => $"{sizeKb:F0} KB",
-            _ => "Unknown"
-        };
-    }
 
     private void OnDownloadStateChanged()
     {

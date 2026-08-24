@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Civitai.Models;
+using DiffusionNexus.UI.Helpers;
 using DiffusionNexus.UI.Services;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -181,10 +182,9 @@ public partial class DownloadLoraVersionDialogViewModel : ObservableObject
         BaseModel = civitaiVersion.BaseModel;
         Category = category ?? string.Empty;
 
-        var primaryFile = civitaiVersion.Files.FirstOrDefault(f => f.Primary == true)
-                          ?? civitaiVersion.Files.FirstOrDefault();
+        var primaryFile = CivitaiVersionFiles.PickPrimary(civitaiVersion);
         FileName = primaryFile?.Name ?? "unknown.safetensors";
-        FileSizeDisplay = FormatFileSize(primaryFile?.SizeKB ?? 0);
+        FileSizeDisplay = FileSizeFormatter.FormatKilobytes(primaryFile?.SizeKB ?? 0);
 
         SourceFolders.Clear();
         foreach (var folder in sourceFolders)
@@ -281,17 +281,6 @@ public partial class DownloadLoraVersionDialogViewModel : ObservableObject
 
         if (IsDownloadToFolder) return CustomFolderPath;
         return null;
-    }
-
-    private static string FormatFileSize(double sizeKb)
-    {
-        return sizeKb switch
-        {
-            >= 1_048_576 => $"{sizeKb / 1_048_576:F1} GB",
-            >= 1_024 => $"{sizeKb / 1_024:F1} MB",
-            > 0 => $"{sizeKb:F0} KB",
-            _ => "Unknown"
-        };
     }
 
     #endregion

@@ -376,7 +376,7 @@ public sealed class PipelineAssetInstaller : IPipelineAssetInstaller, IDisposabl
         var version = model.ModelVersions.FirstOrDefault()
             ?? throw new InvalidOperationException($"{asset.Name}: Civitai model {modelId} has no downloadable versions.");
 
-        var primary = version.Files.FirstOrDefault(f => f.Primary == true) ?? version.Files.FirstOrDefault();
+        var primary = CivitaiVersionFiles.PickPrimary(version);
         var url = primary?.DownloadUrl ?? version.DownloadUrl;
         if (string.IsNullOrWhiteSpace(url))
             throw new InvalidOperationException($"{asset.Name}: no Civitai download URL for version {version.Id}.");

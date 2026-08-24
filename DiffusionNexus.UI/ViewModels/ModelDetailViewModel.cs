@@ -418,8 +418,7 @@ public partial class ModelDetailViewModel : ViewModelBase
             return;
 
         // Resolve download URL
-        var primaryFile = tab.CivitaiVersion.Files.FirstOrDefault(f => f.Primary == true)
-                          ?? tab.CivitaiVersion.Files.FirstOrDefault();
+        var primaryFile = CivitaiVersionFiles.PickPrimary(tab.CivitaiVersion);
         var downloadUrl = primaryFile?.DownloadUrl ?? tab.DownloadUrl;
         if (string.IsNullOrWhiteSpace(downloadUrl))
         {
@@ -947,7 +946,7 @@ public partial class ModelDetailViewModel : ViewModelBase
                 LocalPath = filePath,
                 SizeKB = fileInfo.Length / 1024.0,
                 FileSizeBytes = fileInfo.Length,
-                Format = GetFileFormat(fileInfo.Extension),
+                Format = FileFormatMapper.FromExtension(fileInfo.Extension),
                 IsPrimary = true,
                 IsLocalFileValid = true,
                 LocalFileVerifiedAt = DateTimeOffset.UtcNow,
@@ -1030,22 +1029,6 @@ public partial class ModelDetailViewModel : ViewModelBase
     /// </summary>
     private static BaseModelType ParseBaseModel(string? baseModelRaw)
         => BaseModelTypeExtensions.ParseCivitai(baseModelRaw);
-
-    /// <summary>
-    /// Maps a file extension to the domain FileFormat enum.
-    /// Same mapping as <c>ModelFileSyncService.GetFileFormat</c>.
-    /// </summary>
-    private static FileFormat GetFileFormat(string extension)
-    {
-        return extension.ToLowerInvariant() switch
-        {
-            ".safetensors" => FileFormat.SafeTensor,
-            ".pt" => FileFormat.PickleTensor,
-            ".ckpt" => FileFormat.Other,
-            ".pth" => FileFormat.PickleTensor,
-            _ => FileFormat.Unknown
-        };
-    }
 
     #endregion
 
@@ -1547,8 +1530,7 @@ public partial class ModelDetailViewModel : ViewModelBase
         }
         else
         {
-            var civFile = selected.CivitaiVersion.Files.FirstOrDefault(f => f.Primary == true)
-                          ?? selected.CivitaiVersion.Files.FirstOrDefault();
+            var civFile = CivitaiVersionFiles.PickPrimary(selected.CivitaiVersion);
             FileNameDisplay = civFile?.Name ?? "\u2014";
         }
 

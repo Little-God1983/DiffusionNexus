@@ -1,7 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
-using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Avalonia.Media;
@@ -11,6 +10,7 @@ using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Service.Services.Sync;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.ViewModels.CivitaiBrowser;
 using Microsoft.Extensions.DependencyInjection;
@@ -233,7 +233,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     {
         if (result.Model is null) return null;
 
-        var primary = pick.Version.Files.FirstOrDefault(f => f.Primary == true) ?? pick.Version.Files.FirstOrDefault();
+        var primary = CivitaiVersionFiles.PickPrimary(pick.Version);
         var url = primary?.DownloadUrl ?? pick.Version.DownloadUrl;
         if (string.IsNullOrWhiteSpace(url)) return null;
 
@@ -289,7 +289,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             return null;
         }
 
-        var primary = freshVersion?.Files.FirstOrDefault(f => f.Primary == true) ?? freshVersion?.Files.FirstOrDefault();
+        var primary = CivitaiVersionFiles.PickPrimary(freshVersion);
         var job = new CivitaiDownloadJob
         {
             ModelId = entry.ModelId,
@@ -682,13 +682,10 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         }
     }
 
-    private static async Task<string> ComputeSha256Async(string path, CancellationToken ct)
-    {
-        await using var stream = File.OpenRead(path);
-        using var sha = SHA256.Create();
-        var bytes = await sha.ComputeHashAsync(stream, ct);
-        return Convert.ToHexString(bytes);
-    }
+    // Deleted along with the queue itself in the Task 7 migration — kept as a thin
+    // delegate to the shared hasher until then.
+    private static Task<string> ComputeSha256Async(string path, CancellationToken ct)
+        => FileHasher.Sha256UpperAsync(path, ct);
 
     /// <summary>
     /// Picks the on-disk target for a job, refusing to overwrite a different

@@ -6,6 +6,7 @@ using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Service.Services.Sync;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace DiffusionNexus.UI.Services;
@@ -347,10 +348,7 @@ public sealed class LoraDownloadService
             var bestVersion = civitaiModel?.ModelVersions
                 .FirstOrDefault(v => v.Id == effectiveVersion.Id) ?? effectiveVersion;
 
-            var civFile = bestVersion.Files.FirstOrDefault(f => f.Primary == true)
-                          ?? bestVersion.Files.FirstOrDefault()
-                          ?? civitaiVersion.Files.FirstOrDefault(f => f.Primary == true)
-                          ?? civitaiVersion.Files.FirstOrDefault();
+            var civFile = CivitaiVersionFiles.PickPrimary(bestVersion, civitaiVersion);
 
             var model = await unitOfWork.Models.FindByModelPageIdOrIdAsync(modelPageId, existingModelId);
 
@@ -517,7 +515,7 @@ public sealed class LoraDownloadService
                 LocalPath = filePath,
                 SizeKB = fileInfo.Length / 1024.0,
                 FileSizeBytes = fileInfo.Length,
-                Format = GetFileFormat(fileInfo.Extension),
+                Format = FileFormatMapper.FromExtension(fileInfo.Extension),
                 IsPrimary = true,
                 IsLocalFileValid = true,
                 LocalFileVerifiedAt = DateTimeOffset.UtcNow,
@@ -659,7 +657,7 @@ public sealed class LoraDownloadService
 
         try
         {
-            var hash = await Task.Run(() => ComputeSha256(filePath), ct);
+            var hash = await Task.Run(() => FileHasher.Sha256Upper(filePath), ct);
             var apiKey = await GetApiKeyAsync();
 
             _logger?.Info(LogCategory.Download, "LoraDownload",
@@ -683,13 +681,6 @@ public sealed class LoraDownloadService
                 $"Hash-based metadata retry failed for '{Path.GetFileName(filePath)}': {ex.Message}", ex);
             return false;
         }
-    }
-
-    private static string ComputeSha256(string path)
-    {
-        using var stream = File.OpenRead(path);
-        using var sha = System.Security.Cryptography.SHA256.Create();
-        return Convert.ToHexString(sha.ComputeHash(stream));
     }
 
     private async Task<string?> GetApiKeyAsync()
@@ -734,16 +725,4 @@ public sealed class LoraDownloadService
 
     private static BaseModelType ParseBaseModel(string? baseModelRaw)
         => BaseModelTypeExtensions.ParseCivitai(baseModelRaw);
-
-    private static FileFormat GetFileFormat(string extension)
-    {
-        return extension.ToLowerInvariant() switch
-        {
-            ".safetensors" => FileFormat.SafeTensor,
-            ".pt" => FileFormat.PickleTensor,
-            ".ckpt" => FileFormat.Other,
-            ".pth" => FileFormat.PickleTensor,
-            _ => FileFormat.Unknown
-        };
-    }
 }
