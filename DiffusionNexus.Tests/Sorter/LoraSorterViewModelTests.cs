@@ -3,6 +3,7 @@ using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.Lora.Sorting;
+using DiffusionNexus.Tests.Sync.Service.Identity;
 using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
@@ -30,6 +31,15 @@ public sealed class LoraSorterViewModelTests : IDisposable
         var path = Path.Combine(SourceRoot, relative);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, "weights");
+        return path;
+    }
+
+    /// <summary>A model file with a real safetensors header, for the rungs that read one.</summary>
+    private string WriteSafetensors(string relative, string headerJson)
+    {
+        var path = Path.Combine(SourceRoot, relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(path, SafetensorsFixture.Safetensors(headerJson));
         return path;
     }
 
@@ -89,6 +99,304 @@ public sealed class LoraSorterViewModelTests : IDisposable
         rootNames.Should().Contain(["SDXL 1.0", "Illustrious"]);
         vm.PreviewRoots.First(n => n.Name == "SDXL 1.0")
             .Children.Select(c => c.Name).Should().Contain("Character");
+    }
+
+    /// <summary>
+    /// ModelFileSyncService stamps every locally-discovered model BaseModelRaw = "???", and
+    /// IdentifyModelStep only clears that when a library sync actually runs — it is due-gated on
+    /// 30-day windows and attempt caps. Pointing the sorter at a registered LoRA root takes the
+    /// DB-known branch for nearly every file, so without asking the file here the feature would do
+    /// almost nothing for exactly the self-trained LoRAs it exists for: the same file would be
+    /// identified from its header while sitting in an unregistered folder, and dumped into Unknown
+    /// the moment it was registered.
+    /// </summary>
+    [Fact]
+    public async Task APlaceholderBaseModelOnADbKnownRowIsIdentifiedFromTheFile()
+    {
+        var path = Path.Combine(SourceRoot, "flat", "selftrained.safetensors");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(path, SafetensorsFixture.Safetensors(
+            SafetensorsFixture.Meta(("modelspec.architecture", "stable-diffusion-xl-v1-base"))));
+
+        var vm = CreateVm(cached: [Installed(path, "???", "character")]);
+
+        await vm.InitializeAsync();
+
+        vm.PreviewRoots.Select(n => n.Name).Should()
+            .Contain("SDXL 1.0", "the row says \"???\", but the file itself does not")
+            .And.NotContain(SorterPathBuilder.UnknownFolderName);
+    }
+
+    /// <summary>
+    /// The name rung is off by default, so a LoRA only its name can identify sits in Unknown — and
+    /// the hint tells the user, in numbers taken from their own library, what turning it on buys.
+    /// </summary>
+    [Fact]
+    public async Task ANameOnlyLoraStaysUnknownAndTheHintOffersTheFix()
+    {
+        var path = WriteLora(@"flat\MyChar_Pony_v2.safetensors");
+        var vm = CreateVm(cached: [Installed(path, "???", "character")]);
+
+        await vm.InitializeAsync();
+
+        vm.GuessBaseModelFromFileName.Should().BeFalse("the lowest-confidence rung is opt-in");
+        vm.PreviewRoots.Select(n => n.Name).Should().Contain(SorterPathBuilder.UnknownFolderName);
+        vm.NameGuessHint.Should().Be(
+            "1 LoRA could not be identified — sorting by name will fix 1 of them.");
+    }
+
+    /// <summary>Turning it on files the LoRA by its name and says so in the past tense.</summary>
+    [Fact]
+    public async Task TurningOnNameSortingFilesTheLoraAndRewordsTheHint()
+    {
+        var path = WriteLora(@"flat\MyChar_Pony_v2.safetensors");
+        var vm = CreateVm(cached: [Installed(path, "???", "character")]);
+        await vm.InitializeAsync();
+
+        vm.GuessBaseModelFromFileName = true;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        vm.PreviewRoots.Select(n => n.Name).Should()
+            .Contain("Pony").And.NotContain(SorterPathBuilder.UnknownFolderName);
+        vm.NameGuessHint.Should().Be(
+            "Sorting by name identified 1 of 1 otherwise-unidentified LoRA.");
+    }
+
+    /// <summary>
+    /// A file the name cannot help with is counted as unidentified but not as fixable, so the offer
+    /// never overstates itself — "will fix 4 of them" has to be 4, not "some of them".
+    /// </summary>
+    [Fact]
+    public async Task TheHintCountsOnlyTheFilesTheNameCanActuallyFix()
+    {
+        var named = WriteLora(@"flat\MyChar_Pony_v2.safetensors");
+        var mute = WriteLora(@"flat\untitled_final.safetensors");
+        var vm = CreateVm(cached: [Installed(named, "???", "character"), Installed(mute, "???", "character")]);
+
+        await vm.InitializeAsync();
+
+        vm.NameGuessHint.Should().Be(
+            "2 LoRAs could not be identified — sorting by name will fix 1 of them.");
+    }
+
+    /// <summary>Nothing to offer, nothing said — the hint is not a permanent fixture of the panel.</summary>
+    [Fact]
+    public async Task TheHintIsSilentWhenTheNameRungWouldChangeNothing()
+    {
+        var path = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(path, "SDXL 1.0", "character")]);
+
+        await vm.InitializeAsync();
+
+        vm.NameGuessHint.Should().BeNull();
+    }
+
+    /// <summary>
+    /// The guess travels on the candidate rather than being baked into its base model, so toggling
+    /// the option re-plans off the candidate cache instead of re-walking the disk. On a browsed
+    /// folder of thousands of unknown files that is the difference between an instant checkbox and
+    /// a full re-resolve, so it is pinned by counting hashes: resolution hashes, planning does not
+    /// (these candidates carry no colliding names).
+    /// </summary>
+    [Fact]
+    public async Task TogglingNameSortingDoesNotReResolveCandidates()
+    {
+        WriteLora(@"flat\MyChar_Pony_v2.safetensors");
+        var hashCalls = 0;
+        var vm = CreateVm(cached: [], resolverHash: _ => { hashCalls++; return "hash"; });
+        await vm.InitializeAsync();
+
+        var afterFirstPass = hashCalls;
+        afterFirstPass.Should().BeGreaterThan(0, "the unknown file was resolved from disk");
+
+        vm.GuessBaseModelFromFileName = true;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        vm.PreviewRoots.Select(n => n.Name).Should().Contain("Pony");
+        hashCalls.Should().Be(afterFirstPass, "toggling the option must re-plan, not re-resolve");
+    }
+
+    /// <summary>
+    /// A folder's chips are the union of everything beneath it, so a base-model folder about to
+    /// receive a VAE alongside its LoRAs says so before anything moves — that mixing is invisible
+    /// today and only shows up as a stray file after the sort.
+    /// </summary>
+    [Fact]
+    public async Task AFolderIsLabelledWithEveryAssetKindBeneathIt()
+    {
+        var lora = WriteLora(@"flat\MyChar.safetensors");
+        var vae = WriteLora(@"flat\qwen_image_vae.safetensors");
+        var vm = CreateVm(cached: [Installed(lora, "Qwen", "character"), Installed(vae, "Qwen", "character")]);
+
+        await vm.InitializeAsync();
+
+        var qwen = vm.PreviewRoots.Single(n => n.Name == "Qwen");
+        qwen.AssetKinds.Should().BeEquivalentTo(["LoRA", "VAE"], o => o.WithStrictOrdering());
+    }
+
+    /// <summary>The mark is subtree-wide: a base-model folder is finished only when everything
+    /// under it is, which is the whole point of rolling it up rather than reading one node.</summary>
+    [Fact]
+    public async Task AFolderIsUnfinishedWhenAnythingBeneathItIsUnidentified()
+    {
+        var known = WriteLora(@"flat\a.safetensors");
+        var unknown = WriteLora(@"flat\BRFHE7KV2VWXY8N3D4SXR4XCT0.safetensors");
+        var vm = CreateVm(cached:
+        [
+            Installed(known, "SDXL 1.0", "character"),
+            Installed(unknown, "???", "character"),
+        ]);
+
+        await vm.InitializeAsync();
+
+        vm.PreviewRoots.Single(n => n.Name == "SDXL 1.0").IsIdentified.Should().BeTrue();
+
+        var unknownFolder = vm.PreviewRoots.Single(n => n.Name == SorterPathBuilder.UnknownFolderName);
+        unknownFolder.IsUnidentified.Should().BeTrue();
+        unknownFolder.StatusTooltip.Should().Contain("sort into Unknown");
+
+        // ...and through the category level too, not just at the root.
+        unknownFolder.Children.Where(c => !c.IsFile)
+            .Should().OnlyContain(c => c.IsUnidentified);
+    }
+
+    /// <summary>
+    /// "Identified" has to mean what the tree is actually drawing — and a file the name rung placed
+    /// is NOT identified, it is guessed. Marking it ✓ under "every file here has a base model"
+    /// turned the one screen that could audit the lowest-confidence rung into an endorsement of it.
+    /// </summary>
+    [Fact]
+    public async Task TurningOnNameSortingMarksTheFolderGuessedNotIdentified()
+    {
+        var path = WriteLora(@"flat\MyChar_Pony_v2.safetensors");
+        var vm = CreateVm(cached: [Installed(path, "???", "character")]);
+        await vm.InitializeAsync();
+
+        vm.PreviewRoots.Single(n => n.Name == SorterPathBuilder.UnknownFolderName)
+            .IsUnidentified.Should().BeTrue();
+
+        vm.GuessBaseModelFromFileName = true;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        var pony = vm.PreviewRoots.Single(n => n.Name == "Pony");
+        pony.IsGuessed.Should().BeTrue();
+        pony.IsIdentified.Should().BeFalse("a name is not a reading of the file");
+        pony.StatusTooltip.Should().Contain("named, not read");
+        pony.AssetKinds.Should().ContainSingle().Which.Should().Be("LoRA");
+    }
+
+    /// <summary>
+    /// The other side of the same rule: a file whose header answered is marked read, not guessed,
+    /// even while the name rung is on and its name would have produced the same label. Comparing
+    /// BaseModelRaw against NameGuess would have called this one guessed.
+    /// </summary>
+    [Fact]
+    public async Task AHeaderReadStaysIdentifiedWhileTheNameRungIsOn()
+    {
+        var path = WriteSafetensors(@"flat\MyChar_Pony_v2.safetensors",
+            SafetensorsFixture.Meta(("ss_base_model_version", "sdxl_base_v1-0")));
+        var vm = CreateVm(cached: [Installed(path, "???", "character")]);
+        vm.GuessBaseModelFromFileName = true;
+
+        await vm.InitializeAsync();
+
+        var node = vm.PreviewRoots.Single(n => n.Name == "SDXL 1.0");
+        node.IsIdentified.Should().BeTrue();
+        node.StatusTooltip.Should().Be("Every file here has a base model.");
+    }
+
+    /// <summary>
+    /// A folder's mark is the WORST thing under it: one unidentified file outranks any number of
+    /// guessed ones, which outrank read ones. Otherwise "some files here" would depend on the order
+    /// files happened to arrive in.
+    /// </summary>
+    [Fact]
+    public async Task AFolderTakesTheWorstMarkBeneathIt()
+    {
+        var read = WriteSafetensors(@"flat\a_pony.safetensors",
+            SafetensorsFixture.Meta(("ss_base_model_version", "sdxl_base_v1-0")));
+        var guessed = WriteLora(@"flat\b_sdxl_style.safetensors");
+        var vm = CreateVm(cached:
+        [
+            Installed(read, "???", "character"),
+            Installed(guessed, "???", "character"),
+        ]);
+        vm.GuessBaseModelFromFileName = true;
+
+        await vm.InitializeAsync();
+
+        // Both land in SDXL 1.0 — one because its header said so, one because its name did.
+        var node = vm.PreviewRoots.Single(n => n.Name == "SDXL 1.0");
+        node.IsGuessed.Should().BeTrue("the guessed file drags the folder off ✓");
+    }
+
+    /// <summary>
+    /// The hint's numbers belong to one folder. Deselecting the source clears the tree, the summary
+    /// and the plan — leaving the hint behind advertised "5 LoRAs could not be identified…" over an
+    /// empty tree, for a library that is no longer selected.
+    /// </summary>
+    [Fact]
+    public async Task DeselectingTheSourceClearsTheHintWithTheTree()
+    {
+        var vm = CreateVm(cached: [Installed(WriteLora(@"flat\MyChar_Pony_v2.safetensors"), "???", "character")]);
+        await vm.InitializeAsync();
+        vm.NameGuessHint.Should().NotBeNull();
+
+        vm.SelectedSourceFolder = null;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        vm.PreviewRoots.Should().BeEmpty();
+        vm.NameGuessHint.Should().BeNull();
+    }
+
+    /// <summary>
+    /// The sorter physically relocates everything its enumeration yields, so the scan list is not
+    /// the place to be generous. Routing it at the merged extension set widened it to .bin and
+    /// .gguf — a root holding pytorch_model.bin would have had it filed into a base-model folder,
+    /// wearing a [LoRA] chip because the classifier is name-based and nothing would flag it.
+    /// </summary>
+    [Fact]
+    public async Task WeightFormatsTheSorterDoesNotOwnAreNotPlannedForAMove()
+    {
+        WriteLora(@"flat\pytorch_model.bin");
+        WriteLora(@"flat\quantized.gguf");
+        var moved = WriteLora(@"flat\MyChar.sft");
+
+        var vm = CreateVm();
+        await vm.InitializeAsync();
+
+        var planned = vm.PreviewRoots
+            .SelectMany(Flatten)
+            .Where(n => n.IsFile)
+            .Select(n => n.Name)
+            .ToList();
+
+        planned.Should().Contain(Path.GetFileName(moved),
+            "the short safetensors spelling is the same container the header reader already reads");
+        planned.Should().NotContain("pytorch_model.bin").And.NotContain("quantized.gguf");
+    }
+
+    private static IEnumerable<SortPreviewNodeViewModel> Flatten(SortPreviewNodeViewModel node)
+        => new[] { node }.Concat(node.Children.SelectMany(Flatten));
+
+    /// <summary>A file node carries its own kind and its own mark, so expanding an unfinished folder
+    /// shows which files are the problem rather than only that some are.</summary>
+    [Fact]
+    public async Task AFileNodeCarriesItsOwnKindAndMark()
+    {
+        var vae = WriteLora(@"flat\sdxl_vae.safetensors");
+        var vm = CreateVm(cached: [Installed(vae, "???", "character")]);
+
+        await vm.InitializeAsync();
+
+        var fileNode = vm.PreviewRoots
+            .Single(n => n.Name == SorterPathBuilder.UnknownFolderName)
+            .Children.SelectMany(c => c.IsFile ? [c] : c.Children)
+            .Single(c => c.IsFile);
+
+        fileNode.AssetKinds.Should().ContainSingle().Which.Should().Be("VAE");
+        fileNode.IsUnidentified.Should().BeTrue();
+        fileNode.StatusTooltip.Should().Contain("This file has no base model");
     }
 
     [Fact]

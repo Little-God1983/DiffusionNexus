@@ -7,10 +7,12 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Service.Services.IO;
+using DiffusionNexus.Service.Services.Sync.Identity;
 using DiffusionNexus.UI.Helpers;
 using DiffusionNexus.UI.Services.Lora.Sorting;
 using DiffusionNexus.UI.Utilities;
 using Microsoft.Extensions.DependencyInjection;
+using DiffusionNexus.Domain.Utilities;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -27,7 +29,10 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// <summary>Heartbeat cadence for the unknown-file resolution loop's progress log line.</summary>
     private const int ResolveLogInterval = 50;
 
-    private static readonly string[] ModelExtensions = [".safetensors", ".ckpt", ".pt", ".pth"];
+    // Sortable, NOT Recognized: everything this list yields becomes a planned MOVE, so it must stay
+    // the narrow set. Briefly pointing it at the merged list widened the sorter to .bin and .gguf
+    // and would have relocated a pytorch_model.bin into a base-model folder.
+    private static readonly string[] ModelExtensions = ModelFileExtensions.Sortable;
 
     private readonly IAppSettingsService? _settingsService;
     private readonly IUnifiedLogger? _logger;
@@ -232,6 +237,22 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     [ObservableProperty]
     private bool _deleteEmptySourceFolders;
 
+    /// <summary>
+    /// Opt-in for the lowest-confidence rung: filing a LoRA by what its NAME suggests when nothing
+    /// authoritative and no safetensors header could identify it. Off by default, and deliberately
+    /// a user decision rather than a silent default — FilenameBaseModelHeuristic was tuned for a
+    /// reversible database write, not for relocating files, and its shortest tokens (<c>il</c> →
+    /// Illustrious) match words that occur in ordinary names. <see cref="NameGuessHint"/> tells the
+    /// user how many files it would actually resolve before they turn it on.
+    /// </summary>
+    [ObservableProperty]
+    private bool _guessBaseModelFromFileName;
+
+    /// <summary>How many unidentified LoRAs the name rung would resolve — or did. Null when there
+    /// is nothing to say: no unidentified files, or none the name could help with.</summary>
+    [ObservableProperty]
+    private string? _nameGuessHint;
+
     public ObservableCollection<SortPreviewNodeViewModel> PreviewRoots { get; } = [];
 
     [ObservableProperty]
@@ -266,6 +287,18 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     }
 
     partial void OnIsMoveChanged(bool value)
+    {
+        ClearRunResultBanner();
+        if (_isInitializing) return;
+        _ = RecomputePreviewAsync();
+    }
+
+    /// <summary>
+    /// Re-plans without re-resolving: the name guess travels on the candidate
+    /// (<see cref="SortCandidate.NameGuess"/>) rather than being baked into its base model, so the
+    /// candidate cache stays valid and toggling this on a 3000-file library costs no disk at all.
+    /// </summary>
+    partial void OnGuessBaseModelFromFileNameChanged(bool value)
     {
         ClearRunResultBanner();
         if (_isInitializing) return;
@@ -411,6 +444,10 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             StatusMessage = null;
             _statusMessageIsWarning = false;
             TransferCount = 0;
+            // The hint's numbers describe the folder that was selected. Over an empty tree they
+            // advertise a library that is no longer on screen, which is the one thing a "what this
+            // option is worth on YOUR library" line must never do.
+            NameGuessHint = null;
             return;
         }
 
@@ -523,13 +560,19 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 _candidateCacheSkippedCount = resolution.SkippedCount;
             }
 
+            // Counted from the candidates as resolved, BEFORE any name guess is folded in, so the
+            // two wordings share one pair of numbers and the count does not change when the option
+            // is ticked — only the sentence does.
+            UpdateNameGuessHint(candidates);
+            var plannable = ApplyNameGuesses(candidates);
+
             // BuildPlan also touches disk (lazy hashing on collisions), so it's offloaded too. The
             // options snapshot is read here — on the calling (UI) context — not from inside the
             // Task.Run body.
             var options = BuildOptions();
             var planStopwatch = Stopwatch.StartNew();
             var plan = await Task.Run(
-                () => new LoraSortPlanner(_hashFile, _fileExistsOnDisk).BuildPlan(candidates, options, passCts.Token),
+                () => new LoraSortPlanner(_hashFile, _fileExistsOnDisk).BuildPlan(plannable, options, passCts.Token),
                 passCts.Token);
             planStopwatch.Stop();
 
@@ -650,6 +693,10 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             PreviewRoots.Clear();
             PreviewSummary = null;
             DiskSummary = null;
+            // Goes with the tree, for the same reason: after "Preview failed: …" there are no
+            // candidates behind these numbers. A keepTree disarm (the disk-space gate) leaves a
+            // real tree standing, and the hint still describes it.
+            NameGuessHint = null;
         }
         BlockReason = reason;
     }
@@ -684,6 +731,12 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         var knownSkipped = 0;
         var unknownAdded = 0;
         var unknownSkipped = 0;
+
+        // ModelFileSyncService stamps every locally-discovered model "???", so on a registered root
+        // the header reads below are not a rare row — they can be most of the library. Counted up
+        // front so the progress line can say how far through them the pass is.
+        var placeholderRows = cached.Count(f => SorterPathBuilder.IsPlaceholderBaseModel(f.Version.BaseModelRaw));
+        var headersRead = 0;
 
         foreach (var f in cached)
         {
@@ -738,8 +791,42 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 
                 var category = SorterCategoryResolver.ToFolderName(SorterCategoryResolver.ResolveForModel(f.Model));
                 var sizeBytes = f.File.FileSizeBytes ?? new FileInfo(path).Length;
-                candidates.Add(new SortCandidate(path, f.Version.BaseModelRaw, category,
-                    f.Version.CivitaiId, f.File.HashSHA256, sizeBytes, SidecarLocator.FindSidecars(path)));
+
+                // ModelFileSyncService stamps every locally-discovered model BaseModelRaw = "???",
+                // and IdentifyModelStep only clears that when a library sync actually runs — it is
+                // due-gated on 30-day windows and attempt caps. Until then the row says nothing, so
+                // ask the file the same two questions the unknown-file branch asks. Without this the
+                // very same LoRA would be identified from its header while sitting in an
+                // unregistered folder and dumped into Unknown\ the moment it is registered, which
+                // is backwards. Costs one size-capped header read per placeholder row; a row that
+                // already carries a base model pays nothing.
+                var baseModelRaw = f.Version.BaseModelRaw;
+                string? nameGuess = null;
+                if (SorterPathBuilder.IsPlaceholderBaseModel(baseModelRaw))
+                {
+                    // Real I/O — a FileStream open plus up to SafetensorsHeaderReader.MaxHeaderBytes
+                    // of reads, serially, over what may well be a NAS. Reported for the same reason
+                    // the unknown-file loop below reports: without it the overlay sits on the static
+                    // "Computing preview…" for the whole phase and an exported log has nothing
+                    // between the enumeration line and the end of the pass, so slow and hung look
+                    // identical.
+                    headersRead++;
+                    progress?.Report($"Reading headers {headersRead}/{placeholderRows}…");
+                    if (headersRead % ResolveLogInterval == 0)
+                    {
+                        _logger?.Info(LogCategory.FileSystem, LogSource,
+                            $"Read {headersRead}/{placeholderRows} headers for rows with no base model " +
+                            $"({stopwatch.ElapsedMilliseconds} ms elapsed)");
+                    }
+
+                    var fileIdentity = await _metadataResolver.IdentifyFromFileAsync(path, ct);
+                    baseModelRaw = fileIdentity.FromHeader ?? baseModelRaw;
+                    nameGuess = fileIdentity.FromName;
+                }
+
+                candidates.Add(new SortCandidate(path, baseModelRaw, category,
+                    f.Version.CivitaiId, f.File.HashSHA256, sizeBytes, SidecarLocator.FindSidecars(path), nameGuess,
+                    SorterAssetKindClassifier.Classify(Path.GetFileName(path))));
                 knownAdded++;
             }
             catch (Exception ex) when (IsSkippableFileFailure(ex))
@@ -789,7 +876,8 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 var category = SorterCategoryResolver.InferFolderName(metadata.Tags)
                     ?? SorterPathBuilder.UnknownFolderName;
                 candidates.Add(new SortCandidate(path, metadata.BaseModelRaw, category,
-                    metadata.CivitaiVersionId, metadata.Sha256, sizeBytes, SidecarLocator.FindSidecars(path)));
+                    metadata.CivitaiVersionId, metadata.Sha256, sizeBytes, SidecarLocator.FindSidecars(path),
+                    metadata.NameGuess, SorterAssetKindClassifier.Classify(Path.GetFileName(path))));
                 unknownAdded++;
             }
             catch (Exception ex) when (IsSkippableFileFailure(ex))
@@ -836,6 +924,50 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     private static bool IsSkippableFileFailure(Exception ex)
         => ex is IOException or UnauthorizedAccessException or JsonException;
 
+    /// <summary>
+    /// Folds each candidate's name guess into its base model, but only when the user asked for it
+    /// and only where nothing better answered. Returns the input list unchanged when the option is
+    /// off, so the common path allocates nothing.
+    /// </summary>
+    private List<SortCandidate> ApplyNameGuesses(List<SortCandidate> candidates)
+        => GuessBaseModelFromFileName
+            ? candidates.Select(c => c.NameGuess is not null && SorterPathBuilder.IsPlaceholderBaseModel(c.BaseModelRaw)
+                    ? c with { BaseModelRaw = c.NameGuess, BaseModelIsGuess = true }
+                    : c)
+                .ToList()
+            : candidates;
+
+    /// <summary>
+    /// "5 LoRAs could not be identified — sorting by name will fix 4 of them." Shown before the user
+    /// commits to anything, because the whole point of the opt-in is that they can see what it buys
+    /// on THEIR library rather than guess at it. Silent when there is nothing to offer.
+    /// </summary>
+    private void UpdateNameGuessHint(IReadOnlyList<SortCandidate> candidates)
+    {
+        var unidentified = 0;
+        var fixable = 0;
+        foreach (var candidate in candidates)
+        {
+            if (!SorterPathBuilder.IsPlaceholderBaseModel(candidate.BaseModelRaw)) continue;
+            unidentified++;
+            if (candidate.NameGuess is not null) fixable++;
+        }
+
+        NameGuessHint = fixable == 0
+            ? null
+            : GuessBaseModelFromFileName
+                ? $"Sorting by name identified {fixable} of {unidentified} otherwise-unidentified {LoraWord(unidentified)}."
+                : $"{unidentified} {LoraWord(unidentified)} could not be identified — sorting by name will fix {fixable} of them.";
+    }
+
+    private static string LoraWord(int count) => count == 1 ? "LoRA" : "LoRAs";
+
+    /// <summary>How well this candidate's destination folder is known, as the tree reports it.</summary>
+    private static SortPreviewIdentity IdentityOf(SortCandidate candidate)
+        => SorterPathBuilder.IsPlaceholderBaseModel(candidate.BaseModelRaw) ? SortPreviewIdentity.Unidentified
+            : candidate.BaseModelIsGuess ? SortPreviewIdentity.Guessed
+            : SortPreviewIdentity.Identified;
+
     /// <summary>Result of one resolution pass: the candidates and how many files it had to skip.</summary>
     private sealed record CandidateResolution(List<SortCandidate> Candidates, int SkippedCount);
 
@@ -875,7 +1007,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         {
             foreach (var path in Directory.EnumerateFiles(root, "*", RecursiveSafe))
             {
-                if (ModelExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase))
+                if (ModelFileExtensions.Matches(path, ModelExtensions))
                     files.Add(path);
             }
         }
@@ -1178,12 +1310,20 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 IsAlreadyInPlace = move.Action == PlannedAction.AlreadyInPlace,
                 IsRenamed = move.WasRenamed
             };
+
+            // Read from the candidate as planned, so the tree agrees with the folders it is drawing
+            // rather than with some other definition of "known" — and a base model supplied by the
+            // name rung is reported as guessed rather than as read, because it is the difference
+            // between a folder the file earned and one its file name suggested.
+            var identity = IdentityOf(move.Candidate);
+            fileNode.Absorb(move.Candidate.AssetKind, identity);
             siblings.Add(fileNode);
 
             foreach (var ancestor in chain)
             {
                 ancestor.LoraCount += 1;
                 ancestor.TotalBytes += move.Candidate.FileSizeBytes;
+                ancestor.Absorb(move.Candidate.AssetKind, identity);
             }
         }
 

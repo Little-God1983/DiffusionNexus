@@ -20,7 +20,40 @@
                      FontFamily="Consolas,monospace" FontSize="12" Margin="4,0,12,0"
                      Classes.dimmed="{Binding IsAlreadyInPlace}"
                      Classes.renamed="{Binding IsRenamed}"/>
-          <TextBlock Grid.Column="2" Text="{Binding CountAndSizeDisplay}" FontSize="11" Opacity="0.5"/>
+          <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+            <!-- Asset-kind chips: what is actually in this folder, rolled up through its subfolders.
+                 Anything other than LoRA means the folder is about to receive something the sorter
+                 is not really for. -->
+            <ItemsControl ItemsSource="{Binding AssetKinds}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <StackPanel Orientation="Horizontal" Spacing="3"/>
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Border Background="#2F2F33" BorderBrush="#454549" BorderThickness="1"
+                          CornerRadius="3" Padding="5,0,5,1">
+                    <TextBlock Text="{Binding}" FontSize="10" Opacity="0.85"/>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <!-- Three marks, one visible at a time: read/confirmed, named-only, and no base model
+                 at all. The middle one exists because "sort by name" gives a guessed file a real
+                 folder, and a ✓ over "every file here has a base model" would then be a claim the
+                 preview cannot back. -->
+            <TextBlock Text="✓" ToolTip.Tip="{Binding StatusTooltip}" Foreground="#6FCF7F"
+                       FontSize="12" FontWeight="Bold" Margin="2,0,0,0"
+                       IsVisible="{Binding IsIdentified}"/>
+            <TextBlock Text="~" ToolTip.Tip="{Binding StatusTooltip}" Foreground="#E2B14C"
+                       FontSize="12" FontWeight="Bold" Margin="2,0,0,0"
+                       IsVisible="{Binding IsGuessed}"/>
+            <TextBlock Text="✗" ToolTip.Tip="{Binding StatusTooltip}" Foreground="#FF6B6B"
+                       FontSize="12" FontWeight="Bold" Margin="2,0,0,0"
+                       IsVisible="{Binding IsUnidentified}"/>
+            <TextBlock Text="{Binding CountAndSizeDisplay}" FontSize="11" Opacity="0.5" Margin="6,0,0,0"/>
+          </StackPanel>
         </Grid>
         <ItemsControl ItemsSource="{Binding Children}" Margin="18,0,0,0"
                       IsVisible="{Binding IsExpanded}"/>
@@ -87,6 +120,15 @@
                          IsChecked="{Binding !IncludeCategory}"/>
             <RadioButton GroupName="Structure" Content="Base model + category"
                          IsChecked="{Binding IncludeCategory}"/>
+          </StackPanel>
+
+          <StackPanel Spacing="4">
+            <TextBlock Classes="fieldLabel" Text="UNIDENTIFIED LORAS" FontSize="11" Opacity="0.6"/>
+            <CheckBox Content="Sort by name when nothing else identifies a LoRA"
+                      IsChecked="{Binding GuessBaseModelFromFileName}" FontSize="12"/>
+            <TextBlock Text="{Binding NameGuessHint}" FontSize="11.5" Opacity="0.75"
+                       TextWrapping="Wrap"
+                       IsVisible="{Binding NameGuessHint, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
           </StackPanel>
 
           <StackPanel Spacing="4">

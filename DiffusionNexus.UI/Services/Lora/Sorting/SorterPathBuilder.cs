@@ -1,3 +1,4 @@
+using DiffusionNexus.Service.Services.Sync;
 namespace DiffusionNexus.UI.Services.Lora.Sorting;
 
 /// <summary>
@@ -11,8 +12,18 @@ public static class SorterPathBuilder
 {
     public const string UnknownFolderName = "Unknown";
 
-    public static bool IsPlaceholderBaseModel(string? baseModel)
-        => string.IsNullOrWhiteSpace(baseModel) || baseModel == "???";
+    /// <summary>
+    /// Whether a base model is the "???" placeholder (or nothing at all) rather than an answer —
+    /// the test that picks the Unknown bucket.
+    /// </summary>
+    /// <remarks>
+    /// Delegates rather than restating: <see cref="SyncStateDeriver.IsPlaceholder"/> is the same
+    /// rule on the WRITE side of the boundary — it decides whether <c>IdentifyModelStep</c> may fill
+    /// the very label this then reads to pick a folder. Three verbatim copies of
+    /// <c>IsNullOrWhiteSpace(x) || x == "???"</c> existed, one on each side of that boundary, which
+    /// is exactly the drift the sorter's own doc comments argue against.
+    /// </remarks>
+    public static bool IsPlaceholderBaseModel(string? baseModel) => SyncStateDeriver.IsPlaceholder(baseModel);
 
     /// <summary>
     /// Folder-name sanitization. Windows-only rules today.

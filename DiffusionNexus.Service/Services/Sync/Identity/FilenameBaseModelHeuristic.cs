@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using DiffusionNexus.Domain.Utilities;
 
 namespace DiffusionNexus.Service.Services.Sync.Identity;
 
@@ -14,10 +15,7 @@ public static partial class FilenameBaseModelHeuristic
     // into "detailer_sd1" and losing the version digit the token match below depends on), and the
     // Task 3 caller already pre-strips real extensions before calling in — so a second, unguarded
     // strip here would be the live failure path, not a defensive no-op.
-    private static readonly string[] KnownModelExtensions =
-    {
-        ".safetensors", ".pt", ".ckpt", ".bin", ".sft", ".gguf",
-    };
+    private static readonly string[] KnownModelExtensions = ModelFileExtensions.Recognized;
 
     [GeneratedRegex("[^a-z0-9]+")]
     private static partial Regex TokenSplitRegex();
@@ -85,18 +83,75 @@ public static partial class FilenameBaseModelHeuristic
     // key like "sd3" can never win over a finer one like "sd35" just because of where the
     // separators happened to fall — see the longest-key-first loop in Guess().
     //
-    // No "wan"/"wan21"/"wan22" here, deliberately: "Wan Video" is a real Civitai catalog label,
-    // but BaseModelTypeExtensions.ParseCivitai normalizes it (by stripping spaces) to "WanVideo",
-    // which is not a BaseModelType member — only WanVideo21/WanVideo22 exist — so it always ends
-    // up stored as Other. The bare "wan" token is also a false-positive magnet on its own:
-    // Star Wars character LoRAs ("obi_wan_kenobi") are extremely common. Do not re-add any of the
-    // three without also adding a representable BaseModelType member.
+    // The bare "wan" token is NOT here and must not be added: Star Wars character LoRAs
+    // ("obi_wan_kenobi") are extremely common. The version-qualified spellings are NOT safe on
+    // their own either — the candidate set below synthesizes them from adjacent tokens, so
+    // "obi_wan_2" produces "wan2" and used to resolve to Wan Video despite that guard. See
+    // NamesObiWan: the collision is one specific name, and naming it is what actually holds.
+    //
+    // Several labels here (LTXV*, Wan Video, Qwen, Chroma, HiDream, Flux.2*) are real Civitai
+    // catalog labels that BaseModelTypeExtensions.ParseCivitai cannot map to a BaseModelType
+    // member, so they store as Other. That is a gap in the ENUM, not a reason to withhold the
+    // label: a Civitai-identified model of the same family already stores exactly this raw label
+    // and exactly that Other, so emitting it here changes nothing for the worse — while the sorter,
+    // which files by the raw string, gets a correct folder instead of dumping the file into
+    // Unknown. Tracked separately; do not "fix" it by deleting these keys.
     private static readonly Dictionary<string, string> ExactTokenOrPairMap = new(StringComparer.Ordinal)
     {
         ["sd15"] = "SD 1.5",
         ["sd21"] = "SD 2.1",
         ["sd35"] = "SD 3.5",
         ["sd3"] = "SD 3",
+
+        // LTX. Longest-key-first ordering is what keeps "ltx" from eating "ltx23" — see Guess().
+        // "latex" does not contain the token "ltx" (l-a-t-e-x), so the bare key is safe.
+        ["ltxv23"] = "LTXV 2.3",
+        ["ltx23"] = "LTXV 2.3",
+        ["ltxv2"] = "LTXV2",
+        ["ltx2"] = "LTXV2",
+        ["ltxv"] = "LTXV",
+        ["ltx"] = "LTXV",
+
+        // Wan. Every version-qualified spelling collapses to the family label: the finer catalog
+        // entries encode t2v/i2v and parameter count, which a file name reports too unreliably to
+        // act on — and a wrong "Wan Video 2.2 I2V-A14B" folder is worse than a right "Wan Video".
+        ["wan25"] = "Wan Video",
+        ["wan22"] = "Wan Video",
+        ["wan21"] = "Wan Video",
+        ["wan2"] = "Wan Video",
+
+        ["qwen"] = "Qwen",
+        // Video-qualified only. "Hunyuan 1" (HunyuanDiT, an image model) and "Hunyuan Video" are
+        // separate catalog families rather than two versions of one, so unlike the Wan keys a bare
+        // "hunyuan" cannot be collapsed to either: it would file an image LoRA into a video folder.
+        // The pair set produces this from the usual "hunyuan_video_*" spelling.
+        ["hunyuanvideo"] = "Hunyuan Video",
+        ["chroma"] = "Chroma",
+        ["hidream"] = "HiDream",
+
+        // Flux beyond 1.D/1.S. "kontext" and "klein" are distinctive enough to stand alone;
+        // a bare "klein" is not, because 4B and 9B are different base models and the file name is
+        // the only thing that says which — so only the size-qualified pairs map.
+        ["kontext"] = "Flux.1 Kontext",
+        ["kleinbase9b"] = "Flux.2 Klein 9B-base",
+        ["kleinbase4b"] = "Flux.2 Klein 4B-base",
+        ["klein9b"] = "Flux.2 Klein 9B",
+        ["klein4b"] = "Flux.2 Klein 4B",
+        ["flux2"] = "Flux.2 D",
+    };
+
+    // Keys that must appear as a WHOLE TOKEN, never accepted from the synthesized pair/triple set.
+    // That synthesis exists so a version split across separators still matches ("sd_3.5" tokenizes
+    // to "sd","3","5"), which is right when the key's stem means nothing on its own — "sd", "ltx",
+    // "klein". "flux" is not that: it stands alone as the family name, so synthesizing "flux2" from
+    // a following bare digit reads an ordinary version suffix as a different family, and
+    // "portrait_flux_2" (v2 of a Flux.1 LoRA) came out as Flux.2 D, beating the "flux" prefix rung
+    // below that had it right. Requiring the glued spelling costs nothing measurable: the one file
+    // in the reference library that needed the pair — "flux-2-klein-base-9b-fp8" — is matched
+    // precisely by "kleinbase9b" above instead of coarsely by "flux2".
+    private static readonly HashSet<string> GluedSpellingOnlyKeys = new(StringComparer.Ordinal)
+    {
+        "flux2",
     };
 
     // Rung 5: token prefix match — last resort, so only distinctive prefixes that won't collide
@@ -173,9 +228,15 @@ public static partial class FilenameBaseModelHeuristic
         for (var i = 0; i < tokens.Length - 2; i++)
             candidates.Add(tokens[i] + tokens[i + 1] + tokens[i + 2]);
 
+        var tokenSet = new HashSet<string>(tokens, StringComparer.Ordinal);
+        var namesObiWan = NamesObiWan(tokens);
+
         foreach (var key in ExactTokenOrPairMap.Keys.OrderByDescending(k => k.Length))
         {
-            if (candidates.Contains(key))
+            if (namesObiWan && key.StartsWith("wan", StringComparison.Ordinal)) continue;
+
+            var pool = GluedSpellingOnlyKeys.Contains(key) ? tokenSet : candidates;
+            if (pool.Contains(key))
                 return ExactTokenOrPairMap[key];
         }
 
@@ -189,6 +250,31 @@ public static partial class FilenameBaseModelHeuristic
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Whether the name is Obi-Wan Kenobi's rather than Wan Video's.
+    /// </summary>
+    /// <remarks>
+    /// "wan" is a real word in exactly one place that matters, and the version-qualified keys cannot
+    /// simply be made token-only to dodge it: the dominant real spelling separates the digits
+    /// ("WAN-2.2-I2V-…", "wan_22_high_noise" — 34 of the 36 wan files in the reference library), so
+    /// dropping the pair/triple synthesis would cost far more than it saves. Naming the one
+    /// collision is what actually holds the guard the table above claims.
+    /// </remarks>
+    private static bool NamesObiWan(string[] tokens)
+    {
+        for (var i = 0; i < tokens.Length; i++)
+        {
+            if (string.Equals(tokens[i], "kenobi", StringComparison.Ordinal)) return true;
+            if (string.Equals(tokens[i], "obi", StringComparison.Ordinal)
+                && i + 1 < tokens.Length && string.Equals(tokens[i + 1], "wan", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static string StripKnownExtension(string fileName)
