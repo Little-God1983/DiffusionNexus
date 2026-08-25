@@ -406,15 +406,21 @@ never re-fetched; only an explicit Force re-asks.
 
 ### Retry windows (`SyncRetryPolicy`)
 
-The windows below are the defaults; the two that are user-facing come from settings
-(`SyncNotIdentifiedRetryDays`, `SyncErrorRetryDays`, floored at one day) and the viewer
-builds the policy from them for the bulk run, the per-LoRA button and the tiles alike.
+The windows below are the defaults; the two that are user-facing come from
+**Settings → LoRA Viewer → Metadata Sync** (`SyncNotIdentifiedRetryDays` — 7/14/30/60/90,
+default 30; `SyncErrorRetryDays` — 1/3/7, default 1) and reach the policy through
+`SyncRetryPolicy.FromDays`, which floors either value at one day so a settings row of `0`
+cannot turn the retry window into a busy-loop. `MaxErrorAttempts` (3) is not user-facing —
+it is a fixed ceiling on the `Error` row below. The viewer builds one policy from these
+settings and hands it to the bulk run, the per-LoRA button and the tiles alike, so a scroll
+past a thumbnail and a bulk sync of the same row never disagree about whether it is due
+(§9, "The tile — three on-demand paths, one gate").
 
 | Stored outcome | Re-checked |
 |----------------|-----------|
 | `Matched` | Never (only Force) |
-| `NotIdentified`, `Sidecar`, `Header`, `Heuristic` | After 30 days — a better source may have appeared |
-| `Error` | After 1 day, at most 3 consecutive attempts |
+| `NotIdentified`, `Sidecar`, `Header`, `Heuristic` | After `SyncNotIdentifiedRetryDays` (default 30) — a better source may have appeared |
+| `Error` | After `SyncErrorRetryDays` (default 1), at most `MaxErrorAttempts` (3) consecutive attempts |
 | `None` / no row | Immediately |
 | Tags / images already stamped | Never (only Force) |
 
@@ -604,6 +610,12 @@ Grid (3 rows: Auto, *, Auto)
 └── Row 2: Status Bar (SyncStatus text, auto-hides when empty)
 ```
 
+**Bulk sync windows.** `SyncPlanDialog` and `SyncReportDialog` (`Views/Dialogs/`) are not rows in
+this Grid — they are separate windows the Download Metadata flow shows through `IDialogService`,
+one before the run and one after (§4 steps 3 and 9). The plan dialog's appearance is deliberate
+about the Loading Overlay above: it comes down while the dialog is open, because nothing is
+running yet — the user is still choosing what to start.
+
 ---
 
 ## 8. Filtering Pipeline
@@ -678,11 +690,19 @@ every producer — a thumbnail from the sync step, the tile, and the sidecar app
   already carries bytes contributes nothing at all, and the loop never reaches the runner-up. Rows
   with a blank URL or a `user-thumbnail://` one are dropped from the ranking itself, not merely from
   the result — left in, either could win its version and hide the real image behind it.
-- **One item per due image, no pacer.** Unlike the other four steps this one never awaits
-  `ICivitaiRequestPacer` — the CDN is a static-asset host, not the rate-limited API, and pacing a
-  library's worth of ~65 KB GETs at API speed would turn a minute into an hour. The record of an
-  attempt lives on `ModelImage` itself, not on `ModelSyncStates`, because the unit of work is the
-  image: two versions of one model are two independent thumbnails, two requests, two outcomes.
+- **One item per due image, no pacer — and the unpaced thumbnails step runs N at a time.** Unlike
+  the other four steps this one never awaits `ICivitaiRequestPacer` — the CDN is a static-asset
+  host, not the rate-limited API, and pacing a library's worth of ~65 KB GETs at API speed would
+  turn a minute into an hour. The record of an attempt lives on `ModelImage` itself, not on
+  `ModelSyncStates`, because the unit of work is the image: two versions of one model are two
+  independent thumbnails, two requests, two outcomes. `ThumbnailsStep` is the one step that runs
+  its due images with bounded parallelism instead of one at a time: `SyncOptions.ThumbnailConcurrency`
+  (from **Settings → LoRA Viewer → Metadata Sync**, clamped to 1–8, default 4) sets how many CDN GETs
+  `LibrarySyncService` has in flight at once. The other four steps stay sequential and paced — this
+  is the one place in the pipeline where "sequential" and "paced" pull apart, because the CDN needs
+  neither. The same clamp applies wherever a model has more than one due image at once: the
+  downloader's post-download completion sync and a per-tile sync both fetch that model's outstanding
+  thumbnails through the same bounded path, not one request each in series.
 - **`AllowVideoDownload` is always `false`.** A video-primary row costs exactly one small poster GET
   in bulk; if the CDN has no poster for it yet, the row fails soft (`VideoNoPoster`) and tries again
   tomorrow — it never falls back to pulling the clip. That is the **0-video-bytes-in-bulk guarantee**:

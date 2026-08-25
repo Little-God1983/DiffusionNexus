@@ -10,6 +10,7 @@ using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Service.Services.Sync.Thumbnails;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Views.Dialogs;
 using Microsoft.Extensions.DependencyInjection;
@@ -747,10 +748,10 @@ public partial class ModelDetailViewModel
                 dbVersion.Images.Add(image);
             }
 
-            image.ThumbnailData = data;
-            image.ThumbnailMimeType = mime;
-            image.ThumbnailWidth = width;
-            image.ThumbnailHeight = height;
+            // Plan B made ThumbnailWriter the one writer of the six thumbnail columns; this was the
+            // last path around it. Routing through it also stamps the attempt and clears any prior
+            // failure verdict — a user-uploaded image must not sit next to yesterday's "Corrupt".
+            ThumbnailWriter.ApplySuccess(image, new ThumbnailPayload(data, mime, width, height), DateTimeOffset.UtcNow);
             image.IsLocalCacheValid = false;
             image.LocalCachePath = null;
             image.CachedAt = DateTimeOffset.UtcNow;
