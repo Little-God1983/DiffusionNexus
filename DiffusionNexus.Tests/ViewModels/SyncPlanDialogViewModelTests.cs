@@ -116,4 +116,33 @@ public class SyncPlanDialogViewModelTests
         result.Options.ForceIdentify.Should().BeTrue();
         result.Options.ForceTags.Should().BeFalse();
     }
+
+    /// <summary>
+    /// Pins the three unit branches and their boundaries — this string feeds the row estimates,
+    /// the footer total, and the report's elapsed line. 89.5 s reading "~90 s" while still in the
+    /// seconds branch is the documented quirk, not a bug.
+    /// </summary>
+    [Theory]
+    [InlineData(0, "~0 s")]
+    [InlineData(-5, "~0 s")]
+    [InlineData(89, "~89 s")]
+    [InlineData(89.5, "~90 s")]
+    [InlineData(90, "~2 min")]
+    [InlineData(60 * 89, "~89 min")]
+    [InlineData(60 * 90, "~1.5 h")]
+    [InlineData(60 * 60 * 3, "~3 h")]
+    public void FormatDuration_RendersEachUnitBranch(double seconds, string expected)
+    {
+        SyncPlanDialogViewModel.FormatDuration(TimeSpan.FromSeconds(seconds)).Should().Be(expected);
+    }
+
+    [Fact]
+    public void AZeroCountRow_ShowsNoEstimate()
+    {
+        var vm = Vm(PlanWith(identify: 3, tags: 0, images: 0, thumbs: 12));
+
+        vm.Rows.Single(r => r.Kind == SyncStepKind.FetchTags).EstimateText.Should().BeEmpty(
+            "a disabled '0 Tags ~0 s' row reads like pending work — an empty cell does not");
+        vm.Rows.Single(r => r.Kind == SyncStepKind.IdentifyModel).EstimateText.Should().NotBeEmpty();
+    }
 }

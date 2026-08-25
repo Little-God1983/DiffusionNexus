@@ -193,7 +193,8 @@ public sealed partial class SyncPlanDialogViewModel : ObservableObject
 
             row.Estimate = step?.EstimatedDuration ?? TimeSpan.Zero;
             row.Count = step?.Count ?? 0;
-            row.EstimateText = FormatDuration(row.Estimate);
+            // A row with nothing to do shows no estimate — "~0 s" reads like pending work.
+            row.EstimateText = row.Count > 0 ? FormatDuration(row.Estimate) : "";
 
             // A row that had nothing to do could not have been ticked, so a force that gives it
             // work ticks it. A row that was live keeps whatever the user decided about it.

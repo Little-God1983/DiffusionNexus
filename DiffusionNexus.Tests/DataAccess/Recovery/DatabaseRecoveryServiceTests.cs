@@ -254,6 +254,33 @@ public sealed class DatabaseRecoveryServiceTests : IDisposable
         Assert.Empty(logger.Errors);
     }
 
+    /// <summary>
+    /// The four Plan E settings columns each have a self-heal entry (#521 WP6). Dropping them all
+    /// and repairing pins the SQL inside those entries — a typo'd column name or type would leave
+    /// the app crashing on "no such column" with the repair silently missing it.
+    /// </summary>
+    [Fact]
+    public void CheckAndRepairSchema_ReAddsMissingSyncSettingsColumns()
+    {
+        MigrateFresh();
+        Exec("ALTER TABLE AppSettings DROP COLUMN SyncNotIdentifiedRetryDays;");
+        Exec("ALTER TABLE AppSettings DROP COLUMN SyncErrorRetryDays;");
+        Exec("ALTER TABLE AppSettings DROP COLUMN SyncThumbnailConcurrency;");
+        Exec("ALTER TABLE AppSettings DROP COLUMN LastLibrarySyncAt;");
+        Assert.DoesNotContain("SyncThumbnailConcurrency", Columns("AppSettings"));
+
+        var logger = new CapturingRecoveryLogger();
+        var svc = new DatabaseRecoveryService(logger);
+        using (var ctx = NewContext()) svc.CheckAndRepairSchema(ctx);
+
+        var repaired = Columns("AppSettings");
+        Assert.Contains("SyncNotIdentifiedRetryDays", repaired);
+        Assert.Contains("SyncErrorRetryDays", repaired);
+        Assert.Contains("SyncThumbnailConcurrency", repaired);
+        Assert.Contains("LastLibrarySyncAt", repaired);
+        Assert.Empty(logger.Errors);
+    }
+
     [Fact]
     public void CheckAndRepairSchema_RecreatesDroppedModelSyncStatesTable_WithCascadeToModels()
     {
