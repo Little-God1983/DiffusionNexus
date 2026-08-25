@@ -1,4 +1,5 @@
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Installer.SDK.Shared.Services;
 using DiffusionNexus.UI.Services;
@@ -28,9 +29,16 @@ namespace DiffusionNexus.UI.ViewModels;
 /// which owns the FFmpeg fallback internally and is resolved from <see cref="ScopeFactory"/> at
 /// the point of use. The tile stopped extracting video frames itself in #521 Plan B.
 /// </remarks>
+/// <param name="RetryPolicyProvider">
+/// Supplies the user's current retry windows to the tile's scroll-fetch gate. A delegate rather
+/// than a value because the settings behind it can change while the tile is alive — the parent
+/// view model re-reads them on every bulk sync — and tiles outlive that read. Null (design time,
+/// grouping tests) falls back to <see cref="SyncRetryPolicy.Default"/>.
+/// </param>
 public sealed record ModelTileDependencies(
     IUnifiedLogger? Logger = null,
     IServiceScopeFactory? ScopeFactory = null,
     IDialogService? DialogService = null,
     IClipboardService? Clipboard = null,
-    IUiScheduler? UiScheduler = null);
+    IUiScheduler? UiScheduler = null,
+    Func<SyncRetryPolicy>? RetryPolicyProvider = null);

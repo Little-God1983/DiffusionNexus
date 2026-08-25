@@ -99,6 +99,32 @@ public class SyncRetryPolicyTests
         plan.EstimatedDuration.Should().Be(TimeSpan.FromSeconds(6));
     }
 
+    /// <summary>
+    /// Discovery is not work in the sense this property answers. It used to be special-cased as
+    /// always-work, which made <c>HasWork</c> constant-true for every full plan and every
+    /// "nothing to do" branch behind it dead code — including the viewer's up-to-date early-out.
+    /// A scan whose result nobody can count in advance is executed on its own terms instead.
+    /// </summary>
+    [Fact]
+    public void PlanHasWorkIgnoresTheUncountableDiscoveryStep()
+    {
+        var discoveryOnly = new SyncPlan(SyncScope.Library, SyncOptions.All, new[]
+        {
+            new SyncPlanStep(SyncStepKind.DiscoverFiles, 0, TimeSpan.FromSeconds(2), "Discover new files"),
+        }, Now);
+
+        discoveryOnly.HasWork.Should().BeFalse("a scan that has counted nothing is not counted work");
+
+        var withIdentify = discoveryOnly with
+        {
+            Steps = discoveryOnly.Steps
+                .Append(new SyncPlanStep(SyncStepKind.IdentifyModel, 1, TimeSpan.FromSeconds(3), "Identify"))
+                .ToList(),
+        };
+
+        withIdentify.HasWork.Should().BeTrue("one counted item in any step is work");
+    }
+
     [Fact]
     public void FromDays_BuildsWindowsFromSettingsValues()
     {

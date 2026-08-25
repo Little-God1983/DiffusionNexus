@@ -120,6 +120,20 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     private CancellationTokenSource? _metadataSyncCts;
 
     /// <summary>
+    /// The user's retry windows, read from settings at startup and again at the top of every bulk
+    /// sync. Cached because the tiles' scroll-fetch gate asks per activation — a settings read per
+    /// tile passing the viewport is not a thing to do — and because the per-tile fetch has to judge
+    /// its un-forced steps by the same windows the sync run does.
+    /// </summary>
+    private SyncRetryPolicy _scrollRetryPolicy = SyncRetryPolicy.Default;
+
+    /// <summary>
+    /// The startup read that fills <see cref="_scrollRetryPolicy"/>. Test seam: tests await it
+    /// instead of relying on it having finished.
+    /// </summary>
+    internal Task ScrollRetryPolicyLoad { get; private set; } = Task.CompletedTask;
+
+    /// <summary>
     /// True from the moment this ViewModel starts a run — bulk or per-tile — until it finishes.
     /// </summary>
     /// <remarks>
@@ -494,6 +508,10 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 
         _ = InitializeBaseModelFilterAsync();
         _ = LoadDestinationFoldersAsync(destination);
+
+        // Once, at startup: the tiles' scroll-fetch gate needs the user's retry windows before the
+        // first bulk sync of the session ever happens, and it must not read settings per tile.
+        ScrollRetryPolicyLoad = LoadScrollRetryPolicyAsync();
     }
 
     /// <summary>
@@ -790,7 +808,36 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             ScopeFactory: sp?.GetService<IServiceScopeFactory>(),
             DialogService: TryResolveDialogService(sp),
             Clipboard: sp?.GetService<DiffusionNexus.Installer.SDK.Shared.Services.IClipboardService>(),
-            UiScheduler: sp?.GetService<IUiScheduler>());
+            UiScheduler: sp?.GetService<IUiScheduler>(),
+            // A delegate, not the value: tiles built now must see a policy re-read later (the
+            // startup load landing, or a bulk sync picking up changed settings) without a rebuild.
+            RetryPolicyProvider: () => _scrollRetryPolicy);
+    }
+
+    /// <summary>
+    /// Reads the saved sync settings once at startup so the tiles' scroll-fetch gate judges by the
+    /// user's retry windows from the first scroll, not only after the first bulk sync.
+    /// </summary>
+    /// <remarks>
+    /// Through <see cref="UseSettingsServiceAsync"/> for a fresh scope: this runs concurrently with
+    /// the other two startup tasks, which share the constructor-injected service's single
+    /// non-thread-safe DbContext. Failure is silent and harmless — the built-in default stands in.
+    /// </remarks>
+    private async Task LoadScrollRetryPolicyAsync()
+    {
+        try
+        {
+            var settings = await UseSettingsServiceAsync(s => s.GetSettingsAsync()).ConfigureAwait(false);
+            if (settings is null) return;
+
+            _scrollRetryPolicy = SyncRetryPolicy.FromDays(
+                settings.SyncNotIdentifiedRetryDays, settings.SyncErrorRetryDays);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Debug(LogCategory.General, "LoraViewer",
+                $"Could not read the sync retry settings; using the defaults: {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -806,16 +853,20 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// Runs a full library metadata sync through <see cref="ILibrarySyncService"/>: plans the
-    /// work (discover new files, identify unknown ones, fetch tags and images), executes the
-    /// plan, then rebuilds the grid once from the database.
+    /// Runs a full library metadata sync through <see cref="ILibrarySyncService"/> as a
+    /// conversation: scan for new files, plan the rest, ask the user what to run, run it, record
+    /// that it happened, rebuild the grid once, and show what came of it.
     /// </summary>
     /// <remarks>
     /// The viewer owns none of the sync logic any more (#521 WP2) — no hashing, no Civitai
     /// calls, no per-tile persistence. Everything the old phases did is a step in the service,
     /// which records per-model state so a second run skips what has already been checked
-    /// instead of re-asking Civitai about the whole library. Thumbnails are not a step yet
-    /// (Plan B); on-screen tiles keep pulling their own preview on activation.
+    /// instead of re-asking Civitai about the whole library.
+    /// <para>
+    /// Discovery is a separate, un-negotiable pre-run (Plan E): a scan cannot be counted before it
+    /// has run, so it is the one step nobody can be asked about — and running it first is what lets
+    /// every count in the dialog include the files it just found.
+    /// </para>
     /// </remarks>
     [RelayCommand(CanExecute = nameof(CanStartMetadataSync))]
     private async Task DownloadMissingMetadataAsync()
@@ -847,7 +898,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         {
             IsBusy = true;
             IsCancellable = true;
-            BusyMessage = "Syncing with Civitai...";
+            BusyMessage = "Scanning source folders…";
             SyncStatus = "Planning sync...";
 
             // The first plan after the upgrade also backfills a state row for every model that
@@ -857,32 +908,123 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             if (await Task.Run(() => HasPendingSyncStateBackfillAsync(ct), ct))
                 SyncStatus = "Preparing sync state — first run after update may take a moment…";
 
+            // The retry windows and the thumbnail fan-out are the user's, not constants. Read once
+            // per run and cached, because the tiles' scroll gate reads the same field.
+            //
+            // Through UseSettingsServiceAsync (a fresh scope), not the injected instance: this runs
+            // while the browser sub-VM and the passive update check may be reading settings over
+            // that shared, non-thread-safe DbContext — and GetSettingsAsync is no mere read, it
+            // clears the change tracker and saves. On Task.Run for the usual R7 reason.
+            var settings = await Task.Run(() => UseSettingsServiceAsync(s => s.GetSettingsAsync(ct)), ct)
+                           ?? new AppSettings();
+            var policy = SyncRetryPolicy.FromDays(settings.SyncNotIdentifiedRetryDays, settings.SyncErrorRetryDays);
+            _scrollRetryPolicy = policy;
+
+            // Discovery runs BEFORE the dialog, on its own, for two reasons: the counts the user is
+            // about to approve must include files added since the app started, and a scan cannot be
+            // counted in advance — so a "Discover" row in the dialog could only ever show a blank.
+            //
             // Task.Run, not a bare await: SQLite has no true async, so the planning pass (the
             // first-run state backfill plus every step's selection query) and the discovery scan
             // both run to completion inline before anything yields — on the UI thread that means a
             // frozen overlay and a dead Cancel button, which is exactly what the old phase code
             // used a background thread to avoid. Every UI touch below the await hops back through
             // PostToUi / InvokeOnUiAsync.
-            var plan = await Task.Run(() => _librarySync.PlanAsync(SyncScope.Library, SyncOptions.All, ct), ct);
+            var discoverOptions = new SyncOptions(DiscoverOnly, RetryPolicy: policy);
+            var discoverPlan = await Task.Run(() => _librarySync.PlanAsync(SyncScope.Library, discoverOptions, ct), ct);
 
-            // Correct only when the caller excluded discovery: a plan that still carries the
-            // Discover step always reports work, because nobody knows what a scan will find until
-            // it has run. The honest "nothing to do" verdict is the report's, below.
-            if (!plan.HasWork)
+            SyncReport discoverReport;
+            try
             {
-                SyncStatus = UpToDateStatus;
-                _logger?.Info(LogCategory.Network, "CivitaiSync", "Sync plan is empty — nothing to do");
+                discoverReport = await Task.Run(() => _librarySync.ExecuteAsync(discoverPlan, null, ct), ct);
+            }
+            catch (InvalidOperationException ex)
+            {
+                ReportServiceAlreadyRunning(ex);
                 return;
             }
 
-            // Plan B replaces this with a confirmation dialog showing the same numbers.
+            var discovered = discoverReport.NewFilesDiscovered;
+
+            var baseOptions = new SyncOptions(
+                PlannedStepKinds, RetryPolicy: policy, ThumbnailConcurrency: settings.SyncThumbnailConcurrency);
+            var plan = await Task.Run(() => _librarySync.PlanAsync(SyncScope.Library, baseOptions, ct), ct);
+
             _logger?.Info(LogCategory.Network, "CivitaiSync",
-                $"Starting sync: {string.Join(" · ", plan.Steps.Select(s => $"{SyncReport.Label(s.Kind)} {s.Count}"))}");
+                $"Plan dialog: {string.Join(" · ", plan.Steps.Select(s => $"{SyncReport.Label(s.Kind)} {s.Count}"))} · {discovered} discovered");
+
+            // The overlay comes down for the question: nothing is running while the user reads it,
+            // and a Cancel button over a modal dialog would be cancelling a run that has not started.
+            IsBusy = false;
+            IsCancellable = false;
+            BusyMessage = null;
+
+            var dialogService = DialogService ?? App.Services?.GetService<IDialogService>();
+            if (dialogService is null)
+            {
+                SyncStatus = "Dialog service not available.";
+                return;
+            }
+
+            var dialogVm = new SyncPlanDialogViewModel(
+                plan,
+                baseOptions,
+                replanAsync: o => Task.Run(() => _librarySync.PlanAsync(SyncScope.Library, o, ct), ct),
+                settings.LastLibrarySyncAt,
+                discovered,
+                _logger);
+
+            var choice = await dialogService.ShowSyncPlanDialogAsync(dialogVm);
+            if (!choice.Confirmed || choice.Options is null)
+            {
+                // The button did do something — it scanned — so it owes an answer either way. Which
+                // answer depends on whether there was anything to decline in the first place.
+                SyncStatus = plan.HasWork ? "Sync cancelled — nothing was run." : UpToDateStatus;
+                _logger?.Info(LogCategory.Network, "CivitaiSync", "User cancelled at the plan dialog");
+                return;
+            }
+
+            IsBusy = true;
+            IsCancellable = true;
+            BusyMessage = "Syncing with Civitai...";
+
+            var chosen = choice.Options;
+            _logger?.Info(LogCategory.Network, "CivitaiSync",
+                $"User started sync: steps [{string.Join(", ", chosen.Steps)}] forces " +
+                $"[I:{chosen.ForceIdentify} T:{chosen.ForceTags} Im:{chosen.ForceImages} Th:{chosen.ForceThumbnails}]");
+
+            // Re-planned, not the dialog's plan: it is cheap, the dialog may have been open for
+            // minutes, and the ticks and forces the user came back with select a different set of
+            // items than the one the dialog was built from.
+            var runPlan = await Task.Run(() => _librarySync.PlanAsync(SyncScope.Library, chosen, ct), ct);
 
             var progress = new UiProgress<LibrarySyncProgress>(this, p =>
                 SyncStatus = $"{SyncReport.Label(p.Step)} [{p.Index}/{p.Total}] {p.CurrentItem}");
 
-            var report = await Task.Run(() => _librarySync.ExecuteAsync(plan, progress, ct), ct);
+            SyncReport report;
+            try
+            {
+                report = await Task.Run(() => _librarySync.ExecuteAsync(runPlan, progress, ct), ct);
+            }
+            catch (InvalidOperationException ex)
+            {
+                ReportServiceAlreadyRunning(ex);
+                return;
+            }
+
+            // "Last full sync" is what the next plan dialog tells the user about staleness, so it
+            // records a run that actually finished. Deliberately CancellationToken.None: this
+            // records what already happened, and a just-pressed Cancel must not lose it. Same fresh
+            // scope as the read above, for the same reason — and a write has more to lose.
+            if (!report.Cancelled)
+            {
+                await UseSettingsServiceAsync(async s =>
+                {
+                    await s.UpdateLastLibrarySyncAtAsync(DateTimeOffset.UtcNow, CancellationToken.None)
+                        .ConfigureAwait(false);
+                    return true;
+                });
+            }
 
             // One rebuild, at the end: the service wrote straight to the database, so the
             // in-memory tiles are stale until they are re-projected from it.
@@ -903,6 +1045,14 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             var statusText = DescribeOutcome(report);
             _logger?.Info(LogCategory.Network, "CivitaiSync", statusText);
             SyncStatus = statusText;
+
+            // Down before the report, not behind it: the finally repeats this harmlessly, but a
+            // modal report over a live "Syncing..." overlay claims the run is still going.
+            IsBusy = false;
+            IsCancellable = false;
+            BusyMessage = null;
+
+            await dialogService.ShowSyncReportDialogAsync(new SyncReportDialogViewModel(report, discovered));
         }
         catch (OperationCanceledException)
         {
@@ -928,6 +1078,34 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             _localSyncActive = false;
             RefreshSyncRunning();
         }
+    }
+
+    /// <summary>
+    /// The discovery pre-run: the folder scan and nothing else. Run before the plan dialog opens so
+    /// the counts it shows include files added since the app started.
+    /// </summary>
+    private static readonly IReadOnlySet<SyncStepKind> DiscoverOnly =
+        new HashSet<SyncStepKind> { SyncStepKind.DiscoverFiles };
+
+    /// <summary>
+    /// The four steps the plan dialog offers. Discovery is not among them: by the time the dialog
+    /// opens it has already happened, and its count could never have been shown in advance anyway.
+    /// </summary>
+    private static readonly IReadOnlySet<SyncStepKind> PlannedStepKinds = new HashSet<SyncStepKind>
+    {
+        SyncStepKind.IdentifyModel, SyncStepKind.FetchTags, SyncStepKind.FetchImages, SyncStepKind.Thumbnails,
+    };
+
+    /// <summary>
+    /// The service admits one run at a time and throws on the second (its <c>Wait(0)</c> gate).
+    /// Both of this flow's runs can meet it — a download's completion sync holds the slot for a
+    /// moment — and that is a "not now", not a fault: no stack trace, no retry loop.
+    /// </summary>
+    private void ReportServiceAlreadyRunning(InvalidOperationException ex)
+    {
+        SyncStatus = AlreadyRunningStatus;
+        _logger?.Info(LogCategory.Network, "CivitaiSync",
+            $"Sync not started — the service is already running: {ex.Message}");
     }
 
     /// <summary>Both buttons that can start a run are off while one is running — the service takes one at a time.</summary>
@@ -1582,6 +1760,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         // an explicit re-fetch, so a stored "already checked" or "already failed" verdict must not
         // make the button do nothing. Forcing thumbnails only retries failures, because selection
         // still skips any image that already has bytes.
+        // The retry policy is the user's here too (Plan E). The forces make most windows moot, but
+        // the tags and images fetches are not forced and are judged by it. ThumbnailConcurrency
+        // stays at its default: one model's handful of images gains nothing from a wider fan-out.
         var options = new SyncOptions(
             new HashSet<SyncStepKind>
             {
@@ -1589,7 +1770,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 SyncStepKind.Thumbnails,
             },
             ForceIdentify: true,
-            ForceThumbnails: true);
+            ForceThumbnails: true,
+            RetryPolicy: _scrollRetryPolicy);
 
         SyncPlan plan;
         SyncReport report;
