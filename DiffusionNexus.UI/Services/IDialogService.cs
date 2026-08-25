@@ -433,6 +433,9 @@ public interface IDialogService
 
     /// <summary>Shows the metadata-sync plan dialog. Never null: closing the window is a cancel.</summary>
     Task<SyncPlanDialogResult> ShowSyncPlanDialogAsync(SyncPlanDialogViewModel viewModel);
+
+    /// <summary>Shows the post-run sync report.</summary>
+    Task ShowSyncReportDialogAsync(SyncReportDialogViewModel viewModel);
 }
 
 /// <summary>

@@ -1,0 +1,118 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.SyncReportDialog"
+        x:DataType="vm:SyncReportDialogViewModel"
+        Title="Sync Report"
+        Width="560"
+        SizeToContent="Height"
+        MaxHeight="700"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="#2D2D30">
+
+  <Window.Styles>
+    <Style Selector="TextBlock.failed"><Setter Property="Foreground" Value="#E2B14C"/></Style>
+  </Window.Styles>
+
+  <StackPanel Margin="20" Spacing="14">
+
+    <!-- Summary header -->
+    <TextBlock Text="{Binding SummaryText}"
+               FontSize="14"
+               FontWeight="SemiBold"
+               Foreground="White"
+               TextWrapping="Wrap"/>
+
+    <TextBlock Text="{Binding PartialText}"
+               IsVisible="{Binding IsPartial}"
+               FontSize="12"
+               Foreground="#E2B14C"
+               TextWrapping="Wrap"/>
+
+    <TextBlock Text="{Binding DiscoveredText}"
+               IsVisible="{Binding HasDiscoveredFiles}"
+               FontSize="12"
+               Foreground="#CCCCCC"
+               TextWrapping="Wrap"/>
+
+    <TextBlock Text="{Binding UnexpectedText}"
+               IsVisible="{Binding HasUnexpected}"
+               FontSize="12"
+               Foreground="#E2B14C"
+               TextWrapping="Wrap"/>
+
+    <TextBlock Text="{Binding ElapsedText}"
+               FontSize="12"
+               Foreground="#888888"/>
+
+    <!-- Per-step counts table -->
+    <StackPanel Spacing="0">
+      <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto" Margin="0,0,0,4">
+        <TextBlock Grid.Column="0" Text="Step" FontSize="12" FontWeight="SemiBold" Foreground="#999999"/>
+        <TextBlock Grid.Column="1" Text="Planned" MinWidth="60" TextAlignment="Right" FontSize="12" FontWeight="SemiBold" Foreground="#999999"/>
+        <TextBlock Grid.Column="2" Text="Processed" MinWidth="70" TextAlignment="Right" FontSize="12" FontWeight="SemiBold" Foreground="#999999"/>
+        <TextBlock Grid.Column="3" Text="Succeeded" MinWidth="70" TextAlignment="Right" FontSize="12" FontWeight="SemiBold" Foreground="#999999"/>
+        <TextBlock Grid.Column="4" Text="Skipped" MinWidth="60" TextAlignment="Right" FontSize="12" FontWeight="SemiBold" Foreground="#999999"/>
+        <TextBlock Grid.Column="5" Text="Failed" MinWidth="50" TextAlignment="Right" FontSize="12" FontWeight="SemiBold" Foreground="#999999"/>
+      </Grid>
+
+      <ItemsControl ItemsSource="{Binding StepRows}">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="vm:SyncReportStepRowViewModel">
+            <Border Background="#1E1E1E"
+                    BorderBrush="#444444"
+                    BorderThickness="1"
+                    CornerRadius="6"
+                    Padding="12,8"
+                    Margin="0,0,0,6">
+              <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto">
+                <TextBlock Grid.Column="0" Text="{Binding Label}" FontSize="13" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="1" Text="{Binding Planned}" MinWidth="60" TextAlignment="Right" FontSize="13" Foreground="#CCCCCC" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="2" Text="{Binding Processed}" MinWidth="70" TextAlignment="Right" FontSize="13" Foreground="#CCCCCC" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="3" Text="{Binding Succeeded}" MinWidth="70" TextAlignment="Right" FontSize="13" Foreground="#CCCCCC" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="4" Text="{Binding Skipped}" MinWidth="60" TextAlignment="Right" FontSize="13" Foreground="#CCCCCC" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="5" Text="{Binding Failed}" MinWidth="50" TextAlignment="Right" FontSize="13"
+                           Foreground="#CCCCCC" FontWeight="SemiBold" VerticalAlignment="Center"
+                           Classes.failed="{Binding HasFailed}"/>
+              </Grid>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </StackPanel>
+
+    <!-- Grouped, expandable failures -->
+    <StackPanel Spacing="6" IsVisible="{Binding HasFailures}">
+      <TextBlock Text="Failures" FontSize="13" FontWeight="SemiBold" Foreground="White"/>
+      <ScrollViewer MaxHeight="360">
+        <ItemsControl ItemsSource="{Binding FailureGroups}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:SyncReportFailureGroup">
+              <Expander Header="{Binding Header}" IsExpanded="False" Margin="0,0,0,6">
+                <ItemsControl ItemsSource="{Binding Items}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:SyncReportFailureItem">
+                      <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,4,0,4">
+                        <TextBlock Text="{Binding Name}" FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                        <TextBlock Text="—" FontSize="12" Foreground="#888888"/>
+                        <TextBlock Text="{Binding Reason}" FontSize="12" Foreground="#999999" TextWrapping="Wrap"/>
+                      </StackPanel>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </Expander>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </ScrollViewer>
+    </StackPanel>
+
+    <Grid ColumnDefinitions="*,Auto">
+      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+        <Button Content="Close" Width="90" Click="OnCloseClick" IsCancel="True"/>
+      </StackPanel>
+    </Grid>
+
+  </StackPanel>
+</Window>
