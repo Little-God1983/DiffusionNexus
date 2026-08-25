@@ -133,8 +133,11 @@ public sealed partial class SyncPlanDialogViewModel : ObservableObject
     /// Queues a re-plan behind whatever is already running. Serialized, not coalesced: the
     /// forces are snapshotted here, at toggle time, so each queued plan is the one that toggle
     /// asked for and the last one to land is the one the user last chose. Swapping
-    /// <see cref="_replanTask"/> for the new tail before anything awaits is what makes
-    /// <see cref="WhenReplanSettles"/> cover re-plans queued while another is running.
+    /// <see cref="_replanTask"/> for the new tail before this method returns is what makes
+    /// <see cref="WhenReplanSettles"/> cover re-plans queued while another is running — which
+    /// means the prologue of <see cref="ReplanAfterAsync"/> before its first await must stay
+    /// free of anything that can re-enter this method, or the inner queue link is silently
+    /// dropped from the chain.
     /// </summary>
     private void QueueReplan()
     {
@@ -194,6 +197,8 @@ public sealed partial class SyncPlanDialogViewModel : ObservableObject
 
             // A row that had nothing to do could not have been ticked, so a force that gives it
             // work ticks it. A row that was live keeps whatever the user decided about it.
+            // Known dip: an enabled row the user unticked that transiently drops to 0 and comes
+            // back re-ticks itself — once it hit 0 the untick stopped being a live choice.
             if (!wasEnabled)
             {
                 row.IsSelected = row.Count > 0;
@@ -207,7 +212,10 @@ public sealed partial class SyncPlanDialogViewModel : ObservableObject
     {
         IsUpToDate = Rows.All(r => r.Count == 0);
         CanStart = !IsReplanning && Rows.Any(r => r.IsSelected && r.Count > 0);
-        TotalEstimateText = FormatDuration(TimeSpan.FromTicks(Rows.Where(r => r.IsSelected).Sum(r => r.Estimate.Ticks)));
+        // Same predicate as CanStart and BuildResult: a ticked-but-empty row is not part of the run,
+        // so its (stale) estimate must not be part of the total either.
+        TotalEstimateText = FormatDuration(TimeSpan.FromTicks(
+            Rows.Where(r => r.IsSelected && r.Count > 0).Sum(r => r.Estimate.Ticks)));
 
         OnPropertyChanged(nameof(IsUpToDate));
         OnPropertyChanged(nameof(CanStart));
