@@ -194,32 +194,62 @@ public sealed class LibrarySyncService : ILibrarySyncService
         var succeeded = 0;
         var skipped = 0;
         var failed = 0;
+        var tallyLock = new object();
+
+        void Record(ItemOutcome outcome, SyncItem item)
+        {
+            var result = outcome.Result;
+            processed++;
+            if (result.Succeeded) succeeded++;
+            else if (result.Skipped) skipped++;
+            else
+            {
+                failed++;
+                tally.Failures.Add(new SyncFailure(step.Kind, item.ModelId, item.Name, result.FailureReason ?? "Unknown error"));
+
+                if (outcome.Unexpected)
+                {
+                    tally.UnexpectedFailures++;
+                    tally.FirstUnexpectedError ??= result.FailureReason;
+                }
+            }
+        }
+
+        var concurrency = Math.Clamp(plan.Options.ThumbnailConcurrency, 1, 8);
 
         try
         {
-            for (var i = 0; i < items.Count; i++)
+            if (step.Kind == SyncStepKind.Thumbnails && concurrency > 1 && items.Count > 1)
             {
-                ct.ThrowIfCancellationRequested();
+                // CDN fetches only — deliberately unpaced (see ThumbnailsStep remarks), and every
+                // step owns a fresh scope per ExecuteOneAsync, so items are independent. Only the
+                // tally and the progress counter are shared, and both are synchronized here.
+                var started = 0;
+                var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = concurrency, CancellationToken = ct };
 
-                var item = items[i];
-                progress?.Report(new LibrarySyncProgress(step.Kind, i + 1, items.Count, item.Name));
-
-                var outcome = await ExecuteItemAsync(step, item, apiKey, ct).ConfigureAwait(false);
-                var result = outcome.Result;
-
-                processed++;
-                if (result.Succeeded) succeeded++;
-                else if (result.Skipped) skipped++;
-                else
+                await Parallel.ForEachAsync(items, parallelOptions, async (item, itemCt) =>
                 {
-                    failed++;
-                    tally.Failures.Add(new SyncFailure(step.Kind, item.ModelId, item.Name, result.FailureReason ?? "Unknown error"));
+                    // "Items started", not a stable position: under parallelism the status line
+                    // shows churn, and a monotonic counter is the honest number to put in [i/n].
+                    var index = Interlocked.Increment(ref started);
+                    progress?.Report(new LibrarySyncProgress(step.Kind, index, items.Count, item.Name));
 
-                    if (outcome.Unexpected)
-                    {
-                        tally.UnexpectedFailures++;
-                        tally.FirstUnexpectedError ??= result.FailureReason;
-                    }
+                    var outcome = await ExecuteItemAsync(step, item, apiKey, itemCt).ConfigureAwait(false);
+
+                    lock (tallyLock) Record(outcome, item);
+                }).ConfigureAwait(false);
+            }
+            else
+            {
+                for (var i = 0; i < items.Count; i++)
+                {
+                    ct.ThrowIfCancellationRequested();
+
+                    var item = items[i];
+                    progress?.Report(new LibrarySyncProgress(step.Kind, i + 1, items.Count, item.Name));
+
+                    var outcome = await ExecuteItemAsync(step, item, apiKey, ct).ConfigureAwait(false);
+                    Record(outcome, item);
                 }
             }
         }
