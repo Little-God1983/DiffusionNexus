@@ -95,11 +95,15 @@
                 <ItemsControl ItemsSource="{Binding Items}">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="vm:SyncReportFailureItem">
-                      <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,4,0,4">
-                        <TextBlock Text="{Binding Name}" FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap"/>
-                        <TextBlock Text="—" FontSize="12" Foreground="#888888"/>
-                        <TextBlock Text="{Binding Reason}" FontSize="12" Foreground="#999999" TextWrapping="Wrap"/>
-                      </StackPanel>
+                      <!-- A Grid, not a horizontal StackPanel: a horizontal StackPanel measures
+                           children with unbounded width, so TextWrapping never engages and long
+                           reasons (deserialize errors carry a raw-response snippet) clip at the
+                           window edge. The star column bounds the reason so it wraps. -->
+                      <Grid ColumnDefinitions="Auto,Auto,*" Margin="0,4,0,4">
+                        <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap" MaxWidth="180" Margin="0,0,6,0"/>
+                        <TextBlock Grid.Column="1" Text="—" FontSize="12" Foreground="#888888" Margin="0,0,6,0"/>
+                        <TextBlock Grid.Column="2" Text="{Binding Reason}" FontSize="12" Foreground="#999999" TextWrapping="Wrap"/>
+                      </Grid>
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>
                 </ItemsControl>
