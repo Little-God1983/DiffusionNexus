@@ -1178,15 +1178,14 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             cts.Dispose();
             if (ReferenceEquals(_metadataSyncCts, cts)) _metadataSyncCts = null;
 
-            _localSyncActive = false;
-            RefreshSyncRunning();
-
             // The scan's rows are committed; the grid has to show them however this press ended
             // (F3). Nothing else refreshes it — ILibraryChangeNotifier.ModelDownloaded is raised
             // only by CivitaiModelDownloader, never by DiscoverFilesStep — so without this a
             // cancelled dialog leaves twelve new LoRAs in the database and none of them on screen.
             // Guarded so a failed rebuild costs only the rebuild: the status line above already
             // says what happened, and an exception here would replace it with a lie.
+            // BEFORE the sync-running flag drops: re-enabling the per-tile button while the tile
+            // collection is mid-swap would let a fetch update a tile the rebuild is discarding.
             if (discovered > 0 && !rebuilt)
             {
                 try
@@ -1199,6 +1198,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                         $"Grid refresh after the scan failed: {ex.Message}");
                 }
             }
+
+            _localSyncActive = false;
+            RefreshSyncRunning();
         }
     }
 
