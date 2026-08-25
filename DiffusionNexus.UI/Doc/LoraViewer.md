@@ -443,8 +443,10 @@ sync, so every model queued behind the bad one went unchecked.
 `SyncOptions` carries `ForceIdentify`, `ForceTags`, `ForceImages`, `ForceThumbnails`.
 A forced step ignores the stored verdict and the retry window. The per-LoRA button in the
 detail panel is exactly this: `DownloadMetadataForTileAsync` plans
-`SyncScope.ForModels(modelId)` with `IdentifyModel + FetchTags + FetchImages` and
-`ForceIdentify: true` — same service, same steps, one model — then re-reads that model and
+`SyncScope.ForModels(modelId)` with `IdentifyModel + FetchTags + FetchImages + Thumbnails` and
+`ForceIdentify: true, ForceThumbnails: true` — the thumbnail is force-refreshed too, because
+"download metadata for this model" is, to the person pressing it, a request for the picture as
+well — same service, same steps, one model — then re-reads that model and
 refreshes the tile.
 
 **The scope predicate is the viewer's predicate.** "In the library" means "owns a local file
