@@ -120,6 +120,54 @@ public sealed class DownloadCollisionPolicyTests : IDisposable
     }
 
     [Fact]
+    public async Task ResolveAsync_NoVersionId_PlainNameHoldsForeignBytes_TakesTheFirstFreeNumberedName()
+    {
+        // A local-only version maps CivitaiId ?? 0, so "{stem}_0" is not version-unique at all —
+        // two different local models in one folder both claimed it and the second download
+        // overwrote the first's weights. Without a usable version id the numeric sequence is the
+        // only safe naming, and an existing name we cannot prove is ours is never returned.
+        await File.WriteAllTextAsync(Path.Combine(_dir, "V1.safetensors"), "someone else's weights");
+
+        var resolution = await DownloadCollisionPolicy.ResolveAsync(
+            _dir, "V1.safetensors", versionId: 0, expectedSha256: Sha256Of("mine"), CancellationToken.None);
+
+        resolution.TargetPath.Should().Be(Path.Combine(_dir, "V1_2.safetensors"));
+        resolution.ExistingContentMatches.Should().BeFalse();
+        File.Exists(Path.Combine(_dir, "V1_0.safetensors")).Should().BeFalse(
+            "the meaningless _0 name must never be handed out");
+        (await File.ReadAllTextAsync(Path.Combine(_dir, "V1.safetensors")))
+            .Should().Be("someone else's weights", "a foreign file must be left exactly as it was");
+    }
+
+    [Fact]
+    public async Task ResolveAsync_NoVersionId_NumberedNameHoldsIdenticalContent_ReusesIt()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_dir, "V1.safetensors"), "someone else's weights");
+        await File.WriteAllTextAsync(Path.Combine(_dir, "V1_2.safetensors"), "mine");
+
+        var resolution = await DownloadCollisionPolicy.ResolveAsync(
+            _dir, "V1.safetensors", versionId: 0, expectedSha256: Sha256Of("mine"), CancellationToken.None);
+
+        resolution.TargetPath.Should().Be(Path.Combine(_dir, "V1_2.safetensors"));
+        resolution.ExistingContentMatches.Should().BeTrue(
+            "hash-proof reuse is what makes a re-download of the same local file idempotent");
+    }
+
+    [Fact]
+    public async Task ResolveAsync_NoVersionId_WalksPastEveryUnprovableName()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_dir, "V1.safetensors"), "first model");
+        await File.WriteAllTextAsync(Path.Combine(_dir, "V1_2.safetensors"), "second model");
+        await File.WriteAllTextAsync(Path.Combine(_dir, "V1_3.safetensors"), "third model");
+
+        var resolution = await DownloadCollisionPolicy.ResolveAsync(
+            _dir, "V1.safetensors", versionId: 0, expectedSha256: null, CancellationToken.None);
+
+        resolution.TargetPath.Should().Be(Path.Combine(_dir, "V1_4.safetensors"));
+        resolution.ExistingContentMatches.Should().BeFalse();
+    }
+
+    [Fact]
     public async Task ResolveAsync_PlainNameAccessDenied_CannotProveOwnership_SoItSuffixesWithoutThrowing()
     {
         // Hostile-disk case (S4): the colliding file exists but is ACL-denied to us — the

@@ -173,4 +173,44 @@ public class ModelDetailViewModelTests
         await taskA;
         vm.IdentitySourceDisplay.Should().Be("sidecar file", "a stale lookup for the previous tile must not overwrite the current tile's chip");
     }
+
+    /// <summary>
+    /// The local→Civitai file mapping behind <c>BuildLocalVersionTabs</c> must carry the hashes.
+    /// A detail-panel "Download this version" of a LOCAL version hands the synthesised
+    /// <see cref="CivitaiModelFile"/> to the one download path, where the SHA256 is what
+    /// <c>DownloadCollisionPolicy</c> proves ownership of a colliding file with and what step 7
+    /// verifies the transfer against. Dropping it made both blind: two local-only versions in one
+    /// folder both resolved to <c>{stem}_0</c> and the second download replaced the first model's
+    /// weights — the earlier filename-collision incident, reintroduced through a lossy DTO map.
+    /// </summary>
+    [Fact]
+    public void LocalFileMappingCarriesTheHashesIntoTheDownloadRequest()
+    {
+        var file = new ModelFile
+        {
+            CivitaiId = 900,
+            FileName = "V1.safetensors",
+            SizeKB = 2048,
+            IsPrimary = true,
+            DownloadUrl = "https://civitai.test/api/download/models/1",
+            HashSHA256 = "ABC123",
+            HashAutoV2 = "AV2",
+            HashCRC32 = "CRC",
+            HashBLAKE3 = "B3",
+        };
+
+        var mapped = ModelDetailViewModel.ToCivitaiFile(file);
+
+        mapped.Hashes.Should().NotBeNull();
+        mapped.Hashes!.SHA256.Should().Be("ABC123",
+            "the collision policy and the post-transfer verification both key off this hash");
+        mapped.Hashes.AutoV2.Should().Be("AV2");
+        mapped.Hashes.CRC32.Should().Be("CRC");
+        mapped.Hashes.BLAKE3.Should().Be("B3");
+        mapped.Id.Should().Be(900);
+        mapped.Name.Should().Be("V1.safetensors");
+        mapped.SizeKB.Should().Be(2048);
+        mapped.Primary.Should().BeTrue();
+        mapped.DownloadUrl.Should().Be("https://civitai.test/api/download/models/1");
+    }
 }

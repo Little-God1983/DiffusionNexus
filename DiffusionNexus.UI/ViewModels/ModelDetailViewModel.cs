@@ -730,6 +730,33 @@ public partial class ModelDetailViewModel : ViewModelBase
             : (Services.Lora.Sorting.SorterCategoryResolver.ToFolderName(category), true);
     }
 
+    /// <summary>
+    /// Maps one local <see cref="ModelFile"/> row onto the Civitai DTO the one download path
+    /// (spec §4.4) consumes. The hashes are load-bearing, not decoration: a detail-panel download
+    /// of a LOCAL version hands this object straight to <c>ICivitaiModelDownloader</c>, where the
+    /// SHA256 is both what <c>DownloadCollisionPolicy</c> proves ownership of a colliding file
+    /// with and what the post-transfer verification checks against. Omitting them (as this mapping
+    /// originally did) left both blind: every such download fell through to the suffixed name
+    /// <c>{stem}_{CivitaiId ?? 0}</c>, so two local-only versions in one folder both claimed
+    /// <c>{stem}_0</c> and the second silently replaced the first model's weights.
+    /// Internal so the mapping is directly testable without standing up a panel load.
+    /// </summary>
+    internal static CivitaiModelFile ToCivitaiFile(ModelFile file) => new()
+    {
+        Id = file.CivitaiId ?? 0,
+        Name = file.FileName,
+        SizeKB = file.SizeKB,
+        Primary = file.IsPrimary,
+        DownloadUrl = file.DownloadUrl,
+        Hashes = new CivitaiFileHashes
+        {
+            SHA256 = file.HashSHA256,
+            AutoV2 = file.HashAutoV2,
+            CRC32 = file.HashCRC32,
+            BLAKE3 = file.HashBLAKE3,
+        },
+    };
+
     private void BuildLocalVersionTabs(ModelTileViewModel tile)
     {
         VersionTabs.Clear();
@@ -737,14 +764,7 @@ public partial class ModelDetailViewModel : ViewModelBase
         foreach (var version in tile.Versions)
         {
             // Map local files to CivitaiModelFile so a download of this version has file data
-            var civFiles = version.Files.Select(f => new CivitaiModelFile
-            {
-                Id = f.CivitaiId ?? 0,
-                Name = f.FileName,
-                SizeKB = f.SizeKB,
-                Primary = f.IsPrimary,
-                DownloadUrl = f.DownloadUrl,
-            }).ToList();
+            var civFiles = version.Files.Select(ToCivitaiFile).ToList();
 
             // Map local images to CivitaiModelImage so thumbnails/IDs carry through
             var civImages = version.Images.Select(img => new CivitaiModelImage
