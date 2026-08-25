@@ -10,6 +10,7 @@ using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Service.Services.Lora;
 using DiffusionNexus.UI.Services.Download;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.ViewModels.CivitaiBrowser;
@@ -518,9 +519,20 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                 job.StatusMessage = "No download destination set. Configure one in the Destination panel.";
                 return;
             }
-            targetDir = Path.Combine(folders[0], string.IsNullOrWhiteSpace(job.BaseModel) ? "Unsorted" : job.BaseModel);
+            // The last hand-rolled path build in the download stack, now routed through the one
+            // builder the sorter uses: job.BaseModel arrives straight from Civitai, so it needs
+            // sanitising (an invalid filename character used to throw out of the directory create
+            // below) and the same Unknown\ bucket the sorter would pick — otherwise the sorter
+            // spends every run moving these files out of a folder it never agrees with.
+            targetDir = LoraPathBuilder.BuildTargetDirectory(
+                folders[0], job.BaseModel, null, includeBaseModel: true, includeCategory: false);
         }
-        Directory.CreateDirectory(targetDir);
+
+        // No Directory.CreateDirectory here: it sat outside the try below, so an unwritable or
+        // disconnected destination threw straight through RunGatedAsync (finally-only) into
+        // Task.WhenAll — skipping the counts, the persist and the batch summary, and stranding
+        // every remaining job as Queued. The downloader's step 3 creates the same directory and
+        // turns those exact exceptions into a Failed outcome for this job alone.
 
         try
         {

@@ -260,6 +260,38 @@ public sealed class CivitaiDownloadQueueOutcomeMappingTests : IDisposable
     }
 
     [Fact]
+    public async Task UnwritableDestination_FailsOnlyThatJob_AndLeavesTheBatchRunning()
+    {
+        // The queue used to call Directory.CreateDirectory OUTSIDE the try, so a destination on a
+        // disconnected share or a read-only folder threw through RunGatedAsync (finally-only) into
+        // Task.WhenAll — no counts, no persist, no batch summary, and every remaining job stranded
+        // as Queued. Creating the directory is the downloader's step 3, which turns those exact
+        // exceptions into a Failed outcome for the one job.
+        var blocked = Path.Combine(_tempDir, "a-file-not-a-folder");
+        await File.WriteAllTextAsync(blocked, "a file sits where the folder should be");
+        var downloader = new FakeDownloader
+        {
+            Respond = r => r.TargetDirectory == blocked
+                ? new DownloadOutcome(DownloadStatus.Failed, null, null, false, "target directory unavailable")
+                : new DownloadOutcome(DownloadStatus.Completed, "final.safetensors", 1, false, null)
+        };
+        var queue = Queue(downloader);
+        var doomed = NewJob(versionId: 1);
+        doomed.CustomTargetDirectory = blocked;
+        var healthy = NewJob(versionId: 2);
+        queue.Jobs.Add(doomed);
+        queue.Jobs.Add(healthy);
+
+        var act = async () => await queue.StartAllAsync();
+
+        await act.Should().NotThrowAsync("one unwritable destination must not abort the whole batch");
+        Dispatcher.UIThread.RunJobs();
+        doomed.Status.Should().Be(JobStatus.Failed);
+        doomed.StatusMessage.Should().Be("target directory unavailable");
+        healthy.Status.Should().Be(JobStatus.Completed, "the rest of the batch must still run");
+    }
+
+    [Fact]
     public async Task StartAllAsync_WithNoDownloader_FailsQueuedJobs()
     {
         var queue = new CivitaiDownloadQueue(null, null, null, null,
