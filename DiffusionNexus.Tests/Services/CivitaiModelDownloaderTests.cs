@@ -159,6 +159,14 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
         public void Report(DownloadProgress value) => Reports.Add(value);
     }
 
+    /// <summary>
+    /// Awaits the detached tail of the download (steps 9–10). Production deliberately does NOT wait
+    /// for it — holding the transfer slot open across a network metadata sync was throttling every
+    /// job behind it — so anything asserting on the completion sync or the notifier has to.
+    /// </summary>
+    private static Task Settle(CivitaiModelDownloader downloader)
+        => downloader.LastCompletionTask ?? Task.CompletedTask;
+
     [Fact]
     public async Task HappyPath_Completes_PersistsNotifiesAndPlansTagsAndThumbnails()
     {
@@ -183,6 +191,7 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
             transport.Object, Coordinator().Object, sync.Object, notifier, ScopeFactory(77));
 
         var outcome = await downloader.DownloadAsync(new DownloadRequest(Version(), dir, DownloadTrigger.Dialog));
+        await Settle(downloader);
 
         outcome.Status.Should().Be(DownloadStatus.Completed);
         outcome.Success.Should().BeTrue();
@@ -323,6 +332,7 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
             Transport(content: null, succeed: false).Object, Coordinator().Object, sync.Object, notifier, ScopeFactory(5));
 
         var outcome = await downloader.DownloadAsync(new DownloadRequest(Version(), dir, DownloadTrigger.BrowseQueue));
+        await Settle(downloader);
 
         outcome.Status.Should().Be(DownloadStatus.Failed);
         outcome.Success.Should().BeFalse();
@@ -411,12 +421,38 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
 
         var outcome = await downloader.DownloadAsync(
             new DownloadRequest(Version(), dir, DownloadTrigger.BrowseQueue), progress: null, ct: callerCts.Token);
+        await Settle(downloader);
 
         callerCts.IsCancellationRequested.Should().BeFalse("only the coordinator's linked token was cancelled");
         outcome.Status.Should().Be(DownloadStatus.Cancelled);
         outcome.Error.Should().Be("cancelled");
         outcome.ModelId.Should().BeNull();
         notified.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task CancelledDuringTheCollisionProbe_YieldsCancelled_RatherThanThrowing()
+    {
+        // Step 4 hashes whatever file already sits on the target name, which for a real LoRA is
+        // minutes of I/O. That await was outside every try, and MatchesAsync only catches
+        // IOException/UnauthorizedAccessException — so a cancel mid-probe threw straight out of
+        // DownloadAsync, past the "you get an outcome, not an exception" promise, into a caller
+        // Task.Run with no catch at all: an unobserved fault and a silently dead button.
+        var dir = NewTempDir();
+        File.WriteAllText(Path.Combine(dir, "model.safetensors"), "someone-elses-weights");
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        var downloader = new CivitaiModelDownloader(
+            Transport().Object, Coordinator().Object, Sync().Object, new LibraryChangeNotifier(), ScopeFactory(1));
+
+        var act = async () => await downloader.DownloadAsync(
+            new DownloadRequest(Version(sha256: Sha256Of("downloaded-bytes")), dir, DownloadTrigger.Dialog),
+            progress: null, ct: cts.Token);
+
+        var outcome = (await act.Should().NotThrowAsync()).Subject;
+        outcome.Status.Should().Be(DownloadStatus.Cancelled);
+        outcome.Error.Should().Be("cancelled");
     }
 
     [Fact]
@@ -455,6 +491,7 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
 
         var outcome = await downloader.DownloadAsync(
             new DownloadRequest(Version(sha256: Sha256Of("the-real-bytes")), dir, DownloadTrigger.BrowseQueue));
+        await Settle(downloader);
 
         outcome.Status.Should().Be(DownloadStatus.HashMismatch);
         outcome.Success.Should().BeFalse();
@@ -476,6 +513,7 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
             Transport().Object, Coordinator().Object, sync.Object, notifier, ScopeFactory(21));
 
         var outcome = await downloader.DownloadAsync(new DownloadRequest(Version(), dir, DownloadTrigger.Waitlist));
+        await Settle(downloader);
 
         outcome.Status.Should().Be(DownloadStatus.Completed);
         sync.Verify(
@@ -499,6 +537,7 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
             Transport().Object, Coordinator().Object, sync.Object, notifier, ScopeFactory(31));
 
         var outcome = await downloader.DownloadAsync(new DownloadRequest(Version(), dir, DownloadTrigger.Pipeline));
+        await Settle(downloader);
 
         outcome.Status.Should().Be(DownloadStatus.Completed);
         outcome.ModelId.Should().Be(31);
@@ -557,6 +596,7 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
             Transport().Object, Coordinator().Object, sync.Object, notifier, scopeFactory: null);
 
         var outcome = await downloader.DownloadAsync(new DownloadRequest(Version(), dir, DownloadTrigger.Dialog));
+        await Settle(downloader);
 
         outcome.Status.Should().Be(DownloadStatus.Completed);
         outcome.Success.Should().BeTrue();
