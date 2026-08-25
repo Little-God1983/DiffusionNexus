@@ -98,4 +98,25 @@ public class SyncRetryPolicyTests
         plan.HasWork.Should().BeTrue();
         plan.EstimatedDuration.Should().Be(TimeSpan.FromSeconds(6));
     }
+
+    [Fact]
+    public void FromDays_BuildsWindowsFromSettingsValues()
+    {
+        var policy = SyncRetryPolicy.FromDays(notIdentifiedDays: 14, errorDays: 3);
+
+        policy.NotIdentifiedRetryAfter.Should().Be(TimeSpan.FromDays(14));
+        policy.ErrorRetryAfter.Should().Be(TimeSpan.FromDays(3));
+        policy.MaxErrorAttempts.Should().Be(SyncRetryPolicy.Default.MaxErrorAttempts);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    public void FromDays_FloorsAtOneDay_BecauseZeroWouldMeanAlwaysDue(int days)
+    {
+        var policy = SyncRetryPolicy.FromDays(days, days);
+
+        policy.NotIdentifiedRetryAfter.Should().Be(TimeSpan.FromDays(1));
+        policy.ErrorRetryAfter.Should().Be(TimeSpan.FromDays(1));
+    }
 }

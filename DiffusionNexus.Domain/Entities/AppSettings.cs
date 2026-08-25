@@ -79,6 +79,26 @@ public class AppSettings
     /// </summary>
     public int LoraUpdateCheckStalenessDays { get; set; } = 3;
 
+    // --- Metadata Sync Settings (issue #521 Plan E) ---
+
+    /// <summary>
+    /// Days before the bulk sync re-checks a model whose identity attempt found nothing
+    /// (NotIdentified/Sidecar/Header/Heuristic outcomes). Default 30 (spec §4.1 retry policy).
+    /// </summary>
+    public int SyncNotIdentifiedRetryDays { get; set; } = 30;
+
+    /// <summary>Days before the bulk sync retries a model whose last attempt errored. Default 1.</summary>
+    public int SyncErrorRetryDays { get; set; } = 1;
+
+    /// <summary>
+    /// How many thumbnail CDN downloads the bulk sync runs in parallel (1–8, default 4).
+    /// Applies to the Thumbnails step only; API steps are paced, never parallel.
+    /// </summary>
+    public int SyncThumbnailConcurrency { get; set; } = 4;
+
+    /// <summary>When the last user-started library-wide metadata sync completed uncancelled, if ever.</summary>
+    public DateTimeOffset? LastLibrarySyncAt { get; set; }
+
     #endregion
 
     #region LoRA Sort Settings

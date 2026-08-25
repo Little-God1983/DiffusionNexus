@@ -715,6 +715,21 @@ public sealed class AppSettingsService : IAppSettingsService
     }
 
     /// <inheritdoc />
+    public async Task UpdateLastLibrarySyncAtAsync(DateTimeOffset lastLibrarySyncAt, CancellationToken cancellationToken = default)
+    {
+        var settings = await _unitOfWork.AppSettings
+            .GetSettingsAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        if (settings is not null)
+        {
+            settings.LastLibrarySyncAt = lastLibrarySyncAt;
+            settings.UpdatedAt = DateTimeOffset.UtcNow;
+            await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<string?> GetLoraViewerFilterJsonAsync(CancellationToken cancellationToken = default)
     {
         var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);

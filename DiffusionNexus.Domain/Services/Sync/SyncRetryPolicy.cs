@@ -8,6 +8,17 @@ public sealed record SyncRetryPolicy(TimeSpan NotIdentifiedRetryAfter, TimeSpan 
 {
     public static SyncRetryPolicy Default { get; } = new(TimeSpan.FromDays(30), TimeSpan.FromDays(1), 3);
 
+    /// <summary>
+    /// Builds a policy from the user's saved settings. Floors both windows at one day: zero would
+    /// mean "always due", which turns every plan into a full re-run — when that is wanted it is a
+    /// Force checkbox on the plan dialog, not a saved setting. <see cref="MaxErrorAttempts"/> stays
+    /// at the default: it caps API hammering inside one run window and is not a user-facing knob.
+    /// </summary>
+    public static SyncRetryPolicy FromDays(int notIdentifiedDays, int errorDays) =>
+        new(TimeSpan.FromDays(Math.Max(1, notIdentifiedDays)),
+            TimeSpan.FromDays(Math.Max(1, errorDays)),
+            Default.MaxErrorAttempts);
+
     /// <summary>Whether an identity attempt is due given the stored outcome.</summary>
     public bool IsIdentifyDue(SyncOutcome outcome, DateTimeOffset? checkedAt, int attempts, DateTimeOffset now, bool force)
     {
