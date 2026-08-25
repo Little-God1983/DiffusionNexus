@@ -145,4 +145,39 @@ public class SyncRetryPolicyTests
         policy.NotIdentifiedRetryAfter.Should().Be(TimeSpan.FromDays(1));
         policy.ErrorRetryAfter.Should().Be(TimeSpan.FromDays(1));
     }
+
+    /// <summary>
+    /// These values are not guaranteed to come from the settings combo boxes: the settings importer
+    /// copies them straight out of a JSON file with no range check, and the repository persists them
+    /// unvalidated. <c>TimeSpan.FromDays</c> throws above ~10 675 199 days, so a corrupted
+    /// <c>settings.json</c> carrying <c>2147483647</c> made every Download Metadata press die with
+    /// "TimeSpan overflowed because the duration is too long" — an unusable button, no way to see
+    /// why. Ten years is past every meaningful horizon, so it degrades instead.
+    /// </summary>
+    [Theory]
+    [InlineData(int.MaxValue)]
+    [InlineData(3651)]
+    public void FromDays_CapsAtTenYears_BecauseTheValuesAreNotValidatedOnTheWayIn(int days)
+    {
+        var policy = SyncRetryPolicy.FromDays(days, days);
+
+        policy.NotIdentifiedRetryAfter.Should().Be(TimeSpan.FromDays(3650));
+        policy.ErrorRetryAfter.Should().Be(TimeSpan.FromDays(3650));
+    }
+
+    /// <summary>
+    /// "Everything but discovery" is derived, not listed. A sixth step kind therefore reaches the
+    /// bulk button's plan and the plan dialog's rows on its own — the hand-written copies this
+    /// replaced would have left it silently absent from both, with no compile error to say so.
+    /// </summary>
+    [Fact]
+    public void AllStepsExcept_IsEveryEnumMemberMinusTheExcludedOne()
+    {
+        var all = Enum.GetValues<SyncStepKind>();
+
+        SyncOptions.AllStepsExcept(SyncStepKind.DiscoverFiles).Should()
+            .BeEquivalentTo(all.Where(k => k != SyncStepKind.DiscoverFiles));
+        SyncOptions.AllStepsExcept(SyncStepKind.Thumbnails).Should()
+            .BeEquivalentTo(all.Where(k => k != SyncStepKind.Thumbnails));
+    }
 }

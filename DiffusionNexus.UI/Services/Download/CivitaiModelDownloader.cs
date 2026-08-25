@@ -431,7 +431,7 @@ public sealed class CivitaiModelDownloader : ICivitaiModelDownloader
             }
 
             _logger?.Debug(LogCategory.Download, LogSource, $"Step 9: completing metadata for model {modelId}");
-            var options = new SyncOptions(new HashSet<SyncStepKind> { SyncStepKind.FetchTags, SyncStepKind.Thumbnails });
+            var options = await BuildCompletionOptionsAsync(ct).ConfigureAwait(false);
             var plan = await _librarySync.PlanAsync(SyncScope.ForModels(modelId), options, ct).ConfigureAwait(false);
             await _librarySync.ExecuteAsync(plan, progress: null, ct).ConfigureAwait(false);
         }
@@ -442,6 +442,53 @@ public sealed class CivitaiModelDownloader : ICivitaiModelDownloader
         finally
         {
             if (acquired) CompletionGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// The completion sync's options, carrying the user's retry windows and thumbnail fan-out.
+    /// </summary>
+    /// <remarks>
+    /// Before this, the completion sync was the one thumbnail path that honoured neither: it judged
+    /// due-ness by <see cref="SyncRetryPolicy.Default"/> rather than the user's error window, and
+    /// fetched at the record's default width of four. A model can finish with a dozen due images,
+    /// so someone on a metered connection who set "Thumbnail downloads in parallel = 1" still got
+    /// four concurrent CDN GETs after every download — while the documentation said all three paths
+    /// were bounded by that number.
+    /// <para>
+    /// Read per completion rather than cached: this service is scoped, a download takes minutes,
+    /// and the setting may have changed since the last one. Its own scope, because this runs on the
+    /// detached completion tail alongside whatever else holds the shared <c>DbContext</c>.
+    /// </para>
+    /// <para>
+    /// Never fatal: a completion sync that cannot read settings still runs, on the defaults. A
+    /// download that reached disk has succeeded whatever the follow-up does.
+    /// </para>
+    /// </remarks>
+    private async Task<SyncOptions> BuildCompletionOptionsAsync(CancellationToken ct)
+    {
+        var steps = new HashSet<SyncStepKind> { SyncStepKind.FetchTags, SyncStepKind.Thumbnails };
+
+        if (_scopeFactory is null) return new SyncOptions(steps);
+
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var settingsService = scope.ServiceProvider.GetRequiredService<IAppSettingsService>();
+            var settings = await settingsService.GetSettingsAsync(ct).ConfigureAwait(false);
+            if (settings is null) return new SyncOptions(steps);
+
+            return new SyncOptions(
+                steps,
+                RetryPolicy: SyncRetryPolicy.FromDays(
+                    settings.SyncNotIdentifiedRetryDays, settings.SyncErrorRetryDays),
+                ThumbnailConcurrency: settings.SyncThumbnailConcurrency);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Debug(LogCategory.Download, LogSource,
+                $"Step 9: could not read the sync settings; using the defaults: {ex.Message}");
+            return new SyncOptions(steps);
         }
     }
 

@@ -57,14 +57,18 @@ public sealed partial class SyncPlanDialogViewModel : ObservableObject
     internal const string UpToDateMessage = SyncCopy.UpToDate;
 
     /// <summary>
-    /// The rows, in fixed display order. DiscoverFiles is deliberately absent: discovery has
-    /// already run by the time this dialog opens, so there is nothing left to decide about it.
-    /// Re-plans always ask for all four — the ticks filter at Start, not at plan time.
+    /// The rows, in display order. DiscoverFiles is deliberately absent: discovery has already run
+    /// by the time this dialog opens, so there is nothing left to decide about it. Re-plans always
+    /// ask for every row kind — the ticks filter at Start, not at plan time.
     /// </summary>
+    /// <remarks>
+    /// Derived from the enum rather than listed: the enum's declaration order IS the display order
+    /// (identify, then tags, then images, then thumbnails — the order the pipeline runs them in),
+    /// so a fifth step appears here on its own. The hand-written list this replaces had to be kept
+    /// in step with the enum and with the viewer's own copy, and nothing would have said otherwise.
+    /// </remarks>
     private static readonly SyncStepKind[] RowOrder =
-    [
-        SyncStepKind.IdentifyModel, SyncStepKind.FetchTags, SyncStepKind.FetchImages, SyncStepKind.Thumbnails,
-    ];
+        Enum.GetValues<SyncStepKind>().Where(k => k != SyncStepKind.DiscoverFiles).ToArray();
 
     private static readonly IReadOnlySet<SyncStepKind> AllRowKinds = new HashSet<SyncStepKind>(RowOrder);
 

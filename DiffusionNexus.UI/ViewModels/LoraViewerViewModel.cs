@@ -128,8 +128,17 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     private SyncRetryPolicy _scrollRetryPolicy = SyncRetryPolicy.Default;
 
     /// <summary>
-    /// The startup read that fills <see cref="_scrollRetryPolicy"/>. Test seam: tests await it
-    /// instead of relying on it having finished.
+    /// The user's thumbnail fan-out, read alongside <see cref="_scrollRetryPolicy"/> and cached for
+    /// the same reason. A model with several due images fetches them through this width on the
+    /// per-tile path too — someone who set "Thumbnail downloads in parallel = 1" on a metered
+    /// connection meant it for every path, not only the bulk button.
+    /// </summary>
+    private int _thumbnailConcurrency = 4;
+
+    /// <summary>
+    /// The startup read that fills <see cref="_scrollRetryPolicy"/> and
+    /// <see cref="_thumbnailConcurrency"/>. Test seam: tests await it instead of relying on it
+    /// having finished.
     /// </summary>
     internal Task ScrollRetryPolicyLoad { get; private set; } = Task.CompletedTask;
 
@@ -832,6 +841,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 
             _scrollRetryPolicy = SyncRetryPolicy.FromDays(
                 settings.SyncNotIdentifiedRetryDays, settings.SyncErrorRetryDays);
+            _thumbnailConcurrency = settings.SyncThumbnailConcurrency;
         }
         catch (Exception ex)
         {
@@ -927,6 +937,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                            ?? new AppSettings();
             var policy = SyncRetryPolicy.FromDays(settings.SyncNotIdentifiedRetryDays, settings.SyncErrorRetryDays);
             _scrollRetryPolicy = policy;
+            _thumbnailConcurrency = settings.SyncThumbnailConcurrency;
 
             // Discovery runs BEFORE the dialog, on its own, for two reasons: the counts the user is
             // about to approve must include files added since the app started, and a scan cannot be
@@ -1187,13 +1198,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         new HashSet<SyncStepKind> { SyncStepKind.DiscoverFiles };
 
     /// <summary>
-    /// The four steps the plan dialog offers. Discovery is not among them: by the time the dialog
-    /// opens it has already happened, and its count could never have been shown in advance anyway.
+    /// The steps the plan dialog offers. Discovery is not among them: by the time the dialog opens
+    /// it has already happened, and its count could never have been shown in advance anyway.
+    /// Derived from the enum — a fifth step joins the button's plan and the dialog's rows together
+    /// or not at all, rather than being silently absent from both.
     /// </summary>
-    private static readonly IReadOnlySet<SyncStepKind> PlannedStepKinds = new HashSet<SyncStepKind>
-    {
-        SyncStepKind.IdentifyModel, SyncStepKind.FetchTags, SyncStepKind.FetchImages, SyncStepKind.Thumbnails,
-    };
+    private static readonly IReadOnlySet<SyncStepKind> PlannedStepKinds =
+        SyncOptions.AllStepsExcept(SyncStepKind.DiscoverFiles);
 
     /// <summary>
     /// The service admits one run at a time and throws on the second (its <c>Wait(0)</c> gate).
@@ -1871,9 +1882,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         // an explicit re-fetch, so a stored "already checked" or "already failed" verdict must not
         // make the button do nothing. Forcing thumbnails only retries failures, because selection
         // still skips any image that already has bytes.
-        // The retry policy is the user's here too (Plan E). The forces make most windows moot, but
-        // the tags and images fetches are not forced and are judged by it. ThumbnailConcurrency
-        // stays at its default: one model's handful of images gains nothing from a wider fan-out.
+        // The retry policy AND the thumbnail fan-out are the user's here too (Plan E). The forces
+        // make most windows moot, but the tags and images fetches are not forced and are judged by
+        // the windows — and one model can easily have a dozen due images, which this path fetches
+        // through exactly the bounded gate the bulk run uses. Leaving the concurrency at the record
+        // default meant a user who asked for one parallel download still got four.
         var options = new SyncOptions(
             new HashSet<SyncStepKind>
             {
@@ -1882,7 +1895,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             },
             ForceIdentify: true,
             ForceThumbnails: true,
-            RetryPolicy: _scrollRetryPolicy);
+            RetryPolicy: _scrollRetryPolicy,
+            ThumbnailConcurrency: _thumbnailConcurrency);
 
         SyncPlan plan;
         SyncReport report;

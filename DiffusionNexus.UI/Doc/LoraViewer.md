@@ -409,10 +409,13 @@ never re-fetched; only an explicit Force re-asks.
 The windows below are the defaults; the two that are user-facing come from
 **Settings → LoRA Viewer → Metadata Sync** (`SyncNotIdentifiedRetryDays` — 7/14/30/60/90,
 default 30; `SyncErrorRetryDays` — 1/3/7, default 1) and reach the policy through
-`SyncRetryPolicy.FromDays`, which floors either value at one day so a settings row of `0`
-cannot turn the retry window into a busy-loop. `MaxErrorAttempts` (3) is not user-facing —
-it is a fixed ceiling on the `Error` row below. The viewer builds one policy from these
-settings and hands it to the bulk run, the per-LoRA button and the tiles alike, so a scroll
+`SyncRetryPolicy.FromDays`, which clamps either value to 1–3650 days: `0` would turn the
+retry window into a busy-loop, and a value big enough to overflow `TimeSpan.FromDays` would
+otherwise throw on every press — neither number is validated on the way in, because the
+settings importer copies them straight out of a JSON file. `MaxErrorAttempts` (3) is not
+user-facing — it is a fixed ceiling on the `Error` row below. The viewer builds one policy
+from these settings and hands it to the bulk run, the per-LoRA button and the tiles alike,
+and the downloader builds the same one for its post-download completion sync, so a scroll
 past a thumbnail and a bulk sync of the same row never disagree about whether it is due
 (§9, "The tile — three on-demand paths, one gate").
 

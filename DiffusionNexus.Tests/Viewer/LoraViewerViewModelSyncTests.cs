@@ -976,6 +976,9 @@ public class LoraViewerViewModelSyncTests
 
         options!.Policy.NotIdentifiedRetryAfter.Should().Be(TimeSpan.FromDays(14));
         options.Policy.ErrorRetryAfter.Should().Be(TimeSpan.FromDays(3));
+        options.ThumbnailConcurrency.Should().Be(6,
+            "one model can have a dozen due images, and someone who set 'thumbnail downloads in parallel = 1' " +
+            "on a metered connection meant it for this button too — not only for the bulk run");
     }
 
     [Fact]
