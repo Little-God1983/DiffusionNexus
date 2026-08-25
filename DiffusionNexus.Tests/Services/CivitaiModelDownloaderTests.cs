@@ -501,6 +501,67 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
     }
 
     [Fact]
+    public async Task VerifiedTransfer_ReportsTheHashItActuallyComputed()
+    {
+        var dir = NewTempDir();
+        var expected = Sha256Of("downloaded-bytes");
+
+        var downloader = new CivitaiModelDownloader(
+            Transport().Object, Coordinator().Object, Sync().Object, new LibraryChangeNotifier(), ScopeFactory(1));
+
+        var outcome = await downloader.DownloadAsync(
+            new DownloadRequest(Version(sha256: expected), dir, DownloadTrigger.BrowseQueue));
+
+        outcome.Status.Should().Be(DownloadStatus.Completed);
+        outcome.VerifiedSha256.Should().Be(expected,
+            "step 7 hashed the bytes on disk and they matched — that result is the only digest a caller may record");
+    }
+
+    [Fact]
+    public async Task SkippedVerification_ReportsNoVerifiedHash()
+    {
+        // No expected SHA256 anywhere means step 7 never ran. Saying nothing is what lets the queue
+        // leave ActualSha256 null instead of adopting an unchecked enqueue-time expectation.
+        var dir = NewTempDir();
+
+        var downloader = new CivitaiModelDownloader(
+            Transport().Object, Coordinator().Object, Sync().Object, new LibraryChangeNotifier(), ScopeFactory(1));
+
+        var outcome = await downloader.DownloadAsync(new DownloadRequest(Version(), dir, DownloadTrigger.BrowseQueue));
+
+        outcome.Status.Should().Be(DownloadStatus.Completed);
+        outcome.VerifiedSha256.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task HashProvenReuse_ReportsTheProvenHash_ButAMismatchReportsNone()
+    {
+        var reuseDir = NewTempDir();
+        File.WriteAllText(Path.Combine(reuseDir, "model.safetensors"), "already-here");
+        var reuseHash = Sha256Of("already-here");
+        var reuseDownloader = new CivitaiModelDownloader(
+            Transport().Object, Coordinator().Object, Sync().Object, new LibraryChangeNotifier(), ScopeFactory(1));
+
+        var reuse = await reuseDownloader.DownloadAsync(
+            new DownloadRequest(Version(sha256: reuseHash.ToLowerInvariant()), reuseDir, DownloadTrigger.Dialog));
+
+        reuse.Status.Should().Be(DownloadStatus.ReusedExisting);
+        reuse.VerifiedSha256.Should().Be(reuseHash,
+            "the collision policy proved the file's content equals this hash, and stores it in one casing");
+
+        var badDir = NewTempDir();
+        var badDownloader = new CivitaiModelDownloader(
+            Transport(content: "corrupt-bytes").Object, Coordinator().Object, Sync().Object,
+            new LibraryChangeNotifier(), ScopeFactory(1));
+
+        var bad = await badDownloader.DownloadAsync(
+            new DownloadRequest(Version(sha256: Sha256Of("the-real-bytes")), badDir, DownloadTrigger.BrowseQueue));
+
+        bad.Status.Should().Be(DownloadStatus.HashMismatch);
+        bad.VerifiedSha256.Should().BeNull("verification ran and FAILED — nothing was proven");
+    }
+
+    [Fact]
     public async Task SyncAlreadyRunning_SkipsExecute_ButStillNotifies()
     {
         var dir = NewTempDir();

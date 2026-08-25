@@ -556,10 +556,12 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             // The one Civitai download path (spec §4.4 / D3): collision policy, coordinator
             // enqueue, SHA256 verification, persistence and the Tags+Thumbnails completion
             // sync all live inside the downloader now — the queue only reports outcomes.
-            // File is passed explicitly (rather than left for the downloader to re-pick) so
-            // the enqueue-time ExpectedSha256/FileName snapshot on the job and the file the
-            // downloader actually fetches agree by construction — after a restart-rehydration
-            // the two picks could otherwise diverge if Civitai's file list changed in between.
+            // File is passed explicitly (rather than left for the downloader to re-pick) so the
+            // whole job runs against ONE pick. It is NOT the enqueue-time snapshot, though: after a
+            // restart-rehydration civVersion is re-fetched and this pick is fresh, so only
+            // FileNameOverride still comes from the persisted job. job.ExpectedSha256 can therefore
+            // describe a file this run is not fetching — which is why the digest the queue records
+            // below comes from outcome.VerifiedSha256 and never from that snapshot.
             var primaryFile = CivitaiVersionFiles.PickPrimary(civVersion);
             var request = new DownloadRequest(civVersion!, targetDir, DownloadTrigger.BrowseQueue)
             {
@@ -610,7 +612,11 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                 {
                     case DownloadStatus.Completed:
                         job.ProgressPercent = 100; // the throttled progress adapter's last report may sit below 100
-                        job.ActualSha256 ??= job.ExpectedSha256; // verified inside the downloader
+                        // Only a hash the downloader actually computed against the bytes on disk.
+                        // When it had nothing to verify against it says so by leaving this null, and
+                        // the job's enqueue-time expectation stays exactly what it is — an
+                        // expectation — instead of being persisted as a verification result.
+                        if (outcome.VerifiedSha256 is not null) job.ActualSha256 = outcome.VerifiedSha256;
                         job.Status = JobStatus.Completed;
                         job.StatusMessage = "Done";
                         break;
@@ -620,7 +626,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                         // used to finish as a plain "Done", leaving the LoRA with no description,
                         // tags or preview and no hint of why.
                         job.ProgressPercent = 100;
-                        job.ActualSha256 ??= job.ExpectedSha256; // verified inside the downloader
+                        if (outcome.VerifiedSha256 is not null) job.ActualSha256 = outcome.VerifiedSha256;
                         job.Status = JobStatus.Completed;
                         job.StatusMessage = "Done — no metadata";
                         _logger?.Warn(LogCategory.Download, "CivitaiQueue",

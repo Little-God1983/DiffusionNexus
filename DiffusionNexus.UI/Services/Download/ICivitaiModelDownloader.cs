@@ -50,8 +50,17 @@ public enum DownloadStatus
 }
 
 /// <summary>The result of a <see cref="ICivitaiModelDownloader.DownloadAsync"/> call.</summary>
+/// <param name="VerifiedSha256">
+/// The uppercase SHA256 the downloader actually PROVED against the bytes on disk — the hash it
+/// computed when post-transfer verification ran and matched, or the expected hash on a reuse the
+/// collision policy proved by content. Null whenever verification was skipped (no expected hash to
+/// check against) or failed. Callers that record a digest must use this and nothing else: an
+/// enqueue-time expectation is not evidence, and stamping one as if it were meant the queue
+/// persisted an unverified digest under a comment claiming the downloader had verified it.
+/// </param>
 public sealed record DownloadOutcome(
-    DownloadStatus Status, string? FinalPath, int? ModelId, bool RenamedForCollision, string? Error)
+    DownloadStatus Status, string? FinalPath, int? ModelId, bool RenamedForCollision, string? Error,
+    string? VerifiedSha256 = null)
 {
     public bool Success => Status
         is DownloadStatus.Completed or DownloadStatus.CompletedMetadataIncomplete or DownloadStatus.ReusedExisting;

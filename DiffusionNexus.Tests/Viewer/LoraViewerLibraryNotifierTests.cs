@@ -76,6 +76,31 @@ public class LoraViewerLibraryNotifierTests
     }
 
     [Fact]
+    public void DisposeDetachesTheSubscription_AndIsIdempotent()
+    {
+        // ILibraryChangeNotifier is a singleton while this view model is scoped, so its invocation
+        // list outlives any one instance. Without a teardown, a second resolution — a new DI scope,
+        // a re-created viewer — would root the old view model forever, double every coalesced
+        // rebuild, and keep each stale copy hitting the database on every download.
+        var notifier = new FakeLibraryChangeNotifier();
+        var vm = CreateViewModel(notifier);
+        notifier.SubscriberCount.Should().Be(1);
+
+        vm.Dispose();
+
+        notifier.SubscriberCount.Should().Be(0, "the singleton must not keep holding a dead view model");
+
+        var act = () => vm.Dispose();
+        act.Should().NotThrow("DI can dispose a scoped service more than once");
+        notifier.SubscriberCount.Should().Be(0);
+
+        // The signal itself must now be inert for this instance.
+        notifier.NotifyModelDownloaded(42);
+        _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Never,
+            "a detached view model must not react to the library changing");
+    }
+
+    [Fact]
     public async Task ABatchOfArrivalsCoalescesIntoASingleRebuild()
     {
         var vm = CreateViewModel(new FakeLibraryChangeNotifier());

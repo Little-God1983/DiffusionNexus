@@ -439,6 +439,13 @@ public partial class ModelDetailViewModel : ViewModelBase
         if (!result.Confirmed || string.IsNullOrWhiteSpace(result.TargetFolder))
             return;
 
+        // The panel's own fallback name when the version carries no named file, instead of the
+        // downloader's synthesized "model_{id}.safetensors". Also the name reported back to the user.
+        var fallbackFileName = string.IsNullOrWhiteSpace(primaryFile?.Name)
+            ? $"{ModelName}_{tab.Label}.safetensors"
+            : null;
+        var fileName = fallbackFileName ?? primaryFile!.Name!;
+
         // Mark as downloading
         tab.IsDownloading = true;
 
@@ -459,16 +466,22 @@ public partial class ModelDetailViewModel : ViewModelBase
                 {
                     File = primaryFile,
                     ExistingModelId = SourceTile?.ModelEntity?.Id,
-                    // Keep the panel's own fallback name when the version carries no named file,
-                    // instead of the downloader's synthesized "model_{id}.safetensors".
-                    FileNameOverride = string.IsNullOrWhiteSpace(primaryFile?.Name)
-                        ? $"{ModelName}_{tab.Label}.safetensors"
-                        : null,
+                    FileNameOverride = fallbackFileName,
                 };
 
                 var outcome = await _modelDownloader.DownloadAsync(request).ConfigureAwait(false);
                 if (outcome.Success && outcome.FinalPath is not null)
+                {
                     await _uiScheduler.InvokeAsync(() => _ = RefreshAfterDownloadAsync(outcome.FinalPath));
+                    return;
+                }
+
+                // Without this the typed outcome had no consumer here: a 403 on a gated model just
+                // stopped the spinner — no message, no dialog, no status text — while the inline
+                // downloader this replaced reported the failure and the sibling migration in
+                // LoraViewerViewModel maps every status to a visible line.
+                if (DescribeFailedDownload(outcome, fileName) is { } message)
+                    await _uiScheduler.InvokeAsync(() => StatusMessage = message);
             }
             finally
             {
@@ -476,6 +489,22 @@ public partial class ModelDetailViewModel : ViewModelBase
             }
         });
     }
+
+    /// <summary>
+    /// The user-visible line for a download that did not succeed, or null when there is nothing to
+    /// report. Mirrors <c>LoraViewerViewModel.DownloadLoraAsync</c>'s switch: cancelling is not
+    /// failing, and a hash mismatch is not a clean download — Task 5 made those distinguishable, so
+    /// they must not collapse back into one red line. Internal so the mapping is testable without
+    /// standing up a dialog service and a live download.
+    /// </summary>
+    internal static string? DescribeFailedDownload(DownloadOutcome outcome, string fileName) => outcome.Status switch
+    {
+        DownloadStatus.Cancelled => $"Download cancelled: {fileName}",
+        DownloadStatus.HashMismatch => $"Downloaded {fileName} — hash mismatch, file kept for inspection",
+        DownloadStatus.Failed =>
+            $"Download failed: {fileName}{(outcome.Error is null ? "" : $" ({outcome.Error})")}",
+        _ => null,
+    };
 
     /// <summary>
     /// Reloads the model from the database and refreshes the source tile and detail panel
@@ -1104,7 +1133,7 @@ public partial class ModelDetailViewModel : ViewModelBase
     /// </summary>
     private Task<string?> GetApiKeyAsync()
     {
-        _apiKeyProvider ??= new CivitaiApiKeyProvider(_scopeFactory);
+        _apiKeyProvider ??= CivitaiApiKeys.Resolve(_scopeFactory);
         return _apiKeyProvider.GetApiKeyAsync();
     }
 

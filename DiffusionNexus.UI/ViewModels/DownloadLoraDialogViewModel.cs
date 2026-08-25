@@ -343,7 +343,7 @@ public partial class DownloadLoraDialogViewModel : ObservableObject
 
     private Task<string?> GetApiKeyAsync()
     {
-        _apiKeyProvider ??= new CivitaiApiKeyProvider(App.Services?.GetService<IServiceScopeFactory>(), _settingsService);
+        _apiKeyProvider ??= CivitaiApiKeys.Resolve(fallbackSettings: _settingsService);
         return _apiKeyProvider.GetApiKeyAsync();
     }
 

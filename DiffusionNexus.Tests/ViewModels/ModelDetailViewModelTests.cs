@@ -8,6 +8,7 @@ using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Installer.SDK.Shared.Services;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.Download;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
@@ -172,6 +173,37 @@ public class ModelDetailViewModelTests
         slowLookupForA.SetResult(stateA);
         await taskA;
         vm.IdentitySourceDisplay.Should().Be("sidecar file", "a stale lookup for the previous tile must not overwrite the current tile's chip");
+    }
+
+    /// <summary>
+    /// The migrated detail-panel download reported nothing on Failed/Cancelled/HashMismatch: a 403
+    /// on a gated model just stopped the spinner. The typed outcome now has a consumer here, and it
+    /// keeps the three apart exactly as <c>LoraViewerViewModel.DownloadLoraAsync</c> does —
+    /// cancelling is not failing, and a hash mismatch is not a clean download.
+    /// </summary>
+    [Theory]
+    [InlineData(DownloadStatus.Cancelled, null, "Download cancelled: foo.safetensors")]
+    [InlineData(DownloadStatus.HashMismatch, "hash mismatch",
+        "Downloaded foo.safetensors — hash mismatch, file kept for inspection")]
+    [InlineData(DownloadStatus.Failed, "no download URL", "Download failed: foo.safetensors (no download URL)")]
+    [InlineData(DownloadStatus.Failed, null, "Download failed: foo.safetensors")]
+    public void FailedDownloadsAreDescribedToTheUser(DownloadStatus status, string? error, string expected)
+    {
+        var outcome = new DownloadOutcome(status, "C:\\x\\foo.safetensors", null, false, error);
+
+        ModelDetailViewModel.DescribeFailedDownload(outcome, "foo.safetensors").Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData(DownloadStatus.Completed)]
+    [InlineData(DownloadStatus.CompletedMetadataIncomplete)]
+    [InlineData(DownloadStatus.ReusedExisting)]
+    public void SuccessfulDownloadsHaveNoFailureLine(DownloadStatus status)
+    {
+        var outcome = new DownloadOutcome(status, "C:\\x\\foo.safetensors", 1, false, null);
+
+        ModelDetailViewModel.DescribeFailedDownload(outcome, "foo.safetensors").Should().BeNull(
+            "a success is reported by the panel refreshing, not by a status line");
     }
 
     /// <summary>

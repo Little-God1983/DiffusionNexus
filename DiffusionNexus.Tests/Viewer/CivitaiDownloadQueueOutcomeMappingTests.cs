@@ -80,8 +80,36 @@ public sealed class CivitaiDownloadQueueOutcomeMappingTests : IDisposable
     };
 
     [Fact]
-    public async Task Completed_MapsToCompletedDone_AndAdoptsExpectedShaAsActual()
+    public async Task Completed_MapsToCompletedDone_AndStampsTheHashTheDownloaderActuallyVerified()
     {
+        var downloader = new FakeDownloader
+        {
+            Respond = _ => new DownloadOutcome(
+                DownloadStatus.Completed, "final.safetensors", 1, false, null, "CCCC3333DDDD4444")
+        };
+        var queue = Queue(downloader);
+        var job = NewJob(expectedSha256: "AAAA1111BBBB2222");
+        queue.Jobs.Add(job);
+
+        await queue.StartAllAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        job.Status.Should().Be(JobStatus.Completed);
+        job.StatusMessage.Should().Be("Done");
+        job.TargetPath.Should().Be("final.safetensors");
+        job.ActualSha256.Should().Be("CCCC3333DDDD4444",
+            "ActualSha256 records what was computed against the bytes on disk, not what was expected at enqueue time");
+        job.ProgressPercent.Should().Be(100, "the throttled progress adapter's last report may sit below 100");
+    }
+
+    [Fact]
+    public async Task Completed_WithVerificationSkipped_LeavesActualShaNull()
+    {
+        // After a restart-rehydration the file is re-picked fresh, so job.ExpectedSha256 can
+        // describe a file this run is not fetching. If that re-picked file carries no SHA256 the
+        // downloader logs "verification skipped" and returns VerifiedSha256 null — writing the
+        // stale enqueue-time digest here would persist an unverified hash to the queue file under
+        // a comment claiming the downloader had verified it.
         var downloader = new FakeDownloader
         {
             Respond = _ => new DownloadOutcome(DownloadStatus.Completed, "final.safetensors", 1, false, null)
@@ -94,10 +122,7 @@ public sealed class CivitaiDownloadQueueOutcomeMappingTests : IDisposable
         Dispatcher.UIThread.RunJobs();
 
         job.Status.Should().Be(JobStatus.Completed);
-        job.StatusMessage.Should().Be("Done");
-        job.TargetPath.Should().Be("final.safetensors");
-        job.ActualSha256.Should().Be("AAAA1111BBBB2222", "the downloader already verified the hash");
-        job.ProgressPercent.Should().Be(100, "the throttled progress adapter's last report may sit below 100");
+        job.ActualSha256.Should().BeNull("nothing was verified, so nothing may be recorded as verified");
     }
 
     [Fact]
@@ -105,7 +130,8 @@ public sealed class CivitaiDownloadQueueOutcomeMappingTests : IDisposable
     {
         var downloader = new FakeDownloader
         {
-            Respond = _ => new DownloadOutcome(DownloadStatus.CompletedMetadataIncomplete, "final.safetensors", 1, false, null)
+            Respond = _ => new DownloadOutcome(
+                DownloadStatus.CompletedMetadataIncomplete, "final.safetensors", 1, false, null, "AAAA1111")
         };
         var queue = Queue(downloader);
         var job = NewJob(expectedSha256: "AAAA1111");

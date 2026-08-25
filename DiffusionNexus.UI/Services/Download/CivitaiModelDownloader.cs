@@ -128,8 +128,16 @@ public sealed class CivitaiModelDownloader : ICivitaiModelDownloader
             DownloadStatus status;
             string? error = null;
 
+            // Only ever set from a hash this method PROVED against the bytes on disk. Callers stamp
+            // their records from it, so an expectation that was never checked must leave it null.
+            string? verifiedSha256 = null;
+
             if (resolution.ExistingContentMatches)
             {
+                // The policy only reports a content match after hashing the file and finding it
+                // equal to expectedSha256 — so for this branch the expectation IS proven.
+                verifiedSha256 = expectedSha256?.ToUpperInvariant();
+
                 // 5 — the bytes are already here. Persist anyway: the file can predate the DB row.
                 _logger?.Debug(LogCategory.Download, LogSource,
                     $"Step 5: byte-identical file already on disk — skipping transfer for {resolution.TargetPath}");
@@ -256,6 +264,7 @@ public sealed class CivitaiModelDownloader : ICivitaiModelDownloader
                         }
                         else
                         {
+                            verifiedSha256 = actual;
                             _logger?.Debug(LogCategory.Download, LogSource,
                                 $"Step 7: SHA256 verified for {resolution.TargetPath} ({actual})");
                         }
@@ -290,7 +299,9 @@ public sealed class CivitaiModelDownloader : ICivitaiModelDownloader
             _logger?.Debug(LogCategory.Download, LogSource,
                 $"Step 11: {status} at {resolution.TargetPath} (model id {modelId?.ToString() ?? "(none)"}, " +
                 $"renamed: {renamed})");
-            return Finish(new DownloadOutcome(status, resolution.TargetPath, modelId, renamed, error), fileName);
+            return Finish(
+                new DownloadOutcome(status, resolution.TargetPath, modelId, renamed, error, verifiedSha256),
+                fileName);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

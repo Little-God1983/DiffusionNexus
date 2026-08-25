@@ -29,7 +29,7 @@ namespace DiffusionNexus.UI.ViewModels;
 /// <summary>
 /// ViewModel for the LoRA Viewer view displaying model tiles.
 /// </summary>
-public partial class LoraViewerViewModel : BusyViewModelBase
+public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 {
     private readonly IAppSettingsService? _settingsService;
     private readonly IModelSyncService? _syncService;
@@ -72,12 +72,16 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     private readonly ICivitaiModelDownloader? _modelDownloader;
 
     /// <summary>
-    /// The "library gained a model" signal every download path raises. Subscribed for the
-    /// lifetime of the viewer (one scoped instance per app session, resolved at startup) so the
-    /// Installed tab rebuilds no matter which surface downloaded — including the Browse queue,
-    /// which never told it anything before (spec RC5).
+    /// The "library gained a model" signal every download path raises, so the Installed tab
+    /// rebuilds no matter which surface downloaded — including the Browse queue, which never told
+    /// it anything before (spec RC5). Subscribed in the constructor and detached in
+    /// <see cref="Dispose"/>: the notifier is a singleton while this view model is scoped, so the
+    /// subscription outlives the instance unless something takes it back.
     /// </summary>
     private readonly ILibraryChangeNotifier? _changeNotifier;
+
+    /// <summary>Guards <see cref="Dispose"/> against a second call doing anything.</summary>
+    private bool _disposed;
 
     /// <summary>
     /// True while a notifier-triggered rebuild is scheduled or running. A 20-job queue batch
@@ -490,6 +494,33 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         _ = InitializeBaseModelFilterAsync();
         _ = LoadDestinationFoldersAsync(destination);
+    }
+
+    /// <summary>
+    /// Detaches the library-changed subscription.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ILibraryChangeNotifier"/> is registered as a singleton while this view model is
+    /// scoped, so its invocation list outlives any one instance. Only one is resolved today (the
+    /// root scope, at startup), but the registration does not enforce that: a second resolution — a
+    /// new DI scope, a re-created viewer, a future navigation model — would root the old instance in
+    /// the singleton forever, double every coalesced rebuild, and keep each stale copy hitting the
+    /// database on every download. The class already does exactly this for the detail view model's
+    /// events. DI disposes scoped services when the scope goes, so no call site has to remember.
+    /// Idempotent: the flag makes a second call a no-op, and detaching an absent handler is one
+    /// anyway.
+    /// </remarks>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        // The stored reference the constructor subscribed to — never a fresh resolve, which could
+        // hand back a different instance and leave the real subscription in place.
+        if (_changeNotifier is not null)
+            _changeNotifier.ModelDownloaded -= OnLibraryModelDownloaded;
+
+        GC.SuppressFinalize(this);
     }
 
     /// <summary>
@@ -1244,7 +1275,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// </summary>
     private Task<string?> GetApiKeyForSorterAsync()
     {
-        _apiKeyProvider ??= new CivitaiApiKeyProvider(_scopeFactory);
+        _apiKeyProvider ??= CivitaiApiKeys.Resolve(_scopeFactory);
         return _apiKeyProvider.GetApiKeyAsync();
     }
 
