@@ -528,6 +528,44 @@ public sealed class LibrarySyncServiceTests : IDisposable
         report.Failures.Select(f => f.Reason).Should().AllBe("probe-failure");
     }
 
+    /// <summary>
+    /// The load-bearing half of the branch condition: a PACED API step must never parallelize,
+    /// whatever the configured thumbnail concurrency says. Losing this silently turns the 1.5 s
+    /// Civitai courtesy pacing into a burst and gets users rate-limited.
+    /// </summary>
+    [Fact]
+    public async Task ANonThumbnailsStep_NeverParallelizes_RegardlessOfTheConcurrencySetting()
+    {
+        var probe = new ConcurrencyProbeStep(itemCount: 8, kind: SyncStepKind.FetchTags);
+        var service = NewService([probe]);
+        var options = new SyncOptions(new HashSet<SyncStepKind> { SyncStepKind.FetchTags }, ThumbnailConcurrency: 4);
+
+        var plan = await service.PlanAsync(SyncScope.Library, options);
+        await service.ExecuteAsync(plan);
+
+        probe.Executed.Should().Be(8);
+        probe.MaxObservedConcurrency.Should().Be(1);
+    }
+
+    /// <summary>The service, not the caller, owns the sane range: junk settings degrade, never throw.</summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-3)]
+    [InlineData(100)]
+    public async Task ThumbnailConcurrency_OutOfRangeValues_AreClampedNotThrown(int configured)
+    {
+        var probe = new ConcurrencyProbeStep(itemCount: 10);
+        var service = NewService([probe]);
+        var options = new SyncOptions(new HashSet<SyncStepKind> { SyncStepKind.Thumbnails }, ThumbnailConcurrency: configured);
+
+        var plan = await service.PlanAsync(SyncScope.Library, options);
+        var report = await service.ExecuteAsync(plan);
+
+        report.Steps.Single().Succeeded.Should().Be(10);
+        probe.MaxObservedConcurrency.Should().BeLessThanOrEqualTo(8);
+        if (configured < 1) probe.MaxObservedConcurrency.Should().Be(1, "a clamped-to-1 value must stay sequential");
+    }
+
     // ------------------------------------------------------------------ DI
 
     [Fact]
@@ -670,15 +708,16 @@ public sealed class LibrarySyncServiceTests : IDisposable
         public int MaxObservedConcurrency;
         public int Executed;
 
-        public ConcurrencyProbeStep(int itemCount, bool failOddItems = false)
+        public ConcurrencyProbeStep(int itemCount, bool failOddItems = false, SyncStepKind kind = SyncStepKind.Thumbnails)
         {
             _items = Enumerable.Range(1, itemCount)
                 .Select(i => new SyncItem(i, $"model-{i}", i))
                 .ToList();
             _failOddItems = failOddItems;
+            Kind = kind;
         }
 
-        public SyncStepKind Kind => SyncStepKind.Thumbnails;
+        public SyncStepKind Kind { get; }
         public string Description => "probe";
         public TimeSpan EstimatedPerItem => TimeSpan.Zero;
 
