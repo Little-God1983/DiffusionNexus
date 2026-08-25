@@ -317,6 +317,32 @@
                       </StackPanel>
                       <Border Height="1" Background="#40FFFFFF" Margin="0,8"/>
                       <StackPanel Spacing="8">
+                        <TextBlock Text="Metadata Sync" FontWeight="SemiBold" FontSize="14"/>
+                        <TextBlock Text="How the bulk metadata sync retries models it could not resolve, and how many thumbnails it downloads at once. Applies from the next sync run."
+                                   FontSize="12"
+                                   Opacity="0.7"
+                                   TextWrapping="Wrap"/>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                          <ComboBox ItemsSource="{Binding AvailableSyncNotIdentifiedRetryDays}"
+                                    SelectedItem="{Binding SyncNotIdentifiedRetryDays, Mode=TwoWay}"
+                                    Width="80"/>
+                          <TextBlock Text="Days before re-checking models Civitai did not identify" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                          <ComboBox ItemsSource="{Binding AvailableSyncErrorRetryDays}"
+                                    SelectedItem="{Binding SyncErrorRetryDays, Mode=TwoWay}"
+                                    Width="80"/>
+                          <TextBlock Text="Days before retrying failed lookups" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                          <ComboBox ItemsSource="{Binding AvailableSyncThumbnailConcurrency}"
+                                    SelectedItem="{Binding SyncThumbnailConcurrency, Mode=TwoWay}"
+                                    Width="80"/>
+                          <TextBlock Text="Thumbnail downloads in parallel" VerticalAlignment="Center"/>
+                        </StackPanel>
+                      </StackPanel>
+                      <Border Height="1" Background="#40FFFFFF" Margin="0,8"/>
+                      <StackPanel Spacing="8">
                         <TextBlock Text="Base Model Filter" FontWeight="SemiBold" FontSize="14"/>
                         <TextBlock Text="Force-updates the base-model filter list shared by the Installed and Browse Civitai tabs. Fetches the latest base-model definition from Civitai and rebuilds the filter immediately, without an app restart. Status is reported in the Unified Console."
                                    FontSize="12"

@@ -89,6 +89,45 @@ public partial class SettingsViewModel : BusyViewModelBase
         new[] { 0, 1, 3, 7, 14, 30 };
 
     /// <summary>
+    /// Days before the bulk metadata sync re-checks a model whose identity attempt
+    /// found nothing. Mirrors <see cref="AppSettings.SyncNotIdentifiedRetryDays"/>.
+    /// </summary>
+    [ObservableProperty]
+    private int _syncNotIdentifiedRetryDays = 30;
+
+    /// <summary>
+    /// Days before the bulk metadata sync retries a model whose last attempt errored.
+    /// Mirrors <see cref="AppSettings.SyncErrorRetryDays"/>.
+    /// </summary>
+    [ObservableProperty]
+    private int _syncErrorRetryDays = 1;
+
+    /// <summary>
+    /// How many thumbnail CDN downloads the bulk metadata sync runs in parallel.
+    /// Mirrors <see cref="AppSettings.SyncThumbnailConcurrency"/>.
+    /// </summary>
+    [ObservableProperty]
+    private int _syncThumbnailConcurrency = 4;
+
+    /// <summary>Selectable windows (days) before a not-identified model is re-checked.</summary>
+    public IReadOnlyList<int> AvailableSyncNotIdentifiedRetryDays { get; } = new[] { 7, 14, 30, 60, 90 };
+
+    /// <summary>Selectable windows (days) before an errored attempt is retried.</summary>
+    public IReadOnlyList<int> AvailableSyncErrorRetryDays { get; } = new[] { 1, 3, 7 };
+
+    /// <summary>Parallel thumbnail downloads during a bulk sync.</summary>
+    public IReadOnlyList<int> AvailableSyncThumbnailConcurrency { get; } = new[] { 1, 2, 4, 6, 8 };
+
+    /// <summary>
+    /// The <see cref="AppSettings.LastLibrarySyncAt"/> value read at load time. Not
+    /// user-editable on this page (Task 5's flow stamps it directly via
+    /// <c>UpdateLastLibrarySyncAtAsync</c>), but the save command still builds a
+    /// detached <c>AppSettings</c> snapshot — without carrying this through, every
+    /// settings save would silently null the stamp back out.
+    /// </summary>
+    private DateTimeOffset? _loadedLastLibrarySyncAt;
+
+    /// <summary>
     /// Default source folder for LoRA Sort.
     /// </summary>
     [ObservableProperty]
@@ -326,6 +365,10 @@ public partial class SettingsViewModel : BusyViewModelBase
             UseForgeStylePrompts = settings.UseForgeStylePrompts;
             MergeLoraSources = settings.MergeLoraSources;
             LoraUpdateCheckStalenessDays = settings.LoraUpdateCheckStalenessDays;
+            SyncNotIdentifiedRetryDays = settings.SyncNotIdentifiedRetryDays;
+            SyncErrorRetryDays = settings.SyncErrorRetryDays;
+            SyncThumbnailConcurrency = settings.SyncThumbnailConcurrency;
+            _loadedLastLibrarySyncAt = settings.LastLibrarySyncAt;
             LoraSortSourcePath = settings.LoraSortSourcePath;
             LoraSortTargetPath = settings.LoraSortTargetPath;
             DatasetStoragePath = settings.DatasetStoragePath;
@@ -639,6 +682,10 @@ public partial class SettingsViewModel : BusyViewModelBase
                 UseForgeStylePrompts = UseForgeStylePrompts,
                 MergeLoraSources = MergeLoraSources,
                 LoraUpdateCheckStalenessDays = LoraUpdateCheckStalenessDays,
+                SyncNotIdentifiedRetryDays = SyncNotIdentifiedRetryDays,
+                SyncErrorRetryDays = SyncErrorRetryDays,
+                SyncThumbnailConcurrency = SyncThumbnailConcurrency,
+                LastLibrarySyncAt = _loadedLastLibrarySyncAt,
                 LoraSortSourcePath = LoraSortSourcePath,
                 LoraSortTargetPath = LoraSortTargetPath,
                 DatasetStoragePath = DatasetStoragePath,
@@ -1444,6 +1491,9 @@ public partial class SettingsViewModel : BusyViewModelBase
     partial void OnUseForgeStylePromptsChanged(bool value) => HasChanges = true;
     partial void OnMergeLoraSourcesChanged(bool value) => HasChanges = true;
     partial void OnLoraUpdateCheckStalenessDaysChanged(int value) => HasChanges = true;
+    partial void OnSyncNotIdentifiedRetryDaysChanged(int value) => HasChanges = true;
+    partial void OnSyncErrorRetryDaysChanged(int value) => HasChanges = true;
+    partial void OnSyncThumbnailConcurrencyChanged(int value) => HasChanges = true;
     partial void OnLoraSortSourcePathChanged(string? value) => HasChanges = true;
     partial void OnLoraSortTargetPathChanged(string? value) => HasChanges = true;
     partial void OnDatasetStoragePathChanged(string? value)

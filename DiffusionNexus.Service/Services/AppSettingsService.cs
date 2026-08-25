@@ -305,6 +305,9 @@ public sealed class AppSettingsService : IAppSettingsService
         existingSettings.LastBackupAt = settings.LastBackupAt;
         existingSettings.ComfyUiServerUrl = settings.ComfyUiServerUrl;
         existingSettings.LoraUpdateCheckStalenessDays = settings.LoraUpdateCheckStalenessDays;
+        existingSettings.SyncNotIdentifiedRetryDays = settings.SyncNotIdentifiedRetryDays;
+        existingSettings.SyncErrorRetryDays = settings.SyncErrorRetryDays;
+        existingSettings.SyncThumbnailConcurrency = settings.SyncThumbnailConcurrency;
         existingSettings.UpdatedAt = settings.UpdatedAt;
 
         // Handle LoRA sources (remove deleted, update existing, add new)
