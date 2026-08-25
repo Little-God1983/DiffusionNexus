@@ -567,13 +567,19 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                 FileNameOverride = job.FileName,
                 TaskName = $"Download {job.ModelName} ({job.VersionName})",
             };
-            var progressAdapter = new Progress<DownloadProgress>(p => Dispatcher.UIThread.Post(() =>
+            // One hop to the dispatcher, not two. Progress<T> would post the handler to its
+            // captured SynchronizationContext first and only reach the dispatcher from there, so a
+            // report issued just before the download returns could be enqueued AFTER the terminal
+            // post below and leave the tile frozen at 99%. See UiThreadProgress.
+            var progressAdapter = new UiThreadProgress<DownloadProgress>(p =>
             {
+                // Belt to the ordering brace: a report that somehow arrives after the job reached a
+                // terminal state must not repaint it as "Downloading".
+                if (job.Status != JobStatus.Downloading) return;
                 job.ProgressPercent = p.Percent;
                 job.StatusMessage = p.Message;
-            }));
+            });
             var outcome = await _downloader!.DownloadAsync(request, progressAdapter, ct).ConfigureAwait(false);
-            job.TargetPath = outcome.FinalPath;
 
             if (outcome.RenamedForCollision)
             {
@@ -581,11 +587,18 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                     $"File name collision in {targetDir}: '{job.FileName}' already belongs to a different download — saved as '{Path.GetFileName(outcome.FinalPath)}' instead.");
             }
 
-            // Posted through the same dispatcher queue as the progress adapter above (FIFO),
-            // so a progress update still in flight when the download finishes can never be
-            // processed after — and clobber — this terminal state.
+            // DownloadAsync is awaited with ConfigureAwait(false), so everything from here runs on a
+            // thread-pool thread — and TargetPath/Status/StatusMessage/ProgressPercent are all
+            // [ObservableProperty] behind live Avalonia bindings. Every one of those writes goes
+            // through the dispatcher, TargetPath included (it drives the bound DisplayPath, so
+            // raising its PropertyChanged off-thread was the same hazard the rest of this block was
+            // already avoiding). The adapter above posts onto this same queue in one hop, so a
+            // progress update still in flight cannot be processed after — and clobber — this
+            // terminal state.
             Dispatcher.UIThread.Post(() =>
             {
+                job.TargetPath = outcome.FinalPath;
+
                 if (outcome.Status == DownloadStatus.Cancelled || job.WasCancelledByUser)
                 {
                     job.Status = JobStatus.Cancelled;

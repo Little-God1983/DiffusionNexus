@@ -972,8 +972,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         var downloader = _modelDownloader;
         _ = Task.Run(async () =>
         {
-            var progress = new Progress<DownloadProgress>(p =>
-                Dispatcher.UIThread.Post(() => SyncStatus = $"Downloading {fileName}: {p.Message}"));
+            // One hop to the dispatcher, not two. A Progress<T> built inside this Task.Run has no
+            // SynchronizationContext to capture, so Report would hop to the thread pool before its
+            // handler even enqueued the dispatcher post — while the terminal post below is a single
+            // hop from the awaiting thread. A report issued just before completion could therefore
+            // land after it and leave the toolbar reading "Downloading …" forever.
+            var progress = new UiThreadProgress<DownloadProgress>(
+                p => SyncStatus = $"Downloading {fileName}: {p.Message}");
 
             var request = new DownloadRequest(result.Version, result.TargetFolder, DownloadTrigger.Dialog)
             {
