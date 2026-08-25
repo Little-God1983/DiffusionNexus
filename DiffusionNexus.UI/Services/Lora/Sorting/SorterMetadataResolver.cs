@@ -2,6 +2,7 @@ using System.Text.Json;
 using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Service.Services.Lora;
 using DiffusionNexus.Service.Services.Sync.Identity;
 
 namespace DiffusionNexus.UI.Services.Lora.Sorting;
@@ -177,13 +178,13 @@ public sealed class SorterMetadataResolver
 
     /// <summary>
     /// Whether an authoritative source actually supplied a base model. Uses
-    /// <see cref="SorterPathBuilder.IsPlaceholderBaseModel"/> — the same predicate
+    /// <see cref="LoraPathBuilder.IsPlaceholderBaseModel"/> — the same predicate
     /// <c>BuildTargetDirectory</c> uses to pick the Unknown bucket — so "resolved enough to skip the
     /// file's own rungs" and "resolved enough to earn a real folder" cannot drift apart. A "???"
     /// arriving from a sidecar or an older cache entry is a placeholder to both, not just to one.
     /// </summary>
     private static AuthorityVerdict VerdictFor(string? baseModelRaw)
-        => SorterPathBuilder.IsPlaceholderBaseModel(baseModelRaw)
+        => LoraPathBuilder.IsPlaceholderBaseModel(baseModelRaw)
             ? AuthorityVerdict.NotKnown
             : AuthorityVerdict.Answered;
 

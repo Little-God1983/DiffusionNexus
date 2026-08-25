@@ -8,6 +8,7 @@ using DiffusionNexus.DataAccess.Recovery;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Infrastructure;
+using DiffusionNexus.Infrastructure.Services;
 using DiffusionNexus.Installer.SDK.DataAccess;
 using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.Installer.SDK.Services.Installation;
@@ -946,6 +947,10 @@ public partial class App : Application
 
         services.AddSingleton<ILoraUpdateChecker, LoraUpdateChecker>();
 
+        // The one Civitai API-key lookup (spec §1 RC5) — replaces five verbatim copies.
+        services.AddSingleton<ICivitaiApiKeyProvider>(sp =>
+            new CivitaiApiKeyProvider(sp.GetRequiredService<IServiceScopeFactory>()));
+
         services.AddScoped<LoraViewerViewModel>(sp => new LoraViewerViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IModelSyncService>(),
@@ -956,11 +961,28 @@ public partial class App : Application
             sp.GetService<ILoraUpdateChecker>(),
             sp.GetService<Domain.Services.Sync.ILibrarySyncService>(),
             sp.GetService<IUiScheduler>(),
-            sp.GetService<IServiceScopeFactory>()));
+            sp.GetService<IServiceScopeFactory>(),
+            apiKeyProvider: sp.GetRequiredService<ICivitaiApiKeyProvider>(),
+            modelDownloader: sp.GetService<Services.Download.ICivitaiModelDownloader>(),
+            changeNotifier: sp.GetService<Domain.Services.ILibraryChangeNotifier>()));
         services.AddScoped<LoraDownloadService>(sp => new LoraDownloadService(
             sp.GetService<Civitai.ICivitaiClient>(),
             sp.GetService<IAppSettingsService>(),
-            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>(),
+            apiKeyProvider: sp.GetRequiredService<ICivitaiApiKeyProvider>(),
+            scopeFactory: sp.GetService<IServiceScopeFactory>()));
+        services.AddScoped<ILoraDownloadService>(sp => sp.GetRequiredService<LoraDownloadService>());
+
+        // The cross-module "library gained a model" signal, and the ONE Civitai download path that
+        // raises it (spec §4.4 / D3) — callers must never wrap DownloadAsync in the coordinator.
+        services.AddSingleton<Domain.Services.ILibraryChangeNotifier, Infrastructure.Services.LibraryChangeNotifier>();
+        services.AddScoped<Services.Download.ICivitaiModelDownloader>(sp => new Services.Download.CivitaiModelDownloader(
+            downloadService: sp.GetRequiredService<ILoraDownloadService>(),
+            coordinator: sp.GetService<IDownloadCoordinator>(),
+            librarySync: sp.GetService<Domain.Services.Sync.ILibrarySyncService>(),
+            notifier: sp.GetService<Domain.Services.ILibraryChangeNotifier>(),
+            scopeFactory: sp.GetService<IServiceScopeFactory>(),
+            logger: sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
 
         // Reusable LoRA catalog for the Multi-LoRA Picker (same sources as the LoRA Viewer Installed tab).
         services.AddSingleton<Services.Lora.ILoraCatalog, Services.Lora.LoraCatalog>();
@@ -968,12 +990,12 @@ public partial class App : Application
         // Pipelines: app-side manifest provider + asset installer + module ViewModel.
         services.AddSingleton<Services.Pipelines.IPipelineManifestProvider, Services.Pipelines.PipelineManifestProvider>();
         services.AddScoped<Services.Pipelines.IPipelineAssetInstaller>(sp => new Services.Pipelines.PipelineAssetInstaller(
-            sp.GetRequiredService<IDownloadCoordinator>(),
-            sp.GetRequiredService<Civitai.ICivitaiClient>(),
-            sp.GetRequiredService<LoraDownloadService>(),
-            sp.GetRequiredService<IAppSettingsService>(),
-            sp.GetRequiredService<Services.Diffusion.LocalDiffusionBackendProvider>(),
-            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+            coordinator: sp.GetRequiredService<IDownloadCoordinator>(),
+            civitai: sp.GetRequiredService<Civitai.ICivitaiClient>(),
+            modelDownloader: sp.GetRequiredService<Services.Download.ICivitaiModelDownloader>(),
+            settings: sp.GetRequiredService<IAppSettingsService>(),
+            backendProvider: sp.GetRequiredService<Services.Diffusion.LocalDiffusionBackendProvider>(),
+            unifiedLogger: sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
 
         // Pipeline run UI: output writer + a tile-id -> run-ViewModel factory.
         services.AddScoped<Services.Pipelines.IPipelineOutputWriter, Services.Pipelines.PipelineOutputWriter>();

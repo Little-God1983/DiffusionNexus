@@ -6,6 +6,8 @@ using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Infrastructure.Services;
+using DiffusionNexus.Service.Services.Sync;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace DiffusionNexus.UI.Services;
@@ -25,20 +27,26 @@ public enum MetadataPersistOutcome
 /// <summary>
 /// Downloads LoRA files from Civitai and persists their metadata to the local database.
 /// </summary>
-public sealed class LoraDownloadService
+public sealed class LoraDownloadService : ILoraDownloadService
 {
     private readonly ICivitaiClient? _civitaiClient;
     private readonly IAppSettingsService? _settingsService;
     private readonly IUnifiedLogger? _logger;
+    private ICivitaiApiKeyProvider? _apiKeyProvider;
+    private readonly IServiceScopeFactory? _scopeFactory;
 
     public LoraDownloadService(
         ICivitaiClient? civitaiClient,
         IAppSettingsService? settingsService,
-        IUnifiedLogger? logger)
+        IUnifiedLogger? logger,
+        ICivitaiApiKeyProvider? apiKeyProvider = null,
+        IServiceScopeFactory? scopeFactory = null)
     {
         _civitaiClient = civitaiClient;
         _settingsService = settingsService;
         _logger = logger;
+        _apiKeyProvider = apiKeyProvider;
+        _scopeFactory = scopeFactory;
     }
 
     /// <summary>
@@ -285,7 +293,7 @@ public sealed class LoraDownloadService
     {
         try
         {
-            var scopeFactory = App.Services?.GetService<IServiceScopeFactory>();
+            var scopeFactory = _scopeFactory ?? App.Services?.GetService<IServiceScopeFactory>();
             if (scopeFactory is null)
             {
                 _logger?.Warn(LogCategory.Download, "LoraDownload",
@@ -347,10 +355,7 @@ public sealed class LoraDownloadService
             var bestVersion = civitaiModel?.ModelVersions
                 .FirstOrDefault(v => v.Id == effectiveVersion.Id) ?? effectiveVersion;
 
-            var civFile = bestVersion.Files.FirstOrDefault(f => f.Primary == true)
-                          ?? bestVersion.Files.FirstOrDefault()
-                          ?? civitaiVersion.Files.FirstOrDefault(f => f.Primary == true)
-                          ?? civitaiVersion.Files.FirstOrDefault();
+            var civFile = CivitaiVersionFiles.PickPrimary(bestVersion, civitaiVersion);
 
             var model = await unitOfWork.Models.FindByModelPageIdOrIdAsync(modelPageId, existingModelId);
 
@@ -389,34 +394,46 @@ public sealed class LoraDownloadService
                         model.CivitaiId = modelPageId;
                     }
                     model.CivitaiModelPageId ??= modelPageId;
-                    model.Name = civitaiModel.Name;
-                    model.Description ??= civitaiModel.Description;
-                    model.IsNsfw = civitaiModel.Nsfw;
-                    model.IsPoi = civitaiModel.Poi;
                     model.Source = DataSource.CivitaiApi;
                     model.LastSyncedAt = DateTimeOffset.UtcNow;
-                    model.AllowNoCredit = civitaiModel.AllowNoCredit;
-                    model.AllowDerivatives = civitaiModel.AllowDerivatives;
-                    model.AllowDifferentLicense = civitaiModel.AllowDifferentLicense;
 
-                    if (civitaiModel.Creator is not null)
+                    // S5: name/description/tags/licence flags are user-editable text —
+                    // never overwrite them once the user has touched this model.
+                    // Civitai linkage (above) is not user text, so it stays writable.
+                    if (!model.IsUserEdited)
                     {
-                        if (model.Creator is not null)
-                        {
-                            model.Creator.Username = civitaiModel.Creator.Username;
-                            model.Creator.AvatarUrl ??= civitaiModel.Creator.Image;
-                        }
-                        else
-                        {
-                            var existingCreator = await unitOfWork.Models
-                                .FindCreatorByUsernameAsync(civitaiModel.Creator.Username);
+                        model.Name = civitaiModel.Name;
+                        model.Description ??= civitaiModel.Description;
+                        model.IsNsfw = civitaiModel.Nsfw;
+                        model.IsPoi = civitaiModel.Poi;
+                        model.AllowNoCredit = civitaiModel.AllowNoCredit;
+                        model.AllowDerivatives = civitaiModel.AllowDerivatives;
+                        model.AllowDifferentLicense = civitaiModel.AllowDifferentLicense;
 
-                            model.Creator = existingCreator ?? new Creator
+                        if (civitaiModel.Creator is not null)
+                        {
+                            if (model.Creator is not null)
                             {
-                                Username = civitaiModel.Creator.Username,
-                                AvatarUrl = civitaiModel.Creator.Image,
-                            };
+                                model.Creator.Username = civitaiModel.Creator.Username;
+                                model.Creator.AvatarUrl ??= civitaiModel.Creator.Image;
+                            }
+                            else
+                            {
+                                var existingCreator = await unitOfWork.Models
+                                    .FindCreatorByUsernameAsync(civitaiModel.Creator.Username);
+
+                                model.Creator = existingCreator ?? new Creator
+                                {
+                                    Username = civitaiModel.Creator.Username,
+                                    AvatarUrl = civitaiModel.Creator.Image,
+                                };
+                            }
                         }
+                    }
+                    else
+                    {
+                        _logger?.Debug(LogCategory.Download, "LoraDownload",
+                            $"Model '{model.Name}' (Id={model.Id}) is user-edited — keeping its name/description/licence/creator, only refreshing Civitai linkage");
                     }
                 }
                 else if (modelPageId.HasValue)
@@ -517,7 +534,7 @@ public sealed class LoraDownloadService
                 LocalPath = filePath,
                 SizeKB = fileInfo.Length / 1024.0,
                 FileSizeBytes = fileInfo.Length,
-                Format = GetFileFormat(fileInfo.Extension),
+                Format = FileFormatMapper.FromExtension(fileInfo.Extension),
                 IsPrimary = true,
                 IsLocalFileValid = true,
                 LocalFileVerifiedAt = DateTimeOffset.UtcNow,
@@ -573,19 +590,39 @@ public sealed class LoraDownloadService
                 // Backfill Civitai linkage onto an orphan version we just matched
                 // by hash, so future installed-checks work via CivitaiId (the
                 // hash-fallback path is a safety net, not a permanent crutch).
-                // CivitaiId is UNIQUE — guard before assigning.
+                // CivitaiId is UNIQUE — guard before assigning. Once a version is
+                // linked (non-null CivitaiId) this whole block — linkage AND text —
+                // stays frozen: the hash-fallback match can land on a version that
+                // already carries a DIFFERENT non-null CivitaiId (the same bytes
+                // re-listed upstream under a new version id), and only the orphan
+                // (unlinked) case is safe to backfill from `version` at all.
                 if (duplicateVersion.CivitaiId is null && version.CivitaiId.HasValue
                     && !await unitOfWork.Models.IsVersionCivitaiIdTakenAsync(version.CivitaiId.Value, duplicateVersion.Id))
                 {
+                    // Linkage is not user text, so it is always allowed once we're here.
                     duplicateVersion.CivitaiId = version.CivitaiId;
-                    duplicateVersion.Name = version.Name;
-                    duplicateVersion.Description ??= version.Description;
-                    duplicateVersion.BaseModel = version.BaseModel;
-                    duplicateVersion.BaseModelRaw = version.BaseModelRaw;
-                    duplicateVersion.DownloadUrl ??= version.DownloadUrl;
-                    duplicateVersion.PublishedAt ??= version.PublishedAt;
-                    duplicateVersion.EarlyAccessDays = version.EarlyAccessDays;
-                    duplicateVersion.DownloadCount = version.DownloadCount;
+
+                    // S5: name/description/base model and the stats-ish fields below
+                    // are the version's user-editable text — never overwrite them once
+                    // the user has touched this version. File attachment above is a
+                    // fact about disk, not user text, so it already happened regardless
+                    // of this guard.
+                    if (!duplicateVersion.IsUserEdited)
+                    {
+                        duplicateVersion.Name = version.Name;
+                        duplicateVersion.Description ??= version.Description;
+                        duplicateVersion.BaseModel = version.BaseModel;
+                        duplicateVersion.BaseModelRaw = version.BaseModelRaw;
+                        duplicateVersion.DownloadUrl ??= version.DownloadUrl;
+                        duplicateVersion.PublishedAt ??= version.PublishedAt;
+                        duplicateVersion.EarlyAccessDays = version.EarlyAccessDays;
+                        duplicateVersion.DownloadCount = version.DownloadCount;
+                    }
+                    else
+                    {
+                        _logger?.Debug(LogCategory.Download, "LoraDownload",
+                            $"Version '{duplicateVersion.Name}' (Id={duplicateVersion.Id}) is user-edited — keeping its name/description/base model, only attaching the new file");
+                    }
                 }
             }
             else
@@ -593,7 +630,7 @@ public sealed class LoraDownloadService
                 model.Versions.Add(version);
             }
 
-            if (civitaiModel?.Tags is { Count: > 0 } tags)
+            if (civitaiModel?.Tags is { Count: > 0 } tags && !model.IsUserEdited)
             {
                 var knownTags = await unitOfWork.Models.GetAllTagsLookupAsync();
 
@@ -659,7 +696,7 @@ public sealed class LoraDownloadService
 
         try
         {
-            var hash = await Task.Run(() => ComputeSha256(filePath), ct);
+            var hash = await Task.Run(() => FileHasher.Sha256Upper(filePath), ct);
             var apiKey = await GetApiKeyAsync();
 
             _logger?.Info(LogCategory.Download, "LoraDownload",
@@ -685,25 +722,10 @@ public sealed class LoraDownloadService
         }
     }
 
-    private static string ComputeSha256(string path)
+    private Task<string?> GetApiKeyAsync()
     {
-        using var stream = File.OpenRead(path);
-        using var sha = System.Security.Cryptography.SHA256.Create();
-        return Convert.ToHexString(sha.ComputeHash(stream));
-    }
-
-    private async Task<string?> GetApiKeyAsync()
-    {
-        if (App.Services is not null)
-        {
-            using var scope = App.Services.GetRequiredService<IServiceScopeFactory>().CreateScope();
-            var settingsService = scope.ServiceProvider.GetRequiredService<IAppSettingsService>();
-            return await settingsService.GetCivitaiApiKeyAsync();
-        }
-
-        return _settingsService is not null
-            ? await _settingsService.GetCivitaiApiKeyAsync()
-            : null;
+        _apiKeyProvider ??= CivitaiApiKeys.Resolve(fallbackSettings: _settingsService);
+        return _apiKeyProvider.GetApiKeyAsync();
     }
 
     /// <summary>
@@ -734,16 +756,4 @@ public sealed class LoraDownloadService
 
     private static BaseModelType ParseBaseModel(string? baseModelRaw)
         => BaseModelTypeExtensions.ParseCivitai(baseModelRaw);
-
-    private static FileFormat GetFileFormat(string extension)
-    {
-        return extension.ToLowerInvariant() switch
-        {
-            ".safetensors" => FileFormat.SafeTensor,
-            ".pt" => FileFormat.PickleTensor,
-            ".ckpt" => FileFormat.Other,
-            ".pth" => FileFormat.PickleTensor,
-            _ => FileFormat.Unknown
-        };
-    }
 }

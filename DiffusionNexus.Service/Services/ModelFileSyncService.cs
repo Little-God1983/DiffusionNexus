@@ -638,7 +638,7 @@ public class ModelFileSyncService : IModelSyncService
             LocalPath = filePath,
             SizeKB = fileInfo.Length / 1024.0,
             FileSizeBytes = fileInfo.Length,
-            Format = GetFileFormat(fileInfo.Extension),
+            Format = FileFormatMapper.FromExtension(fileInfo.Extension),
             IsPrimary = true,
             IsLocalFileValid = true,
             LocalFileVerifiedAt = DateTimeOffset.UtcNow,
@@ -649,17 +649,5 @@ public class ModelFileSyncService : IModelSyncService
         model.Versions.Add(version);
 
         return model;
-    }
-
-    private static FileFormat GetFileFormat(string extension)
-    {
-        return extension.ToLowerInvariant() switch
-        {
-            ".safetensors" => FileFormat.SafeTensor,
-            ".pt" => FileFormat.PickleTensor,
-            ".ckpt" => FileFormat.Other,
-            ".pth" => FileFormat.PickleTensor,
-            _ => FileFormat.Unknown
-        };
     }
 }

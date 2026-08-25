@@ -2,6 +2,7 @@ using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.Service.Services.Lora;
 using DiffusionNexus.UI.Services.Lora.Sorting;
 using DiffusionNexus.Tests.Sync.Service.Identity;
 using DiffusionNexus.UI.Utilities;
@@ -124,7 +125,7 @@ public sealed class LoraSorterViewModelTests : IDisposable
 
         vm.PreviewRoots.Select(n => n.Name).Should()
             .Contain("SDXL 1.0", "the row says \"???\", but the file itself does not")
-            .And.NotContain(SorterPathBuilder.UnknownFolderName);
+            .And.NotContain(LoraPathBuilder.UnknownFolderName);
     }
 
     /// <summary>
@@ -140,7 +141,7 @@ public sealed class LoraSorterViewModelTests : IDisposable
         await vm.InitializeAsync();
 
         vm.GuessBaseModelFromFileName.Should().BeFalse("the lowest-confidence rung is opt-in");
-        vm.PreviewRoots.Select(n => n.Name).Should().Contain(SorterPathBuilder.UnknownFolderName);
+        vm.PreviewRoots.Select(n => n.Name).Should().Contain(LoraPathBuilder.UnknownFolderName);
         vm.NameGuessHint.Should().Be(
             "1 LoRA could not be identified — sorting by name will fix 1 of them.");
     }
@@ -157,7 +158,7 @@ public sealed class LoraSorterViewModelTests : IDisposable
         await vm.RecomputePreviewCommand.ExecuteAsync(null);
 
         vm.PreviewRoots.Select(n => n.Name).Should()
-            .Contain("Pony").And.NotContain(SorterPathBuilder.UnknownFolderName);
+            .Contain("Pony").And.NotContain(LoraPathBuilder.UnknownFolderName);
         vm.NameGuessHint.Should().Be(
             "Sorting by name identified 1 of 1 otherwise-unidentified LoRA.");
     }
@@ -251,7 +252,7 @@ public sealed class LoraSorterViewModelTests : IDisposable
 
         vm.PreviewRoots.Single(n => n.Name == "SDXL 1.0").IsIdentified.Should().BeTrue();
 
-        var unknownFolder = vm.PreviewRoots.Single(n => n.Name == SorterPathBuilder.UnknownFolderName);
+        var unknownFolder = vm.PreviewRoots.Single(n => n.Name == LoraPathBuilder.UnknownFolderName);
         unknownFolder.IsUnidentified.Should().BeTrue();
         unknownFolder.StatusTooltip.Should().Contain("sort into Unknown");
 
@@ -272,7 +273,7 @@ public sealed class LoraSorterViewModelTests : IDisposable
         var vm = CreateVm(cached: [Installed(path, "???", "character")]);
         await vm.InitializeAsync();
 
-        vm.PreviewRoots.Single(n => n.Name == SorterPathBuilder.UnknownFolderName)
+        vm.PreviewRoots.Single(n => n.Name == LoraPathBuilder.UnknownFolderName)
             .IsUnidentified.Should().BeTrue();
 
         vm.GuessBaseModelFromFileName = true;
@@ -390,7 +391,7 @@ public sealed class LoraSorterViewModelTests : IDisposable
         await vm.InitializeAsync();
 
         var fileNode = vm.PreviewRoots
-            .Single(n => n.Name == SorterPathBuilder.UnknownFolderName)
+            .Single(n => n.Name == LoraPathBuilder.UnknownFolderName)
             .Children.SelectMany(c => c.IsFile ? [c] : c.Children)
             .Single(c => c.IsFile);
 

@@ -7,6 +7,9 @@ using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Infrastructure.Services;
+using DiffusionNexus.Service.Services.Lora;
+using DiffusionNexus.UI.Helpers;
 using DiffusionNexus.UI.Services;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -21,6 +24,7 @@ public partial class DownloadLoraDialogViewModel : ObservableObject
     private readonly IAppSettingsService? _settingsService;
     private readonly IDialogService? _dialogService;
     private readonly IUnifiedLogger? _logger;
+    private ICivitaiApiKeyProvider? _apiKeyProvider;
 
     [ObservableProperty]
     private string _urlText = string.Empty;
@@ -98,15 +102,8 @@ public partial class DownloadLoraDialogViewModel : ObservableObject
     {
         get
         {
-            if (!IsDownloadToExisting || string.IsNullOrWhiteSpace(SelectedSourceFolder))
-                return string.Empty;
-
-            var path = SelectedSourceFolder;
-            if (CreateBaseModelFolder && !string.IsNullOrWhiteSpace(ResolvedVersion?.BaseModel))
-                path = Path.Combine(path, ResolvedVersion.BaseModel);
-            if (CreateCategoryFolder && !string.IsNullOrWhiteSpace(Category))
-                path = Path.Combine(path, Category);
-            return path;
+            if (!IsDownloadToExisting) return string.Empty;
+            return BuildExistingSourceTargetDirectory() ?? string.Empty;
         }
     }
 
@@ -131,12 +128,14 @@ public partial class DownloadLoraDialogViewModel : ObservableObject
         ICivitaiClient? civitaiClient,
         IAppSettingsService? settingsService,
         IDialogService? dialogService,
-        IUnifiedLogger? logger)
+        IUnifiedLogger? logger,
+        ICivitaiApiKeyProvider? apiKeyProvider = null)
     {
         _civitaiClient = civitaiClient;
         _settingsService = settingsService;
         _dialogService = dialogService;
         _logger = logger;
+        _apiKeyProvider = apiKeyProvider;
     }
 
     public async Task InitializeAsync(IReadOnlyList<string> sourceFolders, string? favoriteFolder = null)
@@ -165,18 +164,22 @@ public partial class DownloadLoraDialogViewModel : ObservableObject
 
     public string? GetTargetFolder()
     {
-        if (IsDownloadToExisting && !string.IsNullOrWhiteSpace(SelectedSourceFolder))
-        {
-            var path = SelectedSourceFolder;
-            if (CreateBaseModelFolder && !string.IsNullOrWhiteSpace(ResolvedVersion?.BaseModel))
-                path = Path.Combine(path, ResolvedVersion.BaseModel);
-            if (CreateCategoryFolder && !string.IsNullOrWhiteSpace(Category))
-                path = Path.Combine(path, Category);
-            return path;
-        }
-
+        if (IsDownloadToExisting) return BuildExistingSourceTargetDirectory();
         if (IsDownloadToFolder) return CustomFolderPath;
         return null;
+    }
+
+    /// <summary>
+    /// The "download to existing source folder" branch shared by <see cref="PreviewPath"/> and
+    /// <see cref="GetTargetFolder"/> — both used to hand-roll the same base-model/category
+    /// combine, which is exactly the folder-toggle drift spec §4.4 exists to kill.
+    /// </summary>
+    private string? BuildExistingSourceTargetDirectory()
+    {
+        if (string.IsNullOrWhiteSpace(SelectedSourceFolder)) return null;
+        return LoraPathBuilder.BuildTargetDirectory(
+            SelectedSourceFolder, ResolvedVersion?.BaseModel, Category,
+            includeBaseModel: CreateBaseModelFolder, includeCategory: CreateCategoryFolder);
     }
 
     [RelayCommand]
@@ -251,8 +254,7 @@ public partial class DownloadLoraDialogViewModel : ObservableObject
                 return;
             }
 
-            var primaryFile = version.Files.FirstOrDefault(f => f.Primary == true)
-                              ?? version.Files.FirstOrDefault();
+            var primaryFile = CivitaiVersionFiles.PickPrimary(version);
             var downloadUrl = primaryFile?.DownloadUrl ?? version.DownloadUrl;
             if (string.IsNullOrWhiteSpace(downloadUrl))
             {
@@ -308,7 +310,7 @@ public partial class DownloadLoraDialogViewModel : ObservableObject
         PreviewCreator = $"Creator: {model.Creator?.Username ?? "Unknown"}";
         PreviewIds = $"Model ID: {model.Id}    Version ID: {version.Id}";
         FileName = primaryFile?.Name ?? "unknown.safetensors";
-        FileSizeDisplay = FormatFileSize(primaryFile?.SizeKB ?? 0);
+        FileSizeDisplay = FileSizeFormatter.FormatKilobytes(primaryFile?.SizeKB ?? 0);
     }
 
     private async Task LoadPreviewImageAsync(CivitaiModel model, CivitaiModelVersion version)
@@ -339,18 +341,10 @@ public partial class DownloadLoraDialogViewModel : ObservableObject
         }
     }
 
-    private async Task<string?> GetApiKeyAsync()
+    private Task<string?> GetApiKeyAsync()
     {
-        if (App.Services is not null)
-        {
-            using var scope = App.Services.GetRequiredService<IServiceScopeFactory>().CreateScope();
-            var settingsService = scope.ServiceProvider.GetRequiredService<IAppSettingsService>();
-            return await settingsService.GetCivitaiApiKeyAsync();
-        }
-
-        return _settingsService is not null
-            ? await _settingsService.GetCivitaiApiKeyAsync()
-            : null;
+        _apiKeyProvider ??= CivitaiApiKeys.Resolve(fallbackSettings: _settingsService);
+        return _apiKeyProvider.GetApiKeyAsync();
     }
 
     /// <summary>
@@ -359,17 +353,6 @@ public partial class DownloadLoraDialogViewModel : ObservableObject
     /// </summary>
     private static string? InferCategoryFromTags(IReadOnlyList<string> tags)
         => Services.Lora.Sorting.SorterCategoryResolver.InferFolderName(tags);
-
-    private static string FormatFileSize(double sizeKb)
-    {
-        return sizeKb switch
-        {
-            >= 1_048_576 => $"{sizeKb / 1_048_576:F1} GB",
-            >= 1_024 => $"{sizeKb / 1_024:F1} MB",
-            > 0 => $"{sizeKb:F0} KB",
-            _ => "Unknown"
-        };
-    }
 
     private void OnDownloadStateChanged()
     {

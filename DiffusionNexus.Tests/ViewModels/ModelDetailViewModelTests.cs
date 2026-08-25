@@ -8,6 +8,7 @@ using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Installer.SDK.Shared.Services;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.Download;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
@@ -49,10 +50,6 @@ public class ModelDetailViewModelTests
             baseModelCatalog: null,
             scopeFactory: scopeFactory ?? new Mock<IServiceScopeFactory>().Object,
             dialogService: new Mock<IDialogService>().Object,
-            downloadService: null,
-            downloadCoordinator: new Mock<IDownloadCoordinator>().Object,
-            taskTracker: new Mock<ITaskTracker>().Object,
-            activityLog: new Mock<IActivityLogService>().Object,
             clipboard: clipboard,
             uiScheduler: scheduler ?? new Helpers.ImmediateUiScheduler());
 
@@ -176,5 +173,76 @@ public class ModelDetailViewModelTests
         slowLookupForA.SetResult(stateA);
         await taskA;
         vm.IdentitySourceDisplay.Should().Be("sidecar file", "a stale lookup for the previous tile must not overwrite the current tile's chip");
+    }
+
+    /// <summary>
+    /// The migrated detail-panel download reported nothing on Failed/Cancelled/HashMismatch: a 403
+    /// on a gated model just stopped the spinner. The typed outcome now has a consumer here, and it
+    /// keeps the three apart exactly as <c>LoraViewerViewModel.DownloadLoraAsync</c> does —
+    /// cancelling is not failing, and a hash mismatch is not a clean download.
+    /// </summary>
+    [Theory]
+    [InlineData(DownloadStatus.Cancelled, null, "Download cancelled: foo.safetensors")]
+    [InlineData(DownloadStatus.HashMismatch, "hash mismatch",
+        "Downloaded foo.safetensors — hash mismatch, file kept for inspection")]
+    [InlineData(DownloadStatus.Failed, "no download URL", "Download failed: foo.safetensors (no download URL)")]
+    [InlineData(DownloadStatus.Failed, null, "Download failed: foo.safetensors")]
+    public void FailedDownloadsAreDescribedToTheUser(DownloadStatus status, string? error, string expected)
+    {
+        var outcome = new DownloadOutcome(status, "C:\\x\\foo.safetensors", null, false, error);
+
+        ModelDetailViewModel.DescribeFailedDownload(outcome, "foo.safetensors").Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData(DownloadStatus.Completed)]
+    [InlineData(DownloadStatus.CompletedMetadataIncomplete)]
+    [InlineData(DownloadStatus.ReusedExisting)]
+    public void SuccessfulDownloadsHaveNoFailureLine(DownloadStatus status)
+    {
+        var outcome = new DownloadOutcome(status, "C:\\x\\foo.safetensors", 1, false, null);
+
+        ModelDetailViewModel.DescribeFailedDownload(outcome, "foo.safetensors").Should().BeNull(
+            "a success is reported by the panel refreshing, not by a status line");
+    }
+
+    /// <summary>
+    /// The local→Civitai file mapping behind <c>BuildLocalVersionTabs</c> must carry the hashes.
+    /// A detail-panel "Download this version" of a LOCAL version hands the synthesised
+    /// <see cref="CivitaiModelFile"/> to the one download path, where the SHA256 is what
+    /// <c>DownloadCollisionPolicy</c> proves ownership of a colliding file with and what step 7
+    /// verifies the transfer against. Dropping it made both blind: two local-only versions in one
+    /// folder both resolved to <c>{stem}_0</c> and the second download replaced the first model's
+    /// weights — the earlier filename-collision incident, reintroduced through a lossy DTO map.
+    /// </summary>
+    [Fact]
+    public void LocalFileMappingCarriesTheHashesIntoTheDownloadRequest()
+    {
+        var file = new ModelFile
+        {
+            CivitaiId = 900,
+            FileName = "V1.safetensors",
+            SizeKB = 2048,
+            IsPrimary = true,
+            DownloadUrl = "https://civitai.test/api/download/models/1",
+            HashSHA256 = "ABC123",
+            HashAutoV2 = "AV2",
+            HashCRC32 = "CRC",
+            HashBLAKE3 = "B3",
+        };
+
+        var mapped = ModelDetailViewModel.ToCivitaiFile(file);
+
+        mapped.Hashes.Should().NotBeNull();
+        mapped.Hashes!.SHA256.Should().Be("ABC123",
+            "the collision policy and the post-transfer verification both key off this hash");
+        mapped.Hashes.AutoV2.Should().Be("AV2");
+        mapped.Hashes.CRC32.Should().Be("CRC");
+        mapped.Hashes.BLAKE3.Should().Be("B3");
+        mapped.Id.Should().Be(900);
+        mapped.Name.Should().Be("V1.safetensors");
+        mapped.SizeKB.Should().Be(2048);
+        mapped.Primary.Should().BeTrue();
+        mapped.DownloadUrl.Should().Be("https://civitai.test/api/download/models/1");
     }
 }

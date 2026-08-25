@@ -470,46 +470,44 @@ dispose the *next* run's token source, after which Cancel cancelled nothing.
 
 ## 5. Data Flow — Download New Version (Detail Panel)
 
+There is exactly one Civitai download path, `ICivitaiModelDownloader` (spec §4.4, `DiffusionNexus.UI.Services.Download`). The detail panel, the download dialog, the Browse queue, the waitlist and the pipeline installer all call the same `DownloadAsync(DownloadRequest, ...)` — no caller does its own transfer, collision handling or persistence anymore. This section walks the flow as the detail panel drives it; the other four callers differ only in how they build the `DownloadRequest` and its `TargetDirectory`.
+
 When the user clicks **Download** on a not-yet-downloaded version tab in the detail panel:
 
 ```
 ModelDetailViewModel.DownloadSelectedVersionAsync
 │
-├── Resolve download URL from CivitaiModelVersion.Files[primary].DownloadUrl
+├── Resolve primary file via CivitaiVersionFiles.PickPrimary(tab.CivitaiVersion)
 ├── Show destination folder dialog (IDialogService.ShowDownloadLoraVersionDialogAsync)
 │   Lists enabled LoRA source folders
 │
-├── DownloadFileAsync (background thread, with ITaskTracker progress):
-│   ├── Try unauthenticated GET first (public models)
-│   ├── On 401/403 → retry with ?token={apiKey} (early access models)
-│   ├── Stream to .tmp file with 80KB buffer, report progress
-│   ├── Rename .tmp → final on completion
-│   │
-│   └── PersistDownloadedModelAsync:
-│       ├── Resolve model page ID:
-│       │   1. Fetch full CivitaiModel via GetModelAsync (if ModelId > 0)
-│       │   2. Use civitaiModel.Id as authoritative page ID
-│       │   3. Fallback: civitaiVersion.ModelId (may be 0 for nested versions)
-│       │
-│       ├── Check if Model with same CivitaiModelPageId already exists in DB
-│       │   ├── YES → add version to existing model (proper grouping)
-│       │   └── NO  → create new Model entity
-│       │
-│       ├── Create ModelVersion + ModelFile + TriggerWords + Images
-│       ├── Create Tags (only for new models)
-│       └── SaveChangesAsync
-│
-└── Finally: tab.IsDownloading = false (UI thread)
+└── ICivitaiModelDownloader.DownloadAsync(DownloadRequest { Trigger = DetailPanel }):
+    ├── 1–2. Pick file + URL, name the file and the coordinator task
+    ├── 3. Create the target directory
+    ├── 4. DownloadCollisionPolicy.ResolveAsync — a same-named file already on disk is
+    │      reused if its SHA256 matches, else the target becomes {stem}_{versionId}{ext}
+    │      (LoraPathBuilder's convention, shared with the Sorter)
+    ├── 5. Existing bytes match → skip the transfer, persist anyway (the file can predate the DB row)
+    ├── 6. Otherwise: stream through IDownloadCoordinator (queued) or inline, with progress
+    ├── 7. Verify SHA256 against the Civitai-reported hash (HashMismatch keeps the file for inspection)
+    ├── 8. Resolve the local model id the persister just wrote
+    ├── 9. Completion sync: tags + thumbnails for just this model (ILibrarySyncService, single-flight)
+    └── 10. ILibraryChangeNotifier.NotifyModelDownloaded(modelId) — every subscriber, including the
+           Installed tab, updates without a manual refresh (see §11)
 ```
+
+`PersistDownloadedModelAsync` (step 5/6's completion) still does the DB work — resolve the model page ID (full `CivitaiModel` fetch when `ModelId > 0`, else the version's `ModelId`), group into an existing `Model` row by `CivitaiModelPageId` or create a new one, write `ModelVersion` + `ModelFile` + `TriggerWords` + `Images` — but it now lives behind the downloader, not behind each caller.
 
 ### Fallbacks
 
 | Situation | Fallback |
 |-----------|----------|
+| Same file name already used by a *different* download | `{stem}_{versionId}{ext}` (`DownloadCollisionPolicy`); the original file is left untouched |
+| Same file name, byte-identical content | Reused — no second copy written, still registered in the DB |
 | `civitaiVersion.ModelId` is 0 | Uses `GetModelVersionAsync` result's `modelId` if available |
-| Full model fetch fails | Creates Model without description/tags/license (can be enriched later via "Download Metadata") |
-| File already tracked in DB | Skipped (dedup by LocalPath) |
-| Download cancelled | Temp file cleaned up |
+| Full model fetch fails | Creates Model without description/tags/license (can be enriched later via "Download Metadata"); outcome is `CompletedMetadataIncomplete` |
+| SHA256 does not match the Civitai-reported hash | `DownloadStatus.HashMismatch` — file is kept on disk for inspection, not deleted |
+| Download cancelled | Temp file cleaned up; outcome is `DownloadStatus.Cancelled` |
 | DB persist fails | File stays on disk; next `DiscoverNewFilesAsync` will pick it up |
 
 ---
@@ -522,7 +520,7 @@ ModelDetailViewModel.DownloadSelectedVersionAsync
 |-------|---------------|
 | **`LoraViewerViewModel`** | Top-level orchestrator. Owns `AllTiles` and `FilteredTiles` collections. Coordinates refresh (discover → backfill → load → group → display). Starts a library sync through `ILibrarySyncService` and shows its plan / progress / report (§4) — it owns no sync logic itself. Manages detail panel lifecycle. Handles filtering (search text, NSFW toggle, base model multi-select). |
 | **`ModelTileViewModel`** | Represents one tile in the grid. May group multiple `Model` entities (same Civitai page). Manages version buttons, thumbnail loading (image + video), clipboard operations, "Open on Civitai", "Open Folder", deletion (single + multi-version picker). Factory methods: `FromModel`, `FromModelGroup`. |
-| **`ModelDetailViewModel`** | Right-side detail panel. Shows all versions (local = blue, remote = yellow tabs). Fetches full version list from Civitai API. Handles downloading new versions with progress. Manages `PersistDownloadedModelAsync` for DB persistence after download. |
+| **`ModelDetailViewModel`** | Right-side detail panel. Shows all versions (local = blue, remote = yellow tabs). Fetches full version list from Civitai API. Builds a `DownloadRequest` and hands it to `ICivitaiModelDownloader` for new-version downloads with progress; no longer owns the transfer or DB persistence itself (§5). |
 | **`CivitaiVersionTabItem`** | One version tab in the detail panel. Wraps `CivitaiModelVersion` (API data) + optional `ModelVersion` (local data). `IsDownloaded` = has local version. |
 | **`VersionButtonViewModel`** | One version toggle button on a tile. Short label derived from `BaseModelRaw` mapping (e.g., "XL", "Pony 🐎", "F.1D"). Tooltip shows full version name + filename. |
 | **`BaseModelFilterItem`** | One item in the base model filter flyout. Fires `SelectionChanged` event when toggled. |
@@ -535,6 +533,7 @@ ModelDetailViewModel.DownloadSelectedVersionAsync
 | **`ModelFileSyncService`** (`IModelSyncService`) | Database-first sync engine. `LoadCachedModelsAsync`: fast path for cached data. `DiscoverNewFilesAsync`: scans folders, creates stub Model entities for new files, detects moved files by hash. `VerifyAndSyncFilesAsync`: background verification of file existence. |
 | **`LibrarySyncService`** (`ILibrarySyncService`) | The metadata sync pipeline (§4). `PlanAsync` reports what a run would do; `ExecuteAsync` runs the steps under a process-wide single-flight gate, stamping `ModelSyncStates` as it goes. Steps: `DiscoverFilesStep`, `IdentifyModelStep`, `FetchTagsStep`, `FetchImagesStep`; persistence lives in `CivitaiMetadataApplier` / `SidecarMetadataApplier`. |
 | **`CivitaiClient`** (`ICivitaiClient`) | HTTP client for Civitai REST API. `GetModelAsync`: full model with all versions. `GetModelVersionAsync`: single version by ID. `GetModelVersionByHashAsync`: version lookup by file hash. Handles auth headers, JSON deserialization. |
+| **`CivitaiModelDownloader`** (`ICivitaiModelDownloader`) | The one download path (§5) shared by the dialog, toolbar, detail panel, Browse queue, waitlist and pipeline installer: file pick, `DownloadCollisionPolicy`, coordinator enqueue, SHA256 verification, persistence, tags+thumbnails completion sync, `ILibraryChangeNotifier` signal. |
 | **`IAppSettingsService`** | Provides configured LoRA source folder paths, API key storage, and general app settings. |
 | **`ISecureStorage`** | Encrypts/decrypts the Civitai API key (stored as `EncryptedCivitaiApiKey` in settings). |
 | **`IVideoThumbnailService`** | Extracts a mid-frame from video previews using FFmpeg. Returns WebP thumbnail bytes. |
@@ -788,7 +787,7 @@ User clicks tile → ModelTileViewModel.OpenDetails()
                └── Remote-only versions = yellow tabs
 
 User clicks yellow tab → Download button enabled
-  → DownloadSelectedVersionAsync → DownloadFileAsync → PersistDownloadedModelAsync
+  → DownloadSelectedVersionAsync → ICivitaiModelDownloader.DownloadAsync (§5)
 ```
 
 ### Detail panel fallbacks
@@ -808,7 +807,13 @@ User clicks yellow tab → Download button enabled
 LoraViewerViewModel
   ├── tile.Deleted       → OnTileDeleted       → remove from AllTiles + FilteredTiles
   ├── tile.DetailRequested → OnTileDetailRequested → OpenDetailAsync
-  └── detailVm.CloseRequested → OnDetailCloseRequested → CloseDetail
+  ├── detailVm.CloseRequested → OnDetailCloseRequested → CloseDetail
+  └── ILibraryChangeNotifier.ModelDownloaded → OnLibraryModelDownloaded → CoalesceRebuildAsync
+        Raised by ICivitaiModelDownloader (§5) after every successful download, from any of its
+        five callers (dialog, toolbar, detail panel, Browse queue, waitlist/pipeline) — the
+        Installed tab refreshes without a manual click. A queue batch raises one signal per file;
+        the first arrival schedules a rebuild ~1.5s out and later arrivals ride along with it, so
+        a 20-item batch costs one tile rebuild, not twenty.
 
 ModelTileViewModel
   ├── VersionButton.SelectCommand → OnVersionButtonSelected → SelectedVersion = ...
@@ -892,7 +897,7 @@ Rungs 4 and 5 are the same two the database-side identity chain uses, called dir
 
 They run only when the rungs above came up empty **with an answer**, never when one of them merely failed. `CivitaiClient.GetAsync` returns null *only* for a 404; a rate limit that survived its three retries, an outage, a non-transient 4xx/5xx and a response-shape change all throw instead, and are reported as "could not ask". A file in that state stays unresolved and sorts into `Unknown\`, because the sorter acts on this value by moving or copying bytes and a wrong folder is worse than Unknown — Unknown is where the user looks. The same applies to a file that would not hash: no hash means no lookup happened, and it also reaches the planner with an empty `Sha256`, the one value the "identical content is already there, skip it" guard needs.
 
-"Empty" here means `SorterPathBuilder.IsPlaceholderBaseModel` — the same predicate `BuildTargetDirectory` uses to pick the Unknown bucket — so `"???"` arriving from a sidecar or an older cache entry is treated as no answer by both, and a file can never be "resolved" enough to skip its own header yet still land in Unknown.
+"Empty" here means `LoraPathBuilder.IsPlaceholderBaseModel` — the same predicate `BuildTargetDirectory` uses to pick the Unknown bucket — so `"???"` arriving from a sidecar or an older cache entry is treated as no answer by both, and a file can never be "resolved" enough to skip its own header yet still land in Unknown.
 
 **Sort by name is opt-in.** Rung 5 never files anything on its own. It is carried on the candidate as `SortCandidate.NameGuess` and folded into the base model only when the user ticks **Sort by name when nothing else identifies a LoRA** (`GuessBaseModelFromFileName`, off by default, session-only like the other sorter options). The reason is the asymmetry between the two file rungs: a header *read the weights*, a name is a guess about them, and `FilenameBaseModelHeuristic` was tuned for a reversible database write rather than for relocating files — its shortest tokens (`il` → Illustrious) match words that occur in ordinary names, so `il_mio_stile.safetensors` would be filed as Illustrious.
 

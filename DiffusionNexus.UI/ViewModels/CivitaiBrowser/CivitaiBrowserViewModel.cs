@@ -9,6 +9,7 @@ using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Infrastructure.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.CivitaiBrowser;
 using DiffusionNexus.UI.Utilities;
@@ -27,6 +28,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     private readonly IUnifiedLogger? _logger;
     private readonly CivitaiDownloadQueue _queue;
     private readonly CivitaiWaitlist _waitlist;
+    private ICivitaiApiKeyProvider? _apiKeyProvider;
     private Avalonia.Threading.DispatcherTimer? _waitlistCountdownTimer;
 
     private CancellationTokenSource? _searchCts;
@@ -50,13 +52,15 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         IUnifiedLogger? logger,
         CivitaiDownloadQueue queue,
         CivitaiWaitlist waitlist,
-        ObservableCollection<BaseModelFilterItem>? sharedBaseModelSource)
+        ObservableCollection<BaseModelFilterItem>? sharedBaseModelSource,
+        ICivitaiApiKeyProvider? apiKeyProvider = null)
     {
         _civitaiClient = civitaiClient;
         _settingsService = settingsService;
         _logger = logger;
         _queue = queue;
         _waitlist = waitlist;
+        _apiKeyProvider = apiKeyProvider;
         StartWaitlistCountdownTimer();
 
         SortOptions = new ObservableCollection<string>
@@ -598,13 +602,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                         if (model.ModelVersions.Count == 0) continue;
                         if (model.Mode is not null) continue; // skip archived/taken-down
                         if (!existingIds.Add(model.Id)) continue;
-                        var vm = new CivitaiResultViewModel(model, ShowNsfwContent)
-                        {
-                            EnqueueAllVersionsHandler = EnqueueAllVersionsForCard
-                        };
-                        vm.ApplyInstalledIndex(_installed);
-                        vm.SelectionChanged += OnResultSelectionChanged;
-                        Results.Add(vm);
+                        Results.Add(CreateResultCard(model));
                     }
                 });
 
@@ -680,6 +678,26 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Builds one search-result card, wired identically regardless of which loop (primary
+    /// search or tag-fallback) discovered the model. A prior bug wired only
+    /// <see cref="CivitaiResultViewModel.EnqueueAllVersionsHandler"/> on the primary-search
+    /// path — "Add selected to queue" silently no-oped on almost every card, since tag-fallback
+    /// results are a small minority (spec RC5). Sharing this factory between both loops means
+    /// they can no longer drift apart the same way again.
+    /// </summary>
+    private CivitaiResultViewModel CreateResultCard(CivitaiModel model)
+    {
+        var vm = new CivitaiResultViewModel(model, ShowNsfwContent)
+        {
+            EnqueueAllVersionsHandler = EnqueueAllVersionsForCard,
+            EnqueueSelectedVersionsHandler = EnqueueSelectedVersionsForCard
+        };
+        vm.ApplyInstalledIndex(_installed);
+        vm.SelectionChanged += OnResultSelectionChanged;
+        return vm;
+    }
+
+    /// <summary>
     /// Re-sorts the result list on the UI thread by the currently selected sort option.
     /// Move-based so bound cards keep their instances (selection, loaded previews).
     /// </summary>
@@ -736,14 +754,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                     if (model.ModelVersions.Count == 0) continue;
                     if (model.Mode is not null) continue; // skip archived/taken-down
                     if (!existingIds.Add(model.Id)) continue;
-                    var vm = new CivitaiResultViewModel(model, ShowNsfwContent)
-                    {
-                        EnqueueAllVersionsHandler = EnqueueAllVersionsForCard,
-                        EnqueueSelectedVersionsHandler = EnqueueSelectedVersionsForCard
-                    };
-                    vm.ApplyInstalledIndex(_installed);
-                    vm.SelectionChanged += OnResultSelectionChanged;
-                    Results.Add(vm);
+                    Results.Add(CreateResultCard(model));
                 }
             });
 
@@ -1142,19 +1153,10 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         }
     }
 
-    private async Task<string?> GetApiKeyAsync()
+    private Task<string?> GetApiKeyAsync()
     {
-        if (App.Services is not null)
-        {
-            using var scope = App.Services.GetRequiredService<IServiceScopeFactory>().CreateScope();
-            var settingsService = scope.ServiceProvider.GetService<IAppSettingsService>();
-            if (settingsService is not null)
-                return await settingsService.GetCivitaiApiKeyAsync();
-        }
-
-        return _settingsService is not null
-            ? await _settingsService.GetCivitaiApiKeyAsync()
-            : null;
+        _apiKeyProvider ??= CivitaiApiKeys.Resolve(fallbackSettings: _settingsService);
+        return _apiKeyProvider.GetApiKeyAsync();
     }
 }
 

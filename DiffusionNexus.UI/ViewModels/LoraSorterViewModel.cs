@@ -7,6 +7,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Service.Services.IO;
+using DiffusionNexus.Service.Services.Lora;
 using DiffusionNexus.Service.Services.Sync.Identity;
 using DiffusionNexus.UI.Helpers;
 using DiffusionNexus.UI.Services.Lora.Sorting;
@@ -735,7 +736,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         // ModelFileSyncService stamps every locally-discovered model "???", so on a registered root
         // the header reads below are not a rare row — they can be most of the library. Counted up
         // front so the progress line can say how far through them the pass is.
-        var placeholderRows = cached.Count(f => SorterPathBuilder.IsPlaceholderBaseModel(f.Version.BaseModelRaw));
+        var placeholderRows = cached.Count(f => LoraPathBuilder.IsPlaceholderBaseModel(f.Version.BaseModelRaw));
         var headersRead = 0;
 
         foreach (var f in cached)
@@ -802,7 +803,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 // already carries a base model pays nothing.
                 var baseModelRaw = f.Version.BaseModelRaw;
                 string? nameGuess = null;
-                if (SorterPathBuilder.IsPlaceholderBaseModel(baseModelRaw))
+                if (LoraPathBuilder.IsPlaceholderBaseModel(baseModelRaw))
                 {
                     // Real I/O — a FileStream open plus up to SafetensorsHeaderReader.MaxHeaderBytes
                     // of reads, serially, over what may well be a NAS. Reported for the same reason
@@ -871,10 +872,10 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 // the headline "Browse any folder" feature dumped a fully-resolved library into
                 // <Target>\<BaseModel>\Unknown\ — the spec reserves Unknown for genuinely unresolved
                 // files. InferFolderName returns null when no tag names a category; the Unknown bucket
-                // name is equivalent to null here (SorterPathBuilder.IsUnresolvedCategory treats both
+                // name is equivalent to null here (LoraPathBuilder.IsUnresolvedCategory treats both
                 // as "no category segment"), so the candidate record stays non-null.
                 var category = SorterCategoryResolver.InferFolderName(metadata.Tags)
-                    ?? SorterPathBuilder.UnknownFolderName;
+                    ?? LoraPathBuilder.UnknownFolderName;
                 candidates.Add(new SortCandidate(path, metadata.BaseModelRaw, category,
                     metadata.CivitaiVersionId, metadata.Sha256, sizeBytes, SidecarLocator.FindSidecars(path),
                     metadata.NameGuess, SorterAssetKindClassifier.Classify(Path.GetFileName(path))));
@@ -931,7 +932,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// </summary>
     private List<SortCandidate> ApplyNameGuesses(List<SortCandidate> candidates)
         => GuessBaseModelFromFileName
-            ? candidates.Select(c => c.NameGuess is not null && SorterPathBuilder.IsPlaceholderBaseModel(c.BaseModelRaw)
+            ? candidates.Select(c => c.NameGuess is not null && LoraPathBuilder.IsPlaceholderBaseModel(c.BaseModelRaw)
                     ? c with { BaseModelRaw = c.NameGuess, BaseModelIsGuess = true }
                     : c)
                 .ToList()
@@ -948,7 +949,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         var fixable = 0;
         foreach (var candidate in candidates)
         {
-            if (!SorterPathBuilder.IsPlaceholderBaseModel(candidate.BaseModelRaw)) continue;
+            if (!LoraPathBuilder.IsPlaceholderBaseModel(candidate.BaseModelRaw)) continue;
             unidentified++;
             if (candidate.NameGuess is not null) fixable++;
         }
@@ -964,7 +965,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 
     /// <summary>How well this candidate's destination folder is known, as the tree reports it.</summary>
     private static SortPreviewIdentity IdentityOf(SortCandidate candidate)
-        => SorterPathBuilder.IsPlaceholderBaseModel(candidate.BaseModelRaw) ? SortPreviewIdentity.Unidentified
+        => LoraPathBuilder.IsPlaceholderBaseModel(candidate.BaseModelRaw) ? SortPreviewIdentity.Unidentified
             : candidate.BaseModelIsGuess ? SortPreviewIdentity.Guessed
             : SortPreviewIdentity.Identified;
 

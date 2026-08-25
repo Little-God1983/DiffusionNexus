@@ -1,3 +1,4 @@
+using DiffusionNexus.Domain.Utilities;
 using DiffusionNexus.Service.Classes;
 using System;
 using System.Collections.Generic;
@@ -36,7 +37,8 @@ public class DuplicateScanner
 
     private static List<FileInfo> GetCandidateFiles(string folder)
     {
-        return Directory.EnumerateFiles(folder, "*.safetensors", SearchOption.AllDirectories)
+        return Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories)
+            .Where(f => ModelFileExtensions.Matches(f, ModelFileExtensions.Sortable))
             .Select(f => new FileInfo(f)).ToList();
     }
 
@@ -52,7 +54,7 @@ public class DuplicateScanner
         {
             foreach (var fi in m.AssociatedFilesInfo)
             {
-                if (fi.Extension.Equals(".safetensors", StringComparison.OrdinalIgnoreCase))
+                if (ModelFileExtensions.Matches(fi.FullName, ModelFileExtensions.Sortable))
                     lookup[fi.FullName] = m;
             }
         }

@@ -3,6 +3,7 @@ using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.UI.Helpers;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 
@@ -114,7 +115,7 @@ public partial class SelectLoraVersionsToDeleteDialog : Window, INotifyPropertyC
             var localPath = primaryFile?.LocalPath;
             var fileExists = !string.IsNullOrEmpty(localPath) && File.Exists(localPath);
             var fileSizeText = primaryFile?.SizeKB > 0
-                ? FormatFileSize(primaryFile.SizeKB)
+                ? FileSizeFormatter.FormatKilobytes(primaryFile.SizeKB)
                 : null;
 
             // Find the parent model for this version (needed for DB removal)
@@ -165,16 +166,6 @@ public partial class SelectLoraVersionsToDeleteDialog : Window, INotifyPropertyC
         if (fileSizeText is not null) parts.Add(fileSizeText);
         if (!fileExists && localPath is not null) parts.Add("(file missing)");
         return parts.Count > 0 ? string.Join(" - ", parts) : string.Empty;
-    }
-
-    private static string FormatFileSize(double sizeKb)
-    {
-        return sizeKb switch
-        {
-            >= 1_048_576 => $"{sizeKb / 1_048_576.0:F1} GB",
-            >= 1_024 => $"{sizeKb / 1_024.0:F1} MB",
-            _ => $"{sizeKb} KB"
-        };
     }
 
     private void OnSelectAllClick(object? sender, RoutedEventArgs e)

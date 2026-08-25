@@ -1,3 +1,5 @@
+using DiffusionNexus.Service.Services.Lora;
+
 namespace DiffusionNexus.UI.Services.Lora.Sorting;
 
 /// <summary>
@@ -28,9 +30,11 @@ public sealed class LoraSortPlanner
 
         // A hash we cannot read is not "no collision" — it is a file we cannot prove is
         // identical, so it must be treated as different content (rename, never overwrite).
-        // Same guard CivitaiDownloadQueue.ResolveCollisionFreeTargetPathAsync carries; the
-        // sorter dropped it while claiming to mirror the convention, so one .safetensors
-        // held open by a running backend killed the entire preview.
+        // Same guard DownloadCollisionPolicy.ResolveAsync carries (the algorithm formerly
+        // lived on CivitaiDownloadQueue.ResolveCollisionFreeTargetPathAsync, since deleted
+        // in the Task 7 downloader migration); the sorter dropped it while claiming to
+        // mirror the convention, so one .safetensors held open by a running backend killed
+        // the entire preview.
         string? HashOfFile(string path)
         {
             if (hashCache.TryGetValue(path, out var cached)) return cached;
@@ -55,7 +59,7 @@ public sealed class LoraSortPlanner
         {
             ct.ThrowIfCancellationRequested();
 
-            var targetDir = SorterPathBuilder.BuildTargetDirectory(
+            var targetDir = LoraPathBuilder.BuildTargetDirectory(
                 options.TargetRoot, candidate.BaseModelRaw, candidate.CategoryFolderName, options.IncludeCategory);
             var names = claimed.TryGetValue(targetDir, out var existing)
                 ? existing
@@ -103,7 +107,7 @@ public sealed class LoraSortPlanner
 
             string? freeName = null;
             string? duplicateOf = null;
-            foreach (var name in SorterPathBuilder.EnumerateCandidateNames(fileName, candidate.CivitaiVersionId))
+            foreach (var name in LoraPathBuilder.EnumerateCandidateNames(fileName, candidate.CivitaiVersionId))
             {
                 ct.ThrowIfCancellationRequested();
                 if (!NameIsTaken(name))

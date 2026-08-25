@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.Service.Services.Lora;
 using DiffusionNexus.UI.Services;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -112,18 +113,11 @@ public partial class DownloadDestinationViewModel : ObservableObject
     public string? BuildTargetDirectory(string? baseModel, string? category)
     {
         if (IsDownloadToFolder)
-        {
             return string.IsNullOrWhiteSpace(CustomFolderPath) ? null : CustomFolderPath;
-        }
-
         if (string.IsNullOrWhiteSpace(SelectedSourceFolder)) return null;
-
-        var path = SelectedSourceFolder;
-        if (CreateBaseModelFolder && !string.IsNullOrWhiteSpace(baseModel))
-            path = Path.Combine(path, baseModel);
-        if (CreateCategoryFolder && !string.IsNullOrWhiteSpace(category))
-            path = Path.Combine(path, category);
-        return path;
+        return LoraPathBuilder.BuildTargetDirectory(
+            SelectedSourceFolder, baseModel, category,
+            includeBaseModel: CreateBaseModelFolder, includeCategory: CreateCategoryFolder);
     }
 
     [RelayCommand]

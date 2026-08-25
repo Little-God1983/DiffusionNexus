@@ -584,7 +584,8 @@ public class DialogService : IDialogService
             App.Services?.GetService<DiffusionNexus.Civitai.ICivitaiClient>(),
             settings,
             this,
-            App.Services?.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>());
+            App.Services?.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>(),
+            apiKeyProvider: App.Services?.GetService<ICivitaiApiKeyProvider>());
         await viewModel.InitializeAsync(sourceFolders, favorite);
 
         var dialog = new DownloadLoraDialog().WithViewModel(viewModel);
