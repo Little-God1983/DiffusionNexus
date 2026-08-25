@@ -65,6 +65,9 @@ public class LoraViewerViewModelSyncTests
     private SyncPlanDialogViewModel? _planDialogVm;
     private SyncReportDialogViewModel? _reportDialogVm;
 
+    /// <summary>True once the plan dialog has been shown — the stale-plan case re-plans behind it.</summary>
+    private bool _dialogShown;
+
     /// <summary>What the user does at the plan dialog. Default: start exactly what the dialog offers.</summary>
     private Func<SyncPlanDialogViewModel, SyncPlanDialogResult> _planDialogAnswer = vm => vm.BuildResult();
 
@@ -91,6 +94,7 @@ public class LoraViewerViewModelSyncTests
             {
                 _calls.Add("plan-dialog");
                 _planDialogVm = dialogVm;
+                _dialogShown = true;
                 return Task.FromResult(_planDialogAnswer(dialogVm));
             });
         _dialogs.Setup(d => d.ShowSyncReportDialogAsync(It.IsAny<SyncReportDialogViewModel>()))
@@ -174,7 +178,7 @@ public class LoraViewerViewModelSyncTests
     {
         if (IsDiscovery(options)) return [DiscoverStep()];
 
-        var identify = _planDialogVm is not null && _identifyCountAfterDialog >= 0
+        var identify = _dialogShown && _identifyCountAfterDialog >= 0
             ? _identifyCountAfterDialog
             : _identifyCount;
 
@@ -374,12 +378,56 @@ public class LoraViewerViewModelSyncTests
 
         _calls.Should().ContainInOrder("execute:run", "report-dialog");
         _reportDialogVm.Should().NotBeNull();
-        _reportDialogVm!.SummaryText.Should().Be("Discovered 0 · Identified 2/3",
-            "the report dialog projects the run's own report — three planned, one of them failed");
+        _reportDialogVm!.SummaryText.Should().Be("Discovered 4 · Identified 2/3",
+            "the report dialog projects the run's own report — three planned, one of them failed — " +
+            "with the scan's count folded back in");
         _reportDialogVm.DiscoveredText.Should().Be("4 new files discovered",
-            "the run's own report knows nothing about the scan that preceded it");
+            "the dialog's own discovered line says the same thing as its table");
         _reportDialogVm.HasFailures.Should().BeTrue("the failures are the part the user has to act on");
         vm.IsBusy.Should().BeFalse("the overlay comes down before the report, not behind it");
+    }
+
+    /// <summary>
+    /// The stamp is a SQLite write at the peak of WAL contention — the run that just ended has been
+    /// writing for minutes. Unguarded, its exception reached the outer catch and took the grid
+    /// rebuild and the report dialog with it: everything the run achieved, lost to save a
+    /// timestamp. A failed stamp may cost the timestamp and nothing else.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_AFailedStampStillRebuildsAndReports()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService();
+        _settings.Setup(s => s.UpdateLastLibrarySyncAtAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("database is locked"));
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Once,
+            "the models the run identified are already committed and stay invisible until the grid is rebuilt");
+        _reportDialogVm.Should().NotBeNull("the user still gets the report of the run that did happen");
+        vm.SyncStatus.Should().Be(RunReport().Summary,
+            "and the status line is the run's tally, not an error message about a timestamp");
+    }
+
+    /// <summary>
+    /// The scan is a separate run, so the run's own report counts none of it — and a report dialog
+    /// whose table says "Discovered 0" a few lines above "9 new files discovered" is arguing with
+    /// itself, as is a status bar that says the same. The scan's count is folded back into the
+    /// report the moment the run returns, so every projection of it agrees.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_FoldsTheScanCountIntoTheRunsOwnReport()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService(discovered: 9);
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        vm.SyncStatus.Should().StartWith("Discovered 9 ",
+            "the status bar is DescribeOutcome's view of the very same report");
+        _reportDialogVm!.SummaryText.Should().StartWith("Discovered 9 ");
+        _reportDialogVm.DiscoveredText.Should().Be("9 new files discovered");
     }
 
     /// <summary>

@@ -224,8 +224,10 @@ DownloadMissingMetadataAsync                      (every service call runs on Ta
 │        ⇒ "Library is up to date — nothing to do"   ← the honest verdict, from the report
 │      otherwise report.Summary (+ " · N failed" when report.Failures is non-empty)
 │        (+ " · N items failed unexpectedly (see log)" when report.UnexpectedFailures > 0)
-│      (the run's own report always says "Discovered 0" — the scan was step 1's run, and its
-│       count is shown by the two dialogs instead)
+│      (step 1's count is folded back into the run's report the moment it returns — rebuilt
+│       explicitly, never with `with`: Summary is a get-only auto-property and the record
+│       copy constructor would carry the stale one — so the status line, the report table
+│       and the dialog's discovered line all say the same number)
 │
 └── 9. SyncReportDialog — per-step counts, failures grouped by step, the discovered count
 ```

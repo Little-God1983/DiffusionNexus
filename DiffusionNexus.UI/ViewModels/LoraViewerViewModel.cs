@@ -1012,18 +1012,39 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 return;
             }
 
+            // The scan was its own run; fold its count back in so every projection of this run
+            // agrees. Not `with`: Summary is a get-only auto-property, and the copy constructor
+            // keeps the stale one — the dialog would print "Discovered 0" above "40 new files
+            // discovered" and the status bar would carry the same contradiction.
+            report = new SyncReport(report.Plan, report.Steps, report.Failures, report.Cancelled,
+                report.Elapsed, discovered, report.UnexpectedFailures, report.FirstUnexpectedError);
+
             // "Last full sync" is what the next plan dialog tells the user about staleness, so it
             // records a run that actually finished. Deliberately CancellationToken.None: this
             // records what already happened, and a just-pressed Cancel must not lose it. Same fresh
             // scope as the read above, for the same reason — and a write has more to lose.
+            //
+            // Guarded, and on the pool like the read: this is a SQLite write at the peak of WAL
+            // contention — the run that just ended has been writing for minutes. Letting it escape
+            // to the catch below would skip the rebuild AND the report dialog, which is the F1
+            // failure documented under the rebuild, re-entered through a new door. A timestamp is
+            // not worth everything the run achieved, so a failed stamp costs only the timestamp.
             if (!report.Cancelled)
             {
-                await UseSettingsServiceAsync(async s =>
+                try
                 {
-                    await s.UpdateLastLibrarySyncAtAsync(DateTimeOffset.UtcNow, CancellationToken.None)
-                        .ConfigureAwait(false);
-                    return true;
-                });
+                    await Task.Run(() => UseSettingsServiceAsync(async s =>
+                    {
+                        await s.UpdateLastLibrarySyncAtAsync(DateTimeOffset.UtcNow, CancellationToken.None)
+                            .ConfigureAwait(false);
+                        return true;
+                    }));
+                }
+                catch (Exception ex)
+                {
+                    _logger?.Warn(LogCategory.Network, "CivitaiSync",
+                        $"Could not record the last-sync timestamp: {ex.Message}");
+                }
             }
 
             // One rebuild, at the end: the service wrote straight to the database, so the
