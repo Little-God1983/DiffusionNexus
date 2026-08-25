@@ -125,13 +125,23 @@ public sealed class CivitaiModelDownloader : ICivitaiModelDownloader
             var reusedPersist = await _downloadService
                 .PersistDownloadedModelAsync(resolution.TargetPath, request.Version, request.ExistingModelId)
                 .ConfigureAwait(false);
-            if (reusedPersist != MetadataPersistOutcome.Complete)
-            {
-                _logger?.Debug(LogCategory.Download, LogSource,
-                    $"Step 5: metadata for the reused file came back {reusedPersist}");
-            }
 
-            status = DownloadStatus.ReusedExisting;
+            // Reuse only claims full success when the metadata actually landed. A failed model-page
+            // fetch leaves a library row with no description, tags or preview — the transfer path
+            // reports exactly that as CompletedMetadataIncomplete ("Done — no metadata"), and a
+            // reused file has no better claim to silence than a transferred one does.
+            if (reusedPersist == MetadataPersistOutcome.Complete)
+            {
+                status = DownloadStatus.ReusedExisting;
+            }
+            else
+            {
+                status = DownloadStatus.CompletedMetadataIncomplete;
+                _logger?.Warn(LogCategory.Download, LogSource,
+                    $"Step 5: {fileName} was already on disk, but its Civitai metadata came back " +
+                    $"{reusedPersist}. Use Download Metadata on the model in the Installed tab to fill it in.",
+                    $"VersionId: {request.Version.Id}\nFile: {resolution.TargetPath}");
+            }
         }
         else
         {
@@ -246,7 +256,10 @@ public sealed class CivitaiModelDownloader : ICivitaiModelDownloader
             }
 
             if (status == DownloadStatus.HashMismatch)
+            {
+                await InvalidateFileRecordAsync(resolution.TargetPath).ConfigureAwait(false);
                 return Finish(new DownloadOutcome(status, resolution.TargetPath, null, renamed, error), fileName);
+            }
         }
 
         // 8 — resolve the local model id the persister just wrote (or that was already there).
@@ -291,6 +304,48 @@ public sealed class CivitaiModelDownloader : ICivitaiModelDownloader
         {
             _logger?.Warn(LogCategory.Download, LogSource, $"Could not resolve the downloaded model id: {ex.Message}");
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Clears <c>IsLocalFileValid</c> on the row(s) pointing at a file whose SHA256 did not match.
+    /// The transport persists Model/ModelVersion/ModelFile — with <c>IsLocalFileValid = true</c> —
+    /// BEFORE step 7 can reject the bytes, so without this a truncated or tampered transfer stayed
+    /// permanently registered as a valid library entry: invisible on the Installed tab only until
+    /// the next refresh, after which it looked like any other installed LoRA. Detecting the problem
+    /// and leaving the evidence in place is worse than not detecting it.
+    /// <para>
+    /// Never fatal: a failed invalidation is logged and the HashMismatch outcome still stands.
+    /// Deliberately NOT on the caller's token — a job cancelled in the same breath as the mismatch
+    /// must still get its row marked bad.
+    /// </para>
+    /// </summary>
+    private async Task InvalidateFileRecordAsync(string targetPath)
+    {
+        if (_scopeFactory is null) return;
+
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var files = await unitOfWork.ModelFiles.GetByLocalPathAsync(targetPath, CancellationToken.None)
+                .ConfigureAwait(false);
+            if (files.Count == 0) return;
+
+            foreach (var file in files)
+            {
+                file.IsLocalFileValid = false;
+                file.LocalFileVerifiedAt = DateTimeOffset.UtcNow;
+            }
+
+            await unitOfWork.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
+            _logger?.Warn(LogCategory.Download, LogSource,
+                $"hash mismatch — file record marked invalid: {targetPath}");
+        }
+        catch (Exception ex)
+        {
+            _logger?.Warn(LogCategory.Download, LogSource,
+                $"Could not mark the mismatched file record invalid: {ex.Message}");
         }
     }
 

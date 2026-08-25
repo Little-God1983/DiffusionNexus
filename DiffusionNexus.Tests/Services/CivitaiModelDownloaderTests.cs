@@ -268,6 +268,32 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
             Times.Once);
     }
 
+    [Theory]
+    [InlineData(MetadataPersistOutcome.Partial)]
+    [InlineData(MetadataPersistOutcome.Failed)]
+    public async Task ReusedFileWhoseMetadataDidNotPersist_ReportsCompletedMetadataIncomplete(
+        MetadataPersistOutcome persistOutcome)
+    {
+        // The bytes were already on disk, but the Civitai model-page fetch failed — so the library
+        // gains a row with no description, tags or preview. The transfer path already surfaces that
+        // as CompletedMetadataIncomplete ("Done — no metadata"); reporting the reuse path as a clean
+        // ReusedExisting was exactly the silence that status was introduced to eliminate.
+        var dir = NewTempDir();
+        var existing = Path.Combine(dir, "model.safetensors");
+        File.WriteAllText(existing, "already-here");
+
+        var downloader = new CivitaiModelDownloader(
+            Transport(persistOutcome: persistOutcome).Object, Coordinator().Object, Sync().Object,
+            new LibraryChangeNotifier(), ScopeFactory(4));
+
+        var outcome = await downloader.DownloadAsync(
+            new DownloadRequest(Version(sha256: Sha256Of("already-here")), dir, DownloadTrigger.Dialog));
+
+        outcome.Status.Should().Be(DownloadStatus.CompletedMetadataIncomplete);
+        outcome.Success.Should().BeTrue("the file is on disk — only its metadata is missing");
+        outcome.FinalPath.Should().Be(existing);
+    }
+
     [Fact]
     public async Task MetadataIncompleteCallback_YieldsCompletedMetadataIncomplete()
     {
