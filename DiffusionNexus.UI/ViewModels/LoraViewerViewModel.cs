@@ -520,7 +520,15 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 
         // Once, at startup: the tiles' scroll-fetch gate needs the user's retry windows before the
         // first bulk sync of the session ever happens, and it must not read settings per tile.
-        ScrollRetryPolicyLoad = LoadScrollRetryPolicyAsync();
+        //
+        // On Task.Run for the usual R7 reason, and this one needs it more than most: it wants two
+        // ints, but AppSettingsService.GetSettingsAsync clears the change tracker, loads the whole
+        // settings graph (LoRA sources, image galleries, base-model folders, dataset categories),
+        // saves, and de-duplicates categories and folder rows. SQLite has no true async, so awaited
+        // bare it ran that full graph load AND up to three writes inline on the UI thread before
+        // the constructor's first real yield — a startup hitch on exactly the view the
+        // UI-performance work targeted.
+        ScrollRetryPolicyLoad = Task.Run(LoadScrollRetryPolicyAsync);
     }
 
     /// <summary>

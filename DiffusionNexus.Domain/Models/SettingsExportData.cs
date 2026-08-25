@@ -159,8 +159,18 @@ public static class SettingsExportSchema
     /// <summary>
     /// Current schema version. Bump when adding new fields.
     /// v2: split AutoBackupEnabled into BackupDatasetImagesEnabled + BackupDatabaseEnabled.
+    /// v3: metadata-sync retry windows + thumbnail concurrency.
     /// </summary>
-    public const int CurrentVersion = 2;
+    /// <remarks>
+    /// Bumping is cheap in both directions. The importer enforces only
+    /// <see cref="MinSupportedVersion"/> — there is no upper bound — so v1 and v2 files still
+    /// import into this build, and an older build reading a v3 file simply ignores the three
+    /// unknown JSON properties. What the bump buys is the distinction a later migration would
+    /// otherwise have no signal for: whether a field is absent because the file predates the
+    /// feature or because the user chose nothing — exactly what
+    /// <see cref="SettingsExportData.LegacyAutoBackupEnabled"/> needed for the v1→v2 split.
+    /// </remarks>
+    public const int CurrentVersion = 3;
 
     /// <summary>
     /// Minimum schema version that can still be imported.

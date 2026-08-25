@@ -298,6 +298,46 @@ public class SettingsExportServiceTests : IDisposable
             .Should().Be(SettingsExportSchema.CurrentVersion);
     }
 
+    /// <summary>
+    /// The file's own rule: bump <c>CurrentVersion</c> whenever fields are added to
+    /// <c>SettingsExportData</c>. v3 is the metadata-sync retry windows and thumbnail concurrency.
+    /// Without the bump a v2 file written before that feature and one written after it are
+    /// indistinguishable, so no later migration can tell "absent because it predates the feature"
+    /// from "the user chose nothing" — which is exactly the distinction the v1→v2 backup split
+    /// needed and got.
+    /// </summary>
+    [Fact]
+    public void TheSchemaVersionIsBumpedForTheMetadataSyncFields()
+    {
+        SettingsExportSchema.CurrentVersion.Should().Be(3);
+        SettingsExportSchema.MinSupportedVersion.Should().Be(1,
+            "the bump costs nothing on the way in — v1 and v2 files still import");
+    }
+
+    /// <summary>
+    /// …and costs nothing on the way in either. A v2 file has none of the three new properties, so
+    /// the DTO defaults stand in and the file imports exactly as it did before the bump. (The
+    /// reverse — an old build reading a v3 file — is covered by the unknown-property tolerance the
+    /// deserializer already has, and by the "newer than this build" test below.)
+    /// </summary>
+    [Fact]
+    public async Task WhenAVersionTwoFileHasNoSyncFieldsThenTheDefaultsAreImported()
+    {
+        var captured = GivenSaveIsCaptured();
+        var path = await WriteJsonAsync("v2-no-sync-fields.json", """
+        { "schemaVersion": 2, "showNsfw": true }
+        """);
+        var sut = CreateSut();
+
+        await sut.ImportAsync(path);
+
+        var imported = captured()!;
+        imported.ShowNsfw.Should().BeTrue("the file's own fields still apply");
+        imported.SyncNotIdentifiedRetryDays.Should().Be(30);
+        imported.SyncErrorRetryDays.Should().Be(1);
+        imported.SyncThumbnailConcurrency.Should().Be(4);
+    }
+
     [Fact]
     public async Task WhenExportingThenTheLegacyV1BackupFlagIsNeverWritten()
     {

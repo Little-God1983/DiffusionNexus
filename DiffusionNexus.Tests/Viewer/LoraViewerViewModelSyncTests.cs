@@ -99,13 +99,20 @@ public class LoraViewerViewModelSyncTests
     /// </summary>
     private Exception _executeThrow = new SyncAlreadyRunningException();
 
+    /// <summary>
+    /// How the mocked settings read behaves. Null means "hand back <see cref="_savedSettings"/>
+    /// immediately"; a test that cares about <i>when</i> the read happens supplies its own.
+    /// </summary>
+    private Func<Task<AppSettings>>? _settingsRead;
+
     private LoraViewerViewModel CreateViewModel(bool withSyncService = true)
     {
         _modelSync.Setup(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<InstalledModelFile>());
         _unitOfWork.SetupGet(u => u.Models).Returns(_models.Object);
         _unitOfWork.SetupGet(u => u.SyncStates).Returns(_syncStates.Object);
-        _settings.Setup(s => s.GetSettingsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(_savedSettings);
+        _settings.Setup(s => s.GetSettingsAsync(It.IsAny<CancellationToken>()))
+            .Returns(() => _settingsRead is null ? Task.FromResult(_savedSettings) : _settingsRead());
 
         _dialogs.Setup(d => d.ShowSyncPlanDialogAsync(It.IsAny<SyncPlanDialogViewModel>()))
             .Returns((SyncPlanDialogViewModel dialogVm) =>
@@ -1202,6 +1209,46 @@ public class LoraViewerViewModelSyncTests
 
         canExecuteDuringRun.Should().BeFalse("one tile's fetch owns the single-flight service for its duration");
         vm.IsSyncRunning.Should().BeFalse("and gives it back when it is done");
+    }
+
+    // ------------------------------------------------------------------------------- startup cost
+
+    /// <summary>
+    /// F14. The startup read wants two ints, but <c>AppSettingsService.GetSettingsAsync</c> clears
+    /// the change tracker, loads the whole settings graph and performs up to three writes — and
+    /// SQLite has no true async, so awaited bare from the constructor all of that ran inline on the
+    /// UI thread before the first real yield. A startup hitch, and a database <i>write</i>, during
+    /// viewer construction.
+    /// </summary>
+    /// <remarks>
+    /// The gate blocks synchronously, the way a SQLite call does, and is self-bounding: a
+    /// regression makes this test take five seconds and fail on <c>readReleased</c>, rather than
+    /// hang and say nothing.
+    /// </remarks>
+    [Fact]
+    public async Task ConstructingTheViewer_DoesNotRunTheSettingsReadInline()
+    {
+        using var release = new ManualResetEventSlim(false);
+        using var entered = new ManualResetEventSlim(false);
+        var readReleased = false;
+
+        _settingsRead = () =>
+        {
+            entered.Set();
+            release.Wait(TimeSpan.FromSeconds(5));
+            Volatile.Write(ref readReleased, true);
+            return Task.FromResult(_savedSettings);
+        };
+
+        var vm = CreateViewModel();
+
+        Volatile.Read(ref readReleased).Should().BeFalse(
+            "the constructor must return while the settings read is still going, not sit on it");
+        entered.Wait(TimeSpan.FromSeconds(10)).Should().BeTrue("the read was still started, just not inline");
+
+        release.Set();
+        await vm.ScrollRetryPolicyLoad.WaitAsync(TimeSpan.FromSeconds(10));
+        vm.ScrollRetryPolicyLoad.IsCompletedSuccessfully.Should().BeTrue("and it does finish");
     }
 
     private static ModelTileViewModel CreateTile(int modelId)
