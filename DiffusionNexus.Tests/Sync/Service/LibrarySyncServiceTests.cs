@@ -351,9 +351,14 @@ public sealed class LibrarySyncServiceTests : IDisposable
 
         service.IsRunning.Should().BeTrue();
 
+        // Its own type, not a bare InvalidOperationException: a step's SelectAsync raises that too
+        // (GetRequiredService, Single() over nothing), and the viewer used to report every one of
+        // them as "already running" at Info level. Still an InvalidOperationException underneath,
+        // so any caller that predates the type keeps catching it.
         var second = () => service.ExecuteAsync(plan);
-        await second.Should().ThrowAsync<InvalidOperationException>()
+        await second.Should().ThrowAsync<SyncAlreadyRunningException>()
             .WithMessage("*already running*");
+        (await Record.ExceptionAsync(second)).Should().BeAssignableTo<InvalidOperationException>();
 
         gate.SetResult();
         await first;

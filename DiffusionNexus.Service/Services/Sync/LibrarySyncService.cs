@@ -122,7 +122,11 @@ public sealed class LibrarySyncService : ILibrarySyncService
 
         // Wait(0), not WaitAsync: the caller must learn synchronously that a run is already going,
         // and a queued second run is never what the user meant by pressing Sync twice.
-        if (!_gate.Wait(0)) throw new InvalidOperationException("A library sync is already running.");
+        //
+        // Its own exception type, not a bare InvalidOperationException: a step's SelectAsync raises
+        // that too (GetRequiredService, Single() over nothing), and a caller cannot tell "not now"
+        // from "your DI graph is broken" by type. Still derives from it, so old callers are fine.
+        if (!_gate.Wait(0)) throw new SyncAlreadyRunningException();
 
         _isRunning = true;
         var stopwatch = Stopwatch.StartNew();

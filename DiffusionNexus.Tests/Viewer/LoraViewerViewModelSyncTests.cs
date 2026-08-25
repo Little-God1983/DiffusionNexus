@@ -93,6 +93,12 @@ public class LoraViewerViewModelSyncTests
     /// <summary>1 = the discovery pre-run throws, 2 = the real run throws, 0 = neither.</summary>
     private int _throwOnExecuteCall;
 
+    /// <summary>
+    /// What that call throws. The gate's own refusal by default; a test that wants to prove a real
+    /// bug is not laundered into "not now" swaps in a plain <see cref="InvalidOperationException"/>.
+    /// </summary>
+    private Exception _executeThrow = new SyncAlreadyRunningException();
+
     private LoraViewerViewModel CreateViewModel(bool withSyncService = true)
     {
         _modelSync.Setup(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()))
@@ -188,7 +194,7 @@ public class LoraViewerViewModelSyncTests
             {
                 _executeCalls++;
                 if (_executeCalls == _throwOnExecuteCall)
-                    throw NotNowException();
+                    throw _executeThrow;
 
                 _executed.Add(plan);
                 var isDiscovery = IsDiscovery(plan.Options);
@@ -201,8 +207,6 @@ public class LoraViewerViewModelSyncTests
             });
     }
 
-    /// <summary>The refusal the single-flight gate raises when a run is already holding the service.</summary>
-    private static Exception NotNowException() => new InvalidOperationException("A library sync is already running.");
 
     /// <summary>The steps a plan for <paramref name="options"/> carries, with the counts the test asked for.</summary>
     private SyncPlanStep[] StepsFor(SyncOptions options)
@@ -682,6 +686,31 @@ public class LoraViewerViewModelSyncTests
         _reportDialogVm.Should().BeNull("there is no report — this run never got the service");
         vm.IsBusy.Should().BeFalse();
         vm.IsSyncRunning.Should().BeFalse("the refused run must not leave the buttons off");
+    }
+
+    /// <summary>
+    /// F8. …and only that refusal. <c>InvalidOperationException</c> is what every step's
+    /// <c>GetRequiredService&lt;IUnitOfWork&gt;()</c> and every <c>Single()</c> over an empty
+    /// sequence raises too. Catching the base type told the user a DI regression was a busy
+    /// service, logged it at Info without the exception, and re-enabled the button so the same
+    /// wrong answer came back on every press. A genuine bug has to stay loud.
+    /// </summary>
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task DownloadMissingMetadata_AnUnrelatedInvalidOperationIsReportedAsAnError(int throwOnCall)
+    {
+        var vm = CreateViewModel();
+        SetupSyncService();
+        _throwOnExecuteCall = throwOnCall;
+        _executeThrow = new InvalidOperationException("No service for type 'IUnitOfWork' has been registered.");
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        vm.SyncStatus.Should().Be("Sync error: No service for type 'IUnitOfWork' has been registered.",
+            "the generic catch logs at Error with the exception; the already-running path logs at Info without it");
+        vm.IsBusy.Should().BeFalse();
+        vm.IsSyncRunning.Should().BeFalse();
     }
 
     // ------------------------------------------------------------------- outcome, status, rebuild

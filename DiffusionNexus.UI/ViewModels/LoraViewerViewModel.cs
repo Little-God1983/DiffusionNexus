@@ -946,7 +946,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             {
                 discoverReport = await Task.Run(() => _librarySync.ExecuteAsync(discoverPlan, null, ct), ct);
             }
-            catch (InvalidOperationException ex)
+            catch (SyncAlreadyRunningException ex)
             {
                 ReportServiceAlreadyRunning(ex);
                 return;
@@ -1031,7 +1031,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             {
                 report = await Task.Run(() => _librarySync.ExecuteAsync(runPlan, progress, ct), ct);
             }
-            catch (InvalidOperationException ex)
+            catch (SyncAlreadyRunningException ex)
             {
                 ReportServiceAlreadyRunning(ex);
                 return;
@@ -1192,7 +1192,15 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     /// Both of this flow's runs can meet it — a download's completion sync holds the slot for a
     /// moment — and that is a "not now", not a fault: no stack trace, no retry loop.
     /// </summary>
-    private void ReportServiceAlreadyRunning(InvalidOperationException ex)
+    /// <remarks>
+    /// The parameter type is the gate's own exception, deliberately. Catching plain
+    /// <see cref="InvalidOperationException"/> here caught every step's
+    /// <c>GetRequiredService&lt;IUnitOfWork&gt;()</c> and every <c>Single()</c> over an empty
+    /// sequence as well, so a DI regression was announced as "a metadata sync is already running",
+    /// logged at Info without the exception, and reproduced forever on every press. Anything else
+    /// now falls to the generic catch, which logs at Error with the exception attached.
+    /// </remarks>
+    private void ReportServiceAlreadyRunning(SyncAlreadyRunningException ex)
     {
         SyncStatus = AlreadyRunningStatus;
         _logger?.Info(LogCategory.Network, "CivitaiSync",
