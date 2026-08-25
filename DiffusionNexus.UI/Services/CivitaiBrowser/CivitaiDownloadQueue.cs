@@ -641,6 +641,10 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                         job.ProgressPercent = 100;
                         job.Status = JobStatus.Completed;
                         job.StatusMessage = "Already downloaded";
+                        // Reuse is content-proven: the collision policy hashed the on-disk file
+                        // against the expectation, so the outcome's digest is as verified as a
+                        // fresh transfer's.
+                        if (outcome.VerifiedSha256 is not null) job.ActualSha256 = outcome.VerifiedSha256;
                         break;
 
                     case DownloadStatus.HashMismatch:

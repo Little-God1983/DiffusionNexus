@@ -147,7 +147,7 @@ public sealed class CivitaiDownloadQueueOutcomeMappingTests : IDisposable
     }
 
     [Fact]
-    public async Task ReusedExisting_MapsToCompletedAlreadyDownloaded_AndDoesNotStampActualSha()
+    public async Task ReusedExisting_MapsToCompletedAlreadyDownloaded_AndDoesNotStampAnUnverifiedSha()
     {
         var downloader = new FakeDownloader
         {
@@ -162,9 +162,30 @@ public sealed class CivitaiDownloadQueueOutcomeMappingTests : IDisposable
 
         job.Status.Should().Be(JobStatus.Completed);
         job.StatusMessage.Should().Be("Already downloaded");
-        job.ActualSha256.Should().BeNull("no fresh transfer happened, so nothing was verified this run");
+        job.ActualSha256.Should().BeNull("the outcome carried no verified digest, so nothing may be stamped");
         job.ProgressPercent.Should().Be(100,
             "no transfer means the throttled progress adapter never reported anything — the tile must not sit at 0% next to 'Already downloaded'");
+    }
+
+    [Fact]
+    public async Task ReusedExisting_WithAContentProvenDigest_StampsActualSha()
+    {
+        // The collision policy hashed the on-disk file against the expectation to prove the
+        // reuse, so the outcome's VerifiedSha256 is as trustworthy as a fresh transfer's.
+        var downloader = new FakeDownloader
+        {
+            Respond = _ => new DownloadOutcome(
+                DownloadStatus.ReusedExisting, "existing.safetensors", 1, false, null, "AAAA1111")
+        };
+        var queue = Queue(downloader);
+        var job = NewJob(expectedSha256: "AAAA1111");
+        queue.Jobs.Add(job);
+
+        await queue.StartAllAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        job.Status.Should().Be(JobStatus.Completed);
+        job.ActualSha256.Should().Be("AAAA1111");
     }
 
     [Fact]
