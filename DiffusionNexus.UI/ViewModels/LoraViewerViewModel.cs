@@ -1101,12 +1101,16 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             // failure documented under the rebuild, re-entered through a new door. A timestamp is
             // not worth everything the run achieved, so a failed stamp costs only the timestamp.
             //
-            // And only a run that covered every offered kind may claim it (F6). The dialog exists
+            // And only a run that covered every kind WITH WORK may claim it (F6). The dialog exists
             // so the user can run a subset; a 20-second thumbnails-only top-up that stamps this
             // makes next week's dialog announce "Last full sync: <today>" for metadata that was
             // never fetched at all. A subset run therefore leaves the timestamp where it was —
             // stale in the safe direction, understating freshness rather than inventing it.
-            if (!report.Cancelled && chosen.Steps.SetEquals(PlannedStepKinds))
+            // Judged against the dialog's rows, not the four kinds: BuildResult drops zero-count
+            // kinds from the chosen set, so demanding all four would mean a library where one step
+            // legitimately has nothing to do could never stamp again. A kind with nothing to do is
+            // covered by doing nothing.
+            if (!report.Cancelled && dialogVm.Rows.All(r => r.Count == 0 || chosen.Steps.Contains(r.Kind)))
             {
                 try
                 {

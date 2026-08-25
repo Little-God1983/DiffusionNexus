@@ -558,21 +558,49 @@ public class LoraViewerViewModelSyncTests
     /// <summary>
     /// F6. The dialog exists so the user can run a subset — and "Last full sync: …" is the only
     /// staleness signal the next dialog shows. A 20-second thumbnails-only top-up that stamped it
-    /// made the viewer announce a full sync for metadata that had never been fetched at all.
+    /// made the viewer announce a full sync for metadata that had never been fetched at all. The
+    /// yardstick is the dialog's rows: a kind the user UNTICKED while it had work makes the run
+    /// partial, and partial runs leave the timestamp alone.
     /// </summary>
     [Fact]
-    public async Task DownloadMissingMetadata_DoesNotStampAFullSyncForASubsetRun()
+    public async Task DownloadMissingMetadata_DoesNotStampAFullSyncWhenAKindWithWorkWasUnticked()
     {
         var vm = CreateViewModel();
-        SetupSyncService();   // only the identify row has work, so only it is ticked and run
+        _otherStepCount = 2;   // every kind has work…
+        _planDialogAnswer = dialogVm =>
+        {
+            // …but the user opts tags out of the run.
+            dialogVm.Rows.Single(r => r.Kind == SyncStepKind.FetchTags).IsSelected = false;
+            return Task.FromResult(dialogVm.BuildResult());
+        };
+        SetupSyncService();
 
         await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
 
-        _executed[^1].Options.Steps.Should().BeEquivalentTo(new[] { SyncStepKind.IdentifyModel },
-            "this run covered one of the four offered kinds");
+        _executed[^1].Options.Steps.Should().NotContain(SyncStepKind.FetchTags,
+            "the untick must actually have excluded the step for this test to mean anything");
         _settings.Verify(s => s.UpdateLastLibrarySyncAtAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
             Times.Never,
-            "a run that skipped tags, images and thumbnails may not present itself as a full sync next week");
+            "a run that skipped tags the library still needed may not present itself as a full sync next week");
+    }
+
+    /// <summary>
+    /// The counterpart: a kind with NOTHING to do is covered by doing nothing. BuildResult drops
+    /// zero-count kinds from the chosen set, so demanding all four kinds would mean a library
+    /// where tags/images/thumbnails are already complete could never refresh its stamp again.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_StampsWhenEveryKindWithWorkRan()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService();   // only the identify row has work; the other three have nothing to do
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _executed[^1].Options.Steps.Should().BeEquivalentTo(new[] { SyncStepKind.IdentifyModel });
+        _settings.Verify(s => s.UpdateLastLibrarySyncAtAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "after this run the library is as synced as four ticked boxes would have left it");
     }
 
     [Fact]
