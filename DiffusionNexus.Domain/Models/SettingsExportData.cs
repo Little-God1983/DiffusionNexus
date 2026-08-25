@@ -50,6 +50,21 @@ public sealed record SettingsExportData
     public bool MergeLoraSources { get; init; }
     public int LoraUpdateCheckStalenessDays { get; init; } = 3;
 
+    // ?? Metadata Sync ????????????????????????????????????????
+
+    /// <summary>Days before the bulk metadata sync re-checks a not-identified model. Default 30.</summary>
+    public int SyncNotIdentifiedRetryDays { get; init; } = 30;
+
+    /// <summary>Days before the bulk metadata sync retries a model whose last attempt errored. Default 1.</summary>
+    public int SyncErrorRetryDays { get; init; } = 1;
+
+    /// <summary>Parallel thumbnail downloads during a bulk sync. Default 4.</summary>
+    public int SyncThumbnailConcurrency { get; init; } = 4;
+
+    // Deliberately no LastLibrarySyncAt here: it is machine-local bookkeeping
+    // (stamped by the sync flow itself, not a user-chosen setting), so it is
+    // not part of the portable export/import contract.
+
     // ?? LoRA Sort ????????????????????????????????????????????
 
     public string? LoraSortSourcePath { get; init; }

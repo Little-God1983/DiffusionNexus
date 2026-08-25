@@ -92,6 +92,9 @@ public class SettingsExportServiceTests : IDisposable
         UseForgeStylePrompts = false,
         MergeLoraSources = true,
         LoraUpdateCheckStalenessDays = 17,
+        SyncNotIdentifiedRetryDays = 60,
+        SyncErrorRetryDays = 7,
+        SyncThumbnailConcurrency = 8,
 
         LoraSortSourcePath = @"D:\Sort\In",
         LoraSortTargetPath = @"D:\Sort\Out",
@@ -130,6 +133,9 @@ public class SettingsExportServiceTests : IDisposable
         imported.UseForgeStylePrompts.Should().BeFalse();
         imported.MergeLoraSources.Should().BeTrue();
         imported.LoraUpdateCheckStalenessDays.Should().Be(17);
+        imported.SyncNotIdentifiedRetryDays.Should().Be(60);
+        imported.SyncErrorRetryDays.Should().Be(7);
+        imported.SyncThumbnailConcurrency.Should().Be(8);
         imported.LoraSortSourcePath.Should().Be(@"D:\Sort\In");
         imported.LoraSortTargetPath.Should().Be(@"D:\Sort\Out");
         imported.DeleteEmptySourceFolders.Should().BeTrue();
@@ -575,6 +581,93 @@ public class SettingsExportServiceTests : IDisposable
         await sut.ImportAsync(path);
 
         captured()!.BackupDatasetImagesEnabled.Should().BeFalse();
+    }
+
+    // Metadata Sync (Task 6 fix round 1).
+    // AppSettingsService.SaveSettingsAsync's whitelist copies these three
+    // columns from whatever detached AppSettings snapshot it is handed.
+    // ImportAsync built that snapshot straight from SettingsExportData without
+    // loading current DB state, and the DTO had no Sync* properties — so every
+    // import silently reset the user's retry windows and concurrency back to
+    // the CLR defaults (30/1/4), even when the export file the user just
+    // produced carried different values.
+
+    [Fact]
+    public async Task WhenSyncSettingsAreExportedAndReimportedThenTheyRoundTrip()
+    {
+        var original = FullyPopulatedSettings();
+        original.SyncNotIdentifiedRetryDays = 60;
+        original.SyncErrorRetryDays = 7;
+        original.SyncThumbnailConcurrency = 8;
+        GivenCurrentSettings(original);
+        var captured = GivenSaveIsCaptured();
+        var sut = CreateSut();
+        var path = PathFor("sync-settings.json");
+
+        await sut.ExportAsync(path);
+        await sut.ImportAsync(path);
+
+        var imported = captured()!;
+        imported.SyncNotIdentifiedRetryDays.Should().Be(60,
+            "the exported retry window must survive re-import, not silently reset to the CLR default");
+        imported.SyncErrorRetryDays.Should().Be(7);
+        imported.SyncThumbnailConcurrency.Should().Be(8);
+    }
+
+    [Fact]
+    public async Task WhenAnOldExportWithoutSyncSettingsIsImportedThenTheSyncDefaultsApply()
+    {
+        // Unavoidable without the fields: an export file written before this fix
+        // (or by an older app version) carries no sync data at all, so import
+        // lands on the DTO's declared defaults — same as any other newly added
+        // setting under this schema's backward-compatibility contract.
+        var captured = GivenSaveIsCaptured();
+        var path = await WriteJsonAsync("old-export-no-sync.json", """
+        { "schemaVersion": 2, "showNsfw": true }
+        """);
+        var sut = CreateSut();
+
+        await sut.ImportAsync(path);
+
+        var imported = captured()!;
+        imported.SyncNotIdentifiedRetryDays.Should().Be(30);
+        imported.SyncErrorRetryDays.Should().Be(1);
+        imported.SyncThumbnailConcurrency.Should().Be(4);
+    }
+
+    [Fact]
+    public async Task WhenExportingThenLastLibrarySyncAtIsNeverWritten()
+    {
+        // Machine-local bookkeeping (Task 5's own sync flow stamps it directly
+        // via UpdateLastLibrarySyncAtAsync), not a portable user setting — it
+        // must never appear in an export file.
+        GivenCurrentSettings(FullyPopulatedSettings());
+        var sut = CreateSut();
+        var path = PathFor("no-last-sync-stamp.json");
+
+        await sut.ExportAsync(path);
+
+        (await File.ReadAllTextAsync(path)).Should().NotContain("lastLibrarySyncAt");
+    }
+
+    [Fact]
+    public async Task WhenImportingThenTheDetachedSnapshotNeverSetsLastLibrarySyncAt()
+    {
+        // ImportAsync's own contribution to the preservation guarantee: it must
+        // never invent a LastLibrarySyncAt value on the snapshot it hands to
+        // SaveSettingsAsync. The other half of the guarantee — that
+        // AppSettingsService.SaveSettingsAsync's whitelist leaves the column
+        // alone so the real (already persisted) value survives untouched — is
+        // proven against a real database in AppSettingsServiceSyncSettingsTests.
+        var captured = GivenSaveIsCaptured();
+        var path = await WriteJsonAsync("last-sync-not-set.json", """
+        { "schemaVersion": 2, "showNsfw": true }
+        """);
+        var sut = CreateSut();
+
+        await sut.ImportAsync(path);
+
+        captured()!.LastLibrarySyncAt.Should().BeNull();
     }
 
     [Fact]
