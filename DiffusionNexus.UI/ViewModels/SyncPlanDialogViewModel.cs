@@ -47,7 +47,8 @@ public sealed partial class SyncPlanStepRowViewModel : ObservableObject
 /// </summary>
 public sealed partial class SyncPlanDialogViewModel : ObservableObject
 {
-    internal const string UpToDateMessage = "Library is up to date — nothing to do";
+    /// <summary>The status bar behind this dialog says the same thing — from the same const (<see cref="SyncCopy.UpToDate"/>).</summary>
+    internal const string UpToDateMessage = SyncCopy.UpToDate;
 
     /// <summary>
     /// The rows, in fixed display order. DiscoverFiles is deliberately absent: discovery has
@@ -93,12 +94,7 @@ public sealed partial class SyncPlanDialogViewModel : ObservableObject
             : "Last full sync: never";
 
         HasDiscoveredFiles = newFilesDiscovered > 0;
-        DiscoveredText = newFilesDiscovered switch
-        {
-            <= 0 => "",
-            1 => "1 new file discovered",
-            _ => $"{newFilesDiscovered} new files discovered",
-        };
+        DiscoveredText = SyncCopy.DescribeDiscovered(newFilesDiscovered);
 
         ApplyPlan(initialPlan);
     }
@@ -194,7 +190,7 @@ public sealed partial class SyncPlanDialogViewModel : ObservableObject
             row.Estimate = step?.EstimatedDuration ?? TimeSpan.Zero;
             row.Count = step?.Count ?? 0;
             // A row with nothing to do shows no estimate — "~0 s" reads like pending work.
-            row.EstimateText = row.Count > 0 ? FormatDuration(row.Estimate) : "";
+            row.EstimateText = row.Count > 0 ? SyncCopy.FormatEstimate(row.Estimate) : "";
 
             // A row that had nothing to do could not have been ticked, so a force that gives it
             // work ticks it. A row that was live keeps whatever the user decided about it.
@@ -215,7 +211,7 @@ public sealed partial class SyncPlanDialogViewModel : ObservableObject
         CanStart = !IsReplanning && Rows.Any(r => r.IsSelected && r.Count > 0);
         // Same predicate as CanStart and BuildResult: a ticked-but-empty row is not part of the run,
         // so its (stale) estimate must not be part of the total either.
-        TotalEstimateText = FormatDuration(TimeSpan.FromTicks(
+        TotalEstimateText = SyncCopy.FormatEstimate(TimeSpan.FromTicks(
             Rows.Where(r => r.IsSelected && r.Count > 0).Sum(r => r.Estimate.Ticks)));
 
         OnPropertyChanged(nameof(IsUpToDate));
@@ -246,23 +242,5 @@ public sealed partial class SyncPlanDialogViewModel : ObservableObject
     {
         var description = plan.Steps.FirstOrDefault(s => s.Kind == kind)?.Description;
         return string.IsNullOrWhiteSpace(description) ? SyncReport.Label(kind) : description;
-    }
-
-    /// <summary>"~45 s" under 90 s, "~4 min" under 90 min, else "~1.5 h".</summary>
-    internal static string FormatDuration(TimeSpan t)
-    {
-        if (t < TimeSpan.Zero) t = TimeSpan.Zero;
-
-        if (t.TotalSeconds < 90)
-        {
-            return $"~{Math.Round(t.TotalSeconds).ToString("0", CultureInfo.InvariantCulture)} s";
-        }
-
-        if (t.TotalMinutes < 90)
-        {
-            return $"~{Math.Round(t.TotalMinutes).ToString("0", CultureInfo.InvariantCulture)} min";
-        }
-
-        return $"~{t.TotalHours.ToString("0.#", CultureInfo.InvariantCulture)} h";
     }
 }

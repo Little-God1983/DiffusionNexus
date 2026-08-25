@@ -118,9 +118,10 @@ public class SyncPlanDialogViewModelTests
     }
 
     /// <summary>
-    /// Pins the three unit branches and their boundaries — this string feeds the row estimates,
-    /// the footer total, and the report's elapsed line. 89.5 s reading "~90 s" while still in the
-    /// seconds branch is the documented quirk, not a bug.
+    /// Pins the three unit branches and their boundaries — this string feeds the row estimates and
+    /// the footer total. 89.5 s reading "~90 s" while still in the seconds branch is the documented
+    /// quirk, not a bug. The report's elapsed line no longer comes through here: a measurement gets
+    /// <see cref="SyncCopy.FormatElapsed"/>, which wears no tilde.
     /// </summary>
     [Theory]
     [InlineData(0, "~0 s")]
@@ -133,7 +134,7 @@ public class SyncPlanDialogViewModelTests
     [InlineData(60 * 60 * 3, "~3 h")]
     public void FormatDuration_RendersEachUnitBranch(double seconds, string expected)
     {
-        SyncPlanDialogViewModel.FormatDuration(TimeSpan.FromSeconds(seconds)).Should().Be(expected);
+        SyncCopy.FormatEstimate(TimeSpan.FromSeconds(seconds)).Should().Be(expected);
     }
 
     [Fact]

@@ -68,15 +68,12 @@ public sealed class SyncReportDialogViewModel
         PartialText = "Cancelled — partial run. Completed items are recorded and will not be redone.";
 
         SummaryText = report.Summary;
-        ElapsedText = SyncPlanDialogViewModel.FormatDuration(report.Elapsed);
+        // The exact formatter, not the plan dialog's estimate one: this is a measurement, and a
+        // tilde in front of it claims the run's own stopwatch was guessing.
+        ElapsedText = SyncCopy.FormatElapsed(report.Elapsed);
 
         HasDiscoveredFiles = newFilesDiscovered > 0;
-        DiscoveredText = newFilesDiscovered switch
-        {
-            <= 0 => "",
-            1 => "1 new file discovered",
-            _ => $"{newFilesDiscovered} new files discovered",
-        };
+        DiscoveredText = SyncCopy.DescribeDiscovered(newFilesDiscovered);
 
         HasUnexpected = report.UnexpectedFailures > 0;
         UnexpectedText = report.UnexpectedFailures switch

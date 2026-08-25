@@ -1333,8 +1333,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     private IServiceScopeFactory RequireScopeFactory()
         => _scopeFactory ?? App.Services!.GetRequiredService<IServiceScopeFactory>();
 
-    /// <summary>Status shown when a run had genuinely nothing left to do.</summary>
-    private const string UpToDateStatus = "Library is up to date — nothing to do";
+    /// <summary>
+    /// Status shown when a run had genuinely nothing left to do. The same const the plan dialog
+    /// shows (<see cref="SyncCopy.UpToDate"/>): the two are on screen together, so they must be
+    /// one string, not two that happen to match.
+    /// </summary>
+    private const string UpToDateStatus = SyncCopy.UpToDate;
 
     /// <summary>
     /// Status shown when a second run is asked for while one is going. The service refuses it, so

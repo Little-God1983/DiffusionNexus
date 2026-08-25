@@ -67,6 +67,22 @@ public class SyncReportDialogViewModelTests
         vm.PartialText.Should().Contain("Cancelled");
     }
 
+    /// <summary>
+    /// The report shows a measurement, so it is rendered by the exact formatter and not the plan
+    /// dialog's estimate one. A "~40 s" under a table of finished work claims the stopwatch was
+    /// guessing — and the estimate formatter is also where the missing scan time used to hide.
+    /// </summary>
+    [Fact]
+    public void ElapsedText_IsTheExactDuration_WithNoEstimateTilde()
+    {
+        var vm = new SyncReportDialogViewModel(
+            Report(new[] { new SyncStepReport(SyncStepKind.FetchTags, 10, 10, 10, 0, 0) }),
+            newFilesDiscovered: 0);
+
+        vm.ElapsedText.Should().Be("1 min 30 s", "the report's stopwatch read 90 seconds");
+        vm.ElapsedText.Should().NotContain("~");
+    }
+
     [Fact]
     public void UnexpectedFailures_AreCalledOut()
     {
