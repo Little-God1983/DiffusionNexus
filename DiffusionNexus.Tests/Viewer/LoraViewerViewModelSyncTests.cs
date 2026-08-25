@@ -68,13 +68,25 @@ public class LoraViewerViewModelSyncTests
     /// <summary>True once the plan dialog has been shown — the stale-plan case re-plans behind it.</summary>
     private bool _dialogShown;
 
-    /// <summary>What the user does at the plan dialog. Default: start exactly what the dialog offers.</summary>
-    private Func<SyncPlanDialogViewModel, SyncPlanDialogResult> _planDialogAnswer = vm => vm.BuildResult();
+    /// <summary>
+    /// What the user does at the plan dialog. Default: start exactly what the dialog offers.
+    /// Asynchronous because some answers involve the dialog first — ticking a Force and waiting for
+    /// the re-plan it queues, which is the state the cancel wording has to be read from.
+    /// </summary>
+    private Func<SyncPlanDialogViewModel, Task<SyncPlanDialogResult>> _planDialogAnswer =
+        vm => Task.FromResult(vm.BuildResult());
 
     private int _identifyCount = 3;
 
     /// <summary>Identify count for plans made after the dialog closed, or -1 to keep <see cref="_identifyCount"/>.</summary>
     private int _identifyCountAfterDialog = -1;
+
+    /// <summary>
+    /// Count given to every step other than identify. Zero by default — one step with work is all
+    /// most of these tests need — but a run that has to cover all four kinds (the only kind of run
+    /// allowed to stamp "last full sync") needs every row to have something in it.
+    /// </summary>
+    private int _otherStepCount;
 
     private int _executeCalls;
 
@@ -95,7 +107,7 @@ public class LoraViewerViewModelSyncTests
                 _calls.Add("plan-dialog");
                 _planDialogVm = dialogVm;
                 _dialogShown = true;
-                return Task.FromResult(_planDialogAnswer(dialogVm));
+                return _planDialogAnswer(dialogVm);
             });
         _dialogs.Setup(d => d.ShowSyncReportDialogAsync(It.IsAny<SyncReportDialogViewModel>()))
             .Returns((SyncReportDialogViewModel dialogVm) =>
@@ -150,7 +162,18 @@ public class LoraViewerViewModelSyncTests
     /// (and runs) the scan alone, every other request plans exactly the steps its options asked
     /// for, and a run succeeds at all of them minus the failures handed in.
     /// </summary>
-    private void SetupSyncService(int discovered = 0, bool cancelled = false, params SyncFailure[] failures)
+    /// <param name="discoverFailures">
+    /// What the scan could not read — an unreachable source folder, a row it could not write. The
+    /// scan is its own run now, so these have to travel into the run's report or they vanish.
+    /// </param>
+    private void SetupSyncService(
+        int discovered = 0,
+        bool cancelled = false,
+        SyncFailure[]? discoverFailures = null,
+        int discoverUnexpected = 0,
+        TimeSpan? discoverElapsed = null,
+        TimeSpan? runElapsed = null,
+        params SyncFailure[] failures)
     {
         _sync.Setup(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((SyncScope scope, SyncOptions options, CancellationToken _) =>
@@ -165,13 +188,21 @@ public class LoraViewerViewModelSyncTests
             {
                 _executeCalls++;
                 if (_executeCalls == _throwOnExecuteCall)
-                    throw new InvalidOperationException("A library sync is already running.");
+                    throw NotNowException();
 
                 _executed.Add(plan);
-                _calls.Add(IsDiscovery(plan.Options) ? "execute:discover" : "execute:run");
-                return ReportFor(plan, discovered, cancelled, failures);
+                var isDiscovery = IsDiscovery(plan.Options);
+                _calls.Add(isDiscovery ? "execute:discover" : "execute:run");
+
+                return isDiscovery
+                    ? ReportFor(plan, discovered, cancelled: false, discoverFailures ?? [], discoverElapsed,
+                        discoverUnexpected, discoverUnexpected > 0 ? "scan: NullReferenceException" : null)
+                    : ReportFor(plan, discovered: 0, cancelled, failures, runElapsed);
             });
     }
+
+    /// <summary>The refusal the single-flight gate raises when a run is already holding the service.</summary>
+    private static Exception NotNowException() => new InvalidOperationException("A library sync is already running.");
 
     /// <summary>The steps a plan for <paramref name="options"/> carries, with the counts the test asked for.</summary>
     private SyncPlanStep[] StepsFor(SyncOptions options)
@@ -186,12 +217,19 @@ public class LoraViewerViewModelSyncTests
             .OrderBy(k => (int)k)
             .Select(k => k == SyncStepKind.IdentifyModel
                 ? IdentifyStep(identify)
-                : new SyncPlanStep(k, 0, TimeSpan.Zero, SyncReport.Label(k)))
+                : new SyncPlanStep(k, _otherStepCount, TimeSpan.Zero, SyncReport.Label(k)))
             .ToArray();
     }
 
     /// <summary>A report for a plan: everything planned was processed, minus the failures on that step.</summary>
-    private static SyncReport ReportFor(SyncPlan plan, int discovered, bool cancelled, IReadOnlyList<SyncFailure> failures)
+    private static SyncReport ReportFor(
+        SyncPlan plan,
+        int discovered,
+        bool cancelled,
+        IReadOnlyList<SyncFailure> failures,
+        TimeSpan? elapsed = null,
+        int unexpected = 0,
+        string? firstUnexpectedError = null)
         => new(
             plan,
             plan.Steps.Select(s =>
@@ -201,8 +239,10 @@ public class LoraViewerViewModelSyncTests
             }).ToList(),
             failures,
             Cancelled: cancelled,
-            Elapsed: TimeSpan.FromSeconds(12),
-            NewFilesDiscovered: IsDiscovery(plan.Options) ? discovered : 0);
+            Elapsed: elapsed ?? TimeSpan.FromSeconds(12),
+            NewFilesDiscovered: IsDiscovery(plan.Options) ? discovered : 0,
+            UnexpectedFailures: unexpected,
+            FirstUnexpectedError: firstUnexpectedError);
 
     /// <summary>The report the run (not the discovery pre-run) produced, as the ViewModel saw it.</summary>
     private SyncReport RunReport() => ReportFor(_executed[^1], discovered: 0, cancelled: false, []);
@@ -259,7 +299,7 @@ public class LoraViewerViewModelSyncTests
         {
             busyDuringDialog = vm.IsBusy;
             cancellableDuringDialog = vm.IsCancellable;
-            return dialogVm.BuildResult();
+            return Task.FromResult(dialogVm.BuildResult());
         };
 
         await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
@@ -274,7 +314,7 @@ public class LoraViewerViewModelSyncTests
     {
         var vm = CreateViewModel();
         SetupSyncService();
-        _planDialogAnswer = _ => SyncPlanDialogResult.Cancelled();
+        _planDialogAnswer = _ => Task.FromResult(SyncPlanDialogResult.Cancelled());
 
         await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
 
@@ -295,12 +335,110 @@ public class LoraViewerViewModelSyncTests
         var vm = CreateViewModel();
         _identifyCount = 0;
         SetupSyncService();
-        _planDialogAnswer = _ => SyncPlanDialogResult.Cancelled();
+        _planDialogAnswer = _ => Task.FromResult(SyncPlanDialogResult.Cancelled());
 
         await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
 
         vm.SyncStatus.Should().Be("Library is up to date — nothing to do");
         _planDialogVm!.IsUpToDate.Should().BeTrue("the dialog said so too — this is the same verdict, not a second one");
+    }
+
+    /// <summary>
+    /// F3. The scan runs before the dialog and commits its new <c>Model</c> rows straight to the
+    /// database, and nothing else refreshes the grid — <c>ILibraryChangeNotifier.ModelDownloaded</c>
+    /// is raised only by the downloader, never by the discovery step. Only the run path rebuilt, so
+    /// a user who dropped twelve LoRAs into a source folder, pressed the button, read
+    /// "12 new files discovered" and then pressed Cancel got twelve rows in the database, none of
+    /// them on screen until a manual Refresh — under a status line claiming nothing had happened.
+    /// </summary>
+    [Theory]
+    [InlineData(12, "Sync cancelled — the scan added 12 new files.")]
+    [InlineData(1, "Sync cancelled — the scan added 1 new file.")]
+    public async Task DownloadMissingMetadata_CancellingTheDialogStillRebuildsAndSaysWhatTheScanAdded(
+        int discovered, string expectedStatus)
+    {
+        var vm = CreateViewModel();
+        SetupSyncService(discovered: discovered);
+        _planDialogAnswer = _ => Task.FromResult(SyncPlanDialogResult.Cancelled());
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Once,
+            "the discovered rows are committed and stay invisible until the grid is re-projected from the database");
+        vm.SyncStatus.Should().Be(expectedStatus,
+            "\"nothing was run\" is false once the scan has added files — it is what the button just did");
+    }
+
+    /// <summary>The same rebuild is owed when the flow leaves through a refusal rather than a cancel.</summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_RebuildsAfterTheScanEvenWhenTheRunIsRefused()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService(discovered: 5);
+        _throwOnExecuteCall = 2;   // the run meets the single-flight gate; the scan already happened
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Once,
+            "the refusal is about the run, not about the five files the scan already committed");
+    }
+
+    /// <summary>And exactly once when the run path already did it — the finally is a backstop, not a second pass.</summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_DoesNotRebuildTwiceWhenTheRunAlreadyDid()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService(discovered: 9);
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// F7. The plan behind the dialog is built before it opens; the Force expander re-plans live.
+    /// An all-zero plan can therefore sit behind a dialog showing 40 thumbnails, and the cancel
+    /// wording used to be read off the stale plan — telling the user the library was up to date
+    /// one second after the dialog showed them work to do. The dialog's own current verdict wins.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_CancellingAfterAForceReplanDoesNotClaimUpToDate()
+    {
+        var vm = CreateViewModel();
+        _identifyCount = 0;                 // the plan the dialog opened on: nothing to do
+        _identifyCountAfterDialog = 40;     // what ticking a Force re-plans into
+        SetupSyncService();
+        _planDialogAnswer = async dialogVm =>
+        {
+            dialogVm.ForceThumbnails = true;
+            await dialogVm.WhenReplanSettles();
+            return SyncPlanDialogResult.Cancelled();
+        };
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _planDialogVm!.IsUpToDate.Should().BeFalse("the re-plan found work and the dialog was showing it");
+        vm.SyncStatus.Should().Be("Sync cancelled — nothing was run.",
+            "the status may not contradict the numbers the user was looking at a second earlier");
+    }
+
+    /// <summary>
+    /// F4. A source folder on a disconnected share makes <c>DiscoverNewFilesAsync</c> throw; the
+    /// step records it as a failure precisely so a report can show it. Cancelling at the dialog
+    /// used to leave that in the log alone, with a status line that said nothing went wrong.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_CancellingAfterAFailedScanSaysTheScanFailed()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService(discoverFailures:
+            [new SyncFailure(SyncStepKind.DiscoverFiles, 0, @"\\nas\loras", "network path not found")]);
+        _planDialogAnswer = _ => Task.FromResult(SyncPlanDialogResult.Cancelled());
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        vm.SyncStatus.Should().Be("Sync cancelled — the scan reported 1 failure(s), see the log.",
+            "the user concluded the library was fully scanned; only the log knew otherwise");
     }
 
     // ---------------------------------------------------------------------------- the run itself
@@ -314,11 +452,11 @@ public class LoraViewerViewModelSyncTests
     {
         var vm = CreateViewModel();
         SetupSyncService();
-        _planDialogAnswer = _ => new SyncPlanDialogResult(true, _planned[^1] with
+        _planDialogAnswer = _ => Task.FromResult(new SyncPlanDialogResult(true, _planned[^1] with
         {
             Steps = new HashSet<SyncStepKind> { SyncStepKind.FetchTags },
             ForceTags = true,
-        });
+        }));
 
         await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
 
@@ -359,6 +497,7 @@ public class LoraViewerViewModelSyncTests
     public async Task DownloadMissingMetadata_StampsTheRunOnlyWhenItWasNotCancelled(bool cancelled, int stamps)
     {
         var vm = CreateViewModel();
+        _otherStepCount = 2;   // every kind has work, so the dialog's default ticks cover all four
         SetupSyncService(cancelled: cancelled);
 
         await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
@@ -366,6 +505,26 @@ public class LoraViewerViewModelSyncTests
         _settings.Verify(s => s.UpdateLastLibrarySyncAtAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
             Times.Exactly(stamps),
             "\"last full sync\" is a claim about a run that finished — a cancelled one covered only part of the library");
+    }
+
+    /// <summary>
+    /// F6. The dialog exists so the user can run a subset — and "Last full sync: …" is the only
+    /// staleness signal the next dialog shows. A 20-second thumbnails-only top-up that stamped it
+    /// made the viewer announce a full sync for metadata that had never been fetched at all.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_DoesNotStampAFullSyncForASubsetRun()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService();   // only the identify row has work, so only it is ticked and run
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _executed[^1].Options.Steps.Should().BeEquivalentTo(new[] { SyncStepKind.IdentifyModel },
+            "this run covered one of the four offered kinds");
+        _settings.Verify(s => s.UpdateLastLibrarySyncAtAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "a run that skipped tags, images and thumbnails may not present itself as a full sync next week");
     }
 
     [Fact]
@@ -397,6 +556,7 @@ public class LoraViewerViewModelSyncTests
     public async Task DownloadMissingMetadata_AFailedStampStillRebuildsAndReports()
     {
         var vm = CreateViewModel();
+        _otherStepCount = 2;   // all four kinds run, so the stamp is actually attempted
         SetupSyncService();
         _settings.Setup(s => s.UpdateLastLibrarySyncAtAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("database is locked"));
@@ -428,6 +588,77 @@ public class LoraViewerViewModelSyncTests
             "the status bar is DescribeOutcome's view of the very same report");
         _reportDialogVm!.SummaryText.Should().StartWith("Discovered 9 ");
         _reportDialogVm.DiscoveredText.Should().Be("9 new files discovered");
+    }
+
+    /// <summary>
+    /// F4. …and so does everything else the scan produced. Its <c>Failures</c> were dropped on the
+    /// floor with only the count surviving, so an unreadable source folder produced a report dialog
+    /// that never mentioned the scan and a status line with no failure count on it.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_FoldsTheScansFailuresIntoTheRunsReport()
+    {
+        var vm = CreateViewModel();
+        var scanFailure = new SyncFailure(SyncStepKind.DiscoverFiles, 0, @"\\nas\loras", "network path not found");
+        SetupSyncService(
+            discoverFailures: [scanFailure],
+            failures: new SyncFailure(SyncStepKind.IdentifyModel, 1, "a.safetensors", "timeout"));
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        var scanGroup = _reportDialogVm!.FailureGroups.Should()
+            .ContainSingle(g => g.Kind == SyncStepKind.DiscoverFiles).Subject;
+        scanGroup.Items.Should().ContainSingle()
+            .Which.Should().BeEquivalentTo(new { Name = @"\\nas\loras", Reason = "network path not found" });
+
+        _reportDialogVm.FailureGroups.Should().HaveCount(2, "the run's own failure is still there too");
+        vm.SyncStatus.Should().EndWith("· 2 failed",
+            "the scan's failure counts towards the tally the user is asked to act on");
+    }
+
+    /// <summary>A clean scan adds no group — the fold must not invent one.</summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_ACleanScanAddsNoFailureGroup()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService(discovered: 4);
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _reportDialogVm!.HasFailures.Should().BeFalse();
+        _reportDialogVm.FailureGroups.Should().BeEmpty();
+    }
+
+    /// <summary>An item the scan lost to a bug no step claimed is still a bug when the scan is its own run.</summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_FoldsTheScansUnexpectedFailuresIn()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService(discoverUnexpected: 1);
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _reportDialogVm!.HasUnexpected.Should().BeTrue();
+        vm.SyncStatus.Should().Contain("1 item failed unexpectedly (see log)");
+    }
+
+    /// <summary>
+    /// F5. The scan is often the slowest part of the whole button press, and it is a separate run
+    /// with its own stopwatch. Reporting only the second one told a user who waited four minutes
+    /// that the work took 40 seconds.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_TheReportedElapsedCoversTheScanToo()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService(
+            discoverElapsed: TimeSpan.FromMinutes(3),
+            runElapsed: TimeSpan.FromSeconds(40));
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _reportDialogVm!.ElapsedText.Should().Be("3 min 40 s",
+            "the press cost the scan plus the run, and the report says what it cost rather than estimating it");
     }
 
     /// <summary>

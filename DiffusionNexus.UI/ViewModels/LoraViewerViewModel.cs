@@ -894,6 +894,14 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         RefreshSyncRunning();
 
         var ct = cts.Token;
+
+        // Both live out here because the finally needs them (F3). The scan runs before the dialog
+        // and commits new Model rows straight to the database, so the grid is stale from that
+        // moment on — and only the run path used to rebuild it. Every other exit (the user
+        // cancelling at the dialog, a missing dialog service, either single-flight refusal, the
+        // cancellation catch, the generic catch) left those rows invisible until a manual Refresh.
+        var discovered = 0;
+        var rebuilt = false;
         try
         {
             IsBusy = true;
@@ -944,7 +952,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 return;
             }
 
-            var discovered = discoverReport.NewFilesDiscovered;
+            discovered = discoverReport.NewFilesDiscovered;
 
             var baseOptions = new SyncOptions(
                 PlannedStepKinds, RetryPolicy: policy, ThumbnailConcurrency: settings.SyncThumbnailConcurrency);
@@ -977,9 +985,26 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             var choice = await dialogService.ShowSyncPlanDialogAsync(dialogVm);
             if (!choice.Confirmed || choice.Options is null)
             {
-                // The button did do something — it scanned — so it owes an answer either way. Which
-                // answer depends on whether there was anything to decline in the first place.
-                SyncStatus = plan.HasWork ? "Sync cancelled — nothing was run." : UpToDateStatus;
+                // The button did do something — it scanned — so it owes an answer either way, and
+                // the answer is about the scan, in that order of importance: what it added, what it
+                // could not read, and only then the verdict. The verdict comes from the dialog's
+                // CURRENT state, never from `plan`: that plan was built before the dialog opened,
+                // and a Force toggle re-plans live, so an all-zero `plan` can sit behind a dialog
+                // showing 40 thumbnails. Saying "up to date" over that is a flat contradiction of
+                // the number the user was looking at a second earlier.
+                if (discovered > 0)
+                {
+                    SyncStatus = $"Sync cancelled — the scan added {discovered} new file{(discovered == 1 ? "" : "s")}.";
+                }
+                else if (discoverReport.Failures.Count > 0)
+                {
+                    SyncStatus = $"Sync cancelled — the scan reported {discoverReport.Failures.Count} failure(s), see the log.";
+                }
+                else
+                {
+                    SyncStatus = dialogVm.IsUpToDate ? UpToDateStatus : "Sync cancelled — nothing was run.";
+                }
+
                 _logger?.Info(LogCategory.Network, "CivitaiSync", "User cancelled at the plan dialog");
                 return;
             }
@@ -1012,12 +1037,31 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 return;
             }
 
-            // The scan was its own run; fold its count back in so every projection of this run
-            // agrees. Not `with`: Summary is a get-only auto-property, and the copy constructor
-            // keeps the stale one — the dialog would print "Discovered 0" above "40 new files
-            // discovered" and the status bar would carry the same contradiction.
-            report = new SyncReport(report.Plan, report.Steps, report.Failures, report.Cancelled,
-                report.Elapsed, discovered, report.UnexpectedFailures, report.FirstUnexpectedError);
+            // The scan was its own run; fold ALL of it back in so every projection of this button
+            // press agrees. Not `with`: Summary is a get-only auto-property, and the copy
+            // constructor keeps the stale one — the dialog would print "Discovered 0" above "40 new
+            // files discovered" and the status bar would carry the same contradiction.
+            //
+            // Four things travel, not just the count (F4, F5):
+            //  · Failures — DiscoverFilesStep deliberately records IOException /
+            //    UnauthorizedAccessException / DbUpdateException as SyncItemResult.Failure so a
+            //    report can show them. Dropped, a disconnected source folder produced a dialog with
+            //    no discovered line, no failure row and a clean report. Scan failures go FIRST so
+            //    the report dialog's orphan-group rule (a group for a kind absent from Steps sorts
+            //    last) still surfaces them — DiscoverFiles is not among this run's steps, so they
+            //    form exactly such a group, which is intended.
+            //  · UnexpectedFailures / FirstUnexpectedError — same reasoning, summed, scan first.
+            //  · Elapsed — on a real library the scan is often the slowest part of the press, and
+            //    the run's own stopwatch never saw it. "~40 s" for four minutes of waiting.
+            report = new SyncReport(
+                report.Plan,
+                report.Steps,
+                discoverReport.Failures.Concat(report.Failures).ToList(),
+                report.Cancelled,
+                discoverReport.Elapsed + report.Elapsed,
+                discovered,
+                discoverReport.UnexpectedFailures + report.UnexpectedFailures,
+                discoverReport.FirstUnexpectedError ?? report.FirstUnexpectedError);
 
             // "Last full sync" is what the next plan dialog tells the user about staleness, so it
             // records a run that actually finished. Deliberately CancellationToken.None: this
@@ -1029,7 +1073,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             // to the catch below would skip the rebuild AND the report dialog, which is the F1
             // failure documented under the rebuild, re-entered through a new door. A timestamp is
             // not worth everything the run achieved, so a failed stamp costs only the timestamp.
-            if (!report.Cancelled)
+            //
+            // And only a run that covered every offered kind may claim it (F6). The dialog exists
+            // so the user can run a subset; a 20-second thumbnails-only top-up that stamps this
+            // makes next week's dialog announce "Last full sync: <today>" for metadata that was
+            // never fetched at all. A subset run therefore leaves the timestamp where it was —
+            // stale in the safe direction, understating freshness rather than inventing it.
+            if (!report.Cancelled && chosen.Steps.SetEquals(PlannedStepKinds))
             {
                 try
                 {
@@ -1062,6 +1112,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             // before the rebuild, so the work landed in the database and stayed invisible in the
             // grid, and the report was swallowed by the cancellation catch below.
             await Task.Run(RebuildTilesFromDatabaseAsync);
+            rebuilt = true;
 
             var statusText = DescribeOutcome(report);
             _logger?.Info(LogCategory.Network, "CivitaiSync", statusText);
@@ -1098,6 +1149,25 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 
             _localSyncActive = false;
             RefreshSyncRunning();
+
+            // The scan's rows are committed; the grid has to show them however this press ended
+            // (F3). Nothing else refreshes it — ILibraryChangeNotifier.ModelDownloaded is raised
+            // only by CivitaiModelDownloader, never by DiscoverFilesStep — so without this a
+            // cancelled dialog leaves twelve new LoRAs in the database and none of them on screen.
+            // Guarded so a failed rebuild costs only the rebuild: the status line above already
+            // says what happened, and an exception here would replace it with a lie.
+            if (discovered > 0 && !rebuilt)
+            {
+                try
+                {
+                    await Task.Run(RebuildTilesFromDatabaseAsync);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.Warn(LogCategory.Network, "CivitaiSync",
+                        $"Grid refresh after the scan failed: {ex.Message}");
+                }
+            }
         }
     }
 
