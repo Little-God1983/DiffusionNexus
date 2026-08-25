@@ -1,0 +1,127 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.SyncPlanDialog"
+        x:DataType="vm:SyncPlanDialogViewModel"
+        Title="Metadata Sync"
+        Width="560"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="#2D2D30">
+
+  <StackPanel Margin="20" Spacing="14">
+
+    <!-- What the discovery pass just found (Task 5 runs it before opening this dialog) -->
+    <TextBlock Text="{Binding DiscoveredText}"
+               IsVisible="{Binding HasDiscoveredFiles}"
+               Foreground="#CCCCCC"
+               FontSize="12"
+               TextWrapping="Wrap"/>
+
+    <!-- Nothing to do: no steps, no Start button - but the force expander below stays -->
+    <StackPanel Spacing="4" IsVisible="{Binding IsUpToDate}">
+      <TextBlock Text="{Binding UpToDateText}"
+                 FontSize="14"
+                 FontWeight="Bold"
+                 Foreground="White"
+                 TextWrapping="Wrap"/>
+      <TextBlock Text="{Binding LastRunText}"
+                 FontSize="12"
+                 Foreground="#888888"/>
+    </StackPanel>
+
+    <!-- The four steps, in fixed order -->
+    <ItemsControl ItemsSource="{Binding Rows}" IsVisible="{Binding !IsUpToDate}">
+      <ItemsControl.ItemTemplate>
+        <DataTemplate x:DataType="vm:SyncPlanStepRowViewModel">
+          <Border Background="#1E1E1E"
+                  BorderBrush="#444444"
+                  BorderThickness="1"
+                  CornerRadius="6"
+                  Padding="12,10"
+                  Margin="0,0,0,6">
+            <Grid ColumnDefinitions="Auto,Auto,*,Auto">
+              <CheckBox Grid.Column="0"
+                        IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                        IsEnabled="{Binding IsEnabled}"
+                        VerticalAlignment="Center"
+                        Margin="0,0,4,0"/>
+
+              <TextBlock Grid.Column="1"
+                         Text="{Binding Count}"
+                         MinWidth="40"
+                         TextAlignment="Right"
+                         FontSize="14"
+                         FontWeight="SemiBold"
+                         Foreground="#FFCC00"
+                         VerticalAlignment="Center"
+                         Margin="0,0,12,0"/>
+
+              <StackPanel Grid.Column="2" Spacing="2" VerticalAlignment="Center">
+                <TextBlock Text="{Binding Label}" FontSize="13" FontWeight="SemiBold"/>
+                <TextBlock Text="{Binding Description}"
+                           FontSize="12"
+                           Foreground="#999999"
+                           TextWrapping="Wrap"/>
+              </StackPanel>
+
+              <TextBlock Grid.Column="3"
+                         Text="{Binding EstimateText}"
+                         FontSize="12"
+                         Foreground="#999999"
+                         TextAlignment="Right"
+                         VerticalAlignment="Center"
+                         Margin="12,0,0,0"/>
+            </Grid>
+          </Border>
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
+
+    <!-- Forcing from the up-to-date state is exactly this expander's purpose, so it is
+         always visible; each toggle re-plans against the database and refreshes the counts. -->
+    <Expander Header="Force re-check…" IsExpanded="False">
+      <StackPanel Spacing="8" Margin="0,6,0,0">
+        <CheckBox Content="Models not found on Civitai"
+                  IsChecked="{Binding ForceIdentify, Mode=TwoWay}"
+                  FontSize="13"/>
+        <CheckBox Content="Tags (even when already checked)"
+                  IsChecked="{Binding ForceTags, Mode=TwoWay}"
+                  FontSize="13"/>
+        <CheckBox Content="Image records (even when already checked)"
+                  IsChecked="{Binding ForceImages, Mode=TwoWay}"
+                  FontSize="13"/>
+        <CheckBox Content="Thumbnails (re-fetch existing attempts)"
+                  IsChecked="{Binding ForceThumbnails, Mode=TwoWay}"
+                  FontSize="13"/>
+        <TextBlock Text="Re-planning…"
+                   IsVisible="{Binding IsReplanning}"
+                   FontSize="12"
+                   Foreground="#66CCFF"/>
+      </StackPanel>
+    </Expander>
+
+    <Grid ColumnDefinitions="*,Auto">
+      <TextBlock Grid.Column="0"
+                 Text="{Binding TotalEstimateText}"
+                 IsVisible="{Binding !IsUpToDate}"
+                 FontSize="12"
+                 Foreground="#CCCCCC"
+                 VerticalAlignment="Center"/>
+
+      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+        <Button Content="Cancel" Width="90" Click="OnCancelClick"/>
+        <Button Content="Start"
+                MinWidth="120"
+                Background="#FFCC00"
+                Foreground="#1E1E1E"
+                FontWeight="SemiBold"
+                IsVisible="{Binding !IsUpToDate}"
+                IsEnabled="{Binding CanStart}"
+                Click="OnStartClick"/>
+      </StackPanel>
+    </Grid>
+
+  </StackPanel>
+</Window>

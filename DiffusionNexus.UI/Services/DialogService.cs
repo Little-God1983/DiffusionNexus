@@ -733,4 +733,17 @@ public class DialogService : IDialogService
         await dialog.ShowDialog(_window);
         return new AssignCivitaiIdsDialogResult(dialog.IsConfirmed, dialog.ResolvedModel, dialog.ResolvedVersion);
     }
+
+    public async Task<SyncPlanDialogResult> ShowSyncPlanDialogAsync(SyncPlanDialogViewModel viewModel)
+    {
+        if (!Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+        {
+            return await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
+                () => ShowSyncPlanDialogAsync(viewModel));
+        }
+
+        var dialog = new SyncPlanDialog().WithViewModel(viewModel);
+        await dialog.ShowDialog(_window);
+        return dialog.Result ?? SyncPlanDialogResult.Cancelled();
+    }
     }

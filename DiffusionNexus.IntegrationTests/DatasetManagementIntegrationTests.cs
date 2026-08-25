@@ -159,6 +159,9 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
         public Task<AssignCivitaiIdsDialogResult> ShowAssignCivitaiIdsDialogAsync() =>
             Task.FromResult(new AssignCivitaiIdsDialogResult(false, null, null));
 
+        public Task<SyncPlanDialogResult> ShowSyncPlanDialogAsync(SyncPlanDialogViewModel viewModel) =>
+            Task.FromResult(SyncPlanDialogResult.Cancelled());
+
         public Task<bool> ShowBackupCompareDialogAsync(BackupCompareData currentStats, BackupCompareData backupStats) =>
             Task.FromResult(false);
 
