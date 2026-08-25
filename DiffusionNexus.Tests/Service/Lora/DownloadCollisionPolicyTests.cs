@@ -1,4 +1,6 @@
+using System.Security.AccessControl;
 using System.Security.Cryptography;
+using System.Security.Principal;
 using System.Text;
 using DiffusionNexus.Service.Services.Lora;
 using FluentAssertions;
@@ -115,5 +117,40 @@ public sealed class DownloadCollisionPolicyTests : IDisposable
             _dir, "V1.safetensors", versionId: 3204603, expectedSha256: Sha256Of("mine"), CancellationToken.None);
 
         first.TargetPath.Should().Be(second.TargetPath).And.Be(Path.Combine(_dir, "V1_3204603.safetensors"));
+    }
+
+    [Fact]
+    public async Task ResolveAsync_PlainNameAccessDenied_CannotProveOwnership_SoItSuffixesWithoutThrowing()
+    {
+        // Hostile-disk case (S4): the colliding file exists but is ACL-denied to us — the
+        // hash probe must not let UnauthorizedAccessException escape ResolveAsync. Denied
+        // OR unreadable, either way we can't prove the file is ours, so it gets the same
+        // "don't overwrite it" treatment as the locked/IOException case above.
+        var path = Path.Combine(_dir, "V1.safetensors");
+        await File.WriteAllTextAsync(path, "someone else's weights");
+
+        var fileInfo = new FileInfo(path);
+        var currentUser = WindowsIdentity.GetCurrent().User!;
+        var denyRule = new FileSystemAccessRule(currentUser, FileSystemRights.Read, AccessControlType.Deny);
+        var accessControl = fileInfo.GetAccessControl();
+        accessControl.AddAccessRule(denyRule);
+        fileInfo.SetAccessControl(accessControl);
+
+        try
+        {
+            var resolution = await DownloadCollisionPolicy.ResolveAsync(
+                _dir, "V1.safetensors", versionId: 3204603, expectedSha256: Sha256Of("mine"), CancellationToken.None);
+
+            resolution.TargetPath.Should().Be(Path.Combine(_dir, "V1_3204603.safetensors"),
+                "an access-denied file must never be reported as a content match, and must never crash the download");
+            resolution.ExistingContentMatches.Should().BeFalse();
+        }
+        finally
+        {
+            // Remove the deny rule before Dispose() tries to delete the temp dir.
+            var cleanup = fileInfo.GetAccessControl();
+            cleanup.RemoveAccessRule(denyRule);
+            fileInfo.SetAccessControl(cleanup);
+        }
     }
 }

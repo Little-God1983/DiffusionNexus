@@ -43,9 +43,9 @@ public static class DownloadCollisionPolicy
             var actual = await FileHasher.Sha256UpperAsync(path, ct).ConfigureAwait(false);
             return string.Equals(actual, expectedSha256, StringComparison.OrdinalIgnoreCase);
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return false; // unreadable/locked — can't prove it's ours, so don't overwrite it
+            return false; // unreadable/locked OR access-denied — either way we can't prove it's ours, so don't overwrite it
         }
     }
 }
