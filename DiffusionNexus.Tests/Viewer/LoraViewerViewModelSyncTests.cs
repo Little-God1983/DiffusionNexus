@@ -492,7 +492,44 @@ public class LoraViewerViewModelSyncTests
         }
 
         _planned[1].ThumbnailConcurrency.Should().Be(6, "SyncThumbnailConcurrency, on the options the dialog builds from");
-        _planned[^1].ThumbnailConcurrency.Should().Be(6, "and therefore on the ones the run executes");
+        _executed[^1].Options.ThumbnailConcurrency.Should().Be(6, "and therefore on the ones the run executes");
+        _executed[^1].Options.Policy.NotIdentifiedRetryAfter.Should().Be(TimeSpan.FromDays(14));
+        _executed[^1].Options.Policy.ErrorRetryAfter.Should().Be(TimeSpan.FromDays(3));
+    }
+
+    /// <summary>
+    /// F13. Every Force toggle already re-planned with the exact options the dialog hands back, and
+    /// PlanAsync is a repository query over the whole library per requested step. Pressing Start
+    /// without changing anything — the common case, since every row with work is pre-ticked — used
+    /// to pay for that pass a second time on the button's critical path.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_RunsTheDialogsOwnPlanInsteadOfPlanningAThirdTime()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService();
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _planned.Should().HaveCount(2, "the discovery plan and the one behind the dialog — and no third pass");
+        _calls.Should().ContainInOrder("plan-dialog", "execute:run")
+            .And.NotContainInOrder("plan-dialog", "plan:run");
+        _executed[^1].Steps.Select(s => s.Kind).Should().BeEquivalentTo(new[] { SyncStepKind.IdentifyModel },
+            "the dialog's plan comes back filtered to the ticked kinds");
+    }
+
+    /// <summary>…and plans again when the dialog cannot vouch for its counts (a failed re-plan).</summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_PlansAgainWhenTheDialogHandsBackNoPlan()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService();
+        _planDialogAnswer = dialogVm => Task.FromResult(dialogVm.BuildResult() with { Plan = null });
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _planned.Should().HaveCount(3, "without a plan to run, the flow has to make one");
+        _calls.Should().ContainInOrder("plan-dialog", "plan:run", "execute:run");
     }
 
     [Theory]
@@ -788,6 +825,9 @@ public class LoraViewerViewModelSyncTests
         var vm = CreateViewModel();
         _identifyCountAfterDialog = 0;
         SetupSyncService();
+        // The dialog withholds its plan whenever a re-plan failed and left its counts stale, and
+        // the flow then plans again — which is the pass that finds the work already done.
+        _planDialogAnswer = dialogVm => Task.FromResult(dialogVm.BuildResult() with { Plan = null });
 
         await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
 

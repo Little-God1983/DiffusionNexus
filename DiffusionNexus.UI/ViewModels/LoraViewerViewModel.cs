@@ -1018,10 +1018,18 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 $"User started sync: steps [{string.Join(", ", chosen.Steps)}] forces " +
                 $"[I:{chosen.ForceIdentify} T:{chosen.ForceTags} Im:{chosen.ForceImages} Th:{chosen.ForceThumbnails}]");
 
-            // Re-planned, not the dialog's plan: it is cheap, the dialog may have been open for
-            // minutes, and the ticks and forces the user came back with select a different set of
-            // items than the one the dialog was built from.
-            var runPlan = await Task.Run(() => _librarySync.PlanAsync(SyncScope.Library, chosen, ct), ct);
+            // The dialog's own plan when it can vouch for it, and only otherwise a third pass
+            // (F13). PlanAsync runs SelectAsync on every requested step, and each of those is a
+            // repository query over the whole library plus per-item retry filtering — this button
+            // was paying for it at least twice, and once more for every Force the user toggled,
+            // even though each toggle had already re-planned with the exact options BuildResult
+            // then returned. The dialog withholds its plan whenever its counts no longer match its
+            // toggles (a failed re-plan), and then this plans again.
+            //
+            // A minutes-old plan is safe: RunStepAsync re-selects per step at execution time, so
+            // the plan's counts reach nothing but the report's Planned column.
+            var runPlan = choice.Plan
+                          ?? await Task.Run(() => _librarySync.PlanAsync(SyncScope.Library, chosen, ct), ct);
 
             var progress = new UiProgress<LibrarySyncProgress>(this, p =>
                 SyncStatus = $"{SyncReport.Label(p.Step)} [{p.Index}/{p.Total}] {p.CurrentItem}");

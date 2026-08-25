@@ -137,6 +137,124 @@ public class SyncPlanDialogViewModelTests
         SyncCopy.FormatEstimate(TimeSpan.FromSeconds(seconds)).Should().Be(expected);
     }
 
+    /// <summary>
+    /// F4. Two quick toggles queue two re-plans. The flag used to be raised inside the queued work,
+    /// so the first link's finally lowered it and the second link's continuation raised it again a
+    /// dispatcher turn later — and in that turn the UI was live with the first plan's counts. Tick
+    /// Force tags, tick Force image records, press Start in the gap: <c>BuildResult</c> filters by
+    /// <c>Count &gt; 0</c>, the Images row was still 0, and FetchImages was silently dropped from
+    /// the run the user had just asked for.
+    /// </summary>
+    [Fact]
+    public async Task StartStaysDisabledAcrossAWholeChainOfQueuedReplans()
+    {
+        var gateA = new TaskCompletionSource();
+        var gateB = new TaskCompletionSource();
+        var secondEntered = new TaskCompletionSource();
+        var calls = 0;
+
+        var vm = Vm(PlanWith(identify: 3, tags: 0, images: 0, thumbs: 0), async o =>
+        {
+            var call = Interlocked.Increment(ref calls);
+            if (call == 2) secondEntered.TrySetResult();
+            await (call == 1 ? gateA.Task : gateB.Task);
+            return PlanWith(3, 0, 0, thumbs: call == 1 ? 0 : 40, options: o);
+        });
+
+        var flag = new List<bool>();
+        var thumbsWhenStartCameBack = -1;
+        vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName != nameof(vm.IsReplanning)) return;
+
+            flag.Add(vm.IsReplanning);
+            if (!vm.IsReplanning && thumbsWhenStartCameBack < 0)
+                thumbsWhenStartCameBack = vm.Rows.Single(r => r.Kind == SyncStepKind.Thumbnails).Count;
+        };
+
+        vm.ForceTags = true;         // queues the first re-plan
+        vm.ForceThumbnails = true;   // queues the second behind it
+
+        vm.IsReplanning.Should().BeTrue("the flag goes up at toggle time, not when the work is pumped");
+        vm.CanStart.Should().BeFalse();
+
+        gateA.SetResult();
+        await secondEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        gateB.SetResult();
+        await vm.WhenReplanSettles();
+
+        flag.Should().Equal(new[] { true, false },
+            "one rise and one fall for the whole chain — a fall in between is the dispatcher turn " +
+            "in which Start was live over counts the user had already superseded");
+        thumbsWhenStartCameBack.Should().Be(40,
+            "Start came back only once the LAST queued plan's counts were the ones on screen");
+        vm.CanStart.Should().BeTrue("the chain settled and the plan that landed has work");
+    }
+
+    /// <summary>
+    /// F13. Every toggle already re-planned with the exact options <c>BuildResult</c> returns, so
+    /// the caller need not pay for a third full selection pass over the library. The plan comes
+    /// back filtered to the ticked kinds and re-labelled with the chosen options.
+    /// </summary>
+    [Fact]
+    public void BuildResult_HandsBackThePlanTheDialogWasShowing()
+    {
+        var vm = Vm(PlanWith(identify: 3, tags: 68, images: 2, thumbs: 12));
+        vm.Rows.Single(r => r.Kind == SyncStepKind.FetchTags).IsSelected = false;
+
+        var result = vm.BuildResult();
+
+        result.Plan.Should().NotBeNull("nothing was forced, so the counts on screen are still the plan's");
+        result.Plan!.Options.Should().BeSameAs(result.Options,
+            "the plan is re-labelled with the chosen options so ExecuteAsync runs the ticked steps with the right forces");
+        result.Plan.Steps.Select(s => s.Kind).Should().BeEquivalentTo(new[]
+        {
+            SyncStepKind.IdentifyModel, SyncStepKind.FetchImages, SyncStepKind.Thumbnails,
+        }, "the unticked row's step is not part of this run");
+        result.Plan.Steps.Single(s => s.Kind == SyncStepKind.IdentifyModel).Count.Should().Be(3,
+            "the counts are the ones the dialog was showing");
+    }
+
+    /// <summary>
+    /// A failed re-plan deliberately keeps the previous counts — which now describe a different
+    /// item set than the toggles do. The dialog says so by withholding its plan, and the caller
+    /// plans again rather than running the wrong selection.
+    /// </summary>
+    [Fact]
+    public async Task BuildResult_WithholdsThePlanWhenAReplanFailedAndLeftTheCountsStale()
+    {
+        var vm = Vm(PlanWith(identify: 3, tags: 0, images: 0, thumbs: 0),
+            _ => Task.FromException<SyncPlan>(new InvalidOperationException("database is locked")));
+
+        vm.ForceThumbnails = true;
+        await vm.WhenReplanSettles();
+
+        vm.Rows.Single(r => r.Kind == SyncStepKind.IdentifyModel).Count.Should().Be(3,
+            "the dialog keeps what it had rather than blanking itself");
+
+        var result = vm.BuildResult();
+
+        result.Options!.ForceThumbnails.Should().BeTrue("the toggle is still the user's choice");
+        result.Plan.Should().BeNull("these counts were never computed with that force");
+    }
+
+    /// <summary>A successful re-plan brings the two back into step, so the plan travels again.</summary>
+    [Fact]
+    public async Task BuildResult_HandsBackTheReplannedPlanAfterAForce()
+    {
+        var vm = Vm(PlanWith(identify: 3, tags: 0, images: 0, thumbs: 0),
+            o => Task.FromResult(PlanWith(3, 0, 0, thumbs: 40, options: o)));
+
+        vm.ForceThumbnails = true;
+        await vm.WhenReplanSettles();
+
+        var result = vm.BuildResult();
+
+        result.Plan.Should().NotBeNull();
+        result.Plan!.Steps.Single(s => s.Kind == SyncStepKind.Thumbnails).Count.Should().Be(40);
+        result.Plan.Options.ForceThumbnails.Should().BeTrue();
+    }
+
     [Fact]
     public void AZeroCountRow_ShowsNoEstimate()
     {

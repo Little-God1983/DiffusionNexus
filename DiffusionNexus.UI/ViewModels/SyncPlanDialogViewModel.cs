@@ -6,7 +6,13 @@ using DiffusionNexus.Domain.Services.UnifiedLogging;
 namespace DiffusionNexus.UI.ViewModels;
 
 /// <summary>The plan dialog's outcome. A cancelled dialog carries no options.</summary>
-public sealed record SyncPlanDialogResult(bool Confirmed, SyncOptions? Options)
+/// <param name="Plan">
+/// The plan the dialog was showing when Start was pressed, filtered to the ticked kinds — the
+/// caller may execute it instead of paying for a third full selection pass over the library. Null
+/// when the dialog cannot vouch for its own counts (a re-plan failed and left them stale relative
+/// to the force toggles), in which case the caller must plan again.
+/// </param>
+public sealed record SyncPlanDialogResult(bool Confirmed, SyncOptions? Options, SyncPlan? Plan = null)
 {
     public static SyncPlanDialogResult Cancelled() => new(false, null);
 }
@@ -67,6 +73,28 @@ public sealed partial class SyncPlanDialogViewModel : ObservableObject
     private readonly IUnifiedLogger? _logger;
     private Task _replanTask = Task.CompletedTask;
 
+    /// <summary>
+    /// How many re-plans are queued or in flight. Raised in <see cref="QueueReplan"/> at toggle
+    /// time and lowered in <see cref="ReplanAfterAsync"/>'s finally; only the last one out lowers
+    /// <see cref="IsReplanning"/>, so the flag covers the whole chain and not just one link of it.
+    /// </summary>
+    /// <remarks>
+    /// No <c>Interlocked</c>: every touch is on the UI context. The toggles arrive through property
+    /// setters raised by the dispatcher, and the continuations that decrement resume on the same
+    /// context. It reads like a race and is not one.
+    /// </remarks>
+    private int _pendingReplans;
+
+    /// <summary>The last plan that was actually applied to the rows — what the user is looking at.</summary>
+    private SyncPlan _lastPlan;
+
+    /// <summary>
+    /// The force toggles <see cref="_lastPlan"/> was computed with. A failed re-plan updates
+    /// neither: the counts on screen are then the previous plan's, and saying otherwise would hand
+    /// the caller a plan for a different item set than the toggles now describe.
+    /// </summary>
+    private (bool Identify, bool Tags, bool Images, bool Thumbnails) _lastPlanForces;
+
     public SyncPlanDialogViewModel(
         SyncPlan initialPlan,
         SyncOptions baseOptions,
@@ -82,6 +110,7 @@ public sealed partial class SyncPlanDialogViewModel : ObservableObject
         _baseOptions = baseOptions;
         _replanAsync = replanAsync;
         _logger = logger;
+        _lastPlan = initialPlan;
 
         Rows = RowOrder.Select(kind => new SyncPlanStepRowViewModel(kind, DescribeStep(initialPlan, kind))).ToList();
         foreach (var row in Rows)
@@ -96,7 +125,10 @@ public sealed partial class SyncPlanDialogViewModel : ObservableObject
         HasDiscoveredFiles = newFilesDiscovered > 0;
         DiscoveredText = SyncCopy.DescribeDiscovered(newFilesDiscovered);
 
-        ApplyPlan(initialPlan);
+        // The initial plan counts as applied: its forces are all false — which is exactly the state
+        // the toggles start in — and it was built over all four kinds, so it can be filtered down
+        // to whatever the user ends up ticking.
+        ApplyPlan(initialPlan, baseOptions);
     }
 
     public IReadOnlyList<SyncPlanStepRowViewModel> Rows { get; }
@@ -134,10 +166,22 @@ public sealed partial class SyncPlanDialogViewModel : ObservableObject
     /// means the prologue of <see cref="ReplanAfterAsync"/> before its first await must stay
     /// free of anything that can re-enter this method, or the inner queue link is silently
     /// dropped from the chain.
+    /// <para>
+    /// The flag goes up here, synchronously, at toggle time — not inside the queued work. Raised
+    /// there, it came down when the first link finished and only went back up when the second
+    /// link's continuation was pumped, leaving a dispatcher turn in which Start was live over the
+    /// superseded counts: tick Force tags, tick Force image records, press Start in the gap, and
+    /// the Images row was still 0 from the first plan, so FetchImages was silently dropped from
+    /// the run the user had just asked for.
+    /// </para>
     /// </summary>
     private void QueueReplan()
     {
         var options = OptionsWith(AllRowKinds);
+
+        _pendingReplans++;
+        IsReplanning = true;
+
         var previous = _replanTask;
         _replanTask = ReplanAfterAsync(previous, options);
     }
@@ -156,28 +200,31 @@ public sealed partial class SyncPlanDialogViewModel : ObservableObject
 
         try
         {
-            IsReplanning = true;
             _logger?.Info(LogCategory.Network, "CivitaiSync",
                 $"Plan dialog: re-planning with forces identify={options.ForceIdentify} tags={options.ForceTags} " +
                 $"images={options.ForceImages} thumbnails={options.ForceThumbnails}");
 
             var plan = await _replanAsync(options);
-            ApplyPlan(plan);
+            ApplyPlan(plan, options);
         }
         catch (Exception ex)
         {
             // Keep the counts we already have: a dialog that blanks itself because a query
-            // hiccuped is worse than one showing a slightly stale plan.
+            // hiccuped is worse than one showing a slightly stale plan. Deliberately without
+            // touching _lastPlan / _lastPlanForces — the counts are now the PREVIOUS plan's, and
+            // BuildResult uses that mismatch to withhold a plan the caller must not run.
             _logger?.Warn(LogCategory.Network, "CivitaiSync",
                 $"Plan dialog: re-plan failed, keeping the previous counts: {ex.Message}");
         }
         finally
         {
-            IsReplanning = false;
+            // Only the last link out lowers it: with two toggles queued, the first one finishing
+            // must not re-enable Start over counts the second is about to replace.
+            if (--_pendingReplans == 0) IsReplanning = false;
         }
     }
 
-    private void ApplyPlan(SyncPlan plan)
+    private void ApplyPlan(SyncPlan plan, SyncOptions builtWith)
     {
         foreach (var row in Rows)
         {
@@ -202,6 +249,12 @@ public sealed partial class SyncPlanDialogViewModel : ObservableObject
             }
         }
 
+        // Recorded together: the rows now show this plan's counts, and these are the forces that
+        // produced them. BuildResult hands the plan on only while the two still agree.
+        _lastPlan = plan;
+        _lastPlanForces =
+            (builtWith.ForceIdentify, builtWith.ForceTags, builtWith.ForceImages, builtWith.ForceThumbnails);
+
         RefreshDerived();
     }
 
@@ -219,10 +272,39 @@ public sealed partial class SyncPlanDialogViewModel : ObservableObject
         OnPropertyChanged(nameof(TotalEstimateText));
     }
 
+    /// <summary>
+    /// What the user chose, and — when the dialog can still vouch for its own numbers — the plan
+    /// behind them, so the caller need not run a third full selection pass over the library.
+    /// </summary>
+    /// <remarks>
+    /// The plan travels only while the current force toggles are the ones it was computed with.
+    /// Every toggle re-plans, so that is the common case; the exception is a re-plan that failed
+    /// and deliberately kept the previous counts, where the numbers now describe a different item
+    /// set than the toggles do. It is filtered to the ticked kinds and re-labelled with the chosen
+    /// options so <c>ExecuteAsync</c> runs exactly what was ticked, with the right forces.
+    /// <para>
+    /// Staleness is safe here: <c>RunStepAsync</c> re-selects per step at execution time, so the
+    /// plan's counts only ever reach the report's Planned column. A dialog left open for minutes
+    /// therefore costs a cosmetic number, not a wrong run.
+    /// </para>
+    /// </remarks>
     public SyncPlanDialogResult BuildResult()
     {
         var steps = Rows.Where(r => r.IsSelected && r.Count > 0).Select(r => r.Kind).ToHashSet();
-        return new SyncPlanDialogResult(true, OptionsWith(steps));
+        var options = OptionsWith(steps);
+
+        var countsMatchTheToggles =
+            _lastPlanForces == (ForceIdentify, ForceTags, ForceImages, ForceThumbnails);
+
+        var plan = countsMatchTheToggles
+            ? new SyncPlan(
+                _lastPlan.Scope,
+                options,
+                _lastPlan.Steps.Where(s => steps.Contains(s.Kind)).ToList(),
+                _lastPlan.PlannedAt)
+            : null;
+
+        return new SyncPlanDialogResult(true, options, plan);
     }
 
     /// <summary>
