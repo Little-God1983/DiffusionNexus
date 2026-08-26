@@ -348,6 +348,29 @@ public class LoraViewerViewModelSyncTests
         vm.IsBusy.Should().BeFalse("the overlay must not come back for a run the user declined");
     }
 
+    /// <summary>
+    /// #541. The pre-run counterpart of the backstop: before the run is reached, only the scan's
+    /// own counts may owe a rebuild. With an empty scan, a cancelled dialog must cost nothing —
+    /// this pins the placement of <c>rebuildOwed = true</c> AFTER the dialog, where the run
+    /// actually starts. Hoisting it up to "the dialog has answered" (a natural reading of "the
+    /// run is confirmed") would buy a full wasted re-projection on every cancel, with no other
+    /// test failing.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_CancellingTheDialogAfterAnEmptyScanDoesNotRebuild()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService();   // discovered: 0, repointed: 0
+        _planDialogAnswer = _ => Task.FromResult(SyncPlanDialogResult.Cancelled());
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Never,
+            "nothing changed in the database — a re-projection would be pure cost on every declined dialog");
+        vm.SyncStatus.Should().Be("Sync cancelled — nothing was run.",
+            "and the exit under test is the one that was actually taken");
+    }
+
     /// <summary>Closing an up-to-date dialog is not a cancellation of anything — say what is true instead.</summary>
     [Fact]
     public async Task DownloadMissingMetadata_ClosingAnUpToDateDialogSaysUpToDate()
@@ -465,6 +488,9 @@ public class LoraViewerViewModelSyncTests
 
         _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Never,
             "the refusal happened at the gate, before any work — a full grid re-projection would be pure cost");
+        vm.SyncStatus.Should().Be("A metadata sync is already running.",
+            "#541: without this the test passes vacuously — any exit before the run also never rebuilds, " +
+            "so the status proves the refusal catch (the reset under test) actually executed");
     }
 
     /// <summary>
@@ -1224,6 +1250,8 @@ public class LoraViewerViewModelSyncTests
         vm.SyncStatus.Should().Be("Dialog service not available.");
         _sync.Verify(s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()),
             Times.Once, "the discovery pre-run had already happened; nothing beyond it may run unasked");
+        _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Never,
+            "#541: this door exits before the run too, and the empty scan owes no rebuild");
     }
 
     // ------------------------------------------------------------------------------ the per-tile button

@@ -382,6 +382,13 @@ public sealed class LibrarySyncServiceTests : IDisposable
             .WithMessage("*already running*");
         (await Record.ExceptionAsync(second)).Should().BeAssignableTo<InvalidOperationException>();
 
+        // #541. The refusal happens at the gate, BEFORE any work — the callers' entire recovery
+        // contract hangs on this ("a refused press wrote nothing", so no rebuild is owed). The
+        // two refused calls above must not have selected or executed anything: the running first
+        // call accounts for one selection (the plan's was its own) and the one blocked item.
+        identify.SelectCalls.Should().Be(2, "plan + the first run's re-selection — the refused calls selected nothing");
+        identify.Executed.Should().HaveCount(1, "only the first run's in-flight item — a refusal that follows work would silently break its callers");
+
         gate.SetResult();
         await first;
 
