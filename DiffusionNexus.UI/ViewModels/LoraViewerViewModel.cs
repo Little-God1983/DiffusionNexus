@@ -287,6 +287,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     /// </remarks>
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(DownloadMissingMetadataCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RefreshCommand))]
     private bool _isSyncRunning;
 
     /// <summary>
@@ -579,7 +580,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     /// <see cref="ReconcileLibraryInBackgroundAsync"/>, which rebuilds the grid only if it
     /// finds a change (a new file appears, a deleted file drops out, a moved file relocates).
     /// </summary>
-    [RelayCommand]
+    /// <remarks>
+    /// Off while a sync runs (#540): a refresh mid-sync starts a second full-library read and its
+    /// "Loaded N models" overwrites the sync's verdict in the status bar. Startup calls it through
+    /// <c>ExecuteAsync</c>, which does not consult CanExecute, and the detail-deleted fallback
+    /// already checks it before falling back to a plain rebuild.
+    /// </remarks>
+    [RelayCommand(CanExecute = nameof(CanRefresh))]
     private async Task RefreshAsync()
     {
         // Design-time or missing services fallback
@@ -1102,6 +1109,17 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 ReportServiceAlreadyRunning(ex);
                 return;
             }
+            catch (OperationCanceledException)
+            {
+                // Task.Run with an already-signalled token never invokes the delegate, and a
+                // cancellation INSIDE the service comes back as a Cancelled report — so an OCE at
+                // THIS await proves the run never entered ExecuteAsync (#540). Only here is that
+                // proof available, which is why the flag is lowered in this scoped catch and never
+                // in the shared OCE catch below: an OCE later in the flow (a dispatcher dying
+                // mid-swap) can arrive after a fully durable run that still owes its rebuild.
+                rebuildOwed = false;
+                throw;
+            }
 
             // The scan was its own run; fold ALL of it back in so every projection of this button
             // press agrees. Not `with`: Summary is a get-only auto-property, and the copy
@@ -1227,9 +1245,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         }
         finally
         {
-            IsBusy = false;
+            // The overlay does NOT come down yet (#540): if the backstop below has a rebuild to
+            // do, that is a multi-second UI-thread tile swap on a big library, and dropping the
+            // overlay first left it running unattributed while both sync buttons still refused
+            // input. Cancellable ends here either way — the token source is disposed next.
             IsCancellable = false;
-            BusyMessage = null;
 
             // Only the CTS this call created: clearing the field unconditionally would let a
             // late-finishing run dispose a newer run's token source out from under it.
@@ -1250,6 +1270,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             // collection is mid-swap would let a fetch update a tile the rebuild is discarding.
             if ((discovered > 0 || repointed > 0 || rebuildOwed) && !rebuilt)
             {
+                IsBusy = true;
+                BusyMessage = "Refreshing library view…";
                 try
                 {
                     await Task.Run(RebuildTilesFromDatabaseAsync);
@@ -1261,6 +1283,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                     SyncStatus = $"{SyncStatus} · grid refresh failed — press Refresh to reload";
                 }
             }
+
+            IsBusy = false;
+            BusyMessage = null;
 
             _localSyncActive = false;
             RefreshSyncRunning();
@@ -1305,6 +1330,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 
     /// <summary>Both buttons that can start a run are off while one is running — the service takes one at a time.</summary>
     private bool CanStartMetadataSync() => !IsSyncRunning;
+
+    /// <summary>The Refresh button obeys the same rule (#540) — see the remarks on <see cref="RefreshAsync"/>.</summary>
+    private bool CanRefresh() => !IsSyncRunning;
 
     /// <summary>
     /// Requests cancellation of the in-flight metadata sync. Safe no-op when idle.

@@ -484,6 +484,85 @@ public class LoraViewerViewModelSyncTests
             "five models just came back on screen, and the status line is where the user learns why");
     }
 
+    /// <summary>
+    /// #540. Task.Run with an already-signalled token never invokes the delegate — an OCE at the
+    /// run's own await proves ExecuteAsync was never entered, because a cancellation INSIDE the
+    /// service comes back as a Cancelled report, not a throw. That proof licenses waiving the
+    /// owed rebuild there and only there: the shared OCE catch must not, because an OCE later in
+    /// the flow (a dispatcher dying mid-swap) can arrive after a fully durable run.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_APreStartCancelDoesNotPayForARebuild()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService();   // discovered: 0 — nothing but the never-started run could owe one
+        _throwOnExecuteCall = 2;
+        _executeThrow = new TaskCanceledException();
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        vm.SyncStatus.Should().Be("Metadata sync cancelled");
+        _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Never,
+            "the run never entered the service and the scan was empty — a full re-projection would be pure cost");
+    }
+
+    /// <summary>
+    /// #540. The backstop is a multi-second, UI-thread tile swap on a big library, and it used to
+    /// run after the finally had already dropped the overlay — while both sync buttons still
+    /// refused input. An unattributed dead zone right after a status line said the operation was
+    /// over. The overlay now stays up over the backstop and says what is happening.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_TheBackstopRebuildRunsUnderTheOverlay()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService();
+        _throwOnExecuteCall = 2;
+        _executeThrow = new InvalidOperationException("database is locked");
+
+        bool? busyDuringBackstop = null;
+        string? messageDuringBackstop = null;
+        _modelSync.Setup(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()))
+            .Callback(() =>
+            {
+                busyDuringBackstop = vm.IsBusy;
+                messageDuringBackstop = vm.BusyMessage;
+            })
+            .ReturnsAsync(Array.Empty<InstalledModelFile>());
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        busyDuringBackstop.Should().BeTrue("a multi-second tile swap with no overlay reads as a hang");
+        messageDuringBackstop.Should().NotBeNullOrEmpty("the overlay must say what it is doing");
+        vm.IsBusy.Should().BeFalse("and it comes down when everything is finished");
+        vm.BusyMessage.Should().BeNull();
+    }
+
+    /// <summary>
+    /// #540. RefreshAsync had no CanExecute, so its button was clickable through a whole sync and
+    /// its unwind — and a press started a second full-library read whose "Loaded N models" then
+    /// overwrote the sync's verdict in the status bar. Off while a sync runs, like both sync
+    /// buttons; the detail-deleted fallback already handles CanExecute being false.
+    /// </summary>
+    [Fact]
+    public async Task Refresh_IsOffWhileASyncRuns()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService();
+
+        var canRefreshDuringSync = true;
+        _planDialogAnswer = dialogVm =>
+        {
+            canRefreshDuringSync = vm.RefreshCommand.CanExecute(null);
+            return Task.FromResult(dialogVm.BuildResult());
+        };
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        canRefreshDuringSync.Should().BeFalse("a refresh mid-sync erases the verdict and doubles the DB load");
+        vm.RefreshCommand.CanExecute(null).Should().BeTrue("and back on the moment the sync is over");
+    }
+
     /// <summary>And exactly once when the run path already did it — the finally is a backstop, not a second pass.</summary>
     [Fact]
     public async Task DownloadMissingMetadata_DoesNotRebuildTwiceWhenTheRunAlreadyDid()
