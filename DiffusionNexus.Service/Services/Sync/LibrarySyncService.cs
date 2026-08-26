@@ -151,10 +151,15 @@ public sealed class LibrarySyncService : ILibrarySyncService
                     await RunStepAsync(step, planStep, plan, apiKey, progress, tally, ct).ConfigureAwait(false);
                 }
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 // A cancelled run still reports what it managed to do — the stamps are already
                 // committed, so pretending nothing happened would only cause it to be redone.
+                //
+                // Filtered, like its item-level counterpart in ExecuteItemAsync: an OCE arriving
+                // when nobody cancelled — an HttpClient timeout, a linked token — is a step
+                // blowing up in a cancellation costume, and it falls through to the abort catch
+                // below instead of posing as "the user cancelled" (#535's door, cancellation-shaped).
                 cancelled = true;
                 _logger?.Info(LogCategory.Network, LogSource, "Library sync cancelled by the user");
             }

@@ -1040,7 +1040,15 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 // and a Force toggle re-plans live, so an all-zero `plan` can sit behind a dialog
                 // showing 40 thumbnails. Saying "up to date" over that is a flat contradiction of
                 // the number the user was looking at a second earlier.
-                if (discovered > 0)
+                if (discovered > 0 && repointed > 0)
+                {
+                    // Both of the scan's writes in one pass — additive, not first-wins: the
+                    // re-linked models just reappeared on screen too, and dropping them here is
+                    // the #537 complaint one branch over.
+                    SyncStatus = $"Sync cancelled — the scan added {discovered} new file{(discovered == 1 ? "" : "s")}" +
+                                 $" and re-linked {repointed} moved file{(repointed == 1 ? "" : "s")}.";
+                }
+                else if (discovered > 0)
                 {
                     SyncStatus = $"Sync cancelled — the scan added {discovered} new file{(discovered == 1 ? "" : "s")}.";
                 }
@@ -1148,7 +1156,10 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 discovered,
                 discoverReport.UnexpectedFailures + report.UnexpectedFailures,
                 discoverReport.FirstUnexpectedError ?? report.FirstUnexpectedError,
-                report.AbortReason,
+                // The scan's term is unreachable today — an aborted scan returns early above —
+                // but if that abort is ever made non-fatal, dropping it here would lose the
+                // reason silently. The coalesce order matches the other folded fields: scan first.
+                discoverReport.AbortReason ?? report.AbortReason,
                 discoverReport.FilesRepointed + report.FilesRepointed);
 
             // "Last full sync" is what the next plan dialog tells the user about staleness, so it
@@ -1233,7 +1244,14 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             IsCancellable = false;
             BusyMessage = null;
 
-            await dialogService.ShowSyncReportDialogAsync(new SyncReportDialogViewModel(report, discovered));
+            // An abort before any step tallied — the API-key read, the first step's selection —
+            // leaves a report whose table is empty (and, unless the scan recorded failures,
+            // nothing else to show). The status line above already leads with the abort; a modal
+            // over an empty table adds nothing to it, so that one case stays on the status line —
+            // the way the aborted-scan path already behaves. Any committed work or failure row
+            // still opens the dialog.
+            if (report.AbortReason is null || report.Steps.Count > 0 || report.Failures.Count > 0)
+                await dialogService.ShowSyncReportDialogAsync(new SyncReportDialogViewModel(report, discovered));
         }
         catch (OperationCanceledException)
         {
@@ -1580,15 +1598,17 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     private static string DescribeOutcome(SyncReport report)
     {
         // An aborted run is never "up to date", however empty its plan looked — the run died, and
-        // the verdict has to lead with that (#535). The tally still follows: what completed before
-        // the failure is committed, and this line is where the user learns both facts.
-        if (report.AbortReason is not null)
-            return $"Sync aborted — {report.AbortReason} · {report.Summary}";
-
-        // Repoints veto "up to date" too (#537): models the grid had hidden just came back on
-        // screen, and this line is where the user learns why.
-        if (report.NewFilesDiscovered == 0 && report.FilesRepointed == 0 && report.Steps.All(s => s.Planned == 0))
+        // the verdict has to lead with that (#535). Only the lead differs: the tally AND the
+        // suffixes below still follow, because the run where the most went wrong is exactly the
+        // one whose failures and repoints must not go unsaid.
+        if (report.AbortReason is null
+            && report.NewFilesDiscovered == 0 && report.FilesRepointed == 0
+            && report.Steps.All(s => s.Planned == 0))
+        {
+            // Repoints veto "up to date" too (#537): models the grid had hidden just came back on
+            // screen, and this line is where the user learns why.
             return UpToDateStatus;
+        }
 
         var status = report.Failures.Count > 0
             ? $"{report.Summary} · {report.Failures.Count} failed"
@@ -1601,6 +1621,15 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         {
             var item = report.UnexpectedFailures == 1 ? "item" : "items";
             status += $" · {report.UnexpectedFailures} {item} failed unexpectedly (see log)";
+        }
+
+        if (report.AbortReason is not null)
+        {
+            // The lead names the abort with its reason, so Summary's own "(aborted)" marker —
+            // right for the log line and the report dialog, where Summary stands alone — would
+            // only repeat it here. The marker is Summary's last part, joined like every other.
+            status = status.Replace(" · (aborted)", string.Empty, StringComparison.Ordinal);
+            return $"Sync aborted — {report.AbortReason} · {status}";
         }
 
         return status;
@@ -2102,16 +2131,22 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             => Report?.Steps.FirstOrDefault(s => s.Kind == SyncStepKind.IdentifyModel)?.Planned ?? 0;
 
         /// <summary>
-        /// Whether the run hit a bug rather than an answer: it aborted midway
-        /// (<see cref="SyncReport.AbortReason"/>) or items failed with exceptions no step claimed
-        /// (<see cref="SyncReport.UnexpectedFailures"/>). "No metadata found on Civitai" may not
-        /// be said over this — a failed ask is not an answer (#535).
+        /// Whether the run hit a failure rather than an answer: it aborted midway
+        /// (<see cref="SyncReport.AbortReason"/>), items failed with exceptions no step claimed
+        /// (<see cref="SyncReport.UnexpectedFailures"/>), or the ask itself failed in a way the
+        /// step did claim — an HTTP 500, a timeout, a disk error recorded as an ordinary
+        /// <see cref="SyncFailure"/> (#536). "No metadata found on Civitai" may not be said over
+        /// any of these — a failed ask is not an answer (#535). The honest no keeps its case:
+        /// identify records "checked, not on Civitai" as a completed item, never as a failure,
+        /// so <see cref="SyncReport.Failures"/> and not-founds are disjoint.
         /// </summary>
         public bool Faulted
-            => Report is not null && (Report.AbortReason is not null || Report.UnexpectedFailures > 0);
+            => Report is not null
+               && (Report.AbortReason is not null || Report.UnexpectedFailures > 0 || Report.Failures.Count > 0);
 
         /// <summary>The failure to show for a <see cref="Faulted"/> outcome, best reason first.</summary>
-        public string? FaultReason => Report?.AbortReason ?? Report?.FirstUnexpectedError;
+        public string? FaultReason
+            => Report?.AbortReason ?? Report?.FirstUnexpectedError ?? Report?.Failures.FirstOrDefault()?.Reason;
     }
 
     /// <summary>

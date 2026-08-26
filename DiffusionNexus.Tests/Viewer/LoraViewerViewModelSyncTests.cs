@@ -189,6 +189,7 @@ public class LoraViewerViewModelSyncTests
         string? discoverAbortReason = null,
         string? runAbortReason = null,
         int repointed = 0,
+        bool runHasNoSteps = false,
         params SyncFailure[] failures)
     {
         _sync.Setup(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()))
@@ -215,7 +216,7 @@ public class LoraViewerViewModelSyncTests
                         discoverUnexpected, discoverUnexpected > 0 ? "scan: NullReferenceException" : null,
                         discoverAbortReason, repointed)
                     : ReportFor(plan, discovered: 0, cancelled, failures, runElapsed,
-                        abortReason: runAbortReason);
+                        abortReason: runAbortReason, noSteps: runHasNoSteps);
             });
     }
 
@@ -247,14 +248,18 @@ public class LoraViewerViewModelSyncTests
         int unexpected = 0,
         string? firstUnexpectedError = null,
         string? abortReason = null,
-        int repointed = 0)
+        int repointed = 0,
+        bool noSteps = false)
         => new(
             plan,
-            plan.Steps.Select(s =>
-            {
-                var failed = failures.Count(f => f.Step == s.Kind);
-                return new SyncStepReport(s.Kind, s.Count, s.Count, Math.Max(0, s.Count - failed), 0, failed);
-            }).ToList(),
+            noSteps
+                // An abort at the API-key read or the first step's selection: no step ever tallied.
+                ? []
+                : plan.Steps.Select(s =>
+                {
+                    var failed = failures.Count(f => f.Step == s.Kind);
+                    return new SyncStepReport(s.Kind, s.Count, s.Count, Math.Max(0, s.Count - failed), 0, failed);
+                }).ToList(),
             failures,
             Cancelled: cancelled,
             Elapsed: elapsed ?? TimeSpan.FromSeconds(12),
@@ -435,6 +440,27 @@ public class LoraViewerViewModelSyncTests
             "the re-pointed rows are valid again and stay invisible until the grid is re-projected");
         vm.SyncStatus.Should().Be(expectedStatus,
             "\"nothing was run\" is false once the scan has re-linked files — it is what the button just did");
+    }
+
+    /// <summary>
+    /// A scan can do both in one pass. The wording was exclusive (`if added … else if re-linked`),
+    /// so a scan that added 3 files AND re-linked 12 told the user about the 3 only — the twelve
+    /// reappeared models were back on screen unexplained, the #537 complaint one branch over.
+    /// </summary>
+    [Theory]
+    [InlineData(3, 12, "Sync cancelled — the scan added 3 new files and re-linked 12 moved files.")]
+    [InlineData(1, 1, "Sync cancelled — the scan added 1 new file and re-linked 1 moved file.")]
+    public async Task DownloadMissingMetadata_CancellingTheDialogAfterAScanThatAddedAndRelinkedStatesBoth(
+        int discovered, int repointed, string expectedStatus)
+    {
+        var vm = CreateViewModel();
+        SetupSyncService(discovered: discovered, repointed: repointed);
+        _planDialogAnswer = _ => Task.FromResult(SyncPlanDialogResult.Cancelled());
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        vm.SyncStatus.Should().Be(expectedStatus,
+            "both of the scan's writes changed what the grid shows, so both belong in the answer");
     }
 
     /// <summary>The same rebuild is owed when the flow leaves through a refusal rather than a cancel.</summary>
@@ -822,6 +848,58 @@ public class LoraViewerViewModelSyncTests
             Times.Never, "a run that died midway did not cover what the user agreed to");
         _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Once,
             "the committed work reaches the grid once — the run path's rebuild, no backstop second pass");
+    }
+
+    /// <summary>
+    /// The abort verdict must not drop the run's other bad news. The abort branch used to return
+    /// early with reason + Summary alone, skipping the ` · N failed`, ` · N moved files re-linked`
+    /// and unexpected-failure suffixes — the run where the most went wrong was the one whose
+    /// status line said the least. And Summary already carries "(aborted)", so the word appeared
+    /// twice.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_AnAbortedRunStillStatesItsFailuresAndRepoints()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService(
+            repointed: 5,
+            runAbortReason: "Unexpected InvalidOperationException: database is locked",
+            failures:
+            [
+                new SyncFailure(SyncStepKind.IdentifyModel, 1, "a.safetensors", "timeout"),
+                new SyncFailure(SyncStepKind.IdentifyModel, 2, "b.safetensors", "timeout"),
+            ]);
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        vm.SyncStatus.Should().Be(
+            "Sync aborted — Unexpected InvalidOperationException: database is locked · " +
+            "Discovered 0 · Identified 1/3 · 2 failed · 5 moved files re-linked",
+            "the abort leads, but the failures and repoints the run racked up still follow");
+        (vm.SyncStatus!.Length - vm.SyncStatus.Replace("aborted", "").Length).Should().Be("aborted".Length,
+            "the lead already says aborted; Summary's own \"(aborted)\" marker must not repeat it");
+    }
+
+    /// <summary>
+    /// A run that died before any step tallied — the API-key read, the first step's selection —
+    /// has a report whose table is empty. The status line already leads with the abort; opening a
+    /// modal dialog over an empty table on top of it says nothing the line did not. The aborted
+    /// SCAN path already behaves this way (status line only), and an abort with committed work
+    /// (non-empty steps) or scan failures still opens the dialog, per the test above.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_AnAbortBeforeAnyStepSkipsTheEmptyReportDialog()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService(
+            runAbortReason: "Unexpected InvalidOperationException: database is locked",
+            runHasNoSteps: true);
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _reportDialogVm.Should().BeNull("there is no row the dialog could show that the status line has not already said");
+        vm.SyncStatus.Should().StartWith("Sync aborted").And.Contain("database is locked",
+            "suppressing the empty dialog must not soften the verdict");
     }
 
     /// <summary>
@@ -1431,6 +1509,35 @@ public class LoraViewerViewModelSyncTests
         var outcome = await vm.DownloadMetadataForTileAsync(CreateTile(modelId: 42));
 
         outcome.Faulted.Should().BeFalse("the run completed cleanly; \"No metadata found\" is the honest message here");
+    }
+
+    /// <summary>
+    /// #536, one notch narrower: an ordinary recorded failure — the step asked and the ask itself
+    /// failed (HTTP 500, timeout, disk error) — is a non-answer too. It is expected (the step
+    /// claimed it, so it is not an UnexpectedFailure) and it is not an abort, so it slipped past
+    /// <c>Faulted</c> and the detail view said "No metadata found on Civitai for this file." over
+    /// a transport failure. Disjointness with the honest no holds in the real step too: identify
+    /// records "checked, not on Civitai" as a success/skip, never as a failure.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMetadataForTile_AnOrdinaryFailedAskIsFaultedNotAVerdictAboutCivitai()
+    {
+        var vm = CreateViewModel();
+
+        _sync.Setup(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncScope s, SyncOptions o, CancellationToken _) => PlanFor(s, o, IdentifyStep(1)));
+        _sync.Setup(s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncPlan p, IProgress<LibrarySyncProgress>? _, CancellationToken _) => new SyncReport(
+                p, [new SyncStepReport(SyncStepKind.IdentifyModel, 1, 1, 0, 0, 1)],
+                [new SyncFailure(SyncStepKind.IdentifyModel, 42, "a.safetensors",
+                    "Response status code does not indicate success: 500")],
+                Cancelled: false, Elapsed: TimeSpan.Zero, NewFilesDiscovered: 0));
+
+        var outcome = await vm.DownloadMetadataForTileAsync(CreateTile(modelId: 42));
+
+        outcome.Applied.Should().BeFalse();
+        outcome.Faulted.Should().BeTrue("a failed ask is not an answer about Civitai");
+        outcome.FaultReason.Should().Contain("500", "the message must name the failure, not a verdict");
     }
 
     // -------------------------------------------------------------------------------- single flight

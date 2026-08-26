@@ -558,6 +558,42 @@ public sealed class LibrarySyncServiceTests : IDisposable
         (await service.ExecuteAsync(plan)).AbortReason.Should().BeNull();
     }
 
+    /// <summary>
+    /// The outer catch's counterpart to
+    /// <see cref="Execute_ForeignTaskCanceledExceptionIsAnOrdinaryFailure"/>: an OCE escaping a
+    /// step's <c>SelectAsync</c> when nobody cancelled — an HttpClient timeout, a linked token —
+    /// is the same door #535 closed, and must abort loudly. Unfiltered, the cancellation catch
+    /// swallowed it as "the user cancelled": the Cancelled banner over a step that blew up.
+    /// </summary>
+    [Fact]
+    public async Task Execute_AForeignOceFromAStepsSelectionIsAnAbortNotACancellation()
+    {
+        using var unrelated = new CancellationTokenSource();
+        await unrelated.CancelAsync();
+
+        var identify = new FakeStep(SyncStepKind.IdentifyModel)
+            .Selecting([Item(1)])
+            .Returning(_ => SyncItemResult.Success);
+        var tags = new FakeStep(SyncStepKind.FetchTags).Selecting([Item(9)]).Returning(_ => SyncItemResult.Success);
+        // Selection #1 is plan time; #2 is the run's re-selection, where a timeout surfaces as a
+        // cancellation type carrying a token that is not the run's.
+        tags.OnSelect = () => tags.SelectCalls == 2
+            ? throw new TaskCanceledException("timeout", null, unrelated.Token)
+            : Task.FromResult(0);
+
+        var service = NewService([identify, tags]);
+        var plan = await service.PlanAsync(SyncScope.Library, OptionsFor(SyncStepKind.IdentifyModel, SyncStepKind.FetchTags));
+
+        var report = await service.ExecuteAsync(plan);
+
+        report.Cancelled.Should().BeFalse(
+            "nobody pressed Cancel — this OCE is a timeout wearing a cancellation type");
+        report.AbortReason.Should().Contain("TaskCanceledException",
+            "a step that blew up must be stated as such, not laundered into a cancellation");
+        report.Steps.Single(s => s.Kind == SyncStepKind.IdentifyModel).Succeeded.Should().Be(1,
+            "the committed work is still reported");
+    }
+
     // ------------------------------------------------------ Thumbnail parallelism
 
     [Fact]

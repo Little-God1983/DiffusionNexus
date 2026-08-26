@@ -225,8 +225,13 @@ DownloadMissingMetadataAsync                      (every service call runs on Ta
 │      ExecuteAsync itself is TOTAL (#535): an exception escaping outside its item loop (a
 │      step's SelectAsync, the API-key read) comes back as report.AbortReason instead of
 │      throwing — the steps that ran are still reported, the failing one and everything after
-│      it never ran. An aborted run shows its report, leads the status line with
-│      "Sync aborted — {reason}", and never stamps "last full sync".
+│      it never ran. An aborted run shows its report (unless it died before ANY step tallied
+│      and has no failure rows either — an empty table says nothing the status line has not,
+│      so that one case stays on the line, like the aborted-scan path), leads the status with
+│      "Sync aborted — {reason}", and never stamps "last full sync". The service's outer
+│      cancellation catch is filtered like its item-level one: an OCE while the run's token is
+│      NOT cancelled (an HttpClient timeout escaping SelectAsync) aborts rather than posing
+│      as "cancelled by the user".
 │      An OperationCanceledException at THIS await means Task.Run never invoked the delegate
 │      (a cancellation inside the service returns a Cancelled report instead), so the scoped
 │      catch waives the owed rebuild there — and only there (#540).
@@ -252,12 +257,15 @@ DownloadMissingMetadataAsync                      (every service call runs on Ta
 │      Refresh to reload" to the status line instead of replacing the verdict.
 │
 ├── 8. SyncStatus:
-│      report.AbortReason ⇒ "Sync aborted — {reason} · {Summary}"   ← leads with the failure
-│      report.NewFilesDiscovered == 0 && report.FilesRepointed == 0 && every step Planned == 0
+│      NOT aborted && report.NewFilesDiscovered == 0 && report.FilesRepointed == 0
+│        && every step Planned == 0
 │        ⇒ "Library is up to date — nothing to do"   ← the honest verdict, from the report
 │      otherwise report.Summary (+ " · N failed" when report.Failures is non-empty)
 │        (+ " · N moved files re-linked" when report.FilesRepointed > 0)
 │        (+ " · N items failed unexpectedly (see log)" when report.UnexpectedFailures > 0)
+│      report.AbortReason ⇒ "Sync aborted — {reason} · " leads the line above (with Summary's
+│        own "(aborted)" marker dropped — the lead already says it): the run where the most
+│        went wrong keeps its failed/re-linked/unexpected suffixes
 │      (step 1's count is folded back into the run's report the moment it returns — rebuilt
 │       explicitly, never with `with`: Summary is a get-only auto-property and the record
 │       copy constructor would carry the stale one — so the status line, the report table
@@ -520,8 +528,11 @@ not-found outcomes (`NotIdentified`, `Sidecar`, `Header`, `Heuristic`, `Error`) 
 their retry windows, which is the checkbox's purpose.
 
 The method returns `TileMetadataSyncResult(Applied, Report)`: `Applied` (any step succeeded)
-tells the detail view to reload; `Faulted` (the run aborted, or items failed with exceptions no
-step claimed, #535) is checked FIRST and wins — a failed ask is not an answer, so it reads
+tells the detail view to reload; `Faulted` (the run aborted, items failed with exceptions no
+step claimed — #535 — or the ask itself failed in a way the step did claim: an HTTP 500, a
+timeout, recorded as an ordinary `SyncFailure`, #536; the honest no stays disjoint because
+identify records "checked, not on Civitai" as a completed item, never a failure) is checked
+FIRST and wins — a failed ask is not an answer, so it reads
 "Metadata download failed: {reason}" (or, when something was still applied before the failure,
 "Metadata partially refreshed — the run hit an error, see the log."); only then does
 `IdentifyPlanned` separate the two honest-no wordings — "No metadata found on Civitai for this
