@@ -42,6 +42,12 @@ public partial class ModelTileViewModel : ViewModelBase
     private readonly IUiScheduler _uiScheduler = AvaloniaUiScheduler.Instance;
 
     /// <summary>
+    /// The user's retry windows, read at the moment the scroll gate asks. Null outside DI, where
+    /// <see cref="SyncRetryPolicy.Default"/> stands in — the same policy the tile used to hardcode.
+    /// </summary>
+    private readonly Func<SyncRetryPolicy>? _retryPolicyProvider;
+
+    /// <summary>
     /// Design-time / demo constructor. Produces a tile with no backing services —
     /// commands that need the database or dialogs no-op, and the clipboard/scheduler
     /// use their shared production defaults.
@@ -62,6 +68,7 @@ public partial class ModelTileViewModel : ViewModelBase
             _dialogService = d.DialogService;
             _clipboard = d.Clipboard ?? AvaloniaClipboardService.Instance;
             _uiScheduler = d.UiScheduler ?? AvaloniaUiScheduler.Instance;
+            _retryPolicyProvider = d.RetryPolicyProvider;
         }
     }
     /// <summary>
@@ -1337,7 +1344,8 @@ public partial class ModelTileViewModel : ViewModelBase
             // to retry: without this gate a poster that 404s costs a GET, a DI scope and a
             // SaveChanges every single time the tile passes the viewport, forever.
             ThumbnailImage = null;
-            if (IsScrollFetchDue(primaryImage, DateTimeOffset.UtcNow))
+            var policy = _retryPolicyProvider?.Invoke() ?? SyncRetryPolicy.Default;
+            if (IsScrollFetchDue(primaryImage, DateTimeOffset.UtcNow, policy))
                 _ = DownloadThumbnailAsync(primaryImage, allowVideoDownload: false, ct);
         }
         else
@@ -1396,9 +1404,15 @@ public partial class ModelTileViewModel : ViewModelBase
     /// asking. <see cref="TryDownloadMissingThumbnailAsync"/> — the one path a person initiates —
     /// does not come through here at all, because a user who clicks "download the missing
     /// thumbnail" has overruled every window by asking.
+    /// <para>
+    /// <paramref name="policy"/> is the user's, not a constant: it comes from the saved sync
+    /// settings through <see cref="ModelTileDependencies.RetryPolicyProvider"/>, so a library
+    /// whose owner widened the error window does not keep re-fetching on scroll on a schedule
+    /// the sync run no longer agrees with.
+    /// </para>
     /// </remarks>
-    internal static bool IsScrollFetchDue(ModelImage image, DateTimeOffset now) =>
-        SyncRetryPolicy.Default.IsThumbnailDue(image.ThumbnailAttemptedAt, image.ThumbnailFailure, now, force: false);
+    internal static bool IsScrollFetchDue(ModelImage image, DateTimeOffset now, SyncRetryPolicy policy) =>
+        policy.IsThumbnailDue(image.ThumbnailAttemptedAt, image.ThumbnailFailure, now, force: false);
 
     /// <summary>
     /// Whether a decode attempt means the stored BLOB is corrupt.

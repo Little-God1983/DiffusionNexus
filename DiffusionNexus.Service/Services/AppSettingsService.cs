@@ -305,6 +305,9 @@ public sealed class AppSettingsService : IAppSettingsService
         existingSettings.LastBackupAt = settings.LastBackupAt;
         existingSettings.ComfyUiServerUrl = settings.ComfyUiServerUrl;
         existingSettings.LoraUpdateCheckStalenessDays = settings.LoraUpdateCheckStalenessDays;
+        existingSettings.SyncNotIdentifiedRetryDays = settings.SyncNotIdentifiedRetryDays;
+        existingSettings.SyncErrorRetryDays = settings.SyncErrorRetryDays;
+        existingSettings.SyncThumbnailConcurrency = settings.SyncThumbnailConcurrency;
         existingSettings.UpdatedAt = settings.UpdatedAt;
 
         // Handle LoRA sources (remove deleted, update existing, add new)
@@ -709,6 +712,21 @@ public sealed class AppSettingsService : IAppSettingsService
         if (settings is not null)
         {
             settings.LastBackupAt = lastBackupAt;
+            settings.UpdatedAt = DateTimeOffset.UtcNow;
+            await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task UpdateLastLibrarySyncAtAsync(DateTimeOffset lastLibrarySyncAt, CancellationToken cancellationToken = default)
+    {
+        var settings = await _unitOfWork.AppSettings
+            .GetSettingsAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        if (settings is not null)
+        {
+            settings.LastLibrarySyncAt = lastLibrarySyncAt;
             settings.UpdatedAt = DateTimeOffset.UtcNow;
             await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }

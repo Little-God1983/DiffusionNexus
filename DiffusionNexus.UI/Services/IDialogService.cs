@@ -430,6 +430,12 @@ public interface IDialogService
     /// </summary>
     /// <returns>Whether the user confirmed, plus the resolved Civitai model/version.</returns>
     Task<AssignCivitaiIdsDialogResult> ShowAssignCivitaiIdsDialogAsync();
+
+    /// <summary>Shows the metadata-sync plan dialog. Never null: closing the window is a cancel.</summary>
+    Task<SyncPlanDialogResult> ShowSyncPlanDialogAsync(SyncPlanDialogViewModel viewModel);
+
+    /// <summary>Shows the post-run sync report.</summary>
+    Task ShowSyncReportDialogAsync(SyncReportDialogViewModel viewModel);
 }
 
 /// <summary>

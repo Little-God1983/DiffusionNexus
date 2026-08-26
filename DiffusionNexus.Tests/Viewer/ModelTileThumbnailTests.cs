@@ -235,7 +235,7 @@ public class ModelTileThumbnailTests
     [Fact]
     public void ScrollFetch_IsDueForARowNothingHasEverTried()
     {
-        ModelTileViewModel.IsScrollFetchDue(new ModelImage(), Now).Should().BeTrue();
+        ModelTileViewModel.IsScrollFetchDue(new ModelImage(), Now, SyncRetryPolicy.Default).Should().BeTrue();
     }
 
     /// <summary>
@@ -252,7 +252,7 @@ public class ModelTileThumbnailTests
             ThumbnailFailure = ThumbnailFailureReason.Http404,
         };
 
-        ModelTileViewModel.IsScrollFetchDue(image, Now).Should().BeFalse(
+        ModelTileViewModel.IsScrollFetchDue(image, Now, SyncRetryPolicy.Default).Should().BeFalse(
             "the asset is gone; asking again a year later costs a request to learn nothing");
     }
 
@@ -265,11 +265,11 @@ public class ModelTileThumbnailTests
             ThumbnailFailure = ThumbnailFailureReason.HttpError,
         };
 
-        ModelTileViewModel.IsScrollFetchDue(image, Now).Should().BeFalse("still inside the retry window");
+        ModelTileViewModel.IsScrollFetchDue(image, Now, SyncRetryPolicy.Default).Should().BeFalse("still inside the retry window");
 
         image.ThumbnailAttemptedAt = Now - SyncRetryPolicy.Default.ErrorRetryAfter;
 
-        ModelTileViewModel.IsScrollFetchDue(image, Now).Should().BeTrue("the CDN coming back is exactly the case to catch");
+        ModelTileViewModel.IsScrollFetchDue(image, Now, SyncRetryPolicy.Default).Should().BeTrue("the CDN coming back is exactly the case to catch");
     }
 
     [Fact]
@@ -277,8 +277,29 @@ public class ModelTileThumbnailTests
     {
         var image = new ModelImage { ThumbnailAttemptedAt = Now, ThumbnailFailure = ThumbnailFailureReason.Corrupt };
 
-        ModelTileViewModel.IsScrollFetchDue(image, Now).Should().BeTrue(
+        ModelTileViewModel.IsScrollFetchDue(image, Now, SyncRetryPolicy.Default).Should().BeTrue(
             "nothing failed at the source — the row simply has no bytes any more");
+    }
+
+    /// <summary>
+    /// The window is the user's (Plan E): the same row is due or not depending on the policy the
+    /// tile is handed, so a widened error window in settings really does stop the scroll path
+    /// re-fetching on the default one-day cadence.
+    /// </summary>
+    [Fact]
+    public void ScrollFetch_HonoursTheSettingsDerivedWindowRatherThanTheDefaultOne()
+    {
+        var image = new ModelImage
+        {
+            ThumbnailAttemptedAt = Now - TimeSpan.FromDays(7),
+            ThumbnailFailure = ThumbnailFailureReason.HttpError,
+        };
+
+        ModelTileViewModel.IsScrollFetchDue(image, Now, SyncRetryPolicy.Default).Should().BeTrue(
+            "a week is well past the default one-day error window");
+
+        ModelTileViewModel.IsScrollFetchDue(image, Now, SyncRetryPolicy.FromDays(30, 30)).Should().BeFalse(
+            "the user asked for a 30-day error window, and the scroll gate is not exempt from it");
     }
 
     // ------------------------------------------- the user-initiated static-sibling pick (Task 8)

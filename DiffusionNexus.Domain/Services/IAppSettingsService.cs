@@ -31,6 +31,11 @@ public interface IAppSettingsService
     Task UpdateLastBackupAtAsync(DateTimeOffset lastBackupAt, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Stamps when the last user-started library sync completed, without touching any other setting.
+    /// </summary>
+    Task UpdateLastLibrarySyncAtAsync(DateTimeOffset lastLibrarySyncAt, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Gets the decrypted Civitai API key.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>

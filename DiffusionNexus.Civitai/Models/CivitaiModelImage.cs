@@ -81,7 +81,13 @@ public sealed record CivitaiImageMeta
     [JsonPropertyName("negativePrompt")]
     public string? NegativePrompt { get; init; }
 
+    /// <summary>
+    /// Generation seed. Tolerant converter: live payloads carry seeds beyond
+    /// <c>Int64.MaxValue</c> (JS float64 artifacts) — those read as null
+    /// instead of failing the whole model version.
+    /// </summary>
     [JsonPropertyName("seed")]
+    [JsonConverter(typeof(TolerantNullableInt64JsonConverter))]
     public long? Seed { get; init; }
 
     [JsonPropertyName("steps")]

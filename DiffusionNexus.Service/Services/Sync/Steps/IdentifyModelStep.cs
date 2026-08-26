@@ -81,15 +81,17 @@ public sealed class IdentifyModelStep : ISyncStep
         var settings = dbScope.ServiceProvider.GetRequiredService<IAppSettingsService>();
         var enabledRoots = await settings.GetEnabledLoraSourcesAsync(ct).ConfigureAwait(false);
 
-        // A forced run is the user asking for another look at a model they can see, so a stored
-        // Civitai id must not hide it: that is what made the per-tile button answer "no metadata
-        // found on Civitai" for every already-matched model. An explicit id scope is the same
-        // request by a different route. Due-ness is still the retry policy's call — and under
-        // force it always says yes.
-        var includeMatched = options.ForceIdentify || scope.Kind == SyncScopeKind.Models;
+        // An explicit id scope is the user asking for another look at a model they can see — the
+        // per-tile "Download Metadata" button — so a stored Civitai id must not hide it: that is
+        // what made that button answer "no metadata found on Civitai" for every already-matched
+        // model. A bulk run is a different promise: its force is the dialog's "Models not found on
+        // Civitai" checkbox, and Matched is exactly "found" — so a library- or folder-wide force
+        // neither fetches matched rows here nor (see IsDue) re-checks the ones the CivitaiId
+        // filter cannot see, and it no longer drags hand-edited models into an overwrite run.
+        var explicitScope = scope.Kind == SyncScopeKind.Models;
 
         var candidates = await uow.SyncStates
-            .SelectIdentifyCandidatesAsync(scope, enabledRoots, includeMatched, ct)
+            .SelectIdentifyCandidatesAsync(scope, enabledRoots, includeMatched: explicitScope, ct)
             .ConfigureAwait(false);
 
         var items = new List<SyncItem>(candidates.Count);
@@ -101,7 +103,7 @@ public sealed class IdentifyModelStep : ISyncStep
             // that — leave it to the verify/discover steps rather than burning an attempt on it.
             if (!File.Exists(candidate.LocalPath)) continue;
 
-            if (IsDue(candidate, options, now)) items.Add(new SyncItem(candidate.ModelId, candidate.Name, candidate));
+            if (IsDue(candidate, options, explicitScope, now)) items.Add(new SyncItem(candidate.ModelId, candidate.Name, candidate));
         }
 
         _logger?.Debug(LogCategory.General, LogSource,
@@ -127,9 +129,14 @@ public sealed class IdentifyModelStep : ISyncStep
     /// is probed only for rows that have been checked before, not for the whole library.
     /// </para>
     /// </remarks>
-    private static bool IsDue(IdentifyCandidate candidate, SyncOptions options, DateTimeOffset now)
+    private static bool IsDue(IdentifyCandidate candidate, SyncOptions options, bool explicitScope, DateTimeOffset now)
     {
-        if (options.Policy.IsIdentifyDue(candidate.Outcome, candidate.CheckedAt, candidate.Attempts, now, options.ForceIdentify))
+        // Force re-looks at a Matched model only when the user pointed at it (the explicit scope).
+        // This gate cannot live in the candidate filter alone: the duplicate copy that owns the
+        // page id but no CivitaiId passes that filter and arrives here as Matched all the same.
+        var force = options.ForceIdentify && (explicitScope || candidate.Outcome != SyncOutcome.Matched);
+
+        if (options.Policy.IsIdentifyDue(candidate.Outcome, candidate.CheckedAt, candidate.Attempts, now, force))
             return true;
 
         // A sidecar that appeared or changed since the last look is new evidence, so it beats the

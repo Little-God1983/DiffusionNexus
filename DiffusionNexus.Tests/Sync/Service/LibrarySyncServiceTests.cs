@@ -351,9 +351,14 @@ public sealed class LibrarySyncServiceTests : IDisposable
 
         service.IsRunning.Should().BeTrue();
 
+        // Its own type, not a bare InvalidOperationException: a step's SelectAsync raises that too
+        // (GetRequiredService, Single() over nothing), and the viewer used to report every one of
+        // them as "already running" at Info level. Still an InvalidOperationException underneath,
+        // so any caller that predates the type keeps catching it.
         var second = () => service.ExecuteAsync(plan);
-        await second.Should().ThrowAsync<InvalidOperationException>()
+        await second.Should().ThrowAsync<SyncAlreadyRunningException>()
             .WithMessage("*already running*");
+        (await Record.ExceptionAsync(second)).Should().BeAssignableTo<InvalidOperationException>();
 
         gate.SetResult();
         await first;
@@ -481,6 +486,91 @@ public sealed class LibrarySyncServiceTests : IDisposable
         report.Steps.Single().Succeeded.Should().Be(1);
     }
 
+    // ------------------------------------------------------ Thumbnail parallelism
+
+    [Fact]
+    public async Task Thumbnails_RunInParallel_UpToTheConfiguredConcurrency()
+    {
+        var probe = new ConcurrencyProbeStep(itemCount: 12);
+        var service = NewService([probe]);
+        var options = new SyncOptions(new HashSet<SyncStepKind> { SyncStepKind.Thumbnails }, ThumbnailConcurrency: 4);
+
+        var plan = await service.PlanAsync(SyncScope.Library, options);
+        var report = await service.ExecuteAsync(plan);
+
+        probe.Executed.Should().Be(12);
+        probe.MaxObservedConcurrency.Should().BeGreaterThan(1).And.BeLessThanOrEqualTo(4);
+        report.Steps.Single().Succeeded.Should().Be(12);
+    }
+
+    [Fact]
+    public async Task Thumbnails_ConcurrencyOne_StaysStrictlySequential()
+    {
+        var probe = new ConcurrencyProbeStep(itemCount: 6);
+        var service = NewService([probe]);
+        var options = new SyncOptions(new HashSet<SyncStepKind> { SyncStepKind.Thumbnails }, ThumbnailConcurrency: 1);
+
+        var plan = await service.PlanAsync(SyncScope.Library, options);
+        await service.ExecuteAsync(plan);
+
+        probe.MaxObservedConcurrency.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ParallelThumbnails_RecordEveryFailure_WithoutLosingAny()
+    {
+        var probe = new ConcurrencyProbeStep(itemCount: 10, failOddItems: true);
+        var service = NewService([probe]);
+        var options = new SyncOptions(new HashSet<SyncStepKind> { SyncStepKind.Thumbnails }, ThumbnailConcurrency: 4);
+
+        var plan = await service.PlanAsync(SyncScope.Library, options);
+        var report = await service.ExecuteAsync(plan);
+
+        var step = report.Steps.Single();
+        step.Processed.Should().Be(10);
+        step.Failed.Should().Be(5);
+        report.Failures.Should().HaveCount(5);
+        report.Failures.Select(f => f.Reason).Should().AllBe("probe-failure");
+    }
+
+    /// <summary>
+    /// The load-bearing half of the branch condition: a PACED API step must never parallelize,
+    /// whatever the configured thumbnail concurrency says. Losing this silently turns the 1.5 s
+    /// Civitai courtesy pacing into a burst and gets users rate-limited.
+    /// </summary>
+    [Fact]
+    public async Task ANonThumbnailsStep_NeverParallelizes_RegardlessOfTheConcurrencySetting()
+    {
+        var probe = new ConcurrencyProbeStep(itemCount: 8, kind: SyncStepKind.FetchTags);
+        var service = NewService([probe]);
+        var options = new SyncOptions(new HashSet<SyncStepKind> { SyncStepKind.FetchTags }, ThumbnailConcurrency: 4);
+
+        var plan = await service.PlanAsync(SyncScope.Library, options);
+        await service.ExecuteAsync(plan);
+
+        probe.Executed.Should().Be(8);
+        probe.MaxObservedConcurrency.Should().Be(1);
+    }
+
+    /// <summary>The service, not the caller, owns the sane range: junk settings degrade, never throw.</summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-3)]
+    [InlineData(100)]
+    public async Task ThumbnailConcurrency_OutOfRangeValues_AreClampedNotThrown(int configured)
+    {
+        var probe = new ConcurrencyProbeStep(itemCount: 10);
+        var service = NewService([probe]);
+        var options = new SyncOptions(new HashSet<SyncStepKind> { SyncStepKind.Thumbnails }, ThumbnailConcurrency: configured);
+
+        var plan = await service.PlanAsync(SyncScope.Library, options);
+        var report = await service.ExecuteAsync(plan);
+
+        report.Steps.Single().Succeeded.Should().Be(10);
+        probe.MaxObservedConcurrency.Should().BeLessThanOrEqualTo(8);
+        if (configured < 1) probe.MaxObservedConcurrency.Should().Be(1, "a clamped-to-1 value must stay sequential");
+    }
+
     // ------------------------------------------------------------------ DI
 
     [Fact]
@@ -606,6 +696,57 @@ public sealed class LibrarySyncServiceTests : IDisposable
             if (OnExecute is not null) await OnExecute(item);
 
             return _result(item);
+        }
+    }
+
+    /// <summary>
+    /// A self-contained <c>Thumbnails</c> step that records the highest number of concurrently
+    /// in-flight <see cref="ExecuteOneAsync"/> calls it observed, to prove (or disprove) that the
+    /// service actually parallelizes this step's items.
+    /// </summary>
+    private sealed class ConcurrencyProbeStep : ISyncStep
+    {
+        private readonly IReadOnlyList<SyncItem> _items;
+        private readonly bool _failOddItems;
+        private int _inFlight;
+
+        public int MaxObservedConcurrency;
+        public int Executed;
+
+        public ConcurrencyProbeStep(int itemCount, bool failOddItems = false, SyncStepKind kind = SyncStepKind.Thumbnails)
+        {
+            _items = Enumerable.Range(1, itemCount)
+                .Select(i => new SyncItem(i, $"model-{i}", i))
+                .ToList();
+            _failOddItems = failOddItems;
+            Kind = kind;
+        }
+
+        public SyncStepKind Kind { get; }
+        public string Description => "probe";
+        public TimeSpan EstimatedPerItem => TimeSpan.Zero;
+
+        public Task<IReadOnlyList<SyncItem>> SelectAsync(SyncScope scope, SyncOptions options, DateTimeOffset now, CancellationToken ct)
+            => Task.FromResult(_items);
+
+        public async Task<SyncItemResult> ExecuteOneAsync(SyncItem item, string? apiKey, CancellationToken ct)
+        {
+            var now = Interlocked.Increment(ref _inFlight);
+            int seen;
+            do
+            {
+                seen = MaxObservedConcurrency;
+                if (now <= seen) break;
+            } while (Interlocked.CompareExchange(ref MaxObservedConcurrency, now, seen) != seen);
+
+            await Task.Delay(25, ct);
+
+            Interlocked.Decrement(ref _inFlight);
+            Interlocked.Increment(ref Executed);
+
+            return _failOddItems && (int)item.Payload % 2 == 1
+                ? SyncItemResult.Failure("probe-failure")
+                : SyncItemResult.Success;
         }
     }
 

@@ -8,6 +8,32 @@ public sealed record SyncRetryPolicy(TimeSpan NotIdentifiedRetryAfter, TimeSpan 
 {
     public static SyncRetryPolicy Default { get; } = new(TimeSpan.FromDays(30), TimeSpan.FromDays(1), 3);
 
+    /// <summary>
+    /// Builds a policy from the user's saved settings. Clamps both windows to 1–3650 days:
+    /// <see cref="MaxErrorAttempts"/> stays at the default, because it caps API hammering inside
+    /// one run window and is not a user-facing knob.
+    /// </summary>
+    /// <remarks>
+    /// The floor: zero would mean "always due", which turns every plan into a full re-run — when
+    /// that is wanted it is a Force checkbox on the plan dialog, not a saved setting.
+    /// <para>
+    /// The cap: these values are not guaranteed to come from the settings combo boxes.
+    /// <c>SettingsExportService.ImportAsync</c> copies them straight out of a JSON file with no
+    /// range check, and <c>AppSettingsService.SaveSettingsAsync</c> persists them unvalidated —
+    /// so a hand-edited or corrupted <c>settings.json</c> carrying <c>2147483647</c> reached
+    /// <see cref="TimeSpan.FromDays"/>, which throws above ~10 675 199 days. Every Download
+    /// Metadata press then died with "TimeSpan overflowed because the duration is too long", and
+    /// the tiles' startup read silently fell back to the default: an unusable button with no way
+    /// to see why. Ten years is past every meaningful horizon, so clamping degrades instead of
+    /// throwing — the same "the service owns the sane range" stance already applied to
+    /// <c>ThumbnailConcurrency</c> in <c>LibrarySyncService</c>.
+    /// </para>
+    /// </remarks>
+    public static SyncRetryPolicy FromDays(int notIdentifiedDays, int errorDays) =>
+        new(TimeSpan.FromDays(Math.Clamp(notIdentifiedDays, 1, 3650)),
+            TimeSpan.FromDays(Math.Clamp(errorDays, 1, 3650)),
+            Default.MaxErrorAttempts);
+
     /// <summary>Whether an identity attempt is due given the stored outcome.</summary>
     public bool IsIdentifyDue(SyncOutcome outcome, DateTimeOffset? checkedAt, int attempts, DateTimeOffset now, bool force)
     {

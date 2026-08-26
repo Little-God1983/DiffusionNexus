@@ -173,37 +173,63 @@ RefreshAsync
 The viewer owns none of this logic. The toolbar button and the detail panel's per-LoRA
 button both drive `ILibrarySyncService` (`DiffusionNexus.Service/Services/Sync/`), which
 plans a run, executes it step by step and records **per-model state** so a second run only
-does what is genuinely outstanding. `LoraViewerViewModel` just starts the run, shows
-progress, and rebuilds its grid once at the end.
+does what is genuinely outstanding. `LoraViewerViewModel` scans, asks the user what to do
+about what the scan found, shows progress, rebuilds its grid once at the end, and reports.
 
 ```
-DownloadMissingMetadataAsync                      (both service calls run on Task.Run —
+DownloadMissingMetadataAsync                      (every service call runs on Task.Run —
 │                                                  SQLite is synchronous, and the planning
-├── PlanAsync(SyncScope.Library, SyncOptions.All)   pass + the folder scan would otherwise
-│     → SyncPlan: one SyncPlanStep per step         freeze the overlay and the Cancel button)
-│       (Kind, Count, EstimatedDuration, Description)
-│     → plan.HasWork == false ⇒ "Library is up to date — nothing to do", no run.
-│       Only reachable for an option set WITHOUT DiscoverFiles: a plan carrying the
-│       discovery step always reports work, because nobody knows what a scan will
-│       find until it has run.
-│     (Plan B puts a confirmation dialog here; for now the plan is logged and started)
+├── 1. Discovery pre-run                            pass + the folder scan would otherwise
+│      Plan+Execute with steps {DiscoverFiles}      freeze the overlay and the Cancel button)
+│      → report.NewFilesDiscovered
+│      Runs BEFORE the question, and is the one step nobody is asked about: a scan cannot be
+│      counted in advance, and running it first is what lets every count below include the
+│      files it just found.
 │
-├── ExecuteAsync(plan, progress, ct)
-│     progress → status bar: "{Label} [{index}/{total}] {currentItem}"
-│     steps run in registration order — a file must be discovered before it can be
-│     identified, and only an identified model has the ids tags/images need
+├── 2. PlanAsync(SyncScope.Library, base options)
+│      steps {IdentifyModel, FetchTags, FetchImages, Thumbnails}; RetryPolicy and
+│      ThumbnailConcurrency come from the saved sync settings, not from constants
+│      → SyncPlan: one SyncPlanStep per step (Kind, Count, EstimatedDuration, Description)
 │
-├── RebuildTilesFromDatabaseAsync()   ← exactly once, after the run — including after a
+├── 3. SyncPlanDialog   ← the busy overlay comes DOWN: nothing is running while the user reads
+│      per-step counts + estimates with tick boxes, four Force toggles that re-plan live,
+│      "Last full sync: …" from AppSettings.LastLibrarySyncAt, and the discovered count
+│      cancelled / closed ⇒ "Sync cancelled — nothing was run.", or
+│        "Library is up to date — nothing to do" when the plan had no counted work
+│
+├── 4. PlanAsync(SyncScope.Library, the options the dialog returned)
+│      re-planned rather than executing the dialog's plan: it is cheap, the ticks and forces
+│      select a different set of items, and the dialog may have been open for minutes
+│
+├── 5. ExecuteAsync(plan, progress, ct)
+│      progress → status bar: "{Label} [{index}/{total}] {currentItem}"
+│      steps run in registration order — a file must be discovered before it can be
+│      identified, and only an identified model has the ids tags/images need
+│      InvalidOperationException from the service's single-flight gate (a download's
+│      completion sync can hold it) ⇒ "A metadata sync is already running." — a "not now",
+│      not a fault: no stack trace, no retry loop. Both runs above are guarded.
+│
+├── 6. UpdateLastLibrarySyncAtAsync(UtcNow)   ← only when the run was NOT cancelled, and with
+│                                        CancellationToken.None: it records what already
+│                                        happened, so a just-pressed Cancel must not lose it
+│
+├── 7. RebuildTilesFromDatabaseAsync()   ← exactly once, after the run — including after a
 │                                       CANCELLED one: those models are already committed,
 │                                       and the run's (signalled) token is deliberately not
 │                                       passed here, or the rebuild would be skipped and the
 │                                       report thrown away with it
 │
-└── SyncStatus:
-      report.NewFilesDiscovered == 0 && every step Planned == 0
-        ⇒ "Library is up to date — nothing to do"   ← the honest verdict, from the report
-      otherwise report.Summary (+ " · N failed" when report.Failures is non-empty)
-        (+ " · N items failed unexpectedly (see log)" when report.UnexpectedFailures > 0)
+├── 8. SyncStatus:
+│      report.NewFilesDiscovered == 0 && every step Planned == 0
+│        ⇒ "Library is up to date — nothing to do"   ← the honest verdict, from the report
+│      otherwise report.Summary (+ " · N failed" when report.Failures is non-empty)
+│        (+ " · N items failed unexpectedly (see log)" when report.UnexpectedFailures > 0)
+│      (step 1's count is folded back into the run's report the moment it returns — rebuilt
+│       explicitly, never with `with`: Summary is a get-only auto-property and the record
+│       copy constructor would carry the stale one — so the status line, the report table
+│       and the dialog's discovered line all say the same number)
+│
+└── 9. SyncReportDialog — per-step counts, failures grouped by step, the discovered count
 ```
 
 ### The steps
@@ -378,13 +404,26 @@ the network.
 **Checked-and-empty is final.** A model whose tags were fetched and came back empty is
 never re-fetched; only an explicit Force re-asks.
 
-### Retry windows (`SyncRetryPolicy.Default`)
+### Retry windows (`SyncRetryPolicy`)
+
+The windows below are the defaults; the two that are user-facing come from
+**Settings → LoRA Viewer → Metadata Sync** (`SyncNotIdentifiedRetryDays` — 7/14/30/60/90,
+default 30; `SyncErrorRetryDays` — 1/3/7, default 1) and reach the policy through
+`SyncRetryPolicy.FromDays`, which clamps either value to 1–3650 days: `0` would turn the
+retry window into a busy-loop, and a value big enough to overflow `TimeSpan.FromDays` would
+otherwise throw on every press — neither number is validated on the way in, because the
+settings importer copies them straight out of a JSON file. `MaxErrorAttempts` (3) is not
+user-facing — it is a fixed ceiling on the `Error` row below. The viewer builds one policy
+from these settings and hands it to the bulk run, the per-LoRA button and the tiles alike,
+and the downloader builds the same one for its post-download completion sync, so a scroll
+past a thumbnail and a bulk sync of the same row never disagree about whether it is due
+(§9, "The tile — three on-demand paths, one gate").
 
 | Stored outcome | Re-checked |
 |----------------|-----------|
 | `Matched` | Never (only Force) |
-| `NotIdentified`, `Sidecar`, `Header`, `Heuristic` | After 30 days — a better source may have appeared |
-| `Error` | After 1 day, at most 3 consecutive attempts |
+| `NotIdentified`, `Sidecar`, `Header`, `Heuristic` | After `SyncNotIdentifiedRetryDays` (default 30) — a better source may have appeared |
+| `Error` | After `SyncErrorRetryDays` (default 1), at most `MaxErrorAttempts` (3) consecutive attempts |
 | `None` / no row | Immediately |
 | Tags / images already stamped | Never (only Force) |
 
@@ -407,8 +446,10 @@ sync, so every model queued behind the bad one went unchecked.
 `SyncOptions` carries `ForceIdentify`, `ForceTags`, `ForceImages`, `ForceThumbnails`.
 A forced step ignores the stored verdict and the retry window. The per-LoRA button in the
 detail panel is exactly this: `DownloadMetadataForTileAsync` plans
-`SyncScope.ForModels(modelId)` with `IdentifyModel + FetchTags + FetchImages` and
-`ForceIdentify: true` — same service, same steps, one model — then re-reads that model and
+`SyncScope.ForModels(modelId)` with `IdentifyModel + FetchTags + FetchImages + Thumbnails` and
+`ForceIdentify: true, ForceThumbnails: true` — the thumbnail is force-refreshed too, because
+"download metadata for this model" is, to the person pressing it, a request for the picture as
+well — same service, same steps, one model — then re-reads that model and
 refreshes the tile.
 
 **The scope predicate is the viewer's predicate.** "In the library" means "owns a local file
@@ -429,12 +470,18 @@ is safe by escaping, not by absence: EF renders a captured-variable `StartsWith`
 `LIKE @p ESCAPE '\'` with `%`, `_` and `\` escaped into the parameter at runtime, so those in a
 source folder's name are ordinary characters here, not wildcards.
 
-Forcing also widens *selection*, not just due-ness: `SelectIdentifyCandidatesAsync` takes an
-`includeMatched` flag (`ForceIdentify || scope.Kind == Models`) that drops the
-"no `CivitaiId` yet" predicate, and an explicit id scope additionally drops the LoRA-family
-type filter. Without that, a forced run over an already-matched model planned zero items and
-the detail panel reported "No metadata found on Civitai for this file." about a model Civitai
-knows — for most of the library.
+Force means two different things by scope, and only the explicit one touches Matched models.
+The per-tile scope widens *selection* as well as due-ness: `SelectIdentifyCandidatesAsync` takes
+an `includeMatched` flag (`scope.Kind == Models`) that drops the "no `CivitaiId` yet" predicate,
+and an explicit id scope additionally drops the LoRA-family type filter. Without that, a forced
+run over an already-matched model planned zero items and the detail panel reported "No metadata
+found on Civitai for this file." about a model Civitai knows — for most of the library. The
+library- and folder-wide force is the plan dialog's "Models not found on Civitai" checkbox, and
+it keeps that promise: Matched models are left alone — `IdentifyModelStep.IsDue` also drops the
+force for a Matched candidate the `CivitaiId` filter cannot see (the duplicate copy that owns
+only the page id) — and hand-edited models are not dragged into a bulk overwrite run. The
+not-found outcomes (`NotIdentified`, `Sidecar`, `Header`, `Heuristic`, `Error`) are forced past
+their retry windows, which is the checkbox's purpose.
 
 The method returns `TileMetadataSyncResult(Applied, Report)`: `Applied` (any step succeeded)
 tells the detail view to reload; `IdentifyPlanned` is what separates the two failure
@@ -574,6 +621,12 @@ Grid (3 rows: Auto, *, Auto)
 └── Row 2: Status Bar (SyncStatus text, auto-hides when empty)
 ```
 
+**Bulk sync windows.** `SyncPlanDialog` and `SyncReportDialog` (`Views/Dialogs/`) are not rows in
+this Grid — they are separate windows the Download Metadata flow shows through `IDialogService`,
+one before the run and one after (§4 steps 3 and 9). The plan dialog's appearance is deliberate
+about the Loading Overlay above: it comes down while the dialog is open, because nothing is
+running yet — the user is still choosing what to start.
+
 ---
 
 ## 8. Filtering Pipeline
@@ -648,11 +701,19 @@ every producer — a thumbnail from the sync step, the tile, and the sidecar app
   already carries bytes contributes nothing at all, and the loop never reaches the runner-up. Rows
   with a blank URL or a `user-thumbnail://` one are dropped from the ranking itself, not merely from
   the result — left in, either could win its version and hide the real image behind it.
-- **One item per due image, no pacer.** Unlike the other four steps this one never awaits
-  `ICivitaiRequestPacer` — the CDN is a static-asset host, not the rate-limited API, and pacing a
-  library's worth of ~65 KB GETs at API speed would turn a minute into an hour. The record of an
-  attempt lives on `ModelImage` itself, not on `ModelSyncStates`, because the unit of work is the
-  image: two versions of one model are two independent thumbnails, two requests, two outcomes.
+- **One item per due image, no pacer — and the unpaced thumbnails step runs N at a time.** Unlike
+  the other four steps this one never awaits `ICivitaiRequestPacer` — the CDN is a static-asset
+  host, not the rate-limited API, and pacing a library's worth of ~65 KB GETs at API speed would
+  turn a minute into an hour. The record of an attempt lives on `ModelImage` itself, not on
+  `ModelSyncStates`, because the unit of work is the image: two versions of one model are two
+  independent thumbnails, two requests, two outcomes. `ThumbnailsStep` is the one step that runs
+  its due images with bounded parallelism instead of one at a time: `SyncOptions.ThumbnailConcurrency`
+  (from **Settings → LoRA Viewer → Metadata Sync**, clamped to 1–8, default 4) sets how many CDN GETs
+  `LibrarySyncService` has in flight at once. The other four steps stay sequential and paced — this
+  is the one place in the pipeline where "sequential" and "paced" pull apart, because the CDN needs
+  neither. The same clamp applies wherever a model has more than one due image at once: the
+  downloader's post-download completion sync and a per-tile sync both fetch that model's outstanding
+  thumbnails through the same bounded path, not one request each in series.
 - **`AllowVideoDownload` is always `false`.** A video-primary row costs exactly one small poster GET
   in bulk; if the CDN has no poster for it yet, the row fails soft (`VideoNoPoster`) and tries again
   tomorrow — it never falls back to pulling the clip. That is the **0-video-bytes-in-bulk guarantee**:
@@ -716,7 +777,10 @@ explain why.
 3. **No BLOB, fetchable URL** → gated by `IsScrollFetchDue`, which is `SyncRetryPolicy.IsThumbnailDue`
    called with `force: false` — **the scroll path honors exactly the same retry windows as the sync
    step.** A row stamped `Http404` yesterday is not re-asked on every pass through the viewport; a
-   soft failure waits out its 1-day window like it would in a bulk run. `AllowVideoDownload` is
+   soft failure waits out the user's error window (`SyncErrorRetryDays`, 1 day by default) like it
+   would in a bulk run — the tile is handed that policy through
+   `ModelTileDependencies.RetryPolicyProvider`, so scroll and sync never disagree about it.
+   `AllowVideoDownload` is
    `false` here too. Without this gate, flinging through a video-heavy library would cost one GET,
    one DI scope and one `SaveChanges` per tile per scroll, forever.
 4. **Everything else** (no URL, a `file://` row, or a `user-thumbnail://` row that lost its BLOB) →

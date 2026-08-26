@@ -286,7 +286,11 @@ public sealed class DatabaseRecoveryService
                 { "ComfyUiServerUrl", "ALTER TABLE AppSettings ADD COLUMN ComfyUiServerUrl TEXT NOT NULL DEFAULT 'http://127.0.0.1:8188/'" },
                 { "LoraUpdateCheckStalenessDays", "ALTER TABLE AppSettings ADD COLUMN LoraUpdateCheckStalenessDays INTEGER NOT NULL DEFAULT 3" },
                 { "FavoriteLoraSourcePath", "ALTER TABLE AppSettings ADD COLUMN FavoriteLoraSourcePath TEXT" },
-                { "EncryptedHuggingfaceApiKey", "ALTER TABLE AppSettings ADD COLUMN EncryptedHuggingfaceApiKey TEXT" }
+                { "EncryptedHuggingfaceApiKey", "ALTER TABLE AppSettings ADD COLUMN EncryptedHuggingfaceApiKey TEXT" },
+                { "SyncNotIdentifiedRetryDays", "ALTER TABLE AppSettings ADD COLUMN SyncNotIdentifiedRetryDays INTEGER NOT NULL DEFAULT 30" },
+                { "SyncErrorRetryDays", "ALTER TABLE AppSettings ADD COLUMN SyncErrorRetryDays INTEGER NOT NULL DEFAULT 1" },
+                { "SyncThumbnailConcurrency", "ALTER TABLE AppSettings ADD COLUMN SyncThumbnailConcurrency INTEGER NOT NULL DEFAULT 4" },
+                { "LastLibrarySyncAt", "ALTER TABLE AppSettings ADD COLUMN LastLibrarySyncAt TEXT" }
             };
 
             foreach (var col in requiredColumns)

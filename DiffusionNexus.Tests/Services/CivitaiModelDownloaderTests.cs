@@ -138,8 +138,15 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
         return sync;
     }
 
-    /// <summary>Scope factory whose scoped IUnitOfWork resolves any local path to <paramref name="modelId"/>.</summary>
-    private static IServiceScopeFactory ScopeFactory(int? modelId)
+    /// <summary>
+    /// Scope factory whose scoped IUnitOfWork resolves any local path to <paramref name="modelId"/>.
+    /// </summary>
+    /// <param name="settings">
+    /// The saved settings the completion sync reads for its retry windows and thumbnail fan-out.
+    /// Left null, no <c>IAppSettingsService</c> is registered at all — which is exactly the
+    /// fail-open case: the read throws and the completion sync runs on the defaults.
+    /// </param>
+    private static IServiceScopeFactory ScopeFactory(int? modelId, AppSettings? settings = null)
     {
         var repository = new Mock<IModelRepository>();
         repository
@@ -149,6 +156,14 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
         unitOfWork.SetupGet(u => u.Models).Returns(repository.Object);
         var services = new ServiceCollection();
         services.AddScoped(_ => unitOfWork.Object);
+
+        if (settings is not null)
+        {
+            var settingsService = new Mock<IAppSettingsService>();
+            settingsService.Setup(s => s.GetSettingsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(settings);
+            services.AddScoped(_ => settingsService.Object);
+        }
+
         return services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
     }
 
@@ -559,6 +574,81 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
 
         bad.Status.Should().Be(DownloadStatus.HashMismatch);
         bad.VerifiedSha256.Should().BeNull("verification ran and FAILED — nothing was proven");
+    }
+
+    /// <summary>
+    /// The completion sync was the one thumbnail path that honoured neither the user's retry
+    /// windows nor their fan-out: it judged due-ness by the built-in default and fetched four wide,
+    /// while the documentation said all three paths were bounded by the setting. A model can finish
+    /// with a dozen due images, so a user on a metered connection who asked for one parallel
+    /// download got four concurrent CDN GETs after every download.
+    /// </summary>
+    [Fact]
+    public async Task CompletionSync_CarriesTheUsersRetryWindowsAndThumbnailFanOut()
+    {
+        var dir = NewTempDir();
+        var sync = Sync();
+        SyncOptions? plannedOptions = null;
+        sync.Setup(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncScope scope, SyncOptions options, CancellationToken _) =>
+            {
+                plannedOptions = options;
+                return new SyncPlan(scope, options, [], DateTimeOffset.UtcNow);
+            });
+
+        // None of them the defaults, so a default value cannot be mistaken for one that travelled.
+        var settings = new AppSettings
+        {
+            SyncNotIdentifiedRetryDays = 14,
+            SyncErrorRetryDays = 3,
+            SyncThumbnailConcurrency = 1,
+        };
+
+        var downloader = new CivitaiModelDownloader(
+            Transport().Object, Coordinator().Object, sync.Object, new LibraryChangeNotifier(),
+            ScopeFactory(77, settings));
+
+        await downloader.DownloadAsync(new DownloadRequest(Version(), dir, DownloadTrigger.BrowseQueue));
+        await Settle(downloader);
+
+        plannedOptions.Should().NotBeNull();
+        plannedOptions!.ThumbnailConcurrency.Should().Be(1, "SyncThumbnailConcurrency");
+        plannedOptions.Policy.NotIdentifiedRetryAfter.Should().Be(TimeSpan.FromDays(14));
+        plannedOptions.Policy.ErrorRetryAfter.Should().Be(TimeSpan.FromDays(3));
+    }
+
+    /// <summary>
+    /// …and a settings read that fails costs the settings, not the completion sync. A download that
+    /// reached disk has succeeded whatever the follow-up does.
+    /// </summary>
+    [Fact]
+    public async Task CompletionSync_FallsBackToTheDefaultsWhenTheSettingsCannotBeRead()
+    {
+        var dir = NewTempDir();
+        var sync = Sync();
+        SyncOptions? plannedOptions = null;
+        sync.Setup(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncScope scope, SyncOptions options, CancellationToken _) =>
+            {
+                plannedOptions = options;
+                return new SyncPlan(scope, options, [], DateTimeOffset.UtcNow);
+            });
+
+        // No IAppSettingsService registered: GetRequiredService throws inside the read.
+        var downloader = new CivitaiModelDownloader(
+            Transport().Object, Coordinator().Object, sync.Object, new LibraryChangeNotifier(), ScopeFactory(77));
+
+        var outcome = await downloader.DownloadAsync(new DownloadRequest(Version(), dir, DownloadTrigger.BrowseQueue));
+        await Settle(downloader);
+
+        outcome.Status.Should().Be(DownloadStatus.Completed);
+        plannedOptions!.Steps.Should().BeEquivalentTo(new[] { SyncStepKind.FetchTags, SyncStepKind.Thumbnails },
+            "the sync still ran");
+        plannedOptions.ThumbnailConcurrency.Should().Be(4, "the record default");
+        plannedOptions.Policy.Should().BeSameAs(SyncRetryPolicy.Default);
+        sync.Verify(
+            s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>?>(), It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]

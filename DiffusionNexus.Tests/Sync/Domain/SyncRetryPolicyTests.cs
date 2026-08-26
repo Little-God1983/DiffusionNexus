@@ -98,4 +98,86 @@ public class SyncRetryPolicyTests
         plan.HasWork.Should().BeTrue();
         plan.EstimatedDuration.Should().Be(TimeSpan.FromSeconds(6));
     }
+
+    /// <summary>
+    /// Discovery is not work in the sense this property answers. It used to be special-cased as
+    /// always-work, which made <c>HasWork</c> constant-true for every full plan and every
+    /// "nothing to do" branch behind it dead code — including the viewer's up-to-date early-out.
+    /// A scan whose result nobody can count in advance is executed on its own terms instead.
+    /// </summary>
+    [Fact]
+    public void PlanHasWorkIgnoresTheUncountableDiscoveryStep()
+    {
+        var discoveryOnly = new SyncPlan(SyncScope.Library, SyncOptions.All, new[]
+        {
+            new SyncPlanStep(SyncStepKind.DiscoverFiles, 0, TimeSpan.FromSeconds(2), "Discover new files"),
+        }, Now);
+
+        discoveryOnly.HasWork.Should().BeFalse("a scan that has counted nothing is not counted work");
+
+        var withIdentify = discoveryOnly with
+        {
+            Steps = discoveryOnly.Steps
+                .Append(new SyncPlanStep(SyncStepKind.IdentifyModel, 1, TimeSpan.FromSeconds(3), "Identify"))
+                .ToList(),
+        };
+
+        withIdentify.HasWork.Should().BeTrue("one counted item in any step is work");
+    }
+
+    [Fact]
+    public void FromDays_BuildsWindowsFromSettingsValues()
+    {
+        var policy = SyncRetryPolicy.FromDays(notIdentifiedDays: 14, errorDays: 3);
+
+        policy.NotIdentifiedRetryAfter.Should().Be(TimeSpan.FromDays(14));
+        policy.ErrorRetryAfter.Should().Be(TimeSpan.FromDays(3));
+        policy.MaxErrorAttempts.Should().Be(SyncRetryPolicy.Default.MaxErrorAttempts);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    public void FromDays_FloorsAtOneDay_BecauseZeroWouldMeanAlwaysDue(int days)
+    {
+        var policy = SyncRetryPolicy.FromDays(days, days);
+
+        policy.NotIdentifiedRetryAfter.Should().Be(TimeSpan.FromDays(1));
+        policy.ErrorRetryAfter.Should().Be(TimeSpan.FromDays(1));
+    }
+
+    /// <summary>
+    /// These values are not guaranteed to come from the settings combo boxes: the settings importer
+    /// copies them straight out of a JSON file with no range check, and the repository persists them
+    /// unvalidated. <c>TimeSpan.FromDays</c> throws above ~10 675 199 days, so a corrupted
+    /// <c>settings.json</c> carrying <c>2147483647</c> made every Download Metadata press die with
+    /// "TimeSpan overflowed because the duration is too long" — an unusable button, no way to see
+    /// why. Ten years is past every meaningful horizon, so it degrades instead.
+    /// </summary>
+    [Theory]
+    [InlineData(int.MaxValue)]
+    [InlineData(3651)]
+    public void FromDays_CapsAtTenYears_BecauseTheValuesAreNotValidatedOnTheWayIn(int days)
+    {
+        var policy = SyncRetryPolicy.FromDays(days, days);
+
+        policy.NotIdentifiedRetryAfter.Should().Be(TimeSpan.FromDays(3650));
+        policy.ErrorRetryAfter.Should().Be(TimeSpan.FromDays(3650));
+    }
+
+    /// <summary>
+    /// "Everything but discovery" is derived, not listed. A sixth step kind therefore reaches the
+    /// bulk button's plan and the plan dialog's rows on its own — the hand-written copies this
+    /// replaced would have left it silently absent from both, with no compile error to say so.
+    /// </summary>
+    [Fact]
+    public void AllStepsExcept_IsEveryEnumMemberMinusTheExcludedOne()
+    {
+        var all = Enum.GetValues<SyncStepKind>();
+
+        SyncOptions.AllStepsExcept(SyncStepKind.DiscoverFiles).Should()
+            .BeEquivalentTo(all.Where(k => k != SyncStepKind.DiscoverFiles));
+        SyncOptions.AllStepsExcept(SyncStepKind.Thumbnails).Should()
+            .BeEquivalentTo(all.Where(k => k != SyncStepKind.Thumbnails));
+    }
 }

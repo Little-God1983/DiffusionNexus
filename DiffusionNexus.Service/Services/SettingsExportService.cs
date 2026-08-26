@@ -59,6 +59,9 @@ public sealed class SettingsExportService : ISettingsExportService
             UseForgeStylePrompts = settings.UseForgeStylePrompts,
             MergeLoraSources = settings.MergeLoraSources,
             LoraUpdateCheckStalenessDays = settings.LoraUpdateCheckStalenessDays,
+            SyncNotIdentifiedRetryDays = settings.SyncNotIdentifiedRetryDays,
+            SyncErrorRetryDays = settings.SyncErrorRetryDays,
+            SyncThumbnailConcurrency = settings.SyncThumbnailConcurrency,
 
             LoraSortSourcePath = settings.LoraSortSourcePath,
             LoraSortTargetPath = settings.LoraSortTargetPath,
@@ -160,6 +163,14 @@ public sealed class SettingsExportService : ISettingsExportService
             UseForgeStylePrompts = export.UseForgeStylePrompts,
             MergeLoraSources = export.MergeLoraSources,
             LoraUpdateCheckStalenessDays = export.LoraUpdateCheckStalenessDays,
+            SyncNotIdentifiedRetryDays = export.SyncNotIdentifiedRetryDays,
+            SyncErrorRetryDays = export.SyncErrorRetryDays,
+            SyncThumbnailConcurrency = export.SyncThumbnailConcurrency,
+            // LastLibrarySyncAt is deliberately left unset here (CLR default null):
+            // it is machine-local bookkeeping, not part of the export schema, and
+            // AppSettingsService.SaveSettingsAsync's whitelist does not touch that
+            // column — so the real, already-persisted value survives this import
+            // untouched rather than being overwritten with this snapshot's null.
 
             LoraSortSourcePath = export.LoraSortSourcePath,
             LoraSortTargetPath = export.LoraSortTargetPath,
