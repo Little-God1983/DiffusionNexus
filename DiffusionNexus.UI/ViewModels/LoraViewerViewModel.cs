@@ -920,6 +920,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         // cancellation catch, the generic catch) left those rows invisible until a manual Refresh.
         var discovered = 0;
         var rebuilt = false;
+        var rebuildOwed = false;
         try
         {
             IsBusy = true;
@@ -1053,6 +1054,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             var progress = new UiProgress<LibrarySyncProgress>(this, p =>
                 SyncStatus = $"{SyncReport.Label(p.Step)} [{p.Index}/{p.Total}] {p.CurrentItem}");
 
+            // From here the run may commit work — each item in its own scope — and a step's
+            // SelectAsync sits outside the loop's try in LibrarySyncService, so a non-cancellation
+            // throw there escapes ExecuteAsync with everything already durable. The finally's
+            // backstop owes a rebuild for that door too, not only for the scan's rows; the cost is
+            // one wasted rebuild when the run dies before writing anything.
+            rebuildOwed = true;
+
             SyncReport report;
             try
             {
@@ -1060,6 +1068,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             }
             catch (SyncAlreadyRunningException ex)
             {
+                // The gate refused it at Wait(0), before any work — this press wrote nothing.
+                rebuildOwed = false;
                 ReportServiceAlreadyRunning(ex);
                 return;
             }
@@ -1182,11 +1192,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             // (F3). Nothing else refreshes it — ILibraryChangeNotifier.ModelDownloaded is raised
             // only by CivitaiModelDownloader, never by DiscoverFilesStep — so without this a
             // cancelled dialog leaves twelve new LoRAs in the database and none of them on screen.
+            // rebuildOwed covers the other door: a run that died midway has committed per-item
+            // work too, and gating on the scan alone left it just as invisible.
             // Guarded so a failed rebuild costs only the rebuild: the status line above already
             // says what happened, and an exception here would replace it with a lie.
             // BEFORE the sync-running flag drops: re-enabling the per-tile button while the tile
             // collection is mid-swap would let a fetch update a tile the rebuild is discarding.
-            if (discovered > 0 && !rebuilt)
+            if ((discovered > 0 || rebuildOwed) && !rebuilt)
             {
                 try
                 {

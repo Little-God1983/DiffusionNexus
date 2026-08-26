@@ -394,6 +394,45 @@ public class LoraViewerViewModelSyncTests
             "the refusal is about the run, not about the five files the scan already committed");
     }
 
+    /// <summary>
+    /// The same rebuild is owed when the RUN dies midway, not only when the scan added rows. Each
+    /// item commits in its own scope, and a step's SelectAsync sits outside the loop's try in
+    /// LibrarySyncService — so a DbException there escapes ExecuteAsync with, say, 200 freshly
+    /// identified models already durable. Gating the backstop on "the scan discovered something"
+    /// left all of that invisible whenever the scan itself came up empty.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_RebuildsWhenTheRunDiesMidway()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService();   // discovered: 0 — only the run wrote anything
+        _throwOnExecuteCall = 2;
+        _executeThrow = new InvalidOperationException("database is locked");
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Once,
+            "whatever the run finished before dying is committed, and the grid has to show it");
+        vm.SyncStatus.Should().StartWith("Sync error:", "the rebuild must not soften the error verdict");
+    }
+
+    /// <summary>
+    /// …but a run the single-flight gate refused never got the service at all, so this press wrote
+    /// nothing beyond the scan — with an empty scan there is nothing new to re-project.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_DoesNotRebuildWhenARefusedRunFollowedAnEmptyScan()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService();   // discovered: 0
+        _throwOnExecuteCall = 2;   // _executeThrow defaults to SyncAlreadyRunningException
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Never,
+            "the refusal happened at the gate, before any work — a full grid re-projection would be pure cost");
+    }
+
     /// <summary>And exactly once when the run path already did it — the finally is a backstop, not a second pass.</summary>
     [Fact]
     public async Task DownloadMissingMetadata_DoesNotRebuildTwiceWhenTheRunAlreadyDid()
