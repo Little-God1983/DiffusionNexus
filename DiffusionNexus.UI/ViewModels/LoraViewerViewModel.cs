@@ -1104,7 +1104,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             }
             catch (SyncAlreadyRunningException ex)
             {
-                // The gate refused it at Wait(0), before any work — this press wrote nothing.
+                // The gate refused it at Wait(0), before any work — this press wrote nothing
+                // BEYOND THE SCAN, which is exactly why the gate keeps its discovered/repointed
+                // terms: only the run's own debt is being waived here.
                 rebuildOwed = false;
                 ReportServiceAlreadyRunning(ex);
                 return;
