@@ -433,7 +433,12 @@ public sealed class CivitaiModelDownloader : ICivitaiModelDownloader
             _logger?.Debug(LogCategory.Download, LogSource, $"Step 9: completing metadata for model {modelId}");
             var options = await BuildCompletionOptionsAsync(ct).ConfigureAwait(false);
             var plan = await _librarySync.PlanAsync(SyncScope.ForModels(modelId), options, ct).ConfigureAwait(false);
-            await _librarySync.ExecuteAsync(plan, progress: null, ct).ConfigureAwait(false);
+            var report = await _librarySync.ExecuteAsync(plan, progress: null, ct).ConfigureAwait(false);
+
+            // ExecuteAsync is total now (#535): what used to surface here as an exception (and be
+            // logged by the catch below) comes back as a report. Same visibility, same non-fatality.
+            if (report.AbortReason is not null)
+                _logger?.Warn(LogCategory.Download, LogSource, $"post-download completion aborted: {report.AbortReason}");
         }
         catch (Exception ex)
         {

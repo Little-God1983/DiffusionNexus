@@ -11,12 +11,14 @@ public class SyncReportDialogViewModelTests
         IReadOnlyList<SyncStepReport> steps,
         IReadOnlyList<SyncFailure>? failures = null,
         bool cancelled = false,
-        int unexpected = 0)
+        int unexpected = 0,
+        string? abortReason = null)
     {
         var options = new SyncOptions(new HashSet<SyncStepKind> { SyncStepKind.IdentifyModel });
         var plan = new SyncPlan(SyncScope.Library, options, Array.Empty<SyncPlanStep>(), DateTimeOffset.UtcNow);
         return new SyncReport(plan, steps, failures ?? Array.Empty<SyncFailure>(), cancelled,
-            TimeSpan.FromSeconds(90), NewFilesDiscovered: 0, UnexpectedFailures: unexpected);
+            TimeSpan.FromSeconds(90), NewFilesDiscovered: 0, UnexpectedFailures: unexpected,
+            AbortReason: abortReason);
     }
 
     [Fact]
@@ -65,6 +67,23 @@ public class SyncReportDialogViewModelTests
 
         vm.IsPartial.Should().BeTrue();
         vm.PartialText.Should().Contain("Cancelled");
+    }
+
+    /// <summary>
+    /// #535. A run that aborted midway (an exception escaped outside the item loop) is partial in
+    /// the same sense a cancelled one is — the completed items are recorded — but the banner must
+    /// name the failure rather than claim anybody pressed Cancel.
+    /// </summary>
+    [Fact]
+    public void AnAbortedRun_SaysPartialAndNamesTheReason()
+    {
+        var vm = new SyncReportDialogViewModel(
+            Report(new[] { new SyncStepReport(SyncStepKind.IdentifyModel, 10, 10, 10, 0, 0) },
+                abortReason: "Unexpected InvalidOperationException: database is locked"),
+            newFilesDiscovered: 0);
+
+        vm.IsPartial.Should().BeTrue();
+        vm.PartialText.Should().Contain("database is locked").And.NotContain("Cancelled");
     }
 
     /// <summary>

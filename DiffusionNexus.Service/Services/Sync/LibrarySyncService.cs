@@ -133,6 +133,7 @@ public sealed class LibrarySyncService : ILibrarySyncService
 
         var tally = new RunTally();
         var cancelled = false;
+        string? abortReason = null;
 
         try
         {
@@ -157,12 +158,25 @@ public sealed class LibrarySyncService : ILibrarySyncService
                 cancelled = true;
                 _logger?.Info(LogCategory.Network, LogSource, "Library sync cancelled by the user");
             }
+            catch (Exception ex)
+            {
+                // R5, one level up (#535). ExecuteItemAsync already counts bugs inside items; what
+                // lands here escaped OUTSIDE the item loop — a step's SelectAsync, or the API-key
+                // read. The rule is the same: by now earlier steps' items are committed (one scope
+                // each), so letting this throw destroy the tally would report a partially-synced
+                // library as "nothing happened". The run aborts — the failing step and everything
+                // after it never runs — but what it did is returned, with the reason on the report
+                // for the caller to state out loud.
+                abortReason = $"Unexpected {ex.GetType().Name}: {ex.Message}";
+                _logger?.Error(LogCategory.Network, LogSource,
+                    "Library sync aborted: an exception escaped outside the item loop", ex);
+            }
 
             stopwatch.Stop();
 
             var syncReport = new SyncReport(
                 plan, tally.Steps, tally.Failures, cancelled, stopwatch.Elapsed, tally.Discovered,
-                tally.UnexpectedFailures, tally.FirstUnexpectedError);
+                tally.UnexpectedFailures, tally.FirstUnexpectedError, abortReason);
             _logger?.Info(LogCategory.Network, LogSource, $"Sync finished: {syncReport.Summary} in {Describe(stopwatch.Elapsed)}");
 
             return syncReport;

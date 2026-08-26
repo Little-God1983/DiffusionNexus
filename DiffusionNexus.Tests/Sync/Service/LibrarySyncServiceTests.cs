@@ -486,6 +486,49 @@ public sealed class LibrarySyncServiceTests : IDisposable
         report.Steps.Single().Succeeded.Should().Be(1);
     }
 
+    /// <summary>
+    /// #535, R5 one level up. A step's <c>SelectAsync</c> runs outside the per-item try, so a
+    /// non-cancellation throw there used to escape <c>ExecuteAsync</c> entirely — with the prior
+    /// steps' per-item work already committed, the tally was discarded and no report was ever
+    /// built. The user saw only the raw exception message; the record of what HAD been synced was
+    /// gone. The escape is recorded on the report instead: the run aborts, but what it did is
+    /// still stated, and the reason travels as <see cref="SyncReport.AbortReason"/>.
+    /// </summary>
+    [Fact]
+    public async Task Execute_AThrowFromAStepsSelectionAbortsTheRunButKeepsTheReport()
+    {
+        var identify = new FakeStep(SyncStepKind.IdentifyModel)
+            .Selecting([Item(1), Item(2)])
+            .Returning(_ => SyncItemResult.Success);
+        var tags = new FakeStep(SyncStepKind.FetchTags).Selecting([Item(9)]).Returning(_ => SyncItemResult.Success);
+        // Selection #1 is plan time and must succeed; #2 is the run's re-selection, where the
+        // database is suddenly locked. (#3 is the gate-release proof at the bottom.)
+        tags.OnSelect = () => tags.SelectCalls == 2
+            ? throw new InvalidOperationException("database is locked")
+            : Task.FromResult(0);
+
+        var service = NewService([identify, tags]);
+        var plan = await service.PlanAsync(SyncScope.Library, OptionsFor(SyncStepKind.IdentifyModel, SyncStepKind.FetchTags));
+
+        var report = await service.ExecuteAsync(plan);
+
+        report.AbortReason.Should().Contain("database is locked",
+            "the escape is a bug outside the item loop and must be stated as such, not laundered into an item failure");
+        report.Cancelled.Should().BeFalse("nobody pressed Cancel");
+        report.Summary.Should().Contain("(aborted)");
+
+        var identifyReport = report.Steps.Single(s => s.Kind == SyncStepKind.IdentifyModel);
+        identifyReport.Succeeded.Should().Be(2,
+            "the two identified models are committed, and this report is the only record that they were");
+        report.Steps.Should().NotContain(s => s.Kind == SyncStepKind.FetchTags,
+            "the failing step never reached its item loop");
+
+        service.IsRunning.Should().BeFalse();
+
+        // ...and the gate really was released: the next run gets in.
+        (await service.ExecuteAsync(plan)).AbortReason.Should().BeNull();
+    }
+
     // ------------------------------------------------------ Thumbnail parallelism
 
     [Fact]

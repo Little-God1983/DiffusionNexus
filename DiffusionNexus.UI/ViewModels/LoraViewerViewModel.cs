@@ -974,6 +974,20 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 
             discovered = discoverReport.NewFilesDiscovered;
 
+            // ExecuteAsync is total now (#535): a throw outside its item loop comes back as
+            // AbortReason instead of escaping. For the scan that keeps the abort semantics it had
+            // when the service still threw — stop here, because a question built on counts a
+            // broken scan produced would put the user's yes on bad numbers. Ordinary scan failures
+            // (an unreadable folder) still proceed and are folded into the run's report below; an
+            // abort is a bug, not a verdict. The finally still rebuilds over whatever the scan
+            // committed first, via the discovered term of its gate.
+            if (discoverReport.AbortReason is not null)
+            {
+                SyncStatus = $"Sync error: {discoverReport.AbortReason}";
+                _logger?.Error(LogCategory.Network, "CivitaiSync", $"Sync scan aborted: {discoverReport.AbortReason}");
+                return;
+            }
+
             var baseOptions = new SyncOptions(
                 PlannedStepKinds, RetryPolicy: policy, ThumbnailConcurrency: settings.SyncThumbnailConcurrency);
             var plan = await Task.Run(() => _librarySync.PlanAsync(SyncScope.Library, baseOptions, ct), ct);
@@ -1054,11 +1068,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             var progress = new UiProgress<LibrarySyncProgress>(this, p =>
                 SyncStatus = $"{SyncReport.Label(p.Step)} [{p.Index}/{p.Total}] {p.CurrentItem}");
 
-            // From here the run may commit work — each item in its own scope — and a step's
-            // SelectAsync sits outside the loop's try in LibrarySyncService, so a non-cancellation
-            // throw there escapes ExecuteAsync with everything already durable. The finally's
-            // backstop owes a rebuild for that door too, not only for the scan's rows; the cost is
-            // one wasted rebuild when the run dies before writing anything.
+            // From here the run may commit work — each item in its own scope. ExecuteAsync is
+            // total now (#535): a run that dies midway comes back as a report with AbortReason
+            // and flows through the run path's own rebuild below. The flag still backs the
+            // finally's rebuild for the doors that remain — a run-path rebuild that fails (its
+            // local guard under #539 leaves rebuilt false), and a service regression that makes
+            // ExecuteAsync escape again. The cost is one wasted rebuild when the run dies before
+            // writing anything.
             rebuildOwed = true;
 
             SyncReport report;
@@ -1098,7 +1114,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 discoverReport.Elapsed + report.Elapsed,
                 discovered,
                 discoverReport.UnexpectedFailures + report.UnexpectedFailures,
-                discoverReport.FirstUnexpectedError ?? report.FirstUnexpectedError);
+                discoverReport.FirstUnexpectedError ?? report.FirstUnexpectedError,
+                report.AbortReason);
 
             // "Last full sync" is what the next plan dialog tells the user about staleness, so it
             // records a run that actually finished. Deliberately CancellationToken.None: this
@@ -1119,8 +1136,10 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             // Judged against the dialog's rows, not the four kinds: BuildResult drops zero-count
             // kinds from the chosen set, so demanding all four would mean a library where one step
             // legitimately has nothing to do could never stamp again. A kind with nothing to do is
-            // covered by doing nothing.
-            if (!report.Cancelled && dialogVm.Rows.All(r => r.Count == 0 || chosen.Steps.Contains(r.Kind)))
+            // covered by doing nothing. An aborted run (#535) is excluded outright: the ticked
+            // kinds say what was asked for, not what actually ran before the run died.
+            if (!report.Cancelled && report.AbortReason is null
+                && dialogVm.Rows.All(r => r.Count == 0 || chosen.Steps.Contains(r.Kind)))
             {
                 try
                 {
@@ -1192,8 +1211,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             // (F3). Nothing else refreshes it — ILibraryChangeNotifier.ModelDownloaded is raised
             // only by CivitaiModelDownloader, never by DiscoverFilesStep — so without this a
             // cancelled dialog leaves twelve new LoRAs in the database and none of them on screen.
-            // rebuildOwed covers the other door: a run that died midway has committed per-item
-            // work too, and gating on the scan alone left it just as invisible.
+            // rebuildOwed covers the doors the run path's own rebuild can leave open: that rebuild
+            // failing, and a service regression that makes ExecuteAsync escape again (#535 made it
+            // total, so an escape is a bug — but the committed work would still need showing).
             // Guarded so a failed rebuild costs only the rebuild: the status line above already
             // says what happened, and an exception here would replace it with a lie.
             // BEFORE the sync-running flag drops: re-enabling the per-tile button while the tile
@@ -1498,6 +1518,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     /// </remarks>
     private static string DescribeOutcome(SyncReport report)
     {
+        // An aborted run is never "up to date", however empty its plan looked — the run died, and
+        // the verdict has to lead with that (#535). The tally still follows: what completed before
+        // the failure is committed, and this line is where the user learns both facts.
+        if (report.AbortReason is not null)
+            return $"Sync aborted — {report.AbortReason} · {report.Summary}";
+
         if (report.NewFilesDiscovered == 0 && report.Steps.All(s => s.Planned == 0))
             return UpToDateStatus;
 
@@ -1835,8 +1861,19 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 // list and repaints description/tags/images.
                 await detail.LoadAsync(tile);
                 // LoadAsync ends by clearing StatusMessage, so a successful refresh used to
-                // leave no trace at all — the bar just closed. Say what happened.
-                detail.StatusMessage = "Metadata refreshed.";
+                // leave no trace at all — the bar just closed. Say what happened — including
+                // when the run also hit a bug partway: what was applied is real, but silence
+                // about the rest would claim a complete refresh (#535).
+                detail.StatusMessage = outcome.Faulted
+                    ? "Metadata partially refreshed — the run hit an error, see the log."
+                    : "Metadata refreshed.";
+            }
+            else if (outcome.Faulted)
+            {
+                // The run hit a bug — it aborted, or the item died on an exception no step
+                // claimed. Neither is an answer from Civitai, so neither of the verdicts below
+                // may be spoken over it (#535).
+                detail.StatusMessage = $"Metadata download failed: {outcome.FaultReason}";
             }
             else
             {
@@ -1997,6 +2034,18 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         /// </summary>
         public int IdentifyPlanned
             => Report?.Steps.FirstOrDefault(s => s.Kind == SyncStepKind.IdentifyModel)?.Planned ?? 0;
+
+        /// <summary>
+        /// Whether the run hit a bug rather than an answer: it aborted midway
+        /// (<see cref="SyncReport.AbortReason"/>) or items failed with exceptions no step claimed
+        /// (<see cref="SyncReport.UnexpectedFailures"/>). "No metadata found on Civitai" may not
+        /// be said over this — a failed ask is not an answer (#535).
+        /// </summary>
+        public bool Faulted
+            => Report is not null && (Report.AbortReason is not null || Report.UnexpectedFailures > 0);
+
+        /// <summary>The failure to show for a <see cref="Faulted"/> outcome, best reason first.</summary>
+        public string? FaultReason => Report?.AbortReason ?? Report?.FirstUnexpectedError;
     }
 
     /// <summary>
