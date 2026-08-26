@@ -90,7 +90,8 @@ public sealed class IdentifyModelStepTests : IDisposable
         int attempts = 0,
         string? sidecarSignature = null,
         bool withState = false,
-        int? civitaiId = null)
+        int? civitaiId = null,
+        bool isUserEdited = false)
     {
         using var scope = NewScope();
         var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
@@ -101,6 +102,7 @@ public sealed class IdentifyModelStepTests : IDisposable
             Type = ModelType.LORA,
             Source = civitaiId is null ? DataSource.LocalFile : DataSource.CivitaiApi,
             CivitaiId = civitaiId,
+            IsUserEdited = isUserEdited,
         };
         var version = new ModelVersion { Name = "v1", BaseModelRaw = "???" };
         version.Files.Add(new ModelFile
@@ -216,13 +218,14 @@ public sealed class IdentifyModelStepTests : IDisposable
     [Fact]
     public async Task Select_ForceIdentifyOverridesTheWindowButNotAMissingFile()
     {
-        var matched = await SeedAsync("matched", NewModelFile("f-matched.safetensors"),
-            outcome: SyncOutcome.Matched, checkedAt: Now.AddDays(-1), withState: true);
+        // Checked yesterday — inside the 30-day window, so only the force makes it due.
+        var recent = await SeedAsync("recent", NewModelFile("f-recent.safetensors"),
+            outcome: SyncOutcome.NotIdentified, checkedAt: Now.AddDays(-1), withState: true);
         var gone = await SeedAsync("gone", MissingModelFile("f-gone.safetensors"));
 
         var items = await NewNotFoundStep().SelectAsync(SyncScope.Library, Options(force: true), Now, CancellationToken.None);
 
-        items.Select(i => i.ModelId).Should().Contain(matched.ModelId);
+        items.Select(i => i.ModelId).Should().Contain(recent.ModelId);
         items.Select(i => i.ModelId).Should().NotContain(gone.ModelId);
     }
 
@@ -246,6 +249,35 @@ public sealed class IdentifyModelStepTests : IDisposable
         // The bulk run still leaves it alone: there is nothing to identify about a matched model.
         var bulk = await NewNotFoundStep().SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
         bulk.Select(i => i.ModelId).Should().NotContain(matched.ModelId);
+    }
+
+    /// <summary>
+    /// The library-wide force is the plan dialog's "Models not found on Civitai" checkbox, and it
+    /// must mean what it says: a Matched model is left alone — whether it carries the CivitaiId
+    /// itself or is the duplicate copy that only carries the page id (null CivitaiId, outcome
+    /// Matched) — and a hand-edited model is not dragged into a bulk overwrite run. Only the
+    /// per-tile scope (the user pointing at one model) re-looks at a Matched row; that path is
+    /// pinned by <see cref="Select_ForceIdentifyIncludesMatchedModel"/>. The not-found ones are
+    /// still forced past their retry window, which is the checkbox's whole purpose.
+    /// </summary>
+    [Fact]
+    public async Task Select_LibraryForceIdentifyLeavesMatchedAndHandEditedAlone()
+    {
+        var matched = await SeedAsync("lf-matched", NewModelFile("lf-matched.safetensors"), civitaiId: 77,
+            outcome: SyncOutcome.Matched, checkedAt: Now.AddDays(-1), withState: true);
+        var duplicate = await SeedAsync("lf-duplicate", NewModelFile("lf-duplicate.safetensors"),
+            outcome: SyncOutcome.Matched, checkedAt: Now.AddDays(-1), withState: true);
+        var edited = await SeedAsync("lf-edited", NewModelFile("lf-edited.safetensors"), isUserEdited: true,
+            outcome: SyncOutcome.NotIdentified, checkedAt: Now.AddDays(-1), withState: true);
+        var notFound = await SeedAsync("lf-notfound", NewModelFile("lf-notfound.safetensors"),
+            outcome: SyncOutcome.NotIdentified, checkedAt: Now.AddDays(-1), withState: true);
+
+        var items = await NewNotFoundStep().SelectAsync(SyncScope.Library, Options(force: true), Now, CancellationToken.None);
+
+        items.Select(i => i.ModelId).Should().BeEquivalentTo([notFound.ModelId]);
+        items.Should().NotContain(i => i.ModelId == matched.ModelId);
+        items.Should().NotContain(i => i.ModelId == duplicate.ModelId);
+        items.Should().NotContain(i => i.ModelId == edited.ModelId);
     }
 
     /// <summary>

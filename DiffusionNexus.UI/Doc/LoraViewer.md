@@ -470,12 +470,18 @@ is safe by escaping, not by absence: EF renders a captured-variable `StartsWith`
 `LIKE @p ESCAPE '\'` with `%`, `_` and `\` escaped into the parameter at runtime, so those in a
 source folder's name are ordinary characters here, not wildcards.
 
-Forcing also widens *selection*, not just due-ness: `SelectIdentifyCandidatesAsync` takes an
-`includeMatched` flag (`ForceIdentify || scope.Kind == Models`) that drops the
-"no `CivitaiId` yet" predicate, and an explicit id scope additionally drops the LoRA-family
-type filter. Without that, a forced run over an already-matched model planned zero items and
-the detail panel reported "No metadata found on Civitai for this file." about a model Civitai
-knows — for most of the library.
+Force means two different things by scope, and only the explicit one touches Matched models.
+The per-tile scope widens *selection* as well as due-ness: `SelectIdentifyCandidatesAsync` takes
+an `includeMatched` flag (`scope.Kind == Models`) that drops the "no `CivitaiId` yet" predicate,
+and an explicit id scope additionally drops the LoRA-family type filter. Without that, a forced
+run over an already-matched model planned zero items and the detail panel reported "No metadata
+found on Civitai for this file." about a model Civitai knows — for most of the library. The
+library- and folder-wide force is the plan dialog's "Models not found on Civitai" checkbox, and
+it keeps that promise: Matched models are left alone — `IdentifyModelStep.IsDue` also drops the
+force for a Matched candidate the `CivitaiId` filter cannot see (the duplicate copy that owns
+only the page id) — and hand-edited models are not dragged into a bulk overwrite run. The
+not-found outcomes (`NotIdentified`, `Sidecar`, `Header`, `Heuristic`, `Error`) are forced past
+their retry windows, which is the checkbox's purpose.
 
 The method returns `TileMetadataSyncResult(Applied, Report)`: `Applied` (any step succeeded)
 tells the detail view to reload; `IdentifyPlanned` is what separates the two failure
