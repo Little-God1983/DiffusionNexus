@@ -51,7 +51,7 @@ public sealed class DiscoverFilesStepTests
     {
         var sync = new Mock<IModelSyncService>();
         sync.Setup(s => s.DiscoverNewFilesAsync(It.IsAny<IProgress<SyncProgress>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([NewModel("a"), NewModel("b"), NewModel("c")]);
+            .ReturnsAsync(new DiscoveryResult { NewModels = [NewModel("a"), NewModel("b"), NewModel("c")] });
         var (step, provider) = NewStep(sync);
         using var _ = provider;
 
@@ -62,12 +62,34 @@ public sealed class DiscoverFilesStepTests
         step.DiscoveredCount.Should().Be(3);
     }
 
+    /// <summary>
+    /// #537. A repoint — a moved file hash-matched to an existing invalid-path row — is a change
+    /// the scan committed, not a new file. It travels beside the discovered count so a
+    /// repoint-only scan stops reading as "nothing happened".
+    /// </summary>
+    [Fact]
+    public async Task Execute_StoresTheRepointedCountForTheReport()
+    {
+        var sync = new Mock<IModelSyncService>();
+        sync.Setup(s => s.DiscoverNewFilesAsync(It.IsAny<IProgress<SyncProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DiscoveryResult { RepointedCount = 12 });
+        var (step, provider) = NewStep(sync);
+        using var _ = provider;
+
+        var items = await step.SelectAsync(SyncScope.Library, Options(), DateTimeOffset.UtcNow, CancellationToken.None);
+        var result = await step.ExecuteOneAsync(items[0], apiKey: null, CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+        step.DiscoveredCount.Should().Be(0, "nothing was added");
+        step.RepointedCount.Should().Be(12, "but twelve rows changed, and the report is how anyone learns that");
+    }
+
     [Fact]
     public async Task Execute_FailureReportsTheReasonAndLeavesNoStaleCount()
     {
         var sync = new Mock<IModelSyncService>();
         sync.SetupSequence(s => s.DiscoverNewFilesAsync(It.IsAny<IProgress<SyncProgress>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([NewModel("a")])
+            .ReturnsAsync(new DiscoveryResult { NewModels = [NewModel("a")], RepointedCount = 2 })
             .ThrowsAsync(new IOException("source folder unavailable"));
         var (step, provider) = NewStep(sync);
         using var _ = provider;
@@ -76,12 +98,14 @@ public sealed class DiscoverFilesStepTests
 
         (await step.ExecuteOneAsync(items[0], apiKey: null, CancellationToken.None)).Succeeded.Should().BeTrue();
         step.DiscoveredCount.Should().Be(1);
+        step.RepointedCount.Should().Be(2);
 
         var failure = await step.ExecuteOneAsync(items[0], apiKey: null, CancellationToken.None);
 
         failure.Succeeded.Should().BeFalse();
         failure.FailureReason.Should().Contain("source folder unavailable");
         step.DiscoveredCount.Should().Be(0);
+        step.RepointedCount.Should().Be(0, "a failed scan may not leave the previous scan's count standing");
     }
 
     [Fact]

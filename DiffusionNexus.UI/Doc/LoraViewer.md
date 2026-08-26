@@ -109,7 +109,10 @@ The "+N more versions" tile badge is computed as
 
 ## 3. Data Flow — Startup / Refresh
 
-When the user opens the LoRA Viewer or clicks **Refresh**, `LoraViewerViewModel.RefreshAsync` executes:
+When the user opens the LoRA Viewer or clicks **Refresh**, `LoraViewerViewModel.RefreshAsync`
+executes. (The button is off while a metadata sync runs, #540 — its "Loaded N models" used to
+overwrite the sync verdict in the status bar; startup calls the command's `ExecuteAsync`
+directly, which does not consult `CanExecute`.)
 
 ```
 RefreshAsync
@@ -121,7 +124,9 @@ RefreshAsync
 │   │   ├── Filters out files already in DB (by LocalPath)
 │   │   ├── For each new file:
 │   │   │   ├── TryMatchByHashAndSize → if a DB record exists with same hash
-│   │   │   │   but invalid path (file was moved), update the path
+│   │   │   │   but invalid path (file was moved), update the path — counted
+│   │   │   │   as DiscoveryResult.RepointedCount (#537): a grid-visible
+│   │   │   │   change that is not a new file
 │   │   │   └── Otherwise → CreateModelFromFile:
 │   │   │       Creates Model + ModelVersion + ModelFile with:
 │   │   │         Source = LocalFile
@@ -181,10 +186,15 @@ DownloadMissingMetadataAsync                      (every service call runs on Ta
 │                                                  SQLite is synchronous, and the planning
 ├── 1. Discovery pre-run                            pass + the folder scan would otherwise
 │      Plan+Execute with steps {DiscoverFiles}      freeze the overlay and the Cancel button)
-│      → report.NewFilesDiscovered
+│      → report.NewFilesDiscovered (added) + report.FilesRepointed (moved files re-linked
+│        to existing rows the grid had hidden — changed, not added, #537)
 │      Runs BEFORE the question, and is the one step nobody is asked about: a scan cannot be
 │      counted in advance, and running it first is what lets every count below include the
 │      files it just found.
+│      A scan whose report carries AbortReason (an exception escaped outside its item loop,
+│      #535) stops the flow here with "Sync error: …" — no question gets asked over counts a
+│      broken scan produced. Ordinary scan failures (an unreadable folder) proceed and are
+│      folded into the run's report.
 │
 ├── 2. PlanAsync(SyncScope.Library, base options)
 │      steps {IdentifyModel, FetchTags, FetchImages, Thumbnails}; RetryPolicy and
@@ -205,31 +215,65 @@ DownloadMissingMetadataAsync                      (every service call runs on Ta
 │      progress → status bar: "{Label} [{index}/{total}] {currentItem}"
 │      steps run in registration order — a file must be discovered before it can be
 │      identified, and only an identified model has the ids tags/images need
-│      InvalidOperationException from the service's single-flight gate (a download's
-│      completion sync can hold it) ⇒ "A metadata sync is already running." — a "not now",
-│      not a fault: no stack trace, no retry loop. Both runs above are guarded.
+│      SyncAlreadyRunningException — the gate's OWN type, thrown at Wait(0) BEFORE any work —
+│      ⇒ "A metadata sync is already running." — a "not now", not a fault: no stack trace, no
+│      retry loop, and no rebuild owed (this press wrote nothing beyond the scan). Both runs
+│      above are guarded. Deliberately NOT a bare InvalidOperationException: a step's
+│      GetRequiredService or Single() raises that too, and catching it here laundered DI/EF
+│      regressions into "already running" — anything else falls to the generic catch and is
+│      reported as "Sync error: …" with the exception logged.
+│      ExecuteAsync itself is TOTAL (#535): an exception escaping outside its item loop (a
+│      step's SelectAsync, the API-key read) comes back as report.AbortReason instead of
+│      throwing — the steps that ran are still reported, the failing one and everything after
+│      it never ran. An aborted run shows its report (unless it died before ANY step tallied
+│      and has no failure rows either — an empty table says nothing the status line has not,
+│      so that one case stays on the line, like the aborted-scan path), leads the status with
+│      "Sync aborted — {reason}", and never stamps "last full sync". The service's outer
+│      cancellation catch is filtered like its item-level one: an OCE while the run's token is
+│      NOT cancelled (an HttpClient timeout escaping SelectAsync) aborts rather than posing
+│      as "cancelled by the user".
+│      An OperationCanceledException at THIS await means Task.Run never invoked the delegate
+│      (a cancellation inside the service returns a Cancelled report instead), so the scoped
+│      catch waives the owed rebuild there — and only there (#540).
 │
-├── 6. UpdateLastLibrarySyncAtAsync(UtcNow)   ← only when the run was NOT cancelled, and with
-│                                        CancellationToken.None: it records what already
-│                                        happened, so a just-pressed Cancel must not lose it
+├── 6. UpdateLastLibrarySyncAtAsync(UtcNow)   ← only when the run was NOT cancelled and did
+│                                        NOT abort, and with CancellationToken.None: it
+│                                        records what already happened, so a just-pressed
+│                                        Cancel must not lose it
 │
-├── 7. RebuildTilesFromDatabaseAsync()   ← exactly once, after the run — including after a
-│                                       CANCELLED one: those models are already committed,
+├── 7. RebuildTilesFromDatabaseAsync()   ← once on this run path — including after a
+│                                       CANCELLED run: those models are already committed,
 │                                       and the run's (signalled) token is deliberately not
 │                                       passed here, or the rebuild would be skipped and the
-│                                       report thrown away with it
+│                                       report thrown away with it.
+│                                       Guarded (#539): a rebuild throw costs only the
+│                                       rebuild — the verdict and the report dialog survive,
+│                                       and the finally's backstop retries it once.
+│      The rebuild is NOT exclusive to this step: the finally block re-projects the grid on
+│      every OTHER exit that owes one (#537/#539) — the scan added or re-linked files and the
+│      dialog was cancelled, the run died and its own rebuild never ran, or this step's
+│      rebuild failed. The backstop runs under the busy overlay ("Refreshing library view…",
+│      #540), retries at most once, and a failure appends "· grid refresh failed — press
+│      Refresh to reload" to the status line instead of replacing the verdict.
 │
 ├── 8. SyncStatus:
-│      report.NewFilesDiscovered == 0 && every step Planned == 0
+│      NOT aborted && report.NewFilesDiscovered == 0 && report.FilesRepointed == 0
+│        && every step Planned == 0
 │        ⇒ "Library is up to date — nothing to do"   ← the honest verdict, from the report
 │      otherwise report.Summary (+ " · N failed" when report.Failures is non-empty)
+│        (+ " · N moved files re-linked" when report.FilesRepointed > 0)
 │        (+ " · N items failed unexpectedly (see log)" when report.UnexpectedFailures > 0)
+│      report.AbortReason ⇒ "Sync aborted — {reason} · " leads the line above (with Summary's
+│        own "(aborted)" marker dropped — the lead already says it): the run where the most
+│        went wrong keeps its failed/re-linked/unexpected suffixes
 │      (step 1's count is folded back into the run's report the moment it returns — rebuilt
 │       explicitly, never with `with`: Summary is a get-only auto-property and the record
 │       copy constructor would carry the stale one — so the status line, the report table
 │       and the dialog's discovered line all say the same number)
 │
-└── 9. SyncReportDialog — per-step counts, failures grouped by step, the discovered count
+└── 9. SyncReportDialog — per-step counts, failures grouped by step, the discovered and
+       re-linked counts; the partial banner covers a cancelled run AND an aborted one
+       (naming report.AbortReason) — either way, completed items are recorded
 ```
 
 ### The steps
@@ -484,9 +528,16 @@ not-found outcomes (`NotIdentified`, `Sidecar`, `Header`, `Heuristic`, `Error`) 
 their retry windows, which is the checkbox's purpose.
 
 The method returns `TileMetadataSyncResult(Applied, Report)`: `Applied` (any step succeeded)
-tells the detail view to reload; `IdentifyPlanned` is what separates the two failure
-wordings — "No metadata found on Civitai for this file." when the step ran and found nothing,
-"Nothing to refresh for this model." when it planned nothing and therefore asked nobody.
+tells the detail view to reload; `Faulted` (the run aborted, items failed with exceptions no
+step claimed — #535 — or the ask itself failed in a way the step did claim: an HTTP 500, a
+timeout, recorded as an ordinary `SyncFailure`, #536; the honest no stays disjoint because
+identify records "checked, not on Civitai" as a completed item, never a failure) is checked
+FIRST and wins — a failed ask is not an answer, so it reads
+"Metadata download failed: {reason}" (or, when something was still applied before the failure,
+"Metadata partially refreshed — the run hit an error, see the log."); only then does
+`IdentifyPlanned` separate the two honest-no wordings — "No metadata found on Civitai for this
+file." when the step ran and found nothing, "Nothing to refresh for this model." when it planned
+nothing and therefore asked nobody.
 
 **One run at a time, and the buttons say so.** The service is single-flight and *throws* on a
 second run rather than queueing it, so both ways in are switched off while one is going:
@@ -510,7 +561,9 @@ dispose the *next* run's token source, after which Cancel cancelled nothing.
 | Hash returns a version but no images | The `FetchImages` step covers it via the version endpoint |
 | Network/disk failure on one item | Recorded as a `SyncFailure` (step, model, reason) and counted in the report; the run continues |
 | `CivitaiId` already owned by another DB row | Only `CivitaiModelPageId` is set (grouping still works), warning logged |
-| A second run started while one is going | Refused before it starts: "A metadata sync is already running." (`ExecuteAsync` would throw — the service is single-flight process-wide) |
+| A second run started while one is going | Refused before it starts: "A metadata sync is already running." (`ExecuteAsync` throws `SyncAlreadyRunningException` at its gate, before any work — the service is single-flight process-wide) |
+| An exception escapes outside the item loop (a step's `SelectAsync`, the API-key read) | The run aborts but `ExecuteAsync` still returns its report (#535): completed steps are recorded, `AbortReason` names the failure, the status leads with "Sync aborted — …", and "last full sync" is not stamped |
+| The post-run grid rebuild throws | The verdict and report dialog survive (#539); the `finally` backstop retries once under the overlay, and a second failure appends "grid refresh failed — press Refresh to reload" |
 | Service not registered | Button reports "Library sync not available." |
 
 ---

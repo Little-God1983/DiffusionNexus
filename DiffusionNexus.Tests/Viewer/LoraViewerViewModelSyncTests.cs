@@ -186,6 +186,10 @@ public class LoraViewerViewModelSyncTests
         int discoverUnexpected = 0,
         TimeSpan? discoverElapsed = null,
         TimeSpan? runElapsed = null,
+        string? discoverAbortReason = null,
+        string? runAbortReason = null,
+        int repointed = 0,
+        bool runHasNoSteps = false,
         params SyncFailure[] failures)
     {
         _sync.Setup(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()))
@@ -209,8 +213,10 @@ public class LoraViewerViewModelSyncTests
 
                 return isDiscovery
                     ? ReportFor(plan, discovered, cancelled: false, discoverFailures ?? [], discoverElapsed,
-                        discoverUnexpected, discoverUnexpected > 0 ? "scan: NullReferenceException" : null)
-                    : ReportFor(plan, discovered: 0, cancelled, failures, runElapsed);
+                        discoverUnexpected, discoverUnexpected > 0 ? "scan: NullReferenceException" : null,
+                        discoverAbortReason, repointed)
+                    : ReportFor(plan, discovered: 0, cancelled, failures, runElapsed,
+                        abortReason: runAbortReason, noSteps: runHasNoSteps);
             });
     }
 
@@ -240,20 +246,28 @@ public class LoraViewerViewModelSyncTests
         IReadOnlyList<SyncFailure> failures,
         TimeSpan? elapsed = null,
         int unexpected = 0,
-        string? firstUnexpectedError = null)
+        string? firstUnexpectedError = null,
+        string? abortReason = null,
+        int repointed = 0,
+        bool noSteps = false)
         => new(
             plan,
-            plan.Steps.Select(s =>
-            {
-                var failed = failures.Count(f => f.Step == s.Kind);
-                return new SyncStepReport(s.Kind, s.Count, s.Count, Math.Max(0, s.Count - failed), 0, failed);
-            }).ToList(),
+            noSteps
+                // An abort at the API-key read or the first step's selection: no step ever tallied.
+                ? []
+                : plan.Steps.Select(s =>
+                {
+                    var failed = failures.Count(f => f.Step == s.Kind);
+                    return new SyncStepReport(s.Kind, s.Count, s.Count, Math.Max(0, s.Count - failed), 0, failed);
+                }).ToList(),
             failures,
             Cancelled: cancelled,
             Elapsed: elapsed ?? TimeSpan.FromSeconds(12),
             NewFilesDiscovered: IsDiscovery(plan.Options) ? discovered : 0,
             UnexpectedFailures: unexpected,
-            FirstUnexpectedError: firstUnexpectedError);
+            FirstUnexpectedError: firstUnexpectedError,
+            AbortReason: abortReason,
+            FilesRepointed: IsDiscovery(plan.Options) ? repointed : 0);
 
     /// <summary>The report the run (not the discovery pre-run) produced, as the ViewModel saw it.</summary>
     private SyncReport RunReport() => ReportFor(_executed[^1], discovered: 0, cancelled: false, []);
@@ -339,6 +353,29 @@ public class LoraViewerViewModelSyncTests
         vm.IsBusy.Should().BeFalse("the overlay must not come back for a run the user declined");
     }
 
+    /// <summary>
+    /// #541. The pre-run counterpart of the backstop: before the run is reached, only the scan's
+    /// own counts may owe a rebuild. With an empty scan, a cancelled dialog must cost nothing —
+    /// this pins the placement of <c>rebuildOwed = true</c> AFTER the dialog, where the run
+    /// actually starts. Hoisting it up to "the dialog has answered" (a natural reading of "the
+    /// run is confirmed") would buy a full wasted re-projection on every cancel, with no other
+    /// test failing.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_CancellingTheDialogAfterAnEmptyScanDoesNotRebuild()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService();   // discovered: 0, repointed: 0
+        _planDialogAnswer = _ => Task.FromResult(SyncPlanDialogResult.Cancelled());
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Never,
+            "nothing changed in the database — a re-projection would be pure cost on every declined dialog");
+        vm.SyncStatus.Should().Be("Sync cancelled — nothing was run.",
+            "and the exit under test is the one that was actually taken");
+    }
+
     /// <summary>Closing an up-to-date dialog is not a cancellation of anything — say what is true instead.</summary>
     [Fact]
     public async Task DownloadMissingMetadata_ClosingAnUpToDateDialogSaysUpToDate()
@@ -380,6 +417,52 @@ public class LoraViewerViewModelSyncTests
             "\"nothing was run\" is false once the scan has added files — it is what the button just did");
     }
 
+    /// <summary>
+    /// #537. The scan's OTHER write: a moved file hash-matched to an invalid-path row is
+    /// re-pointed, in the same commit that inserts new models — and repoint candidates are exactly
+    /// the rows the grid hides, so the twelve models just came back into the database. Gating the
+    /// rebuild on "discovered > 0" alone left them off screen behind a status line claiming
+    /// nothing was run, until a manual Refresh.
+    /// </summary>
+    [Theory]
+    [InlineData(12, "Sync cancelled — the scan re-linked 12 moved files.")]
+    [InlineData(1, "Sync cancelled — the scan re-linked 1 moved file.")]
+    public async Task DownloadMissingMetadata_CancellingTheDialogStillRebuildsAfterARepointOnlyScan(
+        int repointed, string expectedStatus)
+    {
+        var vm = CreateViewModel();
+        SetupSyncService(repointed: repointed);   // discovered: 0 — the scan only re-pointed
+        _planDialogAnswer = _ => Task.FromResult(SyncPlanDialogResult.Cancelled());
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Once,
+            "the re-pointed rows are valid again and stay invisible until the grid is re-projected");
+        vm.SyncStatus.Should().Be(expectedStatus,
+            "\"nothing was run\" is false once the scan has re-linked files — it is what the button just did");
+    }
+
+    /// <summary>
+    /// A scan can do both in one pass. The wording was exclusive (`if added … else if re-linked`),
+    /// so a scan that added 3 files AND re-linked 12 told the user about the 3 only — the twelve
+    /// reappeared models were back on screen unexplained, the #537 complaint one branch over.
+    /// </summary>
+    [Theory]
+    [InlineData(3, 12, "Sync cancelled — the scan added 3 new files and re-linked 12 moved files.")]
+    [InlineData(1, 1, "Sync cancelled — the scan added 1 new file and re-linked 1 moved file.")]
+    public async Task DownloadMissingMetadata_CancellingTheDialogAfterAScanThatAddedAndRelinkedStatesBoth(
+        int discovered, int repointed, string expectedStatus)
+    {
+        var vm = CreateViewModel();
+        SetupSyncService(discovered: discovered, repointed: repointed);
+        _planDialogAnswer = _ => Task.FromResult(SyncPlanDialogResult.Cancelled());
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        vm.SyncStatus.Should().Be(expectedStatus,
+            "both of the scan's writes changed what the grid shows, so both belong in the answer");
+    }
+
     /// <summary>The same rebuild is owed when the flow leaves through a refusal rather than a cancel.</summary>
     [Fact]
     public async Task DownloadMissingMetadata_RebuildsAfterTheScanEvenWhenTheRunIsRefused()
@@ -396,10 +479,10 @@ public class LoraViewerViewModelSyncTests
 
     /// <summary>
     /// The same rebuild is owed when the RUN dies midway, not only when the scan added rows. Each
-    /// item commits in its own scope, and a step's SelectAsync sits outside the loop's try in
-    /// LibrarySyncService — so a DbException there escapes ExecuteAsync with, say, 200 freshly
-    /// identified models already durable. Gating the backstop on "the scan discovered something"
-    /// left all of that invisible whenever the scan itself came up empty.
+    /// item commits in its own scope, so an ExecuteAsync that escapes leaves, say, 200 freshly
+    /// identified models already durable. The real service no longer escapes (#535 made it total —
+    /// an abort comes back as a report), so what this pins is the ViewModel's own defense: a
+    /// service regression that throws again must still get the committed work onto the grid.
     /// </summary>
     [Fact]
     public async Task DownloadMissingMetadata_RebuildsWhenTheRunDiesMidway()
@@ -431,6 +514,105 @@ public class LoraViewerViewModelSyncTests
 
         _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Never,
             "the refusal happened at the gate, before any work — a full grid re-projection would be pure cost");
+        vm.SyncStatus.Should().Be("A metadata sync is already running.",
+            "#541: without this the test passes vacuously — any exit before the run also never rebuilds, " +
+            "so the status proves the refusal catch (the reset under test) actually executed");
+    }
+
+    /// <summary>
+    /// #537, the completed-run half: five models just reappeared, so the verdict may not be
+    /// "Library is up to date — nothing to do" even though nothing was planned in any step.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_ARepointOnlyScanIsNotReportedAsUpToDate()
+    {
+        var vm = CreateViewModel();
+        _identifyCount = 0;              // no step has work — only the scan's repoints happened
+        SetupSyncService(repointed: 5);
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        vm.SyncStatus.Should().Contain("5 moved files re-linked",
+            "five models just came back on screen, and the status line is where the user learns why");
+    }
+
+    /// <summary>
+    /// #540. Task.Run with an already-signalled token never invokes the delegate — an OCE at the
+    /// run's own await proves ExecuteAsync was never entered, because a cancellation INSIDE the
+    /// service comes back as a Cancelled report, not a throw. That proof licenses waiving the
+    /// owed rebuild there and only there: the shared OCE catch must not, because an OCE later in
+    /// the flow (a dispatcher dying mid-swap) can arrive after a fully durable run.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_APreStartCancelDoesNotPayForARebuild()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService();   // discovered: 0 — nothing but the never-started run could owe one
+        _throwOnExecuteCall = 2;
+        _executeThrow = new TaskCanceledException();
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        vm.SyncStatus.Should().Be("Metadata sync cancelled");
+        _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Never,
+            "the run never entered the service and the scan was empty — a full re-projection would be pure cost");
+    }
+
+    /// <summary>
+    /// #540. The backstop is a multi-second, UI-thread tile swap on a big library, and it used to
+    /// run after the finally had already dropped the overlay — while both sync buttons still
+    /// refused input. An unattributed dead zone right after a status line said the operation was
+    /// over. The overlay now stays up over the backstop and says what is happening.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_TheBackstopRebuildRunsUnderTheOverlay()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService();
+        _throwOnExecuteCall = 2;
+        _executeThrow = new InvalidOperationException("database is locked");
+
+        bool? busyDuringBackstop = null;
+        string? messageDuringBackstop = null;
+        _modelSync.Setup(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()))
+            .Callback(() =>
+            {
+                busyDuringBackstop = vm.IsBusy;
+                messageDuringBackstop = vm.BusyMessage;
+            })
+            .ReturnsAsync(Array.Empty<InstalledModelFile>());
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        busyDuringBackstop.Should().BeTrue("a multi-second tile swap with no overlay reads as a hang");
+        messageDuringBackstop.Should().NotBeNullOrEmpty("the overlay must say what it is doing");
+        vm.IsBusy.Should().BeFalse("and it comes down when everything is finished");
+        vm.BusyMessage.Should().BeNull();
+    }
+
+    /// <summary>
+    /// #540. RefreshAsync had no CanExecute, so its button was clickable through a whole sync and
+    /// its unwind — and a press started a second full-library read whose "Loaded N models" then
+    /// overwrote the sync's verdict in the status bar. Off while a sync runs, like both sync
+    /// buttons; the detail-deleted fallback already handles CanExecute being false.
+    /// </summary>
+    [Fact]
+    public async Task Refresh_IsOffWhileASyncRuns()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService();
+
+        var canRefreshDuringSync = true;
+        _planDialogAnswer = dialogVm =>
+        {
+            canRefreshDuringSync = vm.RefreshCommand.CanExecute(null);
+            return Task.FromResult(dialogVm.BuildResult());
+        };
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        canRefreshDuringSync.Should().BeFalse("a refresh mid-sync erases the verdict and doubles the DB load");
+        vm.RefreshCommand.CanExecute(null).Should().BeTrue("and back on the moment the sync is over");
     }
 
     /// <summary>And exactly once when the run path already did it — the finally is a backstop, not a second pass.</summary>
@@ -642,6 +824,104 @@ public class LoraViewerViewModelSyncTests
             "after this run the library is as synced as four ticked boxes would have left it");
     }
 
+    /// <summary>
+    /// #535. ExecuteAsync is total now: a throw outside its item loop comes back as
+    /// <see cref="SyncReport.AbortReason"/> instead of escaping. The flow treats that report as
+    /// what it is — a record of a run that died midway: the report dialog still opens over it and
+    /// the status line names the reason, but "last full sync" is not stamped, however completely
+    /// the kinds were ticked, because the run did not cover what the user agreed to.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_AnAbortedRunShowsItsReportAndDoesNotStampFullSync()
+    {
+        var vm = CreateViewModel();
+        _otherStepCount = 2;   // every kind has work and is ticked — without the abort this stamps
+        SetupSyncService(runAbortReason: "Unexpected InvalidOperationException: database is locked");
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _reportDialogVm.Should().NotBeNull(
+            "what the run finished before dying is committed, and the report is the only record of it");
+        vm.SyncStatus.Should().StartWith("Sync aborted").And.Contain("database is locked",
+            "the verdict must name the failure, not read like a completed run");
+        _settings.Verify(s => s.UpdateLastLibrarySyncAtAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
+            Times.Never, "a run that died midway did not cover what the user agreed to");
+        _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Once,
+            "the committed work reaches the grid once — the run path's rebuild, no backstop second pass");
+    }
+
+    /// <summary>
+    /// The abort verdict must not drop the run's other bad news. The abort branch used to return
+    /// early with reason + Summary alone, skipping the ` · N failed`, ` · N moved files re-linked`
+    /// and unexpected-failure suffixes — the run where the most went wrong was the one whose
+    /// status line said the least. And Summary already carries "(aborted)", so the word appeared
+    /// twice.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_AnAbortedRunStillStatesItsFailuresAndRepoints()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService(
+            repointed: 5,
+            runAbortReason: "Unexpected InvalidOperationException: database is locked",
+            failures:
+            [
+                new SyncFailure(SyncStepKind.IdentifyModel, 1, "a.safetensors", "timeout"),
+                new SyncFailure(SyncStepKind.IdentifyModel, 2, "b.safetensors", "timeout"),
+            ]);
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        vm.SyncStatus.Should().Be(
+            "Sync aborted — Unexpected InvalidOperationException: database is locked · " +
+            "Discovered 0 · Identified 1/3 · 2 failed · 5 moved files re-linked",
+            "the abort leads, but the failures and repoints the run racked up still follow");
+        (vm.SyncStatus!.Length - vm.SyncStatus.Replace("aborted", "").Length).Should().Be("aborted".Length,
+            "the lead already says aborted; Summary's own \"(aborted)\" marker must not repeat it");
+    }
+
+    /// <summary>
+    /// A run that died before any step tallied — the API-key read, the first step's selection —
+    /// has a report whose table is empty. The status line already leads with the abort; opening a
+    /// modal dialog over an empty table on top of it says nothing the line did not. The aborted
+    /// SCAN path already behaves this way (status line only), and an abort with committed work
+    /// (non-empty steps) or scan failures still opens the dialog, per the test above.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_AnAbortBeforeAnyStepSkipsTheEmptyReportDialog()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService(
+            runAbortReason: "Unexpected InvalidOperationException: database is locked",
+            runHasNoSteps: true);
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _reportDialogVm.Should().BeNull("there is no row the dialog could show that the status line has not already said");
+        vm.SyncStatus.Should().StartWith("Sync aborted").And.Contain("database is locked",
+            "suppressing the empty dialog must not soften the verdict");
+    }
+
+    /// <summary>
+    /// #535. The scan pre-run aborting keeps the abort semantics it had when the service still
+    /// threw: the flow stops before the dialog, because a question built on counts a broken scan
+    /// produced would put the user's yes on bad numbers. (Ordinary scan failures — an unreadable
+    /// folder — still proceed and are folded into the report; an abort is a bug, not a verdict.)
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_AnAbortedScanStopsBeforeTheDialog()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService(discoverAbortReason: "Unexpected InvalidOperationException: database is locked");
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _calls.Should().NotContain("plan-dialog");
+        vm.SyncStatus.Should().Be("Sync error: Unexpected InvalidOperationException: database is locked");
+        _sync.Verify(s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()),
+            Times.Once, "only the scan ran; the flow stopped there exactly as it did when the scan still threw");
+    }
+
     [Fact]
     public async Task DownloadMissingMetadata_ShowsTheReportOfTheRunItJustFinished()
     {
@@ -683,6 +963,70 @@ public class LoraViewerViewModelSyncTests
         _reportDialogVm.Should().NotBeNull("the user still gets the report of the run that did happen");
         vm.SyncStatus.Should().Be(RunReport().Summary,
             "and the status line is the run's tally, not an error message about a timestamp");
+    }
+
+    /// <summary>
+    /// #539. The run-path rebuild is a DB read at the peak of WAL contention — the run has been
+    /// writing for minutes. Unguarded, its throw landed in the generic catch: a SUCCESSFUL run's
+    /// verdict was replaced by "Sync error: …", the report dialog was skipped (the report lost),
+    /// and the finally then retried the identical rebuild anyway. A failed rebuild costs the
+    /// rebuild: the verdict stands, the report shows, and the backstop gets one deliberate retry.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_AFailedRebuildDoesNotEraseTheRunsVerdict()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService();
+        _modelSync.SetupSequence(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("database is locked"))
+            .ReturnsAsync(Array.Empty<InstalledModelFile>());
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _reportDialogVm.Should().NotBeNull("the run succeeded; losing its report to a grid read is out of proportion");
+        vm.SyncStatus.Should().Be(RunReport().Summary,
+            "the verdict belongs to the run, not to the rebuild that failed after it");
+        _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2),
+            "the backstop gives the failed rebuild one deliberate retry — which here succeeds");
+    }
+
+    /// <summary>
+    /// #539/#541, the OCE door. An OperationCanceledException out of the rebuild (dispatcher
+    /// shutdown mid-swap) is a rebuild failure, not the user cancelling the sync — the shared OCE
+    /// catch used to relabel the whole successful run "Metadata sync cancelled" over it, and the
+    /// owed rebuild still had to happen.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_AnOceFromTheRebuildIsARebuildFailureNotACancelledSync()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService();
+        _modelSync.SetupSequence(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException())
+            .ReturnsAsync(Array.Empty<InstalledModelFile>());
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        vm.SyncStatus.Should().Be(RunReport().Summary, "nobody cancelled anything");
+        _reportDialogVm.Should().NotBeNull();
+        _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2),
+            "the backstop still owes — and delivers — the rebuild");
+    }
+
+    /// <summary>When the retry fails too, the user must learn the grid is stale — appended, not replacing the verdict.</summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_ABackstopRebuildFailureIsSaidOutLoud()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService();
+        _modelSync.Setup(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("database is locked"));
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        vm.SyncStatus.Should().StartWith(RunReport().Summary, "the run's verdict still leads")
+            .And.Contain("grid refresh failed", "a stale grid without a word would read as lost work");
+        _reportDialogVm.Should().NotBeNull("the report itself is intact — only the grid view is behind");
     }
 
     /// <summary>
@@ -984,6 +1328,8 @@ public class LoraViewerViewModelSyncTests
         vm.SyncStatus.Should().Be("Dialog service not available.");
         _sync.Verify(s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()),
             Times.Once, "the discovery pre-run had already happened; nothing beyond it may run unasked");
+        _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Never,
+            "#541: this door exits before the run too, and the empty scan owes no rebuild");
     }
 
     // ------------------------------------------------------------------------------ the per-tile button
@@ -1100,6 +1446,98 @@ public class LoraViewerViewModelSyncTests
 
         outcome.Applied.Should().BeFalse();
         outcome.IdentifyPlanned.Should().Be(0, "nothing was asked, so nothing may be claimed about Civitai");
+    }
+
+    /// <summary>
+    /// #535/#536. ExecuteAsync is total now, so a run that dies midway reaches this path as a
+    /// report with <see cref="SyncReport.AbortReason"/> instead of an exception. That report is a
+    /// failed ask, not an answer — the outcome has to carry the fault out of the ViewModel so the
+    /// detail view can say "failed" rather than "No metadata found on Civitai for this file."
+    /// </summary>
+    [Fact]
+    public async Task DownloadMetadataForTile_AnAbortedRunIsFaultedNotAVerdictAboutCivitai()
+    {
+        var vm = CreateViewModel();
+
+        _sync.Setup(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncScope s, SyncOptions o, CancellationToken _) => PlanFor(s, o, IdentifyStep(1)));
+        _sync.Setup(s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncPlan p, IProgress<LibrarySyncProgress>? _, CancellationToken _) => new SyncReport(
+                p, [], [], Cancelled: false, Elapsed: TimeSpan.Zero, NewFilesDiscovered: 0,
+                AbortReason: "Unexpected InvalidOperationException: database is locked"));
+
+        var outcome = await vm.DownloadMetadataForTileAsync(CreateTile(modelId: 42));
+
+        outcome.Applied.Should().BeFalse("nothing succeeded before the run died");
+        outcome.Faulted.Should().BeTrue("a failed ask is not an answer about Civitai");
+    }
+
+    /// <summary>An item that failed with an exception no step claimed is the same kind of non-answer.</summary>
+    [Fact]
+    public async Task DownloadMetadataForTile_AnUnexpectedItemFailureIsFaultedToo()
+    {
+        var vm = CreateViewModel();
+
+        _sync.Setup(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncScope s, SyncOptions o, CancellationToken _) => PlanFor(s, o, IdentifyStep(1)));
+        _sync.Setup(s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncPlan p, IProgress<LibrarySyncProgress>? _, CancellationToken _) => new SyncReport(
+                p, [new SyncStepReport(SyncStepKind.IdentifyModel, 1, 1, 0, 0, 1)],
+                [new SyncFailure(SyncStepKind.IdentifyModel, 42, "a.safetensors", "Unexpected NullReferenceException: boom")],
+                Cancelled: false, Elapsed: TimeSpan.Zero, NewFilesDiscovered: 0,
+                UnexpectedFailures: 1, FirstUnexpectedError: "Unexpected NullReferenceException: boom"));
+
+        var outcome = await vm.DownloadMetadataForTileAsync(CreateTile(modelId: 42));
+
+        outcome.Applied.Should().BeFalse();
+        outcome.Faulted.Should().BeTrue("a bug in the one item that was asked about is not \"Civitai has nothing\"");
+    }
+
+    /// <summary>A genuine no — the step asked and Civitai had nothing — must NOT read as a fault.</summary>
+    [Fact]
+    public async Task DownloadMetadataForTile_AGenuineNoFromCivitaiIsNotFaulted()
+    {
+        var vm = CreateViewModel();
+
+        _sync.Setup(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncScope s, SyncOptions o, CancellationToken _) => PlanFor(s, o, IdentifyStep(1)));
+        _sync.Setup(s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncPlan p, IProgress<LibrarySyncProgress>? _, CancellationToken _) => new SyncReport(
+                p, [new SyncStepReport(SyncStepKind.IdentifyModel, 1, 1, 0, 1, 0)], [],
+                Cancelled: false, Elapsed: TimeSpan.Zero, NewFilesDiscovered: 0));
+
+        var outcome = await vm.DownloadMetadataForTileAsync(CreateTile(modelId: 42));
+
+        outcome.Faulted.Should().BeFalse("the run completed cleanly; \"No metadata found\" is the honest message here");
+    }
+
+    /// <summary>
+    /// #536, one notch narrower: an ordinary recorded failure — the step asked and the ask itself
+    /// failed (HTTP 500, timeout, disk error) — is a non-answer too. It is expected (the step
+    /// claimed it, so it is not an UnexpectedFailure) and it is not an abort, so it slipped past
+    /// <c>Faulted</c> and the detail view said "No metadata found on Civitai for this file." over
+    /// a transport failure. Disjointness with the honest no holds in the real step too: identify
+    /// records "checked, not on Civitai" as a success/skip, never as a failure.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMetadataForTile_AnOrdinaryFailedAskIsFaultedNotAVerdictAboutCivitai()
+    {
+        var vm = CreateViewModel();
+
+        _sync.Setup(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncScope s, SyncOptions o, CancellationToken _) => PlanFor(s, o, IdentifyStep(1)));
+        _sync.Setup(s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncPlan p, IProgress<LibrarySyncProgress>? _, CancellationToken _) => new SyncReport(
+                p, [new SyncStepReport(SyncStepKind.IdentifyModel, 1, 1, 0, 0, 1)],
+                [new SyncFailure(SyncStepKind.IdentifyModel, 42, "a.safetensors",
+                    "Response status code does not indicate success: 500")],
+                Cancelled: false, Elapsed: TimeSpan.Zero, NewFilesDiscovered: 0));
+
+        var outcome = await vm.DownloadMetadataForTileAsync(CreateTile(modelId: 42));
+
+        outcome.Applied.Should().BeFalse();
+        outcome.Faulted.Should().BeTrue("a failed ask is not an answer about Civitai");
+        outcome.FaultReason.Should().Contain("500", "the message must name the failure, not a verdict");
     }
 
     // -------------------------------------------------------------------------------- single flight

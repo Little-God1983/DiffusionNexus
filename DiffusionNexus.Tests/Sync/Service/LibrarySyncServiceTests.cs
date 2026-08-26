@@ -29,6 +29,7 @@ public sealed class LibrarySyncServiceTests : IDisposable
     private readonly SqliteConnection _connection;
     private readonly ServiceProvider _serviceProvider;
     private readonly List<Model> _discovered = [];
+    private int _repointed;
 
     private const string ApiKey = "test-api-key";
 
@@ -54,7 +55,7 @@ public sealed class LibrarySyncServiceTests : IDisposable
         // resulting count back off the step for the report.
         var modelSync = new Mock<IModelSyncService>();
         modelSync.Setup(s => s.DiscoverNewFilesAsync(It.IsAny<IProgress<SyncProgress>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => _discovered);
+            .ReturnsAsync(() => new DiscoveryResult { NewModels = _discovered, RepointedCount = _repointed });
         services.AddScoped(_ => modelSync.Object);
 
         _serviceProvider = services.BuildServiceProvider();
@@ -269,6 +270,27 @@ public sealed class LibrarySyncServiceTests : IDisposable
         report.Summary.Should().StartWith("Discovered 7");
     }
 
+    /// <summary>
+    /// #537. The scan does two kinds of write in one commit: it ADDS models for unknown files and
+    /// RE-POINTS existing rows at moved files. Only the first was reported, so a repoint-only scan
+    /// said "discovered 0" over durable, grid-visible changes. The repoint count now travels too —
+    /// as its own number, so "N new files discovered" stays honest.
+    /// </summary>
+    [Fact]
+    public async Task Execute_ReportsRepointedFilesFromTheDiscoverStep()
+    {
+        _repointed = 12;
+
+        var discover = new DiscoverFilesStep(Scopes);
+        var service = NewService([discover]);
+        var plan = await service.PlanAsync(SyncScope.Library, OptionsFor(SyncStepKind.DiscoverFiles));
+
+        var report = await service.ExecuteAsync(plan);
+
+        report.NewFilesDiscovered.Should().Be(0, "nothing was added");
+        report.FilesRepointed.Should().Be(12, "twelve rows changed, and the caller's rebuild decision hangs on knowing that");
+    }
+
     [Fact]
     public async Task Execute_ReSelectsItemsAtRunTime()
     {
@@ -359,6 +381,13 @@ public sealed class LibrarySyncServiceTests : IDisposable
         await second.Should().ThrowAsync<SyncAlreadyRunningException>()
             .WithMessage("*already running*");
         (await Record.ExceptionAsync(second)).Should().BeAssignableTo<InvalidOperationException>();
+
+        // #541. The refusal happens at the gate, BEFORE any work — the callers' entire recovery
+        // contract hangs on this ("a refused press wrote nothing", so no rebuild is owed). The
+        // two refused calls above must not have selected or executed anything: the running first
+        // call accounts for one selection (the plan's was its own) and the one blocked item.
+        identify.SelectCalls.Should().Be(2, "plan + the first run's re-selection — the refused calls selected nothing");
+        identify.Executed.Should().HaveCount(1, "only the first run's in-flight item — a refusal that follows work would silently break its callers");
 
         gate.SetResult();
         await first;
@@ -484,6 +513,85 @@ public sealed class LibrarySyncServiceTests : IDisposable
         report.Cancelled.Should().BeFalse();
         report.UnexpectedFailures.Should().Be(1);
         report.Steps.Single().Succeeded.Should().Be(1);
+    }
+
+    /// <summary>
+    /// #535, R5 one level up. A step's <c>SelectAsync</c> runs outside the per-item try, so a
+    /// non-cancellation throw there used to escape <c>ExecuteAsync</c> entirely — with the prior
+    /// steps' per-item work already committed, the tally was discarded and no report was ever
+    /// built. The user saw only the raw exception message; the record of what HAD been synced was
+    /// gone. The escape is recorded on the report instead: the run aborts, but what it did is
+    /// still stated, and the reason travels as <see cref="SyncReport.AbortReason"/>.
+    /// </summary>
+    [Fact]
+    public async Task Execute_AThrowFromAStepsSelectionAbortsTheRunButKeepsTheReport()
+    {
+        var identify = new FakeStep(SyncStepKind.IdentifyModel)
+            .Selecting([Item(1), Item(2)])
+            .Returning(_ => SyncItemResult.Success);
+        var tags = new FakeStep(SyncStepKind.FetchTags).Selecting([Item(9)]).Returning(_ => SyncItemResult.Success);
+        // Selection #1 is plan time and must succeed; #2 is the run's re-selection, where the
+        // database is suddenly locked. (#3 is the gate-release proof at the bottom.)
+        tags.OnSelect = () => tags.SelectCalls == 2
+            ? throw new InvalidOperationException("database is locked")
+            : Task.FromResult(0);
+
+        var service = NewService([identify, tags]);
+        var plan = await service.PlanAsync(SyncScope.Library, OptionsFor(SyncStepKind.IdentifyModel, SyncStepKind.FetchTags));
+
+        var report = await service.ExecuteAsync(plan);
+
+        report.AbortReason.Should().Contain("database is locked",
+            "the escape is a bug outside the item loop and must be stated as such, not laundered into an item failure");
+        report.Cancelled.Should().BeFalse("nobody pressed Cancel");
+        report.Summary.Should().Contain("(aborted)");
+
+        var identifyReport = report.Steps.Single(s => s.Kind == SyncStepKind.IdentifyModel);
+        identifyReport.Succeeded.Should().Be(2,
+            "the two identified models are committed, and this report is the only record that they were");
+        report.Steps.Should().NotContain(s => s.Kind == SyncStepKind.FetchTags,
+            "the failing step never reached its item loop");
+
+        service.IsRunning.Should().BeFalse();
+
+        // ...and the gate really was released: the next run gets in.
+        (await service.ExecuteAsync(plan)).AbortReason.Should().BeNull();
+    }
+
+    /// <summary>
+    /// The outer catch's counterpart to
+    /// <see cref="Execute_ForeignTaskCanceledExceptionIsAnOrdinaryFailure"/>: an OCE escaping a
+    /// step's <c>SelectAsync</c> when nobody cancelled — an HttpClient timeout, a linked token —
+    /// is the same door #535 closed, and must abort loudly. Unfiltered, the cancellation catch
+    /// swallowed it as "the user cancelled": the Cancelled banner over a step that blew up.
+    /// </summary>
+    [Fact]
+    public async Task Execute_AForeignOceFromAStepsSelectionIsAnAbortNotACancellation()
+    {
+        using var unrelated = new CancellationTokenSource();
+        await unrelated.CancelAsync();
+
+        var identify = new FakeStep(SyncStepKind.IdentifyModel)
+            .Selecting([Item(1)])
+            .Returning(_ => SyncItemResult.Success);
+        var tags = new FakeStep(SyncStepKind.FetchTags).Selecting([Item(9)]).Returning(_ => SyncItemResult.Success);
+        // Selection #1 is plan time; #2 is the run's re-selection, where a timeout surfaces as a
+        // cancellation type carrying a token that is not the run's.
+        tags.OnSelect = () => tags.SelectCalls == 2
+            ? throw new TaskCanceledException("timeout", null, unrelated.Token)
+            : Task.FromResult(0);
+
+        var service = NewService([identify, tags]);
+        var plan = await service.PlanAsync(SyncScope.Library, OptionsFor(SyncStepKind.IdentifyModel, SyncStepKind.FetchTags));
+
+        var report = await service.ExecuteAsync(plan);
+
+        report.Cancelled.Should().BeFalse(
+            "nobody pressed Cancel — this OCE is a timeout wearing a cancellation type");
+        report.AbortReason.Should().Contain("TaskCanceledException",
+            "a step that blew up must be stated as such, not laundered into a cancellation");
+        report.Steps.Single(s => s.Kind == SyncStepKind.IdentifyModel).Succeeded.Should().Be(1,
+            "the committed work is still reported");
     }
 
     // ------------------------------------------------------ Thumbnail parallelism

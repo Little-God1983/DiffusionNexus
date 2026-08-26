@@ -133,6 +133,7 @@ public sealed class LibrarySyncService : ILibrarySyncService
 
         var tally = new RunTally();
         var cancelled = false;
+        string? abortReason = null;
 
         try
         {
@@ -150,19 +151,37 @@ public sealed class LibrarySyncService : ILibrarySyncService
                     await RunStepAsync(step, planStep, plan, apiKey, progress, tally, ct).ConfigureAwait(false);
                 }
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 // A cancelled run still reports what it managed to do — the stamps are already
                 // committed, so pretending nothing happened would only cause it to be redone.
+                //
+                // Filtered, like its item-level counterpart in ExecuteItemAsync: an OCE arriving
+                // when nobody cancelled — an HttpClient timeout, a linked token — is a step
+                // blowing up in a cancellation costume, and it falls through to the abort catch
+                // below instead of posing as "the user cancelled" (#535's door, cancellation-shaped).
                 cancelled = true;
                 _logger?.Info(LogCategory.Network, LogSource, "Library sync cancelled by the user");
+            }
+            catch (Exception ex)
+            {
+                // R5, one level up (#535). ExecuteItemAsync already counts bugs inside items; what
+                // lands here escaped OUTSIDE the item loop — a step's SelectAsync, or the API-key
+                // read. The rule is the same: by now earlier steps' items are committed (one scope
+                // each), so letting this throw destroy the tally would report a partially-synced
+                // library as "nothing happened". The run aborts — the failing step and everything
+                // after it never runs — but what it did is returned, with the reason on the report
+                // for the caller to state out loud.
+                abortReason = $"Unexpected {ex.GetType().Name}: {ex.Message}";
+                _logger?.Error(LogCategory.Network, LogSource,
+                    "Library sync aborted: an exception escaped outside the item loop", ex);
             }
 
             stopwatch.Stop();
 
             var syncReport = new SyncReport(
                 plan, tally.Steps, tally.Failures, cancelled, stopwatch.Elapsed, tally.Discovered,
-                tally.UnexpectedFailures, tally.FirstUnexpectedError);
+                tally.UnexpectedFailures, tally.FirstUnexpectedError, abortReason, tally.Repointed);
             _logger?.Info(LogCategory.Network, LogSource, $"Sync finished: {syncReport.Summary} in {Describe(stopwatch.Elapsed)}");
 
             return syncReport;
@@ -262,7 +281,11 @@ public sealed class LibrarySyncService : ILibrarySyncService
             // In the finally, not after the loop: a cancelled step still did work, and its counts
             // are the only record that those items must not be redone.
             tally.Steps.Add(new SyncStepReport(step.Kind, planStep.Count, processed, succeeded, skipped, failed));
-            if (step is DiscoverFilesStep discoverStep) tally.Discovered = discoverStep.DiscoveredCount;
+            if (step is DiscoverFilesStep discoverStep)
+            {
+                tally.Discovered = discoverStep.DiscoveredCount;
+                tally.Repointed = discoverStep.RepointedCount;
+            }
 
             _logger?.Info(LogCategory.Network, LogSource,
                 $"{StepLabel(step.Kind)}: {succeeded} succeeded · {skipped} skipped · {failed} failed of {processed} processed");
@@ -275,6 +298,9 @@ public sealed class LibrarySyncService : ILibrarySyncService
         public List<SyncStepReport> Steps { get; } = [];
         public List<SyncFailure> Failures { get; } = [];
         public int Discovered { get; set; }
+
+        /// <summary>Rows the scan re-pointed at moved files — changed, not added (#537).</summary>
+        public int Repointed { get; set; }
 
         /// <summary>Items that failed with an exception no step claimed — bugs, counted rather than fatal (R5).</summary>
         public int UnexpectedFailures { get; set; }

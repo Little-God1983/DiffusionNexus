@@ -287,6 +287,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     /// </remarks>
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(DownloadMissingMetadataCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RefreshCommand))]
     private bool _isSyncRunning;
 
     /// <summary>
@@ -579,7 +580,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     /// <see cref="ReconcileLibraryInBackgroundAsync"/>, which rebuilds the grid only if it
     /// finds a change (a new file appears, a deleted file drops out, a moved file relocates).
     /// </summary>
-    [RelayCommand]
+    /// <remarks>
+    /// Off while a sync runs (#540): a refresh mid-sync starts a second full-library read and its
+    /// "Loaded N models" overwrites the sync's verdict in the status bar. Startup calls it through
+    /// <c>ExecuteAsync</c>, which does not consult CanExecute, and the detail-deleted fallback
+    /// already checks it before falling back to a plain rebuild.
+    /// </remarks>
+    [RelayCommand(CanExecute = nameof(CanRefresh))]
     private async Task RefreshAsync()
     {
         // Design-time or missing services fallback
@@ -692,9 +699,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         {
             _logger?.Info(LogCategory.General, "LoraReconcile", "Background reconcile started (discover + verify)");
 
-            var (added, missing, moved) = await Task.Run(async () =>
+            var (added, repointed, missing, moved) = await Task.Run(async () =>
             {
-                var newCount = await DiscoverNewFilesAsync();
+                var discovery = await DiscoverNewFilesAsync();
                 await BackfillCivitaiModelPageIdAsync();
 
                 using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
@@ -704,14 +711,16 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                         SyncStatus = p.Phase == "Verification complete" ? null : p.Phase));
 
                 // MissingCount = files gone from disk (now filtered out of LoadCachedFilesAsync);
-                // MovedCount = files whose path changed. Either, or a new file, changes the grid.
+                // MovedCount = files whose path changed. Either, or a new file, changes the grid —
+                // and so does a row the DISCOVERY half re-pointed (#537): the verify pass then sees
+                // a valid path and counts it as merely verified, so its own MovedCount misses it.
                 var result = await syncService.VerifyAndSyncFilesAsync(progress);
-                return (newCount, result.MissingCount, result.MovedCount);
+                return (discovery.NewModels.Count, discovery.RepointedCount, result.MissingCount, result.MovedCount);
             });
 
-            var changed = added > 0 || missing > 0 || moved > 0;
+            var changed = added > 0 || repointed > 0 || missing > 0 || moved > 0;
             _logger?.Info(LogCategory.General, "LoraReconcile",
-                $"Reconcile done: {added} new, {missing} missing (deleted from disk), {moved} moved → rebuild={changed}");
+                $"Reconcile done: {added} new, {repointed} re-pointed, {missing} missing (deleted from disk), {moved} moved → rebuild={changed}");
 
             if (changed)
                 await RebuildTilesFromDatabaseAsync();
@@ -724,12 +733,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// Discover new files and add them to the database. Returns the number of new models
-    /// discovered so callers can decide whether the grid needs rebuilding.
-    /// Uses a fresh DI scope so the DbContext sees the latest committed data
+    /// Discover new files and add them to the database. Returns what the scan added AND what it
+    /// changed (re-pointed moved files, #537) so callers can decide whether the grid needs
+    /// rebuilding. Uses a fresh DI scope so the DbContext sees the latest committed data
     /// (avoids duplicates when files were already persisted by other operations).
     /// </summary>
-    private async Task<int> DiscoverNewFilesAsync()
+    private async Task<DiscoveryResult> DiscoverNewFilesAsync()
     {
         try
         {
@@ -747,14 +756,14 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 });
             });
 
-            var newModels = await syncService.DiscoverNewFilesAsync(progress);
+            var discovery = await syncService.DiscoverNewFilesAsync(progress);
 
             Dispatcher.UIThread.Post(() =>
             {
-                SyncStatus = $"Discovered {newModels.Count} new files";
+                SyncStatus = $"Discovered {discovery.NewModels.Count} new files";
             });
 
-            return newModels.Count;
+            return discovery;
         }
         catch (Exception ex)
         {
@@ -763,7 +772,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 SyncStatus = $"Discovery error: {ex.Message}";
             });
 
-            return 0;
+            return new DiscoveryResult();
         }
     }
 
@@ -913,12 +922,16 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 
         var ct = cts.Token;
 
-        // Both live out here because the finally needs them (F3). The scan runs before the dialog
-        // and commits new Model rows straight to the database, so the grid is stale from that
-        // moment on — and only the run path used to rebuild it. Every other exit (the user
-        // cancelling at the dialog, a missing dialog service, either single-flight refusal, the
-        // cancellation catch, the generic catch) left those rows invisible until a manual Refresh.
+        // These four live out here because the finally needs them (F3). The scan runs before the
+        // dialog and commits straight to the database — new Model rows (discovered) and re-pointed
+        // moved files (repointed, #537) — so the grid is stale from that moment on, and only the
+        // run path used to rebuild it. Every other exit (the user cancelling at the dialog, a
+        // missing dialog service, either single-flight refusal, the cancellation catch, the
+        // generic catch) left those rows invisible until a manual Refresh. rebuilt records that
+        // the run path already re-projected; rebuildOwed marks the stretch where the run itself
+        // may have committed work.
         var discovered = 0;
+        var repointed = 0;
         var rebuilt = false;
         var rebuildOwed = false;
         try
@@ -973,6 +986,21 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             }
 
             discovered = discoverReport.NewFilesDiscovered;
+            repointed = discoverReport.FilesRepointed;
+
+            // ExecuteAsync is total now (#535): a throw outside its item loop comes back as
+            // AbortReason instead of escaping. For the scan that keeps the abort semantics it had
+            // when the service still threw — stop here, because a question built on counts a
+            // broken scan produced would put the user's yes on bad numbers. Ordinary scan failures
+            // (an unreadable folder) still proceed and are folded into the run's report below; an
+            // abort is a bug, not a verdict. The finally still rebuilds over whatever the scan
+            // committed first, via the discovered term of its gate.
+            if (discoverReport.AbortReason is not null)
+            {
+                SyncStatus = $"Sync error: {discoverReport.AbortReason}";
+                _logger?.Error(LogCategory.Network, "CivitaiSync", $"Sync scan aborted: {discoverReport.AbortReason}");
+                return;
+            }
 
             var baseOptions = new SyncOptions(
                 PlannedStepKinds, RetryPolicy: policy, ThumbnailConcurrency: settings.SyncThumbnailConcurrency);
@@ -1012,9 +1040,23 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 // and a Force toggle re-plans live, so an all-zero `plan` can sit behind a dialog
                 // showing 40 thumbnails. Saying "up to date" over that is a flat contradiction of
                 // the number the user was looking at a second earlier.
-                if (discovered > 0)
+                if (discovered > 0 && repointed > 0)
+                {
+                    // Both of the scan's writes in one pass — additive, not first-wins: the
+                    // re-linked models just reappeared on screen too, and dropping them here is
+                    // the #537 complaint one branch over.
+                    SyncStatus = $"Sync cancelled — the scan added {discovered} new file{(discovered == 1 ? "" : "s")}" +
+                                 $" and re-linked {repointed} moved file{(repointed == 1 ? "" : "s")}.";
+                }
+                else if (discovered > 0)
                 {
                     SyncStatus = $"Sync cancelled — the scan added {discovered} new file{(discovered == 1 ? "" : "s")}.";
+                }
+                else if (repointed > 0)
+                {
+                    // The scan's other write (#537): nothing added, but moved files were re-linked
+                    // to rows the grid had hidden — those models just came back on screen.
+                    SyncStatus = $"Sync cancelled — the scan re-linked {repointed} moved file{(repointed == 1 ? "" : "s")}.";
                 }
                 else if (discoverReport.Failures.Count > 0)
                 {
@@ -1054,11 +1096,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             var progress = new UiProgress<LibrarySyncProgress>(this, p =>
                 SyncStatus = $"{SyncReport.Label(p.Step)} [{p.Index}/{p.Total}] {p.CurrentItem}");
 
-            // From here the run may commit work — each item in its own scope — and a step's
-            // SelectAsync sits outside the loop's try in LibrarySyncService, so a non-cancellation
-            // throw there escapes ExecuteAsync with everything already durable. The finally's
-            // backstop owes a rebuild for that door too, not only for the scan's rows; the cost is
-            // one wasted rebuild when the run dies before writing anything.
+            // From here the run may commit work — each item in its own scope. ExecuteAsync is
+            // total now (#535): a run that dies midway comes back as a report with AbortReason
+            // and flows through the run path's own rebuild below. The flag still backs the
+            // finally's rebuild for the doors that remain — a run-path rebuild that fails (its
+            // local guard under #539 leaves rebuilt false), and a service regression that makes
+            // ExecuteAsync escape again. The cost is one wasted rebuild when the run dies before
+            // writing anything.
             rebuildOwed = true;
 
             SyncReport report;
@@ -1068,10 +1112,23 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             }
             catch (SyncAlreadyRunningException ex)
             {
-                // The gate refused it at Wait(0), before any work — this press wrote nothing.
+                // The gate refused it at Wait(0), before any work — this press wrote nothing
+                // BEYOND THE SCAN, which is exactly why the gate keeps its discovered/repointed
+                // terms: only the run's own debt is being waived here.
                 rebuildOwed = false;
                 ReportServiceAlreadyRunning(ex);
                 return;
+            }
+            catch (OperationCanceledException)
+            {
+                // Task.Run with an already-signalled token never invokes the delegate, and a
+                // cancellation INSIDE the service comes back as a Cancelled report — so an OCE at
+                // THIS await proves the run never entered ExecuteAsync (#540). Only here is that
+                // proof available, which is why the flag is lowered in this scoped catch and never
+                // in the shared OCE catch below: an OCE later in the flow (a dispatcher dying
+                // mid-swap) can arrive after a fully durable run that still owes its rebuild.
+                rebuildOwed = false;
+                throw;
             }
 
             // The scan was its own run; fold ALL of it back in so every projection of this button
@@ -1098,7 +1155,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 discoverReport.Elapsed + report.Elapsed,
                 discovered,
                 discoverReport.UnexpectedFailures + report.UnexpectedFailures,
-                discoverReport.FirstUnexpectedError ?? report.FirstUnexpectedError);
+                discoverReport.FirstUnexpectedError ?? report.FirstUnexpectedError,
+                // The scan's term is unreachable today — an aborted scan returns early above —
+                // but if that abort is ever made non-fatal, dropping it here would lose the
+                // reason silently. The coalesce order matches the other folded fields: scan first.
+                discoverReport.AbortReason ?? report.AbortReason,
+                discoverReport.FilesRepointed + report.FilesRepointed);
 
             // "Last full sync" is what the next plan dialog tells the user about staleness, so it
             // records a run that actually finished. Deliberately CancellationToken.None: this
@@ -1119,8 +1181,10 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             // Judged against the dialog's rows, not the four kinds: BuildResult drops zero-count
             // kinds from the chosen set, so demanding all four would mean a library where one step
             // legitimately has nothing to do could never stamp again. A kind with nothing to do is
-            // covered by doing nothing.
-            if (!report.Cancelled && dialogVm.Rows.All(r => r.Count == 0 || chosen.Steps.Contains(r.Kind)))
+            // covered by doing nothing. An aborted run (#535) is excluded outright: the ticked
+            // kinds say what was asked for, not what actually ran before the run died.
+            if (!report.Cancelled && report.AbortReason is null
+                && dialogVm.Rows.All(r => r.Count == 0 || chosen.Steps.Contains(r.Kind)))
             {
                 try
                 {
@@ -1152,8 +1216,23 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             // already committed — passing the by-then-signalled token here made Task.Run throw
             // before the rebuild, so the work landed in the database and stayed invisible in the
             // grid, and the report was swallowed by the cancellation catch below.
-            await Task.Run(RebuildTilesFromDatabaseAsync);
-            rebuilt = true;
+            //
+            // Guarded (#539): this is a DB read at the peak of WAL contention, and unguarded its
+            // throw reached the outer catches — a SUCCESSFUL run's verdict became "Sync error: …"
+            // (or, for an OCE off a dying dispatcher, "Metadata sync cancelled") and the report
+            // dialog was skipped, with the timestamp possibly already stamped. A failed rebuild
+            // costs only the rebuild: rebuilt stays false, so the finally's backstop gives it one
+            // deliberate retry — which can genuinely succeed once the post-run contention clears.
+            try
+            {
+                await Task.Run(RebuildTilesFromDatabaseAsync);
+                rebuilt = true;
+            }
+            catch (Exception ex)
+            {
+                _logger?.Warn(LogCategory.Network, "CivitaiSync",
+                    $"Grid rebuild after the run failed (the backstop will retry): {ex.Message}");
+            }
 
             var statusText = DescribeOutcome(report);
             _logger?.Info(LogCategory.Network, "CivitaiSync", statusText);
@@ -1165,7 +1244,14 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             IsCancellable = false;
             BusyMessage = null;
 
-            await dialogService.ShowSyncReportDialogAsync(new SyncReportDialogViewModel(report, discovered));
+            // An abort before any step tallied — the API-key read, the first step's selection —
+            // leaves a report whose table is empty (and, unless the scan recorded failures,
+            // nothing else to show). The status line above already leads with the abort; a modal
+            // over an empty table adds nothing to it, so that one case stays on the status line —
+            // the way the aborted-scan path already behaves. Any committed work or failure row
+            // still opens the dialog.
+            if (report.AbortReason is null || report.Steps.Count > 0 || report.Failures.Count > 0)
+                await dialogService.ShowSyncReportDialogAsync(new SyncReportDialogViewModel(report, discovered));
         }
         catch (OperationCanceledException)
         {
@@ -1179,9 +1265,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         }
         finally
         {
-            IsBusy = false;
+            // The overlay does NOT come down yet (#540): if the backstop below has a rebuild to
+            // do, that is a multi-second UI-thread tile swap on a big library, and dropping the
+            // overlay first left it running unattributed while both sync buttons still refused
+            // input. Cancellable ends here either way — the token source is disposed next.
             IsCancellable = false;
-            BusyMessage = null;
 
             // Only the CTS this call created: clearing the field unconditionally would let a
             // late-finishing run dispose a newer run's token source out from under it.
@@ -1192,14 +1280,18 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             // (F3). Nothing else refreshes it — ILibraryChangeNotifier.ModelDownloaded is raised
             // only by CivitaiModelDownloader, never by DiscoverFilesStep — so without this a
             // cancelled dialog leaves twelve new LoRAs in the database and none of them on screen.
-            // rebuildOwed covers the other door: a run that died midway has committed per-item
-            // work too, and gating on the scan alone left it just as invisible.
-            // Guarded so a failed rebuild costs only the rebuild: the status line above already
-            // says what happened, and an exception here would replace it with a lie.
+            // rebuildOwed covers the doors the run path's own rebuild can leave open: that rebuild
+            // failing (#539 — this retry is deliberate, and can succeed once the post-run WAL
+            // contention clears), and a service regression that makes ExecuteAsync escape again
+            // (#535 made it total, so an escape is a bug — but the committed work would still
+            // need showing). Guarded so a failed rebuild costs only the rebuild — the verdict
+            // above stands, with the staleness appended rather than replacing it.
             // BEFORE the sync-running flag drops: re-enabling the per-tile button while the tile
             // collection is mid-swap would let a fetch update a tile the rebuild is discarding.
-            if ((discovered > 0 || rebuildOwed) && !rebuilt)
+            if ((discovered > 0 || repointed > 0 || rebuildOwed) && !rebuilt)
             {
+                IsBusy = true;
+                BusyMessage = "Refreshing library view…";
                 try
                 {
                     await Task.Run(RebuildTilesFromDatabaseAsync);
@@ -1207,9 +1299,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 catch (Exception ex)
                 {
                     _logger?.Warn(LogCategory.Network, "CivitaiSync",
-                        $"Grid refresh after the scan failed: {ex.Message}");
+                        $"Grid refresh after the sync failed: {ex.Message}");
+                    SyncStatus = $"{SyncStatus} · grid refresh failed — press Refresh to reload";
                 }
             }
+
+            IsBusy = false;
+            BusyMessage = null;
 
             _localSyncActive = false;
             RefreshSyncRunning();
@@ -1254,6 +1350,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 
     /// <summary>Both buttons that can start a run are off while one is running — the service takes one at a time.</summary>
     private bool CanStartMetadataSync() => !IsSyncRunning;
+
+    /// <summary>The Refresh button obeys the same rule (#540) — see the remarks on <see cref="RefreshAsync"/>.</summary>
+    private bool CanRefresh() => !IsSyncRunning;
 
     /// <summary>
     /// Requests cancellation of the in-flight metadata sync. Safe no-op when idle.
@@ -1498,17 +1597,39 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     /// </remarks>
     private static string DescribeOutcome(SyncReport report)
     {
-        if (report.NewFilesDiscovered == 0 && report.Steps.All(s => s.Planned == 0))
+        // An aborted run is never "up to date", however empty its plan looked — the run died, and
+        // the verdict has to lead with that (#535). Only the lead differs: the tally AND the
+        // suffixes below still follow, because the run where the most went wrong is exactly the
+        // one whose failures and repoints must not go unsaid.
+        if (report.AbortReason is null
+            && report.NewFilesDiscovered == 0 && report.FilesRepointed == 0
+            && report.Steps.All(s => s.Planned == 0))
+        {
+            // Repoints veto "up to date" too (#537): models the grid had hidden just came back on
+            // screen, and this line is where the user learns why.
             return UpToDateStatus;
+        }
 
         var status = report.Failures.Count > 0
             ? $"{report.Summary} · {report.Failures.Count} failed"
             : report.Summary;
 
+        if (report.FilesRepointed > 0)
+            status += $" · {SyncCopy.DescribeRepointed(report.FilesRepointed)}";
+
         if (report.UnexpectedFailures > 0)
         {
             var item = report.UnexpectedFailures == 1 ? "item" : "items";
             status += $" · {report.UnexpectedFailures} {item} failed unexpectedly (see log)";
+        }
+
+        if (report.AbortReason is not null)
+        {
+            // The lead names the abort with its reason, so Summary's own "(aborted)" marker —
+            // right for the log line and the report dialog, where Summary stands alone — would
+            // only repeat it here. The marker is Summary's last part, joined like every other.
+            status = status.Replace(" · (aborted)", string.Empty, StringComparison.Ordinal);
+            return $"Sync aborted — {report.AbortReason} · {status}";
         }
 
         return status;
@@ -1835,8 +1956,19 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 // list and repaints description/tags/images.
                 await detail.LoadAsync(tile);
                 // LoadAsync ends by clearing StatusMessage, so a successful refresh used to
-                // leave no trace at all — the bar just closed. Say what happened.
-                detail.StatusMessage = "Metadata refreshed.";
+                // leave no trace at all — the bar just closed. Say what happened — including
+                // when the run also hit a bug partway: what was applied is real, but silence
+                // about the rest would claim a complete refresh (#535).
+                detail.StatusMessage = outcome.Faulted
+                    ? "Metadata partially refreshed — the run hit an error, see the log."
+                    : "Metadata refreshed.";
+            }
+            else if (outcome.Faulted)
+            {
+                // The run hit a bug — it aborted, or the item died on an exception no step
+                // claimed. Neither is an answer from Civitai, so neither of the verdicts below
+                // may be spoken over it (#535).
+                detail.StatusMessage = $"Metadata download failed: {outcome.FaultReason}";
             }
             else
             {
@@ -1997,6 +2129,24 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         /// </summary>
         public int IdentifyPlanned
             => Report?.Steps.FirstOrDefault(s => s.Kind == SyncStepKind.IdentifyModel)?.Planned ?? 0;
+
+        /// <summary>
+        /// Whether the run hit a failure rather than an answer: it aborted midway
+        /// (<see cref="SyncReport.AbortReason"/>), items failed with exceptions no step claimed
+        /// (<see cref="SyncReport.UnexpectedFailures"/>), or the ask itself failed in a way the
+        /// step did claim — an HTTP 500, a timeout, a disk error recorded as an ordinary
+        /// <see cref="SyncFailure"/> (#536). "No metadata found on Civitai" may not be said over
+        /// any of these — a failed ask is not an answer (#535). The honest no keeps its case:
+        /// identify records "checked, not on Civitai" as a completed item, never as a failure,
+        /// so <see cref="SyncReport.Failures"/> and not-founds are disjoint.
+        /// </summary>
+        public bool Faulted
+            => Report is not null
+               && (Report.AbortReason is not null || Report.UnexpectedFailures > 0 || Report.Failures.Count > 0);
+
+        /// <summary>The failure to show for a <see cref="Faulted"/> outcome, best reason first.</summary>
+        public string? FaultReason
+            => Report?.AbortReason ?? Report?.FirstUnexpectedError ?? Report?.Failures.FirstOrDefault()?.Reason;
     }
 
     /// <summary>
