@@ -176,7 +176,7 @@ public sealed class LibrarySyncService : ILibrarySyncService
 
             var syncReport = new SyncReport(
                 plan, tally.Steps, tally.Failures, cancelled, stopwatch.Elapsed, tally.Discovered,
-                tally.UnexpectedFailures, tally.FirstUnexpectedError, abortReason);
+                tally.UnexpectedFailures, tally.FirstUnexpectedError, abortReason, tally.Repointed);
             _logger?.Info(LogCategory.Network, LogSource, $"Sync finished: {syncReport.Summary} in {Describe(stopwatch.Elapsed)}");
 
             return syncReport;
@@ -276,7 +276,11 @@ public sealed class LibrarySyncService : ILibrarySyncService
             // In the finally, not after the loop: a cancelled step still did work, and its counts
             // are the only record that those items must not be redone.
             tally.Steps.Add(new SyncStepReport(step.Kind, planStep.Count, processed, succeeded, skipped, failed));
-            if (step is DiscoverFilesStep discoverStep) tally.Discovered = discoverStep.DiscoveredCount;
+            if (step is DiscoverFilesStep discoverStep)
+            {
+                tally.Discovered = discoverStep.DiscoveredCount;
+                tally.Repointed = discoverStep.RepointedCount;
+            }
 
             _logger?.Info(LogCategory.Network, LogSource,
                 $"{StepLabel(step.Kind)}: {succeeded} succeeded · {skipped} skipped · {failed} failed of {processed} processed");
@@ -289,6 +293,9 @@ public sealed class LibrarySyncService : ILibrarySyncService
         public List<SyncStepReport> Steps { get; } = [];
         public List<SyncFailure> Failures { get; } = [];
         public int Discovered { get; set; }
+
+        /// <summary>Rows the scan re-pointed at moved files — changed, not added (#537).</summary>
+        public int Repointed { get; set; }
 
         /// <summary>Items that failed with an exception no step claimed — bugs, counted rather than fatal (R5).</summary>
         public int UnexpectedFailures { get; set; }

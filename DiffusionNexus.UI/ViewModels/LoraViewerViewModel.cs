@@ -692,9 +692,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         {
             _logger?.Info(LogCategory.General, "LoraReconcile", "Background reconcile started (discover + verify)");
 
-            var (added, missing, moved) = await Task.Run(async () =>
+            var (added, repointed, missing, moved) = await Task.Run(async () =>
             {
-                var newCount = await DiscoverNewFilesAsync();
+                var discovery = await DiscoverNewFilesAsync();
                 await BackfillCivitaiModelPageIdAsync();
 
                 using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
@@ -704,14 +704,16 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                         SyncStatus = p.Phase == "Verification complete" ? null : p.Phase));
 
                 // MissingCount = files gone from disk (now filtered out of LoadCachedFilesAsync);
-                // MovedCount = files whose path changed. Either, or a new file, changes the grid.
+                // MovedCount = files whose path changed. Either, or a new file, changes the grid —
+                // and so does a row the DISCOVERY half re-pointed (#537): the verify pass then sees
+                // a valid path and counts it as merely verified, so its own MovedCount misses it.
                 var result = await syncService.VerifyAndSyncFilesAsync(progress);
-                return (newCount, result.MissingCount, result.MovedCount);
+                return (discovery.NewModels.Count, discovery.RepointedCount, result.MissingCount, result.MovedCount);
             });
 
-            var changed = added > 0 || missing > 0 || moved > 0;
+            var changed = added > 0 || repointed > 0 || missing > 0 || moved > 0;
             _logger?.Info(LogCategory.General, "LoraReconcile",
-                $"Reconcile done: {added} new, {missing} missing (deleted from disk), {moved} moved → rebuild={changed}");
+                $"Reconcile done: {added} new, {repointed} re-pointed, {missing} missing (deleted from disk), {moved} moved → rebuild={changed}");
 
             if (changed)
                 await RebuildTilesFromDatabaseAsync();
@@ -724,12 +726,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// Discover new files and add them to the database. Returns the number of new models
-    /// discovered so callers can decide whether the grid needs rebuilding.
-    /// Uses a fresh DI scope so the DbContext sees the latest committed data
+    /// Discover new files and add them to the database. Returns what the scan added AND what it
+    /// changed (re-pointed moved files, #537) so callers can decide whether the grid needs
+    /// rebuilding. Uses a fresh DI scope so the DbContext sees the latest committed data
     /// (avoids duplicates when files were already persisted by other operations).
     /// </summary>
-    private async Task<int> DiscoverNewFilesAsync()
+    private async Task<DiscoveryResult> DiscoverNewFilesAsync()
     {
         try
         {
@@ -747,14 +749,14 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 });
             });
 
-            var newModels = await syncService.DiscoverNewFilesAsync(progress);
+            var discovery = await syncService.DiscoverNewFilesAsync(progress);
 
             Dispatcher.UIThread.Post(() =>
             {
-                SyncStatus = $"Discovered {newModels.Count} new files";
+                SyncStatus = $"Discovered {discovery.NewModels.Count} new files";
             });
 
-            return newModels.Count;
+            return discovery;
         }
         catch (Exception ex)
         {
@@ -763,7 +765,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 SyncStatus = $"Discovery error: {ex.Message}";
             });
 
-            return 0;
+            return new DiscoveryResult();
         }
     }
 
@@ -913,12 +915,16 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 
         var ct = cts.Token;
 
-        // Both live out here because the finally needs them (F3). The scan runs before the dialog
-        // and commits new Model rows straight to the database, so the grid is stale from that
-        // moment on — and only the run path used to rebuild it. Every other exit (the user
-        // cancelling at the dialog, a missing dialog service, either single-flight refusal, the
-        // cancellation catch, the generic catch) left those rows invisible until a manual Refresh.
+        // These four live out here because the finally needs them (F3). The scan runs before the
+        // dialog and commits straight to the database — new Model rows (discovered) and re-pointed
+        // moved files (repointed, #537) — so the grid is stale from that moment on, and only the
+        // run path used to rebuild it. Every other exit (the user cancelling at the dialog, a
+        // missing dialog service, either single-flight refusal, the cancellation catch, the
+        // generic catch) left those rows invisible until a manual Refresh. rebuilt records that
+        // the run path already re-projected; rebuildOwed marks the stretch where the run itself
+        // may have committed work.
         var discovered = 0;
+        var repointed = 0;
         var rebuilt = false;
         var rebuildOwed = false;
         try
@@ -973,6 +979,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             }
 
             discovered = discoverReport.NewFilesDiscovered;
+            repointed = discoverReport.FilesRepointed;
 
             // ExecuteAsync is total now (#535): a throw outside its item loop comes back as
             // AbortReason instead of escaping. For the scan that keeps the abort semantics it had
@@ -1029,6 +1036,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 if (discovered > 0)
                 {
                     SyncStatus = $"Sync cancelled — the scan added {discovered} new file{(discovered == 1 ? "" : "s")}.";
+                }
+                else if (repointed > 0)
+                {
+                    // The scan's other write (#537): nothing added, but moved files were re-linked
+                    // to rows the grid had hidden — those models just came back on screen.
+                    SyncStatus = $"Sync cancelled — the scan re-linked {repointed} moved file{(repointed == 1 ? "" : "s")}.";
                 }
                 else if (discoverReport.Failures.Count > 0)
                 {
@@ -1115,7 +1128,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 discovered,
                 discoverReport.UnexpectedFailures + report.UnexpectedFailures,
                 discoverReport.FirstUnexpectedError ?? report.FirstUnexpectedError,
-                report.AbortReason);
+                report.AbortReason,
+                discoverReport.FilesRepointed + report.FilesRepointed);
 
             // "Last full sync" is what the next plan dialog tells the user about staleness, so it
             // records a run that actually finished. Deliberately CancellationToken.None: this
@@ -1218,7 +1232,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             // says what happened, and an exception here would replace it with a lie.
             // BEFORE the sync-running flag drops: re-enabling the per-tile button while the tile
             // collection is mid-swap would let a fetch update a tile the rebuild is discarding.
-            if ((discovered > 0 || rebuildOwed) && !rebuilt)
+            if ((discovered > 0 || repointed > 0 || rebuildOwed) && !rebuilt)
             {
                 try
                 {
@@ -1524,12 +1538,17 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         if (report.AbortReason is not null)
             return $"Sync aborted — {report.AbortReason} · {report.Summary}";
 
-        if (report.NewFilesDiscovered == 0 && report.Steps.All(s => s.Planned == 0))
+        // Repoints veto "up to date" too (#537): models the grid had hidden just came back on
+        // screen, and this line is where the user learns why.
+        if (report.NewFilesDiscovered == 0 && report.FilesRepointed == 0 && report.Steps.All(s => s.Planned == 0))
             return UpToDateStatus;
 
         var status = report.Failures.Count > 0
             ? $"{report.Summary} · {report.Failures.Count} failed"
             : report.Summary;
+
+        if (report.FilesRepointed > 0)
+            status += $" · {SyncCopy.DescribeRepointed(report.FilesRepointed)}";
 
         if (report.UnexpectedFailures > 0)
         {

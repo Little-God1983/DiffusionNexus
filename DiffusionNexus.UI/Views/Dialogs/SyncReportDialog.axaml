@@ -36,6 +36,13 @@
                Foreground="#CCCCCC"
                TextWrapping="Wrap"/>
 
+    <!-- The scan's other write (#537): moved files re-linked to rows the grid had hidden -->
+    <TextBlock Text="{Binding RepointedText}"
+               IsVisible="{Binding HasRepointedFiles}"
+               FontSize="12"
+               Foreground="#CCCCCC"
+               TextWrapping="Wrap"/>
+
     <TextBlock Text="{Binding UnexpectedText}"
                IsVisible="{Binding HasUnexpected}"
                FontSize="12"

@@ -188,6 +188,7 @@ public class LoraViewerViewModelSyncTests
         TimeSpan? runElapsed = null,
         string? discoverAbortReason = null,
         string? runAbortReason = null,
+        int repointed = 0,
         params SyncFailure[] failures)
     {
         _sync.Setup(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()))
@@ -212,7 +213,7 @@ public class LoraViewerViewModelSyncTests
                 return isDiscovery
                     ? ReportFor(plan, discovered, cancelled: false, discoverFailures ?? [], discoverElapsed,
                         discoverUnexpected, discoverUnexpected > 0 ? "scan: NullReferenceException" : null,
-                        discoverAbortReason)
+                        discoverAbortReason, repointed)
                     : ReportFor(plan, discovered: 0, cancelled, failures, runElapsed,
                         abortReason: runAbortReason);
             });
@@ -245,7 +246,8 @@ public class LoraViewerViewModelSyncTests
         TimeSpan? elapsed = null,
         int unexpected = 0,
         string? firstUnexpectedError = null,
-        string? abortReason = null)
+        string? abortReason = null,
+        int repointed = 0)
         => new(
             plan,
             plan.Steps.Select(s =>
@@ -259,7 +261,8 @@ public class LoraViewerViewModelSyncTests
             NewFilesDiscovered: IsDiscovery(plan.Options) ? discovered : 0,
             UnexpectedFailures: unexpected,
             FirstUnexpectedError: firstUnexpectedError,
-            AbortReason: abortReason);
+            AbortReason: abortReason,
+            FilesRepointed: IsDiscovery(plan.Options) ? repointed : 0);
 
     /// <summary>The report the run (not the discovery pre-run) produced, as the ViewModel saw it.</summary>
     private SyncReport RunReport() => ReportFor(_executed[^1], discovered: 0, cancelled: false, []);
@@ -386,6 +389,31 @@ public class LoraViewerViewModelSyncTests
             "\"nothing was run\" is false once the scan has added files — it is what the button just did");
     }
 
+    /// <summary>
+    /// #537. The scan's OTHER write: a moved file hash-matched to an invalid-path row is
+    /// re-pointed, in the same commit that inserts new models — and repoint candidates are exactly
+    /// the rows the grid hides, so the twelve models just came back into the database. Gating the
+    /// rebuild on "discovered > 0" alone left them off screen behind a status line claiming
+    /// nothing was run, until a manual Refresh.
+    /// </summary>
+    [Theory]
+    [InlineData(12, "Sync cancelled — the scan re-linked 12 moved files.")]
+    [InlineData(1, "Sync cancelled — the scan re-linked 1 moved file.")]
+    public async Task DownloadMissingMetadata_CancellingTheDialogStillRebuildsAfterARepointOnlyScan(
+        int repointed, string expectedStatus)
+    {
+        var vm = CreateViewModel();
+        SetupSyncService(repointed: repointed);   // discovered: 0 — the scan only re-pointed
+        _planDialogAnswer = _ => Task.FromResult(SyncPlanDialogResult.Cancelled());
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Once,
+            "the re-pointed rows are valid again and stay invisible until the grid is re-projected");
+        vm.SyncStatus.Should().Be(expectedStatus,
+            "\"nothing was run\" is false once the scan has re-linked files — it is what the button just did");
+    }
+
     /// <summary>The same rebuild is owed when the flow leaves through a refusal rather than a cancel.</summary>
     [Fact]
     public async Task DownloadMissingMetadata_RebuildsAfterTheScanEvenWhenTheRunIsRefused()
@@ -437,6 +465,23 @@ public class LoraViewerViewModelSyncTests
 
         _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Never,
             "the refusal happened at the gate, before any work — a full grid re-projection would be pure cost");
+    }
+
+    /// <summary>
+    /// #537, the completed-run half: five models just reappeared, so the verdict may not be
+    /// "Library is up to date — nothing to do" even though nothing was planned in any step.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_ARepointOnlyScanIsNotReportedAsUpToDate()
+    {
+        var vm = CreateViewModel();
+        _identifyCount = 0;              // no step has work — only the scan's repoints happened
+        SetupSyncService(repointed: 5);
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        vm.SyncStatus.Should().Contain("5 moved files re-linked",
+            "five models just came back on screen, and the status line is where the user learns why");
     }
 
     /// <summary>And exactly once when the run path already did it — the finally is a backstop, not a second pass.</summary>

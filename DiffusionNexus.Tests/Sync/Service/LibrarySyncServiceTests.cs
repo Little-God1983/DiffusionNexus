@@ -29,6 +29,7 @@ public sealed class LibrarySyncServiceTests : IDisposable
     private readonly SqliteConnection _connection;
     private readonly ServiceProvider _serviceProvider;
     private readonly List<Model> _discovered = [];
+    private int _repointed;
 
     private const string ApiKey = "test-api-key";
 
@@ -54,7 +55,7 @@ public sealed class LibrarySyncServiceTests : IDisposable
         // resulting count back off the step for the report.
         var modelSync = new Mock<IModelSyncService>();
         modelSync.Setup(s => s.DiscoverNewFilesAsync(It.IsAny<IProgress<SyncProgress>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => _discovered);
+            .ReturnsAsync(() => new DiscoveryResult { NewModels = _discovered, RepointedCount = _repointed });
         services.AddScoped(_ => modelSync.Object);
 
         _serviceProvider = services.BuildServiceProvider();
@@ -267,6 +268,27 @@ public sealed class LibrarySyncServiceTests : IDisposable
 
         report.NewFilesDiscovered.Should().Be(7);
         report.Summary.Should().StartWith("Discovered 7");
+    }
+
+    /// <summary>
+    /// #537. The scan does two kinds of write in one commit: it ADDS models for unknown files and
+    /// RE-POINTS existing rows at moved files. Only the first was reported, so a repoint-only scan
+    /// said "discovered 0" over durable, grid-visible changes. The repoint count now travels too —
+    /// as its own number, so "N new files discovered" stays honest.
+    /// </summary>
+    [Fact]
+    public async Task Execute_ReportsRepointedFilesFromTheDiscoverStep()
+    {
+        _repointed = 12;
+
+        var discover = new DiscoverFilesStep(Scopes);
+        var service = NewService([discover]);
+        var plan = await service.PlanAsync(SyncScope.Library, OptionsFor(SyncStepKind.DiscoverFiles));
+
+        var report = await service.ExecuteAsync(plan);
+
+        report.NewFilesDiscovered.Should().Be(0, "nothing was added");
+        report.FilesRepointed.Should().Be(12, "twelve rows changed, and the caller's rebuild decision hangs on knowing that");
     }
 
     [Fact]

@@ -194,7 +194,7 @@ public class ModelFileSyncService : IModelSyncService
     }
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<Model>> DiscoverNewFilesAsync(
+    public async Task<DiscoveryResult> DiscoverNewFilesAsync(
         IProgress<SyncProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
@@ -217,7 +217,7 @@ public class ModelFileSyncService : IModelSyncService
             {
                 Phase = "No source folders configured - add folders in Settings"
             });
-            return [];
+            return new DiscoveryResult();
         }
 
         progress?.Report(new SyncProgress
@@ -268,7 +268,7 @@ public class ModelFileSyncService : IModelSyncService
 
         if (newFiles.Count == 0)
         {
-            return [];
+            return new DiscoveryResult();
         }
 
         progress?.Report(new SyncProgress
@@ -278,6 +278,7 @@ public class ModelFileSyncService : IModelSyncService
         });
 
         var newModels = new List<Model>();
+        var repointed = 0;
         var processedCount = 0;
 
         foreach (var filePath in newFiles)
@@ -299,11 +300,12 @@ public class ModelFileSyncService : IModelSyncService
 
             if (matchedFile is not null)
             {
-                // Update the existing file's path
+                // Update the existing file's path. Counted (#537): the row was stamped invalid —
+                // hidden from the grid — so this is a grid-visible change, just not a new file.
                 matchedFile.LocalPath = filePath;
                 matchedFile.IsLocalFileValid = true;
                 matchedFile.LocalFileVerifiedAt = DateTimeOffset.UtcNow;
-                // The model already exists, we just updated the path
+                repointed++;
             }
             else
             {
@@ -325,7 +327,7 @@ public class ModelFileSyncService : IModelSyncService
             TotalCount = newFiles.Count
         });
 
-        return newModels;
+        return new DiscoveryResult { NewModels = newModels, RepointedCount = repointed };
     }
 
     /// <inheritdoc />
@@ -473,7 +475,8 @@ public class ModelFileSyncService : IModelSyncService
         var cachedModels = await LoadCachedModelsAsync(cancellationToken);
 
         // Phase 2: Discover new files
-        var newModels = await DiscoverNewFilesAsync(progress, cancellationToken);
+        var discovery = await DiscoverNewFilesAsync(progress, cancellationToken);
+        var newModels = discovery.NewModels;
 
         // Phase 3: Verify existing (background - can be slow)
         _ = Task.Run(async () =>

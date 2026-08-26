@@ -22,6 +22,25 @@ public record FileSyncResult
 }
 
 /// <summary>
+/// The outcome of one discovery scan (#537): what it ADDED and what it merely CHANGED. A
+/// hash-matched moved file is re-pointed at its new path in the same SaveChanges that inserts the
+/// new models — a grid-visible change that is not a new file, so it travels as its own count
+/// rather than widening "N new files discovered".
+/// </summary>
+public record DiscoveryResult
+{
+    /// <summary>Genuinely new models, created for files the database did not know.</summary>
+    public IReadOnlyList<Entities.Model> NewModels { get; init; } = [];
+
+    /// <summary>
+    /// Existing <c>ModelFile</c> rows whose path was re-pointed at a moved file (matched by size
+    /// and hash). Repoint candidates are by definition invalid-path rows — the ones the grid
+    /// hides — so a caller deciding whether the grid needs re-projecting must count these as yes.
+    /// </summary>
+    public int RepointedCount { get; init; }
+}
+
+/// <summary>
 /// Progress information for sync operations.
 /// </summary>
 public record SyncProgress
@@ -77,13 +96,15 @@ public interface IModelSyncService
     Task<IReadOnlyList<InstalledModelFile>> LoadCachedFilesAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Scans configured source folders for new safetensor files not yet in the database.
-    /// Creates minimal Model/ModelVersion/ModelFile entries for discovered files.
+    /// Scans configured source folders for model files whose paths the database does not know.
+    /// Creates minimal Model/ModelVersion/ModelFile entries for genuinely new files; a file whose
+    /// size and hash match an existing invalid-path row is a MOVE, and that row is re-pointed at
+    /// the new path instead.
     /// </summary>
     /// <param name="progress">Progress callback.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>Newly discovered models.</returns>
-    Task<IReadOnlyList<Entities.Model>> DiscoverNewFilesAsync(
+    /// <returns>What the scan added and what it changed (#537) — both are grid-visible.</returns>
+    Task<DiscoveryResult> DiscoverNewFilesAsync(
         IProgress<SyncProgress>? progress = null,
         CancellationToken cancellationToken = default);
 

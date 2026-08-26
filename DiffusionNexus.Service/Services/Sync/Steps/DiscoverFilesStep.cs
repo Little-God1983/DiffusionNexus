@@ -32,6 +32,13 @@ public sealed class DiscoverFilesStep : ISyncStep
     /// <summary>How many new models the last <see cref="ExecuteOneAsync"/> created.</summary>
     public int DiscoveredCount { get; private set; }
 
+    /// <summary>
+    /// How many existing rows the last scan re-pointed at moved files (#537). Those rows were
+    /// stamped invalid — hidden from the grid — so the report has to carry this or a repoint-only
+    /// scan reads as "nothing happened" while twelve models just became visible-in-the-database.
+    /// </summary>
+    public int RepointedCount { get; private set; }
+
     /// <inheritdoc />
     public SyncStepKind Kind => SyncStepKind.DiscoverFiles;
 
@@ -49,6 +56,7 @@ public sealed class DiscoverFilesStep : ISyncStep
     public async Task<SyncItemResult> ExecuteOneAsync(SyncItem item, string? apiKey, CancellationToken ct)
     {
         DiscoveredCount = 0;
+        RepointedCount = 0;
 
         try
         {
@@ -57,9 +65,11 @@ public sealed class DiscoverFilesStep : ISyncStep
             var sync = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
 
             var discovered = await sync.DiscoverNewFilesAsync(progress: null, ct).ConfigureAwait(false);
-            DiscoveredCount = discovered.Count;
+            DiscoveredCount = discovered.NewModels.Count;
+            RepointedCount = discovered.RepointedCount;
 
-            _logger?.Info(LogCategory.FileSystem, LogSource, $"Discovered {DiscoveredCount} new model file(s)");
+            _logger?.Info(LogCategory.FileSystem, LogSource,
+                $"Discovered {DiscoveredCount} new model file(s), re-pointed {RepointedCount} moved");
             return SyncItemResult.Success;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

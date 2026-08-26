@@ -27,6 +27,18 @@ internal static class SyncCopy
     };
 
     /// <summary>
+    /// The scan's other write (#537): existing rows re-pointed at moved files — changed, not
+    /// added, which is why it is not folded into <see cref="DescribeDiscovered"/>. Empty when
+    /// none, for the same hide-the-line reason.
+    /// </summary>
+    public static string DescribeRepointed(int count) => count switch
+    {
+        <= 0 => "",
+        1 => "1 moved file re-linked",
+        _ => $"{count} moved files re-linked",
+    };
+
+    /// <summary>
     /// A predicted duration: "~45 s" under 90 s, "~4 min" under 90 min, else "~1.5 h". The tilde
     /// is load-bearing — this is what a run is expected to take, not what one took.
     /// </summary>

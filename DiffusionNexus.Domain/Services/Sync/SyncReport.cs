@@ -26,6 +26,12 @@ public sealed record SyncStepReport(SyncStepKind Kind, int Planned, int Processe
 /// that completed or was cancelled. A caller judging "did this run cover everything it was asked
 /// to?" must treat a non-null value as no.
 /// </param>
+/// <param name="FilesRepointed">
+/// Existing rows the scan re-pointed at moved files (#537) — changed, not added, so it is not
+/// part of <paramref name="NewFilesDiscovered"/> and the "N new files discovered" wording stays
+/// honest. Repoint candidates are invalid-path rows, i.e. exactly the ones the grid hides, so a
+/// caller deciding whether to re-project the grid must treat this as a yes.
+/// </param>
 public sealed record SyncReport(
     SyncPlan Plan,
     IReadOnlyList<SyncStepReport> Steps,
@@ -35,7 +41,8 @@ public sealed record SyncReport(
     int NewFilesDiscovered,
     int UnexpectedFailures = 0,
     string? FirstUnexpectedError = null,
-    string? AbortReason = null)
+    string? AbortReason = null,
+    int FilesRepointed = 0)
 {
     public string Summary { get; } = BuildSummary(Steps, Cancelled, NewFilesDiscovered, AbortReason is not null);
 
