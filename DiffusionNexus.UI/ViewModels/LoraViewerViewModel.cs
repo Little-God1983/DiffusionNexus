@@ -1185,8 +1185,23 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             // already committed — passing the by-then-signalled token here made Task.Run throw
             // before the rebuild, so the work landed in the database and stayed invisible in the
             // grid, and the report was swallowed by the cancellation catch below.
-            await Task.Run(RebuildTilesFromDatabaseAsync);
-            rebuilt = true;
+            //
+            // Guarded (#539): this is a DB read at the peak of WAL contention, and unguarded its
+            // throw reached the outer catches — a SUCCESSFUL run's verdict became "Sync error: …"
+            // (or, for an OCE off a dying dispatcher, "Metadata sync cancelled") and the report
+            // dialog was skipped, with the timestamp possibly already stamped. A failed rebuild
+            // costs only the rebuild: rebuilt stays false, so the finally's backstop gives it one
+            // deliberate retry — which can genuinely succeed once the post-run contention clears.
+            try
+            {
+                await Task.Run(RebuildTilesFromDatabaseAsync);
+                rebuilt = true;
+            }
+            catch (Exception ex)
+            {
+                _logger?.Warn(LogCategory.Network, "CivitaiSync",
+                    $"Grid rebuild after the run failed (the backstop will retry): {ex.Message}");
+            }
 
             var statusText = DescribeOutcome(report);
             _logger?.Info(LogCategory.Network, "CivitaiSync", statusText);
@@ -1226,10 +1241,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             // only by CivitaiModelDownloader, never by DiscoverFilesStep — so without this a
             // cancelled dialog leaves twelve new LoRAs in the database and none of them on screen.
             // rebuildOwed covers the doors the run path's own rebuild can leave open: that rebuild
-            // failing, and a service regression that makes ExecuteAsync escape again (#535 made it
-            // total, so an escape is a bug — but the committed work would still need showing).
-            // Guarded so a failed rebuild costs only the rebuild: the status line above already
-            // says what happened, and an exception here would replace it with a lie.
+            // failing (#539 — this retry is deliberate, and can succeed once the post-run WAL
+            // contention clears), and a service regression that makes ExecuteAsync escape again
+            // (#535 made it total, so an escape is a bug — but the committed work would still
+            // need showing). Guarded so a failed rebuild costs only the rebuild — the verdict
+            // above stands, with the staleness appended rather than replacing it.
             // BEFORE the sync-running flag drops: re-enabling the per-tile button while the tile
             // collection is mid-swap would let a fetch update a tile the rebuild is discarding.
             if ((discovered > 0 || repointed > 0 || rebuildOwed) && !rebuilt)
@@ -1241,7 +1257,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 catch (Exception ex)
                 {
                     _logger?.Warn(LogCategory.Network, "CivitaiSync",
-                        $"Grid refresh after the scan failed: {ex.Message}");
+                        $"Grid refresh after the sync failed: {ex.Message}");
+                    SyncStatus = $"{SyncStatus} · grid refresh failed — press Refresh to reload";
                 }
             }
 

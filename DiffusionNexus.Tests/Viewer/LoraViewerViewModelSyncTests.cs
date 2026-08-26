@@ -783,6 +783,70 @@ public class LoraViewerViewModelSyncTests
     }
 
     /// <summary>
+    /// #539. The run-path rebuild is a DB read at the peak of WAL contention — the run has been
+    /// writing for minutes. Unguarded, its throw landed in the generic catch: a SUCCESSFUL run's
+    /// verdict was replaced by "Sync error: …", the report dialog was skipped (the report lost),
+    /// and the finally then retried the identical rebuild anyway. A failed rebuild costs the
+    /// rebuild: the verdict stands, the report shows, and the backstop gets one deliberate retry.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_AFailedRebuildDoesNotEraseTheRunsVerdict()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService();
+        _modelSync.SetupSequence(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("database is locked"))
+            .ReturnsAsync(Array.Empty<InstalledModelFile>());
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _reportDialogVm.Should().NotBeNull("the run succeeded; losing its report to a grid read is out of proportion");
+        vm.SyncStatus.Should().Be(RunReport().Summary,
+            "the verdict belongs to the run, not to the rebuild that failed after it");
+        _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2),
+            "the backstop gives the failed rebuild one deliberate retry — which here succeeds");
+    }
+
+    /// <summary>
+    /// #539/#541, the OCE door. An OperationCanceledException out of the rebuild (dispatcher
+    /// shutdown mid-swap) is a rebuild failure, not the user cancelling the sync — the shared OCE
+    /// catch used to relabel the whole successful run "Metadata sync cancelled" over it, and the
+    /// owed rebuild still had to happen.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_AnOceFromTheRebuildIsARebuildFailureNotACancelledSync()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService();
+        _modelSync.SetupSequence(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException())
+            .ReturnsAsync(Array.Empty<InstalledModelFile>());
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        vm.SyncStatus.Should().Be(RunReport().Summary, "nobody cancelled anything");
+        _reportDialogVm.Should().NotBeNull();
+        _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2),
+            "the backstop still owes — and delivers — the rebuild");
+    }
+
+    /// <summary>When the retry fails too, the user must learn the grid is stale — appended, not replacing the verdict.</summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_ABackstopRebuildFailureIsSaidOutLoud()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService();
+        _modelSync.Setup(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("database is locked"));
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        vm.SyncStatus.Should().StartWith(RunReport().Summary, "the run's verdict still leads")
+            .And.Contain("grid refresh failed", "a stale grid without a word would read as lost work");
+        _reportDialogVm.Should().NotBeNull("the report itself is intact — only the grid view is behind");
+    }
+
+    /// <summary>
     /// The scan is a separate run, so the run's own report counts none of it — and a report dialog
     /// whose table says "Discovered 0" a few lines above "9 new files discovered" is arguing with
     /// itself, as is a status bar that says the same. The scan's count is folded back into the
