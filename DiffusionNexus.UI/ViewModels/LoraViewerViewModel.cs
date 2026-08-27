@@ -1970,6 +1970,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 // may be spoken over it (#535).
                 detail.StatusMessage = $"Metadata download failed: {outcome.FaultReason}";
             }
+            else if (outcome.Refused)
+            {
+                // The single-flight gate turned it down (#532). Nothing was asked and nothing is
+                // wrong, so this is neither a failure nor a verdict about this model — it is
+                // "try again in a moment", in the words the status line already uses.
+                detail.StatusMessage = AlreadyRunningStatus;
+            }
             else
             {
                 // "Nothing found" is a claim about Civitai, so it may only be made when we
@@ -2028,10 +2035,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 
         // The service admits one run at a time (R10): while this one is going, the bulk button is
         // off too, and the detail panel's own button is off from the moment the flag flips.
+        // Refused, not a bare NotRun (#532): this is the same answer the gate gives below, and the
+        // detail panel must not turn "the button is busy" into "nothing to refresh for this model".
         if (SyncInFlight)
         {
             SyncStatus = AlreadyRunningStatus;
-            return TileMetadataSyncResult.NotRun;
+            return TileMetadataSyncResult.AlreadyRunning;
         }
 
         // Discovery is left out — one tile is not a reason to rescan every LoRA source — but the
@@ -2066,6 +2075,17 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             // the selection queries and the file hash both run inline until the first real yield.
             plan = await Task.Run(() => _librarySync.PlanAsync(SyncScope.ForModels(modelId), options));
             report = await Task.Run(() => _librarySync.ExecuteAsync(plan));
+        }
+        catch (SyncAlreadyRunningException ex)
+        {
+            // The entry guard above reads OUR flag; the gate is the service's, and a download's
+            // completion sync can take it in between (#532). Refusing is not failing: unhandled,
+            // this reached the detail panel's generic catch as "Metadata download failed: …" with
+            // an Error log and a stack trace, for a run that simply has to wait its turn. Same
+            // answer as the bulk path, in the same words — and Refused so the panel can say it too,
+            // rather than falling through to "Nothing to refresh for this model."
+            ReportServiceAlreadyRunning(ex);
+            return TileMetadataSyncResult.AlreadyRunning;
         }
         finally
         {
@@ -2118,10 +2138,19 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     /// The outcome of one per-tile metadata fetch. <paramref name="Report"/> is null only when the
     /// run never started (no sync service, or a tile with no persisted model).
     /// </summary>
-    public sealed record TileMetadataSyncResult(bool Applied, SyncReport? Report)
+    public sealed record TileMetadataSyncResult(bool Applied, SyncReport? Report, bool Refused = false)
     {
         /// <summary>A fetch that never reached the service.</summary>
         public static readonly TileMetadataSyncResult NotRun = new(Applied: false, Report: null);
+
+        /// <summary>
+        /// The service's single-flight gate turned this press down — a bulk run or a download's
+        /// completion sync holds the slot (#532). Distinct from <see cref="NotRun"/>'s other
+        /// causes: nothing is wrong, nothing was asked, and the answer is "try again in a moment"
+        /// rather than "nothing to refresh for this model".
+        /// </summary>
+        public static readonly TileMetadataSyncResult AlreadyRunning =
+            new(Applied: false, Report: null, Refused: true);
 
         /// <summary>
         /// How many models the identify step planned. Zero means it asked Civitai nothing at all,

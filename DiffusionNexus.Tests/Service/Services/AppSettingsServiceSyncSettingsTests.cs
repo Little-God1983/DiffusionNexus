@@ -22,8 +22,9 @@ namespace DiffusionNexus.Tests.Service.Services;
 /// only via the dedicated <see cref="IAppSettingsService.UpdateLastLibrarySyncAtAsync"/>
 /// path (Task 5), so it is intentionally left OUT of the whitelist — the freshly
 /// loaded tracked entity already carries the real value, and copying a detached
-/// snapshot's default-initialized value over it would reproduce the same silent-null
-/// bug that already affects <c>LastBackupAt</c> on this exact code path.
+/// snapshot's default-initialized value over it would reproduce the silent-null bug
+/// that <c>LastBackupAt</c> had on this exact code path until #531 took it out of the
+/// whitelist too (see <c>AppSettingsServiceBackupStampTests</c>).
 /// </summary>
 public sealed class AppSettingsServiceSyncSettingsTests : IDisposable
 {
