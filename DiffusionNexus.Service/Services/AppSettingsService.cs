@@ -302,7 +302,13 @@ public sealed class AppSettingsService : IAppSettingsService
         existingSettings.AutoBackupIntervalHours = settings.AutoBackupIntervalHours;
         existingSettings.AutoBackupLocation = settings.AutoBackupLocation;
         existingSettings.MaxBackups = settings.MaxBackups;
-        existingSettings.LastBackupAt = settings.LastBackupAt;
+        // LastBackupAt is deliberately NOT copied (#531). It is machine-local bookkeeping written
+        // only by UpdateLastBackupAtAsync, and nothing that builds one of these detached snapshots
+        // — the Settings page, SettingsExportService.ImportAsync — has a value for it to carry, so
+        // copying it here wrote the CLR default null over the real stamp on every save: the backup
+        // scheduler then read "never backed up". The freshly loaded tracked entity above already
+        // holds the true value; leaving it alone is the fix. Same rule as LastLibrarySyncAt, which
+        // is absent from this whitelist for exactly the same reason.
         existingSettings.ComfyUiServerUrl = settings.ComfyUiServerUrl;
         existingSettings.LoraUpdateCheckStalenessDays = settings.LoraUpdateCheckStalenessDays;
         existingSettings.SyncNotIdentifiedRetryDays = settings.SyncNotIdentifiedRetryDays;
