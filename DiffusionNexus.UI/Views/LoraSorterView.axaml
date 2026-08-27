@@ -311,10 +311,12 @@
                sorted differently would defeat that. -->
           <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
             <TextBlock Text="Sort" FontSize="11" Opacity="0.6" VerticalAlignment="Center"/>
+            <!-- MinWidth and no MinHeight override, matching the Civitai browser's pickers: a
+                 ComboBox squeezed to MinHeight="0" collapses to a sliver nobody can see. -->
             <ComboBox ItemsSource="{Binding SortOrders}"
-                      SelectedItem="{Binding PreviewSortOrder}"
-                      FontSize="11.5" MinHeight="0" Padding="8,2"
-                      ToolTip.Tip="Orders the rows inside every folder of both trees"/>
+                      SelectedItem="{Binding PreviewSortOrder, Mode=TwoWay}"
+                      MinWidth="110" FontSize="11.5"
+                      ToolTip.Tip="Orders the rows inside every folder of both trees. Default is the order the plan produced."/>
           </StackPanel>
         </Grid>
       </Grid>

@@ -305,12 +305,17 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// differently would defeat that.
     /// </summary>
     [ObservableProperty]
-    private PreviewSortOrder _previewSortOrder = PreviewSortOrder.Size;
+    private PreviewSortOrder _previewSortOrder = PreviewSortOrder.Default;
 
-    /// <summary>The order picker's items. Enum values rather than strings, so the ComboBox binds
-    /// straight to <see cref="PreviewSortOrder"/> with no converter.</summary>
-    public static IReadOnlyList<PreviewSortOrder> SortOrders { get; } =
-        [PreviewSortOrder.Size, PreviewSortOrder.Name];
+    /// <summary>
+    /// The order picker's items. Enum values rather than strings, so the ComboBox binds straight to
+    /// <see cref="PreviewSortOrder"/> with no converter — the same shape as the Civitai browser's
+    /// <c>PeriodOptions</c>. An <b>instance</b> property, deliberately: Avalonia's property-accessor
+    /// plugin resolves instance members off the DataContext, so a static one binds to nothing and
+    /// the picker comes up empty.
+    /// </summary>
+    public IReadOnlyList<PreviewSortOrder> SortOrders { get; } =
+        [PreviewSortOrder.Default, PreviewSortOrder.Size, PreviewSortOrder.Name];
 
     /// <summary>
     /// Opens Explorer for the "Open in folder" context menu. Settable rather than injected, the
@@ -1524,6 +1529,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             IsSourceSide = sourceSide,
             FullPath = Path.Combine(folderPath, fileName),
             Depth = segments.Length,
+            Order = siblings.Count,
             TotalBytes = move.Candidate.FileSizeBytes,
             LoraCount = 1,
             IsAlreadyInPlace = move.Action == PlannedAction.AlreadyInPlace,
@@ -1603,11 +1609,14 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// </remarks>
     private void SortTree(ObservableCollection<SortPreviewNodeViewModel> nodes)
     {
-        var ordered = nodes.OrderBy(n => n.IsFile);
-        var sorted = (PreviewSortOrder == PreviewSortOrder.Name
-                ? ordered.ThenBy(n => n.Name, StringComparer.OrdinalIgnoreCase)
-                : ordered.ThenByDescending(n => n.TotalBytes))
-            .ToList();
+        // Default groups nothing and reorders nothing: it is the plan's own order, which is not a
+        // sort the pane is applying but the absence of one.
+        var sorted = (PreviewSortOrder switch
+        {
+            PreviewSortOrder.Name => nodes.OrderBy(n => n.IsFile).ThenBy(n => n.Name, StringComparer.OrdinalIgnoreCase),
+            PreviewSortOrder.Size => nodes.OrderBy(n => n.IsFile).ThenByDescending(n => n.TotalBytes),
+            _ => nodes.OrderBy(n => n.Order),
+        }).ToList();
 
         nodes.Clear();
         foreach (var node in sorted)
@@ -1637,6 +1646,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             IsSourceSide = sourceSide,
             FullPath = fullPath,
             Depth = depth,
+            Order = siblings.Count,
         };
         siblings.Add(node);
         return node;

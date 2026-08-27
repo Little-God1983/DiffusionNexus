@@ -19,6 +19,13 @@ public partial class SortPreviewNodeViewModel : ObservableObject
 
     /// <summary>How deep under the pane's root this row sits. Drives <see cref="Indent"/>.</summary>
     public int Depth { get; init; }
+
+    /// <summary>
+    /// Where this row sat among its siblings when the tree was built — i.e. the order the plan
+    /// produced. Remembered rather than recomputed so <see cref="PreviewSortOrder.Default"/> can
+    /// actually undo a sort instead of merely stopping sorting.
+    /// </summary>
+    public int Order { get; init; }
     public int LoraCount { get; set; }
     public long TotalBytes { get; set; }
     public bool IsFile { get; init; }
@@ -191,8 +198,11 @@ public partial class SortPreviewNodeViewModel : ObservableObject
 /// <summary>How the preview orders the rows inside every folder of both trees.</summary>
 public enum PreviewSortOrder
 {
-    /// <summary>Biggest first — what the pane has always done for its top-level folders, and the
-    /// order that answers "what is actually taking up the space".</summary>
+    /// <summary>The order the plan produced, untouched. What the pane opens on.</summary>
+    Default,
+
+    /// <summary>Biggest first — the order that answers "what is actually taking up the
+    /// space".</summary>
     Size,
 
     /// <summary>A to Z, case-insensitive — the order that answers "where is this one".</summary>

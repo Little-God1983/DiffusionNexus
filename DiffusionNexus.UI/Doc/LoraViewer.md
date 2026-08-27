@@ -1088,9 +1088,17 @@ independent boxes is deliberate: a link's counterpart can be hidden by the other
 be compared row against row, and two panes sorted differently would defeat that. It applies at
 *every* level (`SortTree`): before this only the top-level folders were ordered, and everything
 below them came out in whatever order the plan happened to produce, which is what made a deep tree
-read as arbitrary. Folders come before files at each level, then the key: `Size` biggest-first,
-`Name` A–Z case-insensitive. Re-ordering moves the existing nodes rather than rebuilding them, so a
-click-to-link highlight and a typed search filter both survive it.
+read as arbitrary. Three orders: `Default` is the plan's own order and what the pane opens on — not
+a sort but the absence of one, so each node remembers its build-time `Order` and returning to
+Default genuinely undoes a sort rather than merely stopping sorting. `Size` and `Name` group folders
+before files at each level, then order biggest-first or A–Z case-insensitive. Re-ordering moves the
+existing nodes rather than rebuilding them, so a click-to-link highlight and a typed search filter
+both survive it.
+
+The picker's items are the enum values themselves, bound from an **instance** property
+(`SortOrders`) — the same shape as the Civitai browser's `PeriodOptions`. Static would bind to
+nothing: Avalonia's property-accessor plugin resolves instance members off the DataContext, and the
+picker comes up empty with no error anywhere.
 
 The tree indent lives on each row's own name (`SortPreviewNodeViewModel.Indent`, from `Depth`),
 *not* on the container holding its children. Indenting the container moved every row's **right**

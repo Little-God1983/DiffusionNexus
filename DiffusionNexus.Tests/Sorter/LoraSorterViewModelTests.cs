@@ -1851,6 +1851,36 @@ public sealed class LoraSorterViewModelTests : IDisposable
             .Should().Be(Path.Combine(SourceRoot, "SDXL 1.0", "Character", "a.safetensors"));
     }
 
+    /// <summary>The pane opens on the order the plan produced, having sorted nothing.</summary>
+    [Fact]
+    public async Task ThePaneStartsOnTheOrderThePlanProduced()
+    {
+        var vm = await SizedVm();
+
+        vm.PreviewSortOrder.Should().Be(PreviewSortOrder.Default);
+        vm.SourceRoots.Single(n => n.Name == "unsorted").Children.Select(n => n.Name)
+            .Should().ContainInOrder("b.safetensors", "c.safetensors", "a.safetensors");
+    }
+
+    /// <summary>
+    /// Default is a real third option, not just "whatever was there before the user touched the
+    /// picker" — going back to it has to undo the sort, which means the plan's own order is
+    /// remembered rather than recomputed.
+    /// </summary>
+    [Fact]
+    public async Task ReturningToDefaultRestoresThePlanOrder()
+    {
+        var vm = await SizedVm();
+        vm.PreviewSortOrder = PreviewSortOrder.Name;
+        vm.SourceRoots.Single(n => n.Name == "unsorted").Children.Select(n => n.Name)
+            .Should().ContainInOrder("a.safetensors", "b.safetensors", "c.safetensors");
+
+        vm.PreviewSortOrder = PreviewSortOrder.Default;
+
+        vm.SourceRoots.Single(n => n.Name == "unsorted").Children.Select(n => n.Name)
+            .Should().ContainInOrder("b.safetensors", "c.safetensors", "a.safetensors");
+    }
+
     /// <summary>
     /// Three orders that all disagree: the plan produces b, c, a; by size that is b, a, c; by name
     /// a, b, c. Nothing here can pass on insertion order by accident.
