@@ -151,4 +151,10 @@ public interface IAppSettingsService
 
     /// <summary>Stores the LoRA Viewer's base-model filter JSON; whitespace/empty clears it to null.</summary>
     Task SetLoraViewerFilterJsonAsync(string? json, CancellationToken cancellationToken = default);
+
+    /// <summary>Gets the LoRA Sorter's excluded-folders JSON (a string array of absolute paths), or null if none.</summary>
+    Task<string?> GetLoraSorterExcludedFoldersJsonAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Stores the LoRA Sorter's excluded-folders JSON; whitespace/empty clears it to null.</summary>
+    Task SetLoraSorterExcludedFoldersJsonAsync(string? json, CancellationToken cancellationToken = default);
 }

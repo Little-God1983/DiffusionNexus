@@ -76,6 +76,13 @@
               <MenuItem Header="Open in folder" Click="OnOpenInFolder"
                         IsEnabled="{Binding CanOpenInFolder}"
                         ToolTip.Tip="Destination folders can only be opened once they exist"/>
+              <!-- Source-side folders only (CanExclude/CanUnexclude): the destination tree
+                   describes the plan's output, which is not a thing one excludes. -->
+              <MenuItem Header="Never sort this folder" Click="OnExcludeFolder"
+                        IsVisible="{Binding CanExclude}"
+                        ToolTip.Tip="Files in here stay exactly where they are — for hand-curated folders like Lightning or utility LoRAs"/>
+              <MenuItem Header="Sort this folder again" Click="OnUnexcludeFolder"
+                        IsVisible="{Binding CanUnexclude}"/>
             </ContextMenu>
           </Border.ContextMenu>
         <!-- The trailing columns are fixed-width so they line up down the pane. The indent goes on
@@ -91,7 +98,7 @@
             <TextBlock Grid.Column="1" Text="{Binding Name}"
                        FontFamily="Consolas,monospace" FontSize="12" Margin="4,0,12,0"
                        VerticalAlignment="Center"
-                       Classes.dimmed="{Binding IsAlreadyInPlace}"
+                       Classes.dimmed="{Binding IsDimmed}"
                        Classes.renamed="{Binding IsRenamed}"
                        Classes.skipped="{Binding IsSkippedDuplicate}"/>
           </Grid>
@@ -216,6 +223,28 @@
             <CheckBox Content="Hide files already in the right folder"
                       IsChecked="{Binding IgnoreFilesAlreadyInPlace}" FontSize="12"
                       ToolTip.Tip="Leaves only the files the run would actually move. The summary still says how many were hidden."/>
+          </StackPanel>
+
+          <StackPanel Spacing="4" IsVisible="{Binding HasExcludedFolders}">
+            <TextBlock Classes="fieldLabel" Text="EXCLUDED FOLDERS" FontSize="11" Opacity="0.6"/>
+            <!-- Exclusions are set from the preview (right-click a folder), but they must stay
+                 visible even when that folder is scrolled away — this list is where one that no
+                 longer earns its exclusion gets removed. -->
+            <ItemsControl ItemsSource="{Binding ExcludedFolders}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="x:String">
+                  <Grid ColumnDefinitions="*,Auto" Margin="0,1">
+                    <TextBlock Grid.Column="0" Text="{Binding}" FontSize="11.5" Opacity="0.85"
+                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                               ToolTip.Tip="{Binding}"/>
+                    <Button Grid.Column="1" Content="✕" Padding="6,1" FontSize="11" Margin="4,0,0,0"
+                            Command="{Binding $parent[UserControl].((vm:LoraSorterViewModel)DataContext).RemoveExclusionCommand}"
+                            CommandParameter="{Binding}"
+                            ToolTip.Tip="Sort this folder again"/>
+                  </Grid>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
           </StackPanel>
 
           <StackPanel Spacing="4">

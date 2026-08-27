@@ -37,6 +37,35 @@ public partial class SortPreviewNodeViewModel : ObservableObject
     /// so this one is not going anywhere. Never appears on the destination side — nothing arrives
     /// for it — which is exactly why the source side has to show it.</summary>
     public bool IsSkippedDuplicate { get; init; }
+
+    /// <summary>
+    /// Inside a folder the user told the sorter to leave alone. Excluded rows are drawn dimmed in
+    /// both trees but never enter the plan — the file simply stays where it is. Settable rather
+    /// than init-only because folders learn it from their files after the tree is assembled; the
+    /// build runs synchronously before the first layout pass, the same guarantee
+    /// <see cref="Note"/> leans on.
+    /// </summary>
+    public bool IsExcluded { get; set; }
+
+    /// <summary>
+    /// The folder whose path is literally on the exclusion list — the one "Sort this folder again"
+    /// can act on. A subfolder inside it is excluded too, but un-excluding from there would have
+    /// nothing to remove.
+    /// </summary>
+    public bool IsExclusionRoot { get; set; }
+
+    /// <summary>Whether the context menu offers "Never sort this folder" here: a source-side
+    /// folder that is not already excluded. Destination folders describe the plan's output, which
+    /// is not a thing one excludes.</summary>
+    public bool CanExclude => !IsFile && IsSourceSide && !IsExcluded && !string.IsNullOrEmpty(FullPath);
+
+    /// <summary>Whether the context menu offers "Sort this folder again" here — see
+    /// <see cref="IsExclusionRoot"/>.</summary>
+    public bool CanUnexclude => !IsFile && IsSourceSide && IsExclusionRoot;
+
+    /// <summary>One dimming flag for the row name: settled files and excluded files both render
+    /// dimmed, for the same reason — nothing is going to happen to them.</summary>
+    public bool IsDimmed => IsAlreadyInPlace || IsExcluded;
     public ObservableCollection<SortPreviewNodeViewModel> Children { get; } = [];
 
     /// <summary>This node and everything beneath it, depth first — the walk every subtree-wide
@@ -153,14 +182,19 @@ public partial class SortPreviewNodeViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(StatusTooltip))]
     private SortPreviewIdentity _identity = SortPreviewIdentity.Identified;
 
+    // All three marks stay dark on an excluded row: the marks answer "is this file's destination
+    // known", and an excluded file has no destination to know. (Ancestors are protected separately
+    // — an excluded file's identity is absorbed as Identified — but the row itself asserting ✓
+    // would be a claim about a reading that never happened.)
+
     /// <summary>✓ — everything here was read or confirmed, not guessed.</summary>
-    public bool IsIdentified => Identity == SortPreviewIdentity.Identified;
+    public bool IsIdentified => !IsExcluded && Identity == SortPreviewIdentity.Identified;
 
     /// <summary>~ — something here is filed on its file name alone.</summary>
-    public bool IsGuessed => Identity == SortPreviewIdentity.Guessed;
+    public bool IsGuessed => !IsExcluded && Identity == SortPreviewIdentity.Guessed;
 
     /// <summary>✗ — something here has no base model and sorts into Unknown.</summary>
-    public bool IsUnidentified => Identity == SortPreviewIdentity.Unidentified;
+    public bool IsUnidentified => !IsExcluded && Identity == SortPreviewIdentity.Unidentified;
 
     public string StatusTooltip => Identity switch
     {

@@ -294,6 +294,7 @@ public sealed class AppSettingsService : IAppSettingsService
         existingSettings.MergeLoraSources = settings.MergeLoraSources;
         existingSettings.LoraSortSourcePath = settings.LoraSortSourcePath;
         existingSettings.LoraSortTargetPath = settings.LoraSortTargetPath;
+        existingSettings.LoraSorterExcludedFoldersJson = settings.LoraSorterExcludedFoldersJson;
         existingSettings.DatasetStoragePath = settings.DatasetStoragePath;
         existingSettings.DeleteEmptySourceFolders = settings.DeleteEmptySourceFolders;
         existingSettings.BackupDatasetImagesEnabled = settings.BackupDatasetImagesEnabled;
@@ -750,6 +751,22 @@ public sealed class AppSettingsService : IAppSettingsService
     {
         var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
         settings.LoraViewerFilterJson = string.IsNullOrWhiteSpace(json) ? null : json;
+        settings.UpdatedAt = DateTimeOffset.UtcNow;
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<string?> GetLoraSorterExcludedFoldersJsonAsync(CancellationToken cancellationToken = default)
+    {
+        var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+        return settings.LoraSorterExcludedFoldersJson;
+    }
+
+    /// <inheritdoc />
+    public async Task SetLoraSorterExcludedFoldersJsonAsync(string? json, CancellationToken cancellationToken = default)
+    {
+        var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+        settings.LoraSorterExcludedFoldersJson = string.IsNullOrWhiteSpace(json) ? null : json;
         settings.UpdatedAt = DateTimeOffset.UtcNow;
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }

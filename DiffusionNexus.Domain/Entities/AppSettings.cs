@@ -142,6 +142,14 @@ public class AppSettings
     public string? LoraSortTargetPath { get; set; }
 
     /// <summary>
+    /// Folders the LoRA Sorter must leave alone (absolute paths, JSON string array) — utility
+    /// libraries like a hand-curated Lightning folder, whose files would otherwise be scattered by
+    /// base model or dumped into Unknown. Null when the user never excluded anything. Owned and
+    /// (de)serialized by the LoRA Sorter ViewModel.
+    /// </summary>
+    public string? LoraSorterExcludedFoldersJson { get; set; }
+
+    /// <summary>
     /// Whether to delete empty source folders after sorting.
     /// </summary>
     public bool DeleteEmptySourceFolders { get; set; }

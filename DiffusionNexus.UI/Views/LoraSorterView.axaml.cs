@@ -83,6 +83,25 @@ public partial class LoraSorterView : ControlBase
         vm.OpenInFolderCommand.Execute(node);
     }
 
+    // Same shape as OnOpenInFolder, for the same reason: the menu item inherits the row's node,
+    // and this template is recursive, so a $parent[ItemsControl] command hop would land on the
+    // folder above rather than the view.
+    private void OnExcludeFolder(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (sender is not Control { DataContext: SortPreviewNodeViewModel node }) return;
+        if (DataContext is not LoraSorterViewModel vm) return;
+
+        vm.ExcludeFolderCommand.Execute(node);
+    }
+
+    private void OnUnexcludeFolder(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (sender is not Control { DataContext: SortPreviewNodeViewModel node }) return;
+        if (DataContext is not LoraSorterViewModel vm) return;
+
+        vm.RemoveExclusionCommand.Execute(node.FullPath);
+    }
+
     /// <summary>
     /// Pairs the clicked row with its counterpart in the other tree, then scrolls that counterpart
     /// into view. The expand/collapse chevron is a <c>ToggleButton</c>, which handles the press

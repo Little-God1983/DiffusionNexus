@@ -2009,6 +2009,208 @@ public sealed class LoraSorterViewModelTests : IDisposable
         File.WriteAllBytes(path, new byte[bytes]);
     }
 
+    [Fact]
+    public async Task ExcludingAFolderTakesItsFilesOutOfThePlanButKeepsThemDimmedInBothTrees()
+    {
+        var vm = await LightningVm();
+        vm.TransferCount.Should().Be(2, "before excluding, the Lightning file sorts into Unknown");
+
+        await vm.ExcludeFolderCommand.ExecuteAsync(vm.SourceRoots.Single(n => n.Name == "Lightning"));
+
+        vm.TransferCount.Should().Be(1);
+        var sourceRow = vm.SourceRoots.SelectMany(Flatten).Single(n => n.Name == "accel_high_noise.safetensors");
+        sourceRow.IsExcluded.Should().BeTrue();
+        sourceRow.IsDimmed.Should().BeTrue();
+        // The file stays where it is, and "after sorting" says so: same folder, dimmed.
+        var afterRow = vm.PreviewRoots.SelectMany(Flatten).Single(n => n.Name == "accel_high_noise.safetensors");
+        afterRow.IsExcluded.Should().BeTrue();
+        vm.PreviewRoots.Single(n => n.Name == "Lightning").IsExcluded.Should().BeTrue();
+        FlattenNames(vm.PreviewRoots).Should().NotContain("Unknown");
+    }
+
+    [Fact]
+    public async Task StartSortingLeavesAnExcludedFolderUntouched()
+    {
+        var vm = await LightningVm();
+        vm.DialogService = ConfirmingDialogService();
+        await vm.ExcludeFolderCommand.ExecuteAsync(vm.SourceRoots.Single(n => n.Name == "Lightning"));
+
+        await vm.StartSortingCommand.ExecuteAsync(null);
+
+        File.Exists(Path.Combine(SourceRoot, @"Lightning\accel_high_noise.safetensors"))
+            .Should().BeTrue("excluded files are not the run's to move");
+        Directory.Exists(Path.Combine(SourceRoot, "Unknown")).Should().BeFalse();
+        File.Exists(Path.Combine(SourceRoot, @"SDXL 1.0\Character\mover.safetensors"))
+            .Should().BeTrue("the rest of the plan still runs");
+    }
+
+    [Fact]
+    public async Task SortingTheFolderAgainRestoresIt()
+    {
+        var vm = await LightningVm();
+        await vm.ExcludeFolderCommand.ExecuteAsync(vm.SourceRoots.Single(n => n.Name == "Lightning"));
+        vm.TransferCount.Should().Be(1);
+
+        await vm.RemoveExclusionCommand.ExecuteAsync(Path.Combine(SourceRoot, "Lightning"));
+
+        vm.TransferCount.Should().Be(2);
+        vm.SourceRoots.SelectMany(Flatten).Should().OnlyContain(n => !n.IsExcluded);
+        _settings.Verify(s => s.SetLoraSorterExcludedFoldersJsonAsync(null, It.IsAny<CancellationToken>()),
+            Times.Once, "an emptied list clears the stored value instead of persisting []");
+    }
+
+    [Fact]
+    public async Task TheSummaryCountsExcludedFiles()
+    {
+        var vm = await LightningVm();
+        vm.PreviewSummary.Should().NotContain("excluded");
+
+        await vm.ExcludeFolderCommand.ExecuteAsync(vm.SourceRoots.Single(n => n.Name == "Lightning"));
+
+        vm.PreviewSummary.Should().Contain("1 excluded");
+    }
+
+    [Fact]
+    public async Task ExclusionsArePersistedWhenAddedAndAppliedWhenLoaded()
+    {
+        var vm = await LightningVm();
+        await vm.ExcludeFolderCommand.ExecuteAsync(vm.SourceRoots.Single(n => n.Name == "Lightning"));
+        _settings.Verify(s => s.SetLoraSorterExcludedFoldersJsonAsync(
+            It.Is<string?>(j => j != null && j.Contains("Lightning")), It.IsAny<CancellationToken>()), Times.Once);
+
+        // A fresh VM finds the stored list and applies it before the first preview.
+        _settings.Setup(s => s.GetLoraSorterExcludedFoldersJsonAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(System.Text.Json.JsonSerializer.Serialize(new[] { Path.Combine(SourceRoot, "Lightning") }));
+        var reloaded = CreateVm(cached: LightningLibrary());
+        await reloaded.InitializeAsync();
+
+        reloaded.ExcludedFolders.Should().ContainSingle(f => f.EndsWith("Lightning"));
+        reloaded.HasExcludedFolders.Should().BeTrue();
+        reloaded.TransferCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ANameGuessInsideAnExcludedFolderNeitherMovesTheFileNorCountsInTheHint()
+    {
+        // A guessable name (the heuristic reads "Pony") inside the excluded folder: exclusion is
+        // checked before the name rung gets a say, so the file neither moves nor pads the hint.
+        var guessable = WriteLora(@"Lightning\MyChar_Pony_v2.safetensors");
+        var vm = CreateVm(cached: [.. LightningLibrary(), Installed(guessable, "???", "character")]);
+        await vm.InitializeAsync();
+        await vm.ExcludeFolderCommand.ExecuteAsync(vm.SourceRoots.Single(n => n.Name == "Lightning"));
+
+        vm.GuessBaseModelFromFileName = true;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        FlattenNames(vm.PreviewRoots).Should().NotContain("Pony");
+        vm.NameGuessHint.Should().BeNull("the only guessable file is excluded, so there is nothing to offer");
+        vm.TransferCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task HidingSettledFilesKeepsExcludedRowsVisible()
+    {
+        var settled = WriteLora(@"SDXL 1.0\Character\settled.safetensors");
+        var vm = CreateVm(cached: [.. LightningLibrary(), Installed(settled, "SDXL 1.0", "character")]);
+        await vm.InitializeAsync();
+        await vm.ExcludeFolderCommand.ExecuteAsync(vm.SourceRoots.Single(n => n.Name == "Lightning"));
+
+        vm.IgnoreFilesAlreadyInPlace = true;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        // Hiding noise is one thing; hiding a choice the user made is another.
+        FlattenNames(vm.SourceRoots).Should().Contain("accel_high_noise.safetensors").And.NotContain("settled.safetensors");
+        FlattenNames(vm.PreviewRoots).Should().Contain("accel_high_noise.safetensors");
+    }
+
+    [Fact]
+    public async Task AnExcludedUnidentifiedFileShowsNoMarkAndPoisonsNoAncestor()
+    {
+        var vm = await LightningVm();
+        vm.SourceRoots.Single(n => n.Name == "Lightning").IsUnidentified
+            .Should().BeTrue("before excluding, the placeholder row honestly reads ✗");
+
+        await vm.ExcludeFolderCommand.ExecuteAsync(vm.SourceRoots.Single(n => n.Name == "Lightning"));
+
+        var folder = vm.SourceRoots.Single(n => n.Name == "Lightning");
+        folder.IsUnidentified.Should().BeFalse("a file the user excluded cannot be 'unfinished'");
+        folder.Note.Should().Be("excluded — won't be sorted");
+        var file = folder.Children.Single(n => n.IsFile);
+        file.IsUnidentified.Should().BeFalse();
+        file.IsIdentified.Should().BeFalse("an excluded row shows no mark at all");
+    }
+
+    [Fact]
+    public async Task TheParentFolderNoteDoesNotCountExcludedFilesAsLeaving()
+    {
+        // Lightning nested under a parent that also holds a mover: the parent's note counts only
+        // the file that is actually going somewhere.
+        var mover = WriteLora(@"mixed\mover2.safetensors");
+        var nested = WriteLora(@"mixed\Lightning\nested_accel.safetensors");
+        var vm = CreateVm(cached: [Installed(mover, "SDXL 1.0", "character"), Installed(nested, "???", "character")]);
+        await vm.InitializeAsync();
+
+        var lightning = vm.SourceRoots.Single(n => n.Name == "mixed").Children.Single(n => n.Name == "Lightning");
+        await vm.ExcludeFolderCommand.ExecuteAsync(lightning);
+
+        vm.SourceRoots.Single(n => n.Name == "mixed").Note.Should().Be("1 of 2 leave");
+    }
+
+    [Fact]
+    public async Task TheSearchFilterStillFindsExcludedRows()
+    {
+        var vm = await LightningVm();
+        await vm.ExcludeFolderCommand.ExecuteAsync(vm.SourceRoots.Single(n => n.Name == "Lightning"));
+
+        vm.SourceFilter.Text = "accel";
+
+        vm.SourceRoots.SelectMany(Flatten).Single(n => n.Name == "accel_high_noise.safetensors")
+            .IsVisible.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task OnlySourceSideFoldersOfferExclusion()
+    {
+        var vm = await LightningVm();
+
+        var sourceFolder = vm.SourceRoots.Single(n => n.Name == "Lightning");
+        sourceFolder.CanExclude.Should().BeTrue();
+        var sourceFile = sourceFolder.Children.Single(n => n.IsFile);
+        sourceFile.CanExclude.Should().BeFalse();
+        var destinationFolder = vm.PreviewRoots.First(n => !n.IsFile);
+        destinationFolder.CanExclude.Should().BeFalse();
+
+        // The commands enforce the same rule rather than trusting the menu to.
+        await vm.ExcludeFolderCommand.ExecuteAsync(sourceFile);
+        await vm.ExcludeFolderCommand.ExecuteAsync(destinationFolder);
+        vm.ExcludedFolders.Should().BeEmpty();
+
+        await vm.ExcludeFolderCommand.ExecuteAsync(sourceFolder);
+        vm.SourceRoots.Single(n => n.Name == "Lightning").CanUnexclude.Should().BeTrue();
+    }
+
+    /// <summary>One curated Lightning folder (placeholder row, unguessable name) plus one ordinary
+    /// mover, so exclusion is visible in the plan, the trees and the summary.</summary>
+    private InstalledModelFile[] LightningLibrary()
+    {
+        var accel = Path.Combine(SourceRoot, @"Lightning\accel_high_noise.safetensors");
+        if (!File.Exists(accel)) WriteLora(@"Lightning\accel_high_noise.safetensors");
+        var mover = Path.Combine(SourceRoot, @"flat\mover.safetensors");
+        if (!File.Exists(mover)) WriteLora(@"flat\mover.safetensors");
+        return
+        [
+            Installed(accel, "???", "character"),
+            Installed(mover, "SDXL 1.0", "character"),
+        ];
+    }
+
+    private async Task<LoraSorterViewModel> LightningVm()
+    {
+        var vm = CreateVm(cached: LightningLibrary());
+        await vm.InitializeAsync();
+        return vm;
+    }
+
     private static IEnumerable<string> FlattenNames(IEnumerable<SortPreviewNodeViewModel> nodes)
     {
         foreach (var node in nodes)

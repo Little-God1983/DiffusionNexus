@@ -978,6 +978,7 @@ The Sorter takes the LoRAs the app already knows about (the same set as the Inst
 | **Folder structure** | Base model only · Base model + category | Base model + category | Categories inferred from tags by `SorterCategoryResolver`, the one helper the download pipeline also uses. Unknown base model → `Unknown\` folder; an unresolved **category** adds no segment at all, exactly as the downloader omits it — otherwise sorting and downloading would move the same files back and forth forever. |
 | **Operation** | Move · Copy | Move | Move shows a warning that old folder structure cannot be restored automatically. Copy into the source root itself is blocked (would re-import on next scan). |
 | **Delete empty source dirs** | on/off | off | Move mode only; triggered after the run completes. |
+| **Excluded folders** | Right-click a source folder → *Never sort this folder* | none | Files under these never enter the plan; drawn dimmed in both trees. Persisted (`LoraSorterExcludedFoldersJson`). See *Excluded folders* under the preview section. |
 
 ### Collision policy — automatic, no dialogs
 
@@ -1094,6 +1095,28 @@ manifest records, and a settled file being *in* it is what makes it a no-op rath
 Folder notes then count only the rows still shown ("1 file leaves", not "1 of 2 leave"), and the
 summary gains `(hidden)` after the already-in-place count, which is the one place the real
 denominator survives so the pane never quietly claims the library is smaller than it is.
+
+**Excluded folders.** Right-click a source-side folder → *Never sort this folder*
+(`ExcludedFolders`, persisted as a JSON path list in `AppSettings.LoraSorterExcludedFoldersJson`).
+This exists for hand-curated utility folders — a `Lightning` folder of accelerator LoRAs is the
+motivating case: nothing on Civitai knows those files, so without it they are scattered by base
+model (when their names happen to be guessable) or dumped into `Unknown\`. Files under an excluded
+folder are partitioned out of the candidates **before** the plan is built and before the name rung
+gets a say, so Start cannot touch them, `TransferCount` ignores them, and the history manifest
+never records them. They still appear in both trees as dimmed stay-put rows (synthetic move ids
+past the plan's keep click-to-link working; the destination side draws them only when their
+unchanged location falls under the target root), because a row that silently vanishes reads as a
+file the sorter lost. An excluded row shows none of the ✓/~/✗ marks — those answer "is this file's
+destination known", and an excluded file has no destination — and its identity is absorbed upward
+as `Identified` so a folder the user closed the book on cannot drag an ✗ up the tree. The exclusion
+root's note reads "excluded — won't be sorted"; parent folder notes count excluded files as staying
+("1 of 2 leave"). Exclusions survive *Hide files already in the right folder* (hiding noise is one
+thing, hiding a choice the user made is another), the summary gains `· N excluded`, and the left
+rail lists every exclusion with a ✕ — visible even when the folder itself is scrolled away or
+filtered out. Un-excluding (context menu *Sort this folder again*, only on the exact excluded path,
+or the rail's ✕) persists `null` when the list empties rather than `[]`. A folder is drawn excluded
+when **every file beneath it** is — a semantic rollup, not a path comparison, so a destination
+folder that merely shares a name with an excluded source folder is never mis-dimmed.
 
 **Ordering and geometry.** One order picker above both trees drives them both — they exist to
 be compared row against row, and two panes sorted differently would defeat that. It applies at
