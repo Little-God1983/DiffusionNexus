@@ -7,24 +7,69 @@
   <UserControl.Styles>
     <Style Selector="TextBlock.dimmed"><Setter Property="Opacity" Value="0.45"/></Style>
     <Style Selector="TextBlock.renamed"><Setter Property="Foreground" Value="#FFA726"/></Style>
+    <Style Selector="TextBlock.skipped">
+      <Setter Property="Opacity" Value="0.4"/>
+      <Setter Property="TextDecorations" Value="Strikethrough"/>
+    </Style>
+
+    <!-- The row's own surface. Every one of these is a Setter rather than an attribute on the
+         Border itself: a local value outranks a style, so setting Background="Transparent" inline
+         would leave the .linked and .selected setters below with nothing to do. -->
+    <Style Selector="Border.noderow">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="BorderBrush" Value="Transparent"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="3"/>
+      <Setter Property="Margin" Value="0,1"/>
+      <Setter Property="Padding" Value="2,0"/>
+    </Style>
+    <Style Selector="Border.noderow:pointerover">
+      <Setter Property="Background" Value="#14FFFFFF"/>
+    </Style>
+    <!-- Teal, because every other colour on this screen already means something: green/amber/red
+         are the identity marks and orange is a rename. .selected comes after .linked so the row the
+         user actually clicked wins when a file is somehow both. -->
+    <Style Selector="Border.noderow.linked">
+      <Setter Property="Background" Value="#234CC2D4"/>
+      <Setter Property="BorderBrush" Value="#6B4CC2D4"/>
+    </Style>
+    <Style Selector="Border.noderow.selected">
+      <Setter Property="Background" Value="#384CC2D4"/>
+      <Setter Property="BorderBrush" Value="#FF4CC2D4"/>
+    </Style>
   </UserControl.Styles>
 
   <UserControl.DataTemplates>
     <DataTemplate DataType="vm:SortPreviewNodeViewModel">
       <StackPanel>
-        <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,1">
+        <!-- One template serves both trees. The two sides differ in exactly two places — the chips
+             below are destination-only, and Note is written only on the source side — and both are
+             a binding rather than a second template's worth of duplicated rows. -->
+        <Border Classes="noderow"
+                Classes.selected="{Binding IsSelected}"
+                Classes.linked="{Binding IsLinked}"
+                PointerPressed="OnPreviewRowPressed">
+        <Grid ColumnDefinitions="Auto,*,Auto">
           <ToggleButton Grid.Column="0" IsChecked="{Binding IsExpanded}"
                         Content="▸" Padding="2,0" Background="Transparent" BorderThickness="0"
-                        IsVisible="{Binding !IsFile}"/>
+                        IsVisible="{Binding !IsFile}"
+                        ToolTip.Tip="Expand"/>
           <TextBlock Grid.Column="1" Text="{Binding Name}"
                      FontFamily="Consolas,monospace" FontSize="12" Margin="4,0,12,0"
                      Classes.dimmed="{Binding IsAlreadyInPlace}"
-                     Classes.renamed="{Binding IsRenamed}"/>
+                     Classes.renamed="{Binding IsRenamed}"
+                     Classes.skipped="{Binding IsSkippedDuplicate}"/>
           <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+            <!-- "all 7 leave", "already here", "duplicate — skipped". Source side only: on the
+                 destination side the folder is the answer and there is nothing to add. -->
+            <TextBlock Text="{Binding Note}" FontSize="10.5" Opacity="0.5" Margin="0,0,2,0"
+                       VerticalAlignment="Center"
+                       IsVisible="{Binding Note, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
             <!-- Asset-kind chips: what is actually in this folder, rolled up through its subfolders.
                  Anything other than LoRA means the folder is about to receive something the sorter
-                 is not really for. -->
-            <ItemsControl ItemsSource="{Binding AssetKinds}">
+                 is not really for — which is a question about a destination, so the source side does
+                 not repeat it. -->
+            <ItemsControl ItemsSource="{Binding AssetKinds}" IsVisible="{Binding !IsSourceSide}">
               <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate>
                   <StackPanel Orientation="Horizontal" Spacing="3"/>
@@ -55,6 +100,7 @@
             <TextBlock Text="{Binding CountAndSizeDisplay}" FontSize="11" Opacity="0.5" Margin="6,0,0,0"/>
           </StackPanel>
         </Grid>
+        </Border>
         <ItemsControl ItemsSource="{Binding Children}" Margin="18,0,0,0"
                       IsVisible="{Binding IsExpanded}"/>
       </StackPanel>
@@ -168,13 +214,41 @@
         </StackPanel>
       </Border>
 
-      <!-- Folder structure preview -->
-      <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto">
-        <TextBlock Grid.Row="0" Text="FOLDER STRUCTURE PREVIEW" FontSize="11" Opacity="0.6" Margin="18,14,18,6"/>
-        <ScrollViewer Grid.Row="1" Padding="18,0" HorizontalScrollBarVisibility="Auto">
-          <ItemsControl ItemsSource="{Binding PreviewRoots}"/>
-        </ScrollViewer>
-        <TextBlock Grid.Row="2" Text="{Binding PreviewSummary}" Margin="18,8,18,12" FontSize="12" Opacity="0.85"/>
+      <!-- Folder structure preview: the library as it is now beside the library as it would be.
+           Both trees are built from the same plan, so they can never describe different ones. -->
+      <Grid Grid.Column="1" RowDefinitions="*,Auto">
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto,*">
+
+          <Grid Grid.Column="0" RowDefinitions="Auto,*">
+            <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" Margin="16,14,8,6">
+              <TextBlock Text="SOURCE (NOW)" FontSize="11" Opacity="0.6" VerticalAlignment="Center"/>
+              <TextBlock Text="{Binding SelectedSourceFolder}" FontFamily="Consolas,monospace"
+                         FontSize="10.5" Opacity="0.35" VerticalAlignment="Center"
+                         TextTrimming="CharacterEllipsis"/>
+            </StackPanel>
+            <ScrollViewer Grid.Row="1" Padding="16,0,6,0" HorizontalScrollBarVisibility="Auto">
+              <ItemsControl x:Name="SourceTree" ItemsSource="{Binding SourceRoots}"/>
+            </ScrollViewer>
+          </Grid>
+
+          <GridSplitter Grid.Column="1" Width="6" Background="#242427"
+                        ResizeDirection="Columns"
+                        ToolTip.Tip="Drag to give either side more room"/>
+
+          <Grid Grid.Column="2" RowDefinitions="Auto,*">
+            <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" Margin="8,14,16,6">
+              <TextBlock Text="AFTER SORTING" FontSize="11" Opacity="0.6" VerticalAlignment="Center"/>
+              <TextBlock Text="{Binding EffectiveTargetRoot}" FontFamily="Consolas,monospace"
+                         FontSize="10.5" Opacity="0.35" VerticalAlignment="Center"
+                         TextTrimming="CharacterEllipsis"/>
+            </StackPanel>
+            <ScrollViewer Grid.Row="1" Padding="6,0,16,0" HorizontalScrollBarVisibility="Auto">
+              <ItemsControl x:Name="TargetTree" ItemsSource="{Binding PreviewRoots}"/>
+            </ScrollViewer>
+          </Grid>
+
+        </Grid>
+        <TextBlock Grid.Row="1" Text="{Binding PreviewSummary}" Margin="16,8,16,12" FontSize="12" Opacity="0.85"/>
       </Grid>
     </Grid>
 

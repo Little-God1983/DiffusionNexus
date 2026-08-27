@@ -1,5 +1,8 @@
 using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Markup.Xaml;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views.Controls;
@@ -64,5 +67,38 @@ public partial class LoraSorterView : ControlBase
         if (_initialized || !this.IsAttachedToVisualTree() || DataContext is not LoraSorterViewModel vm) return;
         _initialized = true;
         _ = vm.InitializeAsync();
+    }
+
+    /// <summary>
+    /// Pairs the clicked row with its counterpart in the other tree, then scrolls that counterpart
+    /// into view. The expand/collapse chevron is a <c>ToggleButton</c>, which handles the press
+    /// itself, so opening a folder does not also select it.
+    /// </summary>
+    private void OnPreviewRowPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (sender is not Control { DataContext: SortPreviewNodeViewModel node }) return;
+        if (DataContext is not LoraSorterViewModel vm) return;
+
+        vm.SelectPreviewNodeCommand.Execute(node);
+
+        // Posted rather than called: selecting expands the folders above the counterpart, and until
+        // that layout pass has run the row either has no container yet or has one at a stale offset,
+        // so bringing it into view here would scroll to where it used to be.
+        Dispatcher.UIThread.Post(ScrollPrimaryLinkIntoView, DispatcherPriority.Background);
+    }
+
+    /// <summary>
+    /// Scrolls to the one counterpart the ViewModel marked as the scroll target. A folder click can
+    /// light rows in a dozen destination folders; the first of them is the only one it makes sense
+    /// to move the viewport to.
+    /// </summary>
+    private void ScrollPrimaryLinkIntoView()
+    {
+        var primary = this.GetVisualDescendants()
+            .OfType<Border>()
+            .FirstOrDefault(b => b.Classes.Contains("noderow")
+                                 && b.DataContext is SortPreviewNodeViewModel { IsPrimaryLink: true });
+
+        primary?.BringIntoView();
     }
 }

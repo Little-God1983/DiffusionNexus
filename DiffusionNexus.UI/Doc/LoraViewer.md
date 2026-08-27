@@ -967,7 +967,7 @@ The third tab in the LoRA Viewer reorganizes installed LoRA files on disk into a
 
 ### What it does
 
-The Sorter takes the LoRAs the app already knows about (the same set as the Installed tab), computes a target folder layout, displays it as an expandable tree preview, and — only after the user clicks **Start Sorting** — moves or copies each LoRA **together with its sidecar files** (`.civitai.info`, `.json`, `.preview.*`, `.txt`, video previews — the same set `StaticFileTypes.GeneralExtensions` counts as part of a model) into that layout. The database is updated in move mode so the library remains current; copy mode keeps the DB pointing at the originals.
+The Sorter takes the LoRAs the app already knows about (the same set as the Installed tab), computes a target folder layout, displays it beside the current one as a before → after preview, and — only after the user clicks **Start Sorting** — moves or copies each LoRA **together with its sidecar files** (`.civitai.info`, `.json`, `.preview.*`, `.txt`, video previews — the same set `StaticFileTypes.GeneralExtensions` counts as part of a model) into that layout. The database is updated in move mode so the library remains current; copy mode keeps the DB pointing at the originals.
 
 ### Options
 
@@ -1029,12 +1029,45 @@ DB rows are matched by path earlier, when the cached library is loaded; there is
 
 Downloaded metadata is cached in `%LocalAppData%\DiffusionNexus\SorterCache\{sha256}.json` (file name always lower-cased, so the store survived the switch to the library-wide uppercase `FileHasher.Sha256Upper`) so a re-run or re-preview of the same file normally costs no network call at all. One exception is deliberate: an entry whose tag lookup never succeeded is stored as *unresolved* rather than as "this model has no tags", so the next pass retries it — that is what stops one transient Civitai failure from leaving a file category-less forever. Within a single pass the tag lookup is also memoized per model id, so a folder full of versions of the same model costs one `/models/{id}` call, not one per file. Rungs 4 and 5 are deliberately never written to that cache: it means *what Civitai said for this hash*, and the API-failure path writes no entry precisely so the next pass retries — a cached guess would kill that retry permanently and freeze the guess as though it were an answer. They are re-derived each pass instead, at the cost of one size-capped header read. The cache is a lookup cache only — the DB is never polluted with unregistered folders.
 
+### The preview is a before → after
+
+The preview pane is two trees: **Source (now)** on the left — the folders the files are in today —
+and **After sorting** on the right. A `GridSplitter` between them lets either side take more room.
+
+Both are built by one pass over the same `LoraSortPlan`, read from opposite ends:
+`PlannedMove.Candidate.FilePath` builds the left, `PlannedMove.TargetFilePath` the right. Nothing
+about the source side is re-derived or re-read from disk, which is what guarantees the two halves
+can never describe different plans — including across an option toggle, where re-planning rebuilds
+both together.
+
+**Click to link.** Clicking any row — file or folder, either side — lights its counterpart(s) in the
+other tree (`SelectPreviewNodeCommand`). Every `PlannedMove` carries an index; a file node holds its
+own, a folder node the union of everything beneath it, so a folder click lights every destination its
+files reach. Only *file* rows light: lighting the destination folders too would mean a folder click
+paints most of the other pane, which says "somewhere over there" rather than "these rows". The
+folders on the path are expanded instead — a highlight inside a collapsed folder is a highlight
+nobody sees. Exactly one counterpart is marked `IsPrimaryLink`, the first in tree order, and that is
+the only one the view scrolls to; a folder click can light a dozen rows, and scrolling to all of them
+means scrolling to none. Clicking the same row again clears the link, and so does a re-plan — the
+nodes a highlight referred to stop existing when the trees are rebuilt.
+
+**What only the source side shows.** Skipped duplicates. The destination tree drops them because
+nothing arrives, but the file is still sitting in the user's folder, and the "now" side is the only
+side that can say so — it is struck through and reads *duplicate — skipped*. Source rows also carry a
+short note: `already here` for a file at its computed destination, `renamed on arrival` for one that
+collides, and per folder a count of departures.
+
+That folder count deliberately reads **"all 7 leave"**, never *"empties"*. The plan covers model
+files and their sidecars, not whatever else lives in that folder, and **Delete empty source folders**
+removes a directory only when it is genuinely empty at execution time — so a folder emptying is not
+something this preview is in a position to promise. It says what the plan does, which it knows.
+
 ### Folder labels in the preview
 
 Each node in the preview tree carries two things beyond its name and size:
 
-- **Asset-kind chips** — `[LoRA]`, `[VAE]`, `[Text Encoder]`, `[ControlNet]`, `[Upscaler]`. A folder's chips are the union of everything beneath it, not just its direct children. The library scan enumerates by extension, so a LoRA folder routinely also holds the VAEs, text encoders and upscalers a workflow needs — on one real library, 35 of 328 unidentified files were one of these. A chip other than `[LoRA]` on a base-model folder is the signal that something which is not a LoRA is about to be filed as one.
-- **A ✓ / ~ / ✗ mark** — ✓ when everything under the node was read or confirmed, `~` when something was filed on its file name alone, ✗ when something has no base model at all. The node keeps the *worst* state beneath it, so a base-model folder is finished only when every category folder under it is. Three states rather than two because *Sort by name* gives a guessed file a real folder: a ✓ under "every file here has a base model" would then be a claim the preview cannot back, on the one screen where the lowest-confidence rung could be audited before anything moves.
+- **Asset-kind chips** — `[LoRA]`, `[VAE]`, `[Text Encoder]`, `[ControlNet]`, `[Upscaler]`. Shown on the destination side only: the question they answer is what a folder is about to *receive*. A folder's chips are the union of everything beneath it, not just its direct children. The library scan enumerates by extension, so a LoRA folder routinely also holds the VAEs, text encoders and upscalers a workflow needs — on one real library, 35 of 328 unidentified files were one of these. A chip other than `[LoRA]` on a base-model folder is the signal that something which is not a LoRA is about to be filed as one.
+- **A ✓ / ~ / ✗ mark** — ✓ when everything under the node was read or confirmed, `~` when something was filed on its file name alone, ✗ when something has no base model at all. Shown on both sides, because the source side is where "why is this one heading for Unknown?" actually gets asked. The node keeps the *worst* state beneath it, so a base-model folder is finished only when every category folder under it is. Three states rather than two because *Sort by name* gives a guessed file a real folder: a ✓ under "every file here has a base model" would then be a claim the preview cannot back, on the one screen where the lowest-confidence rung could be audited before anything moves.
 
 **One extension list, split by the question.** `ModelFileExtensions` (Domain) has `Sortable` — what the app enumerates, discovers into the library, and physically **moves** — and the wider `Recognized`, for deciding whether a *name* reads as a model's (stripping an extension before a name hint, spotting a model reference while hashing). The distinction is load-bearing: over-recognizing costs nothing, but every entry in `Sortable` is a file the sorter will relocate, which is why `.bin` and `.gguf` are recognized and not sortable. Discovery and the sorter read the same `Sortable` set, so a file the sorter would file can never be one the library refuses to discover.
 

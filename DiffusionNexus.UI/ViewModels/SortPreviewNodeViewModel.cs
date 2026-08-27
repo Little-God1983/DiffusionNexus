@@ -16,7 +16,45 @@ public partial class SortPreviewNodeViewModel : ObservableObject
     public bool IsAlreadyInPlace { get; init; }
     /// <summary>Shown with the ✎ marker: file arrives under a collision rename.</summary>
     public bool IsRenamed { get; init; }
+    /// <summary>Struck through on the source side: an identical copy is already at the destination,
+    /// so this one is not going anywhere. Never appears on the destination side — nothing arrives
+    /// for it — which is exactly why the source side has to show it.</summary>
+    public bool IsSkippedDuplicate { get; init; }
     public ObservableCollection<SortPreviewNodeViewModel> Children { get; } = [];
+
+    /// <summary>Which side of the pane this node was built for. The link runs between the two
+    /// trees, so a node has to know which one it is in to find its counterparts in the other.</summary>
+    public bool IsSourceSide { get; init; }
+
+    /// <summary>
+    /// The planned moves underneath this node — one id per <c>PlannedMove</c>, a file node holding
+    /// exactly one and a folder node the union of everything beneath it. This is what pairs the two
+    /// trees: the same move is one row on each side, so equal ids mean "these two rows are the same
+    /// file, before and after".
+    /// </summary>
+    public HashSet<int> MoveIds { get; } = [];
+
+    /// <summary>
+    /// The short right-aligned line on a source row — "all 7 leave", "already here",
+    /// "duplicate — skipped". Deliberately never says a folder <i>empties</i>: the plan covers model
+    /// files and their sidecars, not whatever else lives in that folder, and <i>Delete empty source
+    /// folders</i> removes a directory only if it is genuinely empty when it runs. Null on the
+    /// destination side, where the folder is the answer and there is nothing to add.
+    /// </summary>
+    public string? Note { get; set; }
+
+    /// <summary>The row the user clicked. At most one across both trees.</summary>
+    [ObservableProperty]
+    private bool _isSelected;
+
+    /// <summary>A counterpart of the selected row, on the other tree.</summary>
+    [ObservableProperty]
+    private bool _isLinked;
+
+    /// <summary>The one counterpart the view scrolls to. A folder click can light dozens of rows;
+    /// scrolling to all of them would mean scrolling to none.</summary>
+    [ObservableProperty]
+    private bool _isPrimaryLink;
 
     [ObservableProperty]
     private bool _isExpanded;

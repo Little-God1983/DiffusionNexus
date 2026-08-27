@@ -166,6 +166,14 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         SelectedSourceFolder = SourceFolders[0];
         PreviewRoots.Add(new SortPreviewNodeViewModel { Name = "SDXL 1.0", LoraCount = 12, TotalBytes = 4_200_000_000 });
         PreviewRoots.Add(new SortPreviewNodeViewModel { Name = "Illustrious", LoraCount = 5, TotalBytes = 1_100_000_000 });
+        SourceRoots.Add(new SortPreviewNodeViewModel
+        {
+            Name = "unsorted", IsSourceSide = true, LoraCount = 14, TotalBytes = 4_900_000_000, Note = "all 14 leave"
+        });
+        SourceRoots.Add(new SortPreviewNodeViewModel
+        {
+            Name = "Pony", IsSourceSide = true, LoraCount = 3, TotalBytes = 400_000_000, Note = "3 files stay"
+        });
         PreviewSummary = "✓ 17 files will move   ·   0 already in place   ·   ✎ 0 auto-renamed · 0 duplicates skipped";
         TransferCount = 17;
         HasEnoughSpace = true;
@@ -254,7 +262,12 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     [ObservableProperty]
     private string? _nameGuessHint;
 
+    /// <summary>The destination tree — the library as it would be after sorting.</summary>
     public ObservableCollection<SortPreviewNodeViewModel> PreviewRoots { get; } = [];
+
+    /// <summary>The library as it is now. Built from the same plan, read from the other end:
+    /// <c>PlannedMove.Candidate.FilePath</c> rather than <c>PlannedMove.TargetFilePath</c>.</summary>
+    public ObservableCollection<SortPreviewNodeViewModel> SourceRoots { get; } = [];
 
     [ObservableProperty]
     private string? _previewSummary;
@@ -438,6 +451,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             // DisarmPlan exists for.
             _lastPlan = null;
             PreviewRoots.Clear();
+            SourceRoots.Clear();
             PreviewSummary = null;
             DiskSummary = null;
             HasEnoughSpace = false;
@@ -691,7 +705,10 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         HasEnoughSpace = false;
         if (!keepTree)
         {
+            // Both halves of the picture go together — half a before/after is not a smaller
+            // preview, it is a misleading one.
             PreviewRoots.Clear();
+            SourceRoots.Clear();
             PreviewSummary = null;
             DiskSummary = null;
             // Goes with the tree, for the same reason: after "Preview failed: …" there are no
@@ -1280,66 +1297,232 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// <summary>Walks each non-skipped move's TargetDirectory, strips the target-root prefix, and
     /// materializes nested folder nodes with rolled-up counts/sizes. Root nodes (first-level
     /// folders) are sorted by TotalBytes descending.</summary>
-    private void BuildPreviewTree(LoraSortPlan plan, string targetRoot)
+    /// <summary>
+    /// Pairs a row with its counterpart on the other tree: the file's other end, or — for a folder —
+    /// every destination its files reach. A second click on the same row clears the link, as does
+    /// clicking nothing.
+    /// </summary>
+    /// <remarks>
+    /// Only file rows light up. Lighting the destination folders as well would mean a folder click
+    /// paints most of the other pane, which says "somewhere over there" rather than "these rows".
+    /// The folders on the path are expanded instead, because a highlight inside a collapsed folder
+    /// is a highlight nobody sees.
+    /// </remarks>
+    [RelayCommand]
+    private void SelectPreviewNode(SortPreviewNodeViewModel? node)
     {
-        PreviewRoots.Clear();
+        var wasAlreadySelected = node?.IsSelected == true;
 
-        foreach (var move in plan.Moves)
+        foreach (var existing in AllPreviewNodes())
         {
-            if (move.Action == PlannedAction.SkippedDuplicate) continue;
+            existing.IsSelected = false;
+            existing.IsLinked = false;
+            existing.IsPrimaryLink = false;
+        }
 
-            var relative = Path.GetRelativePath(targetRoot, move.TargetDirectory);
-            var segments = relative == "."
-                ? Array.Empty<string>()
-                : relative.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
+        if (node is null || wasAlreadySelected) return;
 
-            var siblings = PreviewRoots;
-            var chain = new List<SortPreviewNodeViewModel>();
-            foreach (var segment in segments)
+        node.IsSelected = true;
+        LightCounterparts(node.IsSourceSide ? PreviewRoots : SourceRoots, node.MoveIds, primaryTaken: false);
+    }
+
+    /// <returns>Whether a scroll target has been claimed, so the recursion hands it down the tree
+    /// rather than every level claiming its own.</returns>
+    private static bool LightCounterparts(
+        IEnumerable<SortPreviewNodeViewModel> nodes, HashSet<int> moveIds, bool primaryTaken)
+    {
+        foreach (var node in nodes)
+        {
+            // Asked this way round on purpose: Overlaps enumerates its argument and probes the
+            // receiver, so testing a file node's single id against the selection is one lookup,
+            // where the mirror form would walk the whole selection once per file in the tree.
+            if (!moveIds.Overlaps(node.MoveIds)) continue;
+
+            if (node.IsFile)
             {
-                var node = GetOrCreateFolder(siblings, segment);
-                chain.Add(node);
-                siblings = node.Children;
+                node.IsLinked = true;
+                // First in tree order, which is the order the pane draws — so the view scrolls to
+                // the topmost lit row rather than to whichever one the walk happened to reach last.
+                if (!primaryTaken)
+                {
+                    node.IsPrimaryLink = true;
+                    primaryTaken = true;
+                }
+                continue;
             }
 
-            var fileNode = new SortPreviewNodeViewModel
-            {
-                Name = Path.GetFileName(move.TargetFilePath),
-                IsFile = true,
-                TotalBytes = move.Candidate.FileSizeBytes,
-                LoraCount = 1,
-                IsAlreadyInPlace = move.Action == PlannedAction.AlreadyInPlace,
-                IsRenamed = move.WasRenamed
-            };
+            node.IsExpanded = true;
+            primaryTaken = LightCounterparts(node.Children, moveIds, primaryTaken);
+        }
+
+        return primaryTaken;
+    }
+
+    private IEnumerable<SortPreviewNodeViewModel> AllPreviewNodes()
+        => SourceRoots.Concat(PreviewRoots).SelectMany(Descend);
+
+    private static IEnumerable<SortPreviewNodeViewModel> Descend(SortPreviewNodeViewModel node)
+        => new[] { node }.Concat(node.Children.SelectMany(Descend));
+
+    /// <summary>
+    /// Draws both halves of the preview from one pass over the plan: the library as it is now on the
+    /// left, as it would be on the right. They are the same moves read from opposite ends —
+    /// <c>Candidate.FilePath</c> against <c>TargetFilePath</c> — so no option toggle can leave the two
+    /// sides describing different plans, and neither side goes back to disk to find out where a file
+    /// lives.
+    /// </summary>
+    private void BuildPreviewTree(LoraSortPlan plan, string targetRoot)
+    {
+        // Any previous link pointed at nodes that are about to stop existing; the state goes with
+        // them rather than being cleared, which is why nothing here resets the flags.
+        PreviewRoots.Clear();
+        SourceRoots.Clear();
+
+        for (var moveId = 0; moveId < plan.Moves.Count; moveId++)
+        {
+            var move = plan.Moves[moveId];
 
             // Read from the candidate as planned, so the tree agrees with the folders it is drawing
             // rather than with some other definition of "known" — and a base model supplied by the
             // name rung is reported as guessed rather than as read, because it is the difference
             // between a folder the file earned and one its file name suggested.
             var identity = IdentityOf(move.Candidate);
-            fileNode.Absorb(move.Candidate.AssetKind, identity);
-            siblings.Add(fileNode);
 
-            foreach (var ancestor in chain)
-            {
-                ancestor.LoraCount += 1;
-                ancestor.TotalBytes += move.Candidate.FileSizeBytes;
-                ancestor.Absorb(move.Candidate.AssetKind, identity);
-            }
+            // The source side keeps the skipped duplicates the destination side drops. Nothing
+            // arrives for one, so it has no destination row — but it is still sitting in the user's
+            // folder, and this is the only side that can say so.
+            AddFileNode(SourceRoots, sourceSide: true, moveId, move, identity,
+                root: plan.SourceRoot,
+                directory: Path.GetDirectoryName(move.Candidate.FilePath),
+                fileName: Path.GetFileName(move.Candidate.FilePath),
+                note: SourceNote(move));
+
+            if (move.Action == PlannedAction.SkippedDuplicate) continue;
+
+            AddFileNode(PreviewRoots, sourceSide: false, moveId, move, identity,
+                root: targetRoot,
+                directory: move.TargetDirectory,
+                fileName: Path.GetFileName(move.TargetFilePath),
+                note: null);
         }
 
-        var sortedRoots = PreviewRoots.OrderByDescending(n => n.TotalBytes).ToList();
-        PreviewRoots.Clear();
-        foreach (var root in sortedRoots)
-            PreviewRoots.Add(root);
+        AnnotateSourceFolders(SourceRoots);
+        SortRootsBySize(SourceRoots);
+        SortRootsBySize(PreviewRoots);
     }
 
-    private static SortPreviewNodeViewModel GetOrCreateFolder(ObservableCollection<SortPreviewNodeViewModel> siblings, string name)
+    private static void AddFileNode(
+        ObservableCollection<SortPreviewNodeViewModel> roots,
+        bool sourceSide,
+        int moveId,
+        PlannedMove move,
+        SortPreviewIdentity identity,
+        string root,
+        string? directory,
+        string fileName,
+        string? note)
+    {
+        var relative = Path.GetRelativePath(root, directory ?? root);
+        var segments = relative == "."
+            ? Array.Empty<string>()
+            : relative.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
+
+        var siblings = roots;
+        var chain = new List<SortPreviewNodeViewModel>();
+        foreach (var segment in segments)
+        {
+            var node = GetOrCreateFolder(siblings, segment, sourceSide);
+            chain.Add(node);
+            siblings = node.Children;
+        }
+
+        var fileNode = new SortPreviewNodeViewModel
+        {
+            Name = fileName,
+            IsFile = true,
+            IsSourceSide = sourceSide,
+            TotalBytes = move.Candidate.FileSizeBytes,
+            LoraCount = 1,
+            IsAlreadyInPlace = move.Action == PlannedAction.AlreadyInPlace,
+            IsRenamed = move.WasRenamed,
+            IsSkippedDuplicate = move.Action == PlannedAction.SkippedDuplicate,
+            Note = note,
+        };
+
+        fileNode.MoveIds.Add(moveId);
+        fileNode.Absorb(move.Candidate.AssetKind, identity);
+        siblings.Add(fileNode);
+
+        foreach (var ancestor in chain)
+        {
+            ancestor.LoraCount += 1;
+            ancestor.TotalBytes += move.Candidate.FileSizeBytes;
+            ancestor.MoveIds.Add(moveId);
+            ancestor.Absorb(move.Candidate.AssetKind, identity);
+        }
+    }
+
+    /// <summary>What a source row has to add beyond its name, for the rows that are not simply
+    /// leaving.</summary>
+    private static string? SourceNote(PlannedMove move) => move.Action switch
+    {
+        PlannedAction.AlreadyInPlace => "already here",
+        PlannedAction.SkippedDuplicate => "duplicate — skipped",
+        _ => move.WasRenamed ? "renamed on arrival" : null,
+    };
+
+    /// <summary>
+    /// Counts each source folder's departures. Deliberately never says a folder <i>empties</i>: the
+    /// plan covers model files and their sidecars, not whatever else is in there, and
+    /// <see cref="DeleteEmptySourceFolders"/> removes a directory only when it is genuinely empty at
+    /// execution time. "all 7 leave" is a statement about the plan, which is a thing the preview
+    /// actually knows.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="SortPreviewNodeViewModel.Note"/> raises no change notification, and neither do the
+    /// counters the rest of this build mutates after their node is already in the collection. Both
+    /// rely on the same thing: the whole build runs synchronously on the UI thread, so the first
+    /// layout pass — which is when a container is realized and its bindings are read — cannot happen
+    /// until every value here is final. Anything that moves part of this work past an await breaks
+    /// that, and the symptom is a row rendering its default rather than its value.
+    /// </remarks>
+    private static void AnnotateSourceFolders(IEnumerable<SortPreviewNodeViewModel> nodes)
+    {
+        foreach (var node in nodes)
+        {
+            if (node.IsFile) continue;
+
+            var files = Descend(node).Where(n => n.IsFile).ToList();
+            // Derived from the rows rather than counted during the build: "leaving" is exactly the
+            // files that are neither already at their destination nor skipped as duplicates, which
+            // the rows themselves already record.
+            var leaving = files.Count(f => !f.IsAlreadyInPlace && !f.IsSkippedDuplicate);
+
+            node.Note = leaving == 0
+                ? $"{files.Count} file{(files.Count == 1 ? string.Empty : "s")} stay{(files.Count == 1 ? "s" : string.Empty)}"
+                : leaving == files.Count
+                    ? files.Count == 1 ? "1 file leaves" : $"all {files.Count} leave"
+                    : $"{leaving} of {files.Count} leave";
+
+            AnnotateSourceFolders(node.Children);
+        }
+    }
+
+    private static void SortRootsBySize(ObservableCollection<SortPreviewNodeViewModel> roots)
+    {
+        var sorted = roots.OrderByDescending(n => n.TotalBytes).ToList();
+        roots.Clear();
+        foreach (var root in sorted)
+            roots.Add(root);
+    }
+
+    private static SortPreviewNodeViewModel GetOrCreateFolder(
+        ObservableCollection<SortPreviewNodeViewModel> siblings, string name, bool sourceSide)
     {
         var existing = siblings.FirstOrDefault(n => !n.IsFile && string.Equals(n.Name, name, StringComparison.OrdinalIgnoreCase));
         if (existing is not null) return existing;
 
-        var node = new SortPreviewNodeViewModel { Name = name, IsFile = false };
+        var node = new SortPreviewNodeViewModel { Name = name, IsFile = false, IsSourceSide = sourceSide };
         siblings.Add(node);
         return node;
     }
