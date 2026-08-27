@@ -1540,6 +1540,84 @@ public class LoraViewerViewModelSyncTests
         outcome.FaultReason.Should().Contain("500", "the message must name the failure, not a verdict");
     }
 
+    /// <summary>
+    /// #532 item 2. The entry guard reads <c>SyncInFlight</c>, but the gate is taken inside the
+    /// service — and a download's completion sync can grab it in the window between the two. The
+    /// refusal then arrived as an exception out of this method, which the detail panel's generic
+    /// catch rendered as "Metadata download failed: A library sync is already running." with an
+    /// Error log: a "not now" dressed as a fault. The bulk path has always answered this the
+    /// friendly way; the per-tile path now says the same thing.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMetadataForTile_ARefusalFromTheGateIsNotAFailure()
+    {
+        var vm = CreateViewModel();
+
+        _sync.Setup(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncScope s, SyncOptions o, CancellationToken _) => PlanFor(s, o, IdentifyStep(1)));
+        _sync.Setup(s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new SyncAlreadyRunningException());
+
+        var outcome = await vm.DownloadMetadataForTileAsync(CreateTile(modelId: 42));
+
+        outcome.Applied.Should().BeFalse("nothing ran");
+        outcome.Faulted.Should().BeFalse("a refusal is not a bug — no error row, no \"see the log\"");
+        outcome.Refused.Should().BeTrue(
+            "the detail panel has to say \"already running\", not \"Nothing to refresh for this model.\"");
+        vm.SyncStatus.Should().Be("A metadata sync is already running.",
+            "the status line says why nothing happened, in the same words the bulk button uses");
+    }
+
+    /// <summary>
+    /// The other refusal door — our own entry guard, when a bulk run is visibly going — must say
+    /// the same thing. It set the status line correctly but returned a bare <c>NotRun</c>, which
+    /// the detail panel renders as "Nothing to refresh for this model.": a claim about the model,
+    /// made when the truth is that the button was busy.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMetadataForTile_TheEntryGuardRefusalIsAlsoARefusal()
+    {
+        var vm = CreateViewModel();
+
+        var entered = new TaskCompletionSource();
+        var release = new TaskCompletionSource();
+        SetupSyncService();
+        _sync.Setup(s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()))
+            .Returns(async (SyncPlan p, IProgress<LibrarySyncProgress>? _, CancellationToken _) =>
+            {
+                entered.TrySetResult();
+                await release.Task;
+                return ReportFor(p, discovered: 0, cancelled: false, []);
+            });
+
+        var bulk = vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+        await entered.Task;   // a run is in flight — the per-tile guard must see it
+
+        var outcome = await vm.DownloadMetadataForTileAsync(CreateTile(modelId: 42));
+
+        outcome.Refused.Should().BeTrue(
+            "being turned away because a run is going is the same answer whichever guard catches it");
+
+        release.TrySetResult();
+        await bulk;
+    }
+
+    /// <summary>The refusal must also leave the flag down, so the next press is not refused by our own guard.</summary>
+    [Fact]
+    public async Task DownloadMetadataForTile_ARefusedRunStillClearsTheInFlightFlag()
+    {
+        var vm = CreateViewModel();
+
+        _sync.Setup(s => s.PlanAsync(It.IsAny<SyncScope>(), It.IsAny<SyncOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncScope s, SyncOptions o, CancellationToken _) => PlanFor(s, o, IdentifyStep(1)));
+        _sync.Setup(s => s.ExecuteAsync(It.IsAny<SyncPlan>(), It.IsAny<IProgress<LibrarySyncProgress>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new SyncAlreadyRunningException());
+
+        await vm.DownloadMetadataForTileAsync(CreateTile(modelId: 42));
+
+        vm.IsSyncRunning.Should().BeFalse("the run we started never held the slot; the button must come back");
+    }
+
     // -------------------------------------------------------------------------------- single flight
 
     /// <summary>

@@ -534,10 +534,13 @@ timeout, recorded as an ordinary `SyncFailure`, #536; the honest no stays disjoi
 identify records "checked, not on Civitai" as a completed item, never a failure) is checked
 FIRST and wins — a failed ask is not an answer, so it reads
 "Metadata download failed: {reason}" (or, when something was still applied before the failure,
-"Metadata partially refreshed — the run hit an error, see the log."); only then does
-`IdentifyPlanned` separate the two honest-no wordings — "No metadata found on Civitai for this
-file." when the step ran and found nothing, "Nothing to refresh for this model." when it planned
-nothing and therefore asked nobody.
+"Metadata partially refreshed — the run hit an error, see the log."); `Refused` (#532) comes next
+— the single-flight gate turned the press away, through either door (this method's own
+`SyncInFlight` guard, or `SyncAlreadyRunningException` from `ExecuteAsync` when a download's
+completion sync took the slot in between), which is neither a failure nor a verdict and reads
+"A metadata sync is already running."; only then does `IdentifyPlanned` separate the two honest-no
+wordings — "No metadata found on Civitai for this file." when the step ran and found nothing,
+"Nothing to refresh for this model." when it planned nothing and therefore asked nobody.
 
 **One run at a time, and the buttons say so.** The service is single-flight and *throws* on a
 second run rather than queueing it, so both ways in are switched off while one is going:
@@ -561,7 +564,7 @@ dispose the *next* run's token source, after which Cancel cancelled nothing.
 | Hash returns a version but no images | The `FetchImages` step covers it via the version endpoint |
 | Network/disk failure on one item | Recorded as a `SyncFailure` (step, model, reason) and counted in the report; the run continues |
 | `CivitaiId` already owned by another DB row | Only `CivitaiModelPageId` is set (grouping still works), warning logged |
-| A second run started while one is going | Refused before it starts: "A metadata sync is already running." (`ExecuteAsync` throws `SyncAlreadyRunningException` at its gate, before any work — the service is single-flight process-wide) |
+| A second run started while one is going | Refused before it starts: "A metadata sync is already running." (`ExecuteAsync` throws `SyncAlreadyRunningException` at its gate, before any work — the service is single-flight process-wide). Both entry points catch it: the per-tile path returns `TileMetadataSyncResult.AlreadyRunning` so the detail panel says the same thing rather than "Metadata download failed: …" (#532) |
 | An exception escapes outside the item loop (a step's `SelectAsync`, the API-key read) | The run aborts but `ExecuteAsync` still returns its report (#535): completed steps are recorded, `AbortReason` names the failure, the status leads with "Sync aborted — …", and "last full sync" is not stamped |
 | The post-run grid rebuild throws | The verdict and report dialog survive (#539); the `finally` backstop retries once under the overlay, and a second failure appends "grid refresh failed — press Refresh to reload" |
 | Service not registered | Button reports "Library sync not available." |
