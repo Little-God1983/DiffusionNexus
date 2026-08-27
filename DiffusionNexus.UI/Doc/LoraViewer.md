@@ -1084,7 +1084,18 @@ restores every row *and* the expansion the tree had before the search opened it.
 independent boxes is deliberate: a link's counterpart can be hidden by the other pane's filter, so
 `IsPrimaryLink` — the scroll target — is only ever claimed by a row that is currently visible.
 
-**Ordering and geometry.** One order picker in the preview footer drives both trees — they exist to
+**Hiding what is already settled.** *Hide files already in the right folder*
+(`IgnoreFilesAlreadyInPlace`) drops every `AlreadyInPlace` move from **both** trees — both, or the
+two sides stop describing the same set of moves. On a settled library those are most of the rows,
+and a preview that is mostly things which are not going to happen is hard to read. The rows are
+dropped at tree-build time, not out of the plan: the plan is what Start runs and what the history
+manifest records, and a settled file being *in* it is what makes it a no-op rather than an omission.
+`TransferCount` is therefore untouched, which is the point — this changes the view and nothing else.
+Folder notes then count only the rows still shown ("1 file leaves", not "1 of 2 leave"), and the
+summary gains `(hidden)` after the already-in-place count, which is the one place the real
+denominator survives so the pane never quietly claims the library is smaller than it is.
+
+**Ordering and geometry.** One order picker above both trees drives them both — they exist to
 be compared row against row, and two panes sorted differently would defeat that. It applies at
 *every* level (`SortTree`): before this only the top-level folders were ordered, and everything
 below them came out in whatever order the plan happened to produce, which is what made a deep tree

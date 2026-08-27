@@ -1851,6 +1851,106 @@ public sealed class LoraSorterViewModelTests : IDisposable
             .Should().Be(Path.Combine(SourceRoot, "SDXL 1.0", "Character", "a.safetensors"));
     }
 
+    // ------------------------------------------------------------------------------------------
+    // Ignoring files that are already where they belong. On a settled library those are most of
+    // the rows, and a preview that is mostly things which are not going to happen is hard to read.
+    // ------------------------------------------------------------------------------------------
+
+    /// <summary>Ignore means gone — from both sides, so the panes still describe the same set.</summary>
+    [Fact]
+    public async Task IgnoringSettledFilesDropsThemFromBothTrees()
+    {
+        var vm = await SettledVm();
+
+        vm.IgnoreFilesAlreadyInPlace = true;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        FlattenNames(vm.SourceRoots).Should().Contain("mover.safetensors").And.NotContain("settled.safetensors");
+        FlattenNames(vm.PreviewRoots).Should().Contain("mover.safetensors").And.NotContain("settled.safetensors");
+    }
+
+    /// <summary>A folder holding nothing but settled files has nothing left to say.</summary>
+    [Fact]
+    public async Task AFolderWhoseFilesAreAllSettledDisappearsWithThem()
+    {
+        var vm = await SettledVm();
+        vm.SourceRoots.Select(n => n.Name).Should().Contain("Pony");
+
+        vm.IgnoreFilesAlreadyInPlace = true;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        vm.SourceRoots.Select(n => n.Name).Should().NotContain("Pony");
+    }
+
+    /// <summary>
+    /// The folder note counts the rows that are actually there. Keeping the hidden files in the
+    /// denominator would have it describe a folder the pane is no longer drawing.
+    /// </summary>
+    [Fact]
+    public async Task TheFolderNoteCountsOnlyTheRowsStillShown()
+    {
+        var vm = await SettledVm();
+        Note(vm.SourceRoots, "SDXL 1.0", "Character").Should().Be("1 of 2 leave");
+
+        vm.IgnoreFilesAlreadyInPlace = true;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        Note(vm.SourceRoots, "SDXL 1.0", "Character").Should().Be("1 file leaves");
+    }
+
+    /// <summary>
+    /// The count of what was hidden is the one place the denominator survives, so the pane never
+    /// silently claims a library is smaller than it is.
+    /// </summary>
+    [Fact]
+    public async Task TheSummarySaysTheSettledFilesWereHiddenRatherThanDroppingThem()
+    {
+        var vm = await SettledVm();
+        vm.PreviewSummary.Should().Contain("2 already in place").And.NotContain("hidden");
+
+        vm.IgnoreFilesAlreadyInPlace = true;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        vm.PreviewSummary.Should().Contain("2 already in place (hidden)");
+    }
+
+    /// <summary>
+    /// This hides rows; it must not change a single byte of what the run does. A settled file was
+    /// never going to be touched — that is what settled means.
+    /// </summary>
+    [Fact]
+    public async Task IgnoringChangesTheViewAndNothingElse()
+    {
+        var vm = await SettledVm();
+        var before = vm.TransferCount;
+        var rowsBefore = vm.SourceRoots.SelectMany(Flatten).Count(n => n.IsFile);
+
+        vm.IgnoreFilesAlreadyInPlace = true;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        // Paired on purpose: "the run did not change" is only a claim about something if the view
+        // demonstrably did.
+        vm.SourceRoots.SelectMany(Flatten).Count(n => n.IsFile).Should().BeLessThan(rowsBefore);
+        vm.TransferCount.Should().Be(before);
+        vm.CanStart.Should().BeTrue();
+    }
+
+    /// <summary>Two settled files and one mover, so hiding is visible at file, folder and note level.</summary>
+    private async Task<LoraSorterViewModel> SettledVm()
+    {
+        var settled = WriteLora(@"SDXL 1.0\Character\settled.safetensors");
+        var mover = WriteLora(@"SDXL 1.0\Character\mover.safetensors");
+        var alsoSettled = WriteLora(@"Pony\Style\quiet.safetensors");
+        var vm = CreateVm(cached:
+        [
+            Installed(settled, "SDXL 1.0", "character"),
+            Installed(mover, "Illustrious", "concept"),
+            Installed(alsoSettled, "Pony", "style"),
+        ]);
+        await vm.InitializeAsync();
+        return vm;
+    }
+
     /// <summary>The pane opens on the order the plan produced, having sorted nothing.</summary>
     [Fact]
     public async Task ThePaneStartsOnTheOrderThePlanProduced()

@@ -252,6 +252,15 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     private bool _deleteEmptySourceFolders;
 
     /// <summary>
+    /// Hides the files that are already at their computed destination. On a settled library those
+    /// are most of the rows, and a preview that is mostly things which are not going to happen is
+    /// hard to read. Purely a view concern: a settled file was never going to be touched, so this
+    /// changes nothing about the run.
+    /// </summary>
+    [ObservableProperty]
+    private bool _ignoreFilesAlreadyInPlace;
+
+    /// <summary>
     /// Opt-in for the lowest-confidence rung: filing a LoRA by what its NAME suggests when nothing
     /// authoritative and no safetensors header could identify it. Off by default, and deliberately
     /// a user decision rather than a silent default — FilenameBaseModelHeuristic was tuned for a
@@ -332,6 +341,13 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     {
         // A run-result banner ("Done: …"/"Cancelled — …") survives exactly its own post-run
         // recompute; any further user action clears it, same as a fresh preview warning would.
+        ClearRunResultBanner();
+        if (_isInitializing) return;
+        _ = RecomputePreviewAsync();
+    }
+
+    partial void OnIgnoreFilesAlreadyInPlaceChanged(bool value)
+    {
         ClearRunResultBanner();
         if (_isInitializing) return;
         _ = RecomputePreviewAsync();
@@ -639,7 +655,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             BuildPreviewTree(plan, targetRoot);
 
             TransferCount = plan.TransferCount;
-            PreviewSummary = $"✓ {plan.TransferCount} files will {(IsMove ? "move" : "copy")}   ·   {plan.AlreadyInPlaceCount} already in place   ·   ✎ {plan.RenamedCount} auto-renamed · {plan.SkippedDuplicateCount} duplicates skipped";
+            PreviewSummary = $"✓ {plan.TransferCount} files will {(IsMove ? "move" : "copy")}   ·   {plan.AlreadyInPlaceCount} already in place{(IgnoreFilesAlreadyInPlace ? " (hidden)" : string.Empty)}   ·   ✎ {plan.RenamedCount} auto-renamed · {plan.SkippedDuplicateCount} duplicates skipped";
 
             ApplyDiskPreflight(plan, targetRoot);
 
@@ -1462,6 +1478,12 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             // The source side keeps the skipped duplicates the destination side drops. Nothing
             // arrives for one, so it has no destination row — but it is still sitting in the user's
             // folder, and this is the only side that can say so.
+            // Hidden from BOTH trees or the two sides stop describing the same set of moves.
+            // Dropped here rather than out of the plan: the plan is what Start runs and what the
+            // history manifest records, and a settled file being in it is what makes it a no-op
+            // rather than an omission.
+            if (IgnoreFilesAlreadyInPlace && move.Action == PlannedAction.AlreadyInPlace) continue;
+
             AddFileNode(SourceRoots, sourceSide: true, moveId, move, identity,
                 root: plan.SourceRoot,
                 directory: Path.GetDirectoryName(move.Candidate.FilePath),

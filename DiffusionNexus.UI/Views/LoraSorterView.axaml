@@ -210,6 +210,12 @@
                          IsChecked="{Binding !IncludeCategory}"/>
             <RadioButton GroupName="Structure" Content="Base model + category"
                          IsChecked="{Binding IncludeCategory}"/>
+            <!-- Sits under the structure radios because "already in the right folder" is decided by
+                 whichever of them is selected. View-only: a settled file was never going to be
+                 touched, so hiding it changes nothing about the run. -->
+            <CheckBox Content="Hide files already in the right folder"
+                      IsChecked="{Binding IgnoreFilesAlreadyInPlace}" FontSize="12"
+                      ToolTip.Tip="Leaves only the files the run would actually move. The summary still says how many were hidden."/>
           </StackPanel>
 
           <StackPanel Spacing="4">
@@ -260,8 +266,23 @@
 
       <!-- Folder structure preview: the library as it is now beside the library as it would be.
            Both trees are built from the same plan, so they can never describe different ones. -->
-      <Grid Grid.Column="1" RowDefinitions="*,Auto">
-        <Grid Grid.Row="0" ColumnDefinitions="*,Auto,*">
+      <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto">
+
+        <!-- Preview toolbar. One order for both trees — they exist to be compared row against row,
+             and two panes sorted differently would defeat that — so it sits above both rather than
+             in either pane's header. -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="6"
+                    HorizontalAlignment="Right" Margin="8,10,16,0">
+          <TextBlock Text="Sort" FontSize="11" Opacity="0.6" VerticalAlignment="Center"/>
+          <!-- MinWidth and no MinHeight override, matching the Civitai browser's pickers: a
+               ComboBox squeezed to MinHeight="0" collapses to a sliver nobody can see. -->
+          <ComboBox ItemsSource="{Binding SortOrders}"
+                    SelectedItem="{Binding PreviewSortOrder, Mode=TwoWay}"
+                    MinWidth="110" FontSize="11.5"
+                    ToolTip.Tip="Orders the rows inside every folder of both trees. Default is the order the plan produced."/>
+        </StackPanel>
+
+        <Grid Grid.Row="1" ColumnDefinitions="*,Auto,*">
 
           <Grid Grid.Column="0" RowDefinitions="Auto,*">
             <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" Margin="16,14,8,6">
@@ -304,21 +325,8 @@
           </Grid>
 
         </Grid>
-        <Grid Grid.Row="1" ColumnDefinitions="*,Auto" Margin="16,8,16,12">
-          <TextBlock Grid.Column="0" Text="{Binding PreviewSummary}" FontSize="12" Opacity="0.85"
-                     VerticalAlignment="Center"/>
-          <!-- One order for both trees: they exist to be compared row against row, and two panes
-               sorted differently would defeat that. -->
-          <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-            <TextBlock Text="Sort" FontSize="11" Opacity="0.6" VerticalAlignment="Center"/>
-            <!-- MinWidth and no MinHeight override, matching the Civitai browser's pickers: a
-                 ComboBox squeezed to MinHeight="0" collapses to a sliver nobody can see. -->
-            <ComboBox ItemsSource="{Binding SortOrders}"
-                      SelectedItem="{Binding PreviewSortOrder, Mode=TwoWay}"
-                      MinWidth="110" FontSize="11.5"
-                      ToolTip.Tip="Orders the rows inside every folder of both trees. Default is the order the plan produced."/>
-          </StackPanel>
-        </Grid>
+        <TextBlock Grid.Row="2" Text="{Binding PreviewSummary}" Margin="16,8,16,12"
+                   FontSize="12" Opacity="0.85"/>
       </Grid>
     </Grid>
 
