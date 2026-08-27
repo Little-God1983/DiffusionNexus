@@ -160,6 +160,8 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         _historyDirectory = SortHistoryWriter.DefaultHistoryDirectory;
         _deleteEmptyDirectories = DefaultDeleteEmptyDirectories;
         _loadCachedFiles = null;
+        SourceFilter = new SortPreviewFilterViewModel(SourceRoots);
+        TargetFilter = new SortPreviewFilterViewModel(PreviewRoots);
         HookIsBusyNotifications();
 
         SourceFolders.Add(@"C:\Demo\Loras");
@@ -206,6 +208,8 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         _deleteEmptyDirectories = deleteEmptyDirectories ?? DefaultDeleteEmptyDirectories;
         _loadCachedFiles = loadCachedFiles
             ?? (syncService is null ? null : syncService.LoadCachedFilesAsync);
+        SourceFilter = new SortPreviewFilterViewModel(SourceRoots);
+        TargetFilter = new SortPreviewFilterViewModel(PreviewRoots);
         HookIsBusyNotifications();
     }
 
@@ -268,6 +272,14 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// <summary>The library as it is now. Built from the same plan, read from the other end:
     /// <c>PlannedMove.Candidate.FilePath</c> rather than <c>PlannedMove.TargetFilePath</c>.</summary>
     public ObservableCollection<SortPreviewNodeViewModel> SourceRoots { get; } = [];
+
+    /// <summary>The search box over <see cref="SourceRoots"/>.</summary>
+    public SortPreviewFilterViewModel SourceFilter { get; }
+
+    /// <summary>The search box over <see cref="PreviewRoots"/>. Independent of
+    /// <see cref="SourceFilter"/> on purpose — the two panes answer different questions, and a
+    /// renamed file does not even carry the same name on both sides.</summary>
+    public SortPreviewFilterViewModel TargetFilter { get; }
 
     [ObservableProperty]
     private string? _previewSummary;
@@ -452,6 +464,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             _lastPlan = null;
             PreviewRoots.Clear();
             SourceRoots.Clear();
+            ReapplyPreviewFilters();
             PreviewSummary = null;
             DiskSummary = null;
             HasEnoughSpace = false;
@@ -709,6 +722,8 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             // preview, it is a misleading one.
             PreviewRoots.Clear();
             SourceRoots.Clear();
+            // The count beside each box described the tree that just vanished.
+            ReapplyPreviewFilters();
             PreviewSummary = null;
             DiskSummary = null;
             // Goes with the tree, for the same reason: after "Preview failed: …" there are no
@@ -1343,7 +1358,9 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 node.IsLinked = true;
                 // First in tree order, which is the order the pane draws — so the view scrolls to
                 // the topmost lit row rather than to whichever one the walk happened to reach last.
-                if (!primaryTaken)
+                // A row the other pane's search box is currently hiding has no container to scroll
+                // to, so it must not claim the slot and leave the scroll going nowhere.
+                if (!primaryTaken && node.IsVisible)
                 {
                     node.IsPrimaryLink = true;
                     primaryTaken = true;
@@ -1359,10 +1376,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     }
 
     private IEnumerable<SortPreviewNodeViewModel> AllPreviewNodes()
-        => SourceRoots.Concat(PreviewRoots).SelectMany(Descend);
-
-    private static IEnumerable<SortPreviewNodeViewModel> Descend(SortPreviewNodeViewModel node)
-        => new[] { node }.Concat(node.Children.SelectMany(Descend));
+        => SourceRoots.Concat(PreviewRoots).SelectMany(node => node.SelfAndDescendants());
 
     /// <summary>
     /// Draws both halves of the preview from one pass over the plan: the library as it is now on the
@@ -1409,6 +1423,19 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         AnnotateSourceFolders(SourceRoots);
         SortRootsBySize(SourceRoots);
         SortRootsBySize(PreviewRoots);
+        ReapplyPreviewFilters();
+    }
+
+    /// <summary>
+    /// Points both search boxes at the tree that now exists. The text the user typed survives a
+    /// re-plan — an option toggle silently un-filtering the pane they were reading is the one thing
+    /// a filter must not do — but the nodes it described do not survive, so the filter has to be
+    /// computed again against the new ones.
+    /// </summary>
+    private void ReapplyPreviewFilters()
+    {
+        SourceFilter.Reapply();
+        TargetFilter.Reapply();
     }
 
     private static void AddFileNode(
@@ -1492,7 +1519,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         {
             if (node.IsFile) continue;
 
-            var files = Descend(node).Where(n => n.IsFile).ToList();
+            var files = node.SelfAndDescendants().Where(n => n.IsFile).ToList();
             // Derived from the rows rather than counted during the build: "leaving" is exactly the
             // files that are neither already at their destination nor skipped as duplicates, which
             // the rows themselves already record.

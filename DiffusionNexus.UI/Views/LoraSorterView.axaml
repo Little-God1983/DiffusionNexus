@@ -40,8 +40,27 @@
   </UserControl.Styles>
 
   <UserControl.DataTemplates>
+
+    <!-- One search box, used by both pane headers. Each pane owns its own instance and filters only
+         its own tree: the two sides answer different questions, and a renamed file does not even
+         carry the same name on both of them. -->
+    <DataTemplate DataType="vm:SortPreviewFilterViewModel">
+      <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+        <TextBlock Text="{Binding Summary}" FontSize="10.5" Opacity="0.5" VerticalAlignment="Center"
+                   IsVisible="{Binding Summary, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+        <TextBox Text="{Binding Text}" Watermark="Search…" Width="150" FontSize="11.5"
+                 MinHeight="0" Padding="6,2" VerticalAlignment="Center"
+                 ToolTip.Tip="Show only files and folders whose name contains this"/>
+        <Button Content="✕" Command="{Binding ClearCommand}" Padding="6,1" FontSize="11"
+                VerticalAlignment="Center" ToolTip.Tip="Clear the filter"
+                IsVisible="{Binding Text, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+      </StackPanel>
+    </DataTemplate>
+
     <DataTemplate DataType="vm:SortPreviewNodeViewModel">
-      <StackPanel>
+      <!-- IsVisible is the pane's search box talking: true until a filter says otherwise, so an
+           unfiltered tree draws exactly as it always did. -->
+      <StackPanel IsVisible="{Binding IsVisible}">
         <!-- One template serves both trees. The two sides differ in exactly two places — the chips
              below are destination-only, and Note is written only on the source side — and both are
              a binding rather than a second template's worth of duplicated rows. -->
@@ -220,15 +239,21 @@
         <Grid Grid.Row="0" ColumnDefinitions="*,Auto,*">
 
           <Grid Grid.Column="0" RowDefinitions="Auto,*">
-            <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" Margin="16,14,8,6">
-              <TextBlock Text="SOURCE (NOW)" FontSize="11" Opacity="0.6" VerticalAlignment="Center"/>
-              <TextBlock Text="{Binding SelectedSourceFolder}" FontFamily="Consolas,monospace"
+            <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" Margin="16,14,8,6">
+              <TextBlock Grid.Column="0" Text="SOURCE (NOW)" FontSize="11" Opacity="0.6"
+                         VerticalAlignment="Center" Margin="0,0,8,0"/>
+              <TextBlock Grid.Column="1" Text="{Binding SelectedSourceFolder}"
+                         FontFamily="Consolas,monospace"
                          FontSize="10.5" Opacity="0.35" VerticalAlignment="Center"
                          TextTrimming="CharacterEllipsis"/>
-            </StackPanel>
+              <ContentControl Grid.Column="2" Content="{Binding SourceFilter}"/>
+            </Grid>
             <ScrollViewer Grid.Row="1" Padding="16,0,6,0" HorizontalScrollBarVisibility="Auto">
               <ItemsControl x:Name="SourceTree" ItemsSource="{Binding SourceRoots}"/>
             </ScrollViewer>
+            <TextBlock Grid.Row="1" Text="No files match" Margin="16,4,0,0"
+                       FontSize="11.5" Opacity="0.45" VerticalAlignment="Top"
+                       IsVisible="{Binding SourceFilter.HasNoMatches}"/>
           </Grid>
 
           <GridSplitter Grid.Column="1" Width="6" Background="#242427"
@@ -236,15 +261,21 @@
                         ToolTip.Tip="Drag to give either side more room"/>
 
           <Grid Grid.Column="2" RowDefinitions="Auto,*">
-            <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" Margin="8,14,16,6">
-              <TextBlock Text="AFTER SORTING" FontSize="11" Opacity="0.6" VerticalAlignment="Center"/>
-              <TextBlock Text="{Binding EffectiveTargetRoot}" FontFamily="Consolas,monospace"
+            <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" Margin="8,14,16,6">
+              <TextBlock Grid.Column="0" Text="AFTER SORTING" FontSize="11" Opacity="0.6"
+                         VerticalAlignment="Center" Margin="0,0,8,0"/>
+              <TextBlock Grid.Column="1" Text="{Binding EffectiveTargetRoot}"
+                         FontFamily="Consolas,monospace"
                          FontSize="10.5" Opacity="0.35" VerticalAlignment="Center"
                          TextTrimming="CharacterEllipsis"/>
-            </StackPanel>
+              <ContentControl Grid.Column="2" Content="{Binding TargetFilter}"/>
+            </Grid>
             <ScrollViewer Grid.Row="1" Padding="6,0,16,0" HorizontalScrollBarVisibility="Auto">
               <ItemsControl x:Name="TargetTree" ItemsSource="{Binding PreviewRoots}"/>
             </ScrollViewer>
+            <TextBlock Grid.Row="1" Text="No files match" Margin="6,4,0,0"
+                       FontSize="11.5" Opacity="0.45" VerticalAlignment="Top"
+                       IsVisible="{Binding TargetFilter.HasNoMatches}"/>
           </Grid>
 
         </Grid>

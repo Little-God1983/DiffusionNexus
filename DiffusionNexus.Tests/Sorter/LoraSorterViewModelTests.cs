@@ -1538,6 +1538,152 @@ public sealed class LoraSorterViewModelTests : IDisposable
         vm.PreviewRoots.Should().BeEmpty();
     }
 
+    // ------------------------------------------------------------------------------------------
+    // Per-pane search. Each tree has its own box filtering only itself: a library of a few
+    // thousand LoRAs is not something you audit by scrolling, and the two panes are asked
+    // different questions ("where is this file now?" against "what is landing in Unknown?").
+    // ------------------------------------------------------------------------------------------
+
+    /// <summary>The basic promise: type, and what is left is what matched.</summary>
+    [Fact]
+    public async Task FilteringAPaneHidesTheRowsThatDoNotMatch()
+    {
+        var vm = await ThreeFileVm();
+
+        vm.SourceFilter.Text = "keep";
+
+        var files = vm.SourceRoots.SelectMany(Flatten).Where(n => n.IsFile).ToList();
+        files.Single(n => n.Name == "keep-me.safetensors").IsVisible.Should().BeTrue();
+        files.Where(n => n.Name != "keep-me.safetensors").Should().OnlyContain(n => !n.IsVisible);
+    }
+
+    /// <summary>Matching a folder is a way of asking for the folder, so everything under it stays —
+    /// otherwise typing a base-model name would return an empty folder.</summary>
+    [Fact]
+    public async Task AFolderThatMatchesKeepsEverythingUnderIt()
+    {
+        var vm = await ThreeFileVm();
+
+        vm.SourceFilter.Text = "unsorted";
+
+        vm.SourceRoots.Single(n => n.Name == "unsorted").Children
+            .Should().OnlyContain(n => n.IsVisible, "the folder itself is what was asked for");
+        // The other half of the claim: a folder match is still a filter, not a no-op.
+        vm.SourceRoots.Single(n => n.Name == "settled").IsVisible.Should().BeFalse();
+        vm.SourceFilter.Summary.Should().Be("2 of 3 files");
+    }
+
+    /// <summary>A match inside a collapsed folder is a match nobody sees — but a folder that matched
+    /// on its own name is already the answer, so it is left as the user had it.</summary>
+    [Fact]
+    public async Task FoldersOpenForAMatchBeneathThemButNotForOneOnThemselves()
+    {
+        var vm = await ThreeFileVm();
+
+        vm.SourceFilter.Text = "keep";
+        vm.SourceRoots.Single(n => n.Name == "unsorted").IsExpanded.Should().BeTrue();
+
+        vm.SourceFilter.Text = "unsorted";
+        vm.SourceRoots.Single(n => n.Name == "unsorted").IsExpanded.Should()
+            .BeFalse("the folder row itself is the match — there is nothing hidden to reveal");
+    }
+
+    /// <summary>The count is the point of the box on a library you cannot eyeball.</summary>
+    [Fact]
+    public async Task TheFilterSaysHowManyFilesItKept()
+    {
+        var vm = await ThreeFileVm();
+
+        vm.SourceFilter.Summary.Should().BeNull("an unfiltered pane has no count worth showing");
+
+        vm.SourceFilter.Text = "keep";
+
+        vm.SourceFilter.Summary.Should().Be("1 of 3 files");
+        vm.SourceFilter.HasNoMatches.Should().BeFalse();
+    }
+
+    /// <summary>An empty tree under a box with text in it reads as a broken preview unless the pane
+    /// says otherwise.</summary>
+    [Fact]
+    public async Task AFilterThatMatchesNothingSaysSo()
+    {
+        var vm = await ThreeFileVm();
+
+        vm.SourceFilter.Text = "nothing-is-called-this";
+
+        vm.SourceFilter.HasNoMatches.Should().BeTrue();
+        vm.SourceFilter.Summary.Should().Be("0 of 3 files");
+        vm.SourceRoots.SelectMany(Flatten).Should().OnlyContain(n => !n.IsVisible);
+    }
+
+    /// <summary>Clearing puts the tree back — including the folders the search opened, which the
+    /// user never asked to have open.</summary>
+    [Fact]
+    public async Task ClearingTheFilterRestoresEveryRowAndTheExpansionItFound()
+    {
+        var vm = await ThreeFileVm();
+        vm.SourceFilter.Text = "keep";
+        // Stated up front so the restore below is a restore of something.
+        vm.SourceRoots.SelectMany(Flatten).Should().Contain(n => !n.IsVisible);
+        vm.SourceRoots.Single(n => n.Name == "unsorted").IsExpanded.Should().BeTrue();
+
+        vm.SourceFilter.ClearCommand.Execute(null);
+
+        vm.SourceFilter.Text.Should().BeNullOrEmpty();
+        vm.SourceFilter.Summary.Should().BeNull();
+        vm.SourceRoots.SelectMany(Flatten).Should().OnlyContain(n => n.IsVisible);
+        vm.SourceRoots.Single(n => n.Name == "unsorted").IsExpanded.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// A re-plan rebuilds both trees from scratch. Dropping the text the user typed would mean
+    /// every option toggle silently un-filters the pane they were reading.
+    /// </summary>
+    [Fact]
+    public async Task TheFilterSurvivesARePlanAndAppliesToTheNewTree()
+    {
+        var vm = await ThreeFileVm();
+        vm.SourceFilter.Text = "keep";
+
+        vm.IncludeCategory = false;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        vm.SourceFilter.Text.Should().Be("keep");
+        vm.SourceFilter.Summary.Should().Be("1 of 3 files");
+        vm.SourceRoots.SelectMany(Flatten).Where(n => n.IsFile)
+            .Where(n => n.IsVisible).Should().ContainSingle().Which.Name.Should().Be("keep-me.safetensors");
+    }
+
+    /// <summary>Two boxes, two questions. Neither pane may answer for the other.</summary>
+    [Fact]
+    public async Task TheTwoPanesFilterIndependently()
+    {
+        var vm = await ThreeFileVm();
+
+        vm.SourceFilter.Text = "keep";
+
+        vm.SourceRoots.SelectMany(Flatten).Should().Contain(n => !n.IsVisible,
+            "the pane the box belongs to did filter");
+        vm.PreviewRoots.SelectMany(Flatten).Should().OnlyContain(n => n.IsVisible);
+        vm.TargetFilter.Summary.Should().BeNull();
+    }
+
+    /// <summary>Three files across two source folders, headed for three different destinations.</summary>
+    private async Task<LoraSorterViewModel> ThreeFileVm()
+    {
+        var keep = WriteLora(@"unsorted\keep-me.safetensors");
+        var other = WriteLora(@"unsorted\other.safetensors");
+        var third = WriteLora(@"settled\third.safetensors");
+        var vm = CreateVm(cached:
+        [
+            Installed(keep, "SDXL 1.0", "character"),
+            Installed(other, "Pony", "style"),
+            Installed(third, "Illustrious", "concept"),
+        ]);
+        await vm.InitializeAsync();
+        return vm;
+    }
+
     private static IEnumerable<string> FlattenNames(IEnumerable<SortPreviewNodeViewModel> nodes)
     {
         foreach (var node in nodes)

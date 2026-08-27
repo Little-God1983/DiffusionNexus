@@ -22,6 +22,11 @@ public partial class SortPreviewNodeViewModel : ObservableObject
     public bool IsSkippedDuplicate { get; init; }
     public ObservableCollection<SortPreviewNodeViewModel> Children { get; } = [];
 
+    /// <summary>This node and everything beneath it, depth first — the walk every subtree-wide
+    /// question in the pane needs (the link, the folder notes, the search filter).</summary>
+    public IEnumerable<SortPreviewNodeViewModel> SelfAndDescendants()
+        => new[] { this }.Concat(Children.SelectMany(c => c.SelfAndDescendants()));
+
     /// <summary>Which side of the pane this node was built for. The link runs between the two
     /// trees, so a node has to know which one it is in to find its counterparts in the other.</summary>
     public bool IsSourceSide { get; init; }
@@ -58,6 +63,11 @@ public partial class SortPreviewNodeViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _isExpanded;
+
+    /// <summary>Whether the pane's search box is currently letting this row through. True until a
+    /// filter says otherwise, so an unfiltered tree draws exactly as it always did.</summary>
+    [ObservableProperty]
+    private bool _isVisible = true;
 
     /// <summary>Formatted through the shared <see cref="FileSizeFormatter"/>, which exists to
     /// consolidate exactly these copies. The private one this replaced used <c>:F1</c> for GB where

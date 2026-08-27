@@ -1062,6 +1062,28 @@ files and their sidecars, not whatever else lives in that folder, and **Delete e
 removes a directory only when it is genuinely empty at execution time — so a folder emptying is not
 something this preview is in a position to promise. It says what the plan does, which it knows.
 
+**Searching a pane.** Each tree has its own box in its header (`SortPreviewFilterViewModel`,
+`SourceFilter` / `TargetFilter`), filtering only itself. The two are independent on purpose: the
+panes are asked different questions — *where is this file now?* against *what is landing in
+Unknown?* — and a renamed file does not even carry the same name on both sides.
+
+A file row survives when its name contains the text; a folder survives when its own name matches, in
+which case everything under it stays, or when anything beneath it survives. A folder is auto-expanded
+only for a match *beneath* it — a match inside a collapsed folder is a match nobody sees, while a
+folder that matched on its own name is already the answer to what was typed. The header carries a
+live `3 of 1406 files` count, null when nothing is being filtered so an unfiltered pane never reads
+"1406 of 1406", and a pane whose filter matched nothing says *No files match* rather than showing an
+empty tree under a box with text in it.
+
+The filter walks the nodes that already exist — no re-plan, no disk, no Civitai — so a click-to-link
+highlight survives typing, and each keystroke re-filters from the tree as the user left it rather
+than from what the previous keystroke revealed (otherwise "k", "ke", "kee" ratchets folders open one
+at a time). The text survives a re-plan and is re-applied to the fresh tree, because an option toggle
+silently un-filtering the pane someone is reading is the one thing a filter must not do; clearing
+restores every row *and* the expansion the tree had before the search opened it. One consequence of
+independent boxes is deliberate: a link's counterpart can be hidden by the other pane's filter, so
+`IsPrimaryLink` — the scroll target — is only ever claimed by a row that is currently visible.
+
 ### Folder labels in the preview
 
 Each node in the preview tree carries two things beyond its name and size:
