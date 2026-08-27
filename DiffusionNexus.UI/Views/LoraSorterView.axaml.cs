@@ -70,6 +70,20 @@ public partial class LoraSorterView : ControlBase
     }
 
     /// <summary>
+    /// "Open in folder" from a row's context menu. The menu inherits the row's node as its
+    /// DataContext, so the node comes straight off the sender — no <c>$parent</c> traversal, which
+    /// this template cannot use anyway: it is recursive, so the nearest <c>ItemsControl</c> above a
+    /// row is the folder holding it rather than the view.
+    /// </summary>
+    private void OnOpenInFolder(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (sender is not Control { DataContext: SortPreviewNodeViewModel node }) return;
+        if (DataContext is not LoraSorterViewModel vm) return;
+
+        vm.OpenInFolderCommand.Execute(node);
+    }
+
+    /// <summary>
     /// Pairs the clicked row with its counterpart in the other tree, then scrolls that counterpart
     /// into view. The expand/collapse chevron is a <c>ToggleButton</c>, which handles the press
     /// itself, so opening a folder does not also select it.

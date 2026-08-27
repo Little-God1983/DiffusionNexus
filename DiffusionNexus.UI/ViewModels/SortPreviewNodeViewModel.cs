@@ -1,3 +1,4 @@
+using Avalonia;
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DiffusionNexus.UI.Helpers;
@@ -9,6 +10,15 @@ namespace DiffusionNexus.UI.ViewModels;
 public partial class SortPreviewNodeViewModel : ObservableObject
 {
     public string Name { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Where this row is on disk: for a source row where the file or folder is now, for a
+    /// destination row where it would be. Null only on a design-time node.
+    /// </summary>
+    public string? FullPath { get; init; }
+
+    /// <summary>How deep under the pane's root this row sits. Drives <see cref="Indent"/>.</summary>
+    public int Depth { get; init; }
     public int LoraCount { get; set; }
     public long TotalBytes { get; set; }
     public bool IsFile { get; init; }
@@ -74,8 +84,35 @@ public partial class SortPreviewNodeViewModel : ObservableObject
     /// the shared formatter and <c>CivitaiDownloadQueue</c> both use <c>:F2</c>, so the sorter's
     /// disk gate read "4.2 GB" while the download queue's gate for the same bytes read "4.20 GB",
     /// on the same screen.</summary>
-    public string CountAndSizeDisplay => IsFile ? FileSizeFormatter.Format(TotalBytes)
-        : $"{LoraCount} LoRAs · {FileSizeFormatter.Format(TotalBytes)}";
+    public string SizeDisplay => FileSizeFormatter.Format(TotalBytes);
+
+    /// <summary>"12 LoRAs" for a folder, nothing for a file. Kept apart from
+    /// <see cref="SizeDisplay"/> so each gets its own fixed-width column and the sizes line up down
+    /// the pane whether the row above is a folder or a file.</summary>
+    public string CountDisplay => IsFile ? string.Empty : $"{LoraCount} LoRAs";
+
+    /// <summary>
+    /// The tree indent, applied to this row's own name rather than to the container holding its
+    /// children. Indenting the container moves the row's <i>right</i> edge in by 18px per level too,
+    /// which is what left the chips, marks and sizes ragged down the pane.
+    /// </summary>
+    public Thickness Indent => new(Depth * 18, 0, 0, 0);
+
+    /// <summary>
+    /// Whether "Open in folder" has anywhere to go. A destination row usually does not: nothing has
+    /// been sorted yet, so the folder the preview is describing does not exist. A file whose folder
+    /// exists still counts — opening where it will land is useful even before it lands.
+    /// </summary>
+    public bool CanOpenInFolder
+    {
+        get
+        {
+            if (string.IsNullOrEmpty(FullPath)) return false;
+            if (!IsFile) return Directory.Exists(FullPath);
+            return File.Exists(FullPath)
+                   || (Path.GetDirectoryName(FullPath) is { Length: > 0 } dir && Directory.Exists(dir));
+        }
+    }
 
     // Ordered by the enum so the chips read the same way every pass; a folder's chips are the union
     // of everything beneath it, not just its direct children.
@@ -149,6 +186,17 @@ public partial class SortPreviewNodeViewModel : ObservableObject
         if (identity > Identity)
             Identity = identity;
     }
+}
+
+/// <summary>How the preview orders the rows inside every folder of both trees.</summary>
+public enum PreviewSortOrder
+{
+    /// <summary>Biggest first — what the pane has always done for its top-level folders, and the
+    /// order that answers "what is actually taking up the space".</summary>
+    Size,
+
+    /// <summary>A to Z, case-insensitive — the order that answers "where is this one".</summary>
+    Name,
 }
 
 /// <summary>

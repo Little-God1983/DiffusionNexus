@@ -1084,6 +1084,30 @@ restores every row *and* the expansion the tree had before the search opened it.
 independent boxes is deliberate: a link's counterpart can be hidden by the other pane's filter, so
 `IsPrimaryLink` — the scroll target — is only ever claimed by a row that is currently visible.
 
+**Ordering and geometry.** One order picker in the preview footer drives both trees — they exist to
+be compared row against row, and two panes sorted differently would defeat that. It applies at
+*every* level (`SortTree`): before this only the top-level folders were ordered, and everything
+below them came out in whatever order the plan happened to produce, which is what made a deep tree
+read as arbitrary. Folders come before files at each level, then the key: `Size` biggest-first,
+`Name` A–Z case-insensitive. Re-ordering moves the existing nodes rather than rebuilding them, so a
+click-to-link highlight and a typed search filter both survive it.
+
+The tree indent lives on each row's own name (`SortPreviewNodeViewModel.Indent`, from `Depth`),
+*not* on the container holding its children. Indenting the container moved every row's **right**
+edge in by 18px per level too, so the chips, marks and sizes drifted left the deeper you looked.
+With the indent inside the row, every row spans the full pane and shares one right edge; the mark
+sits in a fixed 16px slot and the count and size in fixed right-aligned columns of their own, so a
+folder's "12 LoRAs" cannot push its size out of line with the file sizes beneath it.
+
+**Open in folder.** Right-clicking any row offers it, through the same `IProcessLauncher` seam the
+generation gallery uses. A file is selected in Explorer; a folder is opened. Every node carries a
+`FullPath` — where it is now on the source side, where it would be on the destination side — and
+`CanOpenInFolder` greys the item when there is nowhere to go, which is the normal state of a
+destination folder before anything has been sorted. A destination *file* still resolves to the
+folder it will land in when that folder already exists, so "show me where this goes" is answerable
+for an established part of the library. Opening the nearest existing ancestor instead was rejected:
+it takes the user somewhere they did not click.
+
 ### Folder labels in the preview
 
 Each node in the preview tree carries two things beyond its name and size:

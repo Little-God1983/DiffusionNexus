@@ -10,6 +10,7 @@ using DiffusionNexus.Service.Services.IO;
 using DiffusionNexus.Service.Services.Lora;
 using DiffusionNexus.Service.Services.Sync.Identity;
 using DiffusionNexus.UI.Helpers;
+using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.Lora.Sorting;
 using DiffusionNexus.UI.Utilities;
 using Microsoft.Extensions.DependencyInjection;
@@ -298,6 +299,25 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 
     [ObservableProperty]
     private int _transferCount;
+
+    /// <summary>
+    /// One order for both trees. They exist to be compared row against row, and two panes sorted
+    /// differently would defeat that.
+    /// </summary>
+    [ObservableProperty]
+    private PreviewSortOrder _previewSortOrder = PreviewSortOrder.Size;
+
+    /// <summary>The order picker's items. Enum values rather than strings, so the ComboBox binds
+    /// straight to <see cref="PreviewSortOrder"/> with no converter.</summary>
+    public static IReadOnlyList<PreviewSortOrder> SortOrders { get; } =
+        [PreviewSortOrder.Size, PreviewSortOrder.Name];
+
+    /// <summary>
+    /// Opens Explorer for the "Open in folder" context menu. Settable rather than injected, the
+    /// same way <c>GenerationGalleryViewModel</c> holds one — it keeps the seam mockable without a
+    /// DI registration for a single call.
+    /// </summary>
+    public IProcessLauncher ProcessLauncher { get; set; } = new DefaultProcessLauncher();
 
     public string? EffectiveTargetRoot => string.IsNullOrWhiteSpace(CustomTargetFolder) ? SelectedSourceFolder : CustomTargetFolder;
 
@@ -1323,6 +1343,38 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// The folders on the path are expanded instead, because a highlight inside a collapsed folder
     /// is a highlight nobody sees.
     /// </remarks>
+    /// <summary>
+    /// "Open in folder" from a row's context menu: a file is selected in Explorer, a folder is
+    /// opened, and a file that has not been sorted yet falls back to the folder it will land in —
+    /// which exists whenever the destination is an established part of the library.
+    /// </summary>
+    [RelayCommand]
+    private void OpenInFolder(SortPreviewNodeViewModel? node)
+    {
+        if (node?.FullPath is not { Length: > 0 } path) return;
+
+        try
+        {
+            if (node.IsFile && File.Exists(path))
+            {
+                ProcessLauncher.OpenFolderAndSelectFile(path);
+                return;
+            }
+
+            var folder = node.IsFile ? Path.GetDirectoryName(path) : path;
+            if (folder is null || !Directory.Exists(folder)) return;
+            ProcessLauncher.OpenFolder(folder);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Process.Start throws Win32Exception for a shell association that is broken or a
+            // launch the user's policy blocks. A context menu that cannot open Explorer is a
+            // nuisance; one that takes the tab down with it is not.
+            _logger?.Warn(LogCategory.FileSystem, LogSource,
+                $"Could not open '{path}' in the file manager: {ex.Message}");
+        }
+    }
+
     [RelayCommand]
     private void SelectPreviewNode(SortPreviewNodeViewModel? node)
     {
@@ -1421,8 +1473,8 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         }
 
         AnnotateSourceFolders(SourceRoots);
-        SortRootsBySize(SourceRoots);
-        SortRootsBySize(PreviewRoots);
+        SortTree(SourceRoots);
+        SortTree(PreviewRoots);
         ReapplyPreviewFilters();
     }
 
@@ -1456,9 +1508,11 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 
         var siblings = roots;
         var chain = new List<SortPreviewNodeViewModel>();
+        var folderPath = root;
         foreach (var segment in segments)
         {
-            var node = GetOrCreateFolder(siblings, segment, sourceSide);
+            folderPath = Path.Combine(folderPath, segment);
+            var node = GetOrCreateFolder(siblings, segment, sourceSide, folderPath, chain.Count);
             chain.Add(node);
             siblings = node.Children;
         }
@@ -1468,6 +1522,8 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             Name = fileName,
             IsFile = true,
             IsSourceSide = sourceSide,
+            FullPath = Path.Combine(folderPath, fileName),
+            Depth = segments.Length,
             TotalBytes = move.Candidate.FileSizeBytes,
             LoraCount = 1,
             IsAlreadyInPlace = move.Action == PlannedAction.AlreadyInPlace,
@@ -1535,21 +1591,53 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         }
     }
 
-    private static void SortRootsBySize(ObservableCollection<SortPreviewNodeViewModel> roots)
+    /// <summary>
+    /// Orders every folder of a tree, not just its roots. Below the top level the rows used to come
+    /// out in whatever order the plan happened to produce them, which is what made a deep tree read
+    /// as arbitrary. Folders come before files at each level, then the chosen key.
+    /// </summary>
+    /// <remarks>
+    /// Re-orders the existing nodes rather than rebuilding them, so a click-to-link highlight and a
+    /// typed search filter both survive a change of order — the filter's expansion snapshot is keyed
+    /// by node, and these are the same nodes.
+    /// </remarks>
+    private void SortTree(ObservableCollection<SortPreviewNodeViewModel> nodes)
     {
-        var sorted = roots.OrderByDescending(n => n.TotalBytes).ToList();
-        roots.Clear();
-        foreach (var root in sorted)
-            roots.Add(root);
+        var ordered = nodes.OrderBy(n => n.IsFile);
+        var sorted = (PreviewSortOrder == PreviewSortOrder.Name
+                ? ordered.ThenBy(n => n.Name, StringComparer.OrdinalIgnoreCase)
+                : ordered.ThenByDescending(n => n.TotalBytes))
+            .ToList();
+
+        nodes.Clear();
+        foreach (var node in sorted)
+        {
+            nodes.Add(node);
+            SortTree(node.Children);
+        }
+    }
+
+    partial void OnPreviewSortOrderChanged(PreviewSortOrder value)
+    {
+        SortTree(SourceRoots);
+        SortTree(PreviewRoots);
     }
 
     private static SortPreviewNodeViewModel GetOrCreateFolder(
-        ObservableCollection<SortPreviewNodeViewModel> siblings, string name, bool sourceSide)
+        ObservableCollection<SortPreviewNodeViewModel> siblings, string name, bool sourceSide,
+        string fullPath, int depth)
     {
         var existing = siblings.FirstOrDefault(n => !n.IsFile && string.Equals(n.Name, name, StringComparison.OrdinalIgnoreCase));
         if (existing is not null) return existing;
 
-        var node = new SortPreviewNodeViewModel { Name = name, IsFile = false, IsSourceSide = sourceSide };
+        var node = new SortPreviewNodeViewModel
+        {
+            Name = name,
+            IsFile = false,
+            IsSourceSide = sourceSide,
+            FullPath = fullPath,
+            Depth = depth,
+        };
         siblings.Add(node);
         return node;
     }

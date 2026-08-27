@@ -1684,6 +1684,201 @@ public sealed class LoraSorterViewModelTests : IDisposable
         return vm;
     }
 
+    // ------------------------------------------------------------------------------------------
+    // Open in folder, row ordering, and the geometry the two of them are read in.
+    // ------------------------------------------------------------------------------------------
+
+    /// <summary>A source file is somewhere the user can go and look at right now.</summary>
+    [Fact]
+    public async Task OpeningASourceFileSelectsItInExplorer()
+    {
+        var a = WriteLora(@"unsorted\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        var launcher = new Mock<IProcessLauncher>();
+        vm.ProcessLauncher = launcher.Object;
+        await vm.InitializeAsync();
+
+        vm.OpenInFolderCommand.Execute(vm.SourceRoots.SelectMany(Flatten).Single(n => n.IsFile));
+
+        launcher.Verify(l => l.OpenFolderAndSelectFile(a), Times.Once);
+    }
+
+    /// <summary>A folder row opens the folder itself — there is no one file to select.</summary>
+    [Fact]
+    public async Task OpeningASourceFolderOpensThatFolder()
+    {
+        var a = WriteLora(@"unsorted\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        var launcher = new Mock<IProcessLauncher>();
+        vm.ProcessLauncher = launcher.Object;
+        await vm.InitializeAsync();
+
+        vm.OpenInFolderCommand.Execute(vm.SourceRoots.Single(n => n.Name == "unsorted"));
+
+        launcher.Verify(l => l.OpenFolder(Path.GetDirectoryName(a)!), Times.Once);
+    }
+
+    /// <summary>
+    /// The destination tree describes folders that mostly do not exist yet — nothing has been
+    /// sorted. Opening the nearest thing that does exist would take the user somewhere they did not
+    /// click, so the row simply says it cannot be opened.
+    /// </summary>
+    [Fact]
+    public async Task ADestinationFolderThatDoesNotExistYetCannotBeOpened()
+    {
+        var a = WriteLora(@"unsorted\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        var launcher = new Mock<IProcessLauncher>();
+        vm.ProcessLauncher = launcher.Object;
+        await vm.InitializeAsync();
+
+        var destination = vm.PreviewRoots.Single(n => n.Name == "SDXL 1.0");
+        var source = vm.SourceRoots.Single(n => n.Name == "unsorted");
+
+        // Stated as a pair, because "nothing happened" is what a menu item that does not work
+        // looks like too: the same click on the row beside it must open something.
+        destination.CanOpenInFolder.Should().BeFalse();
+        source.CanOpenInFolder.Should().BeTrue();
+
+        vm.OpenInFolderCommand.Execute(destination);
+        launcher.VerifyNoOtherCalls();
+
+        vm.OpenInFolderCommand.Execute(source);
+        launcher.Verify(l => l.OpenFolder(Path.GetDirectoryName(a)!), Times.Once);
+    }
+
+    /// <summary>
+    /// Sorting into a folder the library already has is the common case, and there "show me where
+    /// this lands" is answerable before anything moves.
+    /// </summary>
+    [Fact]
+    public async Task ADestinationFileFallsBackToTheFolderItWillLandIn()
+    {
+        var a = WriteLora(@"unsorted\a.safetensors");
+        var destinationFolder = Path.Combine(SourceRoot, "SDXL 1.0", "Character");
+        Directory.CreateDirectory(destinationFolder);
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        var launcher = new Mock<IProcessLauncher>();
+        vm.ProcessLauncher = launcher.Object;
+        await vm.InitializeAsync();
+
+        var landing = vm.PreviewRoots.SelectMany(Flatten).Single(n => n.IsFile);
+        landing.CanOpenInFolder.Should().BeTrue("the file is not there yet, but its folder is");
+
+        vm.OpenInFolderCommand.Execute(landing);
+
+        launcher.Verify(l => l.OpenFolder(destinationFolder), Times.Once);
+    }
+
+    /// <summary>
+    /// Only the top-level folders were ever ordered; everything below them came out in whatever
+    /// order the plan happened to produce, which is why a deep tree read as arbitrary.
+    /// </summary>
+    [Fact]
+    public async Task SortingByNameOrdersEveryLevelNotJustTheRoots()
+    {
+        var vm = await SizedVm();
+
+        vm.PreviewSortOrder = PreviewSortOrder.Name;
+
+        vm.SourceRoots.Select(n => n.Name).Should().ContainInOrder("alpha", "unsorted");
+        vm.SourceRoots.Single(n => n.Name == "unsorted").Children.Select(n => n.Name)
+            .Should().ContainInOrder("a.safetensors", "b.safetensors", "c.safetensors");
+    }
+
+    /// <summary>Biggest first, at every level — the order that answers "what is taking up the
+    /// space", and the one the pane has always used for its roots.</summary>
+    [Fact]
+    public async Task SortingBySizePutsTheBiggestFirstAtEveryLevel()
+    {
+        var vm = await SizedVm();
+        vm.PreviewSortOrder = PreviewSortOrder.Name;
+
+        vm.PreviewSortOrder = PreviewSortOrder.Size;
+
+        vm.SourceRoots.Select(n => n.Name).Should().ContainInOrder("unsorted", "alpha");
+        // b, a, c by size — where the plan produced them in the order b, c, a, so this cannot pass
+        // by accident on insertion order.
+        vm.SourceRoots.Single(n => n.Name == "unsorted").Children.Select(n => n.Name)
+            .Should().ContainInOrder("b.safetensors", "a.safetensors", "c.safetensors");
+    }
+
+    /// <summary>
+    /// Re-ordering is not re-planning: the same node objects are moved around, so a click-to-link
+    /// highlight and a typed search filter both survive changing the order.
+    /// </summary>
+    [Fact]
+    public async Task ChangingTheOrderKeepsTheRowsAndWhateverStateTheyCarry()
+    {
+        var vm = await SizedVm();
+        var before = vm.SourceRoots.SelectMany(Flatten).Single(n => n.Name == "a.safetensors");
+        vm.SelectPreviewNodeCommand.Execute(before);
+
+        vm.PreviewSortOrder = PreviewSortOrder.Name;
+
+        // The order did change — otherwise "the rows survived" is a claim about nothing.
+        vm.SourceRoots.First().Name.Should().Be("alpha");
+        vm.SourceRoots.SelectMany(Flatten).Single(n => n.Name == "a.safetensors")
+            .Should().BeSameAs(before);
+        before.IsSelected.Should().BeTrue();
+        vm.PreviewRoots.SelectMany(Flatten).Should().Contain(n => n.IsLinked);
+    }
+
+    /// <summary>
+    /// Depth is what indents a row's own name instead of the container holding its children —
+    /// indenting the container moved every row's right edge in too, which left the chips, marks and
+    /// sizes ragged down the pane. The path is what the context menu opens.
+    /// </summary>
+    [Fact]
+    public async Task EveryRowKnowsItsDepthAndWhereItIsOnDisk()
+    {
+        var a = WriteLora(@"dump\new\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        await vm.InitializeAsync();
+
+        var dump = vm.SourceRoots.Single(n => n.Name == "dump");
+        var nested = dump.Children.Single();
+        var file = nested.Children.Single();
+
+        dump.Depth.Should().Be(0);
+        nested.Depth.Should().Be(1);
+        file.Depth.Should().Be(2);
+
+        dump.FullPath.Should().Be(Path.Combine(SourceRoot, "dump"));
+        nested.FullPath.Should().Be(Path.Combine(SourceRoot, "dump", "new"));
+        file.FullPath.Should().Be(a);
+        vm.PreviewRoots.SelectMany(Flatten).Single(n => n.IsFile).FullPath
+            .Should().Be(Path.Combine(SourceRoot, "SDXL 1.0", "Character", "a.safetensors"));
+    }
+
+    /// <summary>
+    /// Three orders that all disagree: the plan produces b, c, a; by size that is b, a, c; by name
+    /// a, b, c. Nothing here can pass on insertion order by accident.
+    /// </summary>
+    private async Task<LoraSorterViewModel> SizedVm()
+    {
+        WriteSized(@"unsorted\b.safetensors", 100);
+        WriteSized(@"unsorted\c.safetensors", 10);
+        WriteSized(@"unsorted\a.safetensors", 50);
+        WriteSized(@"alpha\d.safetensors", 5);
+        var vm = CreateVm(cached:
+        [
+            Installed(Path.Combine(SourceRoot, @"unsorted\b.safetensors"), "SDXL 1.0", "character"),
+            Installed(Path.Combine(SourceRoot, @"unsorted\c.safetensors"), "SDXL 1.0", "character"),
+            Installed(Path.Combine(SourceRoot, @"unsorted\a.safetensors"), "SDXL 1.0", "character"),
+            Installed(Path.Combine(SourceRoot, @"alpha\d.safetensors"), "Pony", "style"),
+        ]);
+        await vm.InitializeAsync();
+        return vm;
+    }
+
+    private void WriteSized(string relative, int bytes)
+    {
+        var path = Path.Combine(SourceRoot, relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(path, new byte[bytes]);
+    }
+
     private static IEnumerable<string> FlattenNames(IEnumerable<SortPreviewNodeViewModel> nodes)
     {
         foreach (var node in nodes)
