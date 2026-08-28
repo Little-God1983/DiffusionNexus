@@ -158,4 +158,64 @@ public class CivitaiResponseCacheTests
     {
         CivitaiResponseCache.HashKey("abcDEF").Should().Be(CivitaiResponseCache.HashKey("ABCdef"));
     }
+
+    [Fact]
+    public async Task ClearDuringAnInFlightFetch_PreventsThatFetchFromPopulatingTheCache()
+    {
+        // Regression test for the round-1 generation-counter fix. Before it, RunAsync wrote its
+        // result into _entries unconditionally, so a fetch that was already running when Clear()
+        // ran would land its (by-then-stale) answer back into the just-cleared cache with a fresh
+        // TTL, as if nothing had happened.
+        var cache = Create();
+        var calls = 0;
+        var release = new TaskCompletionSource<string?>();
+        Task<string?> Factory() { calls++; return release.Task; }
+
+        var first = cache.GetOrAddAsync(CivitaiResponseCache.ModelKey(7), Ttl, Factory);
+        cache.Clear();
+        release.SetResult("stale");
+
+        // The caller that started the fetch still gets its answer — only the cache write is
+        // suppressed, not the result flowing back to whoever was already waiting for it.
+        (await first).Should().Be("stale");
+        calls.Should().Be(1);
+
+        // A subsequent call must go back to the factory: if the completed fetch above had written
+        // "stale" into _entries, this would be served from cache instead and calls would stay 1.
+        var second = await cache.GetOrAddAsync(CivitaiResponseCache.ModelKey(7), Ttl, Factory);
+        second.Should().Be("stale");
+        calls.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Clear_DropsInFlightEntries_SoALaterCallerStartsItsOwnFetchRatherThanJoining()
+    {
+        // Regression test for the round-1 fix's other half. Before it, Clear() emptied _entries
+        // but left _inFlight untouched, so a caller arriving after Clear() would still find and
+        // join the pre-Clear fetch's Lazy — receiving whatever that older fetch answers (e.g. an
+        // anonymous answer) instead of starting its own, freshly-keyed one.
+        var cache = Create();
+        var release = new TaskCompletionSource<string?>();
+        var firstCalls = 0;
+        var secondCalls = 0;
+        Task<string?> FirstFactory() { firstCalls++; return release.Task; }
+        Task<string?> SecondFactory() { secondCalls++; return Task.FromResult<string?>("fresh"); }
+
+        var first = cache.GetOrAddAsync(CivitaiResponseCache.ModelKey(7), Ttl, FirstFactory);
+        cache.Clear();
+        var second = cache.GetOrAddAsync(CivitaiResponseCache.ModelKey(7), Ttl, SecondFactory);
+
+        // If Clear() had left the in-flight entry in place, `second` would join `first`'s Lazy and
+        // block on `release` (not set yet) instead of running SecondFactory. Bounded so a
+        // regression fails fast within this test instead of hanging the whole run.
+        var finished = await Task.WhenAny(second, Task.Delay(TimeSpan.FromSeconds(2)));
+        finished.Should().BeSameAs(second, "a caller arriving after Clear() must start its own fetch, not join one Clear() should have dropped");
+
+        (await second).Should().Be("fresh");
+        secondCalls.Should().Be(1);
+
+        release.SetResult("stale");
+        (await first).Should().Be("stale");
+        firstCalls.Should().Be(1);
+    }
 }

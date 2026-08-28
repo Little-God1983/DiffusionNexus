@@ -208,6 +208,40 @@ public class CivitaiApiGatewayTests
     }
 
     [Fact]
+    public async Task NullAndEmptyApiKey_AreTreatedAsTheSameUnauthenticatedKey()
+    {
+        // CivitaiClient treats null, "" and whitespace-only identically — it only attaches an
+        // Authorization header when the key is non-whitespace. Settings-sourced call sites
+        // genuinely alternate between null and "" for "no key yet". Without normalisation, every
+        // alternation looks like a real key change, clears the shared cache on every call, and
+        // (via the generation bump) can suppress the very write meant to populate it — defeating
+        // caching entirely for any caller whose key spelling isn't perfectly consistent.
+        var (interactive, _, inner, _) = CreateBoth();
+
+        await interactive.GetModelAsync(42, apiKey: null);
+        await interactive.GetModelAsync(42, apiKey: "");
+
+        inner.ModelCalls.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ApiKeyChangeAcrossLanes_IsDetectedByBothLanes()
+    {
+        // Regression test for the round-1 fix: before it, _lastApiKey lived on each
+        // CivitaiApiGateway instance, so the background lane's first-ever call had its own
+        // _apiKeySeen still false and skipped the clear entirely — it was served the interactive
+        // lane's anonymous entry instead of making its own authenticated request. Both lanes now
+        // share one CivitaiResponseCache.NoteApiKey, so the key change the interactive lane
+        // recorded is visible to the background lane too.
+        var (interactive, background, inner, _) = CreateBoth();
+
+        await interactive.GetModelAsync(42, apiKey: null);
+        await background.GetModelAsync(42, apiKey: "key-a");
+
+        inner.ModelCalls.Should().Be(2);
+    }
+
+    [Fact]
     public async Task GetModelsAsync_CachesBySerializedQuery()
     {
         var (interactive, _, inner, _) = CreateBoth();

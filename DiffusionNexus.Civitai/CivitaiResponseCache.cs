@@ -74,16 +74,31 @@ public sealed class CivitaiResponseCache : ICivitaiApiCache
     /// is an anonymous answer being served to a caller that has since supplied a key (gated models
     /// answer differently). A change of key therefore empties the store.
     /// </summary>
+    /// <remarks>
+    /// The key is normalised before comparing or storing: <see cref="CivitaiClient"/> treats
+    /// <c>null</c>, <c>""</c> and whitespace-only as identically unauthenticated (it only attaches
+    /// an Authorization header when the key is non-whitespace), and these values genuinely
+    /// alternate call to call — they come from settings, where a not-yet-typed key is <c>""</c> in
+    /// one code path and <c>null</c> in another. Comparing them as literally different strings
+    /// would make every such alternation look like a real key change: each call would
+    /// <see cref="Clear"/> the shared cache, and because <see cref="Clear"/> also bumps the
+    /// generation, the concurrent in-flight write from the previous call would be suppressed too
+    /// — the cache could end up never actually populating.
+    /// </remarks>
     public void NoteApiKey(string? apiKey)
     {
+        var normalized = NormalizeApiKey(apiKey);
         lock (_apiKeyLock)
         {
-            if (_apiKeySeen && string.Equals(_lastApiKey, apiKey, StringComparison.Ordinal)) return;
+            if (_apiKeySeen && string.Equals(_lastApiKey, normalized, StringComparison.Ordinal)) return;
             if (_apiKeySeen) Clear();
-            _lastApiKey = apiKey;
+            _lastApiKey = normalized;
             _apiKeySeen = true;
         }
     }
+
+    /// <summary>Collapses every unauthenticated spelling (<c>null</c>, <c>""</c>, whitespace) to one canonical value.</summary>
+    private static string? NormalizeApiKey(string? apiKey) => string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
 
     /// <summary>
     /// Returns the cached value for <paramref name="key"/>, or awaits <paramref name="factory"/>
