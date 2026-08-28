@@ -380,6 +380,9 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     {
         var removed = Jobs.Count;
         _runCts?.Cancel();
+        // Drop the fired CTS so the next Start/Retry creates a fresh run epoch instead
+        // of joining this cancelled one and instantly aborting every new job.
+        _runCts = null;
         Jobs.Clear();
         Persist();
         RaiseCountsChanged();
@@ -424,8 +427,10 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     }
 
     /// <summary>
-    /// Runs all queued jobs through the worker pool. Subsequent calls coalesce — already-
-    /// running jobs aren't restarted; only Queued ones are picked up.
+    /// Runs all queued jobs through the worker pool, re-queuing Cancelled ones first
+    /// (that's the re-run path <see cref="AbortAllActive"/> promises). Subsequent calls
+    /// coalesce — already-running jobs aren't restarted; only Queued/Cancelled ones are
+    /// picked up.
     /// </summary>
     public async Task StartAllAsync()
     {
@@ -441,8 +446,18 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             return;
         }
 
-        _runCts?.Cancel();
-        _runCts = new CancellationTokenSource();
+        // Cancelled jobs re-run on Start. ResetForRetry hands each a fresh un-cancelled
+        // token — the old one is still fired from the Cancel click, and the linked CTS
+        // in RunGatedAsync would otherwise abort them straight back to Cancelled.
+        foreach (var job in Jobs.Where(j => j.Status == JobStatus.Cancelled).ToList())
+        {
+            job.ResetForRetry();
+        }
+
+        // Join the current run epoch instead of cancelling it. Cancelling here used to
+        // kill every in-flight download — most visibly a per-tile Retry the user had
+        // just resumed — the moment Start was clicked again.
+        _runCts ??= new CancellationTokenSource();
         var ct = _runCts.Token;
 
         var pending = Jobs.Where(j => j.Status == JobStatus.Queued).ToList();
