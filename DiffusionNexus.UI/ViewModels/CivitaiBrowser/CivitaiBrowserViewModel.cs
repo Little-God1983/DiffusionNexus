@@ -538,9 +538,27 @@ public partial class CivitaiBrowserViewModel : ObservableObject
 
     // Debounced like the text box: a user comparing two sorts or three periods used to spend a
     // full paginated search on each intermediate choice.
-    partial void OnSelectedSortChanged(string? value) { if (_initialized) _ = DebouncedSearchAsync(); }
-    partial void OnSelectedPeriodChanged(CivitaiPeriod value) { if (_initialized) _ = DebouncedSearchAsync(); }
-    partial void OnSelectedModelTypeChanged(ModelTypeOption? value) { if (_initialized) _ = DebouncedSearchAsync(); }
+    partial void OnSelectedSortChanged(string? value) => OnQueryOptionChanged();
+    partial void OnSelectedPeriodChanged(CivitaiPeriod value) => OnQueryOptionChanged();
+    partial void OnSelectedModelTypeChanged(ModelTypeOption? value) => OnQueryOptionChanged();
+
+    /// <summary>
+    /// Sort/Period/Model-type changed. The re-search itself stays debounced (see
+    /// <see cref="DebouncedSearchAsync"/>) — comparing two sorts or three periods shouldn't cost a
+    /// full paginated search per intermediate choice — but the cursor must not survive the 400ms
+    /// debounce window: <see cref="LoadMoreAsync"/> and the auto-load-more in
+    /// <see cref="MaybeTopUpVisibleResults"/> both read <see cref="HasMore"/> synchronously, and
+    /// either could otherwise paginate the OLD query's cursor under the NEW filter before the
+    /// debounced <see cref="SearchAsync"/> gets a chance to reset it. Clearing it here, synchronously
+    /// in the hook, closes that window without touching the debounce.
+    /// </summary>
+    private void OnQueryOptionChanged()
+    {
+        if (!_initialized) return; // skip the constructor-time cascade
+        _nextCursor = null;
+        OnPropertyChanged(nameof(HasMore));
+        _ = DebouncedSearchAsync();
+    }
     // ShowNsfwContent is a client-side filter (the API call always requests NSFW). No
     // re-search needed when toggled — just reapply local filters.
     partial void OnShowNsfwContentChanged(bool value) => ApplyClientSideFilters();
