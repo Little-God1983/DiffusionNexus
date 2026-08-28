@@ -625,6 +625,54 @@ public sealed class LibrarySyncServiceTests : IDisposable
         cache.Verify(c => c.Clear(), Times.Never);
     }
 
+    /// <summary>
+    /// Review finding 7 on PR #547: the LoRA Viewer's per-tile "Download Metadata" scopes the run
+    /// to one model (<see cref="SyncScope.ForModels"/>) but forces identify + thumbnails, so the
+    /// old unconditional <c>_apiCache.Clear()</c> emptied the WHOLE process-wide cache for a
+    /// single-model request — discarding every other in-flight fetch (the browser's current page,
+    /// the detail panel, the update sweep) along with it. A model-scoped force must invalidate only
+    /// the models the plan actually targets, by their <c>CivitaiModelPageId</c> (the id
+    /// <see cref="CivitaiMetadataApplier"/> keys the gateway's model-page cache with), and must
+    /// never call <c>Clear()</c>.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_WithAModelScopedForce_InvalidatesOnlyThoseModelsInsteadOfClearing()
+    {
+        var cache = new Mock<ICivitaiApiCache>();
+        var scoped = await SeedModelWithCivitaiPageAsync("scoped", civitaiModelPageId: 555);
+        // Not in the scope — proves the invalidation is scoped, not "everything with a page id".
+        await SeedModelWithCivitaiPageAsync("untouched", civitaiModelPageId: 999);
+
+        var service = NewService([], apiCache: cache.Object);
+        var options = new SyncOptions(new HashSet<SyncStepKind> { SyncStepKind.IdentifyModel }, ForceIdentify: true);
+        var plan = await service.PlanAsync(SyncScope.ForModels(scoped), options, CancellationToken.None);
+
+        await service.ExecuteAsync(plan, null, CancellationToken.None);
+
+        cache.Verify(c => c.InvalidateModel(555), Times.Once);
+        cache.Verify(c => c.InvalidateModel(999), Times.Never);
+        cache.Verify(c => c.Clear(), Times.Never);
+    }
+
+    /// <summary>
+    /// The other shape of the same fix: a run scoped to the whole library (the plan dialog's
+    /// "Models not found on Civitai" checkbox) has no bounded target set, so it must keep clearing
+    /// the whole cache rather than trying — and failing — to enumerate it piecemeal.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_WithALibraryScopedForce_StillClearsTheWholeCache()
+    {
+        var cache = new Mock<ICivitaiApiCache>();
+        var service = NewService([], apiCache: cache.Object);
+        var options = new SyncOptions(new HashSet<SyncStepKind> { SyncStepKind.IdentifyModel }, ForceIdentify: true);
+        var plan = await service.PlanAsync(SyncScope.Library, options, CancellationToken.None);
+
+        await service.ExecuteAsync(plan, null, CancellationToken.None);
+
+        cache.Verify(c => c.Clear(), Times.Once);
+        cache.Verify(c => c.InvalidateModel(It.IsAny<int>()), Times.Never);
+    }
+
     // ------------------------------------------------------ Thumbnail parallelism
 
     [Fact]
@@ -768,6 +816,37 @@ public sealed class LibrarySyncServiceTests : IDisposable
 
         await uow.Models.AddAsync(model);
         await uow.SaveChangesAsync();
+    }
+
+    /// <summary>Seeds a matched model that already owns a <c>CivitaiModelPageId</c>, for the cache
+    /// scoped-invalidation tests. Returns the local model id.</summary>
+    private async Task<int> SeedModelWithCivitaiPageAsync(string name, int civitaiModelPageId)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var model = new Model
+        {
+            Name = name,
+            Type = ModelType.LORA,
+            Source = DataSource.CivitaiApi,
+            CivitaiId = civitaiModelPageId,
+            CivitaiModelPageId = civitaiModelPageId,
+        };
+        var version = new ModelVersion { Name = "v1", BaseModelRaw = "???" };
+        version.Files.Add(new ModelFile
+        {
+            FileName = name + ".safetensors",
+            LocalPath = Path.Combine(SeedRoot, name + ".safetensors"),
+            IsLocalFileValid = true,
+            IsPrimary = true,
+        });
+        model.Versions.Add(version);
+
+        await uow.Models.AddAsync(model);
+        await uow.SaveChangesAsync();
+
+        return model.Id;
     }
 
     /// <summary>

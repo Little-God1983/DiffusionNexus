@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using DiffusionNexus.Civitai;
+using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
@@ -147,16 +148,18 @@ public sealed class LibrarySyncService : ILibrarySyncService
             // "Force" means the user has told us the local answer is wrong. A cached response is
             // a local answer, so it goes too — otherwise a forced re-sync would replay the very
             // page that produced the state they are trying to correct. This also covers the LoRA
-            // Viewer's per-tile "Download Metadata", which forces identify and thumbnails.
+            // Viewer's per-tile "Download Metadata", which forces identify and thumbnails for one
+            // model — see InvalidateForcedScopeAsync for why that path drops only that model's
+            // cache entries rather than the whole process-wide cache.
             //
-            // Inside the try (not between _gate.Wait(0) and it): _apiCache.Clear() realistically
-            // never throws, but if it ever did, throwing between the gate acquire and the try
-            // would skip the finally below and leak the gate — wedging sync for the rest of the
-            // session with no way to release it short of restarting the app.
+            // Inside the try (not between _gate.Wait(0) and it): both cache calls below
+            // realistically never throw, but if either ever did, throwing between the gate acquire
+            // and the try would skip the finally below and leak the gate — wedging sync for the
+            // rest of the session with no way to release it short of restarting the app.
             var options = plan.Options;
             if (options.ForceIdentify || options.ForceTags || options.ForceImages || options.ForceThumbnails)
             {
-                _apiCache?.Clear();
+                await InvalidateForcedScopeAsync(plan.Scope, ct).ConfigureAwait(false);
             }
 
             try
@@ -212,6 +215,59 @@ public sealed class LibrarySyncService : ILibrarySyncService
         {
             _isRunning = false;
             _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Drops the cached Civitai responses a forced run is about to make stale — scoped to the
+    /// models the run actually targets when the plan can name them, and a full <c>Clear()</c>
+    /// only for a genuinely library- or folder-wide forced re-sync.
+    /// </summary>
+    /// <remarks>
+    /// A run scoped to specific models (<see cref="SyncScopeKind.Models"/>) is the LoRA Viewer's
+    /// per-tile "Download Metadata" button — one model, not the library. Calling <c>Clear()</c>
+    /// for it used to empty the whole process-wide cache and bump its generation, which stamps
+    /// every fetch already in flight for every OTHER surface (the browser's current page, the
+    /// detail panel, the update sweep) as stale and discards its result — so working down a list
+    /// of tiles re-triggered that N times, exactly the repeat-request pattern the cache exists to
+    /// absorb. <see cref="ICivitaiApiCache.InvalidateModel"/> is scoped to one Civitai model id and
+    /// leaves everything else alone.
+    /// <para>
+    /// <c>CivitaiModelPageId</c>, not <c>CivitaiId</c>, is the id to invalidate with: it is the
+    /// value <see cref="CivitaiMetadataApplier"/> passes to <c>GetModelAsync</c> (the gateway's
+    /// cache key) and — unlike <c>CivitaiId</c>, which only the "owner" row of a Civitai page
+    /// carries — it is set on every local row that shares that page, including duplicates.
+    /// </para>
+    /// <para>
+    /// A <see cref="SyncScopeKind.Library"/> or <see cref="SyncScopeKind.SourceFolder"/> run still
+    /// clears everything: at that scope "force" means the checkbox in the plan dialog ("Models not
+    /// found on Civitai"), which is deliberately library-wide, and the plan does not name a target
+    /// set narrow enough to invalidate piecemeal.
+    /// </para>
+    /// </remarks>
+    private async Task InvalidateForcedScopeAsync(SyncScope scope, CancellationToken ct)
+    {
+        if (_apiCache is null) return;
+
+        if (scope.Kind != SyncScopeKind.Models || scope.ModelIds is not { Count: > 0 } modelIds)
+        {
+            _apiCache.Clear();
+            return;
+        }
+
+        using var dbScope = _scopes.CreateScope();
+        var uow = dbScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        foreach (var modelId in modelIds)
+        {
+            // A model in the scope may have been deleted since the plan was built (same reasoning
+            // as RunStepAsync re-selecting rather than trusting the plan's snapshot) — GetByIdAsync
+            // answers null rather than throwing, and there is simply nothing left to invalidate.
+            var model = await uow.Models.GetByIdAsync(modelId, ct).ConfigureAwait(false);
+            if (model?.CivitaiModelPageId is { } civitaiModelId)
+            {
+                _apiCache.InvalidateModel(civitaiModelId);
+            }
         }
     }
 
