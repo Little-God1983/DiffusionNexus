@@ -79,7 +79,7 @@ public sealed class CivitaiDownloadQueueStartResumeTests : IDisposable
         }
     }
 
-    private CivitaiDownloadQueue Queue(ICivitaiModelDownloader downloader) => new(
+    private CivitaiDownloadQueue Queue(ICivitaiModelDownloader? downloader) => new(
         downloader, logger: null, civitaiClient: null, destination: null,
         persistPathOverride: Path.Combine(_tempDir, $"q-{Guid.NewGuid():N}.json"));
 
@@ -192,5 +192,52 @@ public sealed class CivitaiDownloadQueueStartResumeTests : IDisposable
 
         downloader.CallsByVersion.GetValueOrDefault(3).Should().Be(1,
             "the gate-waiting job must not be scheduled a second time by a coalescing Start");
+    }
+
+    [Fact]
+    public async Task RetryJobAsync_DoesNotStartAJobAlreadyWaitingForAWorkerSlot()
+    {
+        // Same hazard as the Start/Start case, through the per-tile Retry button: the job is
+        // parked in _gate.WaitAsync and still reads Queued, so an unguarded Retry would reset
+        // its state under the live runner and schedule a second transfer.
+        var downloader = new BlockingDownloader();
+        var queue = Queue(downloader);
+        queue.Jobs.Add(NewJob(versionId: 1));
+        queue.Jobs.Add(NewJob(versionId: 2));
+        var waiting = NewJob(versionId: 3);
+        queue.Jobs.Add(waiting);
+
+        var firstStart = queue.StartAllAsync();
+        await downloader.FirstCallStarted.Task;
+
+        await queue.RetryJobAsync(waiting);
+
+        downloader.Release(8);
+        await firstStart;
+        Dispatcher.UIThread.RunJobs();
+
+        downloader.CallsByVersion.GetValueOrDefault(3).Should().Be(1,
+            "Retry on a job that is already scheduled must not run it a second time");
+    }
+
+    [Fact]
+    public async Task StartAllAsync_WithoutADownloader_FailsCancelledJobsToo()
+    {
+        // Start re-runs Cancelled jobs, so the no-service branch has to report on exactly the
+        // set it would have run. Leaving them Cancelled says "you cancelled this", which is a
+        // lie about why nothing happened.
+        var queue = Queue(null);
+        var queued = NewJob(versionId: 1);
+        var cancelled = NewJob(versionId: 2);
+        cancelled.CancelByUser();
+        cancelled.Status = JobStatus.Cancelled;
+        queue.Jobs.Add(queued);
+        queue.Jobs.Add(cancelled);
+
+        await queue.StartAllAsync();
+
+        queued.Status.Should().Be(JobStatus.Failed);
+        cancelled.Status.Should().Be(JobStatus.Failed);
+        cancelled.StatusMessage.Should().Be("Download service unavailable.");
     }
 }

@@ -355,19 +355,39 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     /// </summary>
     public async Task RetryJobAsync(CivitaiDownloadJob job)
     {
-        if (job.Status is JobStatus.Downloading or JobStatus.Completed) return;
+        // Queued is excluded too: such a job is either already claimed by a runner waiting on
+        // the gate, or the next Start picks it up. Retrying it would only reset state under a
+        // runner that is about to use it.
+        if (job.Status is JobStatus.Downloading or JobStatus.Completed or JobStatus.Queued) return;
         if (_downloader is null) return;
 
-        job.ResetForRetry();
-        Persist();
-        RaiseCountsChanged();
+        // Claim BEFORE ResetForRetry. Resetting first would move the job to Queued and then —
+        // if the claim were lost to a previous runner that has posted its terminal status but
+        // not yet released the claim — leave it Queued with nobody running it.
+        if (!TryClaim(job))
+        {
+            _logger?.Debug(LogCategory.Download, "CivitaiQueue",
+                $"Retry ignored: {job.ModelName} — {job.VersionName} is still claimed by a worker.");
+            return;
+        }
 
-        _runCts ??= new CancellationTokenSource();
-        var ct = _runCts.Token;
+        try
+        {
+            job.ResetForRetry();
+            Persist();
+            RaiseCountsChanged();
 
-        _logger?.Info(LogCategory.Download, "CivitaiQueue",
-            $"Retrying: {job.ModelName} — {job.VersionName}");
-        await RunGatedAsync(job, ct);
+            _runCts ??= new CancellationTokenSource();
+            var ct = _runCts.Token;
+
+            _logger?.Info(LogCategory.Download, "CivitaiQueue",
+                $"Retrying: {job.ModelName} — {job.VersionName}");
+            await RunGatedCoreAsync(job, ct);
+        }
+        finally
+        {
+            Unclaim(job);
+        }
         RaiseCountsChanged();
         Persist();
     }
@@ -387,10 +407,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     public void ClearAll()
     {
         var removed = Jobs.Count;
-        _runCts?.Cancel();
-        // Drop the fired CTS so the next Start/Retry creates a fresh run epoch instead
-        // of joining this cancelled one and instantly aborting every new job.
-        _runCts = null;
+        CancelRunEpoch();
         Jobs.Clear();
         Persist();
         RaiseCountsChanged();
@@ -422,8 +439,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         // Cancel the run-wide CTS too so any queued jobs still waiting on a
         // semaphore slot exit cleanly. They keep their Queued status (the worker
         // never started touching them) and can be resumed via Start.
-        _runCts?.Cancel();
-        _runCts = null;
+        CancelRunEpoch();
 
         if (stoppedCount > 0)
         {
@@ -435,10 +451,10 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     }
 
     /// <summary>
-    /// Runs all queued jobs through the worker pool, re-queuing Cancelled ones first
-    /// (that's the re-run path <see cref="AbortAllActive"/> promises). Subsequent calls
-    /// coalesce — already-running jobs aren't restarted; only Queued/Cancelled ones are
-    /// picked up.
+    /// Runs every Queued and Cancelled job through the worker pool — re-running the
+    /// Cancelled ones is the path <see cref="AbortAllActive"/> promises. Subsequent calls
+    /// coalesce: a job already claimed by a live runner is skipped, so no job is ever
+    /// scheduled twice, and jobs still waiting on a worker slot are left alone.
     /// </summary>
     public async Task StartAllAsync()
     {
@@ -446,20 +462,14 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         {
             _logger?.Warn(LogCategory.Download, "CivitaiQueue",
                 "StartAll aborted: ICivitaiModelDownloader unavailable. Marking queued jobs as failed.");
-            foreach (var job in Jobs.Where(j => j.Status == JobStatus.Queued))
+            // Same set Start would have run — Cancelled jobs are re-run candidates, so they
+            // must report the unavailable service too rather than sitting silently Cancelled.
+            foreach (var job in Jobs.Where(j => j.Status is JobStatus.Queued or JobStatus.Cancelled))
             {
                 job.Status = JobStatus.Failed;
                 job.StatusMessage = "Download service unavailable.";
             }
             return;
-        }
-
-        // Cancelled jobs re-run on Start. ResetForRetry hands each a fresh un-cancelled
-        // token — the old one is still fired from the Cancel click, and the linked CTS
-        // in RunGatedAsync would otherwise abort them straight back to Cancelled.
-        foreach (var job in Jobs.Where(j => j.Status == JobStatus.Cancelled).ToList())
-        {
-            job.ResetForRetry();
         }
 
         // Join the current run epoch instead of cancelling it. Cancelling here used to
@@ -468,7 +478,11 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         _runCts ??= new CancellationTokenSource();
         var ct = _runCts.Token;
 
-        var pending = Jobs.Where(j => j.Status == JobStatus.Queued).ToList();
+        // Cancelled jobs re-run on Start. The Cancelled -> Queued reset happens inside
+        // RunGatedAsync, under the claim, rather than in a pass here: a job whose previous
+        // runner has posted its terminal status but not yet released its claim would
+        // otherwise be reset to Queued and then skipped, stranding it with no runner.
+        var pending = Jobs.Where(j => j.Status is JobStatus.Queued or JobStatus.Cancelled).ToList();
         _logger?.Info(LogCategory.Download, "CivitaiQueue",
             $"Starting {pending.Count} download(s) (max concurrency: {_maxConcurrency})");
         var tasks = pending.Select(job => RunGatedAsync(job, ct)).ToList();
@@ -476,7 +490,12 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         RaiseCountsChanged();
         Persist();
         var failedCount = ErrorCount;
-        var summary = $"Batch complete — {CompletedCount} done, {failedCount} failed, {ActiveCount} still active.";
+        // The counts are queue-wide, and Start now coalesces rather than cancelling, so
+        // another batch may still be running. Say that instead of implying the queue is done.
+        var stillActive = ActiveCount;
+        var summary = stillActive > 0
+            ? $"Start batch finished — {CompletedCount} done, {failedCount} failed, {stillActive} still active."
+            : $"Batch complete — {CompletedCount} done, {failedCount} failed.";
         // A batch with failures must not read as a routine Info line in the
         // Unified Console — the per-job errors are elsewhere in the scrollback.
         if (failedCount > 0)
@@ -493,15 +512,40 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         // collision-renamed duplicate on disk. Claim the job for exactly one runner.
         // Registered before the first await so the caller's synchronous
         // Select(...).ToList() over pending jobs already sees the claim.
-        if (!TryClaim(job)) return;
+        if (!TryClaim(job))
+        {
+            // Not an error: the job is already owned by a live runner. Logged because the
+            // alternative — a job that silently does nothing on Start — leaves no other trail.
+            _logger?.Debug(LogCategory.Download, "CivitaiQueue",
+                $"Start skipped {job.ModelName} — {job.VersionName}: already claimed by a worker.");
+            return;
+        }
+
         try
         {
+            // Re-run of a cancelled job. ResetForRetry hands it a fresh un-cancelled token —
+            // the old one is still fired from the Cancel click, and the linked CTS in
+            // RunGatedCoreAsync would otherwise abort it straight back to Cancelled. Done
+            // under the claim so the reset and the run that consumes it are inseparable.
+            if (job.Status == JobStatus.Cancelled) job.ResetForRetry();
+
             await RunGatedCoreAsync(job, runCt).ConfigureAwait(false);
         }
         finally
         {
             Unclaim(job);
         }
+    }
+
+    /// <summary>
+    /// Cancels the current run epoch and drops the fired CTS, so the next Start/Retry
+    /// creates a fresh one instead of joining a cancelled epoch and instantly aborting
+    /// every new job. Both halves are the invariant — never cancel without nulling.
+    /// </summary>
+    private void CancelRunEpoch()
+    {
+        _runCts?.Cancel();
+        _runCts = null;
     }
 
     private bool TryClaim(CivitaiDownloadJob job)
