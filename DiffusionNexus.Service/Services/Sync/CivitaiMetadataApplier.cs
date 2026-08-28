@@ -314,6 +314,55 @@ public sealed class CivitaiMetadataApplier
     }
 
     /// <summary>
+    /// Images for every version of one model, from a single model-page request. Returns the number
+    /// of images added per Civitai version id; a version the page does not describe maps to
+    /// <c>null</c> so the caller can ask for that one specifically.
+    /// </summary>
+    /// <remarks>
+    /// <c>models/{id}</c> carries every version with its images, so asking per version cost a
+    /// six-version model six requests for one page of data. The per-version
+    /// <see cref="ApplyImagesAsync"/> remains for the versions a model page omits — Civitai's two
+    /// endpoints do not always agree, and recording "no images" for a version we simply were not
+    /// told about would stamp it as checked and never look again.
+    /// </remarks>
+    public async Task<IReadOnlyDictionary<int, int?>> ApplyImagesFromModelAsync(
+        IUnitOfWork uow,
+        int civitaiModelId,
+        IReadOnlyList<(int ModelId, int VersionId, int CivitaiVersionId)> versions,
+        string? apiKey,
+        CancellationToken ct = default)
+    {
+        var results = new Dictionary<int, int?>();
+        var civitaiModel = await _client.GetModelAsync(civitaiModelId, apiKey, ct);
+
+        foreach (var (modelId, versionId, civitaiVersionId) in versions)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var civitaiVersion = civitaiModel?.ModelVersions?.FirstOrDefault(v => v.Id == civitaiVersionId);
+            if (civitaiVersion is null)
+            {
+                results[civitaiVersionId] = null;
+                continue;
+            }
+
+            var dbModel = await uow.Models.GetByIdWithIncludesAsync(modelId, ct);
+            var dbVersion = dbModel?.Versions.FirstOrDefault(v => v.Id == versionId);
+            if (dbVersion is null)
+            {
+                results[civitaiVersionId] = 0;
+                continue;
+            }
+
+            var added = AppendImages(dbVersion, civitaiVersion.Images);
+            if (added > 0) await uow.SaveChangesAsync(ct);
+            results[civitaiVersionId] = added;
+        }
+
+        return results;
+    }
+
+    /// <summary>
     /// Whether the model's own text — name, description, tags — may be written from upstream.
     /// A model the user has edited answers no: <see cref="Model.IsUserEdited"/> is sticky, and
     /// nothing Civitai returns is more authoritative than what the user typed.

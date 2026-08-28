@@ -98,6 +98,17 @@ public sealed class FetchImagesStep : ISyncStep
             var versionsGone = 0;
             var imagesAdded = 0;
 
+            // One request for the whole model, then one per version the page did not describe.
+            var civitaiModelId = candidates[0].CivitaiModelId;
+            var byModel = await _civitai
+                .ApplyImagesFromModelAsync(
+                    uow,
+                    civitaiModelId,
+                    candidates.Select(c => (c.ModelId, c.VersionId, c.CivitaiVersionId)).ToList(),
+                    apiKey,
+                    ct)
+                .ConfigureAwait(false);
+
             foreach (var candidate in candidates)
             {
                 ct.ThrowIfCancellationRequested();
@@ -105,7 +116,8 @@ public sealed class FetchImagesStep : ISyncStep
                 // Which version the refusal handler names in its one warning line.
                 inFlight = candidate;
 
-                var added = await _civitai
+                var added = byModel.TryGetValue(candidate.CivitaiVersionId, out var fromPage) ? fromPage : null;
+                added ??= await _civitai
                     .ApplyImagesAsync(uow, candidate.ModelId, candidate.VersionId, candidate.CivitaiVersionId, apiKey, ct)
                     .ConfigureAwait(false);
 

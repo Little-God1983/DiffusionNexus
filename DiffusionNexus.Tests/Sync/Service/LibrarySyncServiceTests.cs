@@ -156,7 +156,7 @@ public sealed class LibrarySyncServiceTests : IDisposable
         step.EstimatedDuration.Should().Be(TimeSpan.FromSeconds(1.6 * 4));
 
         static ImageCandidate Candidate(int modelId, int versionId) =>
-            new(modelId, versionId, versionId + 1000, $"model-{modelId}", null);
+            new(modelId, versionId, versionId + 1000, modelId, $"model-{modelId}", null);
     }
 
     /// <summary>

@@ -49,6 +49,8 @@ public sealed class FetchImagesStepTests : IDisposable
         using var scope = _serviceProvider.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>();
         context.Database.EnsureCreated();
+
+        Step = new FetchImagesStep(Scopes, new CivitaiMetadataApplier(Client.Object));
     }
 
     private IServiceScope NewScope() => _serviceProvider.CreateScope();
@@ -418,6 +420,77 @@ public sealed class FetchImagesStepTests : IDisposable
         step.Kind.Should().Be(SyncStepKind.FetchImages);
         step.Description.Should().Be("Fetch image records");
         step.EstimatedPerItem.Should().Be(TimeSpan.FromSeconds(1.6));
+    }
+
+    /// <summary>
+    /// Client + Step shared across the "one model call" tests below: they exercise
+    /// <see cref="FetchImagesStep.ExecuteOneAsync"/> directly against a synthetic
+    /// <see cref="SyncItem"/>, without seeding the DB — the local model/version ids never need to
+    /// resolve to anything, since these tests only assert which Civitai endpoints were called.
+    /// </summary>
+    private Mock<ICivitaiClient> Client { get; } = new();
+
+    private FetchImagesStep Step { get; }
+
+    /// <summary>
+    /// Builds a synthetic <see cref="SyncItem"/> for one model with the given Civitai version ids,
+    /// and defaults the model page (<see cref="SetModelPageVersions"/>) to describe all of them —
+    /// call <see cref="SetModelPageVersions"/> again afterwards to make the page omit some.
+    /// </summary>
+    private SyncItem CreateItemWithVersions(int civitaiModelId, int[] civitaiVersionIds)
+    {
+        SetModelPageVersions(civitaiModelId, civitaiVersionIds);
+
+        var candidates = civitaiVersionIds
+            .Select(civitaiVersionId => new ImageCandidate(
+                ModelId: civitaiModelId,
+                VersionId: civitaiVersionId,
+                CivitaiVersionId: civitaiVersionId,
+                CivitaiModelId: civitaiModelId,
+                Name: $"model-{civitaiModelId}",
+                ImagesCheckedAt: null))
+            .ToList();
+
+        return new SyncItem(civitaiModelId, $"model-{civitaiModelId}", candidates);
+    }
+
+    /// <summary>Stubs <c>GetModelAsync(civitaiModelId, ...)</c> to describe exactly these versions.</summary>
+    private void SetModelPageVersions(int civitaiModelId, int[] civitaiVersionIds)
+    {
+        Client
+            .Setup(c => c.GetModelAsync(civitaiModelId, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CivitaiModel
+            {
+                Id = civitaiModelId,
+                ModelVersions = civitaiVersionIds.Select(v => NewCivitaiVersion(v, NewImage(v * 10L))).ToList(),
+            });
+    }
+
+    [Fact]
+    public async Task ExecuteOneAsync_ThreeVersionsOfOneModel_MakesOneModelCall()
+    {
+        var item = CreateItemWithVersions(civitaiModelId: 900, civitaiVersionIds: [10, 11, 12]);
+
+        await Step.ExecuteOneAsync(item, apiKey: null, CancellationToken.None);
+
+        Client.Verify(c => c.GetModelAsync(900, It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+        Client.Verify(c => c.GetModelVersionAsync(
+            It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteOneAsync_VersionMissingFromTheModelPage_FallsBackToTheVersionCall()
+    {
+        // The model page describes 10 and 11 but not 12 — that one still needs its own call
+        // rather than being silently recorded as "no images".
+        var item = CreateItemWithVersions(civitaiModelId: 900, civitaiVersionIds: [10, 11, 12]);
+        SetModelPageVersions(900, [10, 11]);
+
+        await Step.ExecuteOneAsync(item, apiKey: null, CancellationToken.None);
+
+        Client.Verify(c => c.GetModelAsync(900, It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+        Client.Verify(c => c.GetModelVersionAsync(12, It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+        Client.Verify(c => c.GetModelVersionAsync(10, It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     public void Dispose()
