@@ -152,12 +152,13 @@ public sealed class IdentifyModelStep : ISyncStep
         var uow = dbScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
         var now = DateTimeOffset.UtcNow;
 
-        // Before the hash and before the request: the model may have been deleted in the UI between
-        // selection and now, and every path below this point stamps ModelSyncState — including the
-        // 404/sidecar branch, whose GetOrCreateAsync would Add a row with a dangling FK and be
-        // rejected by SaveChanges. That rejection is survivable now (see the catch below), but a
-        // failure row for a model the user deliberately deleted is noise, and hashing a
-        // multi-gigabyte file for a model that no longer exists is wasted work on top of it.
+        // Before the sidecar read and before the hash: the model may have been deleted in the UI
+        // between selection and now, and every path below this point stamps ModelSyncState —
+        // including the sidecar branch, which now runs unconditionally first rather than behind a
+        // 404, whose GetOrCreateAsync would Add a row with a dangling FK and be rejected by
+        // SaveChanges. That rejection is survivable now (see the catch below), but a failure row
+        // for a model the user deliberately deleted is noise, and hashing a multi-gigabyte file for
+        // a model that no longer exists is wasted work on top of it.
         var dbModel = await uow.Models.GetByIdAsync(candidate.ModelId, ct).ConfigureAwait(false);
         if (dbModel is null)
         {
