@@ -220,6 +220,22 @@ Manual smoke (owed, cannot be automated): queue 5+ downloads in the browser
 while a library sync runs and confirm no 429 surfaces and the UI stays
 responsive.
 
+## Known limitations
+
+The two lanes equalise the request **interval**, not queue **priority**.
+`CivitaiRequestPacer.WaitAsync` acquires a single `SemaphoreSlim(1,1)` and
+sleeps inside it, so waiters of both lanes are served FIFO — whoever calls
+`WaitAsync` first is released first, regardless of lane. The "a user-facing
+search never waits behind a sync's 1.5 s interval" claim above is true of the
+*interval* (an interactive call never has to wait out a background-length
+gap) but not of the *queue*: a burst of background callers already queued
+ahead of an interactive one still goes first. Worst realistic case — the
+update checker's 4 concurrent calls, the waitlist's 3, plus a sync's 1 — means
+an interactive call can queue behind roughly 8 requests and wait around 10 s
+before its own leaves. Bounded, and still far better than the 429 storms this
+design fixes, but worth naming plainly. Future fix: a two-queue pacer that
+drains interactive waiters ahead of background ones.
+
 ## Out of scope
 
 Disk-backed or ETag caching; making the download-file endpoint itself
