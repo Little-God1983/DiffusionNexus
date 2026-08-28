@@ -59,7 +59,14 @@ public sealed class IdentifyModelStep : ISyncStep
     /// <inheritdoc />
     public string Description => "Identify models (Civitai, sidecar, file header, filename)";
 
-    /// <summary>Hash (large files) + two API calls (hash lookup, model page) with 1.5 s pacing between them.</summary>
+    /// <summary>
+    /// Worst case: a candidate with no sidecar still costs a hash (large files) plus two API calls
+    /// (hash lookup, model page), now paced by the shared <c>CivitaiApiGateway</c> rather than a
+    /// fixed 1.5 s between them. A sidecar-bearing candidate — checked FIRST — costs neither: it
+    /// resolves from the file on disk with zero API calls and no hash. Left at this worst-case
+    /// value (not lowered) because a pinned test asserts it; the plan estimate is deliberately
+    /// pessimistic rather than an average.
+    /// </summary>
     public TimeSpan EstimatedPerItem => TimeSpan.FromSeconds(3);
 
     /// <inheritdoc />

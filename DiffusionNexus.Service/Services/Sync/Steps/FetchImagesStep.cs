@@ -174,8 +174,12 @@ public sealed class FetchImagesStep : ISyncStep
         }
         catch (Exception ex) when (SyncFaults.IsItemFault(ex))
         {
-            // No stamp for the whole model — the versions that did land keep their images (they
-            // were saved as they went), and the next run re-asks the group. Re-asking a version
+            // No stamp for the whole model, and the next run re-asks the group. Which versions
+            // already landed depends on how each got its images: ApplyImagesFromModelAsync saves
+            // its whole batch in one SaveChangesAsync at the end, so a fault before that call means
+            // none of that batch's versions are kept, even ones the page did describe; only the
+            // per-version ApplyImagesAsync fallback (versions the model page omitted) saves as it
+            // goes, so those keep whatever landed before the fault. Either way, re-asking a version
             // that already has images is free: the repository no longer selects it. The tracker is
             // dropped first: the applier interleaves reads with mutations, and after a rejected save
             // the context is still holding exactly the rows the database refused.

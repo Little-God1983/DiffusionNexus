@@ -121,8 +121,11 @@ public sealed class CivitaiWaitlist : ObservableObject
         RaiseCounts();
     }
 
-    // CivitaiClient retries 429s but has NO client-side throttle — cap concurrent
-    // re-checks the same way CivitaiResultViewModel gates video extraction.
+    // _civitaiClient is now CivitaiApiGateway, which does pace requests and share a 429 cooldown
+    // across every caller — but that bounds the INTERVAL between calls, not how many re-checks
+    // this waitlist fires at once. Cap concurrent re-checks the same way CivitaiResultViewModel
+    // gates video extraction, so a large waitlist doesn't queue dozens of calls behind the pacer
+    // in one burst.
     private static readonly SemaphoreSlim s_refreshGate = new(3, 3);
 
     /// <summary>
