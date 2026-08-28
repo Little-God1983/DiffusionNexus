@@ -52,6 +52,8 @@ public sealed class CivitaiDownloadQueueStartResumeTests : IDisposable
         private readonly SemaphoreSlim _release = new(0);
         public int CallCount;
         public int CancelledCount;
+        /// <summary>Calls per version id — how the duplicate-run test spots a job started twice.</summary>
+        public readonly System.Collections.Concurrent.ConcurrentDictionary<int, int> CallsByVersion = new();
         public readonly TaskCompletionSource FirstCallStarted =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -61,6 +63,7 @@ public sealed class CivitaiDownloadQueueStartResumeTests : IDisposable
             DownloadRequest request, IProgress<DownloadProgress>? progress = null, CancellationToken ct = default)
         {
             Interlocked.Increment(ref CallCount);
+            CallsByVersion.AddOrUpdate(request.Version.Id, 1, (_, n) => n + 1);
             FirstCallStarted.TrySetResult();
             try
             {
@@ -160,5 +163,34 @@ public sealed class CivitaiDownloadQueueStartResumeTests : IDisposable
         Dispatcher.UIThread.RunJobs();
 
         job.Status.Should().Be(JobStatus.Completed);
+    }
+
+    [Fact]
+    public async Task StartAllAsync_DoesNotStartAJobThatIsAlreadyWaitingForAWorkerSlot()
+    {
+        // The queue's worker pool is two wide, so a third job sits inside RunGatedAsync's
+        // _gate.WaitAsync while its Status is still Queued — Downloading is only set after
+        // the slot is taken. A second Start therefore re-picks it as "pending" and schedules
+        // a SECOND concurrent runner for the same job: two transfers, two coordinator
+        // entries, a collision-renamed duplicate on disk.
+        var downloader = new BlockingDownloader();
+        var queue = Queue(downloader);
+        queue.Jobs.Add(NewJob(versionId: 1));
+        queue.Jobs.Add(NewJob(versionId: 2));
+        queue.Jobs.Add(NewJob(versionId: 3));
+
+        var firstStart = queue.StartAllAsync();
+        await downloader.FirstCallStarted.Task;
+        downloader.CallCount.Should().Be(2, "the pool is two wide; version 3 is queued behind the gate");
+
+        // User hits Start again (e.g. after adding nothing, or from the re-run path).
+        var secondStart = queue.StartAllAsync();
+
+        downloader.Release(8);
+        await Task.WhenAll(firstStart, secondStart);
+        Dispatcher.UIThread.RunJobs();
+
+        downloader.CallsByVersion.GetValueOrDefault(3).Should().Be(1,
+            "the gate-waiting job must not be scheduled a second time by a coalescing Start");
     }
 }

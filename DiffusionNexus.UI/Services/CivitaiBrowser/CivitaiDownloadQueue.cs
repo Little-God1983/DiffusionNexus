@@ -40,6 +40,14 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     private int _maxConcurrency = 2;
     private CancellationTokenSource? _runCts;
 
+    /// <summary>
+    /// Jobs currently claimed by a worker — from the moment they are scheduled, not from the
+    /// moment they start transferring. Reference identity is what matters (the queue owns one
+    /// instance per job), and the set is touched from pool threads, hence the lock.
+    /// </summary>
+    private readonly HashSet<CivitaiDownloadJob> _scheduled = new();
+    private readonly object _scheduledLock = new();
+
     public CivitaiDownloadQueue(ICivitaiModelDownloader? downloader)
         : this(downloader, null, null, null)
     {
@@ -478,6 +486,35 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     }
 
     private async Task RunGatedAsync(CivitaiDownloadJob job, CancellationToken runCt)
+    {
+        // A job waiting on the gate is still Queued — Downloading is only set once the slot
+        // is taken — so a second Start (or a Retry) re-picks it as "pending" and would run a
+        // second concurrent transfer for the same job: two coordinator entries and a
+        // collision-renamed duplicate on disk. Claim the job for exactly one runner.
+        // Registered before the first await so the caller's synchronous
+        // Select(...).ToList() over pending jobs already sees the claim.
+        if (!TryClaim(job)) return;
+        try
+        {
+            await RunGatedCoreAsync(job, runCt).ConfigureAwait(false);
+        }
+        finally
+        {
+            Unclaim(job);
+        }
+    }
+
+    private bool TryClaim(CivitaiDownloadJob job)
+    {
+        lock (_scheduledLock) return _scheduled.Add(job);
+    }
+
+    private void Unclaim(CivitaiDownloadJob job)
+    {
+        lock (_scheduledLock) _scheduled.Remove(job);
+    }
+
+    private async Task RunGatedCoreAsync(CivitaiDownloadJob job, CancellationToken runCt)
     {
         // Link the run-wide cancel (queue Start cycle / Clear all) with the per-job
         // cancel (user clicked Cancel on this tile). Either firing aborts only this job.
