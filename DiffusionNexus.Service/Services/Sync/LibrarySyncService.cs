@@ -38,10 +38,13 @@ public sealed class LibrarySyncService : ILibrarySyncService
     private volatile bool _isRunning;
 
     /// <remarks>
-    /// There is no pacing parameter: Civitai's courtesy interval is applied per <i>request</i> by
-    /// <see cref="ICivitaiRequestPacer"/> at the call sites inside the steps, because one item is
-    /// not one request (R4). Pacing here spaced items and left the bursts within an item — six
-    /// version calls, or a hash lookup followed by a model page — completely unpaced.
+    /// There is no pacing parameter: every Civitai call the steps make goes through
+    /// <c>CivitaiApiGateway</c> (registered as the steps' <c>ICivitaiClient</c>), which paces,
+    /// waits out a shared 429 cooldown and caches on its own. Pacing used to be applied per
+    /// <i>request</i> at hand-picked call sites inside the steps, because one item is not one
+    /// request (R4) — the images step calls once per version, the identify step twice (hash
+    /// lookup, model page) — but that left every surface added since to discover the rate limit
+    /// on its own; the gateway is the fix, so this service no longer owns any pacing decision.
     /// </remarks>
     public LibrarySyncService(
         IEnumerable<ISyncStep> steps,
@@ -132,16 +135,6 @@ public sealed class LibrarySyncService : ILibrarySyncService
         // from "your DI graph is broken" by type. Still derives from it, so old callers are fine.
         if (!_gate.Wait(0)) throw new SyncAlreadyRunningException();
 
-        // "Force" means the user has told us the local answer is wrong. A cached response is a
-        // local answer, so it goes too — otherwise a forced re-sync would replay the very page
-        // that produced the state they are trying to correct. This also covers the LoRA Viewer's
-        // per-tile "Download Metadata", which forces identify and thumbnails.
-        var options = plan.Options;
-        if (options.ForceIdentify || options.ForceTags || options.ForceImages || options.ForceThumbnails)
-        {
-            _apiCache?.Clear();
-        }
-
         _isRunning = true;
         var stopwatch = Stopwatch.StartNew();
 
@@ -151,6 +144,21 @@ public sealed class LibrarySyncService : ILibrarySyncService
 
         try
         {
+            // "Force" means the user has told us the local answer is wrong. A cached response is
+            // a local answer, so it goes too — otherwise a forced re-sync would replay the very
+            // page that produced the state they are trying to correct. This also covers the LoRA
+            // Viewer's per-tile "Download Metadata", which forces identify and thumbnails.
+            //
+            // Inside the try (not between _gate.Wait(0) and it): _apiCache.Clear() realistically
+            // never throws, but if it ever did, throwing between the gate acquire and the try
+            // would skip the finally below and leak the gate — wedging sync for the rest of the
+            // session with no way to release it short of restarting the app.
+            var options = plan.Options;
+            if (options.ForceIdentify || options.ForceTags || options.ForceImages || options.ForceThumbnails)
+            {
+                _apiCache?.Clear();
+            }
+
             try
             {
                 var apiKey = await ResolveApiKeyAsync(ct).ConfigureAwait(false);
