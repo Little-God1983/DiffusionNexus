@@ -493,10 +493,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         // The base-model filter list is mirrored from AvailableBaseModels which is itself
         // sourced from the full Civitai catalog (with distinct-from-installed as fallback).
         var dialogService = App.Services?.GetService<IDialogService>();
+        var apiCache = App.Services?.GetService<ICivitaiApiCache>();
         var destination = new DownloadDestinationViewModel(dialogService);
         var queue = new CivitaiDownloadQueue(_modelDownloader, _logger, _civitaiClient, destination,
             apiKeyProvider: _apiKeyProvider);
-        var waitlist = new CivitaiWaitlist(_civitaiClient, _logger);
+        var waitlist = new CivitaiWaitlist(_civitaiClient, _logger, apiCache: apiCache);
         BrowserViewModel = new CivitaiBrowserViewModel(_civitaiClient, _settingsService, _logger, queue, waitlist, AvailableBaseModels,
             apiKeyProvider: _apiKeyProvider);
 
@@ -1895,7 +1896,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             sp?.GetService<DiffusionNexus.Installer.SDK.Shared.Services.IClipboardService>(),
             sp?.GetService<IUiScheduler>(),
             apiKeyProvider: _apiKeyProvider,
-            modelDownloader: _modelDownloader);
+            modelDownloader: _modelDownloader,
+            apiCache: sp?.GetService<ICivitaiApiCache>());
 
         detailVm.CloseRequested += OnDetailCloseRequested;
         detailVm.MetadataDeleted += OnDetailMetadataDeleted;

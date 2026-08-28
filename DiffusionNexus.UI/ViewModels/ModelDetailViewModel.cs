@@ -41,6 +41,7 @@ public partial class ModelDetailViewModel : ViewModelBase
     private readonly IServiceScopeFactory? _scopeFactory;
     private readonly IDialogService? _dialogService;
     private readonly ICivitaiModelDownloader? _modelDownloader;
+    private readonly ICivitaiApiCache? _apiCache;
     private readonly IClipboardService _clipboard = AvaloniaClipboardService.Instance;
     private readonly IUiScheduler _uiScheduler = AvaloniaUiScheduler.Instance;
     private ICivitaiApiKeyProvider? _apiKeyProvider;
@@ -290,7 +291,8 @@ public partial class ModelDetailViewModel : ViewModelBase
         IClipboardService? clipboard = null,
         IUiScheduler? uiScheduler = null,
         ICivitaiApiKeyProvider? apiKeyProvider = null,
-        ICivitaiModelDownloader? modelDownloader = null)
+        ICivitaiModelDownloader? modelDownloader = null,
+        ICivitaiApiCache? apiCache = null)
     {
         _civitaiClient = civitaiClient;
         _settingsService = settingsService;
@@ -302,6 +304,7 @@ public partial class ModelDetailViewModel : ViewModelBase
         _clipboard = clipboard ?? AvaloniaClipboardService.Instance;
         _uiScheduler = uiScheduler ?? AvaloniaUiScheduler.Instance;
         _apiKeyProvider = apiKeyProvider;
+        _apiCache = apiCache;
         _modelDownloader = modelDownloader;
     }
 
@@ -871,6 +874,13 @@ public partial class ModelDetailViewModel : ViewModelBase
 
         try
         {
+            // Every call here is triggered by the user opening (or re-opening) this tile's detail
+            // panel — labeled "update check" above for the same reason — so it must behave like one:
+            // the whole point of the trip is to see what Civitai has right now, not the gateway's
+            // 15-minute-old cached page for this model. Drop it first so the fetch below is a real
+            // round-trip. Scoped to just this model id, so it never disturbs the cache for any other
+            // tile, the browser's current page, or a background update sweep.
+            _apiCache?.InvalidateModel(modelId.Value);
             var apiKey = await GetApiKeyAsync();
             var civitaiModel = await _civitaiClient.GetModelAsync(modelId.Value, apiKey);
 
