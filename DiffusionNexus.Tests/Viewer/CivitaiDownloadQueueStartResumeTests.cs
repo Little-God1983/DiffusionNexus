@@ -1,8 +1,11 @@
 using Avalonia.Threading;
+using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
+using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services.CivitaiBrowser;
 using DiffusionNexus.UI.Services.Download;
 using FluentAssertions;
+using Moq;
 
 namespace DiffusionNexus.Tests.Viewer;
 
@@ -218,6 +221,37 @@ public sealed class CivitaiDownloadQueueStartResumeTests : IDisposable
 
         downloader.CallsByVersion.GetValueOrDefault(3).Should().Be(1,
             "Retry on a job that is already scheduled must not run it a second time");
+    }
+
+    [Fact]
+    public async Task StartAllAsync_RehydratesARestoredJobsVersion_WithTheApiKey()
+    {
+        // A job survives a restart with no CivitaiVersion (it isn't persisted) — the queue
+        // must re-fetch it before downloading, and do so with the API key so the call gets
+        // the friendlier quota and can see gated versions.
+        var downloader = new InstantDownloader();
+        var civitaiClient = new Mock<ICivitaiClient>();
+        civitaiClient
+            .Setup(c => c.GetModelVersionAsync(600, "key-a", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CivitaiModelVersion { Id = 600, Name = "v600" });
+        var apiKeyProvider = new Mock<ICivitaiApiKeyProvider>();
+        apiKeyProvider.Setup(p => p.GetApiKeyAsync(It.IsAny<CancellationToken>())).ReturnsAsync("key-a");
+
+        var queue = new CivitaiDownloadQueue(
+            downloader, logger: null, civitaiClient: civitaiClient.Object, destination: null,
+            persistPathOverride: Path.Combine(_tempDir, $"q-{Guid.NewGuid():N}.json"),
+            apiKeyProvider: apiKeyProvider.Object);
+
+        var restored = NewJob(versionId: 600);
+        restored.CivitaiVersion = null; // as it comes back from JSON restore
+        queue.Jobs.Add(restored);
+
+        await queue.StartAllAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        civitaiClient.Verify(
+            c => c.GetModelVersionAsync(600, "key-a", It.IsAny<CancellationToken>()), Times.Once);
+        restored.Status.Should().Be(JobStatus.Completed);
     }
 
     [Fact]

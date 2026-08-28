@@ -36,6 +36,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     private readonly ICivitaiModelDownloader? _downloader;
     private readonly IUnifiedLogger? _logger;
     private readonly ICivitaiClient? _civitaiClient;
+    private readonly ICivitaiApiKeyProvider? _apiKeyProvider;
     private SemaphoreSlim _gate = new(2);
     private int _maxConcurrency = 2;
     private CancellationTokenSource? _runCts;
@@ -58,12 +59,14 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         IUnifiedLogger? logger,
         ICivitaiClient? civitaiClient,
         DownloadDestinationViewModel? destination,
-        string? persistPathOverride = null)
+        string? persistPathOverride = null,
+        ICivitaiApiKeyProvider? apiKeyProvider = null)
     {
         _persistPathOverride = persistPathOverride;
         _downloader = downloader;
         _logger = logger;
         _civitaiClient = civitaiClient;
+        _apiKeyProvider = apiKeyProvider;
         Destination = destination ?? new DownloadDestinationViewModel();
         // Suppress the preview path inside the picker — each queued job may resolve
         // to a different folder, so the per-job expected path is rendered on the tile.
@@ -635,11 +638,13 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             job.Status = JobStatus.Downloading;
             job.StatusMessage = "Connecting...";
 
-            // CivitaiVersion is null after restart-restore; rehydrate from the API.
             var civVersion = job.CivitaiVersion;
             if (civVersion is null && _civitaiClient is not null)
             {
-                civVersion = await _civitaiClient.GetModelVersionAsync(job.VersionId, cancellationToken: ct);
+                // Authenticated: this is the one call in the queue that used to go out anonymously,
+                // which both spent the stricter quota and hid gated versions from a restored job.
+                var apiKey = _apiKeyProvider is null ? null : await _apiKeyProvider.GetApiKeyAsync(ct);
+                civVersion = await _civitaiClient.GetModelVersionAsync(job.VersionId, apiKey, ct);
                 job.CivitaiVersion = civVersion;
             }
             if (civVersion is null)

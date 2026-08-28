@@ -494,7 +494,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         // sourced from the full Civitai catalog (with distinct-from-installed as fallback).
         var dialogService = App.Services?.GetService<IDialogService>();
         var destination = new DownloadDestinationViewModel(dialogService);
-        var queue = new CivitaiDownloadQueue(_modelDownloader, _logger, _civitaiClient, destination);
+        var queue = new CivitaiDownloadQueue(_modelDownloader, _logger, _civitaiClient, destination,
+            apiKeyProvider: _apiKeyProvider);
         var waitlist = new CivitaiWaitlist(_civitaiClient, _logger);
         BrowserViewModel = new CivitaiBrowserViewModel(_civitaiClient, _settingsService, _logger, queue, waitlist, AvailableBaseModels,
             apiKeyProvider: _apiKeyProvider);
