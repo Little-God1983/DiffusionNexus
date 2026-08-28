@@ -120,9 +120,12 @@ public class CivitaiBrowserViewModelBaseModelFilterTests
 
         // LoadNextAsync awaits Dispatcher.UIThread.InvokeAsync to add results on the UI thread.
         // This headless xUnit host never pumps that queue on its own (there is no running
-        // Avalonia Application), so — same rationale as CivitaiDownloadQueueStartResumeTests'
-        // Dispatcher.UIThread.RunJobs() calls — a background pump keeps draining it for the
-        // duration of the await, or the awaited InvokeAsync task never completes.
+        // Avalonia Application) — in the real app Application.Run() supplies the loop. This is
+        // NOT the same situation as CivitaiDownloadQueueStartResumeTests' post-hoc
+        // Dispatcher.UIThread.RunJobs() calls: those drain a queue that fire-and-forget
+        // Dispatcher.UIThread.Post(...) filled, called once *after* the awaited method already
+        // returned. Here the await is directly ON Dispatcher.UIThread.InvokeAsync, so nothing
+        // can ever satisfy it unless something pumps concurrently, while it is in flight.
         await RunWithDispatcherPumpAsync(() => vm.EnsureLoadedAsync());
         await vm.EnsureLoadedAsync();
 
@@ -130,25 +133,63 @@ public class CivitaiBrowserViewModelBaseModelFilterTests
             It.IsAny<CivitaiModelsQuery>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    private static async Task RunWithDispatcherPumpAsync(Func<Task> action)
+    /// <summary>
+    /// Runs <paramref name="action"/> while pumping <see cref="Dispatcher.UIThread"/> just for
+    /// its duration, then stops. <c>Dispatcher.UIThread</c> is a process-wide singleton and this
+    /// test project runs collections in parallel with no `DisableTestParallelization` /
+    /// `xunit.runner.json`, so a free-running pump thread would keep touching that singleton for
+    /// as long as the test process is alive — contending with any other parallel test class that
+    /// also touches the dispatcher. Scoped instead to the exact lifetime of
+    /// <paramref name="action"/>'s task: the pump loop's own condition is the task's completion
+    /// (so it stops itself the instant the awaited operation finishes, no external signal
+    /// needed), and the <c>finally</c> cancellation is only a backstop for the case where the
+    /// task throws before completing normally.
+    ///
+    /// Bounded by <paramref name="timeout"/> so a genuine future regression (the dispatcher call
+    /// never gets satisfied) fails this test in seconds with a clear message, instead of hanging
+    /// a CI run for minutes — which is exactly what happened twice while writing this test
+    /// (~10 min and ~2.5 min) before this pump was added.
+    /// </summary>
+    private static async Task RunWithDispatcherPumpAsync(Func<Task> action, TimeSpan? timeout = null)
     {
+        var effectiveTimeout = timeout ?? TimeSpan.FromSeconds(5);
+        var task = action();
+
         using var pumpCts = new CancellationTokenSource();
-        var pump = Task.Run(() =>
+        var pump = Task.Run(async () =>
         {
-            while (!pumpCts.IsCancellationRequested)
+            while (!task.IsCompleted && !pumpCts.IsCancellationRequested)
             {
                 Dispatcher.UIThread.RunJobs();
-                Thread.Sleep(5);
+                try
+                {
+                    await Task.Delay(5, pumpCts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
             }
         });
+
         try
         {
-            await action();
+            var winner = await Task.WhenAny(task, Task.Delay(effectiveTimeout)).ConfigureAwait(false);
+            if (winner != task)
+            {
+                throw new TimeoutException(
+                    $"{nameof(RunWithDispatcherPumpAsync)}: awaited operation did not complete within " +
+                    $"{effectiveTimeout} even while Dispatcher.UIThread was being pumped. This means the " +
+                    "dispatcher call it depends on is stuck on something the pump doesn't satisfy — " +
+                    "investigate before assuming this is the same class of hang the pump was built for.");
+            }
+
+            await task; // propagate the real result/exception, not just "it completed"
         }
         finally
         {
             pumpCts.Cancel();
-            await pump;
+            await pump.ConfigureAwait(false);
         }
     }
 }
