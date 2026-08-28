@@ -1597,6 +1597,26 @@ public sealed class IdentifyModelStepTests : IDisposable
         await act.Should().ThrowAsync<OperationCanceledException>();
         (await ReadStateAsync(candidate.ModelId)).Should().BeNull(
             "a cancelled sidecar read is work not done, not a model that must wait 30 days as Matched");
+
+        // Pins the routing assumption the ForwardingProxy above is built on. The proxy routes by
+        // raw call count ("first call is real and cancels afterward; every later call is
+        // cancellation-immune"), which only isolates the post-sidecar guard if exactly ONE
+        // Models.GetByIdAsync call happens before that guard fires — the opening "still exists?"
+        // read at line ~169. With the guard intact, that is the ONLY call this run makes: it throws
+        // before the flow ever reaches RecordMatchAsync's own GetByIdAsync (line ~327), so that
+        // second, cancellation-stripped routing branch is never exercised at all here.
+        //
+        // If a future change added, removed or reordered a Models.GetByIdAsync call ahead of the
+        // guard, this count would shift silently — the proxy would keep neutering "every call after
+        // the first" against a different actual call, and the test could keep passing for a reason
+        // disconnected from the line it exists to guard, exactly the tautological-test failure mode
+        // this test was written to escape. A failure here means: go re-verify (per the remarks
+        // above, by temporarily deleting the step's post-sidecar ct.ThrowIfCancellationRequested())
+        // that this test still actually exercises that line before trusting it again.
+        getByIdCalls.Should().Be(1,
+            "the routing above assumes the post-sidecar guard fires after exactly one real " +
+            "Models.GetByIdAsync call and before any other; a different count means this test may " +
+            "no longer be isolating the post-sidecar cancellation check");
     }
 
     private static async Task<Model?> CancelThenReturn(Task<Model?> inner, CancellationTokenSource cts)
