@@ -91,7 +91,12 @@ public sealed class FetchImagesStep : ISyncStep
         using var dbScope = _scopes.CreateScope();
         var uow = dbScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
         var now = DateTimeOffset.UtcNow;
-        var inFlight = candidates[0];
+
+        // Null while the model-page call below is the request in flight — it covers every
+        // candidate at once, not any one version — and set to the actual candidate only once the
+        // per-version loop starts asking for one specifically. A refusal caught with this still
+        // null came from the model page, not from any version Civitai was ever asked about.
+        ImageCandidate? inFlight = null;
 
         try
         {
@@ -200,7 +205,7 @@ public sealed class FetchImagesStep : ISyncStep
     /// model Civitai is refusing us are not going to answer differently.
     /// </summary>
     private async Task<SyncItemResult> RecordRefusalAsync(
-        IUnitOfWork uow, SyncItem item, ImageCandidate inFlight, HttpRequestException refusal,
+        IUnitOfWork uow, SyncItem item, ImageCandidate? inFlight, HttpRequestException refusal,
         DateTimeOffset now, CancellationToken ct)
     {
         uow.ClearChangeTracker();
@@ -227,8 +232,13 @@ public sealed class FetchImagesStep : ISyncStep
             return SyncItemResult.Failure(refusal.Message);
         }
 
+        // Honest about WHAT was refused: the model-page request covers every version in the group
+        // at once, so a refusal caught before the per-version loop ever ran is not about any one of
+        // them — naming candidates[0]'s version id here used to send anyone debugging from this log
+        // line to a version Civitai was never actually asked about (and never rejected).
+        var target = inFlight is null ? "the model page" : $"id {inFlight.CivitaiVersionId}";
         _logger?.Warn(LogCategory.Network, LogSource,
-            $"{item.Name}: Civitai refused ({SyncFaults.RefusalCode(refusal)}) for id {inFlight.CivitaiVersionId}; marked as checked");
+            $"{item.Name}: Civitai refused ({SyncFaults.RefusalCode(refusal)}) for {target}; marked as checked");
         return SyncItemResult.Skip;
     }
 

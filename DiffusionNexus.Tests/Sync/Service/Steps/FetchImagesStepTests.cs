@@ -7,6 +7,7 @@ using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.Sync;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Service.Services.Sync;
 using DiffusionNexus.Service.Services.Sync.Steps;
 using FluentAssertions;
@@ -365,6 +366,46 @@ public sealed class FetchImagesStepTests : IDisposable
 
         var second = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
         second.Select(i => i.ModelId).Should().NotContain(seeded.ModelId);
+    }
+
+    /// <summary>
+    /// Finding 8 (review of PR #547). <c>ApplyImagesFromModelAsync</c> issues one <c>GET
+    /// models/{id}</c> for the whole group BEFORE the per-version loop ever assigns
+    /// <c>inFlight</c> — so a refusal thrown by that batched call used to be logged against
+    /// <c>candidates[0]</c>'s version id, a version Civitai was never actually asked about (it
+    /// refused the MODEL page, not that version). The refusal here comes from the model-page call
+    /// itself; the per-version fallback (<c>GetModelVersionAsync</c>) is deliberately left
+    /// unconfigured and must never be reached, which the call-count assertion below pins.
+    /// </summary>
+    [Fact]
+    public async Task Execute_ModelPageRefusalIsLoggedAgainstTheModelPageNotAVersion()
+    {
+        var seeded = await SeedAsync("model-page-refusal", civitaiId: 900, versionCivitaiIds: [701, 702]);
+
+        var client = new Mock<ICivitaiClient>();
+        client
+            .Setup(x => x.GetModelAsync(900, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException(
+                "Civitai API 403 for /models/900", null, System.Net.HttpStatusCode.Forbidden));
+
+        var logger = new Mock<IUnifiedLogger>();
+        var step = new FetchImagesStep(Scopes, new CivitaiMetadataApplier(client.Object), logger.Object);
+
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        var result = await step.ExecuteOneAsync(items.Single(), apiKey: null, CancellationToken.None);
+
+        result.Skipped.Should().BeTrue("a refusal is an answer, not a failure to be retried");
+        (await ReadStateAsync(seeded.ModelId))!.ImagesCheckedAt.Should().NotBeNull();
+
+        client.Verify(c => c.GetModelVersionAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never, "the model-page call refused before the per-version fallback ever ran");
+
+        // The warning must name the model page, not lie about a version id nothing was asked about.
+        logger.Verify(l => l.Warn(
+                It.IsAny<LogCategory>(), It.IsAny<string>(),
+                It.Is<string>(msg => msg.Contains("the model page") && !msg.Contains("701") && !msg.Contains("702")),
+                It.IsAny<string?>()),
+            Times.Once);
     }
 
     /// <summary>
