@@ -220,22 +220,40 @@ public sealed class CivitaiClient : ICivitaiClient, IDisposable
         => RetryDelayOverride?.Invoke(attempt) ?? retryAfter ?? TimeSpan.FromSeconds(Math.Pow(2, attempt + 1) * 5);
 
     /// <summary>
+    /// Ceiling on how long a single Retry-After is allowed to make every consumer wait —
+    /// <see cref="RateLimitDelay"/>'s <c>Task.Delay</c> here, and
+    /// <see cref="CivitaiRateLimitCooldown.WaitAsync"/>'s cooldown deadline via the gateway. Ten
+    /// minutes is generous headroom for a legitimate Civitai instruction (observed values are low
+    /// tens of seconds), comfortably under <c>Task.Delay</c>'s ~49.7-day ceiling (past which it
+    /// throws <see cref="ArgumentOutOfRangeException"/>), and short enough that a bad server date
+    /// — or a client clock that is years off, which turns the HTTP-date form's
+    /// <c>date - DateTimeOffset.UtcNow</c> into a multi-year <see cref="TimeSpan"/> — cannot wedge
+    /// every Civitai call in the process instead of merely delaying it.
+    /// </summary>
+    internal static readonly TimeSpan MaxRetryAfter = TimeSpan.FromMinutes(10);
+
+    /// <summary>
     /// Retry-After in either legal form. The delta form ("120") arrives pre-parsed as
     /// <c>Delta</c>; the HTTP-date form ("Wed, 21 Oct 2026 07:28:00 GMT") only ever populates
     /// <c>Date</c>, and reading Delta alone — which is what this client used to do — silently
-    /// discarded it and fell back to a blind backoff.
+    /// discarded it and fell back to a blind backoff. Both forms are clamped to
+    /// <see cref="MaxRetryAfter"/> so every consumer inherits the bound; the HTTP-date form is
+    /// additionally clamped to a floor of zero, since a past date means "the wait is already over",
+    /// not a negative one.
     /// </summary>
     private static TimeSpan? ParseRetryAfter(HttpResponseMessage response)
     {
         var header = response.Headers.RetryAfter;
         if (header is null) return null;
-        if (header.Delta is { } delta) return delta;
+        if (header.Delta is { } delta) return Clamp(delta);
         if (header.Date is { } date)
         {
             var wait = date - DateTimeOffset.UtcNow;
-            return wait > TimeSpan.Zero ? wait : TimeSpan.Zero;
+            return Clamp(wait > TimeSpan.Zero ? wait : TimeSpan.Zero);
         }
         return null;
+
+        static TimeSpan Clamp(TimeSpan wait) => wait > MaxRetryAfter ? MaxRetryAfter : wait;
     }
 
     /// <summary>
