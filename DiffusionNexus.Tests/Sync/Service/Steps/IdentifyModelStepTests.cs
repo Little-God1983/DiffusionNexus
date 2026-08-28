@@ -1493,6 +1493,103 @@ public sealed class IdentifyModelStepTests : IDisposable
         step.EstimatedPerItem.Should().Be(TimeSpan.FromSeconds(3));
     }
 
+    /// <summary>
+    /// F1. A .civitai.info next to the file already answers the question the hash lookup would
+    /// ask, and reading it costs no request and no multi-gigabyte hash — so a sidecar-bearing
+    /// candidate must never even reach the hash/by-hash call. Built directly with a hand-made
+    /// <see cref="IdentifyCandidate"/> (skipping <c>SelectAsync</c>) so this pins ExecuteOneAsync's
+    /// own ordering regardless of what candidate selection happens to do.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteOneAsync_WithASidecarPresent_NeverCallsCivitai()
+    {
+        var candidate = await CreateCandidateWithSidecarAsync();
+
+        var client = new Mock<ICivitaiClient>();
+        var step = new IdentifyModelStep(
+            Scopes, client.Object,
+            new CivitaiMetadataApplier(client.Object),
+            new SidecarMetadataApplier());
+
+        var result = await step.ExecuteOneAsync(new SyncItem(candidate.ModelId, candidate.Name, candidate),
+            apiKey: null, CancellationToken.None);
+
+        result.Should().Be(SyncItemResult.Success);
+        client.Verify(c => c.GetModelVersionByHashAsync(
+            It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>The mirror image: no sidecar on disk means the hash/by-hash rung still runs.</summary>
+    [Fact]
+    public async Task ExecuteOneAsync_WithNoSidecar_StillAsksCivitaiByHash()
+    {
+        var candidate = await CreateCandidateWithoutSidecarAsync();
+
+        var client = new Mock<ICivitaiClient>();
+        client.Setup(c => c.GetModelVersionByHashAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CivitaiModelVersion?)null);
+        var step = new IdentifyModelStep(
+            Scopes, client.Object,
+            new CivitaiMetadataApplier(client.Object),
+            new SidecarMetadataApplier());
+
+        await step.ExecuteOneAsync(new SyncItem(candidate.ModelId, candidate.Name, candidate),
+            apiKey: null, CancellationToken.None);
+
+        client.Verify(c => c.GetModelVersionByHashAsync(
+            It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>Seeds a model/version/file row for a fresh temp file that also carries a sidecar,
+    /// then hands back the same <see cref="IdentifyCandidate"/> shape SelectAsync would produce.</summary>
+    private async Task<IdentifyCandidate> CreateCandidateWithSidecarAsync()
+    {
+        var path = NewModelFile("gateway-sidecar-present.safetensors");
+        WriteSidecar(path);
+        return await BuildCandidateAsync("gateway-sidecar-present", path);
+    }
+
+    /// <summary>Same as above, minus the sidecar.</summary>
+    private async Task<IdentifyCandidate> CreateCandidateWithoutSidecarAsync()
+    {
+        var path = NewModelFile("gateway-sidecar-absent.safetensors");
+        return await BuildCandidateAsync("gateway-sidecar-absent", path);
+    }
+
+    /// <summary>Reuses <see cref="SeedAsync"/> — the same seeding every other test in this fixture
+    /// uses — then reads back the version id it created so the candidate can be built directly,
+    /// bypassing SelectAsync entirely.</summary>
+    private async Task<IdentifyCandidate> BuildCandidateAsync(string name, string path)
+    {
+        var (modelId, fileId) = await SeedAsync(name, path);
+
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var model = await uow.Models.GetByIdWithIncludesAsync(modelId);
+        var versionId = model!.Versions.Single().Id;
+
+        return new IdentifyCandidate(modelId, versionId, fileId, name, path, Sha256: null,
+            BaseModelRaw: "???", Outcome: SyncOutcome.None, CheckedAt: null, Attempts: 0, SidecarSignature: null);
+    }
+
+    /// <summary>Writes a real <c>.civitai.info</c> sidecar in the shape
+    /// <see cref="SidecarMetadataApplier"/>'s civitai.info reader expects (top-level id, modelId,
+    /// name, baseModel, trainedWords, files[]) — confirmed against ApplyCivitaiInfoFormatAsync.</summary>
+    private static void WriteSidecar(string modelFilePath)
+    {
+        var sidecar = Path.ChangeExtension(modelFilePath, ".civitai.info");
+        File.WriteAllText(sidecar, """
+        {
+          "id": 4242,
+          "modelId": 900,
+          "name": "v1.0",
+          "baseModel": "SDXL 1.0",
+          "trainedWords": ["trigger"],
+          "files": [{ "name": "model.safetensors", "hashes": { "SHA256": "ABC123" } }]
+        }
+        """);
+    }
+
     public void Dispose()
     {
         _serviceProvider.Dispose();

@@ -12,10 +12,12 @@ using Microsoft.Extensions.DependencyInjection;
 namespace DiffusionNexus.Service.Services.Sync.Steps;
 
 /// <summary>
-/// Step 1 — establishes what a local file actually <i>is</i>: stored/computed SHA256 →
-/// Civitai hash lookup → local sidecar fallback → the file's own safetensors header →
-/// a guess from the filename. Replaces the ViewModel's Phase 1 / 1b and its per-tile
-/// metadata copy (#521 WP2, WP4).
+/// Step 1 — establishes what a local file actually <i>is</i>: local sidecar → stored/computed
+/// SHA256 + Civitai hash lookup → the file's own safetensors header → a guess from the filename.
+/// The sidecar is checked first — it is normally written by our own downloader from a Civitai
+/// response, so it answers the question the hash lookup would ask without a request or a
+/// multi-gigabyte hash. Replaces the ViewModel's Phase 1 / 1b and its per-tile metadata copy
+/// (#521 WP2, WP4).
 /// </summary>
 /// <remarks>
 /// Every path stamps <c>ModelSyncState</c>, which is the whole point of the overhaul: a run that
@@ -166,16 +168,10 @@ public sealed class IdentifyModelStep : ISyncStep
 
         try
         {
-            var hash = await ResolveHashAsync(uow, candidate, ct).ConfigureAwait(false);
-
-            var version = await _client.GetModelVersionByHashAsync(hash, apiKey, ct).ConfigureAwait(false);
-            if (version is not null)
-            {
-                var applied = await _civitai.ApplyAsync(uow, candidate.ModelId, candidate.FileId, version, apiKey, ct).ConfigureAwait(false);
-                return await RecordMatchAsync(uow, candidate, version, applied, now, ct).ConfigureAwait(false);
-            }
-
-            // 404 — not on Civitai. Fall back to whatever the user has next to the file.
+            // Sidecar first. It is the answer Civitai would give us, already on disk, and reading
+            // it costs no request and no multi-gigabyte hash. This used to run only after the hash
+            // lookup 404'd, which meant every sidecar-bearing file paid two API calls to be told
+            // what was sitting next to it. SorterMetadataResolver has always done it in this order.
             var sidecar = await _sidecar.ApplyAsync(uow, candidate.ModelId, candidate.LocalPath, ct).ConfigureAwait(false);
 
             // The applier answers a cancellation with "nothing applied", which is the same answer it
@@ -189,7 +185,16 @@ public sealed class IdentifyModelStep : ISyncStep
                 return SyncItemResult.Success;
             }
 
-            // No Civitai match, no sidecar — read the file's own header, then guess from its name.
+            var hash = await ResolveHashAsync(uow, candidate, ct).ConfigureAwait(false);
+
+            var version = await _client.GetModelVersionByHashAsync(hash, apiKey, ct).ConfigureAwait(false);
+            if (version is not null)
+            {
+                var applied = await _civitai.ApplyAsync(uow, candidate.ModelId, candidate.FileId, version, apiKey, ct).ConfigureAwait(false);
+                return await RecordMatchAsync(uow, candidate, version, applied, now, ct).ConfigureAwait(false);
+            }
+
+            // Not on Civitai and no sidecar — read the file's own header, then guess from its name.
             var header = await SafetensorsHeaderReader.TryReadAsync(candidate.LocalPath, ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
             var headerCheckedAt = header is not null ? now : (DateTimeOffset?)null;
