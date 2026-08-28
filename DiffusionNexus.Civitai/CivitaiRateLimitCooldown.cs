@@ -56,6 +56,18 @@ public sealed class CivitaiRateLimitCooldown : ICivitaiRateLimitObserver
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// The multiplier tracks rate-limit EPISODES, not individual reports. <c>CivitaiClient.GetAsync</c>
+    /// calls this once per 429 response, and its own single in-call retry means a call that is
+    /// refused twice reports twice — escalating on every report used to walk the multiplier
+    /// 1 -> 2 -> 4 inside one request, so the first rate limit a user ever hit jumped straight to
+    /// the 4x cap. A report that arrives while a previous report's cooldown is still counting down
+    /// is treated as the same episode and does not escalate further; a report that arrives once
+    /// that cooldown has elapsed — whether seconds later (server sent a short Retry-After) or after
+    /// a long quiet spell — is a new episode and escalates (from 1 again if the quiet spell also
+    /// exceeded <see cref="MultiplierDecay"/>). The cooldown deadline itself still only ever
+    /// extends, regardless of episode.
+    /// </remarks>
     public void OnRateLimited(TimeSpan? retryAfter)
     {
         lock (_lock)
@@ -63,17 +75,24 @@ public sealed class CivitaiRateLimitCooldown : ICivitaiRateLimitObserver
             var now = _clock();
             var wait = retryAfter ?? DefaultCooldown;
 
+            // Captured before _cooldownUntil is possibly extended below, so it reflects whether A
+            // COOLDOWN FROM AN EARLIER REPORT was still active when THIS report arrived.
+            var sameEpisode = _everRateLimited && now < _cooldownUntil;
+
             // Extend, never shorten: a second 429 while a longer cooldown is running must not
             // release everyone early.
             var deadline = now + (long)wait.TotalMilliseconds;
             if (!_everRateLimited || deadline > _cooldownUntil) _cooldownUntil = deadline;
 
-            // Read through the property's decay rule so a limit after a long quiet spell starts
-            // from 1 again rather than resuming yesterday's penalty.
-            var current = !_everRateLimited || TimeSpan.FromMilliseconds(now - _lastRateLimit) > MultiplierDecay
-                ? 1
-                : _multiplier;
-            _multiplier = Math.Min(current * 2, MaxIntervalMultiplier);
+            if (!sameEpisode)
+            {
+                // Read through the property's decay rule so a limit after a long quiet spell starts
+                // from 1 again rather than resuming yesterday's penalty.
+                var current = !_everRateLimited || TimeSpan.FromMilliseconds(now - _lastRateLimit) > MultiplierDecay
+                    ? 1
+                    : _multiplier;
+                _multiplier = Math.Min(current * 2, MaxIntervalMultiplier);
+            }
 
             _lastRateLimit = now;
             _everRateLimited = true;

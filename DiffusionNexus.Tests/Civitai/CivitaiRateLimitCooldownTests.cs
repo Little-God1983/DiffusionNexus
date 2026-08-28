@@ -58,18 +58,40 @@ public class CivitaiRateLimitCooldownTests
     }
 
     [Fact]
-    public void IntervalMultiplier_DoublesPerRateLimit_CappedAtFour()
+    public void IntervalMultiplier_DoublesPerRateLimitEpisode_CappedAtFour()
     {
+        // Each report here arrives only after the PREVIOUS report's own cooldown has fully
+        // elapsed, so each one starts a genuinely new episode and must still escalate — see
+        // IntervalMultiplier_TwoReportsWithinTheSameCooldown_StaysAtTwo for the same-episode case
+        // this used to get wrong (finding 10).
         var cooldown = Create();
 
-        cooldown.OnRateLimited(null);
+        cooldown.OnRateLimited(TimeSpan.FromSeconds(1));
         cooldown.IntervalMultiplier.Should().Be(2);
 
-        cooldown.OnRateLimited(null);
+        _now += 1001;
+        cooldown.OnRateLimited(TimeSpan.FromSeconds(1));
         cooldown.IntervalMultiplier.Should().Be(4);
 
-        cooldown.OnRateLimited(null);
+        _now += 1001;
+        cooldown.OnRateLimited(TimeSpan.FromSeconds(1));
         cooldown.IntervalMultiplier.Should().Be(4);
+    }
+
+    [Fact]
+    public void IntervalMultiplier_TwoReportsWithinTheSameCooldown_StaysAtTwo()
+    {
+        // Regression test for finding 10. CivitaiClient.GetAsync calls OnRateLimited before
+        // deciding whether to retry, and its own maxRateLimitRetries = 1 means a call that is
+        // refused twice reports twice for what the user experiences as ONE rate-limit event. Before
+        // this fix the multiplier escalated on every report rather than every episode, so the very
+        // first rate limit a user ever hit jumped 1 -> 2 -> 4 within a single call.
+        var cooldown = Create();
+
+        cooldown.OnRateLimited(TimeSpan.FromSeconds(10));
+        cooldown.OnRateLimited(TimeSpan.FromSeconds(10)); // second report, same clock tick, cooldown from the first still active
+
+        cooldown.IntervalMultiplier.Should().Be(2);
     }
 
     [Fact]
