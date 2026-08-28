@@ -82,4 +82,36 @@ public class CivitaiRateLimitCooldownTests
 
         cooldown.IntervalMultiplier.Should().Be(1);
     }
+
+    [Fact]
+    public async Task WaitAsync_ExtendsNeverShortens_WhenSecondRateLimitHasShorterWait()
+    {
+        var cooldown = Create();
+        cooldown.OnRateLimited(TimeSpan.FromSeconds(30));
+        cooldown.OnRateLimited(TimeSpan.FromSeconds(5));  // Second call with shorter wait, same clock time
+
+        await cooldown.WaitAsync(CancellationToken.None);
+
+        _waits.Should().ContainSingle().Which.Should().Be(TimeSpan.FromSeconds(30));
+    }
+
+    [Fact]
+    public async Task WaitAsync_HonoursTheCancellationToken()
+    {
+        var cooldown = new CivitaiRateLimitCooldown(
+            clock: () => _now,
+            delay: async (d, ct) =>
+            {
+                _waits.Add(d);
+                await Task.Delay(d, ct).ConfigureAwait(false);
+            });
+
+        cooldown.OnRateLimited(TimeSpan.FromSeconds(30));
+        var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = () => cooldown.WaitAsync(cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
 }
