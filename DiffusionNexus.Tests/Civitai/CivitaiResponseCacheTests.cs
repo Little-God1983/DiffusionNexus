@@ -90,6 +90,41 @@ public class CivitaiResponseCacheTests
     }
 
     [Fact]
+    public async Task GetOrAddAsync_ManyRealThreadsRacingForOneKey_FactoryRunsExactlyOnce()
+    {
+        // Unlike GetOrAddAsync_ConcurrentCallersForOneKey_ShareASingleFactoryCall (which issues
+        // both calls sequentially on the calling thread and only passes because GetOrAdd
+        // synchronously registers the first task before that call ever yields), this test starts
+        // several callers on real thread-pool threads so they can genuinely race inside
+        // GetOrAddAsync before any of them has published an in-flight entry.
+        var cache = Create();
+        var calls = 0;
+        var release = new TaskCompletionSource<string?>();
+        const int callerCount = 8;
+
+        Task<string?> Factory() { Interlocked.Increment(ref calls); return release.Task; }
+
+        var barrier = new Barrier(callerCount);
+        var callers = Enumerable.Range(0, callerCount)
+            .Select(_ => Task.Run(async () =>
+            {
+                barrier.SignalAndWait();
+                return await cache.GetOrAddAsync(CivitaiResponseCache.ModelKey(7), Ttl, Factory);
+            }))
+            .ToArray();
+
+        // Give the racing threads a moment to actually reach GetOrAddAsync before releasing them,
+        // so the race is against each other and not against this thread finishing first.
+        await Task.Delay(50);
+        release.SetResult("value");
+
+        var results = await Task.WhenAll(callers);
+
+        calls.Should().Be(1);
+        results.Should().OnlyContain(r => r == "value");
+    }
+
+    [Fact]
     public async Task InvalidateModel_ForcesTheNextCallToRefetch()
     {
         var cache = Create();

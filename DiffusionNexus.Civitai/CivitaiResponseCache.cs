@@ -36,7 +36,7 @@ public sealed class CivitaiResponseCache : ICivitaiApiCache
     private readonly int _capacity;
     private readonly Func<long> _clock;
     private readonly ConcurrentDictionary<string, Entry> _entries = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, Task<object?>> _inFlight = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Lazy<Task<object?>>> _inFlight = new(StringComparer.Ordinal);
     private long _sequence;
 
     /// <param name="capacity">Maximum entries before the oldest-inserted are evicted.</param>
@@ -63,17 +63,21 @@ public sealed class CivitaiResponseCache : ICivitaiApiCache
     {
         if (TryGet(key, out var cached)) return (T?)cached;
 
-        // GetOrAdd's factory can run more than once under contention, so the work is deferred into
-        // a Lazy-like Task the losers simply await. Whoever's task ends up in the dictionary is the
-        // one that runs; everybody gets its result.
-        var task = _inFlight.GetOrAdd(key, _ => RunAsync(key, ttl, factory));
+        // ConcurrentDictionary.GetOrAdd can invoke its value factory on more than one racing
+        // thread even though only one result is ever stored — so the value factory here must not
+        // do any work itself. It only constructs a Lazy<Task<object?>>, which is cheap and starts
+        // nothing. Whichever Lazy instance GetOrAdd ends up publishing is decided atomically; only
+        // that one is ever forced (via .Value, below), so factory() runs exactly once even under a
+        // genuine race, and every caller — winner and losers alike — awaits the same task.
+        var lazy = _inFlight.GetOrAdd(key, _ => new Lazy<Task<object?>>(
+            () => RunAsync(key, ttl, factory), LazyThreadSafetyMode.ExecutionAndPublication));
         try
         {
-            return (T?)await task.ConfigureAwait(false);
+            return (T?)await lazy.Value.ConfigureAwait(false);
         }
         finally
         {
-            _inFlight.TryRemove(new KeyValuePair<string, Task<object?>>(key, task));
+            _inFlight.TryRemove(new KeyValuePair<string, Lazy<Task<object?>>>(key, lazy));
         }
     }
 
