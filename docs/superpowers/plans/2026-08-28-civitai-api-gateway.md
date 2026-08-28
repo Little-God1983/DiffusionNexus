@@ -1827,9 +1827,9 @@ In `IdentifyModelStep.ExecuteOneAsync`, replace the block from `var hash = await
 
 ```csharp
             // Sidecar first. It is the answer Civitai would give us, already on disk, and reading
-            // it costs no request and no multi-gigabyte hash. This used to run only after the hash
-            // lookup 404'd, which meant every sidecar-bearing file paid two API calls to be told
-            // what was sitting next to it. SorterMetadataResolver has always done it in this order.
+            // it costs no request. This used to run only after the hash lookup 404'd, which meant
+            // every sidecar-bearing file paid two API calls to be told what was sitting next to it.
+            // SorterMetadataResolver has always done it in this order.
             var sidecar = await _sidecar.ApplyAsync(uow, candidate.ModelId, candidate.LocalPath, ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
 

@@ -385,8 +385,11 @@ public sealed class IdentifyModelStep : ISyncStep
 
         var hash = await FileHasher.Sha256UpperAsync(candidate.LocalPath, ct).ConfigureAwait(false);
 
-        // Set before the Civitai applier runs: it fills hashes with `??=`, so the digest of the bytes
-        // we actually have must already be in place to win over the response's (possibly stale) one.
+        // Committed before anything else in this same execution can claim the hash field: the
+        // sidecar path's SidecarMetadataApplier already wrote HashSHA256 with `??=` moments
+        // earlier on this same uow, and the no-match path's CivitaiMetadataApplier fills it the
+        // same way from the hash-lookup response — either caller, the digest of the bytes we
+        // actually have must already be in place to win over a claim that never measured them.
         var file = await uow.ModelFiles.GetByIdAsync(candidate.FileId, ct).ConfigureAwait(false);
         if (file is not null)
         {
@@ -402,10 +405,13 @@ public sealed class IdentifyModelStep : ISyncStep
 
             file.HashSHA256 = hash;
 
-            // Committed before the network call, on its own: hashing a multi-gigabyte file is the
-            // expensive half of this step, and neither a cancellation nor a fault later in the item
-            // may throw that work away. It also puts the digest of the bytes we actually hold in
-            // place before CivitaiMetadataApplier's `??=` gets a chance to fill it from the response.
+            // Saved here, on its own, rather than left for whichever SaveChangesAsync the rest of
+            // the item eventually calls: hashing a multi-gigabyte file is the expensive half of
+            // this step, and neither a cancellation nor a fault later in the item may throw that
+            // work away. On the no-match path this also puts the digest in place before the
+            // Civitai hash lookup and CivitaiMetadataApplier's own `??=` get a chance to fill it
+            // from the response; the sidecar path has no such lookup or applier to race — saving
+            // early there is purely about not losing the hash to a later fault in the same item.
             await uow.SaveChangesAsync(ct).ConfigureAwait(false);
         }
 
