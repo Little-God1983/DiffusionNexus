@@ -35,28 +35,20 @@ public sealed class IdentifyModelStep : ISyncStep
     private readonly ICivitaiClient _client;
     private readonly CivitaiMetadataApplier _civitai;
     private readonly SidecarMetadataApplier _sidecar;
-    private readonly ICivitaiRequestPacer _pacer;
     private readonly IUnifiedLogger? _logger;
 
-    /// <param name="pacer">
-    /// Paces the one call this step makes itself — the hash lookup. The model-page call that
-    /// follows it lives inside <see cref="CivitaiMetadataApplier"/> and is paced there, so the two
-    /// requests of one item are spaced from each other and not merely from the previous item (R4).
-    /// </param>
     public IdentifyModelStep(
         IServiceScopeFactory scopes,
         ICivitaiClient client,
         CivitaiMetadataApplier civitai,
         SidecarMetadataApplier sidecar,
-        IUnifiedLogger? logger = null,
-        ICivitaiRequestPacer? pacer = null)
+        IUnifiedLogger? logger = null)
     {
         _scopes = scopes ?? throw new ArgumentNullException(nameof(scopes));
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _civitai = civitai ?? throw new ArgumentNullException(nameof(civitai));
         _sidecar = sidecar ?? throw new ArgumentNullException(nameof(sidecar));
         _logger = logger;
-        _pacer = pacer ?? NoCivitaiRequestPacer.Instance;
     }
 
     /// <inheritdoc />
@@ -176,7 +168,6 @@ public sealed class IdentifyModelStep : ISyncStep
         {
             var hash = await ResolveHashAsync(uow, candidate, ct).ConfigureAwait(false);
 
-            await _pacer.WaitAsync(ct).ConfigureAwait(false);
             var version = await _client.GetModelVersionByHashAsync(hash, apiKey, ct).ConfigureAwait(false);
             if (version is not null)
             {

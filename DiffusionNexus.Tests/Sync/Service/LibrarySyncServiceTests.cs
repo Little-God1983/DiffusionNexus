@@ -72,7 +72,7 @@ public sealed class LibrarySyncServiceTests : IDisposable
 
     /// <summary>
     /// Builds the service over the given fake steps. Nothing here sleeps: Civitai's courtesy
-    /// interval is applied per request inside the steps (<c>ICivitaiRequestPacer</c>), and these
+    /// interval is applied by the gateway <see cref="ICivitaiClient"/> is resolved to, and these
     /// steps are fakes that make no requests.
     /// </summary>
     private LibrarySyncService NewService(IEnumerable<ISyncStep> steps)
@@ -689,7 +689,9 @@ public sealed class LibrarySyncServiceTests : IDisposable
 
         var services = new ServiceCollection();
         services.AddDataAccessLayer(options => options.UseSqlite(connection));
-        services.AddSingleton(new Mock<ICivitaiClient>().Object);
+        // AddLibrarySync resolves the background lane by key, not the bare interface — the host
+        // (App.axaml.cs) is what registers both lanes of the real gateway.
+        services.AddKeyedSingleton("background", new Mock<ICivitaiClient>().Object);
         services.AddTransient(_ => new Mock<IAppSettingsService>().Object);
         services.AddLibrarySync();
 
@@ -713,10 +715,6 @@ public sealed class LibrarySyncServiceTests : IDisposable
 
         // The gate is per-service, so the service itself must be a singleton.
         provider.GetRequiredService<ILibrarySyncService>().Should().BeSameAs(provider.GetRequiredService<ILibrarySyncService>());
-
-        // R4: the pacer holds the timestamp of the last Civitai request, so two of them pace nothing.
-        provider.GetRequiredService<ICivitaiRequestPacer>().Should().BeOfType<CivitaiRequestPacer>()
-            .And.BeSameAs(provider.GetRequiredService<ICivitaiRequestPacer>());
     }
 
     // ------------------------------------------------------------- Fixtures

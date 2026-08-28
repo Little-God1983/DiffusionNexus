@@ -145,30 +145,6 @@ public sealed class FetchTagsStepTests : IDisposable
     private static SyncOptions Options(bool force = false) =>
         new(new HashSet<SyncStepKind> { SyncStepKind.FetchTags }, ForceTags: force);
 
-    /// <summary>
-    /// R4. Pacing is per request, and the tags step makes exactly one per item — awaited by the
-    /// applier immediately before the call rather than by the item loop afterwards.
-    /// </summary>
-    [Fact]
-    public async Task Execute_AwaitsThePacerOncePerCivitaiCall()
-    {
-        await SeedAsync("paced", civitaiId: 101);
-
-        var client = new Mock<ICivitaiClient>();
-        client.Setup(x => x.GetModelAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(NewCivitaiModel(tags: ["style"]));
-
-        var pacer = new Mock<ICivitaiRequestPacer>();
-        pacer.Setup(p => p.WaitAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-
-        var step = new FetchTagsStep(Scopes, new CivitaiMetadataApplier(client.Object, logger: null, pacer: pacer.Object));
-
-        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
-        await step.ExecuteOneAsync(items.Single(), apiKey: null, CancellationToken.None);
-
-        pacer.Verify(p => p.WaitAsync(It.IsAny<CancellationToken>()), Times.Once);
-    }
-
     [Fact]
     public async Task Select_ReturnsOnlyNeverChecked_UnlessForced()
     {

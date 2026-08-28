@@ -320,11 +320,12 @@ public sealed class IdentifyModelStepTests : IDisposable
     }
 
     /// <summary>
-    /// R4. One identify item is two Civitai requests — the hash lookup here and the model page
-    /// inside the applier — and pacing between items spaced neither of them.
+    /// One identify item is two Civitai requests — the hash lookup here and the model page inside
+    /// the applier. Pacing between them is the gateway's job now (verified in
+    /// <c>CivitaiApiGatewayTests</c>); what this step still owns is making both calls.
     /// </summary>
     [Fact]
-    public async Task Execute_AwaitsThePacerOncePerCivitaiCall()
+    public async Task Execute_MakesBothCivitaiCalls()
     {
         var path = NewModelFile("paced.safetensors");
         var (modelId, _) = await SeedAsync("paced", path);
@@ -336,21 +337,18 @@ public sealed class IdentifyModelStepTests : IDisposable
         client.Setup(x => x.GetModelAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(NewCivitaiModel(civVersion));
 
-        var pacer = new Mock<ICivitaiRequestPacer>();
-        pacer.Setup(p => p.WaitAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-
         var step = new IdentifyModelStep(
             Scopes, client.Object,
-            new CivitaiMetadataApplier(client.Object, logger: null, pacer: pacer.Object),
+            new CivitaiMetadataApplier(client.Object, logger: null),
             new SidecarMetadataApplier(),
-            logger: null,
-            pacer: pacer.Object);
+            logger: null);
 
         var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
         var result = await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
 
         result.Succeeded.Should().BeTrue();
-        pacer.Verify(p => p.WaitAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+        client.Verify(c => c.GetModelVersionByHashAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+        client.Verify(c => c.GetModelAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

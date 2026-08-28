@@ -17,21 +17,21 @@ public static class SyncServiceCollectionExtensions
     /// and its typed client included) and the orchestrating <see cref="ILibrarySyncService"/>.
     /// </summary>
     /// <remarks>
-    /// Requires <c>ICivitaiClient</c> and <c>IAppSettingsService</c> to be registered by the host.
-    /// Everything except the service and the request pacer is transient and stateless; the service
-    /// is a singleton because it owns the single-flight gate that stops two concurrent runs from
-    /// hammering Civitai with the same 2 500 requests, and the pacer because it holds the timestamp
-    /// of the last request.
+    /// Requires <c>ICivitaiClient</c> (including its keyed <c>"background"</c> registration) and
+    /// <c>IAppSettingsService</c> to be registered by the host. Everything except the service is
+    /// transient and stateless; the service is a singleton because it owns the single-flight gate
+    /// that stops two concurrent runs from hammering Civitai with the same 2 500 requests. Pacing
+    /// is no longer this pipeline's business — it takes the background lane of the Civitai gateway,
+    /// which paces, cools down and caches for every surface in the app, not just this one.
     /// </remarks>
     public static IServiceCollection AddLibrarySync(this IServiceCollection services)
     {
-        // Singleton, and the only one: the pacer IS the process's memory of when it last spoke to
-        // Civitai, so a second instance would pace nothing. It is awaited immediately before every
-        // request the pipeline makes — inside the appliers and the identify step — because one
-        // SyncItem is not one request (R4).
-        services.AddSingleton<ICivitaiRequestPacer>(_ => new CivitaiRequestPacer());
-
-        services.AddTransient<CivitaiMetadataApplier>();
+        // Nobody is waiting on a sync, so it takes the background lane: 1.5 s spacing, yielding
+        // to any interactive call. The pacing itself now lives in the gateway — this pipeline used
+        // to be the only thing in the app that paced at all.
+        services.AddTransient(sp => new CivitaiMetadataApplier(
+            sp.GetRequiredKeyedService<ICivitaiClient>("background"),
+            sp.GetService<IUnifiedLogger>()));
         services.AddTransient<SidecarMetadataApplier>();
         services.AddTransient<SyncStateInitializer>();
 
@@ -52,7 +52,16 @@ public static class SyncServiceCollectionExtensions
         // ids the tags and images steps need, and only a fetched image record has a URL to make a
         // thumbnail from.
         services.AddTransient<ISyncStep, DiscoverFilesStep>();
-        services.AddTransient<ISyncStep, IdentifyModelStep>();
+
+        // The only step holding a client of its own — the by-hash lookup. Background lane, and
+        // without the pacer parameter the gateway has made redundant.
+        services.AddTransient<ISyncStep>(sp => new IdentifyModelStep(
+            sp.GetRequiredService<IServiceScopeFactory>(),
+            sp.GetRequiredKeyedService<ICivitaiClient>("background"),
+            sp.GetRequiredService<CivitaiMetadataApplier>(),
+            sp.GetRequiredService<SidecarMetadataApplier>(),
+            sp.GetService<IUnifiedLogger>()));
+
         services.AddTransient<ISyncStep, FetchTagsStep>();
         services.AddTransient<ISyncStep, FetchImagesStep>();
         services.AddTransient<ISyncStep, ThumbnailsStep>();

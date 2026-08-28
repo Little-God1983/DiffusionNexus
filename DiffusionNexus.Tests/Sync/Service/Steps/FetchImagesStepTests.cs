@@ -232,12 +232,12 @@ public sealed class FetchImagesStepTests : IDisposable
     }
 
     /// <summary>
-    /// R4. One image item is one <i>model</i> but N Civitai calls, one per version. Pacing between
-    /// items therefore paced nothing inside them: a six-version model fired six back-to-back
-    /// requests and then politely waited 1.5 s. The pacer is awaited once per request instead.
+    /// One image item is one <i>model</i> but N Civitai calls, one per version. Pacing itself is
+    /// the gateway's job now (verified in <c>CivitaiApiGatewayTests</c>); what this step still owns
+    /// is making exactly one call per version rather than one per item.
     /// </summary>
     [Fact]
-    public async Task Execute_AwaitsThePacerOncePerCivitaiCall()
+    public async Task Execute_MakesOneCivitaiCallPerVersion()
     {
         await SeedAsync("multi", civitaiId: 101, versionCivitaiIds: [701, 702, 703]);
 
@@ -246,10 +246,7 @@ public sealed class FetchImagesStepTests : IDisposable
             .Setup(x => x.GetModelVersionAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int id, string? _, CancellationToken _) => NewCivitaiVersion(id, NewImage(id * 10)));
 
-        var pacer = new Mock<ICivitaiRequestPacer>();
-        pacer.Setup(p => p.WaitAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-
-        var step = new FetchImagesStep(Scopes, new CivitaiMetadataApplier(client.Object, logger: null, pacer: pacer.Object));
+        var step = new FetchImagesStep(Scopes, new CivitaiMetadataApplier(client.Object, logger: null));
 
         var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
         await step.ExecuteOneAsync(items.Single(), apiKey: null, CancellationToken.None);
@@ -257,7 +254,6 @@ public sealed class FetchImagesStepTests : IDisposable
         client.Verify(
             c => c.GetModelVersionAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
             Times.Exactly(3));
-        pacer.Verify(p => p.WaitAsync(It.IsAny<CancellationToken>()), Times.Exactly(3));
     }
 
     [Fact]

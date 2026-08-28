@@ -16,32 +16,25 @@ namespace DiffusionNexus.Service.Services.Sync;
 /// The caller owns the unit of work (and therefore the DbContext scope): this class only
 /// mutates the graph and saves. All entry points honor <see cref="Model.IsUserEdited"/> /
 /// <see cref="ModelVersion.IsUserEdited"/> so a user's own metadata is never overwritten.
+/// Pacing is not this class's business any more: every request it makes goes through the
+/// Civitai gateway, which paces, cools down after a 429 and caches. It used to wait here
+/// because this was the only code in the app that waited at all.
 /// </remarks>
 public sealed class CivitaiMetadataApplier
 {
     private const string LogSource = "LibrarySync";
 
     private readonly ICivitaiClient _client;
-    private readonly ICivitaiRequestPacer _pacer;
     private readonly IUnifiedLogger? _logger;
 
     /// <param name="client">The Civitai API client.</param>
     /// <param name="logger">Optional unified logger.</param>
-    /// <param name="pacer">
-    /// The process-wide request pacer (R4). Every <c>_client</c> call below awaits it immediately
-    /// before going out, because this class — not the item loop above it — is where the requests
-    /// actually are: one item can be one call, two, or one per version. Optional so the many tests
-    /// that construct an applier over a mocked client do not have to opt out of a wait that never
-    /// happens; DI always supplies the real one.
-    /// </param>
     public CivitaiMetadataApplier(
         ICivitaiClient client,
-        IUnifiedLogger? logger = null,
-        ICivitaiRequestPacer? pacer = null)
+        IUnifiedLogger? logger = null)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _logger = logger;
-        _pacer = pacer ?? NoCivitaiRequestPacer.Instance;
     }
 
     /// <summary>
@@ -67,7 +60,6 @@ public sealed class CivitaiMetadataApplier
         CivitaiModel? civitaiModel = null;
         if (version.ModelId > 0)
         {
-            await _pacer.WaitAsync(ct);
             civitaiModel = await _client.GetModelAsync(version.ModelId, apiKey, ct);
         }
 
@@ -264,7 +256,6 @@ public sealed class CivitaiMetadataApplier
         string? apiKey,
         CancellationToken ct = default)
     {
-        await _pacer.WaitAsync(ct);
         var civitaiModel = await _client.GetModelAsync(civitaiModelId, apiKey, ct);
 
         // A 404 says nothing about tags: the model page itself is gone. Reporting that as
@@ -304,7 +295,6 @@ public sealed class CivitaiMetadataApplier
         string? apiKey,
         CancellationToken ct = default)
     {
-        await _pacer.WaitAsync(ct);
         var civitaiVersion = await _client.GetModelVersionAsync(civitaiVersionId, apiKey, ct);
 
         // As above: a version that 404s is not a version with no images.

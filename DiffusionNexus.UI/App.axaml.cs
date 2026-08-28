@@ -855,8 +855,36 @@ public partial class App : Application
                 sp.GetRequiredService<IFeatureBackendRouter>(),
                 FeatureRegistry.GetRequirements));
 
-        // Civitai API client (singleton - maintains HttpClient)
-        services.AddSingleton<Civitai.ICivitaiClient, Civitai.CivitaiClient>();
+        // The one door to the Civitai API. Everything below is a singleton because the pacing
+        // timestamp, the 429 cooldown and the cache are the process's single opinion about
+        // Civitai — a second copy of any of them would pace, cool down and cache nothing.
+        services.AddSingleton<Civitai.CivitaiRateLimitCooldown>();
+        services.AddSingleton<Civitai.CivitaiResponseCache>();
+        services.AddSingleton<Civitai.ICivitaiApiCache>(sp => sp.GetRequiredService<Civitai.CivitaiResponseCache>());
+        services.AddSingleton<Civitai.ICivitaiRequestPacer>(_ => new Civitai.CivitaiRequestPacer());
+
+        // The raw client, told to report every 429 to the shared cooldown the moment it sees one.
+        services.AddSingleton(sp => new Civitai.CivitaiClient(
+            new HttpClient(),
+            disposeHttpClient: true,
+            rateLimitObserver: sp.GetRequiredService<Civitai.CivitaiRateLimitCooldown>()));
+
+        // Default lane: a user is waiting. Resolved by the browser, the detail panel, the
+        // dialogs, the download path, the waitlist, the sorter and the pipeline installer.
+        services.AddSingleton<Civitai.ICivitaiClient>(sp => new Civitai.CivitaiApiGateway(
+            sp.GetRequiredService<Civitai.CivitaiClient>(),
+            sp.GetRequiredService<Civitai.ICivitaiRequestPacer>(),
+            sp.GetRequiredService<Civitai.CivitaiRateLimitCooldown>(),
+            sp.GetRequiredService<Civitai.CivitaiResponseCache>(),
+            Civitai.CivitaiCallLane.Interactive));
+
+        // Background lane: nobody is waiting. Library sync and the visible-tile update sweep.
+        services.AddKeyedSingleton<Civitai.ICivitaiClient>("background", (sp, _) => new Civitai.CivitaiApiGateway(
+            sp.GetRequiredService<Civitai.CivitaiClient>(),
+            sp.GetRequiredService<Civitai.ICivitaiRequestPacer>(),
+            sp.GetRequiredService<Civitai.CivitaiRateLimitCooldown>(),
+            sp.GetRequiredService<Civitai.CivitaiResponseCache>(),
+            Civitai.CivitaiCallLane.Background));
 
         // Civitai base-model catalog (singleton - in-memory + on-disk cache, falls back to bundled snapshot)
         services.AddSingleton<Civitai.ICivitaiBaseModelCatalog, Civitai.CivitaiBaseModelCatalog>();
@@ -945,7 +973,11 @@ public partial class App : Application
             sp.GetService<Civitai.ICivitaiBaseModelCatalog>(),
             sp.GetService<IBackupScheduler>()));
 
-        services.AddSingleton<ILoraUpdateChecker, LoraUpdateChecker>();
+        services.AddSingleton<ILoraUpdateChecker>(sp => new LoraUpdateChecker(
+            sp.GetRequiredService<IServiceScopeFactory>(),
+            sp.GetRequiredKeyedService<Civitai.ICivitaiClient>("background"),
+            sp.GetRequiredService<IAppSettingsService>(),
+            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
 
         // The one Civitai API-key lookup (spec §1 RC5) — replaces five verbatim copies.
         services.AddSingleton<ICivitaiApiKeyProvider>(sp =>
