@@ -2189,6 +2189,81 @@ public sealed class LoraSorterViewModelTests : IDisposable
         vm.SourceRoots.Single(n => n.Name == "Lightning").CanUnexclude.Should().BeTrue();
     }
 
+    [Fact]
+    public async Task HidingSettledFilesDoesNotMarkTheirFolderExcluded()
+    {
+        // A folder holding a settled file plus an excluded subfolder: hide-settled drops the
+        // settled row from the tree, but the folder is not thereby "all excluded" — dimming it
+        // and taking away its "Never sort this folder" menu would punish it for a view checkbox.
+        var settled = WriteLora(@"SDXL 1.0\Character\settled.safetensors");
+        var nested = WriteLora(@"SDXL 1.0\Character\Lightning\accel.safetensors");
+        var mover = WriteLora(@"flat\mover.safetensors");
+        var vm = CreateVm(cached:
+        [
+            Installed(settled, "SDXL 1.0", "character"),
+            Installed(nested, "???", "character"),
+            Installed(mover, "Pony", "style"),
+        ]);
+        await vm.InitializeAsync();
+        await vm.ExcludeFolderCommand.ExecuteAsync(
+            vm.SourceRoots.SelectMany(Flatten).Single(n => n.Name == "Lightning"));
+
+        vm.IgnoreFilesAlreadyInPlace = true;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        var character = vm.SourceRoots.Single(n => n.Name == "SDXL 1.0").Children.Single(n => n.Name == "Character");
+        character.IsExcluded.Should().BeFalse("its settled file is hidden, not excluded");
+        character.IsDimmed.Should().BeFalse();
+        character.CanExclude.Should().BeTrue();
+        character.Children.Single(n => n.Name == "Lightning").IsExcluded.Should().BeTrue();
+        // Same blind spot on the destination side, where the folder would mis-dim.
+        vm.PreviewRoots.Single(n => n.Name == "SDXL 1.0").Children.Single(n => n.Name == "Character")
+            .IsExcluded.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task RemovingAnExclusionForgivesTheStoredPathSpelling()
+    {
+        // The stored entry uses forward slashes (a yaml-registered source, a hand-synced settings
+        // file); the context menu hands over the tree's backslash spelling. Equivalent paths must
+        // un-exclude rather than silently no-op under a visible menu item.
+        _settings.Setup(s => s.GetLoraSorterExcludedFoldersJsonAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(System.Text.Json.JsonSerializer.Serialize(
+                new[] { Path.Combine(SourceRoot, "Lightning").Replace('\\', '/') }));
+        var vm = CreateVm(cached: LightningLibrary());
+        await vm.InitializeAsync();
+        vm.TransferCount.Should().Be(1, "the forward-slash entry still excludes the folder");
+
+        await vm.RemoveExclusionCommand.ExecuteAsync(Path.Combine(SourceRoot, "Lightning"));
+
+        vm.ExcludedFolders.Should().BeEmpty();
+        vm.TransferCount.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task TogglingHideSettledRebuildsTheTreeWithoutReplanning()
+    {
+        // The checkbox is view-only: only the tree build and the summary read it. Re-running the
+        // planner — lazy collision hashing and all — for a display toggle is the kind of "minutes
+        // on a large library" work the candidate cache exists to avoid.
+        var probes = 0;
+        var settled = WriteLora(@"SDXL 1.0\Character\settled.safetensors");
+        var mover = WriteLora(@"flat\mover3.safetensors");
+        var vm = CreateVm(
+            cached: [Installed(settled, "SDXL 1.0", "character"), Installed(mover, "SDXL 1.0", "character")],
+            fileExistsOnDisk: path => { probes++; return File.Exists(path); });
+        await vm.InitializeAsync();
+        var probesAfterPlanning = probes;
+        probesAfterPlanning.Should().BeGreaterThan(0, "sanity: planning consults the disk, so the counter can tell a re-plan");
+
+        vm.IgnoreFilesAlreadyInPlace = true;
+
+        // Synchronous view work from the plan already in hand: no awaited command, no disk probes.
+        FlattenNames(vm.SourceRoots).Should().NotContain("settled.safetensors");
+        vm.PreviewSummary.Should().Contain("(hidden)");
+        probes.Should().Be(probesAfterPlanning, "hiding settled rows is a view change, not a re-plan");
+    }
+
     /// <summary>One curated Lightning folder (placeholder row, unguessable name) plus one ordinary
     /// mover, so exclusion is visible in the plan, the trees and the summary.</summary>
     private InstalledModelFile[] LightningLibrary()

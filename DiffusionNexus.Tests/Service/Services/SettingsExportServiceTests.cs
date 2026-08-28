@@ -300,16 +300,17 @@ public class SettingsExportServiceTests : IDisposable
 
     /// <summary>
     /// The file's own rule: bump <c>CurrentVersion</c> whenever fields are added to
-    /// <c>SettingsExportData</c>. v3 is the metadata-sync retry windows and thumbnail concurrency.
-    /// Without the bump a v2 file written before that feature and one written after it are
+    /// <c>SettingsExportData</c>. v3 is the metadata-sync retry windows and thumbnail concurrency;
+    /// v4 is the LoRA sorter's excluded-folders list.
+    /// Without the bump a file written before a feature and one written after it are
     /// indistinguishable, so no later migration can tell "absent because it predates the feature"
     /// from "the user chose nothing" — which is exactly the distinction the v1→v2 backup split
     /// needed and got.
     /// </summary>
     [Fact]
-    public void TheSchemaVersionIsBumpedForTheMetadataSyncFields()
+    public void TheSchemaVersionIsBumpedForTheSorterExclusionField()
     {
-        SettingsExportSchema.CurrentVersion.Should().Be(3);
+        SettingsExportSchema.CurrentVersion.Should().Be(4);
         SettingsExportSchema.MinSupportedVersion.Should().Be(1,
             "the bump costs nothing on the way in — v1 and v2 files still import");
     }

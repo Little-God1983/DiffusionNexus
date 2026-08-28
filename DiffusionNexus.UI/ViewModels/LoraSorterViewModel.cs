@@ -67,6 +67,15 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     private readonly Func<CancellationToken, Task<IReadOnlyList<InstalledModelFile>>>? _loadCachedFiles;
 
     private LoraSortPlan? _lastPlan;
+
+    /// <summary>The inputs <see cref="BuildPreviewTree"/> was last given, kept beside
+    /// <see cref="_lastPlan"/> so a view-only toggle (hide-settled) can redraw the trees from the
+    /// plan in hand instead of re-planning. Cleared together with the plan — a null plan makes
+    /// them unreachable, but leaving them behind invites exactly the stale-state trap
+    /// <see cref="DisarmPlan"/> documents.</summary>
+    private string? _lastTargetRoot;
+    private IReadOnlyList<SortCandidate> _lastExcluded = [];
+
     private CancellationTokenSource? _sortCts;
 
     /// <summary>Set when the post-run empty-folder cleanup failed, so the result banner can say so
@@ -360,10 +369,24 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         _ = RecomputePreviewAsync();
     }
 
+    /// <summary>
+    /// View-only: nothing but <see cref="BuildPreviewTree"/> and the summary line reads this flag,
+    /// so the trees are redrawn from the plan already in hand rather than re-planned —
+    /// <c>BuildPlan</c> hashes on collisions and can run for minutes on a large library. Reusing
+    /// the same plan reference also keeps an armed Start armed, for the reason
+    /// <see cref="OnDeleteEmptySourceFoldersChanged"/> spells out. The recompute fallback covers
+    /// the states with no plan to redraw from (nothing previewed yet, or a disarmed one).
+    /// </summary>
     partial void OnIgnoreFilesAlreadyInPlaceChanged(bool value)
     {
         ClearRunResultBanner();
         if (_isInitializing) return;
+        if (_lastPlan is { } plan && _lastTargetRoot is { } targetRoot)
+        {
+            BuildPreviewTree(plan, targetRoot, _lastExcluded);
+            UpdatePreviewSummary(plan, _lastExcluded.Count);
+            return;
+        }
         _ = RecomputePreviewAsync();
     }
 
@@ -519,6 +542,8 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             // _lastPlan goes with the rest: leaving it behind is the same stale-armed-Start trap
             // DisarmPlan exists for.
             _lastPlan = null;
+            _lastTargetRoot = null;
+            _lastExcluded = [];
             PreviewRoots.Clear();
             SourceRoots.Clear();
             ReapplyPreviewFilters();
@@ -685,12 +710,13 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             if (!IsCurrentPass()) return;
 
             _lastPlan = plan;
+            _lastTargetRoot = targetRoot;
+            _lastExcluded = excludedCandidates;
 
             BuildPreviewTree(plan, targetRoot, excludedCandidates);
 
             TransferCount = plan.TransferCount;
-            PreviewSummary = $"✓ {plan.TransferCount} files will {(IsMove ? "move" : "copy")}   ·   {plan.AlreadyInPlaceCount} already in place{(IgnoreFilesAlreadyInPlace ? " (hidden)" : string.Empty)}   ·   ✎ {plan.RenamedCount} auto-renamed · {plan.SkippedDuplicateCount} duplicates skipped"
-                + (excludedCandidates.Count > 0 ? $"   ·   {excludedCandidates.Count} excluded" : string.Empty);
+            UpdatePreviewSummary(plan, excludedCandidates.Count);
 
             ApplyDiskPreflight(plan, targetRoot);
 
@@ -790,6 +816,8 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     private void DisarmPlan(string reason, bool keepTree = false)
     {
         _lastPlan = null;
+        _lastTargetRoot = null;
+        _lastExcluded = [];
         TransferCount = 0;
         HasEnoughSpace = false;
         if (!keepTree)
@@ -1446,7 +1474,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     private async Task RemoveExclusionAsync(string? path)
     {
         if (string.IsNullOrEmpty(path)) return;
-        var existing = ExcludedFolders.FirstOrDefault(f => string.Equals(f, path, StringComparison.OrdinalIgnoreCase));
+        var existing = ExcludedFolders.FirstOrDefault(f => PathsEqual(f, path));
         if (existing is null) return;
         ExcludedFolders.Remove(existing);
         await OnExclusionsChangedAsync();
@@ -1582,6 +1610,10 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         PreviewRoots.Clear();
         SourceRoots.Clear();
 
+        // Folders of the rows hide-settled drops, normalized — see the drop site below. Null on
+        // the common path (checkbox off), so a full tree pays nothing for it.
+        HashSet<string>? hiddenSettledDirs = null;
+
         for (var moveId = 0; moveId < plan.Moves.Count; moveId++)
         {
             var move = plan.Moves[moveId];
@@ -1599,7 +1631,16 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             // Dropped here rather than out of the plan: the plan is what Start runs and what the
             // history manifest records, and a settled file being in it is what makes it a no-op
             // rather than an omission.
-            if (IgnoreFilesAlreadyInPlace && move.Action == PlannedAction.AlreadyInPlace) continue;
+            if (IgnoreFilesAlreadyInPlace && move.Action == PlannedAction.AlreadyInPlace)
+            {
+                // The row is hidden, not gone: its folder chain is remembered so the exclusion
+                // roll-up below cannot mistake "every VISIBLE file here is excluded" for "every
+                // file here is". A settled file sits where it will stay, so one chain serves both
+                // trees.
+                AddDirectoryChain(hiddenSettledDirs ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                    Path.GetDirectoryName(move.Candidate.FilePath));
+                continue;
+            }
 
             AddFileNode(SourceRoots, sourceSide: true, moveId, move, identity,
                 root: plan.SourceRoot,
@@ -1651,11 +1692,37 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 
         AnnotateSourceFolders(SourceRoots);
         // After Annotate on purpose: an exclusion root's note overrides the generic "N files stay".
-        MarkExcludedFolders(SourceRoots, annotate: true);
-        MarkExcludedFolders(PreviewRoots, annotate: false);
+        MarkExcludedFolders(SourceRoots, annotate: true, hiddenSettledDirs);
+        MarkExcludedFolders(PreviewRoots, annotate: false, hiddenSettledDirs);
         SortTree(SourceRoots);
         SortTree(PreviewRoots);
         ReapplyPreviewFilters();
+    }
+
+    /// <summary>One sentence over the plan's counts, shared by the full recompute and the
+    /// view-only hide-settled redraw so the two can never word it differently.</summary>
+    private void UpdatePreviewSummary(LoraSortPlan plan, int excludedCount)
+        => PreviewSummary = $"✓ {plan.TransferCount} files will {(IsMove ? "move" : "copy")}   ·   {plan.AlreadyInPlaceCount} already in place{(IgnoreFilesAlreadyInPlace ? " (hidden)" : string.Empty)}   ·   ✎ {plan.RenamedCount} auto-renamed · {plan.SkippedDuplicateCount} duplicates skipped"
+            + (excludedCount > 0 ? $"   ·   {excludedCount} excluded" : string.Empty);
+
+    /// <summary>Adds <paramref name="directory"/> and every ancestor to <paramref name="dirs"/>,
+    /// normalized the way <see cref="MarkExcludedFolders"/> looks them up. Walking past the pane's
+    /// root is harmless — those ancestors are never asked about.</summary>
+    private static void AddDirectoryChain(HashSet<string> dirs, string? directory)
+    {
+        var current = directory;
+        while (!string.IsNullOrEmpty(current))
+        {
+            try
+            {
+                if (!dirs.Add(Path.TrimEndingDirectorySeparator(Path.GetFullPath(current)))) return;
+            }
+            catch (ArgumentException)
+            {
+                return;
+            }
+            current = Path.GetDirectoryName(current);
+        }
     }
 
     /// <summary>Whether this file sits under any folder on the exclusion list.</summary>
@@ -1680,43 +1747,72 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// folder is never mis-dimmed. Exclusion roots (the paths literally on the list) get the note
     /// and the "Sort this folder again" menu; their subfolders are excluded but not un-excludable.
     /// </summary>
-    private void MarkExcludedFolders(IEnumerable<SortPreviewNodeViewModel> nodes, bool annotate)
+    /// <param name="dirsWithHiddenFiles">Folder chains of the settled rows hide-settled dropped
+    /// from the tree, or null when nothing was dropped. A folder on this list still holds a real,
+    /// merely hidden file, so "every file here is excluded" is not true of it — without this the
+    /// checkbox dimmed such folders and took away their "Never sort this folder" menu.</param>
+    private void MarkExcludedFolders(
+        IEnumerable<SortPreviewNodeViewModel> nodes, bool annotate, HashSet<string>? dirsWithHiddenFiles)
     {
         foreach (var node in nodes)
         {
             if (node.IsFile) continue;
 
             var files = node.SelfAndDescendants().Where(n => n.IsFile).ToList();
-            node.IsExcluded = files.Count > 0 && files.All(f => f.IsExcluded);
+            node.IsExcluded = files.Count > 0 && files.All(f => f.IsExcluded)
+                              && !HoldsHiddenFile(dirsWithHiddenFiles, node.FullPath);
             if (node.IsExcluded && node.FullPath is { Length: > 0 } path && IsExclusionRootPath(path))
             {
                 node.IsExclusionRoot = true;
                 if (annotate) node.Note = "excluded — won't be sorted";
             }
 
-            MarkExcludedFolders(node.Children, annotate);
+            MarkExcludedFolders(node.Children, annotate, dirsWithHiddenFiles);
         }
     }
 
-    /// <summary>Whether this exact folder is on the exclusion list — trailing separators and
-    /// casing forgiven, because half the comparands come back from a JSON round-trip.</summary>
-    private bool IsExclusionRootPath(string path)
+    private static bool HoldsHiddenFile(HashSet<string>? dirsWithHiddenFiles, string? path)
     {
-        foreach (var folder in ExcludedFolders)
+        if (dirsWithHiddenFiles is null || string.IsNullOrEmpty(path)) return false;
+        try
         {
-            try
-            {
-                if (string.Equals(
-                        Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)),
-                        Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder)),
-                        StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-            }
-            catch (ArgumentException) { }
+            return dirsWithHiddenFiles.Contains(Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)));
         }
-        return false;
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Whether this exact folder is on the exclusion list — spelling forgiven, see
+    /// <see cref="PathsEqual"/>.</summary>
+    private bool IsExclusionRootPath(string path)
+        => ExcludedFolders.Any(folder => PathsEqual(path, folder));
+
+    /// <summary>
+    /// Path equality with trailing separators, casing and separator spelling forgiven, because the
+    /// comparands come from different worlds: the tree's <c>Path.Combine</c>-built spelling on one
+    /// side, a JSON round-trip of whatever spelling the source was registered under on the other.
+    /// Everything that answers "is this stored entry that folder" must use this one predicate —
+    /// the un-exclude menu item was shown by the normalized comparison and then acted through a
+    /// raw string compare, which made it a silent no-op for any equivalent-but-different spelling.
+    /// </summary>
+    private static bool PathsEqual(string left, string right)
+    {
+        try
+        {
+            return string.Equals(
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)),
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch (ArgumentException)
+        {
+            // A malformed entry cannot be normalized; the literal comparison is the best that is
+            // left, and it is exactly what lets the rail's ✕ (which passes the stored string
+            // itself) still remove it.
+            return string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+        }
     }
 
     /// <summary>
