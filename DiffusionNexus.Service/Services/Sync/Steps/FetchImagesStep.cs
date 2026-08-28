@@ -40,7 +40,11 @@ public sealed class FetchImagesStep : ISyncStep
     /// <inheritdoc />
     public string Description => "Fetch image records";
 
-    /// <summary>One version call plus the client's pacing, per version of the model.</summary>
+    /// <summary>
+    /// One model call for the whole group, plus one version call and the client's pacing for each
+    /// version the model page did not describe. Left at the per-version estimate: it is a ceiling
+    /// on the rare fallback case, not a claim about the (now cheaper) happy path.
+    /// </summary>
     public TimeSpan EstimatedPerItem => TimeSpan.FromSeconds(1.6);
 
     /// <inheritdoc />

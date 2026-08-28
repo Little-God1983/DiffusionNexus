@@ -333,9 +333,20 @@ public sealed class CivitaiMetadataApplier
         CancellationToken ct = default)
     {
         var results = new Dictionary<int, int?>();
+        if (versions.Count == 0) return results;
+
         var civitaiModel = await _client.GetModelAsync(civitaiModelId, apiKey, ct);
 
-        foreach (var (modelId, versionId, civitaiVersionId) in versions)
+        // Every candidate here shares one local model — FetchImagesStep.SelectAsync groups its
+        // versions by ModelId before calling in — so the graph is loaded once for the whole group,
+        // not once per version as it was before this fix. A gone model row is not "no answer" for a
+        // version the page DID describe: it falls to the same 0 a single missing version row got,
+        // both before and after this change.
+        var dbModel = await uow.Models.GetByIdWithIncludesAsync(versions[0].ModelId, ct);
+
+        var anyAdded = false;
+
+        foreach (var (_, versionId, civitaiVersionId) in versions)
         {
             ct.ThrowIfCancellationRequested();
 
@@ -346,7 +357,6 @@ public sealed class CivitaiMetadataApplier
                 continue;
             }
 
-            var dbModel = await uow.Models.GetByIdWithIncludesAsync(modelId, ct);
             var dbVersion = dbModel?.Versions.FirstOrDefault(v => v.Id == versionId);
             if (dbVersion is null)
             {
@@ -355,9 +365,14 @@ public sealed class CivitaiMetadataApplier
             }
 
             var added = AppendImages(dbVersion, civitaiVersion.Images);
-            if (added > 0) await uow.SaveChangesAsync(ct);
+            if (added > 0) anyAdded = true;
             results[civitaiVersionId] = added;
         }
+
+        // One save for the whole group rather than one per version that added something — the
+        // per-version counts above are already computed from the in-memory graph, so batching the
+        // write changes nothing about what is returned, only how many round-trips it costs.
+        if (anyAdded) await uow.SaveChangesAsync(ct);
 
         return results;
     }
