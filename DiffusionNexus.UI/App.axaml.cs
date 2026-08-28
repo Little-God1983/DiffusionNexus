@@ -855,36 +855,9 @@ public partial class App : Application
                 sp.GetRequiredService<IFeatureBackendRouter>(),
                 FeatureRegistry.GetRequirements));
 
-        // The one door to the Civitai API. Everything below is a singleton because the pacing
-        // timestamp, the 429 cooldown and the cache are the process's single opinion about
-        // Civitai — a second copy of any of them would pace, cool down and cache nothing.
-        services.AddSingleton<Civitai.CivitaiRateLimitCooldown>();
-        services.AddSingleton<Civitai.CivitaiResponseCache>();
-        services.AddSingleton<Civitai.ICivitaiApiCache>(sp => sp.GetRequiredService<Civitai.CivitaiResponseCache>());
-        services.AddSingleton<Civitai.ICivitaiRequestPacer>(_ => new Civitai.CivitaiRequestPacer());
-
-        // The raw client, told to report every 429 to the shared cooldown the moment it sees one.
-        services.AddSingleton(sp => new Civitai.CivitaiClient(
-            new HttpClient(),
-            disposeHttpClient: true,
-            rateLimitObserver: sp.GetRequiredService<Civitai.CivitaiRateLimitCooldown>()));
-
-        // Default lane: a user is waiting. Resolved by the browser, the detail panel, the
-        // dialogs, the download path, the waitlist, the sorter and the pipeline installer.
-        services.AddSingleton<Civitai.ICivitaiClient>(sp => new Civitai.CivitaiApiGateway(
-            sp.GetRequiredService<Civitai.CivitaiClient>(),
-            sp.GetRequiredService<Civitai.ICivitaiRequestPacer>(),
-            sp.GetRequiredService<Civitai.CivitaiRateLimitCooldown>(),
-            sp.GetRequiredService<Civitai.CivitaiResponseCache>(),
-            Civitai.CivitaiCallLane.Interactive));
-
-        // Background lane: nobody is waiting. Library sync and the visible-tile update sweep.
-        services.AddKeyedSingleton<Civitai.ICivitaiClient>("background", (sp, _) => new Civitai.CivitaiApiGateway(
-            sp.GetRequiredService<Civitai.CivitaiClient>(),
-            sp.GetRequiredService<Civitai.ICivitaiRequestPacer>(),
-            sp.GetRequiredService<Civitai.CivitaiRateLimitCooldown>(),
-            sp.GetRequiredService<Civitai.CivitaiResponseCache>(),
-            Civitai.CivitaiCallLane.Background));
+        // The one door to the Civitai API — see CivitaiGatewayServiceCollectionExtensions for the
+        // sharing invariant this establishes (one pacer, one cooldown, one cache behind both lanes).
+        services.AddCivitaiGateway();
 
         // Civitai base-model catalog (singleton - in-memory + on-disk cache, falls back to bundled snapshot)
         services.AddSingleton<Civitai.ICivitaiBaseModelCatalog, Civitai.CivitaiBaseModelCatalog>();

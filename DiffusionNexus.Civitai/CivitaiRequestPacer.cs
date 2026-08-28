@@ -99,18 +99,3 @@ public sealed class CivitaiRequestPacer : ICivitaiRequestPacer
         }
     }
 }
-
-/// <summary>
-/// A pacer that never waits — for tests and for the applier's optional-dependency default, where
-/// no request is actually leaving the machine.
-/// </summary>
-public sealed class NoCivitaiRequestPacer : ICivitaiRequestPacer
-{
-    public static readonly NoCivitaiRequestPacer Instance = new();
-
-    /// <inheritdoc />
-    public Task WaitAsync(CancellationToken ct = default) => Task.CompletedTask;
-
-    /// <inheritdoc />
-    public Task WaitAsync(TimeSpan minInterval, CancellationToken ct = default) => Task.CompletedTask;
-}

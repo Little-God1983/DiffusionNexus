@@ -145,6 +145,28 @@ public sealed class FetchTagsStepTests : IDisposable
     private static SyncOptions Options(bool force = false) =>
         new(new HashSet<SyncStepKind> { SyncStepKind.FetchTags }, ForceTags: force);
 
+    /// <summary>
+    /// The tags step makes exactly one Civitai model fetch per item. Pacing itself is the
+    /// gateway's job now (verified in <c>CivitaiApiGatewayTests</c>); what this step still owns
+    /// is making exactly one call, not zero and not a call per tag.
+    /// </summary>
+    [Fact]
+    public async Task Execute_MakesOneCivitaiCallPerItem()
+    {
+        await SeedAsync("paced", civitaiId: 101);
+
+        var client = new Mock<ICivitaiClient>();
+        client.Setup(x => x.GetModelAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(NewCivitaiModel(tags: ["style"]));
+
+        var step = new FetchTagsStep(Scopes, new CivitaiMetadataApplier(client.Object, logger: null));
+
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        await step.ExecuteOneAsync(items.Single(), apiKey: null, CancellationToken.None);
+
+        client.Verify(c => c.GetModelAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     [Fact]
     public async Task Select_ReturnsOnlyNeverChecked_UnlessForced()
     {
