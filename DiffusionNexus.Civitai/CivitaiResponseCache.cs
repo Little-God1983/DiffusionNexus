@@ -110,7 +110,10 @@ public sealed class CivitaiResponseCache : ICivitaiApiCache
     /// joins an in-flight fetch (rather than starting it) does not inherit the leader's token or
     /// its cancellation — <see cref="Task.WaitAsync(CancellationToken)"/> lets a joiner abandon its
     /// own wait without tearing down the fetch other callers, including the leader, are still
-    /// waiting on.
+    /// waiting on. Removing the <c>_inFlight</c> entry is likewise owned by the fetch itself (see
+    /// <see cref="RunAsync{T}"/>'s <c>finally</c>), not by this method — a caller cancelling its own
+    /// <c>WaitAsync(ct)</c> must not evict an entry a still-running fetch, and every other caller
+    /// waiting on it, still depends on.
     /// </remarks>
     public async Task<T?> GetOrAddAsync<T>(string key, TimeSpan ttl, Func<Task<T?>> factory, CancellationToken ct = default)
         where T : class
@@ -121,39 +124,66 @@ public sealed class CivitaiResponseCache : ICivitaiApiCache
 
         // ConcurrentDictionary.GetOrAdd can invoke its value factory on more than one racing
         // thread even though only one result is ever stored — so the value factory here must not
-        // do any work itself. It only constructs a Lazy<Task<object?>>, which is cheap and starts
-        // nothing. Whichever Lazy instance GetOrAdd ends up publishing is decided atomically; only
-        // that one is ever forced (via .Value, below), so factory() runs exactly once even under a
-        // genuine race, and every caller — winner and losers alike — awaits the same task.
-        var lazy = _inFlight.GetOrAdd(key, _ => new Lazy<Task<object?>>(
-            () => RunAsync(key, ttl, factory, generation), LazyThreadSafetyMode.ExecutionAndPublication));
+        // do any work itself beyond constructing the Lazy. The Lazy captures a reference to
+        // ITSELF (the `self` local, assigned before the factory can possibly be invoked, since
+        // Lazy is — by definition — not evaluated until something later reads .Value) so that
+        // RunAsync can remove its own _inFlight entry without racing whichever caller happens to
+        // trigger the fetch first. Whichever Lazy instance GetOrAdd ends up publishing is decided
+        // atomically; only that one is ever forced (via .Value, below), so factory() runs exactly
+        // once even under a genuine race, and every caller — winner and losers alike — awaits the
+        // same task.
+        var lazy = _inFlight.GetOrAdd(key, ignoredKey =>
+        {
+            Lazy<Task<object?>>? self = null;
+            self = new Lazy<Task<object?>>(() =>
+            {
+                var task = RunAsync(key, ttl, factory, generation, self!);
+
+                // The fetch can outlive every caller (each caller only owns its own WaitAsync(ct)
+                // wait, per the remark above) and can still fault after the last one has abandoned
+                // it — a rate limit, a DNS blip, a bad JSON shape. Touch .Exception so a fault
+                // nobody is left to await does not surface as an UNOBSERVED TASK EXCEPTION at GC
+                // time (App.axaml.cs logs those as errors); it should stay a quiet, uncached miss.
+                task.ContinueWith(observeTask => { _ = observeTask.Exception; },
+                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
+
+                return task;
+            }, LazyThreadSafetyMode.ExecutionAndPublication);
+            return self;
+        });
+
+        return (T?)await lazy.Value.WaitAsync(ct).ConfigureAwait(false);
+    }
+
+    private async Task<object?> RunAsync<T>(string key, TimeSpan ttl, Func<Task<T?>> factory, long generation,
+        Lazy<Task<object?>> self)
+        where T : class
+    {
         try
         {
-            return (T?)await lazy.Value.WaitAsync(ct).ConfigureAwait(false);
+            var value = await factory().ConfigureAwait(false);
+
+            // A Clear() while this fetch was in flight (an API key change, an explicit reset) means
+            // the world moved on before this answer arrived. Writing it now would put a stale value
+            // back into a store that was just emptied specifically to get rid of stale values.
+            if (Interlocked.Read(ref _generation) == generation)
+            {
+                var now = _clock();
+                var sequence = Interlocked.Increment(ref _sequence);
+                _entries[key] = new Entry(value, now + (long)ttl.TotalMilliseconds, sequence);
+                Trim();
+            }
+
+            return value;
         }
         finally
         {
-            _inFlight.TryRemove(new KeyValuePair<string, Lazy<Task<object?>>>(key, lazy));
+            // Owned by the fetch, not by any individual awaiter (see the remark on
+            // GetOrAddAsync). The KeyValuePair overload only removes THIS fetch's own entry, so a
+            // newer fetch for the same key that has since replaced it (e.g. after a Clear(),
+            // whose blanket _inFlight.Clear() may already have dropped this one) is left alone.
+            _inFlight.TryRemove(new KeyValuePair<string, Lazy<Task<object?>>>(key, self));
         }
-    }
-
-    private async Task<object?> RunAsync<T>(string key, TimeSpan ttl, Func<Task<T?>> factory, long generation)
-        where T : class
-    {
-        var value = await factory().ConfigureAwait(false);
-
-        // A Clear() while this fetch was in flight (an API key change, an explicit reset) means
-        // the world moved on before this answer arrived. Writing it now would put a stale value
-        // back into a store that was just emptied specifically to get rid of stale values.
-        if (Interlocked.Read(ref _generation) == generation)
-        {
-            var now = _clock();
-            var sequence = Interlocked.Increment(ref _sequence);
-            _entries[key] = new Entry(value, now + (long)ttl.TotalMilliseconds, sequence);
-            Trim();
-        }
-
-        return value;
     }
 
     private bool TryGet(string key, out object? value)

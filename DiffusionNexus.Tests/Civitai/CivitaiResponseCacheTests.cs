@@ -218,4 +218,81 @@ public class CivitaiResponseCacheTests
         (await first).Should().Be("stale");
         firstCalls.Should().Be(1);
     }
+
+    [Fact]
+    public async Task ACancelledAwaiter_DoesNotEvictALiveInFlightEntry()
+    {
+        // Regression test for finding 1 of the gateway fix-wave review. The old code removed the
+        // _inFlight entry in GetOrAddAsync's own `finally`, which runs for EVERY awaiter — including
+        // one whose WaitAsync(ct) just threw from cancellation, even while the shared fetch it
+        // started is still running. The next caller for that key would then miss TryGet (nothing
+        // written yet), miss _inFlight too (just evicted), and start a SECOND concurrent fetch for
+        // the same key — exactly the duplicate-request bug single-flight exists to prevent. This is
+        // routine, not exotic, in the cancel-heavy paths this PR targets: an update checker starting
+        // a fetch and then abandoning it on the next pagination/filter change.
+        var cache = Create();
+        var calls = 0;
+        var release = new TaskCompletionSource<string?>();
+        Task<string?> Factory() { Interlocked.Increment(ref calls); return release.Task; }
+
+        using var cts = new CancellationTokenSource();
+        var cancelling = cache.GetOrAddAsync(CivitaiResponseCache.ModelKey(7), Ttl, Factory, cts.Token);
+        cts.Cancel();
+        var cancelAct = async () => await cancelling;
+        await cancelAct.Should().ThrowAsync<OperationCanceledException>();
+
+        // A third caller arrives while the fetch the (now-cancelled) first caller started is still
+        // running. If the cancelled caller's `finally` had removed the still-live in-flight entry,
+        // this call would find nothing in either _entries or _inFlight and start a duplicate fetch.
+        var third = cache.GetOrAddAsync(CivitaiResponseCache.ModelKey(7), Ttl, Factory);
+
+        release.SetResult("value");
+        (await third).Should().Be("value");
+        calls.Should().Be(1, "the still-live in-flight fetch must be joined, not duplicated");
+    }
+
+    [Fact]
+    public async Task AllCallersAbandoning_ThenTheFetchFaulting_DoesNotRaiseAnUnobservedTaskException()
+    {
+        // Regression test for finding 6. A detached fetch (see CivitaiApiGateway.SendAsync) can
+        // outlive every caller — each caller only ever abandons its OWN WaitAsync(ct) wait, per the
+        // single-flight contract, so the shared Lazy<Task> can fault after the last one has left.
+        // Before this fix, nothing ever touched that task's .Exception in that case, so the fault
+        // reached TaskScheduler.UnobservedTaskException at GC time and was logged as an ERROR for
+        // something as routine as a 429 or a DNS blip.
+        var cache = Create();
+        var tcs = new TaskCompletionSource<string?>();
+        Task<string?> Factory() => tcs.Task;
+
+        using var cts = new CancellationTokenSource();
+        var call = cache.GetOrAddAsync(CivitaiResponseCache.ModelKey(7), Ttl, Factory, cts.Token);
+        cts.Cancel();
+        var act = async () => await call;
+        await act.Should().ThrowAsync<OperationCanceledException>();
+
+        var unobserved = false;
+        void Handler(object? _, UnobservedTaskExceptionEventArgs e)
+        {
+            unobserved = true;
+            e.SetObserved();
+        }
+
+        TaskScheduler.UnobservedTaskException += Handler;
+        try
+        {
+            tcs.SetException(new InvalidOperationException("boom"));
+
+            // The fault-observing continuation runs synchronously off SetException, but give the
+            // finalizer a fair shot at anything that slipped through before asserting.
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+        }
+        finally
+        {
+            TaskScheduler.UnobservedTaskException -= Handler;
+        }
+
+        unobserved.Should().BeFalse("an abandoned-then-faulted fetch should stay a quiet cache miss, not an UNOBSERVED TASK EXCEPTION");
+    }
 }
