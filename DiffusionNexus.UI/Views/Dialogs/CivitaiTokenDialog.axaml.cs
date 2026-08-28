@@ -1,11 +1,13 @@
 using System.Diagnostics;
+using System.Net;
 using System.Net.Http;
-using System.Net.Http.Headers;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
+using DiffusionNexus.Civitai;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace DiffusionNexus.UI.Views.Dialogs;
 
@@ -20,24 +22,6 @@ public partial class CivitaiTokenDialog : Window
     /// </summary>
     public static readonly StyledProperty<string> TokenTextProperty =
         AvaloniaProperty.Register<CivitaiTokenDialog, string>(nameof(TokenText), defaultValue: string.Empty);
-
-    /// <summary>
-    /// One client for the lifetime of the process. A per-operation HttpClient discards the
-    /// connection pool and the TLS session every time, which is socket churn against a host we
-    /// are already asking to be patient with us.
-    /// </summary>
-    private static readonly HttpClient s_validateHttp = CreateValidateHttpClient();
-
-    private static HttpClient CreateValidateHttpClient()
-    {
-        var client = new HttpClient
-        {
-            BaseAddress = new Uri("https://civitai.com/api/v1/"),
-            Timeout = TimeSpan.FromSeconds(15)
-        };
-        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        return client;
-    }
 
     public CivitaiTokenDialog()
     {
@@ -116,25 +100,43 @@ public partial class CivitaiTokenDialog : Window
     /// Validates the token by making a lightweight authenticated request to Civitai.
     /// Uses <c>GET /api/v1/models?limit=1</c> which returns 401 for invalid tokens.
     /// </summary>
+    /// <remarks>
+    /// Routed through the shared <see cref="ICivitaiClient"/> gateway (the interactive lane) rather
+    /// than a private <c>HttpClient</c> — this was the one call site left hammering Civitai
+    /// unpaced and invisible to the shared 429 cooldown after <c>CivitaiApiGateway</c> became the
+    /// one door everywhere else. The just-typed <paramref name="token"/> is passed as the call's
+    /// <c>apiKey</c> argument, NOT read from whatever key is currently configured/saved — this
+    /// dialog exists specifically to test a token before it is saved.
+    /// </remarks>
     private static async Task<(bool IsValid, string? ErrorMessage)> ValidateTokenAsync(string token)
     {
+        var client = App.Services?.GetService<ICivitaiClient>();
+        if (client is null)
+            return (false, "Could not reach Civitai: the API client is not available.");
+
+        // The gateway's cache never keys by apiKey (an authenticated and an anonymous request for
+        // the same public page return the same answer), so a "limit=1" search cached moments ago
+        // under a different key — or under this same token from a previous click — could otherwise
+        // hand back a stale answer instead of actually asking Civitai about THIS token right now.
+        // Clearing first guarantees this call is a real round-trip. It also empties the shared
+        // cache for every other surface (browser, detail panel, sync), same as a normal saved-key
+        // change already does via CivitaiResponseCache.NoteApiKey — acceptable here because
+        // validating a token is a deliberate, infrequent, user-initiated action (typically while
+        // the cache is still empty, during onboarding), not something that happens mid-scroll.
+        if (client is ICivitaiApiCache cache) cache.Clear();
+
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, "models?limit=1");
-            request.Headers.TryAddWithoutValidation("Authorization", $"ApiKey {token}");
-
-            using var response = await s_validateHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
-
-            if (response.IsSuccessStatusCode)
-                return (true, null);
-
-            if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized
-                or System.Net.HttpStatusCode.Forbidden)
-            {
-                return (false, "Invalid API token. The token was rejected by Civitai (401/403).");
-            }
-
-            return (false, $"Civitai returned an unexpected status: {(int)response.StatusCode} {response.ReasonPhrase}");
+            await client.GetModelsAsync(new CivitaiModelsQuery { Limit = 1 }, apiKey: token);
+            return (true, null);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+        {
+            return (false, "Invalid API token. The token was rejected by Civitai (401/403).");
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode is { } status)
+        {
+            return (false, $"Civitai returned an unexpected status: {(int)status} {ex.Message}");
         }
         catch (TaskCanceledException)
         {
