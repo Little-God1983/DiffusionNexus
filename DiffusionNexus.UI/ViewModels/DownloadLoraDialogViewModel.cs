@@ -26,6 +26,13 @@ public partial class DownloadLoraDialogViewModel : ObservableObject
     private readonly IUnifiedLogger? _logger;
     private ICivitaiApiKeyProvider? _apiKeyProvider;
 
+    /// <summary>
+    /// One client for the lifetime of the process. A per-operation HttpClient discards the
+    /// connection pool and the TLS session every time, which is socket churn against a host we
+    /// are already asking to be patient with us.
+    /// </summary>
+    private static readonly HttpClient s_previewHttp = new() { Timeout = TimeSpan.FromSeconds(15) };
+
     [ObservableProperty]
     private string _urlText = string.Empty;
 
@@ -324,8 +331,7 @@ public partial class DownloadLoraDialogViewModel : ObservableObject
 
         try
         {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-            var data = await http.GetByteArrayAsync(imageUrl);
+            var data = await s_previewHttp.GetByteArrayAsync(imageUrl);
             if (data.Length == 0) return;
 
             await Dispatcher.UIThread.InvokeAsync(() =>

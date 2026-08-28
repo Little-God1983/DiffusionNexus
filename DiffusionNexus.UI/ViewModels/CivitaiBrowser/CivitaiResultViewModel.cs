@@ -21,6 +21,16 @@ public partial class CivitaiResultViewModel : ObservableObject
     private bool _showNsfwPreviews;
 
     /// <summary>
+    /// One client for the lifetime of the process. A per-operation HttpClient discards the
+    /// connection pool and the TLS session every time, which is socket churn against a host we
+    /// are already asking to be patient with us.
+    /// </summary>
+    private static readonly HttpClient s_imagePreviewHttp = new() { Timeout = TimeSpan.FromSeconds(15) };
+
+    /// <summary>Same rationale as <see cref="s_imagePreviewHttp"/>; longer timeout for the video stream.</summary>
+    private static readonly HttpClient s_videoPreviewHttp = new() { Timeout = TimeSpan.FromSeconds(60) };
+
+    /// <summary>
     /// Signals every in-flight preview download (image fetch, video stream,
     /// FFmpeg frame extraction) to stop. Call when the card is being dropped
     /// from the result set so a fresh search doesn't pile up 50+ zombie downloads.
@@ -345,8 +355,7 @@ public partial class CivitaiResultViewModel : ObservableObject
     {
         try
         {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-            using var response = await http.GetAsync(PreviewUrl!, HttpCompletionOption.ResponseHeadersRead, ct);
+            using var response = await s_imagePreviewHttp.GetAsync(PreviewUrl!, HttpCompletionOption.ResponseHeadersRead, ct);
 
             var contentType = response.Content.Headers.ContentType?.ToString() ?? "(none)";
 
@@ -462,8 +471,7 @@ public partial class CivitaiResultViewModel : ObservableObject
 
             // Stream the video URL to a temp file. Both the GET and the CopyToAsync
             // honor the token, so a cancel mid-download stops within ~one buffer fill.
-            using (var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) })
-            using (var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false))
+            using (var response = await s_videoPreviewHttp.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false))
             {
                 response.EnsureSuccessStatusCode();
                 await using var responseStream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);

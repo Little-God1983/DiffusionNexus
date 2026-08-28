@@ -21,6 +21,24 @@ public partial class CivitaiTokenDialog : Window
     public static readonly StyledProperty<string> TokenTextProperty =
         AvaloniaProperty.Register<CivitaiTokenDialog, string>(nameof(TokenText), defaultValue: string.Empty);
 
+    /// <summary>
+    /// One client for the lifetime of the process. A per-operation HttpClient discards the
+    /// connection pool and the TLS session every time, which is socket churn against a host we
+    /// are already asking to be patient with us.
+    /// </summary>
+    private static readonly HttpClient s_validateHttp = CreateValidateHttpClient();
+
+    private static HttpClient CreateValidateHttpClient()
+    {
+        var client = new HttpClient
+        {
+            BaseAddress = new Uri("https://civitai.com/api/v1/"),
+            Timeout = TimeSpan.FromSeconds(15)
+        };
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        return client;
+    }
+
     public CivitaiTokenDialog()
     {
         InitializeComponent();
@@ -102,18 +120,10 @@ public partial class CivitaiTokenDialog : Window
     {
         try
         {
-            using var httpClient = new HttpClient
-            {
-                BaseAddress = new Uri("https://civitai.com/api/v1/"),
-                Timeout = TimeSpan.FromSeconds(15)
-            };
-            httpClient.DefaultRequestHeaders.Accept.Add(
-                new MediaTypeWithQualityHeaderValue("application/json"));
-
             using var request = new HttpRequestMessage(HttpMethod.Get, "models?limit=1");
             request.Headers.TryAddWithoutValidation("Authorization", $"ApiKey {token}");
 
-            using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+            using var response = await s_validateHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
 
             if (response.IsSuccessStatusCode)
                 return (true, null);
