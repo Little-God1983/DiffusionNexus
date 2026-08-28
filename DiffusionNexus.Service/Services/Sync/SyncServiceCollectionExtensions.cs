@@ -1,3 +1,4 @@
+using DiffusionNexus.Civitai;
 using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Service.Services.Sync.Steps;

@@ -1,7 +1,7 @@
-using DiffusionNexus.Service.Services.Sync;
+using DiffusionNexus.Civitai;
 using FluentAssertions;
 
-namespace DiffusionNexus.Tests.Sync.Service;
+namespace DiffusionNexus.Tests.Civitai;
 
 /// <summary>
 /// Covers <see cref="CivitaiRequestPacer"/> — the per-request courtesy interval (R4). The clock
@@ -97,5 +97,23 @@ public sealed class CivitaiRequestPacerTests
         var act = () => pacer.WaitAsync(cts.Token);
 
         await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task WaitAsync_ExplicitInterval_MeasuresAgainstTheSharedTimestamp()
+    {
+        var now = 0L;
+        var waits = new List<TimeSpan>();
+        var pacer = new CivitaiRequestPacer(
+            minInterval: TimeSpan.FromMilliseconds(1500),
+            clock: () => now,
+            delay: (d, _) => { waits.Add(d); now += (long)d.TotalMilliseconds; return Task.CompletedTask; });
+
+        // A background call goes out at t=0, then an interactive caller asks for 750 ms spacing.
+        await pacer.WaitAsync(TimeSpan.FromMilliseconds(1500));
+        now += 100;
+        await pacer.WaitAsync(TimeSpan.FromMilliseconds(750));
+
+        waits.Should().ContainSingle().Which.Should().Be(TimeSpan.FromMilliseconds(650));
     }
 }

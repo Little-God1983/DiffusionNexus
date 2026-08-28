@@ -1,4 +1,4 @@
-namespace DiffusionNexus.Service.Services.Sync;
+namespace DiffusionNexus.Civitai;
 
 /// <summary>
 /// Keeps a minimum interval between two Civitai API requests, whoever makes them.
@@ -17,6 +17,14 @@ public interface ICivitaiRequestPacer
     /// interval since the previous call. Call it immediately before the request, never after.
     /// </summary>
     Task WaitAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// As <see cref="WaitAsync(CancellationToken)"/>, but with the caller's own minimum spacing.
+    /// The timestamp is shared: a background caller asking for 1.5 s and an interactive caller
+    /// asking for 750 ms both measure from whichever request went out last, so background work
+    /// spaces itself behind interactive work rather than alongside it.
+    /// </summary>
+    Task WaitAsync(TimeSpan minInterval, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -67,14 +75,17 @@ public sealed class CivitaiRequestPacer : ICivitaiRequestPacer
     }
 
     /// <inheritdoc />
-    public async Task WaitAsync(CancellationToken ct = default)
+    public Task WaitAsync(CancellationToken ct = default) => WaitAsync(_minInterval, ct);
+
+    /// <inheritdoc />
+    public async Task WaitAsync(TimeSpan minInterval, CancellationToken ct = default)
     {
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             if (_lastCall is { } last)
             {
-                var remaining = _minInterval - TimeSpan.FromMilliseconds(_clock() - last);
+                var remaining = minInterval - TimeSpan.FromMilliseconds(_clock() - last);
                 if (remaining > TimeSpan.Zero) await _delay(remaining, ct).ConfigureAwait(false);
             }
 
@@ -99,4 +110,7 @@ public sealed class NoCivitaiRequestPacer : ICivitaiRequestPacer
 
     /// <inheritdoc />
     public Task WaitAsync(CancellationToken ct = default) => Task.CompletedTask;
+
+    /// <inheritdoc />
+    public Task WaitAsync(TimeSpan minInterval, CancellationToken ct = default) => Task.CompletedTask;
 }
