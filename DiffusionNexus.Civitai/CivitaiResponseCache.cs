@@ -39,6 +39,17 @@ public sealed class CivitaiResponseCache : ICivitaiApiCache
     private readonly ConcurrentDictionary<string, Lazy<Task<object?>>> _inFlight = new(StringComparer.Ordinal);
     private long _sequence;
 
+    /// <summary>
+    /// Bumped by <see cref="Clear"/>. A fetch captures the generation in effect when it starts and
+    /// re-checks it before writing its answer back — a fetch that began in an older generation must
+    /// not resurrect an entry the newer generation's <see cref="Clear"/> just erased.
+    /// </summary>
+    private long _generation;
+
+    private readonly object _apiKeyLock = new();
+    private string? _lastApiKey;
+    private bool _apiKeySeen;
+
     /// <param name="capacity">Maximum entries before the oldest-inserted are evicted.</param>
     /// <param name="clock">Monotonic millisecond clock. Test seam.</param>
     public CivitaiResponseCache(int capacity = 1000, Func<long>? clock = null)
@@ -54,14 +65,44 @@ public sealed class CivitaiResponseCache : ICivitaiApiCache
     public static string SearchKey(string queryString) => $"search:{queryString}";
 
     /// <summary>
+    /// Records the API key a caller is about to use. Lives here — not on whichever caller happens
+    /// to invoke it — because the cache is the shared object multiple lanes read from; tracking
+    /// the last-seen key anywhere else lets one lane clear on a change the other lane has already
+    /// accounted for, or miss a change the other lane made. Cache keys deliberately omit the API
+    /// key — an authenticated and an anonymous request for the same public model return the same
+    /// page, and keying by secret would halve the hit rate for nothing — so what must not happen
+    /// is an anonymous answer being served to a caller that has since supplied a key (gated models
+    /// answer differently). A change of key therefore empties the store.
+    /// </summary>
+    public void NoteApiKey(string? apiKey)
+    {
+        lock (_apiKeyLock)
+        {
+            if (_apiKeySeen && string.Equals(_lastApiKey, apiKey, StringComparison.Ordinal)) return;
+            if (_apiKeySeen) Clear();
+            _lastApiKey = apiKey;
+            _apiKeySeen = true;
+        }
+    }
+
+    /// <summary>
     /// Returns the cached value for <paramref name="key"/>, or awaits <paramref name="factory"/>
     /// once and caches its result. A <c>null</c> result IS cached — a 404 is an answer. An
     /// exception is not: a transient failure must not become a fifteen-minute one.
     /// </summary>
-    public async Task<T?> GetOrAddAsync<T>(string key, TimeSpan ttl, Func<Task<T?>> factory)
+    /// <remarks>
+    /// <paramref name="ct"/> governs only THIS caller's wait on the shared result. A caller that
+    /// joins an in-flight fetch (rather than starting it) does not inherit the leader's token or
+    /// its cancellation — <see cref="Task.WaitAsync(CancellationToken)"/> lets a joiner abandon its
+    /// own wait without tearing down the fetch other callers, including the leader, are still
+    /// waiting on.
+    /// </remarks>
+    public async Task<T?> GetOrAddAsync<T>(string key, TimeSpan ttl, Func<Task<T?>> factory, CancellationToken ct = default)
         where T : class
     {
         if (TryGet(key, out var cached)) return (T?)cached;
+
+        var generation = Interlocked.Read(ref _generation);
 
         // ConcurrentDictionary.GetOrAdd can invoke its value factory on more than one racing
         // thread even though only one result is ever stored — so the value factory here must not
@@ -70,10 +111,10 @@ public sealed class CivitaiResponseCache : ICivitaiApiCache
         // that one is ever forced (via .Value, below), so factory() runs exactly once even under a
         // genuine race, and every caller — winner and losers alike — awaits the same task.
         var lazy = _inFlight.GetOrAdd(key, _ => new Lazy<Task<object?>>(
-            () => RunAsync(key, ttl, factory), LazyThreadSafetyMode.ExecutionAndPublication));
+            () => RunAsync(key, ttl, factory, generation), LazyThreadSafetyMode.ExecutionAndPublication));
         try
         {
-            return (T?)await lazy.Value.ConfigureAwait(false);
+            return (T?)await lazy.Value.WaitAsync(ct).ConfigureAwait(false);
         }
         finally
         {
@@ -81,15 +122,22 @@ public sealed class CivitaiResponseCache : ICivitaiApiCache
         }
     }
 
-    private async Task<object?> RunAsync<T>(string key, TimeSpan ttl, Func<Task<T?>> factory)
+    private async Task<object?> RunAsync<T>(string key, TimeSpan ttl, Func<Task<T?>> factory, long generation)
         where T : class
     {
         var value = await factory().ConfigureAwait(false);
 
-        var now = _clock();
-        var sequence = Interlocked.Increment(ref _sequence);
-        _entries[key] = new Entry(value, now + (long)ttl.TotalMilliseconds, sequence);
-        Trim();
+        // A Clear() while this fetch was in flight (an API key change, an explicit reset) means
+        // the world moved on before this answer arrived. Writing it now would put a stale value
+        // back into a store that was just emptied specifically to get rid of stale values.
+        if (Interlocked.Read(ref _generation) == generation)
+        {
+            var now = _clock();
+            var sequence = Interlocked.Increment(ref _sequence);
+            _entries[key] = new Entry(value, now + (long)ttl.TotalMilliseconds, sequence);
+            Trim();
+        }
+
         return value;
     }
 
@@ -135,5 +183,17 @@ public sealed class CivitaiResponseCache : ICivitaiApiCache
     public void InvalidateVersion(int modelVersionId) => _entries.TryRemove(VersionKey(modelVersionId), out _);
 
     /// <inheritdoc />
-    public void Clear() => _entries.Clear();
+    /// <remarks>
+    /// Bumps the generation before clearing so any fetch already in flight — whose result has not
+    /// been written yet — is stamped as stale and will not repopulate the store it started
+    /// against. In-flight entries are dropped too: a caller that arrives after this Clear() must
+    /// start its own fetch (able to see whatever changed, e.g. a new API key) rather than join a
+    /// fetch that began before the change and carries the old answer.
+    /// </remarks>
+    public void Clear()
+    {
+        Interlocked.Increment(ref _generation);
+        _entries.Clear();
+        _inFlight.Clear();
+    }
 }

@@ -230,4 +230,44 @@ public class CivitaiApiGatewayTests
 
         inner.HashCalls.Should().Be(1);
     }
+
+    [Fact]
+    public async Task ACacheHit_CostsNoPacingSlot()
+    {
+        // If a refactor ever hoisted the cooldown/pacer waits outside the cache factory (so they
+        // ran before the cache lookup instead of only on an actual fetch), every existing cache
+        // test would still pass — they only count calls into the inner client. This is the test
+        // that would catch it: a cache hit must not consume the pacer's timestamp at all, so two
+        // calls for the same id record only the ONE wait that separates the two DISTINCT fetches,
+        // not one wait per call.
+        var (interactive, _, _, _) = CreateBoth();
+
+        await interactive.GetModelAsync(1);       // fetch 1: no prior call, no wait recorded
+        await interactive.GetModelAsync(1);        // cache hit: must record no wait
+        await interactive.GetModelAsync(2);        // fetch 2: distinct id, must record exactly one wait
+
+        _waits.Should().ContainSingle().Which.Should().Be(TimeSpan.FromMilliseconds(750));
+    }
+
+    [Fact]
+    public async Task AnAlreadyCancelledToken_DoesNotSitOutTheCooldownOrPacingWait()
+    {
+        // Prime the pacer so a second, distinct call is actually due to wait — otherwise a
+        // passing assertion would not distinguish "cancellation was honoured" from "there was
+        // nothing to wait for anyway".
+        var (interactive, _, inner, _) = CreateBoth();
+        await interactive.GetModelAsync(1);
+        _waits.Clear();
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = async () => await interactive.GetModelAsync(2, cancellationToken: cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        // Had cancellation not been honoured before the wait, this would show the 750 ms pacing
+        // wait and inner.ModelCalls would be 2.
+        _waits.Should().BeEmpty();
+        inner.ModelCalls.Should().Be(1);
+    }
 }

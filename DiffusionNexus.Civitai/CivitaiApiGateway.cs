@@ -56,10 +56,6 @@ public sealed class CivitaiApiGateway : ICivitaiClient, ICivitaiApiCache
     private readonly CivitaiResponseCache _cache;
     private readonly CivitaiCallLane _lane;
 
-    private readonly object _apiKeyLock = new();
-    private string? _lastApiKey;
-    private bool _apiKeySeen;
-
     public CivitaiApiGateway(
         ICivitaiClient inner,
         ICivitaiRequestPacer pacer,
@@ -78,36 +74,23 @@ public sealed class CivitaiApiGateway : ICivitaiClient, ICivitaiApiCache
         (_lane == CivitaiCallLane.Background ? BackgroundInterval : InteractiveInterval)
         * _cooldown.IntervalMultiplier;
 
-    /// <summary>
-    /// Cache keys deliberately omit the API key — an authenticated and an anonymous request for
-    /// the same public model return the same page, and keying by secret would halve the hit rate
-    /// for nothing. What must not happen is an anonymous answer being served to a caller that has
-    /// since supplied a key (gated models answer differently), so a change of key empties the store.
-    /// </summary>
-    private void NoteApiKey(string? apiKey)
-    {
-        lock (_apiKeyLock)
-        {
-            if (_apiKeySeen && string.Equals(_lastApiKey, apiKey, StringComparison.Ordinal)) return;
-            if (_apiKeySeen) _cache.Clear();
-            _lastApiKey = apiKey;
-            _apiKeySeen = true;
-        }
-    }
-
     /// <summary>Cooldown first, then spacing: no point pacing into a wall.</summary>
     private async Task<T?> SendAsync<T>(string cacheKey, TimeSpan ttl, string? apiKey,
         Func<CancellationToken, Task<T?>> call, CancellationToken ct)
         where T : class
     {
-        NoteApiKey(apiKey);
+        // Delegated to the cache rather than tracked here: _cache is the ONE object shared by
+        // both lane instances (interactive and background wrap the same cache), so the last-seen
+        // key has to live where it is actually shared, not on a per-lane field that would leave
+        // each lane with its own, inconsistent memory of a single store.
+        _cache.NoteApiKey(apiKey);
 
         return await _cache.GetOrAddAsync(cacheKey, ttl, async () =>
         {
             await _cooldown.WaitAsync(ct).ConfigureAwait(false);
             await _pacer.WaitAsync(Interval, ct).ConfigureAwait(false);
             return await call(ct).ConfigureAwait(false);
-        }).ConfigureAwait(false);
+        }, ct).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -153,7 +136,7 @@ public sealed class CivitaiApiGateway : ICivitaiClient, ICivitaiApiCache
     public async Task<CivitaiPagedResponse<CivitaiModelImage>> GetImagesAsync(
         CivitaiImagesQuery? query = null, string? apiKey = null, CancellationToken cancellationToken = default)
     {
-        NoteApiKey(apiKey);
+        _cache.NoteApiKey(apiKey);
         await _cooldown.WaitAsync(cancellationToken).ConfigureAwait(false);
         await _pacer.WaitAsync(Interval, cancellationToken).ConfigureAwait(false);
         return await _inner.GetImagesAsync(query, apiKey, cancellationToken).ConfigureAwait(false);
