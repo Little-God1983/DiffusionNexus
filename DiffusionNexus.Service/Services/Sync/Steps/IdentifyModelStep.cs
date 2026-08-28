@@ -15,9 +15,10 @@ namespace DiffusionNexus.Service.Services.Sync.Steps;
 /// Step 1 — establishes what a local file actually <i>is</i>: local sidecar → stored/computed
 /// SHA256 + Civitai hash lookup → the file's own safetensors header → a guess from the filename.
 /// The sidecar is checked first — it is normally written by our own downloader from a Civitai
-/// response, so it answers the question the hash lookup would ask without a request or a
-/// multi-gigabyte hash. Replaces the ViewModel's Phase 1 / 1b and its per-tile metadata copy
-/// (#521 WP2, WP4).
+/// response, so it answers the question the hash lookup would ask without a request. It does
+/// NOT skip the hash: <c>ModelFile.HashSHA256</c> is a fact about the bytes on disk, and a
+/// sidecar's claimed value is not a measurement of them — see <see cref="ResolveHashAsync"/>.
+/// Replaces the ViewModel's Phase 1 / 1b and its per-tile metadata copy (#521 WP2, WP4).
 /// </summary>
 /// <remarks>
 /// Every path stamps <c>ModelSyncState</c>, which is the whole point of the overhaul: a run that
@@ -62,10 +63,12 @@ public sealed class IdentifyModelStep : ISyncStep
     /// <summary>
     /// Worst case: a candidate with no sidecar still costs a hash (large files) plus two API calls
     /// (hash lookup, model page), now paced by the shared <c>CivitaiApiGateway</c> rather than a
-    /// fixed 1.5 s between them. A sidecar-bearing candidate — checked FIRST — costs neither: it
-    /// resolves from the file on disk with zero API calls and no hash. Left at this worst-case
-    /// value (not lowered) because a pinned test asserts it; the plan estimate is deliberately
-    /// pessimistic rather than an average.
+    /// fixed 1.5 s between them. A sidecar-bearing candidate — checked FIRST — costs no API calls:
+    /// it resolves from the file on disk. It still pays the hash the first time (see
+    /// <see cref="ResolveHashAsync"/>) — the hash is a fact about local bytes a sidecar cannot
+    /// substitute for — so this per-item estimate stays the same worst case either way. Left at
+    /// this worst-case value (not lowered) because a pinned test asserts it; the plan estimate is
+    /// deliberately pessimistic rather than an average.
     /// </summary>
     public TimeSpan EstimatedPerItem => TimeSpan.FromSeconds(3);
 
@@ -177,9 +180,10 @@ public sealed class IdentifyModelStep : ISyncStep
         try
         {
             // Sidecar first. It is the answer Civitai would give us, already on disk, and reading
-            // it costs no request and no multi-gigabyte hash. This used to run only after the hash
-            // lookup 404'd, which meant every sidecar-bearing file paid two API calls to be told
-            // what was sitting next to it. SorterMetadataResolver has always done it in this order.
+            // it costs no request. This used to run only after the hash lookup 404'd, which meant
+            // every sidecar-bearing file paid two API calls to be told what was sitting next to it.
+            // SorterMetadataResolver has always done it in this order. The hash itself is still
+            // computed below when the sidecar applies — see the comment there.
             var sidecar = await _sidecar.ApplyAsync(uow, candidate.ModelId, candidate.LocalPath, ct).ConfigureAwait(false);
 
             // The applier answers a cancellation with "nothing applied", which is the same answer it
@@ -189,6 +193,15 @@ public sealed class IdentifyModelStep : ISyncStep
 
             if (sidecar.Applied)
             {
+                // The sidecar answers "what is this file" without a request, but it is not a
+                // measurement of the bytes on disk — its own hash claim (SidecarMetadataApplier's
+                // `??=`) must not be allowed to stand as ModelFile.HashSHA256. ResolveHashAsync
+                // computes (or reuses a stored, previously-verified) digest and commits it with a
+                // plain assignment, which overwrites whatever the sidecar just wrote. This still
+                // costs zero Civitai calls — the sidecar-first reorder's actual goal — it just no
+                // longer lets a sidecar's claim silently become the trusted hash.
+                await ResolveHashAsync(uow, candidate, ct).ConfigureAwait(false);
+
                 await StampAsync(uow, candidate.ModelId, SyncOutcome.Sidecar, now, sidecar.Signature, error: null, headerCheckedAt: null, ct).ConfigureAwait(false);
                 return SyncItemResult.Success;
             }
@@ -357,7 +370,16 @@ public sealed class IdentifyModelStep : ISyncStep
     /// The candidate's stored hash when it is a usable SHA256, otherwise a freshly computed one —
     /// which is then written back onto the file row so the next run (and the duplicate finder) reuses it.
     /// </summary>
-    private static async Task<string> ResolveHashAsync(IUnitOfWork uow, IdentifyCandidate candidate, CancellationToken ct)
+    /// <remarks>
+    /// <paramref name="candidate"/>.Sha256 is a snapshot taken at selection time, before this
+    /// execution touched the row — so this correctly re-hashes even when the sidecar branch (which
+    /// runs first and shares the same <paramref name="uow"/>) has, in the same call, already
+    /// written its own <c>??=</c> claim into the tracked entity: the plain assignment below
+    /// overwrites that claim with the measured digest regardless. Called both from the sidecar
+    /// path (to make sure a sidecar's claim never becomes the stored hash — see the class remarks)
+    /// and from the no-match path (where the hash also feeds the Civitai hash lookup itself).
+    /// </remarks>
+    private async Task<string> ResolveHashAsync(IUnitOfWork uow, IdentifyCandidate candidate, CancellationToken ct)
     {
         if (FileHasher.IsSha256(candidate.Sha256)) return candidate.Sha256!.ToUpperInvariant();
 
@@ -368,6 +390,16 @@ public sealed class IdentifyModelStep : ISyncStep
         var file = await uow.ModelFiles.GetByIdAsync(candidate.FileId, ct).ConfigureAwait(false);
         if (file is not null)
         {
+            // A prior, unverified claim (e.g. the sidecar's own ??= from earlier in this same
+            // execution) disagreeing with the bytes we just measured is a real signal — a
+            // truncated download, a hand-swapped file, a stale sidecar — worth a log line even
+            // though the measured value is what gets stored either way.
+            if (!string.IsNullOrEmpty(file.HashSHA256) && !string.Equals(file.HashSHA256, hash, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger?.Warn(LogCategory.General, LogSource,
+                    $"'{candidate.Name}': stored hash {file.HashSHA256} does not match the file's measured digest {hash}; using the measured value");
+            }
+
             file.HashSHA256 = hash;
 
             // Committed before the network call, on its own: hashing a multi-gigabyte file is the

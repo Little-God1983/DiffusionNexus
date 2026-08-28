@@ -511,6 +511,47 @@ public sealed class IdentifyModelStepTests : IDisposable
         saved!.Versions.Single().BaseModelRaw.Should().Be("Pony");
     }
 
+    /// <summary>
+    /// Finding 3 (review of PR #547): reordering the sidecar read ahead of the hash lookup left
+    /// <c>ExecuteOneAsync</c> returning at the <c>sidecar.Applied</c> branch before
+    /// <c>ResolveHashAsync</c> ever ran — so the real bytes were never hashed, and
+    /// <c>SidecarMetadataApplier</c>'s own <c>dbFile.HashSHA256 ??= ...</c> let the sidecar's
+    /// CLAIMED SHA256 stand as the stored one. This sidecar deliberately lies about the hash (a
+    /// syntactically valid but wrong 64-hex digest); the stored <c>ModelFile.HashSHA256</c> must
+    /// end up as the real digest of the file's actual bytes, never that claim.
+    /// </summary>
+    [Fact]
+    public async Task Execute_SidecarWithWrongHashStillStoresTheRealDigest()
+    {
+        var path = NewModelFile("sidecar-wrong-hash.safetensors");
+        var (modelId, fileId) = await SeedAsync("sidecar-wrong-hash", path);
+
+        var wrongHash = new string('F', 64);
+        var sidecar = """
+        {"id":700,"modelId":77,"baseModel":"Pony","trainedWords":["x"],
+         "model":{"name":"N","nsfw":false},
+         "files":[{"name":"sidecar-wrong-hash.safetensors","primary":true,"hashes":{"SHA256":"__WRONG_HASH__"}}],
+         "images":[]}
+        """.Replace("__WRONG_HASH__", wrongHash);
+        await File.WriteAllTextAsync(Path.Combine(_tempDir.FullName, "sidecar-wrong-hash.civitai.info"), sidecar);
+
+        var expectedHash = FileHasher.Sha256Upper(path);
+        expectedHash.Should().NotBe(wrongHash, "the test fixture must not accidentally collide with the lie");
+
+        var step = NewNotFoundStep();
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        var result = await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+        (await ReadStateAsync(modelId))!.MetadataOutcome.Should().Be(SyncOutcome.Sidecar);
+
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var file = await uow.ModelFiles.GetByIdAsync(fileId);
+        file!.HashSHA256.Should().Be(expectedHash,
+            "the stored hash must be a measurement of the real bytes, never the sidecar's unverified claim");
+    }
+
     [Fact]
     public async Task Execute_404WithoutSidecarStampsNotIdentified()
     {
