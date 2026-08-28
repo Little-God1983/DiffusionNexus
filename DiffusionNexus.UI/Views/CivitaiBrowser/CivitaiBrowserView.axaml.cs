@@ -49,4 +49,13 @@ public partial class CivitaiBrowserView : UserControl
         vm.SelectWithModifiers(item, isShift, isCtrl);
         e.Handled = true;
     }
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+
+        // The TabControl realises this view only when its tab is first selected, which is exactly
+        // the moment the user has asked to see Civitai results.
+        if (DataContext is CivitaiBrowserViewModel vm) _ = vm.EnsureLoadedAsync();
+    }
 }

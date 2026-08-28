@@ -97,11 +97,11 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             _baseModelSource.CollectionChanged += OnBaseModelSourceChanged;
         }
 
-        // Enable search-on-filter-change now that the initial property cascade is done,
-        // then kick off exactly one initial search.
+        // Enable search-on-filter-change now that the initial property cascade is done. The first
+        // search waits for EnsureLoadedAsync: this VM is constructed when the LoRA Viewer opens,
+        // so searching here meant opening the Installed tab spent up to ten paginated Civitai
+        // requests on a tab the user may never look at.
         _initialized = true;
-        _ = RefreshInstalledSetAsync();
-        _ = SearchAsync();
     }
 
     private readonly ObservableCollection<BaseModelFilterItem>? _baseModelSource;
@@ -500,6 +500,20 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         await SearchAsync();
     }
 
+    private int _loaded;
+
+    /// <summary>
+    /// Runs the first search, once, however many times the tab is shown. Called when the Browse
+    /// Civitai view is first attached to the visual tree.
+    /// </summary>
+    public async Task EnsureLoadedAsync()
+    {
+        if (Interlocked.Exchange(ref _loaded, 1) == 1) return;
+
+        await RefreshInstalledSetAsync();
+        await SearchAsync();
+    }
+
     private async Task DebouncedSearchAsync()
     {
         _debounceCts?.Cancel();
@@ -521,9 +535,12 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     #region Property change hooks
 
     partial void OnSearchTextChanged(string value) { if (_initialized) _ = DebouncedSearchAsync(); }
-    partial void OnSelectedSortChanged(string? value) { if (_initialized) _ = SearchAsync(); }
-    partial void OnSelectedPeriodChanged(CivitaiPeriod value) { if (_initialized) _ = SearchAsync(); }
-    partial void OnSelectedModelTypeChanged(ModelTypeOption? value) { if (_initialized) _ = SearchAsync(); }
+
+    // Debounced like the text box: a user comparing two sorts or three periods used to spend a
+    // full paginated search on each intermediate choice.
+    partial void OnSelectedSortChanged(string? value) { if (_initialized) _ = DebouncedSearchAsync(); }
+    partial void OnSelectedPeriodChanged(CivitaiPeriod value) { if (_initialized) _ = DebouncedSearchAsync(); }
+    partial void OnSelectedModelTypeChanged(ModelTypeOption? value) { if (_initialized) _ = DebouncedSearchAsync(); }
     // ShowNsfwContent is a client-side filter (the API call always requests NSFW). No
     // re-search needed when toggled — just reapply local filters.
     partial void OnShowNsfwContentChanged(bool value) => ApplyClientSideFilters();
