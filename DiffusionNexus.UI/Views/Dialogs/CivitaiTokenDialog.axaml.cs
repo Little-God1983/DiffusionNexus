@@ -146,6 +146,16 @@ public partial class CivitaiTokenDialog : Window
         {
             return (false, $"Could not reach Civitai: {ex.Message}");
         }
+        catch (Exception ex)
+        {
+            // Routing through the gateway means the response is now actually deserialized
+            // (CivitaiClient.DeserializeOrThrow can raise JsonException on a shape it doesn't
+            // recognize) — the removed raw client never parsed a body, so this path is new. This
+            // method is awaited from an `async void` event handler (OnSaveClick): anything that
+            // escapes it terminates the process rather than just failing the validation, so this
+            // must be a true catch-all rather than one more specific exception type.
+            return (false, $"Unexpected error validating the token: {ex.Message}");
+        }
     }
 
     private void SetValidating(bool isValidating, string? message = null)

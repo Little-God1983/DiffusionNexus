@@ -23,17 +23,19 @@ public partial class CivitaiResultViewModel : ObservableObject
     /// <summary>
     /// One client for the lifetime of the process. A per-operation HttpClient discards the
     /// connection pool and the TLS session every time, which is socket churn against a host we
-    /// are already asking to be patient with us. <see cref="PooledConnectionLifetime"/> keeps a
-    /// process-lifetime client from pinning a stale DNS answer for the app's whole run.
+    /// are already asking to be patient with us. <see cref="SocketsHttpHandler.PooledConnectionLifetime"/>
+    /// keeps a process-lifetime client from pinning a stale DNS answer for the app's whole run.
     /// </summary>
     private static readonly HttpClient s_imagePreviewHttp = new(CreatePooledHandler()) { Timeout = TimeSpan.FromSeconds(15) };
 
     /// <summary>Same rationale as <see cref="s_imagePreviewHttp"/>; longer timeout for the video stream.</summary>
     private static readonly HttpClient s_videoPreviewHttp = new(CreatePooledHandler()) { Timeout = TimeSpan.FromSeconds(60) };
 
-    private static readonly TimeSpan PooledConnectionLifetime = TimeSpan.FromMinutes(2);
-
-    private static SocketsHttpHandler CreatePooledHandler() => new() { PooledConnectionLifetime = PooledConnectionLifetime };
+    // Inlined rather than read from a separate static field: static field initializers run in
+    // textual order, and a field declared AFTER s_imagePreviewHttp/s_videoPreviewHttp above would
+    // still be default(TimeSpan) — zero — when those two run, silently disabling pooling instead
+    // of setting a 2-minute lifetime.
+    private static SocketsHttpHandler CreatePooledHandler() => new() { PooledConnectionLifetime = TimeSpan.FromMinutes(2) };
 
     /// <summary>
     /// Signals every in-flight preview download (image fetch, video stream,

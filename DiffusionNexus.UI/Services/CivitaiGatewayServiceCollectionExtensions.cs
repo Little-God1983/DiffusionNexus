@@ -38,8 +38,11 @@ public static class CivitaiGatewayServiceCollectionExtensions
         services.AddSingleton<ICivitaiRequestPacer>(_ => new CivitaiRequestPacer());
 
         // The raw client, told to report every 429 to the shared cooldown the moment it sees one.
+        // This is the single busiest HttpClient in the app — every call from every lane funnels
+        // through it — so, same as the five other process-lifetime clients fixed alongside it,
+        // PooledConnectionLifetime keeps it from pinning a stale DNS answer for the app's whole run.
         services.AddSingleton(sp => new CivitaiClient(
-            new HttpClient(),
+            new HttpClient(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(2) }),
             disposeHttpClient: true,
             rateLimitObserver: sp.GetRequiredService<CivitaiRateLimitCooldown>()));
 
