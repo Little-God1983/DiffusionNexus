@@ -145,25 +145,28 @@ public sealed class LibrarySyncService : ILibrarySyncService
 
         try
         {
-            // "Force" means the user has told us the local answer is wrong. A cached response is
-            // a local answer, so it goes too — otherwise a forced re-sync would replay the very
-            // page that produced the state they are trying to correct. This also covers the LoRA
-            // Viewer's per-tile "Download Metadata", which forces identify and thumbnails for one
-            // model — see InvalidateForcedScopeAsync for why that path drops only that model's
-            // cache entries rather than the whole process-wide cache.
-            //
-            // Inside the try (not between _gate.Wait(0) and it): both cache calls below
-            // realistically never throw, but if either ever did, throwing between the gate acquire
-            // and the try would skip the finally below and leak the gate — wedging sync for the
-            // rest of the session with no way to release it short of restarting the app.
-            var options = plan.Options;
-            if (options.ForceIdentify || options.ForceTags || options.ForceImages || options.ForceThumbnails)
-            {
-                await InvalidateForcedScopeAsync(plan.Scope, ct).ConfigureAwait(false);
-            }
-
             try
             {
+                // "Force" means the user has told us the local answer is wrong. A cached response
+                // is a local answer, so it goes too — otherwise a forced re-sync would replay the
+                // very page that produced the state they are trying to correct. This also covers
+                // the LoRA Viewer's per-tile "Download Metadata", which forces identify and
+                // thumbnails for one model — see InvalidateForcedScopeAsync for why that path drops
+                // only that model's cache entries rather than the whole process-wide cache.
+                //
+                // Inside the INNER try, not the outer one it used to sit in: InvalidateForcedScopeAsync
+                // now does awaited DB I/O of its own (a GetByIdWithIncludesAsync per targeted model,
+                // honouring ct) to find the versions and file hashes to invalidate alongside each
+                // model, so it can raise a DatabaseOperationException or an OperationCanceledException
+                // the same as any step's SelectAsync can. Only the inner try turns that into
+                // abortReason/cancelled on the report instead of escaping ExecuteAsync outright —
+                // the outer try exists solely to guarantee the finally below always runs.
+                var options = plan.Options;
+                if (options.ForceIdentify || options.ForceTags || options.ForceImages || options.ForceThumbnails)
+                {
+                    await InvalidateForcedScopeAsync(plan.Scope, ct).ConfigureAwait(false);
+                }
+
                 var apiKey = await ResolveApiKeyAsync(ct).ConfigureAwait(false);
 
                 foreach (var planStep in plan.Steps)
@@ -220,8 +223,9 @@ public sealed class LibrarySyncService : ILibrarySyncService
 
     /// <summary>
     /// Drops the cached Civitai responses a forced run is about to make stale — scoped to the
-    /// models the run actually targets when the plan can name them, and a full <c>Clear()</c>
-    /// only for a genuinely library- or folder-wide forced re-sync.
+    /// models the run actually targets, and everything the identify step could have cached an
+    /// answer under for them, when the plan can name them; a full <c>Clear()</c> only for a
+    /// genuinely library- or folder-wide forced re-sync.
     /// </summary>
     /// <remarks>
     /// A run scoped to specific models (<see cref="SyncScopeKind.Models"/>) is the LoRA Viewer's
@@ -233,10 +237,23 @@ public sealed class LibrarySyncService : ILibrarySyncService
     /// absorb. <see cref="ICivitaiApiCache.InvalidateModel"/> is scoped to one Civitai model id and
     /// leaves everything else alone.
     /// <para>
-    /// <c>CivitaiModelPageId</c>, not <c>CivitaiId</c>, is the id to invalidate with: it is the
-    /// value <see cref="CivitaiMetadataApplier"/> passes to <c>GetModelAsync</c> (the gateway's
-    /// cache key) and — unlike <c>CivitaiId</c>, which only the "owner" row of a Civitai page
-    /// carries — it is set on every local row that shares that page, including duplicates.
+    /// Invalidating the model page alone under-reaches: a forced identify (<c>ForceIdentify</c>)
+    /// re-asks Civitai by file hash first (<c>GetModelVersionByHashAsync</c>, cached under
+    /// <c>hash:{HASH}</c> for 60 minutes — the longest TTL of any entry) before it ever reaches the
+    /// model page, so a stale hash answer alone can make a forced press look like it did nothing
+    /// for up to an hour. Every version and file hash the targeted models own is invalidated too,
+    /// via <see cref="ICivitaiApiCache.InvalidateVersion"/> / <see cref="ICivitaiApiCache.InvalidateHash"/>,
+    /// so a model-scoped forced run genuinely cannot be answered from an entry that predates it.
+    /// </para>
+    /// <para>
+    /// <c>CivitaiModelPageId</c> is preferred over <c>CivitaiId</c> for the model-page key: it is
+    /// set on every local row that shares a Civitai page, including duplicates, whereas
+    /// <c>CivitaiId</c> is unique and only the "owner" row of a page carries it. A row falls back to
+    /// <c>CivitaiId</c> only when <c>CivitaiModelPageId</c> is null — a row written before the
+    /// <c>AddCivitaiModelPageId</c> migration and never re-synced since — which matches the source
+    /// <c>SyncStateRepository.SelectTagCandidatesAsync</c> and <c>SelectImageCandidatesAsync</c>
+    /// already use for the same id (from <c>m.CivitaiId</c>): without the fallback, such a row
+    /// would be invalidated under neither field.
     /// </para>
     /// <para>
     /// A <see cref="SyncScopeKind.Library"/> or <see cref="SyncScopeKind.SourceFolder"/> run still
@@ -261,12 +278,32 @@ public sealed class LibrarySyncService : ILibrarySyncService
         foreach (var modelId in modelIds)
         {
             // A model in the scope may have been deleted since the plan was built (same reasoning
-            // as RunStepAsync re-selecting rather than trusting the plan's snapshot) — GetByIdAsync
-            // answers null rather than throwing, and there is simply nothing left to invalidate.
-            var model = await uow.Models.GetByIdAsync(modelId, ct).ConfigureAwait(false);
-            if (model?.CivitaiModelPageId is { } civitaiModelId)
+            // as RunStepAsync re-selecting rather than trusting the plan's snapshot) — answers null
+            // rather than throwing, and there is simply nothing left to invalidate. Loaded with
+            // includes (not GetByIdAsync) because the versions and file hashes below live on the
+            // navigation graph, not the row itself.
+            var model = await uow.Models.GetByIdWithIncludesAsync(modelId, ct).ConfigureAwait(false);
+            if (model is null) continue;
+
+            if ((model.CivitaiModelPageId ?? model.CivitaiId) is { } civitaiModelId)
             {
                 _apiCache.InvalidateModel(civitaiModelId);
+            }
+
+            foreach (var version in model.Versions)
+            {
+                if (version.CivitaiId is { } civitaiVersionId)
+                {
+                    _apiCache.InvalidateVersion(civitaiVersionId);
+                }
+
+                foreach (var file in version.Files)
+                {
+                    if (!string.IsNullOrWhiteSpace(file.HashSHA256))
+                    {
+                        _apiCache.InvalidateHash(file.HashSHA256);
+                    }
+                }
             }
         }
     }

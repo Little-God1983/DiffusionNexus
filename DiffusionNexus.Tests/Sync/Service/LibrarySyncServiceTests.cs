@@ -673,6 +673,85 @@ public sealed class LibrarySyncServiceTests : IDisposable
         cache.Verify(c => c.InvalidateModel(It.IsAny<int>()), Times.Never);
     }
 
+    /// <summary>
+    /// Item 1 of the follow-up review: invalidating only the model page under-reaches. A forced
+    /// identify (<c>ForceIdentify</c>) re-asks Civitai by file hash first
+    /// (<c>GetModelVersionByHashAsync</c>, cached under <c>hash:{HASH}</c> for 60 minutes — the
+    /// longest TTL of any entry) before it ever reaches the model page, so leaving that entry alone
+    /// could make a forced press look like it did nothing for up to an hour. The scoped
+    /// invalidation must also drop every version and file hash the targeted model owns.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_WithAModelScopedForce_AlsoInvalidatesItsVersionsAndFileHashes()
+    {
+        const string fileHash = "AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778A";
+        var cache = new Mock<ICivitaiApiCache>();
+        var scoped = await SeedModelWithCivitaiPageAsync(
+            "scoped", civitaiModelPageId: 555, versionCivitaiId: 4242, fileHash: fileHash);
+
+        var service = NewService([], apiCache: cache.Object);
+        var options = new SyncOptions(new HashSet<SyncStepKind> { SyncStepKind.IdentifyModel }, ForceIdentify: true);
+        var plan = await service.PlanAsync(SyncScope.ForModels(scoped), options, CancellationToken.None);
+
+        await service.ExecuteAsync(plan, null, CancellationToken.None);
+
+        cache.Verify(c => c.InvalidateModel(555), Times.Once);
+        cache.Verify(c => c.InvalidateVersion(4242), Times.Once);
+        cache.Verify(c => c.InvalidateHash(fileHash), Times.Once);
+    }
+
+    /// <summary>
+    /// Item 4 of the follow-up review: a row written before the <c>AddCivitaiModelPageId</c>
+    /// migration carries <c>CivitaiId</c> but never got <c>CivitaiModelPageId</c> backfilled — the
+    /// same case the tags/images candidate queries in <c>SyncStateRepository</c> already source
+    /// their Civitai model id from <c>CivitaiId</c> for. Without the fallback such a row would be
+    /// invalidated under neither field.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_WithAModelScopedForce_FallsBackToCivitaiId_WhenPageIdIsNull()
+    {
+        var cache = new Mock<ICivitaiApiCache>();
+        var legacy = await SeedModelWithCivitaiPageAsync("legacy", civitaiModelPageId: null, civitaiId: 777);
+
+        var service = NewService([], apiCache: cache.Object);
+        var options = new SyncOptions(new HashSet<SyncStepKind> { SyncStepKind.IdentifyModel }, ForceIdentify: true);
+        var plan = await service.PlanAsync(SyncScope.ForModels(legacy), options, CancellationToken.None);
+
+        await service.ExecuteAsync(plan, null, CancellationToken.None);
+
+        cache.Verify(c => c.InvalidateModel(777), Times.Once);
+    }
+
+    /// <summary>
+    /// Item 3 of the follow-up review: InvalidateForcedScopeAsync now does awaited DB I/O of its
+    /// own (a GetByIdWithIncludesAsync per targeted model), so it can raise the same kind of fault
+    /// a step's SelectAsync can. It used to sit OUTSIDE ExecuteAsync's inner try — the one that
+    /// turns an escaping exception into abortReason on the report — so that fault would have
+    /// escaped ExecuteAsync entirely, breaking the "ExecuteAsync is total" contract
+    /// CivitaiModelDownloader relies on (#535).
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_AForcedInvalidationDatabaseFault_AbortsWithAReport_RatherThanThrowing()
+    {
+        var cache = new Mock<ICivitaiApiCache>();
+        var scoped = await SeedModelWithCivitaiPageAsync("scoped", civitaiModelPageId: 555);
+
+        var service = NewService([], apiCache: cache.Object);
+        var options = new SyncOptions(new HashSet<SyncStepKind> { SyncStepKind.IdentifyModel }, ForceIdentify: true);
+        var plan = await service.PlanAsync(SyncScope.ForModels(scoped), options, CancellationToken.None);
+
+        // Breaks the in-memory database out from under InvalidateForcedScopeAsync's own DB read —
+        // whatever exception that raises must be caught inside ExecuteAsync, not thrown out of it.
+        _connection.Dispose();
+
+        var report = await service.ExecuteAsync(plan, null, CancellationToken.None);
+
+        report.AbortReason.Should().NotBeNullOrEmpty(
+            "a fault escaping the forced-invalidation DB read must abort with a reason, not throw out of ExecuteAsync");
+        report.Cancelled.Should().BeFalse("nobody pressed Cancel");
+        service.IsRunning.Should().BeFalse("the gate must still be released even though the run aborted");
+    }
+
     // ------------------------------------------------------ Thumbnail parallelism
 
     [Fact]
@@ -820,7 +899,20 @@ public sealed class LibrarySyncServiceTests : IDisposable
 
     /// <summary>Seeds a matched model that already owns a <c>CivitaiModelPageId</c>, for the cache
     /// scoped-invalidation tests. Returns the local model id.</summary>
-    private async Task<int> SeedModelWithCivitaiPageAsync(string name, int civitaiModelPageId)
+    /// <param name="civitaiModelPageId">
+    /// The model's <c>CivitaiModelPageId</c>. Pass <c>null</c> to simulate a legacy row that
+    /// predates the <c>AddCivitaiModelPageId</c> migration — <paramref name="civitaiId"/> then
+    /// takes over as the owner-only <c>CivitaiId</c> the scoped invalidation must fall back to.
+    /// </param>
+    /// <param name="civitaiId">
+    /// <c>CivitaiId</c>. Defaults to <paramref name="civitaiModelPageId"/> — every current writer
+    /// sets both to the same value on the owner row.
+    /// </param>
+    /// <param name="versionCivitaiId">The seeded version's <c>CivitaiId</c>, if any.</param>
+    /// <param name="fileHash">The seeded file's <c>HashSHA256</c>, if any.</param>
+    private async Task<int> SeedModelWithCivitaiPageAsync(
+        string name, int? civitaiModelPageId, int? civitaiId = null,
+        int? versionCivitaiId = null, string? fileHash = null)
     {
         using var scope = _serviceProvider.CreateScope();
         var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
@@ -830,16 +922,17 @@ public sealed class LibrarySyncServiceTests : IDisposable
             Name = name,
             Type = ModelType.LORA,
             Source = DataSource.CivitaiApi,
-            CivitaiId = civitaiModelPageId,
+            CivitaiId = civitaiId ?? civitaiModelPageId,
             CivitaiModelPageId = civitaiModelPageId,
         };
-        var version = new ModelVersion { Name = "v1", BaseModelRaw = "???" };
+        var version = new ModelVersion { Name = "v1", BaseModelRaw = "???", CivitaiId = versionCivitaiId };
         version.Files.Add(new ModelFile
         {
             FileName = name + ".safetensors",
             LocalPath = Path.Combine(SeedRoot, name + ".safetensors"),
             IsLocalFileValid = true,
             IsPrimary = true,
+            HashSHA256 = fileHash,
         });
         model.Versions.Add(version);
 
