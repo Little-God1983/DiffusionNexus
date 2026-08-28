@@ -29,9 +29,12 @@ public partial class DownloadLoraDialogViewModel : ObservableObject
     /// <summary>
     /// One client for the lifetime of the process. A per-operation HttpClient discards the
     /// connection pool and the TLS session every time, which is socket churn against a host we
-    /// are already asking to be patient with us.
+    /// are already asking to be patient with us. PooledConnectionLifetime keeps a process-lifetime
+    /// client from pinning a stale DNS answer for the app's whole run.
     /// </summary>
-    private static readonly HttpClient s_previewHttp = new() { Timeout = TimeSpan.FromSeconds(15) };
+    private static readonly HttpClient s_previewHttp = new(
+        new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(2) })
+    { Timeout = TimeSpan.FromSeconds(15) };
 
     [ObservableProperty]
     private string _urlText = string.Empty;

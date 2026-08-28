@@ -45,7 +45,15 @@ public sealed class LoraDownloadService : ILoraDownloadService
 
     private static HttpClient CreateDownloadHttpClient()
     {
-        var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true })
+        // A process-lifetime HttpClient pins whatever DNS answer it first resolved for as long as
+        // the app runs; SocketsHttpHandler.PooledConnectionLifetime forces the pool to periodically
+        // reconnect (and thus re-resolve) instead. Two minutes is the common default.
+        var handler = new SocketsHttpHandler
+        {
+            AllowAutoRedirect = true,
+            PooledConnectionLifetime = TimeSpan.FromMinutes(2)
+        };
+        var client = new HttpClient(handler)
         {
             Timeout = TimeSpan.FromHours(2)
         };
