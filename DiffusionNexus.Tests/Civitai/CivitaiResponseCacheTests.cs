@@ -139,6 +139,85 @@ public class CivitaiResponseCacheTests
     }
 
     [Fact]
+    public async Task InvalidateHash_ForcesTheNextCallToRefetch()
+    {
+        // Item 1 of the follow-up review: a forced per-tile identify re-asks Civitai by file hash
+        // (GetModelVersionByHashAsync, cached under hash:{HASH} for 60 minutes — the longest TTL of
+        // any entry) before it ever reaches the model page. InvalidateModel alone left that answer
+        // able to defeat the forced press for up to an hour; ICivitaiApiCache had no way to drop a
+        // hash entry at all.
+        var cache = Create();
+        var calls = 0;
+        Task<string?> Factory() { calls++; return Task.FromResult<string?>("value"); }
+
+        await cache.GetOrAddAsync(CivitaiResponseCache.HashKey("ABCDEF"), Ttl, Factory);
+        cache.InvalidateHash("ABCDEF");
+        await cache.GetOrAddAsync(CivitaiResponseCache.HashKey("ABCDEF"), Ttl, Factory);
+
+        calls.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task InvalidateHash_IsCaseInsensitive()
+    {
+        var cache = Create();
+        var calls = 0;
+        Task<string?> Factory() { calls++; return Task.FromResult<string?>("value"); }
+
+        await cache.GetOrAddAsync(CivitaiResponseCache.HashKey("abcDEF"), Ttl, Factory);
+        cache.InvalidateHash("ABCdef");
+        await cache.GetOrAddAsync(CivitaiResponseCache.HashKey("ABCdef"), Ttl, Factory);
+
+        calls.Should().Be(2, "HashKey upper-cases both the stored key and the invalidated one, so the two must agree");
+    }
+
+    [Fact]
+    public async Task InvalidateModel_DuringAnInFlightFetch_SuppressesItsWrite_WithoutSpawningADuplicateRequest()
+    {
+        // Regression test for item 2 of the follow-up review. InvalidateModel/InvalidateVersion/
+        // InvalidateHash removed from _entries only; a fetch already in flight for that key kept
+        // the unchanged global generation, so RunAsync would still write its answer back once it
+        // completed — silently repopulating the very entry the caller just asked to be forgotten,
+        // defeating the waitlist's and the detail panel's user-pressed re-check fixes in exactly
+        // the case they exist for.
+        //
+        // The fix must not evict the live _inFlight entry to get there — that would reintroduce
+        // finding 1's duplicate-request bug (a caller arriving while the original fetch is still
+        // running must join it, not start a second one). So this test drives both invariants at
+        // once: a caller that joins the pre-invalidation fetch still gets that fetch's own answer
+        // without triggering a second factory call, and a caller arriving only after that fetch
+        // completes gets a genuine cache miss — proof the invalidated fetch's answer was never
+        // written to _entries.
+        var cache = Create();
+        var leaderCalls = 0;
+        var release = new TaskCompletionSource<string?>();
+        Task<string?> LeaderFactory() { leaderCalls++; return release.Task; }
+
+        var leader = cache.GetOrAddAsync(CivitaiResponseCache.ModelKey(7), Ttl, LeaderFactory);
+
+        cache.InvalidateModel(7);
+
+        var joinerCalls = 0;
+        Task<string?> JoinerFactory() { joinerCalls++; return Task.FromResult<string?>("should not run"); }
+        var joiner = cache.GetOrAddAsync(CivitaiResponseCache.ModelKey(7), Ttl, JoinerFactory);
+
+        release.SetResult("pre-invalidation-answer");
+
+        (await leader).Should().Be("pre-invalidation-answer");
+        (await joiner).Should().Be("pre-invalidation-answer", "a caller joining a still-live fetch gets that fetch's own answer");
+        leaderCalls.Should().Be(1);
+        joinerCalls.Should().Be(0, "the in-flight fetch must be joined, not duplicated, even though it was invalidated mid-flight");
+
+        var freshCalls = 0;
+        Task<string?> FreshFactory() { freshCalls++; return Task.FromResult<string?>("fresh"); }
+        var afterward = await cache.GetOrAddAsync(CivitaiResponseCache.ModelKey(7), Ttl, FreshFactory);
+
+        afterward.Should().Be("fresh");
+        freshCalls.Should().Be(1,
+            "the invalidated fetch's answer must not have been cached, so this call has to reach the factory");
+    }
+
+    [Fact]
     public async Task Capacity_EvictsTheOldestEntryFirst()
     {
         var cache = Create(capacity: 2);
@@ -251,48 +330,15 @@ public class CivitaiResponseCacheTests
         calls.Should().Be(1, "the still-live in-flight fetch must be joined, not duplicated");
     }
 
-    [Fact]
-    public async Task AllCallersAbandoning_ThenTheFetchFaulting_DoesNotRaiseAnUnobservedTaskException()
-    {
-        // Regression test for finding 6. A detached fetch (see CivitaiApiGateway.SendAsync) can
-        // outlive every caller — each caller only ever abandons its OWN WaitAsync(ct) wait, per the
-        // single-flight contract, so the shared Lazy<Task> can fault after the last one has left.
-        // Before this fix, nothing ever touched that task's .Exception in that case, so the fault
-        // reached TaskScheduler.UnobservedTaskException at GC time and was logged as an ERROR for
-        // something as routine as a 429 or a DNS blip.
-        var cache = Create();
-        var tcs = new TaskCompletionSource<string?>();
-        Task<string?> Factory() => tcs.Task;
-
-        using var cts = new CancellationTokenSource();
-        var call = cache.GetOrAddAsync(CivitaiResponseCache.ModelKey(7), Ttl, Factory, cts.Token);
-        cts.Cancel();
-        var act = async () => await call;
-        await act.Should().ThrowAsync<OperationCanceledException>();
-
-        var unobserved = false;
-        void Handler(object? _, UnobservedTaskExceptionEventArgs e)
-        {
-            unobserved = true;
-            e.SetObserved();
-        }
-
-        TaskScheduler.UnobservedTaskException += Handler;
-        try
-        {
-            tcs.SetException(new InvalidOperationException("boom"));
-
-            // The fault-observing continuation runs synchronously off SetException, but give the
-            // finalizer a fair shot at anything that slipped through before asserting.
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-            GC.Collect();
-        }
-        finally
-        {
-            TaskScheduler.UnobservedTaskException -= Handler;
-        }
-
-        unobserved.Should().BeFalse("an abandoned-then-faulted fetch should stay a quiet cache miss, not an UNOBSERVED TASK EXCEPTION");
-    }
+    // AllCallersAbandoning_ThenTheFetchFaulting_DoesNotRaiseAnUnobservedTaskException (finding 6's
+    // regression test) was removed here (item 5 of the follow-up review). It asserted that a
+    // fault-observing handler never fires after GC.Collect()/WaitForPendingFinalizers()/GC.Collect(),
+    // which depends on the faulted continuation's Task actually being unrooted and collected within
+    // those two passes — never verified to fail against the pre-fix code (unlike its siblings in
+    // this file, all of which were confirmed red via an isolated revert). Verified now, deliberately:
+    // with the fault-observing ContinueWith temporarily removed from CivitaiResponseCache.GetOrAddAsync,
+    // this test still PASSED — it never actually exercised the bug it claimed to guard. A test that
+    // cannot fail is worse than no test, so it is deleted rather than kept and left green by luck.
+    // The production fix it was meant to cover (GetOrAddAsync's ContinueWith(observeTask => { _ =
+    // observeTask.Exception; }, ...)) is untouched and still in place.
 }

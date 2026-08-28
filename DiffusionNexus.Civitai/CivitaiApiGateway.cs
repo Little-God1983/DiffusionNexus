@@ -215,5 +215,8 @@ public sealed class CivitaiApiGateway : ICivitaiClient, ICivitaiApiCache
     public void InvalidateVersion(int modelVersionId) => _cache.InvalidateVersion(modelVersionId);
 
     /// <inheritdoc />
+    public void InvalidateHash(string hash) => _cache.InvalidateHash(hash);
+
+    /// <inheritdoc />
     public void Clear() => _cache.Clear();
 }

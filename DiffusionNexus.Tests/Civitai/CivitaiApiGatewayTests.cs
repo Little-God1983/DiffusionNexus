@@ -195,6 +195,18 @@ public class CivitaiApiGatewayTests
     }
 
     [Fact]
+    public async Task InvalidateHash_ForcesARefetch()
+    {
+        var (interactive, _, inner, _) = CreateBoth();
+
+        await interactive.GetModelVersionByHashAsync("DEADBEEF");
+        interactive.InvalidateHash("DEADBEEF");
+        await interactive.GetModelVersionByHashAsync("DEADBEEF");
+
+        inner.HashCalls.Should().Be(2);
+    }
+
+    [Fact]
     public async Task ChangingTheApiKey_ClearsTheCache()
     {
         var (interactive, _, inner, _) = CreateBoth();

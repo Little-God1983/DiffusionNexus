@@ -14,6 +14,9 @@ public interface ICivitaiApiCache
     /// <summary>Forgets the version record for <paramref name="modelVersionId"/> (a Civitai version id).</summary>
     void InvalidateVersion(int modelVersionId);
 
+    /// <summary>Forgets the by-hash lookup for <paramref name="hash"/> (a file's SHA256).</summary>
+    void InvalidateHash(string hash);
+
     /// <summary>Forgets everything.</summary>
     void Clear();
 }
@@ -26,8 +29,11 @@ public interface ICivitaiApiCache
 /// In-memory and process-lifetime on purpose. A disk cache would have to answer questions about
 /// staleness that <c>ModelSyncState</c> already answers for the long term; what is missing is
 /// only the short window in which several surfaces ask for the same page within seconds — a
-/// download's persist and its completion sync, an update check and the detail panel the user
-/// then opens.
+/// download's persist and its completion sync, or the tags and images steps of one sync run both
+/// asking about the same model page. (The detail panel's own re-open used to be an example here
+/// too, but it now invalidates the model it is about to show on every open — see
+/// <c>ModelDetailViewModel.FetchCivitaiDataAsync</c> — so a re-open is deliberately never a cache
+/// hit any more.)
 /// </remarks>
 public sealed class CivitaiResponseCache : ICivitaiApiCache
 {
@@ -38,6 +44,21 @@ public sealed class CivitaiResponseCache : ICivitaiApiCache
     private readonly ConcurrentDictionary<string, Entry> _entries = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Lazy<Task<object?>>> _inFlight = new(StringComparer.Ordinal);
     private long _sequence;
+
+    /// <summary>
+    /// Per-key counterpart to <see cref="_generation"/>. <see cref="InvalidateModel"/>,
+    /// <see cref="InvalidateVersion"/> and <see cref="InvalidateHash"/> bump a key's entry here
+    /// instead of touching <see cref="_inFlight"/> — removing that dictionary entry out from under
+    /// a fetch that is still running is what let a caller's own cancellation start a duplicate
+    /// request before (see <see cref="RunAsync{T}"/>'s remark), and per-key invalidation must not
+    /// reintroduce that. A fetch captures its key's version when it starts, the same way it
+    /// captures <see cref="_generation"/>, and re-checks both before writing — so a fetch already
+    /// in flight when its key is invalidated still runs to completion and still answers whoever is
+    /// waiting on it, but its answer is never written back into <see cref="_entries"/>. Missing
+    /// keys default to version 0, so a key that has never been invalidated needs no entry here at
+    /// all.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, long> _keyVersions = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Bumped by <see cref="Clear"/>. A fetch captures the generation in effect when it starts and
@@ -113,7 +134,10 @@ public sealed class CivitaiResponseCache : ICivitaiApiCache
     /// waiting on. Removing the <c>_inFlight</c> entry is likewise owned by the fetch itself (see
     /// <see cref="RunAsync{T}"/>'s <c>finally</c>), not by this method — a caller cancelling its own
     /// <c>WaitAsync(ct)</c> must not evict an entry a still-running fetch, and every other caller
-    /// waiting on it, still depends on.
+    /// waiting on it, still depends on. <see cref="InvalidateModel"/>, <see cref="InvalidateVersion"/>
+    /// and <see cref="InvalidateHash"/> honour the same rule — see <see cref="_keyVersions"/> — so a
+    /// per-key invalidation racing an in-flight fetch for that key never evicts it either; it only
+    /// keeps that fetch's eventual answer from being written back.
     /// </remarks>
     public async Task<T?> GetOrAddAsync<T>(string key, TimeSpan ttl, Func<Task<T?>> factory, CancellationToken ct = default)
         where T : class
@@ -121,6 +145,7 @@ public sealed class CivitaiResponseCache : ICivitaiApiCache
         if (TryGet(key, out var cached)) return (T?)cached;
 
         var generation = Interlocked.Read(ref _generation);
+        var keyVersion = CurrentKeyVersion(key);
 
         // ConcurrentDictionary.GetOrAdd can invoke its value factory on more than one racing
         // thread even though only one result is ever stored — so the value factory here must not
@@ -137,15 +162,20 @@ public sealed class CivitaiResponseCache : ICivitaiApiCache
             Lazy<Task<object?>>? self = null;
             self = new Lazy<Task<object?>>(() =>
             {
-                var task = RunAsync(key, ttl, factory, generation, self!);
+                var task = RunAsync(key, ttl, factory, generation, keyVersion, self!);
 
                 // The fetch can outlive every caller (each caller only owns its own WaitAsync(ct)
                 // wait, per the remark above) and can still fault after the last one has abandoned
                 // it — a rate limit, a DNS blip, a bad JSON shape. Touch .Exception so a fault
                 // nobody is left to await does not surface as an UNOBSERVED TASK EXCEPTION at GC
                 // time (App.axaml.cs logs those as errors); it should stay a quiet, uncached miss.
-                task.ContinueWith(observeTask => { _ = observeTask.Exception; },
-                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
+                // TaskScheduler.Default, explicitly: ExecuteSynchronously means this almost always
+                // runs inline off SetException/SetResult regardless, but leaving the scheduler
+                // implicit would capture whatever TaskScheduler.Current happens to be at the moment
+                // this Lazy is first forced — a detail this continuation has no business depending on.
+                task.ContinueWith(observeTask => { _ = observeTask.Exception; }, CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
 
                 return task;
             }, LazyThreadSafetyMode.ExecutionAndPublication);
@@ -156,7 +186,7 @@ public sealed class CivitaiResponseCache : ICivitaiApiCache
     }
 
     private async Task<object?> RunAsync<T>(string key, TimeSpan ttl, Func<Task<T?>> factory, long generation,
-        Lazy<Task<object?>> self)
+        long keyVersion, Lazy<Task<object?>> self)
         where T : class
     {
         try
@@ -165,8 +195,11 @@ public sealed class CivitaiResponseCache : ICivitaiApiCache
 
             // A Clear() while this fetch was in flight (an API key change, an explicit reset) means
             // the world moved on before this answer arrived. Writing it now would put a stale value
-            // back into a store that was just emptied specifically to get rid of stale values.
-            if (Interlocked.Read(ref _generation) == generation)
+            // back into a store that was just emptied specifically to get rid of stale values. A
+            // per-key InvalidateModel/InvalidateVersion/InvalidateHash for THIS key while the fetch
+            // was in flight is the same situation at a narrower scope — the key version check below
+            // catches that even when the global generation never moved.
+            if (Interlocked.Read(ref _generation) == generation && CurrentKeyVersion(key) == keyVersion)
             {
                 var now = _clock();
                 var sequence = Interlocked.Increment(ref _sequence);
@@ -184,6 +217,23 @@ public sealed class CivitaiResponseCache : ICivitaiApiCache
             // whose blanket _inFlight.Clear() may already have dropped this one) is left alone.
             _inFlight.TryRemove(new KeyValuePair<string, Lazy<Task<object?>>>(key, self));
         }
+    }
+
+    private long CurrentKeyVersion(string key) => _keyVersions.TryGetValue(key, out var version) ? version : 0;
+
+    /// <summary>
+    /// Forgets <paramref name="key"/>'s cached entry and bumps its version so a fetch already in
+    /// flight for it — one that started before this call — cannot write its answer back once it
+    /// completes. Deliberately does NOT touch <c>_inFlight</c>: a still-running fetch for this key
+    /// keeps every caller already waiting on it (including whichever caller triggered THIS
+    /// invalidation, if it goes on to call <see cref="GetOrAddAsync{T}"/> and joins that same
+    /// fetch), and any caller arriving after that fetch's own <c>finally</c> removes it gets a
+    /// genuine cache miss — a fresh fetch, captured under the bumped version.
+    /// </summary>
+    private void Invalidate(string key)
+    {
+        _entries.TryRemove(key, out _);
+        _keyVersions.AddOrUpdate(key, 1, static (_, current) => current + 1);
     }
 
     private bool TryGet(string key, out object? value)
@@ -222,10 +272,13 @@ public sealed class CivitaiResponseCache : ICivitaiApiCache
     }
 
     /// <inheritdoc />
-    public void InvalidateModel(int modelId) => _entries.TryRemove(ModelKey(modelId), out _);
+    public void InvalidateModel(int modelId) => Invalidate(ModelKey(modelId));
 
     /// <inheritdoc />
-    public void InvalidateVersion(int modelVersionId) => _entries.TryRemove(VersionKey(modelVersionId), out _);
+    public void InvalidateVersion(int modelVersionId) => Invalidate(VersionKey(modelVersionId));
+
+    /// <inheritdoc />
+    public void InvalidateHash(string hash) => Invalidate(HashKey(hash));
 
     /// <inheritdoc />
     /// <remarks>
@@ -233,12 +286,16 @@ public sealed class CivitaiResponseCache : ICivitaiApiCache
     /// been written yet — is stamped as stale and will not repopulate the store it started
     /// against. In-flight entries are dropped too: a caller that arrives after this Clear() must
     /// start its own fetch (able to see whatever changed, e.g. a new API key) rather than join a
-    /// fetch that began before the change and carries the old answer.
+    /// fetch that began before the change and carries the old answer. <c>_keyVersions</c> is
+    /// cleared for hygiene, not correctness — the generation bump alone already invalidates every
+    /// key — so it does not grow unbounded across a long session's worth of individual
+    /// invalidations.
     /// </remarks>
     public void Clear()
     {
         Interlocked.Increment(ref _generation);
         _entries.Clear();
         _inFlight.Clear();
+        _keyVersions.Clear();
     }
 }
