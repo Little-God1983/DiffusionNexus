@@ -15,6 +15,15 @@ public class CivitaiApiGatewayTests
         public List<string?> ApiKeysSeen { get; } = [];
         public Func<int, CivitaiModel?>? ModelResponder;
 
+        /// <summary>
+        /// When set, <see cref="GetModelAsync"/> awaits this instead of returning synchronously —
+        /// simulates a genuinely in-flight HTTP call (like the real <c>HttpClient</c>, it observes
+        /// the caller's cancellation token via <see cref="Task.WaitAsync(CancellationToken)"/>
+        /// rather than ignoring it), so a single-flight leader/joiner scenario can be driven
+        /// deterministically instead of racing real threads.
+        /// </summary>
+        public TaskCompletionSource<CivitaiModel?>? PendingModelResult;
+
         public Task<CivitaiPagedResponse<CivitaiModel>> GetModelsAsync(
             CivitaiModelsQuery? query = null, string? apiKey = null, CancellationToken cancellationToken = default)
         {
@@ -28,6 +37,7 @@ public class CivitaiApiGatewayTests
         {
             ModelCalls++;
             ApiKeysSeen.Add(apiKey);
+            if (PendingModelResult is { } pending) return pending.Task.WaitAsync(cancellationToken);
             var model = ModelResponder is not null
                 ? ModelResponder(modelId)
                 : new CivitaiModel { Id = modelId, Name = $"model-{modelId}" };
@@ -284,14 +294,29 @@ public class CivitaiApiGatewayTests
     }
 
     [Fact]
-    public async Task AnAlreadyCancelledToken_DoesNotSitOutTheCooldownOrPacingWait()
+    public async Task AnAlreadyCancelledToken_StillAbandonsThisCallersOwnWaitPromptly()
     {
-        // Prime the pacer so a second, distinct call is actually due to wait — otherwise a
-        // passing assertion would not distinguish "cancellation was honoured" from "there was
-        // nothing to wait for anyway".
+        // Superseded by the blocker-1 fix (see LeaderCancellation_DoesNotCancelAJoinerWaitingOnTheSameFetch):
+        // this used to assert that an already-cancelled caller's token stopped the shared
+        // cooldown/pacer/API-call work before it ever ran (ModelCalls staying at 1) — true only
+        // because, pre-fix, that caller's own token WAS the token driving the shared fetch. Now the
+        // shared fetch runs on a detached token so no single caller (leader or joiner) can tear it
+        // down; a caller can only abandon its OWN wait for the result. So this caller still gets
+        // its OperationCanceledException promptly — it does not hang waiting on work it no longer
+        // owns — but the detached fetch is unaffected and reaches the real API call regardless.
+        // That is the accepted trade-off: an abandoned fetch is cheap (one metadata GET) and still
+        // populates the cache rather than being wasted.
         var (interactive, _, inner, _) = CreateBoth();
+        // Prime the pacer so a second, distinct call is actually due to wait.
         await interactive.GetModelAsync(1);
         _waits.Clear();
+
+        // Keeps the shared fetch genuinely pending rather than resolving synchronously against the
+        // test's zero-latency fake pacer/cooldown, so what is exercised is this caller's own
+        // join-wait noticing its cancellation — not an accidental synchronous race. A real HTTP
+        // call never completes this fast, so this mirrors production, where the fetch is always
+        // still in flight when a caller's own cancellation fires.
+        inner.PendingModelResult = new TaskCompletionSource<CivitaiModel?>();
 
         using var cts = new CancellationTokenSource();
         cts.Cancel();
@@ -299,9 +324,49 @@ public class CivitaiApiGatewayTests
         var act = async () => await interactive.GetModelAsync(2, cancellationToken: cts.Token);
 
         await act.Should().ThrowAsync<OperationCanceledException>();
-        // Had cancellation not been honoured before the wait, this would show the 750 ms pacing
-        // wait and inner.ModelCalls would be 2.
-        _waits.Should().BeEmpty();
-        inner.ModelCalls.Should().Be(1);
+        // The pacer wait ran (unaffected by this caller's cancellation) and the detached fetch
+        // reached the real inner call — neither is torn down by this caller abandoning its wait.
+        _waits.Should().ContainSingle().Which.Should().Be(TimeSpan.FromMilliseconds(750));
+        inner.ModelCalls.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task LeaderCancellation_DoesNotCancelAJoinerWaitingOnTheSameFetch()
+    {
+        // Blocker-1 regression test. SendAsync's shared factory used to be built from whichever
+        // caller's CancellationToken happened to become the single-flight leader's — so that
+        // caller cancelling (e.g. LoraUpdateChecker dropping a stale page on "user paginated or
+        // filter changed") tore down the in-flight fetch a joiner with its own live token (e.g.
+        // ModelDetailViewModel, joining with CancellationToken.None) was still depending on. The
+        // joiner must be able to receive the value regardless of what the leader does with ITS OWN
+        // token.
+        var (interactive, _, inner, _) = CreateBoth();
+        inner.PendingModelResult = new TaskCompletionSource<CivitaiModel?>();
+
+        using var leaderCts = new CancellationTokenSource();
+
+        // Started (not awaited) so it registers the in-flight fetch and then suspends on the
+        // pending inner call — deterministic on a single thread because CountingClient.GetModelAsync
+        // only ever suspends there, never before, for this call shape.
+        var leaderTask = interactive.GetModelAsync(42, cancellationToken: leaderCts.Token);
+        var joinerTask = interactive.GetModelAsync(42, cancellationToken: CancellationToken.None);
+
+        leaderCts.Cancel();
+
+        // The leader only abandons ITS OWN wait — it must see its own cancellation promptly rather
+        // than hang waiting for the still-pending shared fetch.
+        var leaderAct = async () => await leaderTask;
+        await leaderAct.Should().ThrowAsync<OperationCanceledException>();
+
+        // The shared fetch is still alive: completing it now must resolve the joiner with the real
+        // value, not the leader's cancellation. Bounded so a regression (the joiner hanging or
+        // throwing) fails fast instead of hanging the whole test run.
+        inner.PendingModelResult.SetResult(new CivitaiModel { Id = 42, Name = "model-42" });
+        var finished = await Task.WhenAny(joinerTask, Task.Delay(TimeSpan.FromSeconds(2)));
+        finished.Should().BeSameAs(joinerTask, "a leader cancelling must not cancel a joiner still waiting on the shared fetch");
+
+        var joinerResult = await joinerTask;
+        joinerResult.Should().NotBeNull();
+        joinerResult!.Id.Should().Be(42);
     }
 }

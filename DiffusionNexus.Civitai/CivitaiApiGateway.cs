@@ -75,6 +75,36 @@ public sealed class CivitaiApiGateway : ICivitaiClient, ICivitaiApiCache
         * _cooldown.IntervalMultiplier;
 
     /// <summary>Cooldown first, then spacing: no point pacing into a wall.</summary>
+    /// <remarks>
+    /// The factory below runs on <see cref="CancellationToken.None"/>, not <paramref name="ct"/>.
+    /// <see cref="CivitaiResponseCache.GetOrAddAsync{T}"/> single-flights concurrent callers for
+    /// the same key onto one shared fetch — one of them becomes its "leader" (whichever call first
+    /// registers the in-flight entry), and the rest join it. If the factory captured a caller's
+    /// token, that caller's cancellation would tear down the cooldown wait, the pacer wait, or the
+    /// underlying HTTP call — for EVERY caller sharing the fetch, including joiners who supplied
+    /// their own, still-live token and never asked to be cancelled (see blocker 1 in the gateway
+    /// fix-wave review: a page the update checker abandons on every pagination/filter change could
+    /// otherwise cancel the detail panel's join to the same model). Detaching the shared work from
+    /// any one caller's token means every caller — leader and joiners alike — can only ever abandon
+    /// its OWN wait, via <c>ct</c> below, which <see cref="CivitaiResponseCache.GetOrAddAsync{T}"/>
+    /// already applies with <c>Task.WaitAsync</c>.
+    ///
+    /// Consequences, considered deliberately:
+    /// <list type="bullet">
+    /// <item>An abandoned fetch now runs to completion instead of being torn down. That is cheap —
+    /// one metadata GET — and still populates the cache, so the work is not wasted; it just outlives
+    /// the caller that triggered it, the same way a fire-and-forget prefetch would.</item>
+    /// <item>Nothing hangs app shutdown or a cancelled sync run over this: process exit does not
+    /// wait for a detached background continuation, and the caller-side cancellation (this method's
+    /// own <c>ct</c>) still resolves promptly regardless of what the shared fetch is doing.</item>
+    /// <item>The cooldown and pacer waits no longer stop early for a caller's cancellation — a
+    /// caller that starts a fetch during an active 429 cooldown could sit out the FULL cooldown in
+    /// the background even after every caller waiting on it has bailed. Accepted: the cooldown is
+    /// bounded (server-supplied Retry-After, or the 30 s default) and the same "let it finish, it's
+    /// cheap" reasoning applies — the alternative (racing the shared work against an arbitrary
+    /// caller's token) is exactly the bug this fixes.</item>
+    /// </list>
+    /// </remarks>
     private async Task<T?> SendAsync<T>(string cacheKey, TimeSpan ttl, string? apiKey,
         Func<CancellationToken, Task<T?>> call, CancellationToken ct)
         where T : class
@@ -87,9 +117,9 @@ public sealed class CivitaiApiGateway : ICivitaiClient, ICivitaiApiCache
 
         return await _cache.GetOrAddAsync(cacheKey, ttl, async () =>
         {
-            await _cooldown.WaitAsync(ct).ConfigureAwait(false);
-            await _pacer.WaitAsync(Interval, ct).ConfigureAwait(false);
-            return await call(ct).ConfigureAwait(false);
+            await _cooldown.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+            await _pacer.WaitAsync(Interval, CancellationToken.None).ConfigureAwait(false);
+            return await call(CancellationToken.None).ConfigureAwait(false);
         }, ct).ConfigureAwait(false);
     }
 
