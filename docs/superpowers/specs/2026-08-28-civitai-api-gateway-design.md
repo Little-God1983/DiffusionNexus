@@ -101,9 +101,30 @@ State on the singleton, consulted before every request in either lane:
   429 pauses *all* of them.
 - `_intervalMultiplier` decays back to 1 after 5 minutes without a 429.
 
-The inner client keeps its own retry loop (it is the thing that sees the
-response), but the gateway now records the 429 globally. `LoraUpdateChecker`'s
-private 60 s cooldown is deleted — the gateway's is strictly better.
+**How the gateway learns.** The 429 response is visible only inside
+`CivitaiClient`, which today converts it into a bare `HttpRequestException`
+carrying nothing but the status. Two additions close that gap:
+
+- `CivitaiClient` takes an optional `ICivitaiRateLimitObserver` and calls it
+  the moment *any* 429 arrives — including one its own retry then recovers
+  from. So the first 429 pauses every other surface immediately, rather than
+  only after the unlucky caller has exhausted its retries.
+- When it does give up, it throws `CivitaiRateLimitedException`, which
+  derives from `HttpRequestException` with `StatusCode = TooManyRequests`
+  and adds `RetryAfter`. Every existing `catch (HttpRequestException ex)
+  when (ex.StatusCode == TooManyRequests)` handler keeps working unchanged.
+
+`Retry-After` is parsed once, in the client, accepting **both** the delta
+form and the HTTP-date form (only the delta form is understood today).
+
+The inner client's 429 retry budget drops from 3 to 1. Three retries meant a
+single logical call could sleep 10 + 20 + 40 s *inside* the call while
+holding a download slot; with a shared cooldown now doing that job properly,
+one immediate retry is the right amount of local optimism. The 5xx/transient
+budget stays at 3.
+
+`LoraUpdateChecker`'s private 60 s cooldown is deleted — the gateway's is
+strictly better.
 
 ### Cache — in-memory, bounded, TTL
 
@@ -115,7 +136,9 @@ private 60 s cooldown is deleted — the gateway's is strictly better.
 | `GetModelsAsync` | full query string | 2 min | kills filter-toggle re-searches |
 | `GetTagsAsync`, `GetCreatorsAsync`, `GetImagesAsync` | — | not cached | unused in production |
 
-- Bounded LRU: 500 model + 500 version + 200 hash + 50 search entries.
+- A single bounded store, 1000 entries, evicting oldest-inserted first. One
+  cap is enough — per-kind caps would be three knobs measuring the same
+  memory.
 - **Single-flight**: concurrent callers for the same key await one request
   rather than issuing N. This alone collapses the two-concurrent-download
   case when both hit the same model page.
