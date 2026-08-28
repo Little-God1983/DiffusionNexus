@@ -504,6 +504,27 @@ public class CivitaiClientTests
     }
 
     [Fact]
+    public async Task GetAsync_ClampsPastRetryAfterHttpDate_ToZero()
+    {
+        // A past HTTP-date must clamp to TimeSpan.Zero, not go negative — the gateway feeds
+        // this value straight into a cooldown deadline.
+        var observer = new RecordingRateLimitObserver();
+        var handler = new FakeHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+        {
+            Headers = { RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(DateTimeOffset.UtcNow.AddSeconds(-45)) }
+        });
+        using var client = new CivitaiClient(new HttpClient(handler), disposeHttpClient: true, rateLimitObserver: observer)
+        {
+            RetryDelayOverride = _ => TimeSpan.Zero
+        };
+
+        var act = async () => await client.GetModelAsync(1);
+        var ex = await act.Should().ThrowAsync<CivitaiRateLimitedException>();
+
+        ex.Which.RetryAfter.Should().Be(TimeSpan.Zero);
+    }
+
+    [Fact]
     public async Task RateLimitedException_IsStillCaughtAsHttpRequestException()
     {
         var handler = new FakeHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.TooManyRequests));

@@ -340,7 +340,13 @@ public sealed class CivitaiClient : ICivitaiClient, IDisposable
             }
         }
 
-        // Only reachable when the transient-retry budget is exhausted without a decisive answer.
+        // Dead code required only to satisfy the compiler: every real exit from the loop above
+        // already returns or throws (429 throws CivitaiRateLimitedException directly; 5xx
+        // exhaustion falls through to the !IsSuccessStatusCode throw with the real status code;
+        // both catch guards fail rather than fall through once attempt == maxRetries, so the
+        // exception propagates instead of reaching here). The compiler cannot prove a `for` loop
+        // exhaustive, so this throw exists to satisfy it — it is not a live fallback path. Do not
+        // debug a real 429 or 5xx exhaustion by looking here.
         throw new HttpRequestException(
             $"Civitai API gave no usable response after {maxRetries} retries for {endpoint}",
             null,
