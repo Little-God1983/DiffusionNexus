@@ -2187,8 +2187,8 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 After a restart the download queue re-fetches each job's version anonymously. An authenticated request gets a friendlier quota and can see gated versions.
 
 **Files:**
-- Modify: `DiffusionNexus.UI/Services/CivitaiBrowser/CivitaiDownloadQueue.cs:559-563`
-- Test: `DiffusionNexus.Tests/Viewer/CivitaiWaitlistMoveToQueueTests.cs` or the nearest queue fixture
+- Modify: `DiffusionNexus.UI/Services/CivitaiBrowser/CivitaiDownloadQueue.cs:638-644`
+- Test: `DiffusionNexus.Tests/Viewer/CivitaiDownloadQueueStartResumeTests.cs`
 
 **Interfaces:**
 - Consumes: `ICivitaiApiKeyProvider.GetApiKeyAsync(CancellationToken)` (existing, `DiffusionNexus.Domain.Services`).
@@ -2223,7 +2223,7 @@ Expected: FAIL — the call goes out with a null key.
 
 - [ ] **Step 3: Implement**
 
-In `CivitaiDownloadQueue.cs`, replace lines 559-563:
+In `CivitaiDownloadQueue.cs`, replace lines 638-644:
 
 ```csharp
             var civVersion = job.CivitaiVersion;
