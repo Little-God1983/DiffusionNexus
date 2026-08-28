@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using DiffusionNexus.Civitai;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
@@ -30,6 +31,7 @@ public sealed class LibrarySyncService : ILibrarySyncService
     private readonly SyncStateInitializer _initializer;
     private readonly IServiceScopeFactory _scopes;
     private readonly IUnifiedLogger? _logger;
+    private readonly ICivitaiApiCache? _apiCache;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     // volatile: the UI thread polls this while the run itself lives on a thread-pool thread.
@@ -45,12 +47,14 @@ public sealed class LibrarySyncService : ILibrarySyncService
         IEnumerable<ISyncStep> steps,
         SyncStateInitializer initializer,
         IServiceScopeFactory scopes,
-        IUnifiedLogger? logger = null)
+        IUnifiedLogger? logger = null,
+        ICivitaiApiCache? apiCache = null)
     {
         _steps = (steps ?? throw new ArgumentNullException(nameof(steps))).ToList();
         _initializer = initializer ?? throw new ArgumentNullException(nameof(initializer));
         _scopes = scopes ?? throw new ArgumentNullException(nameof(scopes));
         _logger = logger;
+        _apiCache = apiCache;
     }
 
     /// <inheritdoc />
@@ -127,6 +131,16 @@ public sealed class LibrarySyncService : ILibrarySyncService
         // that too (GetRequiredService, Single() over nothing), and a caller cannot tell "not now"
         // from "your DI graph is broken" by type. Still derives from it, so old callers are fine.
         if (!_gate.Wait(0)) throw new SyncAlreadyRunningException();
+
+        // "Force" means the user has told us the local answer is wrong. A cached response is a
+        // local answer, so it goes too — otherwise a forced re-sync would replay the very page
+        // that produced the state they are trying to correct. This also covers the LoRA Viewer's
+        // per-tile "Download Metadata", which forces identify and thumbnails.
+        var options = plan.Options;
+        if (options.ForceIdentify || options.ForceTags || options.ForceImages || options.ForceThumbnails)
+        {
+            _apiCache?.Clear();
+        }
 
         _isRunning = true;
         var stopwatch = Stopwatch.StartNew();

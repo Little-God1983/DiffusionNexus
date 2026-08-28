@@ -75,8 +75,8 @@ public sealed class LibrarySyncServiceTests : IDisposable
     /// interval is applied by the gateway <see cref="ICivitaiClient"/> is resolved to, and these
     /// steps are fakes that make no requests.
     /// </summary>
-    private LibrarySyncService NewService(IEnumerable<ISyncStep> steps)
-        => new(steps, NewInitializer(), Scopes, logger: null);
+    private LibrarySyncService NewService(IEnumerable<ISyncStep> steps, ICivitaiApiCache? apiCache = null)
+        => new(steps, NewInitializer(), Scopes, logger: null, apiCache);
 
     private static SyncOptions OptionsFor(params SyncStepKind[] kinds) => new(new HashSet<SyncStepKind>(kinds));
 
@@ -592,6 +592,37 @@ public sealed class LibrarySyncServiceTests : IDisposable
             "a step that blew up must be stated as such, not laundered into a cancellation");
         report.Steps.Single(s => s.Kind == SyncStepKind.IdentifyModel).Succeeded.Should().Be(1,
             "the committed work is still reported");
+    }
+
+    /// <summary>
+    /// "Force" means the user has told us the local answer is wrong. A cached response is a local
+    /// answer, so it goes too — otherwise a forced re-sync would replay the very page that produced
+    /// the state they are trying to correct.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_WithAForceOption_ClearsTheCivitaiCacheFirst()
+    {
+        var cache = new Mock<ICivitaiApiCache>();
+        var service = NewService([], apiCache: cache.Object);
+        var options = new SyncOptions(new HashSet<SyncStepKind> { SyncStepKind.FetchTags }, ForceTags: true);
+        var plan = await service.PlanAsync(SyncScope.Library, options, CancellationToken.None);
+
+        await service.ExecuteAsync(plan, null, CancellationToken.None);
+
+        cache.Verify(c => c.Clear(), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithoutAForceOption_LeavesTheCacheAlone()
+    {
+        var cache = new Mock<ICivitaiApiCache>();
+        var service = NewService([], apiCache: cache.Object);
+        var options = new SyncOptions(new HashSet<SyncStepKind> { SyncStepKind.FetchTags });
+        var plan = await service.PlanAsync(SyncScope.Library, options, CancellationToken.None);
+
+        await service.ExecuteAsync(plan, null, CancellationToken.None);
+
+        cache.Verify(c => c.Clear(), Times.Never);
     }
 
     // ------------------------------------------------------ Thumbnail parallelism

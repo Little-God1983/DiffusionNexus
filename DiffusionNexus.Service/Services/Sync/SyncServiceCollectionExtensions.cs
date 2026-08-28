@@ -70,7 +70,8 @@ public static class SyncServiceCollectionExtensions
             sp.GetRequiredService<IEnumerable<ISyncStep>>(),
             sp.GetRequiredService<SyncStateInitializer>(),
             sp.GetRequiredService<IServiceScopeFactory>(),
-            sp.GetService<IUnifiedLogger>()));
+            sp.GetService<IUnifiedLogger>(),
+            sp.GetService<ICivitaiApiCache>()));
 
         return services;
     }
