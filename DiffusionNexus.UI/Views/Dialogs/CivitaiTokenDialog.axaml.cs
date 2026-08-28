@@ -125,9 +125,19 @@ public partial class CivitaiTokenDialog : Window
         // the cache is still empty, during onboarding), not something that happens mid-scroll.
         if (client is ICivitaiApiCache cache) cache.Clear();
 
+        // The raw HttpClient this dialog used to own carried Timeout = 15s. Routing through the
+        // gateway dropped every per-call bound: the gateway's cooldown/pacer waits detach onto
+        // CancellationToken.None (an active 429 cooldown is the server's Retry-After, or the 30s
+        // default), CivitaiClient's own 429 retry adds another delay on top, and the shared
+        // HttpClient in AddCivitaiGateway has no Timeout set (100s default). Without a token here
+        // the dialog could sit on "Validating..." for minutes with Save/Cancel/the textbox all
+        // disabled and no way out. A local 15s budget restores the original bound and gives the
+        // catch below something to fire on again.
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+
         try
         {
-            await client.GetModelsAsync(new CivitaiModelsQuery { Limit = 1 }, apiKey: token);
+            await client.GetModelsAsync(new CivitaiModelsQuery { Limit = 1 }, apiKey: token, cancellationToken: cts.Token);
             return (true, null);
         }
         catch (HttpRequestException ex) when (ex.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
@@ -138,9 +148,12 @@ public partial class CivitaiTokenDialog : Window
         {
             return (false, $"Civitai returned an unexpected status: {(int)status} {ex.Message}");
         }
-        catch (TaskCanceledException)
+        catch (TaskCanceledException) when (cts.IsCancellationRequested)
         {
-            return (false, "Connection timed out. Please check your internet connection and try again.");
+            // The only token reaching this call is the local 15s budget above — nothing else can
+            // cancel it — so this is always our own timeout, never some other caller's token
+            // (there isn't one) or a shutdown-shaped cancellation.
+            return (false, "Validation timed out after 15 seconds. Civitai may be rate-limited right now — please try again shortly.");
         }
         catch (HttpRequestException ex)
         {
