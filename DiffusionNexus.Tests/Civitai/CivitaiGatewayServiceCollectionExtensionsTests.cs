@@ -1,3 +1,4 @@
+using System.Reflection;
 using DiffusionNexus.Civitai;
 using DiffusionNexus.UI.Services;
 using FluentAssertions;
@@ -8,10 +9,14 @@ namespace DiffusionNexus.Tests.Civitai;
 
 /// <summary>
 /// Guards the DI-level sharing invariant <c>AddCivitaiGateway</c> exists to establish: one pacer,
-/// one cooldown and one cache behind both lanes of <see cref="ICivitaiClient"/>. Before this test,
-/// nothing in the suite would fail if a future edit re-registered <see cref="ICivitaiClient"/>, or
-/// added a second <see cref="CivitaiResponseCache"/> — the app would still build and every other
-/// test would still pass while the gateway quietly paced, cooled down and cached nothing.
+/// one cooldown and one cache behind both lanes of <see cref="ICivitaiClient"/>. The real guard is
+/// <see cref="GatewayInstances_ShareTheSamePacerCooldownAndCache"/>, which reflects into the two
+/// constructed <see cref="CivitaiApiGateway"/> instances and compares their collaborators directly —
+/// it is the one proven (see task-6-report.md, fix round 2) to fail if a lane factory is changed to
+/// build its own private collaborator instead of resolving the shared one. The other tests here check
+/// adjacent, real but narrower facts: that the two lanes are distinct instances, that the cache
+/// interface and concrete type never diverge, and (as a cheap, admittedly non-dispositive sanity
+/// check) that the collaborator types keep singleton lifetime in the container.
 /// </summary>
 public sealed class CivitaiGatewayServiceCollectionExtensionsTests
 {
@@ -47,35 +52,88 @@ public sealed class CivitaiGatewayServiceCollectionExtensionsTests
     }
 
     /// <summary>
-    /// <see cref="CivitaiApiGateway"/> holds its pacer, cooldown and cache in private fields, so the
-    /// two gateway instances' collaborators cannot be compared directly without adding accessors to
-    /// production code purely for this test. What is asserted instead: the three collaborator types
-    /// are registered as singletons, so both gateway factories — which resolve them by
-    /// <c>sp.GetRequiredService</c> against the same provider — necessarily receive the same
-    /// instances. Resolving each twice and asserting reference equality is the reachable proxy for
-    /// "both lanes share one pacer, one cooldown, one cache".
+    /// NOT a wiring test. This only proves that <c>AddSingleton</c> does what <c>AddSingleton</c>
+    /// always does — resolving the same type twice from the same container yields the same
+    /// instance. It passes even if a gateway factory is changed to build its own private
+    /// <c>new CivitaiRequestPacer()</c> instead of resolving the shared one, because it never looks
+    /// inside either gateway. <see cref="GatewayInstances_ShareTheSamePacerCooldownAndCache"/> below
+    /// is the test that actually catches that mutation; keep this one only as a cheap sanity check
+    /// that the container itself is configured with singleton lifetimes, not as evidence the
+    /// gateways use them.
     /// </summary>
     [Fact]
-    public void SharedCollaborators_AreSingletonsWithinTheProvider()
+    public void CollaboratorServices_HaveSingletonLifetimeWithinTheProvider_ContainerCheckOnly()
     {
         using var provider = BuildProvider();
 
         provider.GetRequiredService<CivitaiRateLimitCooldown>()
-            .Should().BeSameAs(provider.GetRequiredService<CivitaiRateLimitCooldown>(),
-                "one cooldown is what makes a single 429 pause every surface");
+            .Should().BeSameAs(provider.GetRequiredService<CivitaiRateLimitCooldown>());
 
         provider.GetRequiredService<CivitaiResponseCache>()
-            .Should().BeSameAs(provider.GetRequiredService<CivitaiResponseCache>(),
-                "one cache is what stops the same model page being fetched twice");
+            .Should().BeSameAs(provider.GetRequiredService<CivitaiResponseCache>());
 
         provider.GetRequiredService<ICivitaiRequestPacer>()
-            .Should().BeSameAs(provider.GetRequiredService<ICivitaiRequestPacer>(),
-                "one pacer timestamp is what makes background work space itself behind interactive work");
+            .Should().BeSameAs(provider.GetRequiredService<ICivitaiRequestPacer>());
 
-        // Not required by the invariant (the gateway wraps the raw client, not the other way
-        // round), but the raw CivitaiClient is also registered as a singleton, so both lanes end
-        // up wrapping the same inner client too.
         provider.GetRequiredService<CivitaiClient>()
             .Should().BeSameAs(provider.GetRequiredService<CivitaiClient>());
+    }
+
+    /// <summary>
+    /// The real guard for the load-bearing invariant: not "the collaborator types are singletons"
+    /// (guaranteed by <c>AddSingleton</c> regardless of what the gateway factories do with them —
+    /// see <see cref="CollaboratorServices_HaveSingletonLifetimeWithinTheProvider_ContainerCheckOnly"/>)
+    /// but "the two constructed <see cref="CivitaiApiGateway"/> instances actually hold the same
+    /// pacer, cooldown and cache object". <see cref="CivitaiApiGateway"/> has no public accessors for
+    /// its collaborators and none were added for this test — reflecting over the private fields is
+    /// the only way to look inside both instances and compare, and is the instrument the review that
+    /// commissioned this test explicitly sanctioned. Verified to actually fail the mutation it exists
+    /// to catch — see the fix-round-2 section of task-6-report.md.
+    /// </summary>
+    [Fact]
+    public void GatewayInstances_ShareTheSamePacerCooldownAndCache()
+    {
+        using var provider = BuildProvider();
+
+        var interactive = (CivitaiApiGateway)provider.GetRequiredService<ICivitaiClient>();
+        var background = (CivitaiApiGateway)provider.GetRequiredKeyedService<ICivitaiClient>("background");
+
+        GetPrivateField(interactive, "_pacer").Should().BeSameAs(GetPrivateField(background, "_pacer"),
+            "both lanes must share one pacer — the pacing timestamp is the process's single opinion " +
+            "about when it last spoke to Civitai, and a lane with its own pacer would space nothing " +
+            "against the other");
+
+        GetPrivateField(interactive, "_cooldown").Should().BeSameAs(GetPrivateField(background, "_cooldown"),
+            "both lanes must share one cooldown — a 429 drawn by either lane must pause both");
+
+        GetPrivateField(interactive, "_cache").Should().BeSameAs(GetPrivateField(background, "_cache"),
+            "both lanes must share one cache — otherwise the same model page is fetched twice, once " +
+            "per lane");
+    }
+
+    /// <summary>
+    /// Reads a private instance field off <see cref="CivitaiApiGateway"/> by name. Fails the test
+    /// explicitly — rather than returning <c>null</c> and letting a <c>BeSameAs(null)</c> pass
+    /// vacuously — if the field cannot be found, so a future rename breaks loudly instead of quietly
+    /// disarming the assertion above.
+    /// </summary>
+    private static object GetPrivateField(CivitaiApiGateway gateway, string fieldName)
+    {
+        var field = typeof(CivitaiApiGateway).GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Instance);
+        if (field is null)
+        {
+            Assert.Fail($"CivitaiApiGateway no longer has a private field named '{fieldName}' — " +
+                "update this test's field name (and check whether the collaborator it names was " +
+                "renamed or restructured) instead of letting the assertion above pass on a null it " +
+                "never actually compared.");
+        }
+
+        var value = field.GetValue(gateway);
+        if (value is null)
+        {
+            Assert.Fail($"CivitaiApiGateway.{fieldName} was null on a constructed gateway instance.");
+        }
+
+        return value;
     }
 }
