@@ -69,6 +69,7 @@ public sealed record SettingsExportData
 
     public string? LoraSortSourcePath { get; init; }
     public string? LoraSortTargetPath { get; init; }
+    public string? LoraSorterExcludedFoldersJson { get; init; }
     public bool DeleteEmptySourceFolders { get; init; }
 
     // ?? Dataset Helper ???????????????????????????????????????
@@ -160,6 +161,7 @@ public static class SettingsExportSchema
     /// Current schema version. Bump when adding new fields.
     /// v2: split AutoBackupEnabled into BackupDatasetImagesEnabled + BackupDatabaseEnabled.
     /// v3: metadata-sync retry windows + thumbnail concurrency.
+    /// v4: LoRA sorter excluded-folders list.
     /// </summary>
     /// <remarks>
     /// Bumping is cheap in both directions. The importer enforces only
@@ -170,7 +172,7 @@ public static class SettingsExportSchema
     /// feature or because the user chose nothing — exactly what
     /// <see cref="SettingsExportData.LegacyAutoBackupEnabled"/> needed for the v1→v2 split.
     /// </remarks>
-    public const int CurrentVersion = 3;
+    public const int CurrentVersion = 4;
 
     /// <summary>
     /// Minimum schema version that can still be imported.

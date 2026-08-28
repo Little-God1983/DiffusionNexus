@@ -65,6 +65,7 @@ public sealed class SettingsExportService : ISettingsExportService
 
             LoraSortSourcePath = settings.LoraSortSourcePath,
             LoraSortTargetPath = settings.LoraSortTargetPath,
+            LoraSorterExcludedFoldersJson = settings.LoraSorterExcludedFoldersJson,
             DeleteEmptySourceFolders = settings.DeleteEmptySourceFolders,
 
             DatasetStoragePath = settings.DatasetStoragePath,
@@ -174,6 +175,7 @@ public sealed class SettingsExportService : ISettingsExportService
 
             LoraSortSourcePath = export.LoraSortSourcePath,
             LoraSortTargetPath = export.LoraSortTargetPath,
+            LoraSorterExcludedFoldersJson = export.LoraSorterExcludedFoldersJson,
             DeleteEmptySourceFolders = export.DeleteEmptySourceFolders,
 
             DatasetStoragePath = export.DatasetStoragePath,

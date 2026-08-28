@@ -1,5 +1,8 @@
 using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Markup.Xaml;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views.Controls;
@@ -64,5 +67,71 @@ public partial class LoraSorterView : ControlBase
         if (_initialized || !this.IsAttachedToVisualTree() || DataContext is not LoraSorterViewModel vm) return;
         _initialized = true;
         _ = vm.InitializeAsync();
+    }
+
+    /// <summary>
+    /// "Open in folder" from a row's context menu. The menu inherits the row's node as its
+    /// DataContext, so the node comes straight off the sender — no <c>$parent</c> traversal, which
+    /// this template cannot use anyway: it is recursive, so the nearest <c>ItemsControl</c> above a
+    /// row is the folder holding it rather than the view.
+    /// </summary>
+    private void OnOpenInFolder(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (sender is not Control { DataContext: SortPreviewNodeViewModel node }) return;
+        if (DataContext is not LoraSorterViewModel vm) return;
+
+        vm.OpenInFolderCommand.Execute(node);
+    }
+
+    // Same shape as OnOpenInFolder, for the same reason: the menu item inherits the row's node,
+    // and this template is recursive, so a $parent[ItemsControl] command hop would land on the
+    // folder above rather than the view.
+    private void OnExcludeFolder(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (sender is not Control { DataContext: SortPreviewNodeViewModel node }) return;
+        if (DataContext is not LoraSorterViewModel vm) return;
+
+        vm.ExcludeFolderCommand.Execute(node);
+    }
+
+    private void OnUnexcludeFolder(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (sender is not Control { DataContext: SortPreviewNodeViewModel node }) return;
+        if (DataContext is not LoraSorterViewModel vm) return;
+
+        vm.RemoveExclusionCommand.Execute(node.FullPath);
+    }
+
+    /// <summary>
+    /// Pairs the clicked row with its counterpart in the other tree, then scrolls that counterpart
+    /// into view. The expand/collapse chevron is a <c>ToggleButton</c>, which handles the press
+    /// itself, so opening a folder does not also select it.
+    /// </summary>
+    private void OnPreviewRowPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (sender is not Control { DataContext: SortPreviewNodeViewModel node }) return;
+        if (DataContext is not LoraSorterViewModel vm) return;
+
+        vm.SelectPreviewNodeCommand.Execute(node);
+
+        // Posted rather than called: selecting expands the folders above the counterpart, and until
+        // that layout pass has run the row either has no container yet or has one at a stale offset,
+        // so bringing it into view here would scroll to where it used to be.
+        Dispatcher.UIThread.Post(ScrollPrimaryLinkIntoView, DispatcherPriority.Background);
+    }
+
+    /// <summary>
+    /// Scrolls to the one counterpart the ViewModel marked as the scroll target. A folder click can
+    /// light rows in a dozen destination folders; the first of them is the only one it makes sense
+    /// to move the viewport to.
+    /// </summary>
+    private void ScrollPrimaryLinkIntoView()
+    {
+        var primary = this.GetVisualDescendants()
+            .OfType<Border>()
+            .FirstOrDefault(b => b.Classes.Contains("noderow")
+                                 && b.DataContext is SortPreviewNodeViewModel { IsPrimaryLink: true });
+
+        primary?.BringIntoView();
     }
 }

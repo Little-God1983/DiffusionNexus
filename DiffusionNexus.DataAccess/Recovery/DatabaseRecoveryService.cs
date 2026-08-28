@@ -290,6 +290,7 @@ public sealed class DatabaseRecoveryService
                 { "SyncNotIdentifiedRetryDays", "ALTER TABLE AppSettings ADD COLUMN SyncNotIdentifiedRetryDays INTEGER NOT NULL DEFAULT 30" },
                 { "SyncErrorRetryDays", "ALTER TABLE AppSettings ADD COLUMN SyncErrorRetryDays INTEGER NOT NULL DEFAULT 1" },
                 { "SyncThumbnailConcurrency", "ALTER TABLE AppSettings ADD COLUMN SyncThumbnailConcurrency INTEGER NOT NULL DEFAULT 4" },
+                { "LoraSorterExcludedFoldersJson", "ALTER TABLE AppSettings ADD COLUMN LoraSorterExcludedFoldersJson TEXT" },
                 { "LastLibrarySyncAt", "ALTER TABLE AppSettings ADD COLUMN LastLibrarySyncAt TEXT" }
             };
 

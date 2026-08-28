@@ -10,6 +10,7 @@ using DiffusionNexus.Service.Services.IO;
 using DiffusionNexus.Service.Services.Lora;
 using DiffusionNexus.Service.Services.Sync.Identity;
 using DiffusionNexus.UI.Helpers;
+using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.Lora.Sorting;
 using DiffusionNexus.UI.Utilities;
 using Microsoft.Extensions.DependencyInjection;
@@ -66,6 +67,15 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     private readonly Func<CancellationToken, Task<IReadOnlyList<InstalledModelFile>>>? _loadCachedFiles;
 
     private LoraSortPlan? _lastPlan;
+
+    /// <summary>The inputs <see cref="BuildPreviewTree"/> was last given, kept beside
+    /// <see cref="_lastPlan"/> so a view-only toggle (hide-settled) can redraw the trees from the
+    /// plan in hand instead of re-planning. Cleared together with the plan — a null plan makes
+    /// them unreachable, but leaving them behind invites exactly the stale-state trap
+    /// <see cref="DisarmPlan"/> documents.</summary>
+    private string? _lastTargetRoot;
+    private IReadOnlyList<SortCandidate> _lastExcluded = [];
+
     private CancellationTokenSource? _sortCts;
 
     /// <summary>Set when the post-run empty-folder cleanup failed, so the result banner can say so
@@ -160,12 +170,22 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         _historyDirectory = SortHistoryWriter.DefaultHistoryDirectory;
         _deleteEmptyDirectories = DefaultDeleteEmptyDirectories;
         _loadCachedFiles = null;
+        SourceFilter = new SortPreviewFilterViewModel(SourceRoots);
+        TargetFilter = new SortPreviewFilterViewModel(PreviewRoots);
         HookIsBusyNotifications();
 
         SourceFolders.Add(@"C:\Demo\Loras");
         SelectedSourceFolder = SourceFolders[0];
         PreviewRoots.Add(new SortPreviewNodeViewModel { Name = "SDXL 1.0", LoraCount = 12, TotalBytes = 4_200_000_000 });
         PreviewRoots.Add(new SortPreviewNodeViewModel { Name = "Illustrious", LoraCount = 5, TotalBytes = 1_100_000_000 });
+        SourceRoots.Add(new SortPreviewNodeViewModel
+        {
+            Name = "unsorted", IsSourceSide = true, LoraCount = 14, TotalBytes = 4_900_000_000, Note = "all 14 leave"
+        });
+        SourceRoots.Add(new SortPreviewNodeViewModel
+        {
+            Name = "Pony", IsSourceSide = true, LoraCount = 3, TotalBytes = 400_000_000, Note = "3 files stay"
+        });
         PreviewSummary = "✓ 17 files will move   ·   0 already in place   ·   ✎ 0 auto-renamed · 0 duplicates skipped";
         TransferCount = 17;
         HasEnoughSpace = true;
@@ -198,6 +218,8 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         _deleteEmptyDirectories = deleteEmptyDirectories ?? DefaultDeleteEmptyDirectories;
         _loadCachedFiles = loadCachedFiles
             ?? (syncService is null ? null : syncService.LoadCachedFilesAsync);
+        SourceFilter = new SortPreviewFilterViewModel(SourceRoots);
+        TargetFilter = new SortPreviewFilterViewModel(PreviewRoots);
         HookIsBusyNotifications();
     }
 
@@ -239,6 +261,15 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     private bool _deleteEmptySourceFolders;
 
     /// <summary>
+    /// Hides the files that are already at their computed destination. On a settled library those
+    /// are most of the rows, and a preview that is mostly things which are not going to happen is
+    /// hard to read. Purely a view concern: a settled file was never going to be touched, so this
+    /// changes nothing about the run.
+    /// </summary>
+    [ObservableProperty]
+    private bool _ignoreFilesAlreadyInPlace;
+
+    /// <summary>
     /// Opt-in for the lowest-confidence rung: filing a LoRA by what its NAME suggests when nothing
     /// authoritative and no safetensors header could identify it. Off by default, and deliberately
     /// a user decision rather than a silent default — FilenameBaseModelHeuristic was tuned for a
@@ -254,7 +285,34 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     [ObservableProperty]
     private string? _nameGuessHint;
 
+    /// <summary>
+    /// Folders the sorter must leave alone (absolute paths): utility libraries such as a
+    /// hand-curated Lightning folder, whose accelerator LoRAs are not on Civitai and would
+    /// otherwise be scattered by base model or dumped into Unknown. Files under these stay out of
+    /// the plan entirely — checked before the name rung gets a say — and are drawn dimmed in both
+    /// trees so the preview keeps describing the whole library. Persisted via
+    /// <see cref="IAppSettingsService"/>.
+    /// </summary>
+    public ObservableCollection<string> ExcludedFolders { get; } = [];
+
+    /// <summary>Gates the left rail's excluded-folders list; raised manually by the two commands
+    /// that mutate <see cref="ExcludedFolders"/>.</summary>
+    public bool HasExcludedFolders => ExcludedFolders.Count > 0;
+
+    /// <summary>The destination tree — the library as it would be after sorting.</summary>
     public ObservableCollection<SortPreviewNodeViewModel> PreviewRoots { get; } = [];
+
+    /// <summary>The library as it is now. Built from the same plan, read from the other end:
+    /// <c>PlannedMove.Candidate.FilePath</c> rather than <c>PlannedMove.TargetFilePath</c>.</summary>
+    public ObservableCollection<SortPreviewNodeViewModel> SourceRoots { get; } = [];
+
+    /// <summary>The search box over <see cref="SourceRoots"/>.</summary>
+    public SortPreviewFilterViewModel SourceFilter { get; }
+
+    /// <summary>The search box over <see cref="PreviewRoots"/>. Independent of
+    /// <see cref="SourceFilter"/> on purpose — the two panes answer different questions, and a
+    /// renamed file does not even carry the same name on both sides.</summary>
+    public SortPreviewFilterViewModel TargetFilter { get; }
 
     [ObservableProperty]
     private string? _previewSummary;
@@ -274,6 +332,30 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     [ObservableProperty]
     private int _transferCount;
 
+    /// <summary>
+    /// One order for both trees. They exist to be compared row against row, and two panes sorted
+    /// differently would defeat that.
+    /// </summary>
+    [ObservableProperty]
+    private PreviewSortOrder _previewSortOrder = PreviewSortOrder.Default;
+
+    /// <summary>
+    /// The order picker's items. Enum values rather than strings, so the ComboBox binds straight to
+    /// <see cref="PreviewSortOrder"/> with no converter — the same shape as the Civitai browser's
+    /// <c>PeriodOptions</c>. An <b>instance</b> property, deliberately: Avalonia's property-accessor
+    /// plugin resolves instance members off the DataContext, so a static one binds to nothing and
+    /// the picker comes up empty.
+    /// </summary>
+    public IReadOnlyList<PreviewSortOrder> SortOrders { get; } =
+        [PreviewSortOrder.Default, PreviewSortOrder.Size, PreviewSortOrder.Name];
+
+    /// <summary>
+    /// Opens Explorer for the "Open in folder" context menu. Settable rather than injected, the
+    /// same way <c>GenerationGalleryViewModel</c> holds one — it keeps the seam mockable without a
+    /// DI registration for a single call.
+    /// </summary>
+    public IProcessLauncher ProcessLauncher { get; set; } = new DefaultProcessLauncher();
+
     public string? EffectiveTargetRoot => string.IsNullOrWhiteSpace(CustomTargetFolder) ? SelectedSourceFolder : CustomTargetFolder;
 
     public bool CanStart => !IsBusy && HasEnoughSpace && TransferCount > 0 && EffectiveTargetRoot is not null;
@@ -284,6 +366,27 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         // recompute; any further user action clears it, same as a fresh preview warning would.
         ClearRunResultBanner();
         if (_isInitializing) return;
+        _ = RecomputePreviewAsync();
+    }
+
+    /// <summary>
+    /// View-only: nothing but <see cref="BuildPreviewTree"/> and the summary line reads this flag,
+    /// so the trees are redrawn from the plan already in hand rather than re-planned —
+    /// <c>BuildPlan</c> hashes on collisions and can run for minutes on a large library. Reusing
+    /// the same plan reference also keeps an armed Start armed, for the reason
+    /// <see cref="OnDeleteEmptySourceFoldersChanged"/> spells out. The recompute fallback covers
+    /// the states with no plan to redraw from (nothing previewed yet, or a disarmed one).
+    /// </summary>
+    partial void OnIgnoreFilesAlreadyInPlaceChanged(bool value)
+    {
+        ClearRunResultBanner();
+        if (_isInitializing) return;
+        if (_lastPlan is { } plan && _lastTargetRoot is { } targetRoot)
+        {
+            BuildPreviewTree(plan, targetRoot, _lastExcluded);
+            UpdatePreviewSummary(plan, _lastExcluded.Count);
+            return;
+        }
         _ = RecomputePreviewAsync();
     }
 
@@ -373,6 +476,8 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                     SelectedSourceFolder = favorite is not null && SourceFolders.Contains(favorite, StringComparer.OrdinalIgnoreCase)
                         ? favorite
                         : SourceFolders.FirstOrDefault();
+
+                    await LoadExcludedFoldersAsync();
                 }
             }
             finally
@@ -437,7 +542,11 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             // _lastPlan goes with the rest: leaving it behind is the same stale-armed-Start trap
             // DisarmPlan exists for.
             _lastPlan = null;
+            _lastTargetRoot = null;
+            _lastExcluded = [];
             PreviewRoots.Clear();
+            SourceRoots.Clear();
+            ReapplyPreviewFilters();
             PreviewSummary = null;
             DiskSummary = null;
             HasEnoughSpace = false;
@@ -561,11 +670,29 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 _candidateCacheSkippedCount = resolution.SkippedCount;
             }
 
+            // Excluded folders leave the plan HERE, before the name rung gets a say: a guess must
+            // not move a file the user told the sorter to leave alone, and the hint must not offer
+            // to fix files that are not being sorted.
+            List<SortCandidate> kept;
+            List<SortCandidate> excludedCandidates;
+            if (ExcludedFolders.Count == 0)
+            {
+                kept = candidates;
+                excludedCandidates = [];
+            }
+            else
+            {
+                kept = [];
+                excludedCandidates = [];
+                foreach (var candidate in candidates)
+                    (IsExcludedPath(candidate.FilePath) ? excludedCandidates : kept).Add(candidate);
+            }
+
             // Counted from the candidates as resolved, BEFORE any name guess is folded in, so the
             // two wordings share one pair of numbers and the count does not change when the option
             // is ticked — only the sentence does.
-            UpdateNameGuessHint(candidates);
-            var plannable = ApplyNameGuesses(candidates);
+            UpdateNameGuessHint(kept);
+            var plannable = ApplyNameGuesses(kept);
 
             // BuildPlan also touches disk (lazy hashing on collisions), so it's offloaded too. The
             // options snapshot is read here — on the calling (UI) context — not from inside the
@@ -583,11 +710,13 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             if (!IsCurrentPass()) return;
 
             _lastPlan = plan;
+            _lastTargetRoot = targetRoot;
+            _lastExcluded = excludedCandidates;
 
-            BuildPreviewTree(plan, targetRoot);
+            BuildPreviewTree(plan, targetRoot, excludedCandidates);
 
             TransferCount = plan.TransferCount;
-            PreviewSummary = $"✓ {plan.TransferCount} files will {(IsMove ? "move" : "copy")}   ·   {plan.AlreadyInPlaceCount} already in place   ·   ✎ {plan.RenamedCount} auto-renamed · {plan.SkippedDuplicateCount} duplicates skipped";
+            UpdatePreviewSummary(plan, excludedCandidates.Count);
 
             ApplyDiskPreflight(plan, targetRoot);
 
@@ -687,11 +816,18 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     private void DisarmPlan(string reason, bool keepTree = false)
     {
         _lastPlan = null;
+        _lastTargetRoot = null;
+        _lastExcluded = [];
         TransferCount = 0;
         HasEnoughSpace = false;
         if (!keepTree)
         {
+            // Both halves of the picture go together — half a before/after is not a smaller
+            // preview, it is a misleading one.
             PreviewRoots.Clear();
+            SourceRoots.Clear();
+            // The count beside each box described the tree that just vanished.
+            ReapplyPreviewFilters();
             PreviewSummary = null;
             DiskSummary = null;
             // Goes with the tree, for the same reason: after "Preview failed: …" there are no
@@ -1280,66 +1416,574 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// <summary>Walks each non-skipped move's TargetDirectory, strips the target-root prefix, and
     /// materializes nested folder nodes with rolled-up counts/sizes. Root nodes (first-level
     /// folders) are sorted by TotalBytes descending.</summary>
-    private void BuildPreviewTree(LoraSortPlan plan, string targetRoot)
+    /// <summary>
+    /// Pairs a row with its counterpart on the other tree: the file's other end, or — for a folder —
+    /// every destination its files reach. A second click on the same row clears the link, as does
+    /// clicking nothing.
+    /// </summary>
+    /// <remarks>
+    /// Only file rows light up. Lighting the destination folders as well would mean a folder click
+    /// paints most of the other pane, which says "somewhere over there" rather than "these rows".
+    /// The folders on the path are expanded instead, because a highlight inside a collapsed folder
+    /// is a highlight nobody sees.
+    /// </remarks>
+    /// <summary>
+    /// "Open in folder" from a row's context menu: a file is selected in Explorer, a folder is
+    /// opened, and a file that has not been sorted yet falls back to the folder it will land in —
+    /// which exists whenever the destination is an established part of the library.
+    /// </summary>
+    [RelayCommand]
+    private void OpenInFolder(SortPreviewNodeViewModel? node)
     {
-        PreviewRoots.Clear();
+        if (node?.FullPath is not { Length: > 0 } path) return;
 
-        foreach (var move in plan.Moves)
+        try
         {
-            if (move.Action == PlannedAction.SkippedDuplicate) continue;
-
-            var relative = Path.GetRelativePath(targetRoot, move.TargetDirectory);
-            var segments = relative == "."
-                ? Array.Empty<string>()
-                : relative.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
-
-            var siblings = PreviewRoots;
-            var chain = new List<SortPreviewNodeViewModel>();
-            foreach (var segment in segments)
+            if (node.IsFile && File.Exists(path))
             {
-                var node = GetOrCreateFolder(siblings, segment);
-                chain.Add(node);
-                siblings = node.Children;
+                ProcessLauncher.OpenFolderAndSelectFile(path);
+                return;
             }
 
-            var fileNode = new SortPreviewNodeViewModel
+            var folder = node.IsFile ? Path.GetDirectoryName(path) : path;
+            if (folder is null || !Directory.Exists(folder)) return;
+            ProcessLauncher.OpenFolder(folder);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Process.Start throws Win32Exception for a shell association that is broken or a
+            // launch the user's policy blocks. A context menu that cannot open Explorer is a
+            // nuisance; one that takes the tab down with it is not.
+            _logger?.Warn(LogCategory.FileSystem, LogSource,
+                $"Could not open '{path}' in the file manager: {ex.Message}");
+        }
+    }
+
+    /// <summary>Context-menu "Never sort this folder": source-side folders only.</summary>
+    [RelayCommand]
+    private async Task ExcludeFolderAsync(SortPreviewNodeViewModel? node)
+    {
+        if (node is not { IsFile: false, IsSourceSide: true, FullPath.Length: > 0 }) return;
+        if (ExcludedFolders.Contains(node.FullPath, StringComparer.OrdinalIgnoreCase)) return;
+        ExcludedFolders.Add(node.FullPath);
+        await OnExclusionsChangedAsync();
+    }
+
+    /// <summary>Context-menu "Sort this folder again" and the left rail's ✕ button.</summary>
+    [RelayCommand]
+    private async Task RemoveExclusionAsync(string? path)
+    {
+        if (string.IsNullOrEmpty(path)) return;
+        var existing = ExcludedFolders.FirstOrDefault(f => PathsEqual(f, path));
+        if (existing is null) return;
+        ExcludedFolders.Remove(existing);
+        await OnExclusionsChangedAsync();
+    }
+
+    private async Task OnExclusionsChangedAsync()
+    {
+        OnPropertyChanged(nameof(HasExcludedFolders));
+        await PersistExcludedFoldersAsync();
+        ClearRunResultBanner();
+        // In-memory recompute: the candidate cache is untouched — exclusion filters candidates, it
+        // does not change what they resolved to.
+        await RecomputePreviewAsync();
+    }
+
+    /// <summary>Restores the exclusion list before the first preview, so a folder the user parked
+    /// last session does not flash through a plan that moves it.</summary>
+    private async Task LoadExcludedFoldersAsync()
+    {
+        if (_settingsService is null) return;
+
+        var json = await _settingsService.GetLoraSorterExcludedFoldersJsonAsync();
+        ExcludedFolders.Clear();
+        if (!string.IsNullOrWhiteSpace(json))
+        {
+            try
             {
-                Name = Path.GetFileName(move.TargetFilePath),
-                IsFile = true,
-                TotalBytes = move.Candidate.FileSizeBytes,
-                LoraCount = 1,
-                IsAlreadyInPlace = move.Action == PlannedAction.AlreadyInPlace,
-                IsRenamed = move.WasRenamed
-            };
+                foreach (var folder in JsonSerializer.Deserialize<List<string>>(json) ?? [])
+                {
+                    if (!string.IsNullOrWhiteSpace(folder)
+                        && !ExcludedFolders.Contains(folder, StringComparer.OrdinalIgnoreCase))
+                    {
+                        ExcludedFolders.Add(folder);
+                    }
+                }
+            }
+            catch (JsonException ex)
+            {
+                // A corrupt stored value costs the list, not the tab. Deliberately not re-saved as
+                // null here: the user may prefer to fix the row over losing it.
+                _logger?.Warn(LogCategory.FileSystem, LogSource,
+                    $"Ignoring an unreadable excluded-folder list: {ex.Message}");
+            }
+        }
+        OnPropertyChanged(nameof(HasExcludedFolders));
+    }
+
+    private async Task PersistExcludedFoldersAsync()
+    {
+        if (_settingsService is null) return;
+        try
+        {
+            var json = ExcludedFolders.Count == 0
+                ? null
+                : JsonSerializer.Serialize(ExcludedFolders.ToArray());
+            await _settingsService.SetLoraSorterExcludedFoldersJsonAsync(json);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The exclusion still applies to this session; only its survival is at risk — which is
+            // worth a warning, not a broken preview.
+            _logger?.Warn(LogCategory.FileSystem, LogSource,
+                $"Could not save the excluded-folder list — it will not survive a restart: {ex.Message}");
+        }
+    }
+
+    [RelayCommand]
+    private void SelectPreviewNode(SortPreviewNodeViewModel? node)
+    {
+        var wasAlreadySelected = node?.IsSelected == true;
+
+        foreach (var existing in AllPreviewNodes())
+        {
+            existing.IsSelected = false;
+            existing.IsLinked = false;
+            existing.IsPrimaryLink = false;
+        }
+
+        if (node is null || wasAlreadySelected) return;
+
+        node.IsSelected = true;
+        LightCounterparts(node.IsSourceSide ? PreviewRoots : SourceRoots, node.MoveIds, primaryTaken: false);
+    }
+
+    /// <returns>Whether a scroll target has been claimed, so the recursion hands it down the tree
+    /// rather than every level claiming its own.</returns>
+    private static bool LightCounterparts(
+        IEnumerable<SortPreviewNodeViewModel> nodes, HashSet<int> moveIds, bool primaryTaken)
+    {
+        foreach (var node in nodes)
+        {
+            // Asked this way round on purpose: Overlaps enumerates its argument and probes the
+            // receiver, so testing a file node's single id against the selection is one lookup,
+            // where the mirror form would walk the whole selection once per file in the tree.
+            if (!moveIds.Overlaps(node.MoveIds)) continue;
+
+            if (node.IsFile)
+            {
+                node.IsLinked = true;
+                // First in tree order, which is the order the pane draws — so the view scrolls to
+                // the topmost lit row rather than to whichever one the walk happened to reach last.
+                // A row the other pane's search box is currently hiding has no container to scroll
+                // to, so it must not claim the slot and leave the scroll going nowhere.
+                if (!primaryTaken && node.IsVisible)
+                {
+                    node.IsPrimaryLink = true;
+                    primaryTaken = true;
+                }
+                continue;
+            }
+
+            node.IsExpanded = true;
+            primaryTaken = LightCounterparts(node.Children, moveIds, primaryTaken);
+        }
+
+        return primaryTaken;
+    }
+
+    private IEnumerable<SortPreviewNodeViewModel> AllPreviewNodes()
+        => SourceRoots.Concat(PreviewRoots).SelectMany(node => node.SelfAndDescendants());
+
+    /// <summary>
+    /// Draws both halves of the preview from one pass over the plan: the library as it is now on the
+    /// left, as it would be on the right. They are the same moves read from opposite ends —
+    /// <c>Candidate.FilePath</c> against <c>TargetFilePath</c> — so no option toggle can leave the two
+    /// sides describing different plans, and neither side goes back to disk to find out where a file
+    /// lives.
+    /// </summary>
+    private void BuildPreviewTree(LoraSortPlan plan, string targetRoot, IReadOnlyList<SortCandidate> excluded)
+    {
+        // Any previous link pointed at nodes that are about to stop existing; the state goes with
+        // them rather than being cleared, which is why nothing here resets the flags.
+        PreviewRoots.Clear();
+        SourceRoots.Clear();
+
+        // Folders of the rows hide-settled drops, normalized — see the drop site below. Null on
+        // the common path (checkbox off), so a full tree pays nothing for it.
+        HashSet<string>? hiddenSettledDirs = null;
+
+        for (var moveId = 0; moveId < plan.Moves.Count; moveId++)
+        {
+            var move = plan.Moves[moveId];
 
             // Read from the candidate as planned, so the tree agrees with the folders it is drawing
             // rather than with some other definition of "known" — and a base model supplied by the
             // name rung is reported as guessed rather than as read, because it is the difference
             // between a folder the file earned and one its file name suggested.
             var identity = IdentityOf(move.Candidate);
-            fileNode.Absorb(move.Candidate.AssetKind, identity);
-            siblings.Add(fileNode);
 
-            foreach (var ancestor in chain)
+            // The source side keeps the skipped duplicates the destination side drops. Nothing
+            // arrives for one, so it has no destination row — but it is still sitting in the user's
+            // folder, and this is the only side that can say so.
+            // Hidden from BOTH trees or the two sides stop describing the same set of moves.
+            // Dropped here rather than out of the plan: the plan is what Start runs and what the
+            // history manifest records, and a settled file being in it is what makes it a no-op
+            // rather than an omission.
+            if (IgnoreFilesAlreadyInPlace && move.Action == PlannedAction.AlreadyInPlace)
             {
-                ancestor.LoraCount += 1;
-                ancestor.TotalBytes += move.Candidate.FileSizeBytes;
-                ancestor.Absorb(move.Candidate.AssetKind, identity);
+                // The row is hidden, not gone: its folder chain is remembered so the exclusion
+                // roll-up below cannot mistake "every VISIBLE file here is excluded" for "every
+                // file here is". A settled file sits where it will stay, so one chain serves both
+                // trees.
+                AddDirectoryChain(hiddenSettledDirs ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                    Path.GetDirectoryName(move.Candidate.FilePath));
+                continue;
+            }
+
+            AddFileNode(SourceRoots, sourceSide: true, moveId, move, identity,
+                root: plan.SourceRoot,
+                directory: Path.GetDirectoryName(move.Candidate.FilePath),
+                fileName: Path.GetFileName(move.Candidate.FilePath),
+                note: SourceNote(move));
+
+            if (move.Action == PlannedAction.SkippedDuplicate) continue;
+
+            AddFileNode(PreviewRoots, sourceSide: false, moveId, move, identity,
+                root: targetRoot,
+                directory: move.TargetDirectory,
+                fileName: Path.GetFileName(move.TargetFilePath),
+                note: null);
+        }
+
+        // Excluded files are drawn as stay-put rows: dimmed, in both trees, paired for
+        // click-to-link by synthetic ids past the plan's — they are deliberately NOT in the plan,
+        // which is exactly what makes Start unable to touch them. Their identity is absorbed as
+        // Identified so a folder the user closed the book on cannot drag an ✗ up the tree; the
+        // rows themselves show no mark at all (see the node's gating).
+        for (var i = 0; i < excluded.Count; i++)
+        {
+            var candidate = excluded[i];
+            var stayDir = Path.GetDirectoryName(candidate.FilePath) ?? string.Empty;
+            var stay = new PlannedMove(candidate, stayDir, candidate.FilePath,
+                PlannedAction.AlreadyInPlace, WasRenamed: false);
+            var moveId = plan.Moves.Count + i;
+
+            AddFileNode(SourceRoots, sourceSide: true, moveId, stay, SortPreviewIdentity.Identified,
+                root: plan.SourceRoot,
+                directory: stayDir,
+                fileName: Path.GetFileName(candidate.FilePath),
+                note: null,
+                isExcluded: true);
+
+            // "After sorting" this file is still exactly where it is — which the destination tree
+            // can only say when that place falls under the root it is drawing.
+            if (IsWithin(stayDir, targetRoot))
+            {
+                AddFileNode(PreviewRoots, sourceSide: false, moveId, stay, SortPreviewIdentity.Identified,
+                    root: targetRoot,
+                    directory: stayDir,
+                    fileName: Path.GetFileName(candidate.FilePath),
+                    note: null,
+                    isExcluded: true);
             }
         }
 
-        var sortedRoots = PreviewRoots.OrderByDescending(n => n.TotalBytes).ToList();
-        PreviewRoots.Clear();
-        foreach (var root in sortedRoots)
-            PreviewRoots.Add(root);
+        AnnotateSourceFolders(SourceRoots);
+        // After Annotate on purpose: an exclusion root's note overrides the generic "N files stay".
+        MarkExcludedFolders(SourceRoots, annotate: true, hiddenSettledDirs);
+        MarkExcludedFolders(PreviewRoots, annotate: false, hiddenSettledDirs);
+        SortTree(SourceRoots);
+        SortTree(PreviewRoots);
+        ReapplyPreviewFilters();
     }
 
-    private static SortPreviewNodeViewModel GetOrCreateFolder(ObservableCollection<SortPreviewNodeViewModel> siblings, string name)
+    /// <summary>One sentence over the plan's counts, shared by the full recompute and the
+    /// view-only hide-settled redraw so the two can never word it differently.</summary>
+    private void UpdatePreviewSummary(LoraSortPlan plan, int excludedCount)
+        => PreviewSummary = $"✓ {plan.TransferCount} files will {(IsMove ? "move" : "copy")}   ·   {plan.AlreadyInPlaceCount} already in place{(IgnoreFilesAlreadyInPlace ? " (hidden)" : string.Empty)}   ·   ✎ {plan.RenamedCount} auto-renamed · {plan.SkippedDuplicateCount} duplicates skipped"
+            + (excludedCount > 0 ? $"   ·   {excludedCount} excluded" : string.Empty);
+
+    /// <summary>Adds <paramref name="directory"/> and every ancestor to <paramref name="dirs"/>,
+    /// normalized the way <see cref="MarkExcludedFolders"/> looks them up. Walking past the pane's
+    /// root is harmless — those ancestors are never asked about.</summary>
+    private static void AddDirectoryChain(HashSet<string> dirs, string? directory)
+    {
+        var current = directory;
+        while (!string.IsNullOrEmpty(current))
+        {
+            try
+            {
+                if (!dirs.Add(Path.TrimEndingDirectorySeparator(Path.GetFullPath(current)))) return;
+            }
+            catch (ArgumentException)
+            {
+                return;
+            }
+            current = Path.GetDirectoryName(current);
+        }
+    }
+
+    /// <summary>Whether this file sits under any folder on the exclusion list.</summary>
+    private bool IsExcludedPath(string filePath)
+    {
+        foreach (var folder in ExcludedFolders)
+        {
+            // A malformed stored path (hand-edited DB, dead drive letter syntax) must cost that
+            // entry, not the preview.
+            try
+            {
+                if (IsWithin(filePath, folder)) return true;
+            }
+            catch (ArgumentException) { }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Rolls exclusion up the tree: a folder is excluded when every file beneath it is — semantic,
+    /// not path-based, so a destination folder that merely shares a name with an excluded source
+    /// folder is never mis-dimmed. Exclusion roots (the paths literally on the list) get the note
+    /// and the "Sort this folder again" menu; their subfolders are excluded but not un-excludable.
+    /// </summary>
+    /// <param name="dirsWithHiddenFiles">Folder chains of the settled rows hide-settled dropped
+    /// from the tree, or null when nothing was dropped. A folder on this list still holds a real,
+    /// merely hidden file, so "every file here is excluded" is not true of it — without this the
+    /// checkbox dimmed such folders and took away their "Never sort this folder" menu.</param>
+    private void MarkExcludedFolders(
+        IEnumerable<SortPreviewNodeViewModel> nodes, bool annotate, HashSet<string>? dirsWithHiddenFiles)
+    {
+        foreach (var node in nodes)
+        {
+            if (node.IsFile) continue;
+
+            var files = node.SelfAndDescendants().Where(n => n.IsFile).ToList();
+            node.IsExcluded = files.Count > 0 && files.All(f => f.IsExcluded)
+                              && !HoldsHiddenFile(dirsWithHiddenFiles, node.FullPath);
+            if (node.IsExcluded && node.FullPath is { Length: > 0 } path && IsExclusionRootPath(path))
+            {
+                node.IsExclusionRoot = true;
+                if (annotate) node.Note = "excluded — won't be sorted";
+            }
+
+            MarkExcludedFolders(node.Children, annotate, dirsWithHiddenFiles);
+        }
+    }
+
+    private static bool HoldsHiddenFile(HashSet<string>? dirsWithHiddenFiles, string? path)
+    {
+        if (dirsWithHiddenFiles is null || string.IsNullOrEmpty(path)) return false;
+        try
+        {
+            return dirsWithHiddenFiles.Contains(Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)));
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Whether this exact folder is on the exclusion list — spelling forgiven, see
+    /// <see cref="PathsEqual"/>.</summary>
+    private bool IsExclusionRootPath(string path)
+        => ExcludedFolders.Any(folder => PathsEqual(path, folder));
+
+    /// <summary>
+    /// Path equality with trailing separators, casing and separator spelling forgiven, because the
+    /// comparands come from different worlds: the tree's <c>Path.Combine</c>-built spelling on one
+    /// side, a JSON round-trip of whatever spelling the source was registered under on the other.
+    /// Everything that answers "is this stored entry that folder" must use this one predicate —
+    /// the un-exclude menu item was shown by the normalized comparison and then acted through a
+    /// raw string compare, which made it a silent no-op for any equivalent-but-different spelling.
+    /// </summary>
+    private static bool PathsEqual(string left, string right)
+    {
+        try
+        {
+            return string.Equals(
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)),
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch (ArgumentException)
+        {
+            // A malformed entry cannot be normalized; the literal comparison is the best that is
+            // left, and it is exactly what lets the rail's ✕ (which passes the stored string
+            // itself) still remove it.
+            return string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    /// <summary>
+    /// Points both search boxes at the tree that now exists. The text the user typed survives a
+    /// re-plan — an option toggle silently un-filtering the pane they were reading is the one thing
+    /// a filter must not do — but the nodes it described do not survive, so the filter has to be
+    /// computed again against the new ones.
+    /// </summary>
+    private void ReapplyPreviewFilters()
+    {
+        SourceFilter.Reapply();
+        TargetFilter.Reapply();
+    }
+
+    private static void AddFileNode(
+        ObservableCollection<SortPreviewNodeViewModel> roots,
+        bool sourceSide,
+        int moveId,
+        PlannedMove move,
+        SortPreviewIdentity identity,
+        string root,
+        string? directory,
+        string fileName,
+        string? note,
+        bool isExcluded = false)
+    {
+        var relative = Path.GetRelativePath(root, directory ?? root);
+        var segments = relative == "."
+            ? Array.Empty<string>()
+            : relative.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
+
+        var siblings = roots;
+        var chain = new List<SortPreviewNodeViewModel>();
+        var folderPath = root;
+        foreach (var segment in segments)
+        {
+            folderPath = Path.Combine(folderPath, segment);
+            var node = GetOrCreateFolder(siblings, segment, sourceSide, folderPath, chain.Count);
+            chain.Add(node);
+            siblings = node.Children;
+        }
+
+        var fileNode = new SortPreviewNodeViewModel
+        {
+            Name = fileName,
+            IsFile = true,
+            IsSourceSide = sourceSide,
+            FullPath = Path.Combine(folderPath, fileName),
+            Depth = segments.Length,
+            Order = siblings.Count,
+            TotalBytes = move.Candidate.FileSizeBytes,
+            LoraCount = 1,
+            // Not both: an excluded row's stay-put move is synthesized with AlreadyInPlace as a
+            // harmless carrier, and "already at its computed destination" is not a claim it makes.
+            IsAlreadyInPlace = !isExcluded && move.Action == PlannedAction.AlreadyInPlace,
+            IsRenamed = move.WasRenamed,
+            IsSkippedDuplicate = move.Action == PlannedAction.SkippedDuplicate,
+            IsExcluded = isExcluded,
+            Note = note,
+        };
+
+        fileNode.MoveIds.Add(moveId);
+        fileNode.Absorb(move.Candidate.AssetKind, identity);
+        siblings.Add(fileNode);
+
+        foreach (var ancestor in chain)
+        {
+            ancestor.LoraCount += 1;
+            ancestor.TotalBytes += move.Candidate.FileSizeBytes;
+            ancestor.MoveIds.Add(moveId);
+            ancestor.Absorb(move.Candidate.AssetKind, identity);
+        }
+    }
+
+    /// <summary>What a source row has to add beyond its name, for the rows that are not simply
+    /// leaving.</summary>
+    private static string? SourceNote(PlannedMove move) => move.Action switch
+    {
+        PlannedAction.AlreadyInPlace => "already here",
+        PlannedAction.SkippedDuplicate => "duplicate — skipped",
+        _ => move.WasRenamed ? "renamed on arrival" : null,
+    };
+
+    /// <summary>
+    /// Counts each source folder's departures. Deliberately never says a folder <i>empties</i>: the
+    /// plan covers model files and their sidecars, not whatever else is in there, and
+    /// <see cref="DeleteEmptySourceFolders"/> removes a directory only when it is genuinely empty at
+    /// execution time. "all 7 leave" is a statement about the plan, which is a thing the preview
+    /// actually knows.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="SortPreviewNodeViewModel.Note"/> raises no change notification, and neither do the
+    /// counters the rest of this build mutates after their node is already in the collection. Both
+    /// rely on the same thing: the whole build runs synchronously on the UI thread, so the first
+    /// layout pass — which is when a container is realized and its bindings are read — cannot happen
+    /// until every value here is final. Anything that moves part of this work past an await breaks
+    /// that, and the symptom is a row rendering its default rather than its value.
+    /// </remarks>
+    private static void AnnotateSourceFolders(IEnumerable<SortPreviewNodeViewModel> nodes)
+    {
+        foreach (var node in nodes)
+        {
+            if (node.IsFile) continue;
+
+            var files = node.SelfAndDescendants().Where(n => n.IsFile).ToList();
+            // Derived from the rows rather than counted during the build: "leaving" is exactly the
+            // files that are neither already at their destination nor skipped as duplicates, which
+            // the rows themselves already record.
+            var leaving = files.Count(f => !f.IsAlreadyInPlace && !f.IsSkippedDuplicate && !f.IsExcluded);
+
+            node.Note = leaving == 0
+                ? $"{files.Count} file{(files.Count == 1 ? string.Empty : "s")} stay{(files.Count == 1 ? "s" : string.Empty)}"
+                : leaving == files.Count
+                    ? files.Count == 1 ? "1 file leaves" : $"all {files.Count} leave"
+                    : $"{leaving} of {files.Count} leave";
+
+            AnnotateSourceFolders(node.Children);
+        }
+    }
+
+    /// <summary>
+    /// Orders every folder of a tree, not just its roots. Below the top level the rows used to come
+    /// out in whatever order the plan happened to produce them, which is what made a deep tree read
+    /// as arbitrary. Folders come before files at each level, then the chosen key.
+    /// </summary>
+    /// <remarks>
+    /// Re-orders the existing nodes rather than rebuilding them, so a click-to-link highlight and a
+    /// typed search filter both survive a change of order — the filter's expansion snapshot is keyed
+    /// by node, and these are the same nodes.
+    /// </remarks>
+    private void SortTree(ObservableCollection<SortPreviewNodeViewModel> nodes)
+    {
+        // Default groups nothing and reorders nothing: it is the plan's own order, which is not a
+        // sort the pane is applying but the absence of one.
+        var sorted = (PreviewSortOrder switch
+        {
+            PreviewSortOrder.Name => nodes.OrderBy(n => n.IsFile).ThenBy(n => n.Name, StringComparer.OrdinalIgnoreCase),
+            PreviewSortOrder.Size => nodes.OrderBy(n => n.IsFile).ThenByDescending(n => n.TotalBytes),
+            _ => nodes.OrderBy(n => n.Order),
+        }).ToList();
+
+        nodes.Clear();
+        foreach (var node in sorted)
+        {
+            nodes.Add(node);
+            SortTree(node.Children);
+        }
+    }
+
+    partial void OnPreviewSortOrderChanged(PreviewSortOrder value)
+    {
+        SortTree(SourceRoots);
+        SortTree(PreviewRoots);
+    }
+
+    private static SortPreviewNodeViewModel GetOrCreateFolder(
+        ObservableCollection<SortPreviewNodeViewModel> siblings, string name, bool sourceSide,
+        string fullPath, int depth)
     {
         var existing = siblings.FirstOrDefault(n => !n.IsFile && string.Equals(n.Name, name, StringComparison.OrdinalIgnoreCase));
         if (existing is not null) return existing;
 
-        var node = new SortPreviewNodeViewModel { Name = name, IsFile = false };
+        var node = new SortPreviewNodeViewModel
+        {
+            Name = name,
+            IsFile = false,
+            IsSourceSide = sourceSide,
+            FullPath = fullPath,
+            Depth = depth,
+            Order = siblings.Count,
+        };
         siblings.Add(node);
         return node;
     }

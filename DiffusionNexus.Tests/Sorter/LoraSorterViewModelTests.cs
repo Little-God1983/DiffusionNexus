@@ -1299,6 +1299,993 @@ public sealed class LoraSorterViewModelTests : IDisposable
         lines.Should().Contain(l => l.StartsWith("Sort finished:") && l.Contains(" ms"));
     }
 
+    // ------------------------------------------------------------------------------------------
+    // Before → after preview. The pane draws the library as it is now beside the library as it
+    // would be, and one click pairs a row with its counterpart. Both trees come out of the same
+    // LoraSortPlan, so nothing here reads disk a second time.
+    // ------------------------------------------------------------------------------------------
+
+    /// <summary>The left tree is the folders the files are in today, nesting and all — not a
+    /// re-derivation of anything, just the plan read from the other end.</summary>
+    [Fact]
+    public async Task TheSourceTreeMirrorsTheFoldersTheFilesAreInNow()
+    {
+        var a = WriteLora(@"unsorted\a.safetensors");
+        var b = WriteLora(@"dump\new\b.safetensors");
+        var vm = CreateVm(cached:
+        [
+            Installed(a, "SDXL 1.0", "character"),
+            Installed(b, "Pony", "style"),
+        ]);
+
+        await vm.InitializeAsync();
+
+        vm.SourceRoots.Select(n => n.Name).Should().BeEquivalentTo(["unsorted", "dump"]);
+        vm.SourceRoots.Single(n => n.Name == "dump").Children.Single().Name.Should().Be("new");
+        FlattenNames(vm.SourceRoots).Should().Contain("b.safetensors");
+    }
+
+    /// <summary>
+    /// A duplicate is skipped because an identical copy already sits at the destination, so nothing
+    /// arrives and the target tree rightly has nothing to draw. The file is still on the user's
+    /// disk though, and the "now" side is the one side that can say so.
+    /// </summary>
+    [Fact]
+    public async Task ASkippedDuplicateAppearsOnTheSourceSideOnly()
+    {
+        var first = WriteLora(@"x\V1.safetensors");
+        var second = WriteLora(@"y\V1.safetensors");
+        var vm = CreateVm(cached:
+        [
+            Installed(first, "SDXL 1.0", "character"),
+            Installed(second, "SDXL 1.0", "character"),
+        ]);
+
+        await vm.InitializeAsync();
+
+        var skipped = vm.SourceRoots.SelectMany(Flatten).Where(n => n.IsSkippedDuplicate).ToList();
+        skipped.Should().ContainSingle().Which.Note.Should().Be("duplicate — skipped");
+        vm.PreviewRoots.SelectMany(Flatten).Count(n => n.IsFile).Should().Be(1,
+            "only the copy that actually arrives belongs on the destination side");
+    }
+
+    /// <summary>A file that is already where it belongs is dimmed on both sides — the source row
+    /// has to explain why it is not in the leaving count.</summary>
+    [Fact]
+    public async Task AFileThatIsAlreadyWhereItBelongsSaysSoOnTheSourceSide()
+    {
+        var inPlace = WriteLora(@"SDXL 1.0\Character\a.safetensors");
+        var vm = CreateVm(cached: [Installed(inPlace, "SDXL 1.0", "character")]);
+
+        await vm.InitializeAsync();
+
+        var node = vm.SourceRoots.SelectMany(Flatten).Single(n => n.IsFile);
+        node.IsAlreadyInPlace.Should().BeTrue();
+        node.Note.Should().Be("already here");
+    }
+
+    /// <summary>
+    /// "all N leave", never "empties". The plan knows about model files and their sidecars, not
+    /// whatever else is in that folder, and <i>Delete empty source folders</i> only removes
+    /// directories that are genuinely empty when it runs — so a folder emptying is not something
+    /// this preview is in a position to promise.
+    /// </summary>
+    [Fact]
+    public async Task ASourceFolderWhoseFilesAllLeaveSaysSoWithoutPromisingItEmpties()
+    {
+        var a = WriteLora(@"unsorted\a.safetensors");
+        var b = WriteLora(@"unsorted\b.safetensors");
+        var vm = CreateVm(cached:
+        [
+            Installed(a, "SDXL 1.0", "character"),
+            Installed(b, "Pony", "style"),
+        ]);
+
+        await vm.InitializeAsync();
+
+        var note = vm.SourceRoots.Single(n => n.Name == "unsorted").Note;
+        note.Should().Be("all 2 leave");
+        note.Should().NotContain("empt");
+    }
+
+    /// <summary>A folder losing some of its files says how many, and one losing none says that
+    /// instead — the count is the whole point of the line.</summary>
+    [Fact]
+    public async Task ASourceFolderThatOnlyPartlyEmptiesSaysHowMany()
+    {
+        var stays = WriteLora(@"SDXL 1.0\Character\stays.safetensors");
+        var goes = WriteLora(@"SDXL 1.0\Character\goes.safetensors");
+        var untouched = WriteLora(@"Pony\Style\settled.safetensors");
+        var vm = CreateVm(cached:
+        [
+            Installed(stays, "SDXL 1.0", "character"),
+            Installed(goes, "Pony", "style"),
+            Installed(untouched, "Pony", "style"),
+        ]);
+
+        await vm.InitializeAsync();
+
+        Note(vm.SourceRoots, "SDXL 1.0", "Character").Should().Be("1 of 2 leave");
+        Note(vm.SourceRoots, "Pony", "Style").Should().Be("1 file stays");
+    }
+
+    private static string? Note(IEnumerable<SortPreviewNodeViewModel> roots, string root, string child)
+        => roots.Single(n => n.Name == root).Children.Single(n => n.Name == child).Note;
+
+    /// <summary>The pairing itself: click a file, its counterpart lights, and the folders above it
+    /// open so the lit row is somewhere a user can actually see.</summary>
+    [Fact]
+    public async Task SelectingASourceFileLightsTheDestinationItLandsIn()
+    {
+        var a = WriteLora(@"unsorted\a.safetensors");
+        var b = WriteLora(@"unsorted\b.safetensors");
+        var vm = CreateVm(cached:
+        [
+            Installed(a, "SDXL 1.0", "character"),
+            Installed(b, "Pony", "style"),
+        ]);
+        await vm.InitializeAsync();
+
+        var source = vm.SourceRoots.SelectMany(Flatten).Single(n => n.Name == "a.safetensors");
+        vm.SelectPreviewNodeCommand.Execute(source);
+
+        source.IsSelected.Should().BeTrue();
+        var lit = vm.PreviewRoots.SelectMany(Flatten).Where(n => n.IsLinked).ToList();
+        lit.Should().ContainSingle().Which.Name.Should().Be("a.safetensors");
+        vm.PreviewRoots.Single(n => n.Name == "SDXL 1.0").IsExpanded.Should()
+            .BeTrue("a highlight inside a collapsed folder is a highlight nobody sees");
+    }
+
+    /// <summary>Clicking a folder answers "where does all of this go?" — every destination lights,
+    /// but only one is the scroll target, because scrolling to twelve rows means scrolling to
+    /// none of them.</summary>
+    [Fact]
+    public async Task SelectingASourceFolderLightsEveryDestinationItsFilesReach()
+    {
+        var a = WriteLora(@"unsorted\a.safetensors");
+        var b = WriteLora(@"unsorted\b.safetensors");
+        var c = WriteLora(@"unsorted\c.safetensors");
+        var vm = CreateVm(cached:
+        [
+            Installed(a, "SDXL 1.0", "character"),
+            Installed(b, "Pony", "style"),
+            Installed(c, "Illustrious", "concept"),
+        ]);
+        await vm.InitializeAsync();
+
+        vm.SelectPreviewNodeCommand.Execute(vm.SourceRoots.Single(n => n.Name == "unsorted"));
+
+        var lit = vm.PreviewRoots.SelectMany(Flatten).Where(n => n.IsLinked).ToList();
+        lit.Should().HaveCount(3);
+        lit.Count(n => n.IsPrimaryLink).Should().Be(1);
+    }
+
+    /// <summary>The link runs both ways: a destination row can say where its file is coming from.</summary>
+    [Fact]
+    public async Task SelectingADestinationFileLightsWhereItComesFrom()
+    {
+        var a = WriteLora(@"dump\new\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        await vm.InitializeAsync();
+
+        var target = vm.PreviewRoots.SelectMany(Flatten).Single(n => n.IsFile);
+        vm.SelectPreviewNodeCommand.Execute(target);
+
+        vm.SourceRoots.SelectMany(Flatten).Where(n => n.IsLinked)
+            .Should().ContainSingle().Which.Name.Should().Be("a.safetensors");
+        vm.SourceRoots.Single(n => n.Name == "dump").IsExpanded.Should().BeTrue();
+    }
+
+    /// <summary>One link at a time. A second click leaves no trace of the first, or the pane
+    /// accumulates highlights until it means nothing.</summary>
+    [Fact]
+    public async Task ASecondSelectionClearsTheFirst()
+    {
+        var a = WriteLora(@"unsorted\a.safetensors");
+        var b = WriteLora(@"unsorted\b.safetensors");
+        var vm = CreateVm(cached:
+        [
+            Installed(a, "SDXL 1.0", "character"),
+            Installed(b, "Pony", "style"),
+        ]);
+        await vm.InitializeAsync();
+
+        var files = vm.SourceRoots.SelectMany(Flatten).Where(n => n.IsFile).ToList();
+        vm.SelectPreviewNodeCommand.Execute(files.Single(n => n.Name == "a.safetensors"));
+        vm.SelectPreviewNodeCommand.Execute(files.Single(n => n.Name == "b.safetensors"));
+
+        files.Single(n => n.Name == "a.safetensors").IsSelected.Should().BeFalse();
+        vm.PreviewRoots.SelectMany(Flatten).Where(n => n.IsLinked)
+            .Should().ContainSingle().Which.Name.Should().Be("b.safetensors");
+    }
+
+    /// <summary>
+    /// A re-plan invalidates every pairing that was on screen — the nodes the highlight referred to
+    /// no longer exist. Ticking <i>Sort by name</i> is the cheapest way to reach that: it re-plans
+    /// from the cached candidates without touching disk.
+    /// </summary>
+    [Fact]
+    public async Task RePlanningClearsTheLink()
+    {
+        var a = WriteLora(@"unsorted\MyChar_Pony_v2.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "???", "character")]);
+        await vm.InitializeAsync();
+
+        vm.SelectPreviewNodeCommand.Execute(vm.SourceRoots.Single(n => n.Name == "unsorted"));
+        vm.PreviewRoots.SelectMany(Flatten).Should().Contain(n => n.IsLinked);
+
+        vm.GuessBaseModelFromFileName = true;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        vm.SourceRoots.SelectMany(Flatten).Should().NotContain(n => n.IsSelected);
+        vm.PreviewRoots.SelectMany(Flatten).Should().NotContain(n => n.IsLinked || n.IsPrimaryLink);
+    }
+
+    /// <summary>The source tree is plan state like everything else Start depends on: a failed pass
+    /// that clears the destination tree must not leave the other half of the picture standing.</summary>
+    [Fact]
+    public async Task DeselectingTheSourceFolderClearsBothTrees()
+    {
+        var a = WriteLora(@"unsorted\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        await vm.InitializeAsync();
+        vm.SourceRoots.Should().NotBeEmpty();
+
+        vm.SelectedSourceFolder = null;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        vm.SourceRoots.Should().BeEmpty();
+        vm.PreviewRoots.Should().BeEmpty();
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Per-pane search. Each tree has its own box filtering only itself: a library of a few
+    // thousand LoRAs is not something you audit by scrolling, and the two panes are asked
+    // different questions ("where is this file now?" against "what is landing in Unknown?").
+    // ------------------------------------------------------------------------------------------
+
+    /// <summary>The basic promise: type, and what is left is what matched.</summary>
+    [Fact]
+    public async Task FilteringAPaneHidesTheRowsThatDoNotMatch()
+    {
+        var vm = await ThreeFileVm();
+
+        vm.SourceFilter.Text = "keep";
+
+        var files = vm.SourceRoots.SelectMany(Flatten).Where(n => n.IsFile).ToList();
+        files.Single(n => n.Name == "keep-me.safetensors").IsVisible.Should().BeTrue();
+        files.Where(n => n.Name != "keep-me.safetensors").Should().OnlyContain(n => !n.IsVisible);
+    }
+
+    /// <summary>Matching a folder is a way of asking for the folder, so everything under it stays —
+    /// otherwise typing a base-model name would return an empty folder.</summary>
+    [Fact]
+    public async Task AFolderThatMatchesKeepsEverythingUnderIt()
+    {
+        var vm = await ThreeFileVm();
+
+        vm.SourceFilter.Text = "unsorted";
+
+        vm.SourceRoots.Single(n => n.Name == "unsorted").Children
+            .Should().OnlyContain(n => n.IsVisible, "the folder itself is what was asked for");
+        // The other half of the claim: a folder match is still a filter, not a no-op.
+        vm.SourceRoots.Single(n => n.Name == "settled").IsVisible.Should().BeFalse();
+        vm.SourceFilter.Summary.Should().Be("2 of 3 files");
+    }
+
+    /// <summary>A match inside a collapsed folder is a match nobody sees — but a folder that matched
+    /// on its own name is already the answer, so it is left as the user had it.</summary>
+    [Fact]
+    public async Task FoldersOpenForAMatchBeneathThemButNotForOneOnThemselves()
+    {
+        var vm = await ThreeFileVm();
+
+        vm.SourceFilter.Text = "keep";
+        vm.SourceRoots.Single(n => n.Name == "unsorted").IsExpanded.Should().BeTrue();
+
+        vm.SourceFilter.Text = "unsorted";
+        vm.SourceRoots.Single(n => n.Name == "unsorted").IsExpanded.Should()
+            .BeFalse("the folder row itself is the match — there is nothing hidden to reveal");
+    }
+
+    /// <summary>The count is the point of the box on a library you cannot eyeball.</summary>
+    [Fact]
+    public async Task TheFilterSaysHowManyFilesItKept()
+    {
+        var vm = await ThreeFileVm();
+
+        vm.SourceFilter.Summary.Should().BeNull("an unfiltered pane has no count worth showing");
+
+        vm.SourceFilter.Text = "keep";
+
+        vm.SourceFilter.Summary.Should().Be("1 of 3 files");
+        vm.SourceFilter.HasNoMatches.Should().BeFalse();
+    }
+
+    /// <summary>An empty tree under a box with text in it reads as a broken preview unless the pane
+    /// says otherwise.</summary>
+    [Fact]
+    public async Task AFilterThatMatchesNothingSaysSo()
+    {
+        var vm = await ThreeFileVm();
+
+        vm.SourceFilter.Text = "nothing-is-called-this";
+
+        vm.SourceFilter.HasNoMatches.Should().BeTrue();
+        vm.SourceFilter.Summary.Should().Be("0 of 3 files");
+        vm.SourceRoots.SelectMany(Flatten).Should().OnlyContain(n => !n.IsVisible);
+    }
+
+    /// <summary>Clearing puts the tree back — including the folders the search opened, which the
+    /// user never asked to have open.</summary>
+    [Fact]
+    public async Task ClearingTheFilterRestoresEveryRowAndTheExpansionItFound()
+    {
+        var vm = await ThreeFileVm();
+        vm.SourceFilter.Text = "keep";
+        // Stated up front so the restore below is a restore of something.
+        vm.SourceRoots.SelectMany(Flatten).Should().Contain(n => !n.IsVisible);
+        vm.SourceRoots.Single(n => n.Name == "unsorted").IsExpanded.Should().BeTrue();
+
+        vm.SourceFilter.ClearCommand.Execute(null);
+
+        vm.SourceFilter.Text.Should().BeNullOrEmpty();
+        vm.SourceFilter.Summary.Should().BeNull();
+        vm.SourceRoots.SelectMany(Flatten).Should().OnlyContain(n => n.IsVisible);
+        vm.SourceRoots.Single(n => n.Name == "unsorted").IsExpanded.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// A re-plan rebuilds both trees from scratch. Dropping the text the user typed would mean
+    /// every option toggle silently un-filters the pane they were reading.
+    /// </summary>
+    [Fact]
+    public async Task TheFilterSurvivesARePlanAndAppliesToTheNewTree()
+    {
+        var vm = await ThreeFileVm();
+        vm.SourceFilter.Text = "keep";
+
+        vm.IncludeCategory = false;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        vm.SourceFilter.Text.Should().Be("keep");
+        vm.SourceFilter.Summary.Should().Be("1 of 3 files");
+        vm.SourceRoots.SelectMany(Flatten).Where(n => n.IsFile)
+            .Where(n => n.IsVisible).Should().ContainSingle().Which.Name.Should().Be("keep-me.safetensors");
+    }
+
+    /// <summary>Two boxes, two questions. Neither pane may answer for the other.</summary>
+    [Fact]
+    public async Task TheTwoPanesFilterIndependently()
+    {
+        var vm = await ThreeFileVm();
+
+        vm.SourceFilter.Text = "keep";
+
+        vm.SourceRoots.SelectMany(Flatten).Should().Contain(n => !n.IsVisible,
+            "the pane the box belongs to did filter");
+        vm.PreviewRoots.SelectMany(Flatten).Should().OnlyContain(n => n.IsVisible);
+        vm.TargetFilter.Summary.Should().BeNull();
+    }
+
+    /// <summary>Three files across two source folders, headed for three different destinations.</summary>
+    private async Task<LoraSorterViewModel> ThreeFileVm()
+    {
+        var keep = WriteLora(@"unsorted\keep-me.safetensors");
+        var other = WriteLora(@"unsorted\other.safetensors");
+        var third = WriteLora(@"settled\third.safetensors");
+        var vm = CreateVm(cached:
+        [
+            Installed(keep, "SDXL 1.0", "character"),
+            Installed(other, "Pony", "style"),
+            Installed(third, "Illustrious", "concept"),
+        ]);
+        await vm.InitializeAsync();
+        return vm;
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Open in folder, row ordering, and the geometry the two of them are read in.
+    // ------------------------------------------------------------------------------------------
+
+    /// <summary>A source file is somewhere the user can go and look at right now.</summary>
+    [Fact]
+    public async Task OpeningASourceFileSelectsItInExplorer()
+    {
+        var a = WriteLora(@"unsorted\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        var launcher = new Mock<IProcessLauncher>();
+        vm.ProcessLauncher = launcher.Object;
+        await vm.InitializeAsync();
+
+        vm.OpenInFolderCommand.Execute(vm.SourceRoots.SelectMany(Flatten).Single(n => n.IsFile));
+
+        launcher.Verify(l => l.OpenFolderAndSelectFile(a), Times.Once);
+    }
+
+    /// <summary>A folder row opens the folder itself — there is no one file to select.</summary>
+    [Fact]
+    public async Task OpeningASourceFolderOpensThatFolder()
+    {
+        var a = WriteLora(@"unsorted\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        var launcher = new Mock<IProcessLauncher>();
+        vm.ProcessLauncher = launcher.Object;
+        await vm.InitializeAsync();
+
+        vm.OpenInFolderCommand.Execute(vm.SourceRoots.Single(n => n.Name == "unsorted"));
+
+        launcher.Verify(l => l.OpenFolder(Path.GetDirectoryName(a)!), Times.Once);
+    }
+
+    /// <summary>
+    /// The destination tree describes folders that mostly do not exist yet — nothing has been
+    /// sorted. Opening the nearest thing that does exist would take the user somewhere they did not
+    /// click, so the row simply says it cannot be opened.
+    /// </summary>
+    [Fact]
+    public async Task ADestinationFolderThatDoesNotExistYetCannotBeOpened()
+    {
+        var a = WriteLora(@"unsorted\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        var launcher = new Mock<IProcessLauncher>();
+        vm.ProcessLauncher = launcher.Object;
+        await vm.InitializeAsync();
+
+        var destination = vm.PreviewRoots.Single(n => n.Name == "SDXL 1.0");
+        var source = vm.SourceRoots.Single(n => n.Name == "unsorted");
+
+        // Stated as a pair, because "nothing happened" is what a menu item that does not work
+        // looks like too: the same click on the row beside it must open something.
+        destination.CanOpenInFolder.Should().BeFalse();
+        source.CanOpenInFolder.Should().BeTrue();
+
+        vm.OpenInFolderCommand.Execute(destination);
+        launcher.VerifyNoOtherCalls();
+
+        vm.OpenInFolderCommand.Execute(source);
+        launcher.Verify(l => l.OpenFolder(Path.GetDirectoryName(a)!), Times.Once);
+    }
+
+    /// <summary>
+    /// Sorting into a folder the library already has is the common case, and there "show me where
+    /// this lands" is answerable before anything moves.
+    /// </summary>
+    [Fact]
+    public async Task ADestinationFileFallsBackToTheFolderItWillLandIn()
+    {
+        var a = WriteLora(@"unsorted\a.safetensors");
+        var destinationFolder = Path.Combine(SourceRoot, "SDXL 1.0", "Character");
+        Directory.CreateDirectory(destinationFolder);
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        var launcher = new Mock<IProcessLauncher>();
+        vm.ProcessLauncher = launcher.Object;
+        await vm.InitializeAsync();
+
+        var landing = vm.PreviewRoots.SelectMany(Flatten).Single(n => n.IsFile);
+        landing.CanOpenInFolder.Should().BeTrue("the file is not there yet, but its folder is");
+
+        vm.OpenInFolderCommand.Execute(landing);
+
+        launcher.Verify(l => l.OpenFolder(destinationFolder), Times.Once);
+    }
+
+    /// <summary>
+    /// Only the top-level folders were ever ordered; everything below them came out in whatever
+    /// order the plan happened to produce, which is why a deep tree read as arbitrary.
+    /// </summary>
+    [Fact]
+    public async Task SortingByNameOrdersEveryLevelNotJustTheRoots()
+    {
+        var vm = await SizedVm();
+
+        vm.PreviewSortOrder = PreviewSortOrder.Name;
+
+        vm.SourceRoots.Select(n => n.Name).Should().ContainInOrder("alpha", "unsorted");
+        vm.SourceRoots.Single(n => n.Name == "unsorted").Children.Select(n => n.Name)
+            .Should().ContainInOrder("a.safetensors", "b.safetensors", "c.safetensors");
+    }
+
+    /// <summary>Biggest first, at every level — the order that answers "what is taking up the
+    /// space", and the one the pane has always used for its roots.</summary>
+    [Fact]
+    public async Task SortingBySizePutsTheBiggestFirstAtEveryLevel()
+    {
+        var vm = await SizedVm();
+        vm.PreviewSortOrder = PreviewSortOrder.Name;
+
+        vm.PreviewSortOrder = PreviewSortOrder.Size;
+
+        vm.SourceRoots.Select(n => n.Name).Should().ContainInOrder("unsorted", "alpha");
+        // b, a, c by size — where the plan produced them in the order b, c, a, so this cannot pass
+        // by accident on insertion order.
+        vm.SourceRoots.Single(n => n.Name == "unsorted").Children.Select(n => n.Name)
+            .Should().ContainInOrder("b.safetensors", "a.safetensors", "c.safetensors");
+    }
+
+    /// <summary>
+    /// Re-ordering is not re-planning: the same node objects are moved around, so a click-to-link
+    /// highlight and a typed search filter both survive changing the order.
+    /// </summary>
+    [Fact]
+    public async Task ChangingTheOrderKeepsTheRowsAndWhateverStateTheyCarry()
+    {
+        var vm = await SizedVm();
+        var before = vm.SourceRoots.SelectMany(Flatten).Single(n => n.Name == "a.safetensors");
+        vm.SelectPreviewNodeCommand.Execute(before);
+
+        vm.PreviewSortOrder = PreviewSortOrder.Name;
+
+        // The order did change — otherwise "the rows survived" is a claim about nothing.
+        vm.SourceRoots.First().Name.Should().Be("alpha");
+        vm.SourceRoots.SelectMany(Flatten).Single(n => n.Name == "a.safetensors")
+            .Should().BeSameAs(before);
+        before.IsSelected.Should().BeTrue();
+        vm.PreviewRoots.SelectMany(Flatten).Should().Contain(n => n.IsLinked);
+    }
+
+    /// <summary>
+    /// Depth is what indents a row's own name instead of the container holding its children —
+    /// indenting the container moved every row's right edge in too, which left the chips, marks and
+    /// sizes ragged down the pane. The path is what the context menu opens.
+    /// </summary>
+    [Fact]
+    public async Task EveryRowKnowsItsDepthAndWhereItIsOnDisk()
+    {
+        var a = WriteLora(@"dump\new\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        await vm.InitializeAsync();
+
+        var dump = vm.SourceRoots.Single(n => n.Name == "dump");
+        var nested = dump.Children.Single();
+        var file = nested.Children.Single();
+
+        dump.Depth.Should().Be(0);
+        nested.Depth.Should().Be(1);
+        file.Depth.Should().Be(2);
+
+        dump.FullPath.Should().Be(Path.Combine(SourceRoot, "dump"));
+        nested.FullPath.Should().Be(Path.Combine(SourceRoot, "dump", "new"));
+        file.FullPath.Should().Be(a);
+        vm.PreviewRoots.SelectMany(Flatten).Single(n => n.IsFile).FullPath
+            .Should().Be(Path.Combine(SourceRoot, "SDXL 1.0", "Character", "a.safetensors"));
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Ignoring files that are already where they belong. On a settled library those are most of
+    // the rows, and a preview that is mostly things which are not going to happen is hard to read.
+    // ------------------------------------------------------------------------------------------
+
+    /// <summary>Ignore means gone — from both sides, so the panes still describe the same set.</summary>
+    [Fact]
+    public async Task IgnoringSettledFilesDropsThemFromBothTrees()
+    {
+        var vm = await SettledVm();
+
+        vm.IgnoreFilesAlreadyInPlace = true;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        FlattenNames(vm.SourceRoots).Should().Contain("mover.safetensors").And.NotContain("settled.safetensors");
+        FlattenNames(vm.PreviewRoots).Should().Contain("mover.safetensors").And.NotContain("settled.safetensors");
+    }
+
+    /// <summary>A folder holding nothing but settled files has nothing left to say.</summary>
+    [Fact]
+    public async Task AFolderWhoseFilesAreAllSettledDisappearsWithThem()
+    {
+        var vm = await SettledVm();
+        vm.SourceRoots.Select(n => n.Name).Should().Contain("Pony");
+
+        vm.IgnoreFilesAlreadyInPlace = true;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        vm.SourceRoots.Select(n => n.Name).Should().NotContain("Pony");
+    }
+
+    /// <summary>
+    /// The folder note counts the rows that are actually there. Keeping the hidden files in the
+    /// denominator would have it describe a folder the pane is no longer drawing.
+    /// </summary>
+    [Fact]
+    public async Task TheFolderNoteCountsOnlyTheRowsStillShown()
+    {
+        var vm = await SettledVm();
+        Note(vm.SourceRoots, "SDXL 1.0", "Character").Should().Be("1 of 2 leave");
+
+        vm.IgnoreFilesAlreadyInPlace = true;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        Note(vm.SourceRoots, "SDXL 1.0", "Character").Should().Be("1 file leaves");
+    }
+
+    /// <summary>
+    /// The count of what was hidden is the one place the denominator survives, so the pane never
+    /// silently claims a library is smaller than it is.
+    /// </summary>
+    [Fact]
+    public async Task TheSummarySaysTheSettledFilesWereHiddenRatherThanDroppingThem()
+    {
+        var vm = await SettledVm();
+        vm.PreviewSummary.Should().Contain("2 already in place").And.NotContain("hidden");
+
+        vm.IgnoreFilesAlreadyInPlace = true;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        vm.PreviewSummary.Should().Contain("2 already in place (hidden)");
+    }
+
+    /// <summary>
+    /// This hides rows; it must not change a single byte of what the run does. A settled file was
+    /// never going to be touched — that is what settled means.
+    /// </summary>
+    [Fact]
+    public async Task IgnoringChangesTheViewAndNothingElse()
+    {
+        var vm = await SettledVm();
+        var before = vm.TransferCount;
+        var rowsBefore = vm.SourceRoots.SelectMany(Flatten).Count(n => n.IsFile);
+
+        vm.IgnoreFilesAlreadyInPlace = true;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        // Paired on purpose: "the run did not change" is only a claim about something if the view
+        // demonstrably did.
+        vm.SourceRoots.SelectMany(Flatten).Count(n => n.IsFile).Should().BeLessThan(rowsBefore);
+        vm.TransferCount.Should().Be(before);
+        vm.CanStart.Should().BeTrue();
+    }
+
+    /// <summary>Two settled files and one mover, so hiding is visible at file, folder and note level.</summary>
+    private async Task<LoraSorterViewModel> SettledVm()
+    {
+        var settled = WriteLora(@"SDXL 1.0\Character\settled.safetensors");
+        var mover = WriteLora(@"SDXL 1.0\Character\mover.safetensors");
+        var alsoSettled = WriteLora(@"Pony\Style\quiet.safetensors");
+        var vm = CreateVm(cached:
+        [
+            Installed(settled, "SDXL 1.0", "character"),
+            Installed(mover, "Illustrious", "concept"),
+            Installed(alsoSettled, "Pony", "style"),
+        ]);
+        await vm.InitializeAsync();
+        return vm;
+    }
+
+    /// <summary>The pane opens on the order the plan produced, having sorted nothing.</summary>
+    [Fact]
+    public async Task ThePaneStartsOnTheOrderThePlanProduced()
+    {
+        var vm = await SizedVm();
+
+        vm.PreviewSortOrder.Should().Be(PreviewSortOrder.Default);
+        vm.SourceRoots.Single(n => n.Name == "unsorted").Children.Select(n => n.Name)
+            .Should().ContainInOrder("b.safetensors", "c.safetensors", "a.safetensors");
+    }
+
+    /// <summary>
+    /// Default is a real third option, not just "whatever was there before the user touched the
+    /// picker" — going back to it has to undo the sort, which means the plan's own order is
+    /// remembered rather than recomputed.
+    /// </summary>
+    [Fact]
+    public async Task ReturningToDefaultRestoresThePlanOrder()
+    {
+        var vm = await SizedVm();
+        vm.PreviewSortOrder = PreviewSortOrder.Name;
+        vm.SourceRoots.Single(n => n.Name == "unsorted").Children.Select(n => n.Name)
+            .Should().ContainInOrder("a.safetensors", "b.safetensors", "c.safetensors");
+
+        vm.PreviewSortOrder = PreviewSortOrder.Default;
+
+        vm.SourceRoots.Single(n => n.Name == "unsorted").Children.Select(n => n.Name)
+            .Should().ContainInOrder("b.safetensors", "c.safetensors", "a.safetensors");
+    }
+
+    /// <summary>
+    /// Three orders that all disagree: the plan produces b, c, a; by size that is b, a, c; by name
+    /// a, b, c. Nothing here can pass on insertion order by accident.
+    /// </summary>
+    private async Task<LoraSorterViewModel> SizedVm()
+    {
+        WriteSized(@"unsorted\b.safetensors", 100);
+        WriteSized(@"unsorted\c.safetensors", 10);
+        WriteSized(@"unsorted\a.safetensors", 50);
+        WriteSized(@"alpha\d.safetensors", 5);
+        var vm = CreateVm(cached:
+        [
+            Installed(Path.Combine(SourceRoot, @"unsorted\b.safetensors"), "SDXL 1.0", "character"),
+            Installed(Path.Combine(SourceRoot, @"unsorted\c.safetensors"), "SDXL 1.0", "character"),
+            Installed(Path.Combine(SourceRoot, @"unsorted\a.safetensors"), "SDXL 1.0", "character"),
+            Installed(Path.Combine(SourceRoot, @"alpha\d.safetensors"), "Pony", "style"),
+        ]);
+        await vm.InitializeAsync();
+        return vm;
+    }
+
+    private void WriteSized(string relative, int bytes)
+    {
+        var path = Path.Combine(SourceRoot, relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(path, new byte[bytes]);
+    }
+
+    [Fact]
+    public async Task ExcludingAFolderTakesItsFilesOutOfThePlanButKeepsThemDimmedInBothTrees()
+    {
+        var vm = await LightningVm();
+        vm.TransferCount.Should().Be(2, "before excluding, the Lightning file sorts into Unknown");
+
+        await vm.ExcludeFolderCommand.ExecuteAsync(vm.SourceRoots.Single(n => n.Name == "Lightning"));
+
+        vm.TransferCount.Should().Be(1);
+        var sourceRow = vm.SourceRoots.SelectMany(Flatten).Single(n => n.Name == "accel_high_noise.safetensors");
+        sourceRow.IsExcluded.Should().BeTrue();
+        sourceRow.IsDimmed.Should().BeTrue();
+        // The file stays where it is, and "after sorting" says so: same folder, dimmed.
+        var afterRow = vm.PreviewRoots.SelectMany(Flatten).Single(n => n.Name == "accel_high_noise.safetensors");
+        afterRow.IsExcluded.Should().BeTrue();
+        vm.PreviewRoots.Single(n => n.Name == "Lightning").IsExcluded.Should().BeTrue();
+        FlattenNames(vm.PreviewRoots).Should().NotContain("Unknown");
+    }
+
+    [Fact]
+    public async Task StartSortingLeavesAnExcludedFolderUntouched()
+    {
+        var vm = await LightningVm();
+        vm.DialogService = ConfirmingDialogService();
+        await vm.ExcludeFolderCommand.ExecuteAsync(vm.SourceRoots.Single(n => n.Name == "Lightning"));
+
+        await vm.StartSortingCommand.ExecuteAsync(null);
+
+        File.Exists(Path.Combine(SourceRoot, @"Lightning\accel_high_noise.safetensors"))
+            .Should().BeTrue("excluded files are not the run's to move");
+        Directory.Exists(Path.Combine(SourceRoot, "Unknown")).Should().BeFalse();
+        File.Exists(Path.Combine(SourceRoot, @"SDXL 1.0\Character\mover.safetensors"))
+            .Should().BeTrue("the rest of the plan still runs");
+    }
+
+    [Fact]
+    public async Task SortingTheFolderAgainRestoresIt()
+    {
+        var vm = await LightningVm();
+        await vm.ExcludeFolderCommand.ExecuteAsync(vm.SourceRoots.Single(n => n.Name == "Lightning"));
+        vm.TransferCount.Should().Be(1);
+
+        await vm.RemoveExclusionCommand.ExecuteAsync(Path.Combine(SourceRoot, "Lightning"));
+
+        vm.TransferCount.Should().Be(2);
+        vm.SourceRoots.SelectMany(Flatten).Should().OnlyContain(n => !n.IsExcluded);
+        _settings.Verify(s => s.SetLoraSorterExcludedFoldersJsonAsync(null, It.IsAny<CancellationToken>()),
+            Times.Once, "an emptied list clears the stored value instead of persisting []");
+    }
+
+    [Fact]
+    public async Task TheSummaryCountsExcludedFiles()
+    {
+        var vm = await LightningVm();
+        vm.PreviewSummary.Should().NotContain("excluded");
+
+        await vm.ExcludeFolderCommand.ExecuteAsync(vm.SourceRoots.Single(n => n.Name == "Lightning"));
+
+        vm.PreviewSummary.Should().Contain("1 excluded");
+    }
+
+    [Fact]
+    public async Task ExclusionsArePersistedWhenAddedAndAppliedWhenLoaded()
+    {
+        var vm = await LightningVm();
+        await vm.ExcludeFolderCommand.ExecuteAsync(vm.SourceRoots.Single(n => n.Name == "Lightning"));
+        _settings.Verify(s => s.SetLoraSorterExcludedFoldersJsonAsync(
+            It.Is<string?>(j => j != null && j.Contains("Lightning")), It.IsAny<CancellationToken>()), Times.Once);
+
+        // A fresh VM finds the stored list and applies it before the first preview.
+        _settings.Setup(s => s.GetLoraSorterExcludedFoldersJsonAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(System.Text.Json.JsonSerializer.Serialize(new[] { Path.Combine(SourceRoot, "Lightning") }));
+        var reloaded = CreateVm(cached: LightningLibrary());
+        await reloaded.InitializeAsync();
+
+        reloaded.ExcludedFolders.Should().ContainSingle(f => f.EndsWith("Lightning"));
+        reloaded.HasExcludedFolders.Should().BeTrue();
+        reloaded.TransferCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ANameGuessInsideAnExcludedFolderNeitherMovesTheFileNorCountsInTheHint()
+    {
+        // A guessable name (the heuristic reads "Pony") inside the excluded folder: exclusion is
+        // checked before the name rung gets a say, so the file neither moves nor pads the hint.
+        var guessable = WriteLora(@"Lightning\MyChar_Pony_v2.safetensors");
+        var vm = CreateVm(cached: [.. LightningLibrary(), Installed(guessable, "???", "character")]);
+        await vm.InitializeAsync();
+        await vm.ExcludeFolderCommand.ExecuteAsync(vm.SourceRoots.Single(n => n.Name == "Lightning"));
+
+        vm.GuessBaseModelFromFileName = true;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        FlattenNames(vm.PreviewRoots).Should().NotContain("Pony");
+        vm.NameGuessHint.Should().BeNull("the only guessable file is excluded, so there is nothing to offer");
+        vm.TransferCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task HidingSettledFilesKeepsExcludedRowsVisible()
+    {
+        var settled = WriteLora(@"SDXL 1.0\Character\settled.safetensors");
+        var vm = CreateVm(cached: [.. LightningLibrary(), Installed(settled, "SDXL 1.0", "character")]);
+        await vm.InitializeAsync();
+        await vm.ExcludeFolderCommand.ExecuteAsync(vm.SourceRoots.Single(n => n.Name == "Lightning"));
+
+        vm.IgnoreFilesAlreadyInPlace = true;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        // Hiding noise is one thing; hiding a choice the user made is another.
+        FlattenNames(vm.SourceRoots).Should().Contain("accel_high_noise.safetensors").And.NotContain("settled.safetensors");
+        FlattenNames(vm.PreviewRoots).Should().Contain("accel_high_noise.safetensors");
+    }
+
+    [Fact]
+    public async Task AnExcludedUnidentifiedFileShowsNoMarkAndPoisonsNoAncestor()
+    {
+        var vm = await LightningVm();
+        vm.SourceRoots.Single(n => n.Name == "Lightning").IsUnidentified
+            .Should().BeTrue("before excluding, the placeholder row honestly reads ✗");
+
+        await vm.ExcludeFolderCommand.ExecuteAsync(vm.SourceRoots.Single(n => n.Name == "Lightning"));
+
+        var folder = vm.SourceRoots.Single(n => n.Name == "Lightning");
+        folder.IsUnidentified.Should().BeFalse("a file the user excluded cannot be 'unfinished'");
+        folder.Note.Should().Be("excluded — won't be sorted");
+        var file = folder.Children.Single(n => n.IsFile);
+        file.IsUnidentified.Should().BeFalse();
+        file.IsIdentified.Should().BeFalse("an excluded row shows no mark at all");
+    }
+
+    [Fact]
+    public async Task TheParentFolderNoteDoesNotCountExcludedFilesAsLeaving()
+    {
+        // Lightning nested under a parent that also holds a mover: the parent's note counts only
+        // the file that is actually going somewhere.
+        var mover = WriteLora(@"mixed\mover2.safetensors");
+        var nested = WriteLora(@"mixed\Lightning\nested_accel.safetensors");
+        var vm = CreateVm(cached: [Installed(mover, "SDXL 1.0", "character"), Installed(nested, "???", "character")]);
+        await vm.InitializeAsync();
+
+        var lightning = vm.SourceRoots.Single(n => n.Name == "mixed").Children.Single(n => n.Name == "Lightning");
+        await vm.ExcludeFolderCommand.ExecuteAsync(lightning);
+
+        vm.SourceRoots.Single(n => n.Name == "mixed").Note.Should().Be("1 of 2 leave");
+    }
+
+    [Fact]
+    public async Task TheSearchFilterStillFindsExcludedRows()
+    {
+        var vm = await LightningVm();
+        await vm.ExcludeFolderCommand.ExecuteAsync(vm.SourceRoots.Single(n => n.Name == "Lightning"));
+
+        vm.SourceFilter.Text = "accel";
+
+        vm.SourceRoots.SelectMany(Flatten).Single(n => n.Name == "accel_high_noise.safetensors")
+            .IsVisible.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task OnlySourceSideFoldersOfferExclusion()
+    {
+        var vm = await LightningVm();
+
+        var sourceFolder = vm.SourceRoots.Single(n => n.Name == "Lightning");
+        sourceFolder.CanExclude.Should().BeTrue();
+        var sourceFile = sourceFolder.Children.Single(n => n.IsFile);
+        sourceFile.CanExclude.Should().BeFalse();
+        var destinationFolder = vm.PreviewRoots.First(n => !n.IsFile);
+        destinationFolder.CanExclude.Should().BeFalse();
+
+        // The commands enforce the same rule rather than trusting the menu to.
+        await vm.ExcludeFolderCommand.ExecuteAsync(sourceFile);
+        await vm.ExcludeFolderCommand.ExecuteAsync(destinationFolder);
+        vm.ExcludedFolders.Should().BeEmpty();
+
+        await vm.ExcludeFolderCommand.ExecuteAsync(sourceFolder);
+        vm.SourceRoots.Single(n => n.Name == "Lightning").CanUnexclude.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task HidingSettledFilesDoesNotMarkTheirFolderExcluded()
+    {
+        // A folder holding a settled file plus an excluded subfolder: hide-settled drops the
+        // settled row from the tree, but the folder is not thereby "all excluded" — dimming it
+        // and taking away its "Never sort this folder" menu would punish it for a view checkbox.
+        var settled = WriteLora(@"SDXL 1.0\Character\settled.safetensors");
+        var nested = WriteLora(@"SDXL 1.0\Character\Lightning\accel.safetensors");
+        var mover = WriteLora(@"flat\mover.safetensors");
+        var vm = CreateVm(cached:
+        [
+            Installed(settled, "SDXL 1.0", "character"),
+            Installed(nested, "???", "character"),
+            Installed(mover, "Pony", "style"),
+        ]);
+        await vm.InitializeAsync();
+        await vm.ExcludeFolderCommand.ExecuteAsync(
+            vm.SourceRoots.SelectMany(Flatten).Single(n => n.Name == "Lightning"));
+
+        vm.IgnoreFilesAlreadyInPlace = true;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        var character = vm.SourceRoots.Single(n => n.Name == "SDXL 1.0").Children.Single(n => n.Name == "Character");
+        character.IsExcluded.Should().BeFalse("its settled file is hidden, not excluded");
+        character.IsDimmed.Should().BeFalse();
+        character.CanExclude.Should().BeTrue();
+        character.Children.Single(n => n.Name == "Lightning").IsExcluded.Should().BeTrue();
+        // Same blind spot on the destination side, where the folder would mis-dim.
+        vm.PreviewRoots.Single(n => n.Name == "SDXL 1.0").Children.Single(n => n.Name == "Character")
+            .IsExcluded.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task RemovingAnExclusionForgivesTheStoredPathSpelling()
+    {
+        // The stored entry uses forward slashes (a yaml-registered source, a hand-synced settings
+        // file); the context menu hands over the tree's backslash spelling. Equivalent paths must
+        // un-exclude rather than silently no-op under a visible menu item.
+        _settings.Setup(s => s.GetLoraSorterExcludedFoldersJsonAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(System.Text.Json.JsonSerializer.Serialize(
+                new[] { Path.Combine(SourceRoot, "Lightning").Replace('\\', '/') }));
+        var vm = CreateVm(cached: LightningLibrary());
+        await vm.InitializeAsync();
+        vm.TransferCount.Should().Be(1, "the forward-slash entry still excludes the folder");
+
+        await vm.RemoveExclusionCommand.ExecuteAsync(Path.Combine(SourceRoot, "Lightning"));
+
+        vm.ExcludedFolders.Should().BeEmpty();
+        vm.TransferCount.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task TogglingHideSettledRebuildsTheTreeWithoutReplanning()
+    {
+        // The checkbox is view-only: only the tree build and the summary read it. Re-running the
+        // planner — lazy collision hashing and all — for a display toggle is the kind of "minutes
+        // on a large library" work the candidate cache exists to avoid.
+        var probes = 0;
+        var settled = WriteLora(@"SDXL 1.0\Character\settled.safetensors");
+        var mover = WriteLora(@"flat\mover3.safetensors");
+        var vm = CreateVm(
+            cached: [Installed(settled, "SDXL 1.0", "character"), Installed(mover, "SDXL 1.0", "character")],
+            fileExistsOnDisk: path => { probes++; return File.Exists(path); });
+        await vm.InitializeAsync();
+        var probesAfterPlanning = probes;
+        probesAfterPlanning.Should().BeGreaterThan(0, "sanity: planning consults the disk, so the counter can tell a re-plan");
+
+        vm.IgnoreFilesAlreadyInPlace = true;
+
+        // Synchronous view work from the plan already in hand: no awaited command, no disk probes.
+        FlattenNames(vm.SourceRoots).Should().NotContain("settled.safetensors");
+        vm.PreviewSummary.Should().Contain("(hidden)");
+        probes.Should().Be(probesAfterPlanning, "hiding settled rows is a view change, not a re-plan");
+    }
+
+    /// <summary>One curated Lightning folder (placeholder row, unguessable name) plus one ordinary
+    /// mover, so exclusion is visible in the plan, the trees and the summary.</summary>
+    private InstalledModelFile[] LightningLibrary()
+    {
+        var accel = Path.Combine(SourceRoot, @"Lightning\accel_high_noise.safetensors");
+        if (!File.Exists(accel)) WriteLora(@"Lightning\accel_high_noise.safetensors");
+        var mover = Path.Combine(SourceRoot, @"flat\mover.safetensors");
+        if (!File.Exists(mover)) WriteLora(@"flat\mover.safetensors");
+        return
+        [
+            Installed(accel, "???", "character"),
+            Installed(mover, "SDXL 1.0", "character"),
+        ];
+    }
+
+    private async Task<LoraSorterViewModel> LightningVm()
+    {
+        var vm = CreateVm(cached: LightningLibrary());
+        await vm.InitializeAsync();
+        return vm;
+    }
+
     private static IEnumerable<string> FlattenNames(IEnumerable<SortPreviewNodeViewModel> nodes)
     {
         foreach (var node in nodes)

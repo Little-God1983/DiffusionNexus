@@ -967,7 +967,7 @@ The third tab in the LoRA Viewer reorganizes installed LoRA files on disk into a
 
 ### What it does
 
-The Sorter takes the LoRAs the app already knows about (the same set as the Installed tab), computes a target folder layout, displays it as an expandable tree preview, and — only after the user clicks **Start Sorting** — moves or copies each LoRA **together with its sidecar files** (`.civitai.info`, `.json`, `.preview.*`, `.txt`, video previews — the same set `StaticFileTypes.GeneralExtensions` counts as part of a model) into that layout. The database is updated in move mode so the library remains current; copy mode keeps the DB pointing at the originals.
+The Sorter takes the LoRAs the app already knows about (the same set as the Installed tab), computes a target folder layout, displays it beside the current one as a before → after preview, and — only after the user clicks **Start Sorting** — moves or copies each LoRA **together with its sidecar files** (`.civitai.info`, `.json`, `.preview.*`, `.txt`, video previews — the same set `StaticFileTypes.GeneralExtensions` counts as part of a model) into that layout. The database is updated in move mode so the library remains current; copy mode keeps the DB pointing at the originals.
 
 ### Options
 
@@ -978,6 +978,7 @@ The Sorter takes the LoRAs the app already knows about (the same set as the Inst
 | **Folder structure** | Base model only · Base model + category | Base model + category | Categories inferred from tags by `SorterCategoryResolver`, the one helper the download pipeline also uses. Unknown base model → `Unknown\` folder; an unresolved **category** adds no segment at all, exactly as the downloader omits it — otherwise sorting and downloading would move the same files back and forth forever. |
 | **Operation** | Move · Copy | Move | Move shows a warning that old folder structure cannot be restored automatically. Copy into the source root itself is blocked (would re-import on next scan). |
 | **Delete empty source dirs** | on/off | off | Move mode only; triggered after the run completes. |
+| **Excluded folders** | Right-click a source folder → *Never sort this folder* | none | Files under these never enter the plan; drawn dimmed in both trees. Persisted (`LoraSorterExcludedFoldersJson`). See *Excluded folders* under the preview section. |
 
 ### Collision policy — automatic, no dialogs
 
@@ -1029,12 +1030,132 @@ DB rows are matched by path earlier, when the cached library is loaded; there is
 
 Downloaded metadata is cached in `%LocalAppData%\DiffusionNexus\SorterCache\{sha256}.json` (file name always lower-cased, so the store survived the switch to the library-wide uppercase `FileHasher.Sha256Upper`) so a re-run or re-preview of the same file normally costs no network call at all. One exception is deliberate: an entry whose tag lookup never succeeded is stored as *unresolved* rather than as "this model has no tags", so the next pass retries it — that is what stops one transient Civitai failure from leaving a file category-less forever. Within a single pass the tag lookup is also memoized per model id, so a folder full of versions of the same model costs one `/models/{id}` call, not one per file. Rungs 4 and 5 are deliberately never written to that cache: it means *what Civitai said for this hash*, and the API-failure path writes no entry precisely so the next pass retries — a cached guess would kill that retry permanently and freeze the guess as though it were an answer. They are re-derived each pass instead, at the cost of one size-capped header read. The cache is a lookup cache only — the DB is never polluted with unregistered folders.
 
+### The preview is a before → after
+
+The preview pane is two trees: **Source (now)** on the left — the folders the files are in today —
+and **After sorting** on the right. A `GridSplitter` between them lets either side take more room.
+
+Both are built by one pass over the same `LoraSortPlan`, read from opposite ends:
+`PlannedMove.Candidate.FilePath` builds the left, `PlannedMove.TargetFilePath` the right. Nothing
+about the source side is re-derived or re-read from disk, which is what guarantees the two halves
+can never describe different plans — including across an option toggle, where re-planning rebuilds
+both together.
+
+**Click to link.** Clicking any row — file or folder, either side — lights its counterpart(s) in the
+other tree (`SelectPreviewNodeCommand`). Every `PlannedMove` carries an index; a file node holds its
+own, a folder node the union of everything beneath it, so a folder click lights every destination its
+files reach. Only *file* rows light: lighting the destination folders too would mean a folder click
+paints most of the other pane, which says "somewhere over there" rather than "these rows". The
+folders on the path are expanded instead — a highlight inside a collapsed folder is a highlight
+nobody sees. Exactly one counterpart is marked `IsPrimaryLink`, the first in tree order, and that is
+the only one the view scrolls to; a folder click can light a dozen rows, and scrolling to all of them
+means scrolling to none. Clicking the same row again clears the link, and so does a re-plan — the
+nodes a highlight referred to stop existing when the trees are rebuilt.
+
+**What only the source side shows.** Skipped duplicates. The destination tree drops them because
+nothing arrives, but the file is still sitting in the user's folder, and the "now" side is the only
+side that can say so — it is struck through and reads *duplicate — skipped*. Source rows also carry a
+short note: `already here` for a file at its computed destination, `renamed on arrival` for one that
+collides, and per folder a count of departures.
+
+That folder count deliberately reads **"all 7 leave"**, never *"empties"*. The plan covers model
+files and their sidecars, not whatever else lives in that folder, and **Delete empty source folders**
+removes a directory only when it is genuinely empty at execution time — so a folder emptying is not
+something this preview is in a position to promise. It says what the plan does, which it knows.
+
+**Searching a pane.** Each tree has its own box in its header (`SortPreviewFilterViewModel`,
+`SourceFilter` / `TargetFilter`), filtering only itself. The two are independent on purpose: the
+panes are asked different questions — *where is this file now?* against *what is landing in
+Unknown?* — and a renamed file does not even carry the same name on both sides.
+
+A file row survives when its name contains the text; a folder survives when its own name matches, in
+which case everything under it stays, or when anything beneath it survives. A folder is auto-expanded
+only for a match *beneath* it — a match inside a collapsed folder is a match nobody sees, while a
+folder that matched on its own name is already the answer to what was typed. The header carries a
+live `3 of 1406 files` count, null when nothing is being filtered so an unfiltered pane never reads
+"1406 of 1406", and a pane whose filter matched nothing says *No files match* rather than showing an
+empty tree under a box with text in it.
+
+The filter walks the nodes that already exist — no re-plan, no disk, no Civitai — so a click-to-link
+highlight survives typing, and each keystroke re-filters from the tree as the user left it rather
+than from what the previous keystroke revealed (otherwise "k", "ke", "kee" ratchets folders open one
+at a time). The text survives a re-plan and is re-applied to the fresh tree, because an option toggle
+silently un-filtering the pane someone is reading is the one thing a filter must not do; clearing
+restores every row *and* the expansion the tree had before the search opened it. One consequence of
+independent boxes is deliberate: a link's counterpart can be hidden by the other pane's filter, so
+`IsPrimaryLink` — the scroll target — is only ever claimed by a row that is currently visible.
+
+**Hiding what is already settled.** *Hide files already in the right folder*
+(`IgnoreFilesAlreadyInPlace`) drops every `AlreadyInPlace` move from **both** trees — both, or the
+two sides stop describing the same set of moves. On a settled library those are most of the rows,
+and a preview that is mostly things which are not going to happen is hard to read. The rows are
+dropped at tree-build time, not out of the plan: the plan is what Start runs and what the history
+manifest records, and a settled file being *in* it is what makes it a no-op rather than an omission.
+`TransferCount` is therefore untouched, which is the point — this changes the view and nothing else.
+Folder notes then count only the rows still shown ("1 file leaves", not "1 of 2 leave"), and the
+summary gains `(hidden)` after the already-in-place count, which is the one place the real
+denominator survives so the pane never quietly claims the library is smaller than it is.
+
+**Excluded folders.** Right-click a source-side folder → *Never sort this folder*
+(`ExcludedFolders`, persisted as a JSON path list in `AppSettings.LoraSorterExcludedFoldersJson`).
+This exists for hand-curated utility folders — a `Lightning` folder of accelerator LoRAs is the
+motivating case: nothing on Civitai knows those files, so without it they are scattered by base
+model (when their names happen to be guessable) or dumped into `Unknown\`. Files under an excluded
+folder are partitioned out of the candidates **before** the plan is built and before the name rung
+gets a say, so Start cannot touch them, `TransferCount` ignores them, and the history manifest
+never records them. They still appear in both trees as dimmed stay-put rows (synthetic move ids
+past the plan's keep click-to-link working; the destination side draws them only when their
+unchanged location falls under the target root), because a row that silently vanishes reads as a
+file the sorter lost. An excluded row shows none of the ✓/~/✗ marks — those answer "is this file's
+destination known", and an excluded file has no destination — and its identity is absorbed upward
+as `Identified` so a folder the user closed the book on cannot drag an ✗ up the tree. The exclusion
+root's note reads "excluded — won't be sorted"; parent folder notes count excluded files as staying
+("1 of 2 leave"). Exclusions survive *Hide files already in the right folder* (hiding noise is one
+thing, hiding a choice the user made is another), the summary gains `· N excluded`, and the left
+rail lists every exclusion with a ✕ — visible even when the folder itself is scrolled away or
+filtered out. Un-excluding (context menu *Sort this folder again*, only on the exact excluded path,
+or the rail's ✕) persists `null` when the list empties rather than `[]`. A folder is drawn excluded
+when **every file beneath it** is — a semantic rollup, not a path comparison, so a destination
+folder that merely shares a name with an excluded source folder is never mis-dimmed.
+
+**Ordering and geometry.** One order picker above both trees drives them both — they exist to
+be compared row against row, and two panes sorted differently would defeat that. It applies at
+*every* level (`SortTree`): before this only the top-level folders were ordered, and everything
+below them came out in whatever order the plan happened to produce, which is what made a deep tree
+read as arbitrary. Three orders: `Default` is the plan's own order and what the pane opens on — not
+a sort but the absence of one, so each node remembers its build-time `Order` and returning to
+Default genuinely undoes a sort rather than merely stopping sorting. `Size` and `Name` group folders
+before files at each level, then order biggest-first or A–Z case-insensitive. Re-ordering moves the
+existing nodes rather than rebuilding them, so a click-to-link highlight and a typed search filter
+both survive it.
+
+The picker's items are the enum values themselves, bound from an **instance** property
+(`SortOrders`) — the same shape as the Civitai browser's `PeriodOptions`. Static would bind to
+nothing: Avalonia's property-accessor plugin resolves instance members off the DataContext, and the
+picker comes up empty with no error anywhere.
+
+The tree indent lives on each row's own name (`SortPreviewNodeViewModel.Indent`, from `Depth`),
+*not* on the container holding its children. Indenting the container moved every row's **right**
+edge in by 18px per level too, so the chips, marks and sizes drifted left the deeper you looked.
+With the indent inside the row, every row spans the full pane and shares one right edge; the mark
+sits in a fixed 16px slot and the count and size in fixed right-aligned columns of their own, so a
+folder's "12 LoRAs" cannot push its size out of line with the file sizes beneath it.
+
+**Open in folder.** Right-clicking any row offers it, through the same `IProcessLauncher` seam the
+generation gallery uses. A file is selected in Explorer; a folder is opened. Every node carries a
+`FullPath` — where it is now on the source side, where it would be on the destination side — and
+`CanOpenInFolder` greys the item when there is nowhere to go, which is the normal state of a
+destination folder before anything has been sorted. A destination *file* still resolves to the
+folder it will land in when that folder already exists, so "show me where this goes" is answerable
+for an established part of the library. Opening the nearest existing ancestor instead was rejected:
+it takes the user somewhere they did not click.
+
 ### Folder labels in the preview
 
 Each node in the preview tree carries two things beyond its name and size:
 
-- **Asset-kind chips** — `[LoRA]`, `[VAE]`, `[Text Encoder]`, `[ControlNet]`, `[Upscaler]`. A folder's chips are the union of everything beneath it, not just its direct children. The library scan enumerates by extension, so a LoRA folder routinely also holds the VAEs, text encoders and upscalers a workflow needs — on one real library, 35 of 328 unidentified files were one of these. A chip other than `[LoRA]` on a base-model folder is the signal that something which is not a LoRA is about to be filed as one.
-- **A ✓ / ~ / ✗ mark** — ✓ when everything under the node was read or confirmed, `~` when something was filed on its file name alone, ✗ when something has no base model at all. The node keeps the *worst* state beneath it, so a base-model folder is finished only when every category folder under it is. Three states rather than two because *Sort by name* gives a guessed file a real folder: a ✓ under "every file here has a base model" would then be a claim the preview cannot back, on the one screen where the lowest-confidence rung could be audited before anything moves.
+- **Asset-kind chips** — `[LoRA]`, `[VAE]`, `[Text Encoder]`, `[ControlNet]`, `[Upscaler]`. Shown on the destination side only: the question they answer is what a folder is about to *receive*. A folder's chips are the union of everything beneath it, not just its direct children. The library scan enumerates by extension, so a LoRA folder routinely also holds the VAEs, text encoders and upscalers a workflow needs — on one real library, 35 of 328 unidentified files were one of these. A chip other than `[LoRA]` on a base-model folder is the signal that something which is not a LoRA is about to be filed as one.
+- **A ✓ / ~ / ✗ mark** — ✓ when everything under the node was read or confirmed, `~` when something was filed on its file name alone, ✗ when something has no base model at all. Shown on both sides, because the source side is where "why is this one heading for Unknown?" actually gets asked. The node keeps the *worst* state beneath it, so a base-model folder is finished only when every category folder under it is. Three states rather than two because *Sort by name* gives a guessed file a real folder: a ✓ under "every file here has a base model" would then be a claim the preview cannot back, on the one screen where the lowest-confidence rung could be audited before anything moves.
 
 **One extension list, split by the question.** `ModelFileExtensions` (Domain) has `Sortable` — what the app enumerates, discovers into the library, and physically **moves** — and the wider `Recognized`, for deciding whether a *name* reads as a model's (stripping an extension before a name hint, spotting a model reference while hashing). The distinction is load-bearing: over-recognizing costs nothing, but every entry in `Sortable` is a file the sorter will relocate, which is why `.bin` and `.gguf` are recognized and not sortable. Discovery and the sorter read the same `Sortable` set, so a file the sorter would file can never be one the library refuses to discover.
 
