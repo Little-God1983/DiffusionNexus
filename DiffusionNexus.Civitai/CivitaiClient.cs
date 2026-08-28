@@ -28,6 +28,7 @@ public sealed class CivitaiClient : ICivitaiClient, IDisposable
 
     private readonly HttpClient _httpClient;
     private readonly bool _disposeHttpClient;
+    private readonly ICivitaiRateLimitObserver? _rateLimitObserver;
 
     /// <summary>
     /// Creates a new CivitaiClient with a default HttpClient.
@@ -41,10 +42,15 @@ public sealed class CivitaiClient : ICivitaiClient, IDisposable
     /// </summary>
     /// <param name="httpClient">The HTTP client to use.</param>
     /// <param name="disposeHttpClient">Whether to dispose the HttpClient when this client is disposed.</param>
-    public CivitaiClient(HttpClient httpClient, bool disposeHttpClient = false)
+    /// <param name="rateLimitObserver">Told about every 429, including recovered ones.</param>
+    public CivitaiClient(
+        HttpClient httpClient,
+        bool disposeHttpClient = false,
+        ICivitaiRateLimitObserver? rateLimitObserver = null)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _disposeHttpClient = disposeHttpClient;
+        _rateLimitObserver = rateLimitObserver;
 
         // HttpClient throws InvalidOperationException if BaseAddress or DefaultRequestHeaders
         // are mutated after the first request has been sent. That happens when this ctor
@@ -214,6 +220,25 @@ public sealed class CivitaiClient : ICivitaiClient, IDisposable
         => RetryDelayOverride?.Invoke(attempt) ?? retryAfter ?? TimeSpan.FromSeconds(Math.Pow(2, attempt + 1) * 5);
 
     /// <summary>
+    /// Retry-After in either legal form. The delta form ("120") arrives pre-parsed as
+    /// <c>Delta</c>; the HTTP-date form ("Wed, 21 Oct 2026 07:28:00 GMT") only ever populates
+    /// <c>Date</c>, and reading Delta alone — which is what this client used to do — silently
+    /// discarded it and fell back to a blind backoff.
+    /// </summary>
+    private static TimeSpan? ParseRetryAfter(HttpResponseMessage response)
+    {
+        var header = response.Headers.RetryAfter;
+        if (header is null) return null;
+        if (header.Delta is { } delta) return delta;
+        if (header.Date is { } date)
+        {
+            var wait = date - DateTimeOffset.UtcNow;
+            return wait > TimeSpan.Zero ? wait : TimeSpan.Zero;
+        }
+        return null;
+    }
+
+    /// <summary>
     /// 5xx responses are the server having a moment, not an answer about the resource —
     /// Civitai fronts its API with a CDN that emits 502/503/504 under load. Everything
     /// else in the 4xx range is a real answer and is never retried.
@@ -225,6 +250,11 @@ public sealed class CivitaiClient : ICivitaiClient, IDisposable
         where T : class
     {
         const int maxRetries = 3;
+
+        // One immediate retry, not three. A 429 is a quota, and the gateway's shared cooldown is
+        // what waits it out for everybody; three in-call retries meant a single call could sleep
+        // 10 + 20 + 40 s while holding a download slot.
+        const int maxRateLimitRetries = 1;
 
         for (var attempt = 0; attempt <= maxRetries; attempt++)
         {
@@ -254,12 +284,20 @@ public sealed class CivitaiClient : ICivitaiClient, IDisposable
                 // Handle rate limiting with automatic retry
                 if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
                 {
-                    if (attempt == maxRetries) break;
+                    var serverRetryAfter = ParseRetryAfter(response);
 
-                    // Respect Retry-After header, or use exponential backoff
-                    var retryAfter = RateLimitDelay(attempt, response.Headers.RetryAfter?.Delta);
+                    // Reported before the decision to retry: every other surface should stop
+                    // now, not after this caller has finished being optimistic.
+                    _rateLimitObserver?.OnRateLimited(serverRetryAfter);
 
-                    await Task.Delay(retryAfter, cancellationToken);
+                    if (attempt >= maxRateLimitRetries)
+                    {
+                        throw new CivitaiRateLimitedException(
+                            $"Civitai API rate limited after {maxRateLimitRetries} retries for {endpoint}",
+                            serverRetryAfter);
+                    }
+
+                    await Task.Delay(RateLimitDelay(attempt, serverRetryAfter), cancellationToken);
                     continue;
                 }
 
@@ -302,11 +340,11 @@ public sealed class CivitaiClient : ICivitaiClient, IDisposable
             }
         }
 
-        // All retries exhausted on rate limiting
+        // Only reachable when the transient-retry budget is exhausted without a decisive answer.
         throw new HttpRequestException(
-            $"Civitai API rate limited after {maxRetries} retries for {endpoint}",
+            $"Civitai API gave no usable response after {maxRetries} retries for {endpoint}",
             null,
-            System.Net.HttpStatusCode.TooManyRequests);
+            System.Net.HttpStatusCode.ServiceUnavailable);
     }
 
     /// <summary>
