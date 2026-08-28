@@ -74,9 +74,31 @@ public sealed class CivitaiApiGateway : ICivitaiClient, ICivitaiApiCache
         (_lane == CivitaiCallLane.Background ? BackgroundInterval : InteractiveInterval)
         * _cooldown.IntervalMultiplier;
 
+    /// <summary>
+    /// Cooldown first, then spacing: no point pacing into a wall. The single shared preamble for
+    /// every call this gateway makes — <see cref="SendAsync{T}"/>'s factory and the three
+    /// uncached methods below all funnel through here.
+    /// </summary>
+    /// <remarks>
+    /// Same two waits, two different answers to "can a caller's cancellation tear this down?",
+    /// and the rule is exactly the one <see cref="SendAsync{T}"/>'s remark below explains at
+    /// length: shared, single-flighted work (<see cref="SendAsync{T}"/>'s factory) detaches by
+    /// passing <see cref="CancellationToken.None"/>; exclusive, non-single-flighted work
+    /// (<see cref="GetImagesAsync"/>, <see cref="GetTagsAsync"/>, <see cref="GetCreatorsAsync"/> —
+    /// none of the three are cached, so nobody else is ever waiting on the same call) honours the
+    /// caller's own token by passing it straight through.
+    /// </remarks>
+    private async Task GateAsync(CancellationToken ct)
+    {
+        await _cooldown.WaitAsync(ct).ConfigureAwait(false);
+        await _pacer.WaitAsync(Interval, ct).ConfigureAwait(false);
+    }
+
     /// <summary>Cooldown first, then spacing: no point pacing into a wall.</summary>
     /// <remarks>
-    /// The factory below runs on <see cref="CancellationToken.None"/>, not <paramref name="ct"/>.
+    /// This calls <see cref="GateAsync"/> — the same preamble <see cref="GetImagesAsync"/>,
+    /// <see cref="GetTagsAsync"/> and <see cref="GetCreatorsAsync"/> use — but with
+    /// <see cref="CancellationToken.None"/>, not <paramref name="ct"/>.
     /// <see cref="CivitaiResponseCache.GetOrAddAsync{T}"/> single-flights concurrent callers for
     /// the same key onto one shared fetch — one of them becomes its "leader" (whichever call first
     /// registers the in-flight entry), and the rest join it. If the factory captured a caller's
@@ -117,8 +139,7 @@ public sealed class CivitaiApiGateway : ICivitaiClient, ICivitaiApiCache
 
         return await _cache.GetOrAddAsync(cacheKey, ttl, async () =>
         {
-            await _cooldown.WaitAsync(CancellationToken.None).ConfigureAwait(false);
-            await _pacer.WaitAsync(Interval, CancellationToken.None).ConfigureAwait(false);
+            await GateAsync(CancellationToken.None).ConfigureAwait(false);
             return await call(CancellationToken.None).ConfigureAwait(false);
         }, ct).ConfigureAwait(false);
     }
@@ -167,8 +188,7 @@ public sealed class CivitaiApiGateway : ICivitaiClient, ICivitaiApiCache
         CivitaiImagesQuery? query = null, string? apiKey = null, CancellationToken cancellationToken = default)
     {
         _cache.NoteApiKey(apiKey);
-        await _cooldown.WaitAsync(cancellationToken).ConfigureAwait(false);
-        await _pacer.WaitAsync(Interval, cancellationToken).ConfigureAwait(false);
+        await GateAsync(cancellationToken).ConfigureAwait(false);
         return await _inner.GetImagesAsync(query, apiKey, cancellationToken).ConfigureAwait(false);
     }
 
@@ -176,8 +196,7 @@ public sealed class CivitaiApiGateway : ICivitaiClient, ICivitaiApiCache
     public async Task<CivitaiPagedResponse<CivitaiTag>> GetTagsAsync(
         int? limit = null, int? page = null, string? query = null, CancellationToken cancellationToken = default)
     {
-        await _cooldown.WaitAsync(cancellationToken).ConfigureAwait(false);
-        await _pacer.WaitAsync(Interval, cancellationToken).ConfigureAwait(false);
+        await GateAsync(cancellationToken).ConfigureAwait(false);
         return await _inner.GetTagsAsync(limit, page, query, cancellationToken).ConfigureAwait(false);
     }
 
@@ -185,8 +204,7 @@ public sealed class CivitaiApiGateway : ICivitaiClient, ICivitaiApiCache
     public async Task<CivitaiPagedResponse<CivitaiCreatorInfo>> GetCreatorsAsync(
         int? limit = null, int? page = null, string? query = null, CancellationToken cancellationToken = default)
     {
-        await _cooldown.WaitAsync(cancellationToken).ConfigureAwait(false);
-        await _pacer.WaitAsync(Interval, cancellationToken).ConfigureAwait(false);
+        await GateAsync(cancellationToken).ConfigureAwait(false);
         return await _inner.GetCreatorsAsync(limit, page, query, cancellationToken).ConfigureAwait(false);
     }
 
