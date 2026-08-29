@@ -516,6 +516,8 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     {
         if (Interlocked.Exchange(ref _loaded, 1) == 1) return;
 
+        _logger?.Debug(LogCategory.Network, "CivitaiBrowser", "Deferred initial load starting (view attached + DataContext bound).");
+
         // Run concurrently, same as the constructor did before the first search moved here.
         // RefreshInstalledSetAsync re-applies itself to whatever is in Results once it lands
         // (see its own doc comment), so it does not need to finish before the search starts —

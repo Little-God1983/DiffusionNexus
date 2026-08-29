@@ -11,6 +11,16 @@ using DiffusionNexus.UI.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
+// The headless Avalonia platform is a single process-wide singleton, and xunit's default
+// per-collection parallelism runs different test classes' fixtures on different threads. Two
+// test classes racing to be the first to touch Avalonia's platform/dispatcher setup (this
+// EnsureAvalonia() call below, and separately whatever internal session Avalonia.Headless.XUnit's
+// [AvaloniaFact] itself bootstraps) crashes with "Call from invalid thread" inside
+// AvaloniaHeadlessPlatform.Initialize — observed when a third [AvaloniaFact] test class was added
+// alongside the existing two. Serializing collections removes the race; it does not slow this
+// small, headless-only suite meaningfully.
+[assembly: CollectionBehavior(DisableTestParallelization = true)]
+
 namespace DiffusionNexus.IntegrationTests;
 
 public sealed class TestAppHost : IAsyncLifetime, IDisposable
