@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
+using System.Text.Json;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -10,6 +11,7 @@ using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Infrastructure.Services;
+using DiffusionNexus.UI.Models;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.CivitaiBrowser;
 using DiffusionNexus.UI.Utilities;
@@ -120,14 +122,40 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     [ObservableProperty]
     private ModelTypeOption? _selectedModelType;
 
+    /// <summary>
+    /// The "Show" flyout's four positively-phrased toggles, all ticked by default.
+    /// Each hides exactly what its badge marks on <see cref="CivitaiResultViewModel"/> —
+    /// see the predicate in <see cref="ApplyClientSideFilters"/>. All four are
+    /// client-side only (the API call always requests the full unfiltered set), so
+    /// their change hooks re-apply local filters and never re-search.
+    /// </summary>
     [ObservableProperty]
-    private bool _hideInstalledModels;
+    private bool _showInstalled = true;
 
     [ObservableProperty]
-    private bool _hideEarlyAccessModels;
+    private bool _showEarlyAccess = true;
 
     [ObservableProperty]
-    private bool _showNsfwContent = true;
+    private bool _showPaywalled = true;
+
+    [ObservableProperty]
+    private bool _showNsfw = true;
+
+    /// <summary>Number of the four Show-flyout toggles currently unticked (0 = filter inactive).</summary>
+    public int ActiveShowFilterCount =>
+        (ShowInstalled ? 0 : 1) + (ShowEarlyAccess ? 0 : 1) + (ShowPaywalled ? 0 : 1) + (ShowNsfw ? 0 : 1);
+
+    public bool IsShowFilterActive => ActiveShowFilterCount > 0;
+
+    /// <summary>Re-ticks all four Show-flyout toggles. Analogue of <see cref="ClearBaseModelFilters"/>.</summary>
+    [RelayCommand]
+    private void ShowAllResultFilters()
+    {
+        ShowInstalled = true;
+        ShowEarlyAccess = true;
+        ShowPaywalled = true;
+        ShowNsfw = true;
+    }
 
     [ObservableProperty]
     private double _cardWidth = 240;
@@ -518,6 +546,15 @@ public partial class CivitaiBrowserViewModel : ObservableObject
 
         _logger?.Debug(LogCategory.Network, "CivitaiBrowser", "Deferred initial load starting (view attached + DataContext bound).");
 
+        // Restore the saved filter BEFORE the deferred search: BuildQuery reads the
+        // base-model selection (AvailableBaseModels), so a restore landing after that
+        // search would issue a query for the wrong filter. This is a single-row
+        // AppSettings read (not RefreshInstalledSetAsync's full-library scan below), so
+        // awaiting it here does not reproduce the "browser opens empty" stall that
+        // gating the search behind a slow full scan caused — RefreshInstalledSetAsync
+        // still runs concurrently with the search itself, unaffected.
+        await RestoreSavedFilterAsync();
+
         // Run concurrently, same as the constructor did before the first search moved here.
         // RefreshInstalledSetAsync re-applies itself to whatever is in Results once it lands
         // (see its own doc comment), so it does not need to finish before the search starts —
@@ -525,6 +562,145 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         // empty" regression this fixes: on a large library the scan can take long enough that
         // the user perceives an empty grid even though the search itself would have been fast.
         await Task.WhenAll(RefreshInstalledSetAsync(), SearchIfNotAlreadyStartedAsync());
+    }
+
+    /// <summary>
+    /// Snapshots the current filter for persistence: base-model selection (including any
+    /// saved names still pending a mirror rebuild, via <see cref="FoldLiveBaseModelSelectionsIntoSticky"/>
+    /// so re-saving while a name is temporarily absent from the source doesn't truncate it —
+    /// same intent as <c>LoraViewerViewModel.CaptureFilter</c>) plus the four Show flags.
+    /// </summary>
+    internal CivitaiBrowserFilterData CaptureFilter()
+    {
+        FoldLiveBaseModelSelectionsIntoSticky();
+
+        return new CivitaiBrowserFilterData
+        {
+            SelectedBaseModels = _stickyBaseModelSelections.ToList(),
+            ShowInstalled = ShowInstalled,
+            ShowEarlyAccess = ShowEarlyAccess,
+            ShowPaywalled = ShowPaywalled,
+            ShowNsfw = ShowNsfw,
+        };
+    }
+
+    /// <summary>
+    /// Applies a saved filter: the four Show flags (null means "show" — see
+    /// <see cref="CivitaiBrowserFilterData.ShowInstalled"/>) and the base-model selection.
+    /// Selection is written directly to the live mirror items (case-insensitive name match)
+    /// with <see cref="OnBaseModelFilterToggled"/> suppressed — that handler unconditionally
+    /// re-searches, and this is called once per restored name, so without the guard a
+    /// four-base-model saved filter would fire four separate Civitai requests instead of
+    /// letting <see cref="EnsureLoadedAsync"/>'s single deferred search run afterwards. Names
+    /// the mirror doesn't know yet (catalog/base-model source hasn't produced them) are parked
+    /// in <see cref="_stickyBaseModelSelections"/> so <see cref="RebuildBaseModelMirror"/>
+    /// re-selects them the moment they materialize — the same mechanism a live toggle already
+    /// relies on when its name later drops out of the source.
+    /// </summary>
+    internal void ApplySavedFilter(CivitaiBrowserFilterData data)
+    {
+        ShowInstalled = data.ShowInstalled ?? true;
+        ShowEarlyAccess = data.ShowEarlyAccess ?? true;
+        ShowPaywalled = data.ShowPaywalled ?? true;
+        ShowNsfw = data.ShowNsfw ?? true;
+
+        var wanted = (data.SelectedBaseModels ?? []).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        _suppressBaseModelFilterEvents = true;
+        try
+        {
+            foreach (var item in AvailableBaseModels)
+            {
+                item.IsSelected = wanted.Remove(item.BaseModelRaw);
+            }
+        }
+        finally
+        {
+            _suppressBaseModelFilterEvents = false;
+        }
+
+        foreach (var name in wanted) _stickyBaseModelSelections.Add(name);
+
+        OnPropertyChanged(nameof(IsBaseModelFilterActive));
+        OnPropertyChanged(nameof(ActiveBaseModelFilterCount));
+        RebuildFlyoutBaseModels();
+    }
+
+    /// <summary>
+    /// Persists the current filter (base-model selection + the four Show flags) to
+    /// AppSettings. Single slot — saving overwrites the previous filter. Restored
+    /// automatically the next time the browser opens (<see cref="EnsureLoadedAsync"/>).
+    /// </summary>
+    [RelayCommand]
+    private async Task SaveFilterAsync()
+    {
+        if (_settingsService is null) return;
+        try
+        {
+            var json = JsonSerializer.Serialize(CaptureFilter());
+            await UseSettingsServiceAsync(async s =>
+            {
+                await s.SetCivitaiBrowserFilterJsonAsync(json).ConfigureAwait(false);
+                return true;
+            });
+            StatusMessage = "Filter saved.";
+        }
+        catch (Exception ex)
+        {
+            _logger?.Warn(LogCategory.General, "CivitaiBrowser", $"Could not save filter: {ex.Message}");
+            StatusMessage = "Could not save the filter.";
+        }
+    }
+
+    /// <summary>
+    /// Loads the saved filter from AppSettings and applies it. Called by
+    /// <see cref="EnsureLoadedAsync"/> before the deferred initial search — the base-model
+    /// selection feeds <see cref="BuildQuery"/>, so a restore landing after that search would
+    /// issue a query for the wrong filter. Corrupt or missing data degrades silently to the
+    /// unfiltered default (all four Show flags stay ticked).
+    /// </summary>
+    private async Task RestoreSavedFilterAsync()
+    {
+        if (_settingsService is null) return;
+        try
+        {
+            var json = await UseSettingsServiceAsync(s => s.GetCivitaiBrowserFilterJsonAsync())
+                .ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(json)) return;
+
+            var data = JsonSerializer.Deserialize<CivitaiBrowserFilterData>(json);
+            if (data is null) return;
+
+            await Dispatcher.UIThread.InvokeAsync(() => ApplySavedFilter(data));
+        }
+        catch (Exception ex)
+        {
+            _logger?.Warn(LogCategory.General, "CivitaiBrowser", $"Could not restore saved filter: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Runs a settings operation on a fresh scoped <see cref="IAppSettingsService"/> when DI
+    /// is available. The constructor-injected instance is shared with other startup tasks
+    /// (destination folders, the Installed tab's own filter restore) over a single
+    /// non-thread-safe DbContext, so the save/restore paths here — which can run concurrently
+    /// with them — must not reuse it. Falls back to the injected instance without DI
+    /// (design-time/tests). Mirrors <c>LoraViewerViewModel.UseSettingsServiceAsync</c>.
+    /// </summary>
+    private async Task<T?> UseSettingsServiceAsync<T>(Func<IAppSettingsService, Task<T>> action)
+    {
+        var scopeFactory = App.Services?.GetService<IServiceScopeFactory>();
+        if (scopeFactory is not null)
+        {
+            using var scope = scopeFactory.CreateScope();
+            return await action(scope.ServiceProvider.GetRequiredService<IAppSettingsService>())
+                .ConfigureAwait(false);
+        }
+
+        if (_settingsService is not null)
+            return await action(_settingsService).ConfigureAwait(false);
+
+        return default;
     }
 
     /// <summary>
@@ -587,11 +763,20 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         OnPropertyChanged(nameof(HasMore));
         _ = DebouncedSearchAsync();
     }
-    // ShowNsfwContent is a client-side filter (the API call always requests NSFW). No
-    // re-search needed when toggled — just reapply local filters.
-    partial void OnShowNsfwContentChanged(bool value) => ApplyClientSideFilters();
-    partial void OnHideEarlyAccessModelsChanged(bool value) => ApplyClientSideFilters();
-    partial void OnHideInstalledModelsChanged(bool value) => ApplyClientSideFilters();
+    // All four Show-flyout toggles are client-side filters (the API call always
+    // requests the full unfiltered set). No re-search needed when toggled — just
+    // reapply local filters and refresh the flyout's count badge.
+    partial void OnShowInstalledChanged(bool value) => OnShowFilterChanged();
+    partial void OnShowEarlyAccessChanged(bool value) => OnShowFilterChanged();
+    partial void OnShowPaywalledChanged(bool value) => OnShowFilterChanged();
+    partial void OnShowNsfwChanged(bool value) => OnShowFilterChanged();
+
+    private void OnShowFilterChanged()
+    {
+        OnPropertyChanged(nameof(ActiveShowFilterCount));
+        OnPropertyChanged(nameof(IsShowFilterActive));
+        ApplyClientSideFilters();
+    }
 
     #endregion
 
@@ -601,7 +786,8 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     /// <summary>
     /// When client-side filters drop the visible count below this floor, the VM
     /// quietly kicks off a Load-more so the user doesn't see a half-empty grid
-    /// after toggling Hide Installed / Hide Early Access / Show NSFW.
+    /// after toggling any of the "Show" flyout's four filters (Installed / Early
+    /// Access / Paywalled / NSFW).
     /// </summary>
     private const int AutoLoadMoreThreshold = 30;
 
@@ -759,7 +945,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     /// </summary>
     private CivitaiResultViewModel CreateResultCard(CivitaiModel model)
     {
-        var vm = new CivitaiResultViewModel(model, ShowNsfwContent)
+        var vm = new CivitaiResultViewModel(model, ShowNsfw)
         {
             EnqueueAllVersionsHandler = EnqueueAllVersionsForCard,
             EnqueueSelectedVersionsHandler = EnqueueSelectedVersionsForCard
@@ -897,7 +1083,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             Sort = SelectedSort,
             Period = SelectedPeriod,
             // Always request NSFW from the API so we get the full result set, then
-            // filter client-side via ShowNsfwContent. Sending
+            // filter client-side via ShowNsfw. Sending
             // nsfw=false here strips them at the server and they can't come back.
             Nsfw = "true",
             BaseModels = baseModels,
@@ -926,16 +1112,38 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     /// </summary>
     private readonly HashSet<string> _stickyBaseModelSelections = new(StringComparer.OrdinalIgnoreCase);
 
-    private void RebuildBaseModelMirror()
+    /// <summary>
+    /// True while a batch restore (<see cref="ApplySavedFilter"/>) is writing directly
+    /// to <see cref="BaseModelFilterItem.IsSelected"/>. Without this guard each restored
+    /// selection would fire <see cref="OnBaseModelFilterToggled"/> — which unconditionally
+    /// re-searches — kicking off one Civitai request per restored base model instead of
+    /// letting <see cref="EnsureLoadedAsync"/> run the single deferred search afterwards.
+    /// </summary>
+    private bool _suppressBaseModelFilterEvents;
+
+    /// <summary>
+    /// Folds each mirror item's live <see cref="BaseModelFilterItem.IsSelected"/> state
+    /// into <see cref="_stickyBaseModelSelections"/>: selected names are added, unselected
+    /// ones removed. Used both before <see cref="RebuildBaseModelMirror"/> wipes the item
+    /// list (so the wipe doesn't lose the user's latest toggles) and when
+    /// <see cref="CaptureFilter"/> snapshots the filter for persistence (so a save between
+    /// rebuilds reflects those same latest toggles).
+    /// </summary>
+    private void FoldLiveBaseModelSelectionsIntoSticky()
     {
-        // Fold the live item states into the sticky set: names currently listed
-        // follow their checkbox; names absent from the current mirror keep their
-        // remembered state until they rematerialize.
         foreach (var b in AvailableBaseModels)
         {
             if (b.IsSelected) _stickyBaseModelSelections.Add(b.BaseModelRaw);
             else _stickyBaseModelSelections.Remove(b.BaseModelRaw);
         }
+    }
+
+    private void RebuildBaseModelMirror()
+    {
+        // Fold the live item states into the sticky set: names currently listed
+        // follow their checkbox; names absent from the current mirror keep their
+        // remembered state until they rematerialize.
+        FoldLiveBaseModelSelectionsIntoSticky();
 
         foreach (var existing in AvailableBaseModels)
         {
@@ -966,6 +1174,8 @@ public partial class CivitaiBrowserViewModel : ObservableObject
 
     private void OnBaseModelFilterToggled(object? sender, EventArgs e)
     {
+        if (_suppressBaseModelFilterEvents) return;
+
         OnPropertyChanged(nameof(IsBaseModelFilterActive));
         OnPropertyChanged(nameof(ActiveBaseModelFilterCount));
 
@@ -983,11 +1193,17 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         {
             // Keep each card's thumbnail in line with the toggle: hiding NSFW swaps
             // adult previews for the model's safest image (no-op when unchanged).
-            result.ApplyNsfwPreference(ShowNsfwContent);
+            result.ApplyNsfwPreference(ShowNsfw);
 
-            var hide = (HideEarlyAccessModels && result.IsEarlyAccess)
-                       || (HideInstalledModels && result.IsInstalled)
-                       || (!ShowNsfwContent && result.IsNsfw);
+            // Each toggle hides exactly what its badge marks. Early Access and
+            // Paywalled are deliberately disjoint (ShowEarlyAccessBadge is already
+            // IsEarlyAccess && !IsPermanentlyPaid) — filtering on the raw IsEarlyAccess
+            // flag here would make the Paywalled toggle a no-op for permanently-paid
+            // cards, since they'd already be caught by Early Access.
+            var hide = (!ShowInstalled && result.IsInstalled)
+                       || (!ShowEarlyAccess && result.ShowEarlyAccessBadge)
+                       || (!ShowPaywalled && result.IsPermanentlyPaid)
+                       || (!ShowNsfw && result.IsNsfw);
             result.IsHidden = hide;
         }
         OnPropertyChanged(nameof(VisibleCount));
