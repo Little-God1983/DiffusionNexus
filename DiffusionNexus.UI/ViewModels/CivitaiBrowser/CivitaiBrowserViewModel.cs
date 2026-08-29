@@ -869,6 +869,27 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     private const int MaxAutoPaginateIterations = 10;
 
     /// <summary>
+    /// Items requested per API page — Civitai's documented maximum.
+    /// <para>
+    /// Not merely "bigger is better": the API applies <c>query=</c> (relevance search)
+    /// first to build a page window, then post-filters that window by <c>baseModels=</c>.
+    /// A text search combined with a base-model filter therefore yields only the
+    /// survivors of each window, so a 50-item window can come back with two items —
+    /// measured 2026-08-29 for <c>query=latex</c>: 20/page for Illustrious, 12 for Pony,
+    /// 2 for Flux.1 D, against a full 50 for the same filter with no search term. The
+    /// auto-paginate loop then burned all <see cref="MaxAutoPaginateIterations"/>
+    /// iterations (~7 s once each request is spaced by the gateway's interactive pace)
+    /// and still showed a near-empty grid.
+    /// </para>
+    /// <para>
+    /// Doubling the window roughly triples the yield (45 and 6 respectively for the
+    /// cases above) for ~165 ms of extra transfer, which is far cheaper than the
+    /// additional paced round trips it saves.
+    /// </para>
+    /// </summary>
+    private const int PageSize = 100;
+
+    /// <summary>
     /// When client-side filters drop the visible count below this floor, the VM
     /// quietly kicks off a Load-more so the user doesn't see a half-empty grid
     /// after toggling any of the "Show" flyout's four filters (Installed / Early
@@ -1172,7 +1193,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             // nsfw=false here strips them at the server and they can't come back.
             Nsfw = "true",
             BaseModels = baseModels,
-            Limit = 50,
+            Limit = PageSize,
             Cursor = cursor
         };
     }
