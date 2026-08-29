@@ -453,7 +453,12 @@ public class CivitaiClientTests
     private sealed class RecordingRateLimitObserver : ICivitaiRateLimitObserver
     {
         public List<TimeSpan?> Observed { get; } = [];
-        public void OnRateLimited(TimeSpan? retryAfter) => Observed.Add(retryAfter);
+        public List<bool> IsRetryOfReportedCall { get; } = [];
+        public void OnRateLimited(TimeSpan? retryAfter, bool isRetryOfReportedCall = false)
+        {
+            Observed.Add(retryAfter);
+            IsRetryOfReportedCall.Add(isRetryOfReportedCall);
+        }
     }
 
     [Fact]
@@ -479,6 +484,58 @@ public class CivitaiClientTests
 
         model.Should().NotBeNull();
         observer.Observed.Should().ContainSingle().Which.Should().Be(TimeSpan.FromSeconds(7));
+    }
+
+    [Fact]
+    public async Task GetAsync_ReportsOnlyTheFirst429OfACall_AsNotARetryOfAnAlreadyReportedCall()
+    {
+        // Finding A / PR #547 round 3: the observer must be able to tell a call's own in-call
+        // retry (its second 429) apart from a call's first 429, because that is the signal
+        // CivitaiRateLimitCooldown needs to escalate its multiplier once per call, not once per
+        // report. maxRateLimitRetries == 1, so at most two reports occur per call.
+        var observer = new RecordingRateLimitObserver();
+        var handler = new FakeHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+        {
+            Headers = { RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromMilliseconds(1)) }
+        });
+        using var client = new CivitaiClient(new HttpClient(handler), disposeHttpClient: true, rateLimitObserver: observer)
+        {
+            RetryDelayOverride = _ => TimeSpan.Zero
+        };
+
+        var act = async () => await client.GetModelAsync(1);
+        await act.Should().ThrowAsync<CivitaiRateLimitedException>();
+
+        observer.IsRetryOfReportedCall.Should().Equal(false, true);
+    }
+
+    [Fact]
+    public async Task GetAsync_TwoRateLimitsInOneCall_EscalatesTheSharedCooldownMultiplierOnlyOnce()
+    {
+        // Drives the REAL sequence end to end (not the cooldown directly): report, sleep exactly
+        // the server's Retry-After (mirroring production, where RateLimitDelay returns retryAfter
+        // verbatim — RetryDelayOverride is a test-only seam), report again. Before the fix, the
+        // second report landed exactly at the first report's cooldown deadline, which the
+        // (then purely time-based) episode check saw as a NEW episode — so the very first rate
+        // limit a user ever hit jumped the multiplier straight to the 4x cap. It must not.
+        var retryAfter = TimeSpan.FromSeconds(1);
+        long now = 0;
+        var cooldown = new CivitaiRateLimitCooldown(clock: () => now, delay: (_, _) => Task.CompletedTask);
+        var handler = new FakeHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+        {
+            Headers = { RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(retryAfter) }
+        });
+        using var client = new CivitaiClient(new HttpClient(handler), disposeHttpClient: true, rateLimitObserver: cooldown)
+        {
+            // Advances the shared clock by exactly retryAfter, standing in for the real
+            // Task.Delay(RateLimitDelay(...)) sleep between the two 429s.
+            RetryDelayOverride = _ => { now += (long)retryAfter.TotalMilliseconds; return TimeSpan.Zero; }
+        };
+
+        var act = async () => await client.GetModelAsync(1);
+        await act.Should().ThrowAsync<CivitaiRateLimitedException>();
+
+        cooldown.IntervalMultiplier.Should().Be(2);
     }
 
     [Fact]

@@ -61,23 +61,35 @@ public sealed class CivitaiRateLimitCooldown : ICivitaiRateLimitObserver
     /// calls this once per 429 response, and its own single in-call retry means a call that is
     /// refused twice reports twice — escalating on every report used to walk the multiplier
     /// 1 -> 2 -> 4 inside one request, so the first rate limit a user ever hit jumped straight to
-    /// the 4x cap. A report that arrives while a previous report's cooldown is still counting down
-    /// is treated as the same episode and does not escalate further; a report that arrives once
-    /// that cooldown has elapsed — whether seconds later (server sent a short Retry-After) or after
-    /// a long quiet spell — is a new episode and escalates (from 1 again if the quiet spell also
-    /// exceeded <see cref="MultiplierDecay"/>). The cooldown deadline itself still only ever
-    /// extends, regardless of episode.
+    /// the 4x cap.
+    /// <para>
+    /// <paramref name="isRetryOfReportedCall"/> is the authoritative signal for that specific case:
+    /// <c>CivitaiClient</c> passes true for a report that is its own in-call retry re-hitting the
+    /// limit, and such a report never escalates, however the clock lines up. That distinction
+    /// matters because a purely time-based fallback — "did an earlier cooldown deadline already
+    /// pass?" — only works when the caller's retry sleep is SHORTER than the cooldown it just set.
+    /// With a server <c>Retry-After</c> the client's own <c>RateLimitDelay</c> sleeps exactly that
+    /// long, so the second report can land at (or a hair past) the first report's own deadline —
+    /// indistinguishable, by time alone, from a genuinely new episode starting at that instant. The
+    /// time-based check (a report arriving while a previous report's cooldown is still counting
+    /// down is the same episode) is kept only as a fallback for reports that do NOT carry the
+    /// call-level signal — e.g. two independently concurrent calls that both happen to hit the
+    /// limit in the same window. A report that escalates does so from 1 again if the quiet spell
+    /// since the last one exceeded <see cref="MultiplierDecay"/>. The cooldown deadline itself
+    /// still only ever extends, regardless of episode.
+    /// </para>
     /// </remarks>
-    public void OnRateLimited(TimeSpan? retryAfter)
+    public void OnRateLimited(TimeSpan? retryAfter, bool isRetryOfReportedCall = false)
     {
         lock (_lock)
         {
             var now = _clock();
             var wait = retryAfter ?? DefaultCooldown;
 
-            // Captured before _cooldownUntil is possibly extended below, so it reflects whether A
-            // COOLDOWN FROM AN EARLIER REPORT was still active when THIS report arrived.
-            var sameEpisode = _everRateLimited && now < _cooldownUntil;
+            // Captured before _cooldownUntil is possibly extended below, so the timing fallback
+            // reflects whether A COOLDOWN FROM AN EARLIER REPORT was still active when THIS report
+            // arrived. The call-level signal, when the caller supplies it, overrides this outright.
+            var sameEpisode = isRetryOfReportedCall || (_everRateLimited && now < _cooldownUntil);
 
             // Extend, never shorten: a second 429 while a longer cooldown is running must not
             // release everyone early.

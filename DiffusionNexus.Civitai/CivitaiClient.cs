@@ -274,6 +274,10 @@ public sealed class CivitaiClient : ICivitaiClient, IDisposable
         // 10 + 20 + 40 s while holding a download slot.
         const int maxRateLimitRetries = 1;
 
+        // Tracks whether THIS call has already reported a 429, independent of `attempt` (which
+        // also advances on transient 5xx/exception retries) — see the OnRateLimited call below.
+        var rateLimitAlreadyReportedThisCall = false;
+
         for (var attempt = 0; attempt <= maxRetries; attempt++)
         {
             HttpResponseMessage? response = null;
@@ -305,8 +309,14 @@ public sealed class CivitaiClient : ICivitaiClient, IDisposable
                     var serverRetryAfter = ParseRetryAfter(response);
 
                     // Reported before the decision to retry: every other surface should stop
-                    // now, not after this caller has finished being optimistic.
-                    _rateLimitObserver?.OnRateLimited(serverRetryAfter);
+                    // now, not after this caller has finished being optimistic. isRetryOfReportedCall
+                    // tells the cooldown whether an earlier report already covered this same call —
+                    // its own one-retry budget means a call refused twice reports twice, and with a
+                    // server Retry-After the second report can land exactly at the first report's own
+                    // cooldown deadline, which a purely time-based episode check cannot tell apart
+                    // from a genuinely new episode (finding A, PR #547 round 3).
+                    _rateLimitObserver?.OnRateLimited(serverRetryAfter, isRetryOfReportedCall: rateLimitAlreadyReportedThisCall);
+                    rateLimitAlreadyReportedThisCall = true;
 
                     if (attempt >= maxRateLimitRetries)
                     {

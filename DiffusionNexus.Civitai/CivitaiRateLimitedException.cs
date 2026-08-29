@@ -14,7 +14,16 @@ namespace DiffusionNexus.Civitai;
 public interface ICivitaiRateLimitObserver
 {
     /// <param name="retryAfter">The parsed Retry-After, or null when the response carried none.</param>
-    void OnRateLimited(TimeSpan? retryAfter);
+    /// <param name="isRetryOfReportedCall">
+    /// True when this report is <see cref="CivitaiClient"/>'s own in-call retry re-hitting the
+    /// limit — i.e. an earlier report already told the observer about a 429 from the SAME logical
+    /// call. False (the default) for a call's first 429. See
+    /// <see cref="CivitaiRateLimitCooldown.OnRateLimited"/> for why this matters: a purely
+    /// time-based "is this still the same episode" check cannot tell the difference between a
+    /// caller's own retry landing at (or after) its own cooldown deadline and a genuinely new
+    /// rate-limit episode starting at that same moment.
+    /// </param>
+    void OnRateLimited(TimeSpan? retryAfter, bool isRetryOfReportedCall = false);
 }
 
 /// <summary>
