@@ -1,8 +1,10 @@
 using System.Reflection;
+using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.UI.Services.CivitaiBrowser;
 using DiffusionNexus.UI.ViewModels.CivitaiBrowser;
 using FluentAssertions;
+using Moq;
 
 namespace DiffusionNexus.Tests.Viewer;
 
@@ -186,6 +188,38 @@ public sealed class CivitaiBrowserResultVisibilityFilterTests
 
         vm.ActiveShowFilterCount.Should().Be(2);
         vm.IsShowFilterActive.Should().BeTrue();
+    }
+
+    /// <summary>
+    /// "Client-side only, no re-search" is an explicit requirement for all four Show
+    /// toggles (same behavior the old "Show NSFW Content" checkbox already had) — pin
+    /// it the same way <c>CivitaiBrowserViewModelBaseModelFilterTests.Constructor_DoesNotSearchCivitai</c>
+    /// pins the base-model side's own "no accidental search" guarantee.
+    /// </summary>
+    [Fact]
+    public void TogglingAnyShowFlag_NeverCallsTheCivitaiApi()
+    {
+        var client = new Mock<ICivitaiClient>();
+        var tempDir = Directory.CreateTempSubdirectory("dn-show-filter-tests").FullName;
+        var queue = new CivitaiDownloadQueue(null, null, null, null,
+            persistPathOverride: Path.Combine(tempDir, "queue.json"));
+        var waitlist = new CivitaiWaitlist(null, null,
+            persistPathOverride: Path.Combine(tempDir, "waitlist.json"));
+        var vm = new CivitaiBrowserViewModel(client.Object, null, null, queue, waitlist, null);
+
+        vm.ShowInstalled = false;
+        vm.ShowEarlyAccess = false;
+        vm.ShowPaywalled = false;
+        vm.ShowNsfw = false;
+        vm.ShowInstalled = true;
+        vm.ShowEarlyAccess = true;
+        vm.ShowPaywalled = true;
+        vm.ShowNsfw = true;
+
+        client.Verify(c => c.GetModelsAsync(
+                It.IsAny<CivitaiModelsQuery>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "the Show flyout's toggles are client-side only — the API always returns the full set");
     }
 
     [Fact]
