@@ -37,7 +37,16 @@ public interface ICivitaiApiCache
 /// </remarks>
 public sealed class CivitaiResponseCache : ICivitaiApiCache
 {
-    private sealed record Entry(object? Value, long ExpiresAt, long InsertedSequence);
+    /// <summary>
+    /// <paramref name="Generation"/> and <paramref name="KeyVersion"/> are the generation/key-version
+    /// a fetch had captured when it STARTED — not necessarily what is current now. Stamping them
+    /// onto the entry (rather than trusting the pre-write check in <see cref="RunAsync{T}"/> alone)
+    /// is what closes the race that check cannot: <see cref="TryGet"/> re-validates both against
+    /// what is current at READ time, so a write that lands after an <c>Invalidate*</c>/<see cref="Clear"/>
+    /// slipped in between that check and this write is harmless — stale on arrival — rather than
+    /// merely rare.
+    /// </summary>
+    private sealed record Entry(object? Value, long ExpiresAt, long InsertedSequence, long Generation, long KeyVersion);
 
     private readonly int _capacity;
     private readonly Func<long> _clock;
@@ -54,9 +63,13 @@ public sealed class CivitaiResponseCache : ICivitaiApiCache
     /// reintroduce that. A fetch captures its key's version when it starts, the same way it
     /// captures <see cref="_generation"/>, and re-checks both before writing — so a fetch already
     /// in flight when its key is invalidated still runs to completion and still answers whoever is
-    /// waiting on it, but its answer is never written back into <see cref="_entries"/>. Missing
-    /// keys default to version 0, so a key that has never been invalidated needs no entry here at
-    /// all.
+    /// waiting on it. That pre-write re-check is a narrowing, not a guarantee (it can itself race
+    /// an invalidation landing in the gap between the check and the write) — the actual guarantee
+    /// is that the entry, if written at all, carries the version captured at fetch start, and
+    /// <see cref="TryGet"/> rejects it as stale the moment that no longer matches this dictionary's
+    /// current value for the key, so a late write is never SERVED even on the rare run where it
+    /// does land in <see cref="_entries"/>. Missing keys default to version 0, so a key that has
+    /// never been invalidated needs no entry here at all.
     /// </summary>
     private readonly ConcurrentDictionary<string, long> _keyVersions = new(StringComparer.Ordinal);
 
@@ -70,6 +83,14 @@ public sealed class CivitaiResponseCache : ICivitaiApiCache
     private readonly object _apiKeyLock = new();
     private string? _lastApiKey;
     private bool _apiKeySeen;
+
+    /// <summary>
+    /// Test seam: invoked in <see cref="RunAsync{T}"/> right after the pre-write generation/
+    /// key-version check passes, before the write itself — lets a test deterministically land an
+    /// invalidation in that otherwise-thread-timing-dependent gap. See the finding-B regression
+    /// test in <c>CivitaiResponseCacheTests</c>.
+    /// </summary>
+    internal Action<string>? BeforeCacheWrite;
 
     /// <param name="capacity">Maximum entries before the oldest-inserted are evicted.</param>
     /// <param name="clock">Monotonic millisecond clock. Test seam.</param>
@@ -137,7 +158,8 @@ public sealed class CivitaiResponseCache : ICivitaiApiCache
     /// waiting on it, still depends on. <see cref="InvalidateModel"/>, <see cref="InvalidateVersion"/>
     /// and <see cref="InvalidateHash"/> honour the same rule — see <see cref="_keyVersions"/> — so a
     /// per-key invalidation racing an in-flight fetch for that key never evicts it either; it only
-    /// keeps that fetch's eventual answer from being written back.
+    /// keeps that fetch's eventual answer from being SERVED — see <see cref="Entry"/> and
+    /// <see cref="TryGet"/> for how a late write is made harmless rather than merely rare.
     /// </remarks>
     public async Task<T?> GetOrAddAsync<T>(string key, TimeSpan ttl, Func<Task<T?>> factory, CancellationToken ct = default)
         where T : class
@@ -199,11 +221,24 @@ public sealed class CivitaiResponseCache : ICivitaiApiCache
             // per-key InvalidateModel/InvalidateVersion/InvalidateHash for THIS key while the fetch
             // was in flight is the same situation at a narrower scope — the key version check below
             // catches that even when the global generation never moved.
+            //
+            // This check is a cheap narrowing, not the actual guarantee: it can itself race an
+            // Invalidate*/Clear that lands between the read above and the write below (both run on
+            // this thread with no await between them, but another thread can still bump _generation
+            // or _keyVersions in that window). The entry is stamped with the GENERATION and
+            // KEYVERSION THIS FETCH CAPTURED AT START regardless, and TryGet re-validates both
+            // against what is current at read time — so a write that slips through this narrow
+            // window is stale on arrival and gets dropped there instead of sticking for the full TTL.
             if (Interlocked.Read(ref _generation) == generation && CurrentKeyVersion(key) == keyVersion)
             {
+                // Test seam only: lets a test land an Invalidate*/Clear exactly here — after the
+                // check above has already passed, before the write below — to prove that window is
+                // now harmless rather than merely narrow. Never set outside tests.
+                BeforeCacheWrite?.Invoke(key);
+
                 var now = _clock();
                 var sequence = Interlocked.Increment(ref _sequence);
-                _entries[key] = new Entry(value, now + (long)ttl.TotalMilliseconds, sequence);
+                _entries[key] = new Entry(value, now + (long)ttl.TotalMilliseconds, sequence, generation, keyVersion);
                 Trim();
             }
 
@@ -236,11 +271,21 @@ public sealed class CivitaiResponseCache : ICivitaiApiCache
         _keyVersions.AddOrUpdate(key, 1, static (_, current) => current + 1);
     }
 
+    /// <summary>
+    /// A hit requires the entry to be unexpired AND stamped with the generation/key-version that
+    /// are current right now — not just what they were when the fetch that produced it started
+    /// (see <see cref="Entry"/>). That second check is what actually closes the
+    /// check-then-write race in <see cref="RunAsync{T}"/>: an entry that slipped through that
+    /// race's narrow window carries an older stamp than what is current, so it is treated as a
+    /// miss and removed here, exactly like an expired one.
+    /// </summary>
     private bool TryGet(string key, out object? value)
     {
         value = null;
         if (!_entries.TryGetValue(key, out var entry)) return false;
-        if (_clock() >= entry.ExpiresAt)
+        if (_clock() >= entry.ExpiresAt ||
+            entry.Generation != Interlocked.Read(ref _generation) ||
+            entry.KeyVersion != CurrentKeyVersion(key))
         {
             _entries.TryRemove(key, out _);
             return false;

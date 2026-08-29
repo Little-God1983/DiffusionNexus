@@ -218,6 +218,36 @@ public class CivitaiResponseCacheTests
     }
 
     [Fact]
+    public async Task InvalidateModel_BetweenTheVersionCheckAndTheWrite_StillSuppressesTheStaleWrite()
+    {
+        // Regression test for finding B of the round-3 review. RunAsync's pre-write check
+        // ("Interlocked.Read(ref _generation) == generation && CurrentKeyVersion(key) == keyVersion")
+        // and the write that follows it are two separate statements with no await between them —
+        // an Invalidate* landing in that gap bumps _keyVersions but finds no _entries value to
+        // remove (the write hasn't happened yet), and the stale write then lands and sticks for
+        // the entry's full TTL, exactly what the key-version mechanism exists to prevent (see
+        // ModelDetailViewModel.FetchCivitaiDataAsync and LibrarySyncService.InvalidateForcedScopeAsync,
+        // both of which invalidate-then-refetch on every user-forced press). BeforeCacheWrite is a
+        // test-only hook that fires at exactly that gap, letting this test land the invalidation
+        // deterministically instead of relying on genuine thread-scheduling luck.
+        var cache = Create();
+        var calls = 0;
+        Task<string?> Factory() { calls++; return Task.FromResult<string?>("stale-answer"); }
+
+        cache.BeforeCacheWrite = _ => cache.InvalidateModel(7);
+        await cache.GetOrAddAsync(CivitaiResponseCache.ModelKey(7), Ttl, Factory);
+
+        // The write still happens (the pre-write check ran before the hook fired the invalidation),
+        // but it must not be SERVED: a fresh TryGet has to see it as stale and force a refetch.
+        cache.BeforeCacheWrite = null;
+        var afterInvalidate = await cache.GetOrAddAsync(CivitaiResponseCache.ModelKey(7), Ttl, Factory);
+
+        afterInvalidate.Should().Be("stale-answer");
+        calls.Should().Be(2,
+            "the write that raced the invalidation must be ignored on read, forcing a genuine refetch rather than serving the stale value for the rest of the TTL");
+    }
+
+    [Fact]
     public async Task Capacity_EvictsTheOldestEntryFirst()
     {
         var cache = Create(capacity: 2);
