@@ -41,6 +41,13 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     private CivitaiInstalledIndex _installed = CivitaiInstalledIndex.Empty;
     private CivitaiResultViewModel? _lastClickedItem;
 
+    /// <summary>
+    /// The "All LoRA types" <see cref="ModelTypeOption"/>, captured once in the constructor.
+    /// <see cref="ResetFilter"/> and <see cref="CanReset"/> read this same instance instead of
+    /// re-deriving the label lookup, so a future relabel can't rot one copy and not the other.
+    /// </summary>
+    private readonly ModelTypeOption _defaultModelType;
+
     public CivitaiBrowserViewModel()
         : this(null, null, null, new CivitaiDownloadQueue(null), new CivitaiWaitlist(null, null), null)
     {
@@ -87,7 +94,8 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             new("All LoRA types",  [CivitaiModelType.LORA, CivitaiModelType.LoCon, CivitaiModelType.DoRA]),
             new("All models",      null) // null = no types filter (Checkpoints, embeddings, etc. too)
         };
-        SelectedModelType = ModelTypeOptions.Single(o => o.Label == "All LoRA types");
+        _defaultModelType = ModelTypeOptions.Single(o => o.Label == "All LoRA types");
+        SelectedModelType = _defaultModelType;
 
         // Base model filter mirrors the Installed-tab list (same names) but holds its
         // own selection state — toggling here doesn't disturb the installed filter.
@@ -202,6 +210,25 @@ public partial class CivitaiBrowserViewModel : ObservableObject
 
     public bool IsBaseModelFilterActive => AvailableBaseModels.Any(f => f.IsSelected);
     public int ActiveBaseModelFilterCount => AvailableBaseModels.Count(f => f.IsSelected);
+
+    /// <summary>
+    /// True when anything in the filter bar differs from the constructor's defaults — drives
+    /// the Reset button's <c>IsEnabled</c> so it greys out once the bar is already at rest.
+    /// Sourced the same way <see cref="ResetFilter"/> restores them: the constants
+    /// <see cref="CivitaiModelSort.Newest"/> / <see cref="CivitaiPeriod.AllTime"/> and the
+    /// captured <see cref="_defaultModelType"/> instance, plus <see cref="_stickyBaseModelSelections"/>
+    /// so a parked-but-not-yet-materialized base model still counts as "not at rest". Re-raised
+    /// everywhere the other computed badge properties (<see cref="ActiveShowFilterCount"/>,
+    /// <see cref="ActiveBaseModelFilterCount"/>) are re-raised.
+    /// </summary>
+    public bool CanReset =>
+        !string.IsNullOrEmpty(SearchText)
+        || !ShowInstalled || !ShowEarlyAccess || !ShowPaywalled || !ShowNsfw
+        || IsBaseModelFilterActive
+        || _stickyBaseModelSelections.Count > 0
+        || SelectedSort != CivitaiModelSort.Newest
+        || SelectedPeriod != CivitaiPeriod.AllTime
+        || SelectedModelType != _defaultModelType;
 
     partial void OnBaseModelFilterSearchTextChanged(string? value) => RebuildFlyoutBaseModels();
 
@@ -643,6 +670,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
 
         OnPropertyChanged(nameof(IsBaseModelFilterActive));
         OnPropertyChanged(nameof(ActiveBaseModelFilterCount));
+        OnPropertyChanged(nameof(CanReset));
         RebuildFlyoutBaseModels();
     }
 
@@ -781,7 +809,11 @@ public partial class CivitaiBrowserViewModel : ObservableObject
 
     #region Property change hooks
 
-    partial void OnSearchTextChanged(string value) { if (_initialized) _ = DebouncedSearchAsync(); }
+    partial void OnSearchTextChanged(string value)
+    {
+        OnPropertyChanged(nameof(CanReset));
+        if (_initialized && !_suppressFilterChangeSearch) _ = DebouncedSearchAsync();
+    }
 
     // Debounced like the text box: a user comparing two sorts or three periods used to spend a
     // full paginated search on each intermediate choice.
@@ -798,12 +830,21 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     /// either could otherwise paginate the OLD query's cursor under the NEW filter before the
     /// debounced <see cref="SearchAsync"/> gets a chance to reset it. Clearing it here, synchronously
     /// in the hook, closes that window without touching the debounce.
+    /// <para>
+    /// <see cref="_suppressFilterChangeSearch"/> gates ONLY the search below, not the cursor
+    /// clear/<see cref="HasMore"/> raise above — <see cref="ResetFilter"/> holds that flag for
+    /// the whole reset (so three property writes don't fire three searches) but the stale
+    /// cursor from before the reset must still be invalidated synchronously, same as any other
+    /// query-option change.
+    /// </para>
     /// </summary>
     private void OnQueryOptionChanged()
     {
         if (!_initialized) return; // skip the constructor-time cascade
         _nextCursor = null;
         OnPropertyChanged(nameof(HasMore));
+        OnPropertyChanged(nameof(CanReset));
+        if (_suppressFilterChangeSearch) return;
         _ = DebouncedSearchAsync();
     }
     // All four Show-flyout toggles are client-side filters (the API call always
@@ -818,6 +859,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(ActiveShowFilterCount));
         OnPropertyChanged(nameof(IsShowFilterActive));
+        OnPropertyChanged(nameof(CanReset));
         ApplyClientSideFilters();
     }
 
@@ -1163,8 +1205,79 @@ public partial class CivitaiBrowserViewModel : ObservableObject
 
         OnPropertyChanged(nameof(IsBaseModelFilterActive));
         OnPropertyChanged(nameof(ActiveBaseModelFilterCount));
+        OnPropertyChanged(nameof(CanReset));
         if (!string.IsNullOrWhiteSpace(BaseModelFilterSearchText))
             RebuildFlyoutBaseModels();
+        _ = SearchAsync();
+    }
+
+    /// <summary>
+    /// Returns the ENTIRE filter bar to the constructor's defaults in one click: search text,
+    /// the four Show toggles, the base-model selection — including
+    /// <see cref="_stickyBaseModelSelections"/>, same as <see cref="ClearBaseModelFilters"/>, so a
+    /// parked/not-yet-materialized name doesn't survive an explicit reset invisibly and start
+    /// re-filtering results once it does materialize — and Sort/Period/Model type.
+    /// <para>
+    /// Live view only. Does NOT touch the saved filter: no call to <see cref="SaveFilterAsync"/>,
+    /// no settings write. The persisted filter (<see cref="RestoreSavedFilterAsync"/> reads it back
+    /// on next open) stays exactly as it was until the user explicitly hits Save again.
+    /// </para>
+    /// <para>
+    /// Several of the properties reset here independently kick off a search when written one at a
+    /// time: <see cref="OnSearchTextChanged"/> and <see cref="OnQueryOptionChanged"/> (Sort/Period/
+    /// Model type) both debounce into <see cref="SearchAsync"/>, and each base-model item's
+    /// <see cref="OnBaseModelFilterToggled"/> searches immediately. Both suppression flags —
+    /// <see cref="_suppressBaseModelFilterEvents"/> (already used by <see cref="ClearBaseModelFilters"/>)
+    /// and <see cref="_suppressFilterChangeSearch"/> (its equivalent for the property hooks) — are
+    /// held for the whole reset, and exactly one explicit <see cref="SearchAsync"/> fires at the
+    /// end, mirroring <see cref="ClearBaseModelFilters"/>'s own pattern.
+    /// </para>
+    /// </summary>
+    [RelayCommand]
+    private void ResetFilter()
+    {
+        _suppressBaseModelFilterEvents = true;
+        _suppressFilterChangeSearch = true;
+
+        // A search text or query-option change made just before Reset (but within its 400ms
+        // debounce window) leaves a pending DebouncedSearchAsync timer. Suppressing this reset's
+        // OWN property writes never touches it — DebouncedSearchAsync only cancels the timer IT
+        // schedules, and a suppressed hook never calls it — so without cancelling here that stale
+        // timer would still fire its own SearchAsync up to 400ms later, alongside the explicit one
+        // below: two searches instead of one.
+        _debounceCts?.Cancel();
+
+        try
+        {
+            SearchText = string.Empty;
+
+            ShowInstalled = true;
+            ShowEarlyAccess = true;
+            ShowPaywalled = true;
+            ShowNsfw = true;
+
+            foreach (var item in AvailableBaseModels) item.IsSelected = false;
+            _stickyBaseModelSelections.Clear();
+
+            SelectedSort = CivitaiModelSort.Newest;
+            SelectedPeriod = CivitaiPeriod.AllTime;
+            SelectedModelType = _defaultModelType;
+        }
+        finally
+        {
+            _suppressBaseModelFilterEvents = false;
+            _suppressFilterChangeSearch = false;
+        }
+
+        OnPropertyChanged(nameof(IsBaseModelFilterActive));
+        OnPropertyChanged(nameof(ActiveBaseModelFilterCount));
+        OnPropertyChanged(nameof(ActiveShowFilterCount));
+        OnPropertyChanged(nameof(IsShowFilterActive));
+        OnPropertyChanged(nameof(HasMore));
+        OnPropertyChanged(nameof(CanReset));
+        if (!string.IsNullOrWhiteSpace(BaseModelFilterSearchText))
+            RebuildFlyoutBaseModels();
+
         _ = SearchAsync();
     }
 
@@ -1185,6 +1298,19 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     /// letting <see cref="EnsureLoadedAsync"/> run the single deferred search afterwards.
     /// </summary>
     private bool _suppressBaseModelFilterEvents;
+
+    /// <summary>
+    /// True while <see cref="ResetFilter"/> is writing <see cref="SearchText"/>,
+    /// <see cref="SelectedSort"/>, <see cref="SelectedPeriod"/> and <see cref="SelectedModelType"/>
+    /// back to their defaults. Gates only the search each of those properties' change hook would
+    /// otherwise fire (<see cref="OnSearchTextChanged"/>'s <see cref="DebouncedSearchAsync"/> call,
+    /// <see cref="OnQueryOptionChanged"/>'s) and the auto-top-up in
+    /// <see cref="MaybeTopUpVisibleResults"/> — never the cursor clear / <see cref="HasMore"/>
+    /// raise in <see cref="OnQueryOptionChanged"/>, which must still run synchronously for a reset
+    /// exactly like any other query-option change. The equivalent of
+    /// <see cref="_suppressBaseModelFilterEvents"/> for this half of the filter bar.
+    /// </summary>
+    private bool _suppressFilterChangeSearch;
 
     /// <summary>
     /// Folds each mirror item's live <see cref="BaseModelFilterItem.IsSelected"/> state
@@ -1229,6 +1355,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         }
         OnPropertyChanged(nameof(IsBaseModelFilterActive));
         OnPropertyChanged(nameof(ActiveBaseModelFilterCount));
+        OnPropertyChanged(nameof(CanReset));
         RebuildFlyoutBaseModels();
     }
 
@@ -1243,6 +1370,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
 
         OnPropertyChanged(nameof(IsBaseModelFilterActive));
         OnPropertyChanged(nameof(ActiveBaseModelFilterCount));
+        OnPropertyChanged(nameof(CanReset));
 
         // A toggle can change which items the narrowed flyout shows (selected items
         // are pinned visible), so refresh the composed view while a search is active.
@@ -1284,10 +1412,16 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     /// <see cref="IsBusy"/> guard prevents re-entry while a fetch is already in
     /// flight — including the recursive call from within
     /// <see cref="LoadNextAsync"/>'s own end-of-iteration <see cref="ApplyClientSideFilters"/>.
+    /// Also skipped while <see cref="_suppressFilterChangeSearch"/> is held: a Show-flag write
+    /// mid-<see cref="ResetFilter"/> could otherwise sneak in an unwanted API call — via this
+    /// auto-top-up, not the debounced search path — ahead of the reset's own single explicit
+    /// search, if a stale cursor/low visible-count happened to still be in effect from before
+    /// the reset started.
     /// </summary>
     private void MaybeTopUpVisibleResults()
     {
         if (!_initialized) return;       // skip the constructor-time cascade
+        if (_suppressFilterChangeSearch) return; // ResetFilter is mid-flight; its own search covers this
         if (IsBusy) return;              // a fetch is in flight; let it finish first
         if (!HasMore) return;            // nothing left to load
         if (VisibleCount >= AutoLoadMoreThreshold) return;
