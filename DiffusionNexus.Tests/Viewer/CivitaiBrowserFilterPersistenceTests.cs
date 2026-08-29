@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.Text.Json;
 using Avalonia.Threading;
 using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
@@ -135,44 +134,10 @@ public sealed class CivitaiBrowserFilterPersistenceTests
             "a saved base model the catalog didn't know yet must select itself once it materializes");
     }
 
-    [Fact]
-    public async Task SaveThenRestore_RoundTripsThroughAppSettings()
-    {
-        string? stored = null;
-        var settings = new Mock<IAppSettingsService>();
-        settings.Setup(s => s.SetCivitaiBrowserFilterJsonAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .Callback<string?, CancellationToken>((json, _) => stored = json)
-            .Returns(Task.CompletedTask);
-        settings.Setup(s => s.GetCivitaiBrowserFilterJsonAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => stored);
-
-        var source = new ObservableCollection<BaseModelFilterItem> { new("SDXL 1.0"), new("Pony") };
-        var vm = CreateVm(source, settings.Object);
-        vm.AvailableBaseModels.Single(i => i.BaseModelRaw == "Pony").IsSelected = true;
-        vm.ShowEarlyAccess = false;
-        vm.ShowNsfw = false;
-
-        await vm.SaveFilterCommand.ExecuteAsync(null);
-        stored.Should().NotBeNullOrWhiteSpace("Save must persist through the settings service");
-
-        var restoredSource = new ObservableCollection<BaseModelFilterItem> { new("SDXL 1.0"), new("Pony") };
-        var restoredVm = CreateVm(restoredSource, settings.Object);
-
-        // EnsureLoadedAsync's restore step awaits Dispatcher.UIThread.InvokeAsync (inside
-        // RestoreSavedFilterAsync's dispatch of ApplySavedFilter). This headless xUnit host never
-        // pumps that queue on its own — the same situation
-        // CivitaiBrowserViewModelBaseModelFilterTests.EnsureLoadedAsync_SearchesOnce... documents
-        // for the deferred search's own UI-thread write — so something must pump concurrently
-        // while the await is in flight.
-        await RunWithDispatcherPumpAsync(() => restoredVm.EnsureLoadedAsync());
-
-        restoredVm.ShowEarlyAccess.Should().BeFalse();
-        restoredVm.ShowNsfw.Should().BeFalse();
-        restoredVm.ShowInstalled.Should().BeTrue();
-        restoredVm.ShowPaywalled.Should().BeTrue();
-        restoredVm.AvailableBaseModels.Single(i => i.BaseModelRaw == "Pony").IsSelected.Should().BeTrue();
-        restoredVm.AvailableBaseModels.Single(i => i.BaseModelRaw == "SDXL 1.0").IsSelected.Should().BeFalse();
-    }
+    // SaveThenRestore_RoundTripsThroughAppSettings moved to
+    // DiffusionNexus.IntegrationTests.CivitaiBrowserViewModelDispatcherTests: EnsureLoadedAsync's
+    // restore step awaits Dispatcher.UIThread.InvokeAsync mid-flight, which this project cannot
+    // pump reliably — see that class's doc comment for the full story.
 
     /// <summary>
     /// Regression guard for the review finding: <c>ClearBaseModelFilters</c> used to wipe only
@@ -220,147 +185,12 @@ public sealed class CivitaiBrowserFilterPersistenceTests
             Times.Once, "clearing 3 selections must fire one search, not one per cleared item");
     }
 
-    /// <summary>
-    /// Pins the exact failure mode <c>EnsureLoadedAsync</c> has regressed on before: a settings
-    /// read that returns garbage, or throws outright, must not prevent the deferred first search
-    /// from running. <see cref="CivitaiBrowserViewModel.RestoreSavedFilterAsync"/>'s try/catch
-    /// degrades silently — this proves it actually does, through the public entry point, rather
-    /// than trusting the catch block by inspection.
-    /// </summary>
-    [Fact]
-    public async Task EnsureLoadedAsync_CorruptSavedFilterJson_StillRunsTheFirstSearch()
-    {
-        var settings = new Mock<IAppSettingsService>();
-        settings.Setup(s => s.GetCivitaiBrowserFilterJsonAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync("{ this is not valid json");
-
-        var client = new Mock<ICivitaiClient>();
-        client.Setup(c => c.GetModelsAsync(It.IsAny<CivitaiModelsQuery>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new CivitaiPagedResponse<CivitaiModel>());
-        var vm = CreateVm(settingsService: settings.Object, civitaiClient: client.Object);
-
-        await RunWithDispatcherPumpAsync(() => vm.EnsureLoadedAsync());
-
-        client.Verify(c => c.GetModelsAsync(It.IsAny<CivitaiModelsQuery>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
-            Times.Once, "corrupt saved-filter JSON must not block the deferred first search");
-    }
-
-    /// <summary>Same guard as above, for the settings read itself throwing rather than
-    /// returning unparseable data.</summary>
-    [Fact]
-    public async Task EnsureLoadedAsync_SettingsServiceThrows_StillRunsTheFirstSearch()
-    {
-        var settings = new Mock<IAppSettingsService>();
-        settings.Setup(s => s.GetCivitaiBrowserFilterJsonAsync(It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("simulated settings failure"));
-
-        var client = new Mock<ICivitaiClient>();
-        client.Setup(c => c.GetModelsAsync(It.IsAny<CivitaiModelsQuery>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new CivitaiPagedResponse<CivitaiModel>());
-        var vm = CreateVm(settingsService: settings.Object, civitaiClient: client.Object);
-
-        await RunWithDispatcherPumpAsync(() => vm.EnsureLoadedAsync());
-
-        client.Verify(c => c.GetModelsAsync(It.IsAny<CivitaiModelsQuery>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
-            Times.Once, "a throwing settings read must not block the deferred first search");
-    }
-
-    /// <summary>
-    /// The state-mismatch this class was reviewed for: if the user starts their own search
-    /// while <see cref="CivitaiBrowserViewModel.RestoreSavedFilterAsync"/>'s settings read is
-    /// still in flight, that search's <c>BuildQuery</c> already ran without the restored base
-    /// models. Applying the restored selection afterwards would move the badge
-    /// (<c>ActiveBaseModelFilterCount</c>) without moving the grid — nothing re-queries — so the
-    /// chosen fix is to skip the base-model half of the restore in that case (not force a second,
-    /// user-clobbering search). The four Show flags stay safe to apply regardless, since they
-    /// filter the already-fetched <c>Results</c> directly rather than the query.
-    /// <see cref="CivitaiBrowserViewModel.SearchAsync"/> sets <c>_searchStarted</c> as its first
-    /// statement, synchronously, before any await — so calling
-    /// <see cref="CivitaiBrowserViewModel.SearchCommand"/> before <c>EnsureLoadedAsync</c> is a
-    /// deterministic way to reproduce "the user already searched", no timing races needed.
-    /// </summary>
-    [Fact]
-    public async Task RestoreSavedFilter_SkipsBaseModelSelection_WhenUserSearchAlreadyStarted()
-    {
-        var settings = new Mock<IAppSettingsService>();
-        settings.Setup(s => s.GetCivitaiBrowserFilterJsonAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(JsonSerializer.Serialize(new CivitaiBrowserFilterData
-            {
-                SelectedBaseModels = ["Pony"],
-                ShowEarlyAccess = false,
-            }));
-
-        var client = new Mock<ICivitaiClient>();
-        client.Setup(c => c.GetModelsAsync(It.IsAny<CivitaiModelsQuery>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new CivitaiPagedResponse<CivitaiModel>());
-
-        var source = new ObservableCollection<BaseModelFilterItem> { new("SDXL 1.0"), new("Pony") };
-        var vm = CreateVm(source, settings.Object, client.Object);
-
-        // The user's own search starts FIRST — Interlocked.Exchange(ref _searchStarted, 1) runs
-        // synchronously as SearchAsync's very first statement, so _searchStarted is already set
-        // by the time this call returns control, exactly like a keystroke racing ahead of the
-        // restore's settings read.
-        var userSearchTask = vm.SearchCommand.ExecuteAsync(null);
-
-        await RunWithDispatcherPumpAsync(() => Task.WhenAll(userSearchTask, vm.EnsureLoadedAsync()));
-
-        vm.AvailableBaseModels.Single(i => i.BaseModelRaw == "Pony").IsSelected.Should().BeFalse(
-            "the user's own search already ran without the restored base model — selecting it " +
-            "now would only move the badge, not the grid, so the restore must skip it");
-        vm.IsBaseModelFilterActive.Should().BeFalse();
-        vm.ShowEarlyAccess.Should().BeFalse(
-            "the four Show flags are safe to apply regardless of the race — they filter the " +
-            "already-fetched Results directly, not the query");
-    }
-
-    /// <summary>
-    /// Runs <paramref name="action"/> while pumping <see cref="Dispatcher.UIThread"/> just for its
-    /// duration, then stops. Copied from
-    /// <c>CivitaiBrowserViewModelBaseModelFilterTests.RunWithDispatcherPumpAsync</c> — see that
-    /// copy's doc comment for the full rationale (scoped lifetime so a free-running pump thread
-    /// doesn't contend with other parallel test classes touching the same process-wide
-    /// <see cref="Dispatcher.UIThread"/> singleton; bounded timeout so a genuine regression fails
-    /// fast instead of hanging CI).
-    /// </summary>
-    private static async Task RunWithDispatcherPumpAsync(Func<Task> action, TimeSpan? timeout = null)
-    {
-        var effectiveTimeout = timeout ?? TimeSpan.FromSeconds(5);
-        var task = action();
-
-        using var pumpCts = new CancellationTokenSource();
-        var pump = Task.Run(async () =>
-        {
-            while (!task.IsCompleted && !pumpCts.IsCancellationRequested)
-            {
-                Dispatcher.UIThread.RunJobs();
-                try
-                {
-                    await Task.Delay(5, pumpCts.Token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-            }
-        });
-
-        try
-        {
-            var winner = await Task.WhenAny(task, Task.Delay(effectiveTimeout)).ConfigureAwait(false);
-            if (winner != task)
-            {
-                throw new TimeoutException(
-                    $"{nameof(RunWithDispatcherPumpAsync)}: awaited operation did not complete within " +
-                    $"{effectiveTimeout} even while Dispatcher.UIThread was being pumped.");
-            }
-
-            await task;
-        }
-        finally
-        {
-            pumpCts.Cancel();
-            await pump.ConfigureAwait(false);
-        }
-    }
+    // EnsureLoadedAsync_CorruptSavedFilterJson_StillRunsTheFirstSearch,
+    // EnsureLoadedAsync_SettingsServiceThrows_StillRunsTheFirstSearch, and
+    // RestoreSavedFilter_SkipsBaseModelSelection_WhenUserSearchAlreadyStarted moved to
+    // DiffusionNexus.IntegrationTests.CivitaiBrowserViewModelDispatcherTests: all three await
+    // Dispatcher.UIThread.InvokeAsync(...) mid-flight (inside EnsureLoadedAsync/
+    // RestoreSavedFilterAsync), which this project cannot pump reliably — see that class's doc
+    // comment for the full story. The RunWithDispatcherPumpAsync helper that used to live here
+    // moved with them (it only ever existed to route around that same unreliability).
 }
