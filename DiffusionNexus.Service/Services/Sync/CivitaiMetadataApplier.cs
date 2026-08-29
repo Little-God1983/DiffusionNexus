@@ -16,32 +16,25 @@ namespace DiffusionNexus.Service.Services.Sync;
 /// The caller owns the unit of work (and therefore the DbContext scope): this class only
 /// mutates the graph and saves. All entry points honor <see cref="Model.IsUserEdited"/> /
 /// <see cref="ModelVersion.IsUserEdited"/> so a user's own metadata is never overwritten.
+/// Pacing is not this class's business any more: every request it makes goes through the
+/// Civitai gateway, which paces, cools down after a 429 and caches. It used to wait here
+/// because this was the only code in the app that waited at all.
 /// </remarks>
 public sealed class CivitaiMetadataApplier
 {
     private const string LogSource = "LibrarySync";
 
     private readonly ICivitaiClient _client;
-    private readonly ICivitaiRequestPacer _pacer;
     private readonly IUnifiedLogger? _logger;
 
     /// <param name="client">The Civitai API client.</param>
     /// <param name="logger">Optional unified logger.</param>
-    /// <param name="pacer">
-    /// The process-wide request pacer (R4). Every <c>_client</c> call below awaits it immediately
-    /// before going out, because this class — not the item loop above it — is where the requests
-    /// actually are: one item can be one call, two, or one per version. Optional so the many tests
-    /// that construct an applier over a mocked client do not have to opt out of a wait that never
-    /// happens; DI always supplies the real one.
-    /// </param>
     public CivitaiMetadataApplier(
         ICivitaiClient client,
-        IUnifiedLogger? logger = null,
-        ICivitaiRequestPacer? pacer = null)
+        IUnifiedLogger? logger = null)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _logger = logger;
-        _pacer = pacer ?? NoCivitaiRequestPacer.Instance;
     }
 
     /// <summary>
@@ -67,7 +60,6 @@ public sealed class CivitaiMetadataApplier
         CivitaiModel? civitaiModel = null;
         if (version.ModelId > 0)
         {
-            await _pacer.WaitAsync(ct);
             civitaiModel = await _client.GetModelAsync(version.ModelId, apiKey, ct);
         }
 
@@ -264,7 +256,6 @@ public sealed class CivitaiMetadataApplier
         string? apiKey,
         CancellationToken ct = default)
     {
-        await _pacer.WaitAsync(ct);
         var civitaiModel = await _client.GetModelAsync(civitaiModelId, apiKey, ct);
 
         // A 404 says nothing about tags: the model page itself is gone. Reporting that as
@@ -304,7 +295,6 @@ public sealed class CivitaiMetadataApplier
         string? apiKey,
         CancellationToken ct = default)
     {
-        await _pacer.WaitAsync(ct);
         var civitaiVersion = await _client.GetModelVersionAsync(civitaiVersionId, apiKey, ct);
 
         // As above: a version that 404s is not a version with no images.
@@ -321,6 +311,70 @@ public sealed class CivitaiMetadataApplier
         }
 
         return added;
+    }
+
+    /// <summary>
+    /// Images for every version of one model, from a single model-page request. Returns the number
+    /// of images added per Civitai version id; a version the page does not describe maps to
+    /// <c>null</c> so the caller can ask for that one specifically.
+    /// </summary>
+    /// <remarks>
+    /// <c>models/{id}</c> carries every version with its images, so asking per version cost a
+    /// six-version model six requests for one page of data. The per-version
+    /// <see cref="ApplyImagesAsync"/> remains for the versions a model page omits — Civitai's two
+    /// endpoints do not always agree, and recording "no images" for a version we simply were not
+    /// told about would stamp it as checked and never look again.
+    /// </remarks>
+    public async Task<IReadOnlyDictionary<int, int?>> ApplyImagesFromModelAsync(
+        IUnitOfWork uow,
+        int civitaiModelId,
+        IReadOnlyList<(int ModelId, int VersionId, int CivitaiVersionId)> versions,
+        string? apiKey,
+        CancellationToken ct = default)
+    {
+        var results = new Dictionary<int, int?>();
+        if (versions.Count == 0) return results;
+
+        var civitaiModel = await _client.GetModelAsync(civitaiModelId, apiKey, ct);
+
+        // Every candidate here shares one local model — FetchImagesStep.SelectAsync groups its
+        // versions by ModelId before calling in — so the graph is loaded once for the whole group,
+        // not once per version as it was before this fix. A gone model row is not "no answer" for a
+        // version the page DID describe: it falls to the same 0 a single missing version row got,
+        // both before and after this change.
+        var dbModel = await uow.Models.GetByIdWithIncludesAsync(versions[0].ModelId, ct);
+
+        var anyAdded = false;
+
+        foreach (var (_, versionId, civitaiVersionId) in versions)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var civitaiVersion = civitaiModel?.ModelVersions?.FirstOrDefault(v => v.Id == civitaiVersionId);
+            if (civitaiVersion is null)
+            {
+                results[civitaiVersionId] = null;
+                continue;
+            }
+
+            var dbVersion = dbModel?.Versions.FirstOrDefault(v => v.Id == versionId);
+            if (dbVersion is null)
+            {
+                results[civitaiVersionId] = 0;
+                continue;
+            }
+
+            var added = AppendImages(dbVersion, civitaiVersion.Images);
+            if (added > 0) anyAdded = true;
+            results[civitaiVersionId] = added;
+        }
+
+        // One save for the whole group rather than one per version that added something — the
+        // per-version counts above are already computed from the in-memory graph, so batching the
+        // write changes nothing about what is returned, only how many round-trips it costs.
+        if (anyAdded) await uow.SaveChangesAsync(ct);
+
+        return results;
     }
 
     /// <summary>

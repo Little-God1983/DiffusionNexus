@@ -40,7 +40,11 @@ public sealed class FetchImagesStep : ISyncStep
     /// <inheritdoc />
     public string Description => "Fetch image records";
 
-    /// <summary>One version call plus the client's pacing, per version of the model.</summary>
+    /// <summary>
+    /// One model call for the whole group, plus one version call and the client's pacing for each
+    /// version the model page did not describe. Left at the per-version estimate: it is a ceiling
+    /// on the rare fallback case, not a claim about the (now cheaper) happy path.
+    /// </summary>
     public TimeSpan EstimatedPerItem => TimeSpan.FromSeconds(1.6);
 
     /// <inheritdoc />
@@ -87,7 +91,12 @@ public sealed class FetchImagesStep : ISyncStep
         using var dbScope = _scopes.CreateScope();
         var uow = dbScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
         var now = DateTimeOffset.UtcNow;
-        var inFlight = candidates[0];
+
+        // Null while the model-page call below is the request in flight — it covers every
+        // candidate at once, not any one version — and set to the actual candidate only once the
+        // per-version loop starts asking for one specifically. A refusal caught with this still
+        // null came from the model page, not from any version Civitai was ever asked about.
+        ImageCandidate? inFlight = null;
 
         try
         {
@@ -98,6 +107,17 @@ public sealed class FetchImagesStep : ISyncStep
             var versionsGone = 0;
             var imagesAdded = 0;
 
+            // One request for the whole model, then one per version the page did not describe.
+            var civitaiModelId = candidates[0].CivitaiModelId;
+            var byModel = await _civitai
+                .ApplyImagesFromModelAsync(
+                    uow,
+                    civitaiModelId,
+                    candidates.Select(c => (c.ModelId, c.VersionId, c.CivitaiVersionId)).ToList(),
+                    apiKey,
+                    ct)
+                .ConfigureAwait(false);
+
             foreach (var candidate in candidates)
             {
                 ct.ThrowIfCancellationRequested();
@@ -105,7 +125,8 @@ public sealed class FetchImagesStep : ISyncStep
                 // Which version the refusal handler names in its one warning line.
                 inFlight = candidate;
 
-                var added = await _civitai
+                var added = byModel.TryGetValue(candidate.CivitaiVersionId, out var fromPage) ? fromPage : null;
+                added ??= await _civitai
                     .ApplyImagesAsync(uow, candidate.ModelId, candidate.VersionId, candidate.CivitaiVersionId, apiKey, ct)
                     .ConfigureAwait(false);
 
@@ -158,8 +179,12 @@ public sealed class FetchImagesStep : ISyncStep
         }
         catch (Exception ex) when (SyncFaults.IsItemFault(ex))
         {
-            // No stamp for the whole model — the versions that did land keep their images (they
-            // were saved as they went), and the next run re-asks the group. Re-asking a version
+            // No stamp for the whole model, and the next run re-asks the group. Which versions
+            // already landed depends on how each got its images: ApplyImagesFromModelAsync saves
+            // its whole batch in one SaveChangesAsync at the end, so a fault before that call means
+            // none of that batch's versions are kept, even ones the page did describe; only the
+            // per-version ApplyImagesAsync fallback (versions the model page omitted) saves as it
+            // goes, so those keep whatever landed before the fault. Either way, re-asking a version
             // that already has images is free: the repository no longer selects it. The tracker is
             // dropped first: the applier interleaves reads with mutations, and after a rejected save
             // the context is still holding exactly the rows the database refused.
@@ -180,7 +205,7 @@ public sealed class FetchImagesStep : ISyncStep
     /// model Civitai is refusing us are not going to answer differently.
     /// </summary>
     private async Task<SyncItemResult> RecordRefusalAsync(
-        IUnitOfWork uow, SyncItem item, ImageCandidate inFlight, HttpRequestException refusal,
+        IUnitOfWork uow, SyncItem item, ImageCandidate? inFlight, HttpRequestException refusal,
         DateTimeOffset now, CancellationToken ct)
     {
         uow.ClearChangeTracker();
@@ -207,8 +232,13 @@ public sealed class FetchImagesStep : ISyncStep
             return SyncItemResult.Failure(refusal.Message);
         }
 
+        // Honest about WHAT was refused: the model-page request covers every version in the group
+        // at once, so a refusal caught before the per-version loop ever ran is not about any one of
+        // them — naming candidates[0]'s version id here used to send anyone debugging from this log
+        // line to a version Civitai was never actually asked about (and never rejected).
+        var target = inFlight is null ? "the model page" : $"id {inFlight.CivitaiVersionId}";
         _logger?.Warn(LogCategory.Network, LogSource,
-            $"{item.Name}: Civitai refused ({SyncFaults.RefusalCode(refusal)}) for id {inFlight.CivitaiVersionId}; marked as checked");
+            $"{item.Name}: Civitai refused ({SyncFaults.RefusalCode(refusal)}) for {target}; marked as checked");
         return SyncItemResult.Skip;
     }
 

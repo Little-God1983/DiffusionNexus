@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using DiffusionNexus.Civitai;
+using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
@@ -30,27 +32,33 @@ public sealed class LibrarySyncService : ILibrarySyncService
     private readonly SyncStateInitializer _initializer;
     private readonly IServiceScopeFactory _scopes;
     private readonly IUnifiedLogger? _logger;
+    private readonly ICivitaiApiCache? _apiCache;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     // volatile: the UI thread polls this while the run itself lives on a thread-pool thread.
     private volatile bool _isRunning;
 
     /// <remarks>
-    /// There is no pacing parameter: Civitai's courtesy interval is applied per <i>request</i> by
-    /// <see cref="ICivitaiRequestPacer"/> at the call sites inside the steps, because one item is
-    /// not one request (R4). Pacing here spaced items and left the bursts within an item — six
-    /// version calls, or a hash lookup followed by a model page — completely unpaced.
+    /// There is no pacing parameter: every Civitai call the steps make goes through
+    /// <c>CivitaiApiGateway</c> (registered as the steps' <c>ICivitaiClient</c>), which paces,
+    /// waits out a shared 429 cooldown and caches on its own. Pacing used to be applied per
+    /// <i>request</i> at hand-picked call sites inside the steps, because one item is not one
+    /// request (R4) — the images step calls once per version, the identify step twice (hash
+    /// lookup, model page) — but that left every surface added since to discover the rate limit
+    /// on its own; the gateway is the fix, so this service no longer owns any pacing decision.
     /// </remarks>
     public LibrarySyncService(
         IEnumerable<ISyncStep> steps,
         SyncStateInitializer initializer,
         IServiceScopeFactory scopes,
-        IUnifiedLogger? logger = null)
+        IUnifiedLogger? logger = null,
+        ICivitaiApiCache? apiCache = null)
     {
         _steps = (steps ?? throw new ArgumentNullException(nameof(steps))).ToList();
         _initializer = initializer ?? throw new ArgumentNullException(nameof(initializer));
         _scopes = scopes ?? throw new ArgumentNullException(nameof(scopes));
         _logger = logger;
+        _apiCache = apiCache;
     }
 
     /// <inheritdoc />
@@ -139,6 +147,26 @@ public sealed class LibrarySyncService : ILibrarySyncService
         {
             try
             {
+                // "Force" means the user has told us the local answer is wrong. A cached response
+                // is a local answer, so it goes too — otherwise a forced re-sync would replay the
+                // very page that produced the state they are trying to correct. This also covers
+                // the LoRA Viewer's per-tile "Download Metadata", which forces identify and
+                // thumbnails for one model — see InvalidateForcedScopeAsync for why that path drops
+                // only that model's cache entries rather than the whole process-wide cache.
+                //
+                // Inside the INNER try, not the outer one it used to sit in: InvalidateForcedScopeAsync
+                // now does awaited DB I/O of its own (a GetByIdWithIncludesAsync per targeted model,
+                // honouring ct) to find the versions and file hashes to invalidate alongside each
+                // model, so it can raise a DatabaseOperationException or an OperationCanceledException
+                // the same as any step's SelectAsync can. Only the inner try turns that into
+                // abortReason/cancelled on the report instead of escaping ExecuteAsync outright —
+                // the outer try exists solely to guarantee the finally below always runs.
+                var options = plan.Options;
+                if (options.ForceIdentify || options.ForceTags || options.ForceImages || options.ForceThumbnails)
+                {
+                    await InvalidateForcedScopeAsync(plan.Scope, ct).ConfigureAwait(false);
+                }
+
                 var apiKey = await ResolveApiKeyAsync(ct).ConfigureAwait(false);
 
                 foreach (var planStep in plan.Steps)
@@ -190,6 +218,93 @@ public sealed class LibrarySyncService : ILibrarySyncService
         {
             _isRunning = false;
             _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Drops the cached Civitai responses a forced run is about to make stale — scoped to the
+    /// models the run actually targets, and everything the identify step could have cached an
+    /// answer under for them, when the plan can name them; a full <c>Clear()</c> only for a
+    /// genuinely library- or folder-wide forced re-sync.
+    /// </summary>
+    /// <remarks>
+    /// A run scoped to specific models (<see cref="SyncScopeKind.Models"/>) is the LoRA Viewer's
+    /// per-tile "Download Metadata" button — one model, not the library. Calling <c>Clear()</c>
+    /// for it used to empty the whole process-wide cache and bump its generation, which stamps
+    /// every fetch already in flight for every OTHER surface (the browser's current page, the
+    /// detail panel, the update sweep) as stale and discards its result — so working down a list
+    /// of tiles re-triggered that N times, exactly the repeat-request pattern the cache exists to
+    /// absorb. <see cref="ICivitaiApiCache.InvalidateModel"/> is scoped to one Civitai model id and
+    /// leaves everything else alone.
+    /// <para>
+    /// Invalidating the model page alone under-reaches: a forced identify (<c>ForceIdentify</c>)
+    /// re-asks Civitai by file hash first (<c>GetModelVersionByHashAsync</c>, cached under
+    /// <c>hash:{HASH}</c> for 60 minutes — the longest TTL of any entry) before it ever reaches the
+    /// model page, so a stale hash answer alone can make a forced press look like it did nothing
+    /// for up to an hour. Every version and file hash the targeted models own is invalidated too,
+    /// via <see cref="ICivitaiApiCache.InvalidateVersion"/> / <see cref="ICivitaiApiCache.InvalidateHash"/>,
+    /// so a model-scoped forced run genuinely cannot be answered from an entry that predates it.
+    /// </para>
+    /// <para>
+    /// <c>CivitaiModelPageId</c> is preferred over <c>CivitaiId</c> for the model-page key: it is
+    /// set on every local row that shares a Civitai page, including duplicates, whereas
+    /// <c>CivitaiId</c> is unique and only the "owner" row of a page carries it. A row falls back to
+    /// <c>CivitaiId</c> only when <c>CivitaiModelPageId</c> is null — a row written before the
+    /// <c>AddCivitaiModelPageId</c> migration and never re-synced since — which matches the source
+    /// <c>SyncStateRepository.SelectTagCandidatesAsync</c> and <c>SelectImageCandidatesAsync</c>
+    /// already use for the same id (from <c>m.CivitaiId</c>): without the fallback, such a row
+    /// would be invalidated under neither field.
+    /// </para>
+    /// <para>
+    /// A <see cref="SyncScopeKind.Library"/> or <see cref="SyncScopeKind.SourceFolder"/> run still
+    /// clears everything: at that scope "force" means the checkbox in the plan dialog ("Models not
+    /// found on Civitai"), which is deliberately library-wide, and the plan does not name a target
+    /// set narrow enough to invalidate piecemeal.
+    /// </para>
+    /// </remarks>
+    private async Task InvalidateForcedScopeAsync(SyncScope scope, CancellationToken ct)
+    {
+        if (_apiCache is null) return;
+
+        if (scope.Kind != SyncScopeKind.Models || scope.ModelIds is not { Count: > 0 } modelIds)
+        {
+            _apiCache.Clear();
+            return;
+        }
+
+        using var dbScope = _scopes.CreateScope();
+        var uow = dbScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        foreach (var modelId in modelIds)
+        {
+            // A model in the scope may have been deleted since the plan was built (same reasoning
+            // as RunStepAsync re-selecting rather than trusting the plan's snapshot) — answers null
+            // rather than throwing, and there is simply nothing left to invalidate. Loaded with
+            // includes (not GetByIdAsync) because the versions and file hashes below live on the
+            // navigation graph, not the row itself.
+            var model = await uow.Models.GetByIdWithIncludesAsync(modelId, ct).ConfigureAwait(false);
+            if (model is null) continue;
+
+            if ((model.CivitaiModelPageId ?? model.CivitaiId) is { } civitaiModelId)
+            {
+                _apiCache.InvalidateModel(civitaiModelId);
+            }
+
+            foreach (var version in model.Versions)
+            {
+                if (version.CivitaiId is { } civitaiVersionId)
+                {
+                    _apiCache.InvalidateVersion(civitaiVersionId);
+                }
+
+                foreach (var file in version.Files)
+                {
+                    if (!string.IsNullOrWhiteSpace(file.HashSHA256))
+                    {
+                        _apiCache.InvalidateHash(file.HashSHA256);
+                    }
+                }
+            }
         }
     }
 

@@ -1,8 +1,10 @@
+using System.Reflection;
 using System.Text.Json;
 using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.DataAccess;
 using DiffusionNexus.DataAccess.Data;
+using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
@@ -320,11 +322,12 @@ public sealed class IdentifyModelStepTests : IDisposable
     }
 
     /// <summary>
-    /// R4. One identify item is two Civitai requests — the hash lookup here and the model page
-    /// inside the applier — and pacing between items spaced neither of them.
+    /// One identify item is two Civitai requests — the hash lookup here and the model page inside
+    /// the applier. Pacing between them is the gateway's job now (verified in
+    /// <c>CivitaiApiGatewayTests</c>); what this step still owns is making both calls.
     /// </summary>
     [Fact]
-    public async Task Execute_AwaitsThePacerOncePerCivitaiCall()
+    public async Task Execute_MakesBothCivitaiCalls()
     {
         var path = NewModelFile("paced.safetensors");
         var (modelId, _) = await SeedAsync("paced", path);
@@ -336,21 +339,18 @@ public sealed class IdentifyModelStepTests : IDisposable
         client.Setup(x => x.GetModelAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(NewCivitaiModel(civVersion));
 
-        var pacer = new Mock<ICivitaiRequestPacer>();
-        pacer.Setup(p => p.WaitAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-
         var step = new IdentifyModelStep(
             Scopes, client.Object,
-            new CivitaiMetadataApplier(client.Object, logger: null, pacer: pacer.Object),
+            new CivitaiMetadataApplier(client.Object, logger: null),
             new SidecarMetadataApplier(),
-            logger: null,
-            pacer: pacer.Object);
+            logger: null);
 
         var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
         var result = await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
 
         result.Succeeded.Should().BeTrue();
-        pacer.Verify(p => p.WaitAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+        client.Verify(c => c.GetModelVersionByHashAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+        client.Verify(c => c.GetModelAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -509,6 +509,47 @@ public sealed class IdentifyModelStepTests : IDisposable
         var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
         var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
         saved!.Versions.Single().BaseModelRaw.Should().Be("Pony");
+    }
+
+    /// <summary>
+    /// Finding 3 (review of PR #547): reordering the sidecar read ahead of the hash lookup left
+    /// <c>ExecuteOneAsync</c> returning at the <c>sidecar.Applied</c> branch before
+    /// <c>ResolveHashAsync</c> ever ran — so the real bytes were never hashed, and
+    /// <c>SidecarMetadataApplier</c>'s own <c>dbFile.HashSHA256 ??= ...</c> let the sidecar's
+    /// CLAIMED SHA256 stand as the stored one. This sidecar deliberately lies about the hash (a
+    /// syntactically valid but wrong 64-hex digest); the stored <c>ModelFile.HashSHA256</c> must
+    /// end up as the real digest of the file's actual bytes, never that claim.
+    /// </summary>
+    [Fact]
+    public async Task Execute_SidecarWithWrongHashStillStoresTheRealDigest()
+    {
+        var path = NewModelFile("sidecar-wrong-hash.safetensors");
+        var (modelId, fileId) = await SeedAsync("sidecar-wrong-hash", path);
+
+        var wrongHash = new string('F', 64);
+        var sidecar = """
+        {"id":700,"modelId":77,"baseModel":"Pony","trainedWords":["x"],
+         "model":{"name":"N","nsfw":false},
+         "files":[{"name":"sidecar-wrong-hash.safetensors","primary":true,"hashes":{"SHA256":"__WRONG_HASH__"}}],
+         "images":[]}
+        """.Replace("__WRONG_HASH__", wrongHash);
+        await File.WriteAllTextAsync(Path.Combine(_tempDir.FullName, "sidecar-wrong-hash.civitai.info"), sidecar);
+
+        var expectedHash = FileHasher.Sha256Upper(path);
+        expectedHash.Should().NotBe(wrongHash, "the test fixture must not accidentally collide with the lie");
+
+        var step = NewNotFoundStep();
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        var result = await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+        (await ReadStateAsync(modelId))!.MetadataOutcome.Should().Be(SyncOutcome.Sidecar);
+
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var file = await uow.ModelFiles.GetByIdAsync(fileId);
+        file!.HashSHA256.Should().Be(expectedHash,
+            "the stored hash must be a measurement of the real bytes, never the sidecar's unverified claim");
     }
 
     [Fact]
@@ -1457,20 +1498,29 @@ public sealed class IdentifyModelStepTests : IDisposable
     }
 
     /// <summary>
-    /// I3. <see cref="SidecarMetadataApplier"/> answers a cancellation with "nothing applied",
-    /// which is indistinguishable from "there was no sidecar" — so the step must ask the token
-    /// itself before it stamps, or a cancelled model is recorded as one Civitai has never heard
-    /// of and is then not re-checked for 30 days.
+    /// Renamed from <c>Execute_CancellationDuringSidecarDoesNotStamp</c>. Under the old (hash
+    /// first) ordering this exercised the sidecar branch's own cancellation check; under the new
+    /// (sidecar first) ordering the candidate has no sidecar on disk, so
+    /// <see cref="SidecarMetadataApplier.ApplyAsync"/> returns "nothing applied" long before the
+    /// token is ever cancelled — the cancel below fires as a side effect of the mocked hash lookup,
+    /// which still answers its normal 404 (<c>ReturnsAsync</c>, not a throw), so execution falls
+    /// through into the header rung. What actually throws is the pre-existing
+    /// <c>ct.ThrowIfCancellationRequested()</c> immediately after the header read, further down —
+    /// not the sidecar branch's check. <see cref="Execute_CancellationDuringARealSidecarReadDoesNotStamp"/>
+    /// below is what pins the sidecar branch's own check with a real sidecar on disk.
     /// </summary>
     [Fact]
-    public async Task Execute_CancellationDuringSidecarDoesNotStamp()
+    public async Task Execute_CancellationDuringHashLookupSurfacesAtTheHeaderCheck()
     {
-        var path = NewModelFile("cancel-sidecar.safetensors");
-        var (modelId, _) = await SeedAsync("cancel-sidecar", path);
+        var path = NewModelFile("cancel-after-hash.safetensors");
+        var (modelId, _) = await SeedAsync("cancel-after-hash", path);
 
         using var cts = new CancellationTokenSource();
 
-        // 404 on Civitai → the sidecar branch. The user hits Cancel while that read is in flight.
+        // No sidecar on disk: the sidecar branch is a fast "nothing applied" before any of this
+        // runs. The hash lookup below cancels the token as a side effect but still returns its
+        // normal (non-throwing) 404 answer, so control falls through to the header rung, where the
+        // header read's own post-check is what actually observes the cancellation.
         var step = NewStep(c => c
             .Setup(x => x.GetModelVersionByHashAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Callback(() => cts.Cancel())
@@ -1485,6 +1535,191 @@ public sealed class IdentifyModelStepTests : IDisposable
         (await ReadStateAsync(modelId)).Should().BeNull("a cancelled item is work not done, not a model Civitai has never heard of");
     }
 
+    /// <summary>
+    /// I3, the check this actually needs to pin. The candidate carries a REAL sidecar on disk.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A naively pre-cancelled token does NOT reach the sidecar branch at all in this codebase — a
+    /// first attempt at this test (a plain <c>cts.Cancel()</c> before calling <c>ExecuteOneAsync</c>)
+    /// was instead caught by the step's own opening "model still exists?" read
+    /// (<c>uow.Models.GetByIdAsync</c>, line ~161, *before* the try block), because that call goes
+    /// through EF Core's real async query pipeline (<c>SqliteCommand.ExecuteReaderAsync</c>), which
+    /// itself throws on an already-cancelled token — confirmed by inspecting the thrown exception's
+    /// stack trace, which bottomed out at <c>RepositoryBase.GetByIdAsync</c>, nowhere near the
+    /// sidecar branch. A second attempt let that one call complete on the real token (cancelling
+    /// only once it returned) but was STILL not isolating the target line: with no sidecar match,
+    /// the "no Civitai hit" path falls through <see cref="IdentifyModelStep.ResolveHashAsync"/> —
+    /// which, given no stored hash, re-hashes the file and independently observes the same
+    /// cancelled token — and even with a stored hash bypassing that, the header rung a few lines
+    /// further down carries its OWN pre-existing, unconditional <c>ct.ThrowIfCancellationRequested()</c>
+    /// (unrelated to this task, always executed) that intercepts it just the same. Every "no match"
+    /// path independently notices the same cancellation via its own real I/O or its own explicit
+    /// check, so removing the post-sidecar line changed nothing there — a second tautology.
+    /// </para>
+    /// <para>
+    /// This version instead routes through the Civitai-MATCH branch, which returns immediately
+    /// after <c>RecordMatchAsync</c> and never reaches the header rung, and uses a stored SHA256 so
+    /// <c>ResolveHashAsync</c> never touches the file. <see cref="ForwardingProxy"/> wraps the real
+    /// <see cref="IUnitOfWork"/>/<see cref="IModelRepository"/>/<see cref="ISyncStateRepository"/> so
+    /// every DB call downstream of the sidecar branch — <c>CivitaiMetadataApplier</c>'s reads,
+    /// <c>RecordMatchAsync</c>'s own re-fetch, every <c>SaveChangesAsync</c> — runs with
+    /// <see cref="CancellationToken.None"/> instead of the real (by-then cancelled) token, so NONE of
+    /// them can independently notice the cancellation. The one exception is the very first
+    /// <c>Models.GetByIdAsync</c> call (the opening guard): it runs on the real, not-yet-cancelled
+    /// token so it completes normally, and the token becomes cancelled the instant it returns —
+    /// deterministically sequenced, no wall-clock race against real file I/O. What is deliberately
+    /// left un-neutered is <see cref="SidecarMetadataApplier.ApplyAsync"/>'s own sidecar file read,
+    /// which uses the raw <c>ct</c> parameter directly (not the proxied <c>uow</c>): by the time it
+    /// runs, the token is cancelled, so that real read throws internally and the applier's own
+    /// <c>catch (OperationCanceledException) when (ct.IsCancellationRequested)</c> swallows it,
+    /// reporting <c>Applied = false</c> — the exact shape it also uses for "there is no sidecar".
+    /// With every other check neutralised, ONLY the step's own post-sidecar
+    /// <c>ct.ThrowIfCancellationRequested()</c> stands between that and a silently completed
+    /// <see cref="SyncOutcome.Matched"/> stamp on a model whose sidecar read was actually cancelled.
+    /// </para>
+    /// <para>
+    /// Verified not to be a tautology exactly as the review asked: with the post-sidecar
+    /// <c>ct.ThrowIfCancellationRequested()</c> temporarily deleted, this test FAILS — no exception
+    /// is observed and the model is instead stamped <see cref="SyncOutcome.Matched"/>. Restoring the
+    /// line makes it pass again. See task-8-report.md for the exact before/after runs (both attempts
+    /// above included).
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Execute_CancellationDuringARealSidecarReadDoesNotStamp()
+    {
+        var candidate = await CreateCandidateWithSidecarAsync(storedSha256: new string('a', 64));
+
+        using var cts = new CancellationTokenSource();
+        using var scope = NewScope();
+        var realUow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        // Every call except the FIRST Models.GetByIdAsync (the opening "still exists?" guard) is
+        // cancellation-immune: its token argument is silently replaced with None. That first call
+        // alone runs on the real token and cancels it the moment it returns.
+        var getByIdCalls = 0;
+        var wrappedModels = ForwardingProxy.Wrap<IModelRepository>(realUow.Models, new()
+        {
+            [nameof(IModelRepository.GetByIdAsync)] = (method, args) =>
+            {
+                if (Interlocked.Increment(ref getByIdCalls) == 1)
+                {
+                    var first = (Task<Model?>)method.Invoke(realUow.Models, args)!;
+                    return CancelThenReturn(first, cts);
+                }
+
+                return method.Invoke(realUow.Models, StripCancellation(args));
+            },
+        });
+        var wrappedSyncStates = ForwardingProxy.Wrap<ISyncStateRepository>(realUow.SyncStates, new());
+        var wrappedUow = ForwardingProxy.Wrap<IUnitOfWork>(realUow, new()
+        {
+            ["get_Models"] = (_, _) => wrappedModels,
+            ["get_SyncStates"] = (_, _) => wrappedSyncStates,
+        });
+
+        var civVersion = NewCivitaiVersion();
+        var client = new Mock<ICivitaiClient>();
+        client.Setup(c => c.GetModelVersionByHashAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(civVersion);
+        client.Setup(c => c.GetModelAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(NewCivitaiModel(civVersion));
+
+        var step = new IdentifyModelStep(
+            new SingleInstanceScopeFactory(wrappedUow),
+            client.Object,
+            new CivitaiMetadataApplier(client.Object),
+            new SidecarMetadataApplier());
+
+        var act = () => step.ExecuteOneAsync(
+            new SyncItem(candidate.ModelId, candidate.Name, candidate), apiKey: null, cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        (await ReadStateAsync(candidate.ModelId)).Should().BeNull(
+            "a cancelled sidecar read is work not done, not a model that must wait 30 days as Matched");
+
+        // Pins the routing assumption the ForwardingProxy above is built on. The proxy routes by
+        // raw call count ("first call is real and cancels afterward; every later call is
+        // cancellation-immune"), which only isolates the post-sidecar guard if exactly ONE
+        // Models.GetByIdAsync call happens before that guard fires — the opening "still exists?"
+        // read at line ~169. With the guard intact, that is the ONLY call this run makes: it throws
+        // before the flow ever reaches RecordMatchAsync's own GetByIdAsync (line ~327), so that
+        // second, cancellation-stripped routing branch is never exercised at all here.
+        //
+        // If a future change added, removed or reordered a Models.GetByIdAsync call ahead of the
+        // guard, this count would shift silently — the proxy would keep neutering "every call after
+        // the first" against a different actual call, and the test could keep passing for a reason
+        // disconnected from the line it exists to guard, exactly the tautological-test failure mode
+        // this test was written to escape. A failure here means: go re-verify (per the remarks
+        // above, by temporarily deleting the step's post-sidecar ct.ThrowIfCancellationRequested())
+        // that this test still actually exercises that line before trusting it again.
+        getByIdCalls.Should().Be(1,
+            "the routing above assumes the post-sidecar guard fires after exactly one real " +
+            "Models.GetByIdAsync call and before any other; a different count means this test may " +
+            "no longer be isolating the post-sidecar cancellation check");
+    }
+
+    private static async Task<Model?> CancelThenReturn(Task<Model?> inner, CancellationTokenSource cts)
+    {
+        var value = await inner.ConfigureAwait(false);
+        cts.Cancel();
+        return value;
+    }
+
+    private static object?[]? StripCancellation(object?[]? args) =>
+        args?.Select(a => a is CancellationToken ? (object)CancellationToken.None : a).ToArray();
+
+    /// <summary>
+    /// A <see cref="DispatchProxy"/> that forwards every call on <typeparamref name="T"/> to a real
+    /// inner instance with its <see cref="CancellationToken"/> argument (if any) replaced by
+    /// <see cref="CancellationToken.None"/>, except member names present in <c>overrides</c> — those
+    /// get full control over how (and whether) the inner call happens. Avoids hand-writing
+    /// forwarding stubs for every member of a wide repository interface just to change one, and lets
+    /// a test prove that a SPECIFIC cancellation check is the thing standing between a cancelled
+    /// token and an incorrect stamp, rather than some other, unrelated call incidentally noticing
+    /// the same cancellation on its own.
+    /// </summary>
+    private class ForwardingProxy : DispatchProxy
+    {
+        private object _inner = null!;
+        private Dictionary<string, Func<MethodInfo, object?[]?, object?>> _overrides = null!;
+
+        public static T Wrap<T>(T inner, Dictionary<string, Func<MethodInfo, object?[]?, object?>> overrides) where T : class
+        {
+            var proxy = Create<T, ForwardingProxy>();
+            var self = (ForwardingProxy)(object)proxy;
+            self._inner = inner;
+            self._overrides = overrides;
+            return proxy;
+        }
+
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        {
+            if (_overrides.TryGetValue(targetMethod!.Name, out var handler)) return handler(targetMethod, args);
+            return targetMethod.Invoke(_inner, StripCancellation(args));
+        }
+    }
+
+    /// <summary>An <see cref="IServiceScopeFactory"/> that always hands back the same
+    /// pre-built <see cref="IUnitOfWork"/> — lets a test control exactly which instance
+    /// <see cref="IdentifyModelStep"/>'s own <c>_scopes.CreateScope()</c> resolves.</summary>
+    private sealed class SingleInstanceScopeFactory(IUnitOfWork uow) : IServiceScopeFactory
+    {
+        public IServiceScope CreateScope() => new Scope(uow);
+
+        private sealed class Scope(IUnitOfWork uow) : IServiceScope
+        {
+            public IServiceProvider ServiceProvider { get; } = new Provider(uow);
+            public void Dispose() { }
+        }
+
+        private sealed class Provider(IUnitOfWork uow) : IServiceProvider
+        {
+            public object? GetService(Type serviceType) => serviceType == typeof(IUnitOfWork) ? uow : null;
+        }
+    }
+
     [Fact]
     public void Step_DescribesItselfForThePlanView()
     {
@@ -1493,6 +1728,106 @@ public sealed class IdentifyModelStepTests : IDisposable
         step.Kind.Should().Be(SyncStepKind.IdentifyModel);
         step.Description.Should().NotBeNullOrWhiteSpace();
         step.EstimatedPerItem.Should().Be(TimeSpan.FromSeconds(3));
+    }
+
+    /// <summary>
+    /// F1. A .civitai.info next to the file already answers the question the hash lookup would
+    /// ask, and reading it costs no request and no multi-gigabyte hash — so a sidecar-bearing
+    /// candidate must never even reach the hash/by-hash call. Built directly with a hand-made
+    /// <see cref="IdentifyCandidate"/> (skipping <c>SelectAsync</c>) so this pins ExecuteOneAsync's
+    /// own ordering regardless of what candidate selection happens to do.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteOneAsync_WithASidecarPresent_NeverCallsCivitai()
+    {
+        var candidate = await CreateCandidateWithSidecarAsync();
+
+        var client = new Mock<ICivitaiClient>();
+        var step = new IdentifyModelStep(
+            Scopes, client.Object,
+            new CivitaiMetadataApplier(client.Object),
+            new SidecarMetadataApplier());
+
+        var result = await step.ExecuteOneAsync(new SyncItem(candidate.ModelId, candidate.Name, candidate),
+            apiKey: null, CancellationToken.None);
+
+        result.Should().Be(SyncItemResult.Success);
+        client.Verify(c => c.GetModelVersionByHashAsync(
+            It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>The mirror image: no sidecar on disk means the hash/by-hash rung still runs.</summary>
+    [Fact]
+    public async Task ExecuteOneAsync_WithNoSidecar_StillAsksCivitaiByHash()
+    {
+        var candidate = await CreateCandidateWithoutSidecarAsync();
+
+        var client = new Mock<ICivitaiClient>();
+        client.Setup(c => c.GetModelVersionByHashAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CivitaiModelVersion?)null);
+        var step = new IdentifyModelStep(
+            Scopes, client.Object,
+            new CivitaiMetadataApplier(client.Object),
+            new SidecarMetadataApplier());
+
+        await step.ExecuteOneAsync(new SyncItem(candidate.ModelId, candidate.Name, candidate),
+            apiKey: null, CancellationToken.None);
+
+        client.Verify(c => c.GetModelVersionByHashAsync(
+            It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>Seeds a model/version/file row for a fresh temp file that also carries a sidecar,
+    /// then hands back the same <see cref="IdentifyCandidate"/> shape SelectAsync would produce.
+    /// <paramref name="storedSha256"/> lets a caller give the candidate an already-valid hash, the
+    /// same way <see cref="Execute_ReusesAStoredValidHashInsteadOfRehashing"/> does, so
+    /// <c>ResolveHashAsync</c> never touches the file.</summary>
+    private async Task<IdentifyCandidate> CreateCandidateWithSidecarAsync(string? storedSha256 = null)
+    {
+        var path = NewModelFile("gateway-sidecar-present.safetensors");
+        WriteSidecar(path);
+        return await BuildCandidateAsync("gateway-sidecar-present", path, storedSha256);
+    }
+
+    /// <summary>Same as above, minus the sidecar.</summary>
+    private async Task<IdentifyCandidate> CreateCandidateWithoutSidecarAsync()
+    {
+        var path = NewModelFile("gateway-sidecar-absent.safetensors");
+        return await BuildCandidateAsync("gateway-sidecar-absent", path);
+    }
+
+    /// <summary>Reuses <see cref="SeedAsync"/> — the same seeding every other test in this fixture
+    /// uses — then reads back the version id it created so the candidate can be built directly,
+    /// bypassing SelectAsync entirely.</summary>
+    private async Task<IdentifyCandidate> BuildCandidateAsync(string name, string path, string? storedSha256 = null)
+    {
+        var (modelId, fileId) = await SeedAsync(name, path, sha256: storedSha256);
+
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var model = await uow.Models.GetByIdWithIncludesAsync(modelId);
+        var versionId = model!.Versions.Single().Id;
+
+        return new IdentifyCandidate(modelId, versionId, fileId, name, path, Sha256: storedSha256,
+            BaseModelRaw: "???", Outcome: SyncOutcome.None, CheckedAt: null, Attempts: 0, SidecarSignature: null);
+    }
+
+    /// <summary>Writes a real <c>.civitai.info</c> sidecar in the shape
+    /// <see cref="SidecarMetadataApplier"/>'s civitai.info reader expects (top-level id, modelId,
+    /// name, baseModel, trainedWords, files[]) — confirmed against ApplyCivitaiInfoFormatAsync.</summary>
+    private static void WriteSidecar(string modelFilePath)
+    {
+        var sidecar = Path.ChangeExtension(modelFilePath, ".civitai.info");
+        File.WriteAllText(sidecar, """
+        {
+          "id": 4242,
+          "modelId": 900,
+          "name": "v1.0",
+          "baseModel": "SDXL 1.0",
+          "trainedWords": ["trigger"],
+          "files": [{ "name": "model.safetensors", "hashes": { "SHA256": "ABC123" } }]
+        }
+        """);
     }
 
     public void Dispose()

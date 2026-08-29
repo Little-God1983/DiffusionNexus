@@ -138,23 +138,119 @@
                   VerticalAlignment="Center"/>
         </StackPanel>
 
-        <CheckBox Grid.Column="6"
-                  Content="Hide Installed"
-                  IsChecked="{Binding HideInstalledModels, Mode=TwoWay}"
-                  VerticalAlignment="Center"
-                  Margin="0,0,12,0"/>
+        <Button Grid.Column="6" Margin="0,0,16,0"
+                Padding="8,6"
+                VerticalAlignment="Center"
+                ToolTip.Tip="Choose which cards are visible. Browser-only — independent from the Installed tab's own filters.">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <TextBlock Text="Show" VerticalAlignment="Center"/>
+            <TextBlock Text="&#x25BD;" FontSize="12"
+                       VerticalAlignment="Center"
+                       IsVisible="{Binding !IsShowFilterActive}"
+                       Foreground="#AAAAAA"/>
+            <TextBlock Text="&#x25BD;" FontSize="12"
+                       VerticalAlignment="Center"
+                       IsVisible="{Binding IsShowFilterActive}"
+                       Foreground="#FF4444"/>
+            <TextBlock Text="{Binding ActiveShowFilterCount}"
+                       IsVisible="{Binding IsShowFilterActive}"
+                       Foreground="#FF4444"
+                       FontSize="11"
+                       VerticalAlignment="Center"/>
+          </StackPanel>
+          <Button.Flyout>
+            <Flyout Placement="BottomEdgeAlignedLeft"
+                    ShowMode="Standard">
+              <Border Background="#1E1E1E"
+                      BorderBrush="#444"
+                      BorderThickness="1"
+                      CornerRadius="4"
+                      Padding="8"
+                      MinWidth="180">
+                <StackPanel Spacing="2">
+                  <TextBlock Text="Show"
+                             FontWeight="SemiBold"
+                             Margin="4,0,4,8"
+                             Opacity="0.7"/>
 
-        <CheckBox Grid.Column="7"
-                  Content="Hide Early Access"
-                  IsChecked="{Binding HideEarlyAccessModels, Mode=TwoWay}"
-                  VerticalAlignment="Center"
-                  Margin="0,0,12,0"/>
+                  <ToggleButton IsChecked="{Binding ShowInstalled, Mode=TwoWay}"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Left"
+                                Padding="8,6"
+                                Background="Transparent"
+                                BorderThickness="1"
+                                BorderBrush="#333"
+                                CornerRadius="4">
+                    <TextBlock Text="Installed" FontSize="13"/>
+                  </ToggleButton>
 
-        <CheckBox Grid.Column="8"
-                  Content="Show NSFW Content"
-                  IsChecked="{Binding ShowNsfwContent, Mode=TwoWay}"
-                  ToolTip.Tip="Browser-only NSFW filter. Independent from the Installed tab's NSFW toggle."
-                  VerticalAlignment="Center"/>
+                  <ToggleButton IsChecked="{Binding ShowEarlyAccess, Mode=TwoWay}"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Left"
+                                Padding="8,6"
+                                Background="Transparent"
+                                BorderThickness="1"
+                                BorderBrush="#333"
+                                CornerRadius="4">
+                    <TextBlock Text="Early Access" FontSize="13"/>
+                  </ToggleButton>
+
+                  <ToggleButton IsChecked="{Binding ShowPaywalled, Mode=TwoWay}"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Left"
+                                Padding="8,6"
+                                Background="Transparent"
+                                BorderThickness="1"
+                                BorderBrush="#333"
+                                CornerRadius="4">
+                    <TextBlock Text="Paywalled" FontSize="13"/>
+                  </ToggleButton>
+
+                  <ToggleButton IsChecked="{Binding ShowNsfw, Mode=TwoWay}"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Left"
+                                Padding="8,6"
+                                Background="Transparent"
+                                BorderThickness="1"
+                                BorderBrush="#333"
+                                CornerRadius="4">
+                    <TextBlock Text="NSFW" FontSize="13"/>
+                  </ToggleButton>
+
+                  <Button Content="Show all"
+                          Command="{Binding ShowAllResultFiltersCommand}"
+                          IsVisible="{Binding IsShowFilterActive}"
+                          Padding="4,2"
+                          Margin="4,8,4,0"
+                          FontSize="11"
+                          HorizontalAlignment="Left"/>
+                </StackPanel>
+              </Border>
+            </Flyout>
+          </Button.Flyout>
+        </Button>
+
+        <Button Grid.Column="7"
+                Command="{Binding SaveFilterCommand}"
+                VerticalAlignment="Center"
+                Margin="0,0,8,0"
+                ToolTip.Tip="Save the current filter — it is applied automatically the next time the browser opens">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <TextBlock Text="&#x1F4BE;" FontSize="13" VerticalAlignment="Center"/>
+            <TextBlock Text="Save filter" VerticalAlignment="Center"/>
+          </StackPanel>
+        </Button>
+
+        <Button Grid.Column="8"
+                Command="{Binding ResetFilterCommand}"
+                IsEnabled="{Binding CanReset}"
+                VerticalAlignment="Center"
+                ToolTip.Tip="Reset the filter bar to its defaults — search, base model, show toggles, sort, period and model type. The saved filter is untouched.">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <TextBlock Text="&#x21BA;" FontSize="13" VerticalAlignment="Center"/>
+            <TextBlock Text="Reset" VerticalAlignment="Center"/>
+          </StackPanel>
+        </Button>
 
       </Grid>
     </Border>
@@ -183,7 +279,7 @@
           </TextBlock>
           <TextBlock Opacity="0.7"
                      IsVisible="{Binding HasHiddenResults}"
-                     ToolTip.Tip="Results hidden by 'Hide Installed' or 'Hide Early Access' toggles. Disable those filters to see them.">
+                     ToolTip.Tip="Results hidden by the Show filter (Installed / Early Access / Paywalled / NSFW). Open the Show flyout to bring them back.">
             <Run Text="Hidden: "/>
             <Run Text="{Binding HiddenByFilters}" Foreground="#F59E0B"/>
           </TextBlock>

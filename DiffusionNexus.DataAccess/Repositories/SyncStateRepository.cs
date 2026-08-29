@@ -420,13 +420,16 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
                               ModelId = m.Id,
                               VersionId = v.Id,
                               CivitaiVersionId = v.CivitaiId!.Value,
+                              // Same source SelectTagCandidatesAsync uses for CivitaiModelId — the
+                              // models filter above already requires it non-null.
+                              CivitaiModelId = m.CivitaiId!.Value,
                               m.Name,
                               ImagesCheckedAt = m.SyncState != null ? m.SyncState.ImagesCheckedAt : null,
                           })
             .ToListAsync(ct).ConfigureAwait(false);
 
         return rows.OrderBy(r => r.ModelId).ThenBy(r => r.VersionId)
-            .Select(r => new ImageCandidate(r.ModelId, r.VersionId, r.CivitaiVersionId, r.Name, r.ImagesCheckedAt))
+            .Select(r => new ImageCandidate(r.ModelId, r.VersionId, r.CivitaiVersionId, r.CivitaiModelId, r.Name, r.ImagesCheckedAt))
             .ToList();
     }
 

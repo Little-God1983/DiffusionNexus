@@ -146,11 +146,12 @@ public sealed class FetchTagsStepTests : IDisposable
         new(new HashSet<SyncStepKind> { SyncStepKind.FetchTags }, ForceTags: force);
 
     /// <summary>
-    /// R4. Pacing is per request, and the tags step makes exactly one per item — awaited by the
-    /// applier immediately before the call rather than by the item loop afterwards.
+    /// The tags step makes exactly one Civitai model fetch per item. Pacing itself is the
+    /// gateway's job now (verified in <c>CivitaiApiGatewayTests</c>); what this step still owns
+    /// is making exactly one call, not zero and not a call per tag.
     /// </summary>
     [Fact]
-    public async Task Execute_AwaitsThePacerOncePerCivitaiCall()
+    public async Task Execute_MakesOneCivitaiCallPerItem()
     {
         await SeedAsync("paced", civitaiId: 101);
 
@@ -158,15 +159,12 @@ public sealed class FetchTagsStepTests : IDisposable
         client.Setup(x => x.GetModelAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(NewCivitaiModel(tags: ["style"]));
 
-        var pacer = new Mock<ICivitaiRequestPacer>();
-        pacer.Setup(p => p.WaitAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-
-        var step = new FetchTagsStep(Scopes, new CivitaiMetadataApplier(client.Object, logger: null, pacer: pacer.Object));
+        var step = new FetchTagsStep(Scopes, new CivitaiMetadataApplier(client.Object, logger: null));
 
         var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
         await step.ExecuteOneAsync(items.Single(), apiKey: null, CancellationToken.None);
 
-        pacer.Verify(p => p.WaitAsync(It.IsAny<CancellationToken>()), Times.Once);
+        client.Verify(c => c.GetModelAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

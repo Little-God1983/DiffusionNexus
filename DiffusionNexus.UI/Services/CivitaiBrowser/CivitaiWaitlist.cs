@@ -24,15 +24,18 @@ public sealed class CivitaiWaitlist : ObservableObject
     private readonly string? _persistPathOverride;
     private readonly ICivitaiClient? _civitaiClient;
     private readonly IUnifiedLogger? _logger;
+    private readonly ICivitaiApiCache? _apiCache;
 
     public CivitaiWaitlist(
         ICivitaiClient? civitaiClient,
         IUnifiedLogger? logger,
-        string? persistPathOverride = null)
+        string? persistPathOverride = null,
+        ICivitaiApiCache? apiCache = null)
     {
         _civitaiClient = civitaiClient;
         _logger = logger;
         _persistPathOverride = persistPathOverride;
+        _apiCache = apiCache;
         Entries.CollectionChanged += (_, _) => RaiseCounts();
         TryRestore();
         RefreshAvailability();
@@ -121,8 +124,11 @@ public sealed class CivitaiWaitlist : ObservableObject
         RaiseCounts();
     }
 
-    // CivitaiClient retries 429s but has NO client-side throttle — cap concurrent
-    // re-checks the same way CivitaiResultViewModel gates video extraction.
+    // _civitaiClient is now CivitaiApiGateway, which does pace requests and share a 429 cooldown
+    // across every caller — but that bounds the INTERVAL between calls, not how many re-checks
+    // this waitlist fires at once. Cap concurrent re-checks the same way CivitaiResultViewModel
+    // gates video extraction, so a large waitlist doesn't queue dozens of calls behind the pacer
+    // in one burst.
     private static readonly SemaphoreSlim s_refreshGate = new(3, 3);
 
     /// <summary>
@@ -132,6 +138,15 @@ public sealed class CivitaiWaitlist : ObservableObject
     /// network error → CheckFailed with old data kept. Returns the fetched
     /// version so move-to-queue can reuse it without a second fetch.
     /// </summary>
+    /// <remarks>
+    /// Only callers are the "Update" and "Move ready to queue" buttons (via
+    /// <see cref="RefreshAllAsync"/> / <see cref="MoveReadyToQueueAsync"/>) — both explicit,
+    /// user-pressed re-checks, never a background timer (the countdown tick only calls the
+    /// local, API-free <see cref="RefreshAvailability"/>). So every call here drops the
+    /// gateway's cached version first: the whole point of pressing the button is to genuinely
+    /// re-ask Civitai whether the early-access deadline has moved, and the gateway's 15-minute
+    /// version cache would otherwise hand back the byte-identical stale answer.
+    /// </remarks>
     public async Task<CivitaiModelVersion?> RefreshEntryAsync(
         CivitaiWaitlistEntry entry, string? apiKey, CancellationToken ct = default, DateTimeOffset? utcNow = null)
     {
@@ -144,6 +159,7 @@ public sealed class CivitaiWaitlist : ObservableObject
         {
             _logger?.Debug(LogCategory.Download, "CivitaiWaitlist",
                 $"Re-checking: {entry.ModelName} — {entry.VersionName} (version {entry.VersionId})");
+            _apiCache?.InvalidateVersion(entry.VersionId);
             version = await _civitaiClient.GetModelVersionAsync(entry.VersionId, apiKey, ct);
 
             if (version is null)

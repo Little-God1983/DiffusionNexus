@@ -35,6 +35,32 @@ public sealed class LoraDownloadService : ILoraDownloadService
     private ICivitaiApiKeyProvider? _apiKeyProvider;
     private readonly IServiceScopeFactory? _scopeFactory;
 
+    /// <summary>
+    /// One client for the lifetime of the process. A per-operation HttpClient discards the
+    /// connection pool and the TLS session every time, which is socket churn against a host we
+    /// are already asking to be patient with us. The 2-hour timeout covers the file transfer
+    /// itself, which can run long for large checkpoints.
+    /// </summary>
+    private static readonly HttpClient s_downloadHttpClient = CreateDownloadHttpClient();
+
+    private static HttpClient CreateDownloadHttpClient()
+    {
+        // A process-lifetime HttpClient pins whatever DNS answer it first resolved for as long as
+        // the app runs; SocketsHttpHandler.PooledConnectionLifetime forces the pool to periodically
+        // reconnect (and thus re-resolve) instead. Two minutes is the common default.
+        var handler = new SocketsHttpHandler
+        {
+            AllowAutoRedirect = true,
+            PooledConnectionLifetime = TimeSpan.FromMinutes(2)
+        };
+        var client = new HttpClient(handler)
+        {
+            Timeout = TimeSpan.FromHours(2)
+        };
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("DiffusionNexus/1.0");
+        return client;
+    }
+
     public LoraDownloadService(
         ICivitaiClient? civitaiClient,
         IAppSettingsService? settingsService,
@@ -94,12 +120,7 @@ public sealed class LoraDownloadService : ILoraDownloadService
                 Directory.CreateDirectory(directory);
             }
 
-            using var httpClient = new HttpClient(new HttpClientHandler
-            {
-                AllowAutoRedirect = true
-            });
-            httpClient.Timeout = TimeSpan.FromHours(2);
-            httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("DiffusionNexus/1.0");
+            var httpClient = s_downloadHttpClient;
 
             var ct = linkedCts.Token;
             _logger?.Trace(LogCategory.Download, "LoraDownload",

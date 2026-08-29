@@ -855,8 +855,9 @@ public partial class App : Application
                 sp.GetRequiredService<IFeatureBackendRouter>(),
                 FeatureRegistry.GetRequirements));
 
-        // Civitai API client (singleton - maintains HttpClient)
-        services.AddSingleton<Civitai.ICivitaiClient, Civitai.CivitaiClient>();
+        // The one door to the Civitai API — see CivitaiGatewayServiceCollectionExtensions for the
+        // sharing invariant this establishes (one pacer, one cooldown, one cache behind both lanes).
+        services.AddCivitaiGateway();
 
         // Civitai base-model catalog (singleton - in-memory + on-disk cache, falls back to bundled snapshot)
         services.AddSingleton<Civitai.ICivitaiBaseModelCatalog, Civitai.CivitaiBaseModelCatalog>();
@@ -945,7 +946,11 @@ public partial class App : Application
             sp.GetService<Civitai.ICivitaiBaseModelCatalog>(),
             sp.GetService<IBackupScheduler>()));
 
-        services.AddSingleton<ILoraUpdateChecker, LoraUpdateChecker>();
+        services.AddSingleton<ILoraUpdateChecker>(sp => new LoraUpdateChecker(
+            sp.GetRequiredService<IServiceScopeFactory>(),
+            sp.GetRequiredKeyedService<Civitai.ICivitaiClient>("background"),
+            sp.GetRequiredService<IAppSettingsService>(),
+            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
 
         // The one Civitai API-key lookup (spec §1 RC5) — replaces five verbatim copies.
         services.AddSingleton<ICivitaiApiKeyProvider>(sp =>

@@ -137,6 +137,13 @@ public class AppSettings
     public string? LoraViewerFilterJson { get; set; }
 
     /// <summary>
+    /// The Civitai Browser's saved filter (selected base models, show-Installed/Early
+    /// Access/Paywalled/NSFW flags), serialized as JSON. Null when the user never saved
+    /// one. Owned and (de)serialized by the Civitai Browser ViewModel.
+    /// </summary>
+    public string? CivitaiBrowserFilterJson { get; set; }
+
+    /// <summary>
     /// Default target folder for LoRA Sort.
     /// </summary>
     public string? LoraSortTargetPath { get; set; }

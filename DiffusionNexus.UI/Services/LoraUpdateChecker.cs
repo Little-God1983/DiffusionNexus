@@ -14,21 +14,10 @@ public sealed class LoraUpdateChecker : ILoraUpdateChecker
 {
     private const int MaxConcurrency = 4;
 
-    /// <summary>How long to pause new checks after a 429 from Civitai.</summary>
-    private static readonly TimeSpan RateLimitBackoff = TimeSpan.FromSeconds(60);
-
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ICivitaiClient _civitaiClient;
     private readonly IAppSettingsService _settingsService;
     private readonly IUnifiedLogger? _logger;
-
-    /// <summary>
-    /// UTC time before which new requests should be skipped because Civitai
-    /// recently returned 429. Shared across pagination events so a rate-limit
-    /// during one batch cools down subsequent batches too.
-    /// </summary>
-    private DateTime _rateLimitedUntilUtc;
-    private readonly object _rateLimitLock = new();
 
     public LoraUpdateChecker(
         IServiceScopeFactory scopeFactory,
@@ -56,13 +45,6 @@ public sealed class LoraUpdateChecker : ILoraUpdateChecker
 
         if (staleness <= TimeSpan.Zero)
         {
-            return;
-        }
-
-        if (IsRateLimited())
-        {
-            _logger?.Debug(LogCategory.Network, "LoraUpdateChecker",
-                $"Skipping update-check batch (trigger={source}) — backing off after recent 429.");
             return;
         }
 
@@ -126,14 +108,6 @@ public sealed class LoraUpdateChecker : ILoraUpdateChecker
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            // Honour a backoff that another in-flight call may have triggered.
-            if (IsRateLimited())
-            {
-                _logger?.Debug(LogCategory.Network, "LoraUpdateChecker",
-                    $"Skipped '{tileName}' (trigger={source}, civitaiId={civitaiModelId}) — backoff active");
-                return;
-            }
-
             var remote = await _civitaiClient
                 .GetModelAsync(civitaiModelId, apiKey, cancellationToken)
                 .ConfigureAwait(false);
@@ -181,9 +155,10 @@ public sealed class LoraUpdateChecker : ILoraUpdateChecker
         }
         catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.TooManyRequests)
         {
-            TriggerBackoff();
+            // The gateway's shared cooldown already paused every surface; nothing to do here but
+            // say so. This class used to keep a private 60 s backoff that only it obeyed.
             _logger?.Warn(LogCategory.Network, "LoraUpdateChecker",
-                $"Civitai rate-limited update check for '{tileName}' (trigger={source}, civitaiId={civitaiModelId}); pausing for {RateLimitBackoff.TotalSeconds:0}s");
+                $"Civitai rate-limited update check for '{tileName}' (trigger={source}, civitaiId={civitaiModelId})");
         }
         catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
@@ -227,23 +202,4 @@ public sealed class LoraUpdateChecker : ILoraUpdateChecker
         return last is null || last.Value < cutoffUtc;
     }
 
-    private bool IsRateLimited()
-    {
-        lock (_rateLimitLock)
-        {
-            return DateTime.UtcNow < _rateLimitedUntilUtc;
-        }
-    }
-
-    private void TriggerBackoff()
-    {
-        lock (_rateLimitLock)
-        {
-            var newDeadline = DateTime.UtcNow + RateLimitBackoff;
-            if (newDeadline > _rateLimitedUntilUtc)
-            {
-                _rateLimitedUntilUtc = newDeadline;
-            }
-        }
-    }
 }

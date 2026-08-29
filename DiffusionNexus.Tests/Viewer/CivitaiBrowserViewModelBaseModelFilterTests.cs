@@ -1,8 +1,11 @@
 using System.Collections.ObjectModel;
+using DiffusionNexus.Civitai;
+using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.UI.Services.CivitaiBrowser;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.ViewModels.CivitaiBrowser;
 using FluentAssertions;
+using Moq;
 
 namespace DiffusionNexus.Tests.Viewer;
 
@@ -28,6 +31,14 @@ public class CivitaiBrowserViewModelBaseModelFilterTests
             new CivitaiWaitlist(null, null, persistPathOverride: Path.Combine(Path.GetTempPath(), $"dn-waitlist-{Guid.NewGuid():N}.json")), source);
         return (vm, source);
     }
+
+    /// <summary>
+    /// Mirrors the construction at LoraViewerViewModel.cs:499, with a caller-supplied
+    /// (typically mocked) <see cref="ICivitaiClient"/> so tests can assert on API calls.
+    /// </summary>
+    private static CivitaiBrowserViewModel CreateViewModel(ICivitaiClient client) =>
+        new(client, null, null, new CivitaiDownloadQueue(null),
+            new CivitaiWaitlist(null, null, persistPathOverride: Path.Combine(Path.GetTempPath(), $"dn-waitlist-{Guid.NewGuid():N}.json")), null);
 
     [Fact]
     public void MirrorContainsExactlyTheSharedList()
@@ -85,4 +96,21 @@ public class CivitaiBrowserViewModelBaseModelFilterTests
 
         vm.FlyoutBaseModels.Should().Equal(vm.AvailableBaseModels);
     }
+
+    [Fact]
+    public void Constructor_DoesNotSearchCivitai()
+    {
+        var client = new Mock<ICivitaiClient>();
+
+        _ = CreateViewModel(client.Object);
+
+        client.Verify(c => c.GetModelsAsync(
+            It.IsAny<CivitaiModelsQuery>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // EnsureLoadedAsync_SearchesOnce_HoweverOftenItIsCalled and
+    // DeferredInitialSearch_DoesNotClobberAUserInitiatedSearch moved to
+    // DiffusionNexus.IntegrationTests.CivitaiBrowserViewModelDispatcherTests: both await
+    // Dispatcher.UIThread.InvokeAsync(...) mid-flight (LoadNextAsync's UI-thread write), which
+    // this project cannot pump reliably — see that class's doc comment for the full story.
 }

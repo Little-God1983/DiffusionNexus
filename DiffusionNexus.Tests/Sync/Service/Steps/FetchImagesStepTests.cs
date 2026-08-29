@@ -7,6 +7,7 @@ using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.Sync;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Service.Services.Sync;
 using DiffusionNexus.Service.Services.Sync.Steps;
 using FluentAssertions;
@@ -49,6 +50,8 @@ public sealed class FetchImagesStepTests : IDisposable
         using var scope = _serviceProvider.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>();
         context.Database.EnsureCreated();
+
+        Step = new FetchImagesStep(Scopes, new CivitaiMetadataApplier(Client.Object));
     }
 
     private IServiceScope NewScope() => _serviceProvider.CreateScope();
@@ -232,12 +235,12 @@ public sealed class FetchImagesStepTests : IDisposable
     }
 
     /// <summary>
-    /// R4. One image item is one <i>model</i> but N Civitai calls, one per version. Pacing between
-    /// items therefore paced nothing inside them: a six-version model fired six back-to-back
-    /// requests and then politely waited 1.5 s. The pacer is awaited once per request instead.
+    /// One image item is one <i>model</i> but N Civitai calls, one per version. Pacing itself is
+    /// the gateway's job now (verified in <c>CivitaiApiGatewayTests</c>); what this step still owns
+    /// is making exactly one call per version rather than one per item.
     /// </summary>
     [Fact]
-    public async Task Execute_AwaitsThePacerOncePerCivitaiCall()
+    public async Task Execute_MakesOneCivitaiCallPerVersion()
     {
         await SeedAsync("multi", civitaiId: 101, versionCivitaiIds: [701, 702, 703]);
 
@@ -246,10 +249,7 @@ public sealed class FetchImagesStepTests : IDisposable
             .Setup(x => x.GetModelVersionAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int id, string? _, CancellationToken _) => NewCivitaiVersion(id, NewImage(id * 10)));
 
-        var pacer = new Mock<ICivitaiRequestPacer>();
-        pacer.Setup(p => p.WaitAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-
-        var step = new FetchImagesStep(Scopes, new CivitaiMetadataApplier(client.Object, logger: null, pacer: pacer.Object));
+        var step = new FetchImagesStep(Scopes, new CivitaiMetadataApplier(client.Object, logger: null));
 
         var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
         await step.ExecuteOneAsync(items.Single(), apiKey: null, CancellationToken.None);
@@ -257,7 +257,6 @@ public sealed class FetchImagesStepTests : IDisposable
         client.Verify(
             c => c.GetModelVersionAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
             Times.Exactly(3));
-        pacer.Verify(p => p.WaitAsync(It.IsAny<CancellationToken>()), Times.Exactly(3));
     }
 
     [Fact]
@@ -370,6 +369,46 @@ public sealed class FetchImagesStepTests : IDisposable
     }
 
     /// <summary>
+    /// Finding 8 (review of PR #547). <c>ApplyImagesFromModelAsync</c> issues one <c>GET
+    /// models/{id}</c> for the whole group BEFORE the per-version loop ever assigns
+    /// <c>inFlight</c> — so a refusal thrown by that batched call used to be logged against
+    /// <c>candidates[0]</c>'s version id, a version Civitai was never actually asked about (it
+    /// refused the MODEL page, not that version). The refusal here comes from the model-page call
+    /// itself; the per-version fallback (<c>GetModelVersionAsync</c>) is deliberately left
+    /// unconfigured and must never be reached, which the call-count assertion below pins.
+    /// </summary>
+    [Fact]
+    public async Task Execute_ModelPageRefusalIsLoggedAgainstTheModelPageNotAVersion()
+    {
+        var seeded = await SeedAsync("model-page-refusal", civitaiId: 900, versionCivitaiIds: [701, 702]);
+
+        var client = new Mock<ICivitaiClient>();
+        client
+            .Setup(x => x.GetModelAsync(900, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException(
+                "Civitai API 403 for /models/900", null, System.Net.HttpStatusCode.Forbidden));
+
+        var logger = new Mock<IUnifiedLogger>();
+        var step = new FetchImagesStep(Scopes, new CivitaiMetadataApplier(client.Object), logger.Object);
+
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        var result = await step.ExecuteOneAsync(items.Single(), apiKey: null, CancellationToken.None);
+
+        result.Skipped.Should().BeTrue("a refusal is an answer, not a failure to be retried");
+        (await ReadStateAsync(seeded.ModelId))!.ImagesCheckedAt.Should().NotBeNull();
+
+        client.Verify(c => c.GetModelVersionAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never, "the model-page call refused before the per-version fallback ever ran");
+
+        // The warning must name the model page, not lie about a version id nothing was asked about.
+        logger.Verify(l => l.Warn(
+                It.IsAny<LogCategory>(), It.IsAny<string>(),
+                It.Is<string>(msg => msg.Contains("the model page") && !msg.Contains("701") && !msg.Contains("702")),
+                It.IsAny<string?>()),
+            Times.Once);
+    }
+
+    /// <summary>
     /// I2, the other side: 5xx is the server having a moment, not an answer about this model.
     /// </summary>
     [Fact]
@@ -422,6 +461,77 @@ public sealed class FetchImagesStepTests : IDisposable
         step.Kind.Should().Be(SyncStepKind.FetchImages);
         step.Description.Should().Be("Fetch image records");
         step.EstimatedPerItem.Should().Be(TimeSpan.FromSeconds(1.6));
+    }
+
+    /// <summary>
+    /// Client + Step shared across the "one model call" tests below: they exercise
+    /// <see cref="FetchImagesStep.ExecuteOneAsync"/> directly against a synthetic
+    /// <see cref="SyncItem"/>, without seeding the DB — the local model/version ids never need to
+    /// resolve to anything, since these tests only assert which Civitai endpoints were called.
+    /// </summary>
+    private Mock<ICivitaiClient> Client { get; } = new();
+
+    private FetchImagesStep Step { get; }
+
+    /// <summary>
+    /// Builds a synthetic <see cref="SyncItem"/> for one model with the given Civitai version ids,
+    /// and defaults the model page (<see cref="SetModelPageVersions"/>) to describe all of them —
+    /// call <see cref="SetModelPageVersions"/> again afterwards to make the page omit some.
+    /// </summary>
+    private SyncItem CreateItemWithVersions(int civitaiModelId, int[] civitaiVersionIds)
+    {
+        SetModelPageVersions(civitaiModelId, civitaiVersionIds);
+
+        var candidates = civitaiVersionIds
+            .Select(civitaiVersionId => new ImageCandidate(
+                ModelId: civitaiModelId,
+                VersionId: civitaiVersionId,
+                CivitaiVersionId: civitaiVersionId,
+                CivitaiModelId: civitaiModelId,
+                Name: $"model-{civitaiModelId}",
+                ImagesCheckedAt: null))
+            .ToList();
+
+        return new SyncItem(civitaiModelId, $"model-{civitaiModelId}", candidates);
+    }
+
+    /// <summary>Stubs <c>GetModelAsync(civitaiModelId, ...)</c> to describe exactly these versions.</summary>
+    private void SetModelPageVersions(int civitaiModelId, int[] civitaiVersionIds)
+    {
+        Client
+            .Setup(c => c.GetModelAsync(civitaiModelId, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CivitaiModel
+            {
+                Id = civitaiModelId,
+                ModelVersions = civitaiVersionIds.Select(v => NewCivitaiVersion(v, NewImage(v * 10L))).ToList(),
+            });
+    }
+
+    [Fact]
+    public async Task ExecuteOneAsync_ThreeVersionsOfOneModel_MakesOneModelCall()
+    {
+        var item = CreateItemWithVersions(civitaiModelId: 900, civitaiVersionIds: [10, 11, 12]);
+
+        await Step.ExecuteOneAsync(item, apiKey: null, CancellationToken.None);
+
+        Client.Verify(c => c.GetModelAsync(900, It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+        Client.Verify(c => c.GetModelVersionAsync(
+            It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteOneAsync_VersionMissingFromTheModelPage_FallsBackToTheVersionCall()
+    {
+        // The model page describes 10 and 11 but not 12 — that one still needs its own call
+        // rather than being silently recorded as "no images".
+        var item = CreateItemWithVersions(civitaiModelId: 900, civitaiVersionIds: [10, 11, 12]);
+        SetModelPageVersions(900, [10, 11]);
+
+        await Step.ExecuteOneAsync(item, apiKey: null, CancellationToken.None);
+
+        Client.Verify(c => c.GetModelAsync(900, It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+        Client.Verify(c => c.GetModelVersionAsync(12, It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+        Client.Verify(c => c.GetModelVersionAsync(10, It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     public void Dispose()

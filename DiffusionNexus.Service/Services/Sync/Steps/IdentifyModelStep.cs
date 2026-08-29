@@ -12,10 +12,13 @@ using Microsoft.Extensions.DependencyInjection;
 namespace DiffusionNexus.Service.Services.Sync.Steps;
 
 /// <summary>
-/// Step 1 — establishes what a local file actually <i>is</i>: stored/computed SHA256 →
-/// Civitai hash lookup → local sidecar fallback → the file's own safetensors header →
-/// a guess from the filename. Replaces the ViewModel's Phase 1 / 1b and its per-tile
-/// metadata copy (#521 WP2, WP4).
+/// Step 1 — establishes what a local file actually <i>is</i>: local sidecar → stored/computed
+/// SHA256 + Civitai hash lookup → the file's own safetensors header → a guess from the filename.
+/// The sidecar is checked first — it is normally written by our own downloader from a Civitai
+/// response, so it answers the question the hash lookup would ask without a request. It does
+/// NOT skip the hash: <c>ModelFile.HashSHA256</c> is a fact about the bytes on disk, and a
+/// sidecar's claimed value is not a measurement of them — see <see cref="ResolveHashAsync"/>.
+/// Replaces the ViewModel's Phase 1 / 1b and its per-tile metadata copy (#521 WP2, WP4).
 /// </summary>
 /// <remarks>
 /// Every path stamps <c>ModelSyncState</c>, which is the whole point of the overhaul: a run that
@@ -35,28 +38,20 @@ public sealed class IdentifyModelStep : ISyncStep
     private readonly ICivitaiClient _client;
     private readonly CivitaiMetadataApplier _civitai;
     private readonly SidecarMetadataApplier _sidecar;
-    private readonly ICivitaiRequestPacer _pacer;
     private readonly IUnifiedLogger? _logger;
 
-    /// <param name="pacer">
-    /// Paces the one call this step makes itself — the hash lookup. The model-page call that
-    /// follows it lives inside <see cref="CivitaiMetadataApplier"/> and is paced there, so the two
-    /// requests of one item are spaced from each other and not merely from the previous item (R4).
-    /// </param>
     public IdentifyModelStep(
         IServiceScopeFactory scopes,
         ICivitaiClient client,
         CivitaiMetadataApplier civitai,
         SidecarMetadataApplier sidecar,
-        IUnifiedLogger? logger = null,
-        ICivitaiRequestPacer? pacer = null)
+        IUnifiedLogger? logger = null)
     {
         _scopes = scopes ?? throw new ArgumentNullException(nameof(scopes));
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _civitai = civitai ?? throw new ArgumentNullException(nameof(civitai));
         _sidecar = sidecar ?? throw new ArgumentNullException(nameof(sidecar));
         _logger = logger;
-        _pacer = pacer ?? NoCivitaiRequestPacer.Instance;
     }
 
     /// <inheritdoc />
@@ -65,7 +60,16 @@ public sealed class IdentifyModelStep : ISyncStep
     /// <inheritdoc />
     public string Description => "Identify models (Civitai, sidecar, file header, filename)";
 
-    /// <summary>Hash (large files) + two API calls (hash lookup, model page) with 1.5 s pacing between them.</summary>
+    /// <summary>
+    /// Worst case: a candidate with no sidecar still costs a hash (large files) plus two API calls
+    /// (hash lookup, model page), now paced by the shared <c>CivitaiApiGateway</c> rather than a
+    /// fixed 1.5 s between them. A sidecar-bearing candidate — checked FIRST — costs no API calls:
+    /// it resolves from the file on disk. It still pays the hash the first time (see
+    /// <see cref="ResolveHashAsync"/>) — the hash is a fact about local bytes a sidecar cannot
+    /// substitute for — so this per-item estimate stays the same worst case either way. Left at
+    /// this worst-case value (not lowered) because a pinned test asserts it; the plan estimate is
+    /// deliberately pessimistic rather than an average.
+    /// </summary>
     public TimeSpan EstimatedPerItem => TimeSpan.FromSeconds(3);
 
     /// <inheritdoc />
@@ -158,12 +162,13 @@ public sealed class IdentifyModelStep : ISyncStep
         var uow = dbScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
         var now = DateTimeOffset.UtcNow;
 
-        // Before the hash and before the request: the model may have been deleted in the UI between
-        // selection and now, and every path below this point stamps ModelSyncState — including the
-        // 404/sidecar branch, whose GetOrCreateAsync would Add a row with a dangling FK and be
-        // rejected by SaveChanges. That rejection is survivable now (see the catch below), but a
-        // failure row for a model the user deliberately deleted is noise, and hashing a
-        // multi-gigabyte file for a model that no longer exists is wasted work on top of it.
+        // Before the sidecar read and before the hash: the model may have been deleted in the UI
+        // between selection and now, and every path below this point stamps ModelSyncState —
+        // including the sidecar branch, which now runs unconditionally first rather than behind a
+        // 404, whose GetOrCreateAsync would Add a row with a dangling FK and be rejected by
+        // SaveChanges. That rejection is survivable now (see the catch below), but a failure row
+        // for a model the user deliberately deleted is noise, and hashing a multi-gigabyte file for
+        // a model that no longer exists is wasted work on top of it.
         var dbModel = await uow.Models.GetByIdAsync(candidate.ModelId, ct).ConfigureAwait(false);
         if (dbModel is null)
         {
@@ -174,17 +179,11 @@ public sealed class IdentifyModelStep : ISyncStep
 
         try
         {
-            var hash = await ResolveHashAsync(uow, candidate, ct).ConfigureAwait(false);
-
-            await _pacer.WaitAsync(ct).ConfigureAwait(false);
-            var version = await _client.GetModelVersionByHashAsync(hash, apiKey, ct).ConfigureAwait(false);
-            if (version is not null)
-            {
-                var applied = await _civitai.ApplyAsync(uow, candidate.ModelId, candidate.FileId, version, apiKey, ct).ConfigureAwait(false);
-                return await RecordMatchAsync(uow, candidate, version, applied, now, ct).ConfigureAwait(false);
-            }
-
-            // 404 — not on Civitai. Fall back to whatever the user has next to the file.
+            // Sidecar first. It is the answer Civitai would give us, already on disk, and reading
+            // it costs no request. This used to run only after the hash lookup 404'd, which meant
+            // every sidecar-bearing file paid two API calls to be told what was sitting next to it.
+            // SorterMetadataResolver has always done it in this order. The hash itself is still
+            // computed below when the sidecar applies — see the comment there.
             var sidecar = await _sidecar.ApplyAsync(uow, candidate.ModelId, candidate.LocalPath, ct).ConfigureAwait(false);
 
             // The applier answers a cancellation with "nothing applied", which is the same answer it
@@ -194,11 +193,31 @@ public sealed class IdentifyModelStep : ISyncStep
 
             if (sidecar.Applied)
             {
+                // The sidecar answers "what is this file" without a request, but it is not a
+                // measurement of the bytes on disk — its own hash claim (SidecarMetadataApplier's
+                // `??=`) must not be allowed to stand as ModelFile.HashSHA256 for THIS execution.
+                // ResolveHashAsync re-measures (or reuses a stored value that already looks like a
+                // SHA256 — see its remarks for exactly what that does and does not guarantee) and
+                // commits it with a plain assignment, which overwrites whatever the sidecar just
+                // wrote moments earlier in this same call. This still costs zero Civitai calls —
+                // the sidecar-first reorder's actual goal — it just no longer lets a sidecar's claim
+                // silently become the trusted hash within a single execution.
+                await ResolveHashAsync(uow, candidate, ct).ConfigureAwait(false);
+
                 await StampAsync(uow, candidate.ModelId, SyncOutcome.Sidecar, now, sidecar.Signature, error: null, headerCheckedAt: null, ct).ConfigureAwait(false);
                 return SyncItemResult.Success;
             }
 
-            // No Civitai match, no sidecar — read the file's own header, then guess from its name.
+            var hash = await ResolveHashAsync(uow, candidate, ct).ConfigureAwait(false);
+
+            var version = await _client.GetModelVersionByHashAsync(hash, apiKey, ct).ConfigureAwait(false);
+            if (version is not null)
+            {
+                var applied = await _civitai.ApplyAsync(uow, candidate.ModelId, candidate.FileId, version, apiKey, ct).ConfigureAwait(false);
+                return await RecordMatchAsync(uow, candidate, version, applied, now, ct).ConfigureAwait(false);
+            }
+
+            // Not on Civitai and no sidecar — read the file's own header, then guess from its name.
             var header = await SafetensorsHeaderReader.TryReadAsync(candidate.LocalPath, ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
             var headerCheckedAt = header is not null ? now : (DateTimeOffset?)null;
@@ -350,26 +369,72 @@ public sealed class IdentifyModelStep : ISyncStep
     }
 
     /// <summary>
-    /// The candidate's stored hash when it is a usable SHA256, otherwise a freshly computed one —
-    /// which is then written back onto the file row so the next run (and the duplicate finder) reuses it.
+    /// The candidate's stored hash when it already looks like a SHA256, otherwise a freshly
+    /// computed one — which is then written back onto the file row so the next run (and the
+    /// duplicate finder) reuses it.
     /// </summary>
-    private static async Task<string> ResolveHashAsync(IUnitOfWork uow, IdentifyCandidate candidate, CancellationToken ct)
+    /// <remarks>
+    /// <para>
+    /// The short-circuit (<see cref="FileHasher.IsSha256"/>) trusts <paramref name="candidate"/>.Sha256
+    /// purely on SHAPE. It is not, itself, proof the value was ever measured from the bytes on
+    /// disk — it cannot distinguish a digest THIS method previously computed from one a sidecar
+    /// merely claimed (<c>SidecarMetadataApplier</c>'s <c>??=</c>). What makes it safe within a
+    /// single execution: <paramref name="candidate"/>.Sha256 is a snapshot taken at selection time,
+    /// before this execution touched the row, so this method still re-hashes and its plain
+    /// assignment still overwrites even when the sidecar branch (which runs first and shares the
+    /// same <paramref name="uow"/>) has, in the same call, already written its own claim into the
+    /// tracked entity.
+    /// </para>
+    /// <para>
+    /// What it does NOT do is re-verify a value that reached the database from an EARLIER
+    /// execution. On this branch, between commit <c>d9a1748c</c> (sidecar checked before the hash)
+    /// and <c>d552e398</c> (this method's overwrite added), the sidecar-first reorder could commit
+    /// a sidecar's claimed hash as <c>ModelFile.HashSHA256</c> with nothing ever measuring the
+    /// file's bytes. Such a row's stored value is indistinguishable, by shape alone, from a
+    /// genuinely measured one, and this short-circuit returns it verbatim, forever, without
+    /// re-hashing — so the mismatch warning below can only ever fire for a row this method itself
+    /// re-hashes; it can never fire for one of these. That defect never reached develop or main (it
+    /// lived only on this branch, between those two commits), so no backfill or schema change is
+    /// warranted for it — this remark exists only so the next reader does not mistake the
+    /// short-circuit for a guarantee about provenance it does not actually make.
+    /// </para>
+    /// Called both from the sidecar path (where the measured digest overwrites whatever claim
+    /// THIS call's own sidecar read just wrote) and from the no-match path (where the hash also
+    /// feeds the Civitai hash lookup itself).
+    /// </remarks>
+    private async Task<string> ResolveHashAsync(IUnitOfWork uow, IdentifyCandidate candidate, CancellationToken ct)
     {
         if (FileHasher.IsSha256(candidate.Sha256)) return candidate.Sha256!.ToUpperInvariant();
 
         var hash = await FileHasher.Sha256UpperAsync(candidate.LocalPath, ct).ConfigureAwait(false);
 
-        // Set before the Civitai applier runs: it fills hashes with `??=`, so the digest of the bytes
-        // we actually have must already be in place to win over the response's (possibly stale) one.
+        // Committed before anything else in this same execution can claim the hash field: the
+        // sidecar path's SidecarMetadataApplier already wrote HashSHA256 with `??=` moments
+        // earlier on this same uow, and the no-match path's CivitaiMetadataApplier fills it the
+        // same way from the hash-lookup response — either caller, the digest of the bytes we
+        // actually have must already be in place to win over a claim that never measured them.
         var file = await uow.ModelFiles.GetByIdAsync(candidate.FileId, ct).ConfigureAwait(false);
         if (file is not null)
         {
+            // A prior, unverified claim (e.g. the sidecar's own ??= from earlier in this same
+            // execution) disagreeing with the bytes we just measured is a real signal — a
+            // truncated download, a hand-swapped file, a stale sidecar — worth a log line even
+            // though the measured value is what gets stored either way.
+            if (!string.IsNullOrEmpty(file.HashSHA256) && !string.Equals(file.HashSHA256, hash, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger?.Warn(LogCategory.General, LogSource,
+                    $"'{candidate.Name}': stored hash {file.HashSHA256} does not match the file's measured digest {hash}; using the measured value");
+            }
+
             file.HashSHA256 = hash;
 
-            // Committed before the network call, on its own: hashing a multi-gigabyte file is the
-            // expensive half of this step, and neither a cancellation nor a fault later in the item
-            // may throw that work away. It also puts the digest of the bytes we actually hold in
-            // place before CivitaiMetadataApplier's `??=` gets a chance to fill it from the response.
+            // Saved here, on its own, rather than left for whichever SaveChangesAsync the rest of
+            // the item eventually calls: hashing a multi-gigabyte file is the expensive half of
+            // this step, and neither a cancellation nor a fault later in the item may throw that
+            // work away. On the no-match path this also puts the digest in place before the
+            // Civitai hash lookup and CivitaiMetadataApplier's own `??=` get a chance to fill it
+            // from the response; the sidecar path has no such lookup or applier to race — saving
+            // early there is purely about not losing the hash to a later fault in the same item.
             await uow.SaveChangesAsync(ct).ConfigureAwait(false);
         }
 

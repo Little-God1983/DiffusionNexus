@@ -34,6 +34,16 @@ public partial class AssignCivitaiIdsDialog : Window
     public static readonly StyledProperty<string> VersionIdTextProperty =
         AvaloniaProperty.Register<AssignCivitaiIdsDialog, string>(nameof(VersionIdText), defaultValue: string.Empty);
 
+    /// <summary>
+    /// One client for the lifetime of the process. A per-operation HttpClient discards the
+    /// connection pool and the TLS session every time, which is socket churn against a host we
+    /// are already asking to be patient with us. PooledConnectionLifetime keeps a process-lifetime
+    /// client from pinning a stale DNS answer for the app's whole run.
+    /// </summary>
+    private static readonly HttpClient s_previewHttp = new(
+        new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(2) })
+    { Timeout = TimeSpan.FromSeconds(15) };
+
     public AssignCivitaiIdsDialog()
     {
         InitializeComponent();
@@ -271,8 +281,7 @@ public partial class AssignCivitaiIdsDialog : Window
 
         try
         {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-            var data = await http.GetByteArrayAsync(imageUrl);
+            var data = await s_previewHttp.GetByteArrayAsync(imageUrl);
             using var ms = new MemoryStream(data);
             previewImage.Source = new Bitmap(ms);
             noPreview.IsVisible = false;

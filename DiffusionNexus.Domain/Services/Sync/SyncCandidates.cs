@@ -12,7 +12,13 @@ public sealed record IdentifyCandidate(int ModelId, int VersionId, int FileId, s
 public sealed record TagCandidate(int ModelId, int CivitaiModelId, string Name, DateTimeOffset? TagsCheckedAt);
 
 /// <summary>A model version eligible for the image-fetch step.</summary>
-public sealed record ImageCandidate(int ModelId, int VersionId, int CivitaiVersionId, string Name, DateTimeOffset? ImagesCheckedAt);
+/// <param name="CivitaiModelId">
+/// The Civitai model page this version belongs to — the same id <see cref="TagCandidate"/> carries
+/// as <c>CivitaiModelId</c>, i.e. <c>Model.CivitaiId</c>. Lets <c>FetchImagesStep</c> fetch every
+/// version of a model with one <c>models/{id}</c> call instead of one <c>model-versions/{id}</c>
+/// call per version.
+/// </param>
+public sealed record ImageCandidate(int ModelId, int VersionId, int CivitaiVersionId, int CivitaiModelId, string Name, DateTimeOffset? ImagesCheckedAt);
 
 /// <summary>
 /// One image eligible for the thumbnail step — the version's <i>primary</i> image, the one
