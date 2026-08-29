@@ -291,7 +291,8 @@ public sealed class DatabaseRecoveryService
                 { "SyncErrorRetryDays", "ALTER TABLE AppSettings ADD COLUMN SyncErrorRetryDays INTEGER NOT NULL DEFAULT 1" },
                 { "SyncThumbnailConcurrency", "ALTER TABLE AppSettings ADD COLUMN SyncThumbnailConcurrency INTEGER NOT NULL DEFAULT 4" },
                 { "LoraSorterExcludedFoldersJson", "ALTER TABLE AppSettings ADD COLUMN LoraSorterExcludedFoldersJson TEXT" },
-                { "LastLibrarySyncAt", "ALTER TABLE AppSettings ADD COLUMN LastLibrarySyncAt TEXT" }
+                { "LastLibrarySyncAt", "ALTER TABLE AppSettings ADD COLUMN LastLibrarySyncAt TEXT" },
+                { "CivitaiBrowserFilterJson", "ALTER TABLE AppSettings ADD COLUMN CivitaiBrowserFilterJson TEXT" }
             };
 
             foreach (var col in requiredColumns)

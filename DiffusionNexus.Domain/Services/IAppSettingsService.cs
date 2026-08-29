@@ -152,6 +152,12 @@ public interface IAppSettingsService
     /// <summary>Stores the LoRA Viewer's base-model filter JSON; whitespace/empty clears it to null.</summary>
     Task SetLoraViewerFilterJsonAsync(string? json, CancellationToken cancellationToken = default);
 
+    /// <summary>Gets the Civitai Browser's saved filter JSON, or null if never saved.</summary>
+    Task<string?> GetCivitaiBrowserFilterJsonAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Stores the Civitai Browser's filter JSON; whitespace/empty clears it to null.</summary>
+    Task SetCivitaiBrowserFilterJsonAsync(string? json, CancellationToken cancellationToken = default);
+
     /// <summary>Gets the LoRA Sorter's excluded-folders JSON (a string array of absolute paths), or null if none.</summary>
     Task<string?> GetLoraSorterExcludedFoldersJsonAsync(CancellationToken cancellationToken = default);
 

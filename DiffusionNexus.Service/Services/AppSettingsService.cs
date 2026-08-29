@@ -756,6 +756,22 @@ public sealed class AppSettingsService : IAppSettingsService
     }
 
     /// <inheritdoc />
+    public async Task<string?> GetCivitaiBrowserFilterJsonAsync(CancellationToken cancellationToken = default)
+    {
+        var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+        return settings.CivitaiBrowserFilterJson;
+    }
+
+    /// <inheritdoc />
+    public async Task SetCivitaiBrowserFilterJsonAsync(string? json, CancellationToken cancellationToken = default)
+    {
+        var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+        settings.CivitaiBrowserFilterJson = string.IsNullOrWhiteSpace(json) ? null : json;
+        settings.UpdatedAt = DateTimeOffset.UtcNow;
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
     public async Task<string?> GetLoraSorterExcludedFoldersJsonAsync(CancellationToken cancellationToken = default)
     {
         var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
