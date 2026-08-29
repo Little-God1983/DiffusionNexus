@@ -195,11 +195,13 @@ public sealed class IdentifyModelStep : ISyncStep
             {
                 // The sidecar answers "what is this file" without a request, but it is not a
                 // measurement of the bytes on disk — its own hash claim (SidecarMetadataApplier's
-                // `??=`) must not be allowed to stand as ModelFile.HashSHA256. ResolveHashAsync
-                // computes (or reuses a stored, previously-verified) digest and commits it with a
-                // plain assignment, which overwrites whatever the sidecar just wrote. This still
-                // costs zero Civitai calls — the sidecar-first reorder's actual goal — it just no
-                // longer lets a sidecar's claim silently become the trusted hash.
+                // `??=`) must not be allowed to stand as ModelFile.HashSHA256 for THIS execution.
+                // ResolveHashAsync re-measures (or reuses a stored value that already looks like a
+                // SHA256 — see its remarks for exactly what that does and does not guarantee) and
+                // commits it with a plain assignment, which overwrites whatever the sidecar just
+                // wrote moments earlier in this same call. This still costs zero Civitai calls —
+                // the sidecar-first reorder's actual goal — it just no longer lets a sidecar's claim
+                // silently become the trusted hash within a single execution.
                 await ResolveHashAsync(uow, candidate, ct).ConfigureAwait(false);
 
                 await StampAsync(uow, candidate.ModelId, SyncOutcome.Sidecar, now, sidecar.Signature, error: null, headerCheckedAt: null, ct).ConfigureAwait(false);
@@ -367,17 +369,38 @@ public sealed class IdentifyModelStep : ISyncStep
     }
 
     /// <summary>
-    /// The candidate's stored hash when it is a usable SHA256, otherwise a freshly computed one —
-    /// which is then written back onto the file row so the next run (and the duplicate finder) reuses it.
+    /// The candidate's stored hash when it already looks like a SHA256, otherwise a freshly
+    /// computed one — which is then written back onto the file row so the next run (and the
+    /// duplicate finder) reuses it.
     /// </summary>
     /// <remarks>
-    /// <paramref name="candidate"/>.Sha256 is a snapshot taken at selection time, before this
-    /// execution touched the row — so this correctly re-hashes even when the sidecar branch (which
-    /// runs first and shares the same <paramref name="uow"/>) has, in the same call, already
-    /// written its own <c>??=</c> claim into the tracked entity: the plain assignment below
-    /// overwrites that claim with the measured digest regardless. Called both from the sidecar
-    /// path (to make sure a sidecar's claim never becomes the stored hash — see the class remarks)
-    /// and from the no-match path (where the hash also feeds the Civitai hash lookup itself).
+    /// <para>
+    /// The short-circuit (<see cref="FileHasher.IsSha256"/>) trusts <paramref name="candidate"/>.Sha256
+    /// purely on SHAPE. It is not, itself, proof the value was ever measured from the bytes on
+    /// disk — it cannot distinguish a digest THIS method previously computed from one a sidecar
+    /// merely claimed (<c>SidecarMetadataApplier</c>'s <c>??=</c>). What makes it safe within a
+    /// single execution: <paramref name="candidate"/>.Sha256 is a snapshot taken at selection time,
+    /// before this execution touched the row, so this method still re-hashes and its plain
+    /// assignment still overwrites even when the sidecar branch (which runs first and shares the
+    /// same <paramref name="uow"/>) has, in the same call, already written its own claim into the
+    /// tracked entity.
+    /// </para>
+    /// <para>
+    /// What it does NOT do is re-verify a value that reached the database from an EARLIER
+    /// execution. On this branch, between commit <c>d9a1748c</c> (sidecar checked before the hash)
+    /// and <c>d552e398</c> (this method's overwrite added), the sidecar-first reorder could commit
+    /// a sidecar's claimed hash as <c>ModelFile.HashSHA256</c> with nothing ever measuring the
+    /// file's bytes. Such a row's stored value is indistinguishable, by shape alone, from a
+    /// genuinely measured one, and this short-circuit returns it verbatim, forever, without
+    /// re-hashing — so the mismatch warning below can only ever fire for a row this method itself
+    /// re-hashes; it can never fire for one of these. That defect never reached develop or main (it
+    /// lived only on this branch, between those two commits), so no backfill or schema change is
+    /// warranted for it — this remark exists only so the next reader does not mistake the
+    /// short-circuit for a guarantee about provenance it does not actually make.
+    /// </para>
+    /// Called both from the sidecar path (where the measured digest overwrites whatever claim
+    /// THIS call's own sidecar read just wrote) and from the no-match path (where the hash also
+    /// feeds the Civitai hash lookup itself).
     /// </remarks>
     private async Task<string> ResolveHashAsync(IUnitOfWork uow, IdentifyCandidate candidate, CancellationToken ct)
     {
