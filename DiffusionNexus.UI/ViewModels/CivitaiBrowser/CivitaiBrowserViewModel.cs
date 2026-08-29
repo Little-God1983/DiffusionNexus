@@ -228,6 +228,11 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     [RelayCommand]
     private async Task SearchAsync()
     {
+        // Marks that SOME search has been kicked off, so EnsureLoadedAsync's deferred
+        // initial search (see SearchIfNotAlreadyStartedAsync) backs off instead of
+        // cancelling/clobbering it if the user got here first.
+        Interlocked.Exchange(ref _searchStarted, 1);
+
         _searchCts?.Cancel();
         _searchCts = new CancellationTokenSource();
         var ct = _searchCts.Token;
@@ -501,6 +506,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     }
 
     private int _loaded;
+    private int _searchStarted;
 
     /// <summary>
     /// Runs the first search, once, however many times the tab is shown. Called when the Browse
@@ -510,9 +516,29 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     {
         if (Interlocked.Exchange(ref _loaded, 1) == 1) return;
 
-        await RefreshInstalledSetAsync();
-        await SearchAsync();
+        // Run concurrently, same as the constructor did before the first search moved here.
+        // RefreshInstalledSetAsync re-applies itself to whatever is in Results once it lands
+        // (see its own doc comment), so it does not need to finish before the search starts —
+        // and gating the search behind a full-library DB scan is exactly the "browser opens
+        // empty" regression this fixes: on a large library the scan can take long enough that
+        // the user perceives an empty grid even though the search itself would have been fast.
+        await Task.WhenAll(RefreshInstalledSetAsync(), SearchIfNotAlreadyStartedAsync());
     }
+
+    /// <summary>
+    /// Runs the deferred initial search unless the user has already triggered one of their own
+    /// (typed, changed a filter, hit Refresh) by the time this gets a chance to run.
+    /// <see cref="SearchAsync"/> has no re-entrancy guard — it unconditionally cancels whatever
+    /// search is in flight and clears <see cref="Results"/> — so letting this fire after a
+    /// user-started search would cancel and wipe out results the user is already looking at,
+    /// for no benefit (the deferred search asks for nothing the user's own search doesn't
+    /// already cover on first load). <see cref="_searchStarted"/> is set by
+    /// <see cref="SearchAsync"/> itself, so whichever of the two reaches it first wins.
+    /// </summary>
+    private Task SearchIfNotAlreadyStartedAsync() =>
+        Interlocked.CompareExchange(ref _searchStarted, 1, 0) == 0
+            ? SearchAsync()
+            : Task.CompletedTask;
 
     private async Task DebouncedSearchAsync()
     {
@@ -632,6 +658,14 @@ public partial class CivitaiBrowserViewModel : ObservableObject
 
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
+                    // Re-check here, not just before the await: a cancellation can land after
+                    // the pre-dispatch check passed but before this callback actually runs on
+                    // the UI thread (SearchAsync has no re-entrancy guard and cancels whatever
+                    // is in flight), and without this the cancelled pipeline's stale response
+                    // still lands in Results right alongside — or ahead of — the search that
+                    // superseded it.
+                    if (ct.IsCancellationRequested) return;
+
                     foreach (var model in response.Items)
                     {
                         if (model.ModelVersions.Count == 0) continue;
@@ -640,6 +674,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                         Results.Add(CreateResultCard(model));
                     }
                 });
+                if (ct.IsCancellationRequested) return;
 
                 ApplyClientSideFilters();
 
@@ -784,6 +819,10 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             var preCount = Results.Count;
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
+                // See the matching check in LoadNextAsync's own dispatch: cancellation can
+                // land after the pre-dispatch check passed but before this callback runs.
+                if (ct.IsCancellationRequested) return;
+
                 foreach (var model in tagResponse.Items)
                 {
                     if (model.ModelVersions.Count == 0) continue;
@@ -792,6 +831,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                     Results.Add(CreateResultCard(model));
                 }
             });
+            if (ct.IsCancellationRequested) return;
 
             // The merged cards default to visible — without a filter pass here,
             // Hide Installed / Hide Early Access / Show-NSFW were silently ignored

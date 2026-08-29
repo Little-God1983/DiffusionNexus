@@ -134,6 +134,87 @@ public class CivitaiBrowserViewModelBaseModelFilterTests
     }
 
     /// <summary>
+    /// Reproduces the browser-empty-on-open / "no results then refreshes" regression:
+    /// <see cref="CivitaiBrowserViewModel.EnsureLoadedAsync"/> defers the first search to
+    /// after the (now-async) installed-set load, so a user who searches before that
+    /// deferred search reaches Civitai races it. Neither pipeline has a re-entrancy guard,
+    /// and the token check in <c>LoadNextAsync</c> runs BEFORE the UI-thread write — a
+    /// cancellation landing after that check (but before the dispatched write executes)
+    /// still lets the cancelled pipeline's stale response land in <see cref="CivitaiBrowserViewModel.Results"/>.
+    ///
+    /// The two <see cref="ICivitaiClient.GetModelsAsync"/> calls are driven by separate
+    /// <see cref="TaskCompletionSource{T}"/>s so the race is deterministic instead of
+    /// timing-dependent:
+    /// 1. The deferred load's call (tcsA) is released FIRST, letting it pass its
+    ///    cancellation check and queue its UI-thread write — but that write is not yet
+    ///    pumped, so it sits pending exactly like a real dispatcher hop would.
+    /// 2. Only THEN does the user's own search start (<c>SearchCommand</c>), which cancels
+    ///    the deferred load's token — after its check already passed.
+    /// 3. The user's own call (tcsB) is released, queuing its own write.
+    /// 4. Both queued UI-thread writes are drained together.
+    ///
+    /// Before the fix: the deferred load's stale "StaleModel" (id 1) leaks into
+    /// <c>Results</c> even though it was cancelled by the user's search. After the fix
+    /// (token re-checked inside the dispatcher callback, plus not clobbering an
+    /// already-started user search), only the user's own "RealModel" (id 2) survives.
+    /// </summary>
+    [Fact]
+    public async Task DeferredInitialSearch_DoesNotClobberAUserInitiatedSearch()
+    {
+        var tcsA = new TaskCompletionSource<CivitaiPagedResponse<CivitaiModel>>();
+        var tcsB = new TaskCompletionSource<CivitaiPagedResponse<CivitaiModel>>();
+        var callCount = 0;
+
+        var client = new Mock<ICivitaiClient>();
+        client.Setup(c => c.GetModelsAsync(
+                It.IsAny<CivitaiModelsQuery>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns(() => Interlocked.Increment(ref callCount) == 1 ? tcsA.Task : tcsB.Task);
+
+        var vm = CreateViewModel(client.Object);
+
+        // The view's OnAttachedToVisualTree calls this without awaiting it.
+        var loadTask = vm.EnsureLoadedAsync();
+
+        // Release the deferred load's API call. TaskCompletionSource continuations run
+        // synchronously on this thread by default, so this drives LoadNextAsync forward
+        // past its `if (ct.IsCancellationRequested) return;` check and up to (but not
+        // through, since nothing is pumping the dispatcher yet) its queued UI-thread write.
+        tcsA.SetResult(SingleModelResponse(modelId: 1, name: "StaleModel"));
+
+        // The user searches now — after the deferred load's check already passed.
+        var userSearchTask = vm.SearchCommand.ExecuteAsync(null);
+
+        // Release the user's own API call the same way; it queues its own UI-thread write.
+        tcsB.SetResult(SingleModelResponse(modelId: 2, name: "RealModel"));
+
+        // Drain both queued writes together — this is the exact interleave described above.
+        Dispatcher.UIThread.RunJobs();
+
+        await RunWithDispatcherPumpAsync(() => Task.WhenAll(loadTask, userSearchTask));
+
+        vm.Results.Select(r => r.Model!.Id).Should().Equal(
+            new[] { 2 },
+            "the deferred load was cancelled by the user's own search (after its check had " +
+            "already passed) and must not write its stale response into Results");
+        vm.StatusMessage.Should().NotBe("No results.");
+    }
+
+    private static CivitaiPagedResponse<CivitaiModel> SingleModelResponse(int modelId, string name) =>
+        new()
+        {
+            Items =
+            [
+                new CivitaiModel
+                {
+                    Id = modelId,
+                    Name = name,
+                    ModelVersions = [new CivitaiModelVersion { Id = modelId * 100 }]
+                }
+            ],
+            Metadata = new CivitaiPaginationMetadata()
+        };
+
+    /// <summary>
     /// Runs <paramref name="action"/> while pumping <see cref="Dispatcher.UIThread"/> just for
     /// its duration, then stops. <c>Dispatcher.UIThread</c> is a process-wide singleton and this
     /// test project runs collections in parallel with no `DisableTestParallelization` /
