@@ -85,19 +85,19 @@ public sealed class DiscoverFilesStepTests
     }
 
     /// <summary>
-    /// #527. The reclassify pass runs every time discovery does, from the same
-    /// <see cref="IModelSyncService"/> the step already holds — this pins that the step actually
-    /// reads the pass's return value onto its own property rather than, say, leaving it at its
-    /// reset default.
+    /// #527 round 2. ReclassifySupportAssetsAsync now runs INSIDE DiscoverNewFilesAsync itself, so
+    /// the step reads the count off the DiscoveryResult rather than calling the pass a second
+    /// time. This pins that reading, and — just as importantly — that the step does NOT also call
+    /// ReclassifySupportAssetsAsync directly any more: since the pass is self-terminating (a
+    /// reclassified row no longer matches its own candidate query), a second direct call here
+    /// would silently return 0 and overwrite the real count with it, undoing the whole fix.
     /// </summary>
     [Fact]
     public async Task Execute_StoresTheReclassifiedCountForTheReport()
     {
         var sync = new Mock<IModelSyncService>();
         sync.Setup(s => s.DiscoverNewFilesAsync(It.IsAny<IProgress<SyncProgress>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DiscoveryResult());
-        sync.Setup(s => s.ReclassifySupportAssetsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(35);
+            .ReturnsAsync(new DiscoveryResult { ReclassifiedCount = 35 });
         var (step, provider) = NewStep(sync);
         using var _ = provider;
 
@@ -106,6 +106,11 @@ public sealed class DiscoverFilesStepTests
 
         result.Succeeded.Should().BeTrue();
         step.ReclassifiedCount.Should().Be(35, "35 rows just stopped claiming to be LoRAs, and the report is how anyone learns that");
+        // Both parameters use It.IsAny: the compiler bakes a bare It.IsAny<CancellationToken>()
+        // call into an expression pinning excludeModelIds to its literal default (null), which
+        // would let a future call made with a non-null exclusion set slip past this guard unseen.
+        sync.Verify(s => s.ReclassifySupportAssetsAsync(It.IsAny<CancellationToken>(), It.IsAny<IReadOnlySet<int>?>()), Times.Never,
+            "DiscoverNewFilesAsync already ran the pass internally; a second direct call here would double-run it and, being self-terminating, silently report 0");
     }
 
     [Fact]

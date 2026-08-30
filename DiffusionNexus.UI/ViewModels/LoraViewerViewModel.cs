@@ -701,7 +701,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         {
             _logger?.Info(LogCategory.General, "LoraReconcile", "Background reconcile started (discover + verify)");
 
-            var (added, repointed, missing, moved) = await Task.Run(async () =>
+            var (added, repointed, reclassified, missing, moved) = await Task.Run(async () =>
             {
                 var discovery = await DiscoverNewFilesAsync();
                 await BackfillCivitaiModelPageIdAsync();
@@ -717,12 +717,18 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 // and so does a row the DISCOVERY half re-pointed (#537): the verify pass then sees
                 // a valid path and counts it as merely verified, so its own MovedCount misses it.
                 var result = await syncService.VerifyAndSyncFilesAsync(progress);
-                return (discovery.NewModels.Count, discovery.RepointedCount, result.MissingCount, result.MovedCount);
+                return (discovery.NewModels.Count, discovery.RepointedCount, discovery.ReclassifiedCount,
+                    result.MissingCount, result.MovedCount);
             });
 
-            var changed = added > 0 || repointed > 0 || missing > 0 || moved > 0;
+            // reclassified belongs beside repointed for the same reason (#527): DiscoverNewFilesAsync
+            // now runs the legacy-library backfill on every call, including this passive one, and a
+            // row that just dropped out of the LoRA-family grid has to trigger the same rebuild a
+            // repointed row triggers by reappearing in it.
+            var changed = added > 0 || repointed > 0 || reclassified > 0 || missing > 0 || moved > 0;
             _logger?.Info(LogCategory.General, "LoraReconcile",
-                $"Reconcile done: {added} new, {repointed} re-pointed, {missing} missing (deleted from disk), {moved} moved → rebuild={changed}");
+                $"Reconcile done: {added} new, {repointed} re-pointed, {reclassified} reclassified, " +
+                $"{missing} missing (deleted from disk), {moved} moved → rebuild={changed}");
 
             if (changed)
                 await RebuildTilesFromDatabaseAsync();

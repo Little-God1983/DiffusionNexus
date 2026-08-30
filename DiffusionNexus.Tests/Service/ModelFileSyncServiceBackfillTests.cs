@@ -210,4 +210,39 @@ public sealed class ModelFileSyncServiceBackfillTests : IDisposable
         changed.Should().Be(1);
         (await LoadTypeAsync(id)).Should().Be(ModelType.VAE);
     }
+
+    /// <summary>
+    /// #527 round 2 — the regression that would have caught the wiring gap: ReclassifySupportAssetsAsync
+    /// used to have exactly one caller (DiscoverFilesStep), reached only via the bulk "Download
+    /// Missing Metadata" button. The passive background reconcile path calls
+    /// <see cref="IModelSyncService.DiscoverNewFilesAsync"/> directly and never went through that
+    /// step, so a user who merely opened or refreshed the Viewer on a legacy library never got the
+    /// backfill. Proves the fix at its true entry point: a PLAIN call to DiscoverNewFilesAsync —
+    /// not ReclassifySupportAssetsAsync — reclassifies a pre-existing row and reports it, even
+    /// though the configured source folder has nothing new on disk (it does not even exist here),
+    /// which is deliberately the common case: a library that has already been fully indexed once
+    /// hits "no new files" on every ordinary refresh, and that is exactly the case the legacy
+    /// backfill has to reach.
+    /// </summary>
+    [Fact]
+    public async Task APlainDiscoverNewFilesAsyncCallReclassifiesALegacyRowAndReportsIt()
+    {
+        var settings = new Mock<IAppSettingsService>();
+        settings.Setup(s => s.GetEnabledLoraSourcesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([@"C:\does-not-exist-527-round2"]);
+
+        var id = await GivenModelAsync("Wan2_2_VAE_bf16", ModelType.LORA, DataSource.LocalFile, SyncOutcome.NotIdentified);
+
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var sut = new ModelFileSyncService(uow, settings.Object);
+
+        var result = await sut.DiscoverNewFilesAsync();
+
+        result.NewModels.Should().BeEmpty("nothing new is on disk — the source folder does not even exist");
+        result.RepointedCount.Should().Be(0, "nothing moved either");
+        result.ReclassifiedCount.Should().Be(1,
+            "the legacy row still has to be corrected even though this scan found nothing new to discover");
+        (await LoadTypeAsync(id)).Should().Be(ModelType.VAE);
+    }
 }

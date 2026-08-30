@@ -38,6 +38,19 @@ public record DiscoveryResult
     /// hides — so a caller deciding whether the grid needs re-projecting must count these as yes.
     /// </summary>
     public int RepointedCount { get; init; }
+
+    /// <summary>
+    /// Pre-existing rows corrected out of discovery's old blanket <c>LORA</c> stamp into their real
+    /// kind (#527) — a VAE, text encoder, ControlNet or upscaler a library predating that
+    /// detection still mislabelled. Changed, not added, the same shape of thing
+    /// <see cref="RepointedCount"/> already is. Runs on every call to
+    /// <see cref="IModelSyncService.DiscoverNewFilesAsync"/>, not only when new files are found —
+    /// a returning library with nothing new on disk is exactly the case the legacy backfill has to
+    /// reach, since every caller of discovery (the bulk sync button and the passive background
+    /// reconcile alike) gets this for free rather than only the one that also calls
+    /// <see cref="IModelSyncService.ReclassifySupportAssetsAsync"/> directly.
+    /// </summary>
+    public int ReclassifiedCount { get; init; }
 }
 
 /// <summary>
@@ -144,11 +157,24 @@ public interface IModelSyncService
     /// One-shot reclassification of rows that predate support-asset detection (#527), from the
     /// FILE NAME only. Returns how many rows changed.
     /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <param name="excludeModelIds">
+    /// Model ids to skip even though they match the candidate query. Exists for
+    /// <see cref="DiscoverNewFilesAsync"/>'s own use (#527 round 2): a model it just created in
+    /// the SAME call had its kind set from its weights via <c>AssetKindResolver</c> — the more
+    /// accurate rung — moments earlier, and looks identical to a genuinely old, never-classified
+    /// row to this query (neither has a <c>ModelSyncState</c> row yet). Re-examining a
+    /// just-created row here by name alone can only make an already-correct weight-based verdict
+    /// worse, never better. Null (the default) excludes nothing — every other caller, including
+    /// this method's own direct tests, has no such batch to protect.
+    /// </param>
     /// <remarks>
     /// Name-only on purpose: a header read per row would cost minutes on a large library over a
     /// NAS, and any row this gets wrong is corrected the next time <c>IdentifyModelStep</c> reads
     /// that file's weights. Idempotent and self-terminating — a row reclassified to VAE no longer
     /// satisfies the candidate query's <c>Type == LORA</c>.
     /// </remarks>
-    Task<int> ReclassifySupportAssetsAsync(CancellationToken cancellationToken = default);
+    Task<int> ReclassifySupportAssetsAsync(
+        CancellationToken cancellationToken = default,
+        IReadOnlySet<int>? excludeModelIds = null);
 }

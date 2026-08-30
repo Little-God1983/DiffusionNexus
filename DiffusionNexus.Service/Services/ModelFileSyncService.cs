@@ -267,68 +267,94 @@ public class ModelFileSyncService : IModelSyncService
             Phase = $"Found {allFiles.Count} total files, {newFiles.Count} are new"
         });
 
-        if (newFiles.Count == 0)
-        {
-            return new DiscoveryResult();
-        }
-
-        progress?.Report(new SyncProgress
-        {
-            Phase = "Processing new files",
-            TotalCount = newFiles.Count
-        });
-
         var newModels = new List<Model>();
         var repointed = 0;
-        var processedCount = 0;
 
-        foreach (var filePath in newFiles)
+        // Deliberately NOT an early return when newFiles.Count == 0 (#527 round 2): a returning
+        // library that has already been fully indexed once hits exactly this branch on every
+        // ordinary refresh, and that — not "new files just appeared" — is the common case a
+        // pre-#527 library's mislabelled rows need the backfill below to reach. An early return
+        // here is precisely how the passive Refresh/reconcile path (which never calls
+        // ReclassifySupportAssetsAsync on its own) used to never trigger it at all.
+        if (newFiles.Count > 0)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var fileName = Path.GetFileName(filePath);
             progress?.Report(new SyncProgress
             {
                 Phase = "Processing new files",
-                CurrentItem = fileName,
-                ProcessedCount = processedCount,
                 TotalCount = newFiles.Count
             });
 
-            // First check if we can match by hash (file was moved)
-            var fileInfo = new FileInfo(filePath);
-            var matchedFile = await TryMatchByHashAndSizeAsync(filePath, fileInfo.Length, cancellationToken);
+            var processedCount = 0;
 
-            if (matchedFile is not null)
+            foreach (var filePath in newFiles)
             {
-                // Update the existing file's path. Counted (#537): the row was stamped invalid —
-                // hidden from the grid — so this is a grid-visible change, just not a new file.
-                matchedFile.LocalPath = filePath;
-                matchedFile.IsLocalFileValid = true;
-                matchedFile.LocalFileVerifiedAt = DateTimeOffset.UtcNow;
-                repointed++;
-            }
-            else
-            {
-                // Create new model entry
-                var model = await CreateModelFromFileAsync(filePath, fileInfo, cancellationToken).ConfigureAwait(false);
-                await _unitOfWork.Models.AddAsync(model, cancellationToken).ConfigureAwait(false);
-                newModels.Add(model);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var fileName = Path.GetFileName(filePath);
+                progress?.Report(new SyncProgress
+                {
+                    Phase = "Processing new files",
+                    CurrentItem = fileName,
+                    ProcessedCount = processedCount,
+                    TotalCount = newFiles.Count
+                });
+
+                // First check if we can match by hash (file was moved)
+                var fileInfo = new FileInfo(filePath);
+                var matchedFile = await TryMatchByHashAndSizeAsync(filePath, fileInfo.Length, cancellationToken);
+
+                if (matchedFile is not null)
+                {
+                    // Update the existing file's path. Counted (#537): the row was stamped invalid —
+                    // hidden from the grid — so this is a grid-visible change, just not a new file.
+                    matchedFile.LocalPath = filePath;
+                    matchedFile.IsLocalFileValid = true;
+                    matchedFile.LocalFileVerifiedAt = DateTimeOffset.UtcNow;
+                    repointed++;
+                }
+                else
+                {
+                    // Create new model entry
+                    var model = await CreateModelFromFileAsync(filePath, fileInfo, cancellationToken).ConfigureAwait(false);
+                    await _unitOfWork.Models.AddAsync(model, cancellationToken).ConfigureAwait(false);
+                    newModels.Add(model);
+                }
+
+                processedCount++;
             }
 
-            processedCount++;
+            await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+            progress?.Report(new SyncProgress
+            {
+                Phase = "Discovery complete",
+                ProcessedCount = newFiles.Count,
+                TotalCount = newFiles.Count
+            });
         }
 
-        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        // Legacy-library backfill (#527 round 2): runs on every discovery call, not only the bulk
+        // "Download Missing Metadata" button. ReclassifySupportAssetsAsync used to be reachable
+        // only through DiscoverFilesStep's own separate call, so the passive background reconcile
+        // path — which calls this method directly and never went through that step — never ran it
+        // at all. Placed after the SaveChangesAsync above (same reasoning RepointedCount already
+        // follows: a moved-in support asset discovered THIS scan is caught up in the same call)
+        // but honours cancellationToken itself and only saves after its own loop completes in
+        // full, so a cancellation here throws rather than reporting a partial pass as a finished
+        // count — it never leaves this call returning a result the caller reads as complete.
+        //
+        // excludeModelIds protects newModels specifically: those rows were JUST classified from
+        // their weights by CreateModelFromFileAsync above (the accurate rung), and — having no
+        // ModelSyncState row yet, same as a genuinely old row — would otherwise look like an
+        // ordinary candidate to the query below. A file correctly discovered as LORA by its
+        // weights despite a name like "vae_finetune_lora.safetensors" must not have that correct
+        // verdict immediately overwritten by the weaker name-only guess this pass makes.
+        var reclassified = await ReclassifySupportAssetsAsync(
+            cancellationToken,
+            excludeModelIds: newModels.Count > 0 ? newModels.Select(m => m.Id).ToHashSet() : null)
+            .ConfigureAwait(false);
 
-        progress?.Report(new SyncProgress
-        {
-            Phase = "Discovery complete",
-            ProcessedCount = newFiles.Count,
-            TotalCount = newFiles.Count
-        });
-
-        return new DiscoveryResult { NewModels = newModels, RepointedCount = repointed };
+        return new DiscoveryResult { NewModels = newModels, RepointedCount = repointed, ReclassifiedCount = reclassified };
     }
 
     /// <inheritdoc />
@@ -535,7 +561,9 @@ public class ModelFileSyncService : IModelSyncService
     }
 
     /// <inheritdoc />
-    public async Task<int> ReclassifySupportAssetsAsync(CancellationToken cancellationToken = default)
+    public async Task<int> ReclassifySupportAssetsAsync(
+        CancellationToken cancellationToken = default,
+        IReadOnlySet<int>? excludeModelIds = null)
     {
         var candidates = await _unitOfWork.Models
             .GetSupportAssetBackfillCandidatesAsync(cancellationToken)
@@ -545,6 +573,10 @@ public class ModelFileSyncService : IModelSyncService
         foreach (var model in candidates)
         {
             cancellationToken.ThrowIfCancellationRequested();
+
+            // See the interface doc: a model DiscoverNewFilesAsync just created in the same call
+            // is already weight-classified and must never be re-guessed from its name here.
+            if (excludeModelIds is not null && excludeModelIds.Contains(model.Id)) continue;
 
             // The file name, not the model name: a user may have renamed the model in the app,
             // and it is the file on disk whose name carries the marker.

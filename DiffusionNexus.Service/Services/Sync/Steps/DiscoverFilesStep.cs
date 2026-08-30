@@ -72,11 +72,18 @@ public sealed class DiscoverFilesStep : ISyncStep
             using var scope = _scopes.CreateScope();
             var sync = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
 
+            // ReclassifySupportAssetsAsync now runs INSIDE DiscoverNewFilesAsync itself (#527
+            // round 2) — the passive background reconcile path calls that method directly and
+            // never went through this step, so a separate call here used to mean a user who only
+            // ever refreshed a legacy library never got the backfill. Read the count off the
+            // result rather than calling the pass again: reclassification is self-terminating (a
+            // reclassified row no longer matches its own candidate query), so a second direct call
+            // here would not double the count — it would silently overwrite it with 0 and undo
+            // this line's whole purpose.
             var discovered = await sync.DiscoverNewFilesAsync(progress: null, ct).ConfigureAwait(false);
             DiscoveredCount = discovered.NewModels.Count;
             RepointedCount = discovered.RepointedCount;
-
-            ReclassifiedCount = await sync.ReclassifySupportAssetsAsync(ct).ConfigureAwait(false);
+            ReclassifiedCount = discovered.ReclassifiedCount;
 
             _logger?.Info(LogCategory.FileSystem, LogSource,
                 $"Discovered {DiscoveredCount} new model file(s), re-pointed {RepointedCount} moved, " +

@@ -54,11 +54,18 @@ public sealed class LibrarySyncServiceTests : IDisposable
 
         // The real DiscoverFilesStep delegates the disk scan to this; the sync service reads the
         // resulting count back off the step for the report.
+        // #527 round 2: ReclassifySupportAssetsAsync now runs inside DiscoverNewFilesAsync itself,
+        // so its count travels on the same DiscoveryResult RepointedCount already does — no
+        // separate ReclassifySupportAssetsAsync setup here, matching what DiscoverFilesStep
+        // actually calls now.
         var modelSync = new Mock<IModelSyncService>();
         modelSync.Setup(s => s.DiscoverNewFilesAsync(It.IsAny<IProgress<SyncProgress>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => new DiscoveryResult { NewModels = _discovered, RepointedCount = _repointed });
-        modelSync.Setup(s => s.ReclassifySupportAssetsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => _reclassified);
+            .ReturnsAsync(() => new DiscoveryResult
+            {
+                NewModels = _discovered,
+                RepointedCount = _repointed,
+                ReclassifiedCount = _reclassified,
+            });
         services.AddScoped(_ => modelSync.Object);
 
         _serviceProvider = services.BuildServiceProvider();
@@ -295,8 +302,10 @@ public sealed class LibrarySyncServiceTests : IDisposable
     }
 
     /// <summary>
-    /// #527. The discover step's third write: pre-existing rows a library predating support-asset
-    /// detection still stamped LORA, corrected in place. Changed, not added, so it travels beside
+    /// #527 round 2. The discover step's third write: pre-existing rows a library predating
+    /// support-asset detection still stamped LORA, corrected in place inside
+    /// <see cref="IModelSyncService.DiscoverNewFilesAsync"/> itself now, not via a second call
+    /// this service makes on its own. Changed, not added, so it travels beside
     /// <see cref="SyncReport.FilesRepointed"/> rather than folding into either existing count.
     /// </summary>
     [Fact]
