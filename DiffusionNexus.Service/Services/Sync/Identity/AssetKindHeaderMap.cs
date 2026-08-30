@@ -53,12 +53,27 @@ public static class AssetKindHeaderMap
     // dict, which serializes with underscores, while the dot-spelled legacy format only ever named
     // its pair up/down. A needle for a spelling no tool writes is a needle that can only misfire.
     //
-    // Normalizing "." to "_" before matching would collapse both spellings into one needle and is
-    // deliberately NOT done: the VAE rung's "encoder.down."/"decoder.up.", the TextEncoder rung's
-    // "text_model.encoder.layers" and the ".alpha" suffix rule all depend on the dots being real.
+    // "lora_linear_layer" is a THIRD spelling and is NOT redundant with either pair — do not remove
+    // it as such. Legacy diffusers patched the text encoder through PatchedLoraProjection, which
+    // holds the adapter as an attribute of that name, so its keys read
+    // "…q_proj.lora_linear_layer.down.weight": the segment sits BETWEEN "lora" and "down", so the
+    // key contains neither "lora_down" nor "lora.down" and both pairs above miss it. It then matches
+    // the TextEncoder rung, stamping a real LoRA TextEncoder from its weights.
+    //
+    // The file's own UNet keys ("unet.…processor.to_q_lora.down.weight") would otherwise rescue it,
+    // but they cannot be relied on: SafetensorsHeaderReader samples only the first
+    // MaxSampledTensorKeys root properties in file order, and "text_encoder…" sorts before "unet…",
+    // so an alphabetically written header can present 64 text-encoder keys and no UNet key at all.
+    // Same sampling hazard the composite guard below exists for, reached from the other side.
+    //
+    // Normalizing "." to "_" before matching would collapse the two up/down spellings into one
+    // needle (it would not help this one) and is deliberately NOT done: the VAE rung's
+    // "encoder.down."/"decoder.up.", the TextEncoder rung's "text_model.encoder.layers" and the
+    // ".alpha" suffix rule all depend on the dots being real.
     private static readonly string[] LoraNeedles =
     {
-        "lora_up", "lora_down", "lora.up", "lora.down", "lora_a.", "lora_b.", "lora_unet", "lora_te",
+        "lora_up", "lora_down", "lora.up", "lora.down", "lora_linear_layer",
+        "lora_a.", "lora_b.", "lora_unet", "lora_te",
     };
 
     private const string LoraAlphaSuffix = ".alpha";

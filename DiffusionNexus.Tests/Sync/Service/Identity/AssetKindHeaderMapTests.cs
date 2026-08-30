@@ -97,6 +97,43 @@ public sealed class AssetKindHeaderMapTests
         => AssetKindHeaderMap.Map(Header(key)).Should().Be(ModelType.LORA);
 
     /// <summary>
+    /// The OTHER legacy diffusers spelling, and the one the dotted needles still miss. Its text
+    /// encoder half was patched through <c>PatchedLoraProjection</c>, which holds the adapter as an
+    /// attribute named <c>lora_linear_layer</c>, so the pair serializes as
+    /// "…q_proj.lora_linear_layer.down.weight". That segment sits BETWEEN "lora" and "down", so the
+    /// key contains neither "lora_down" nor "lora.down" — it misses rung 1 and matches the
+    /// TextEncoder rung's "text_model.encoder.layers" instead. Same bug shape as the dotted one
+    /// above, same unrecoverable consequence: a real LoRA stamped TextEncoder from its weights.
+    /// </summary>
+    [Theory]
+    [InlineData("text_encoder.text_model.encoder.layers.0.self_attn.q_proj.lora_linear_layer.down.weight")]
+    [InlineData("text_encoder.text_model.encoder.layers.0.self_attn.q_proj.lora_linear_layer.up.weight")]
+    public void LegacyDiffusersTextEncoderProjectionKeysStillNameALora(string key)
+        => AssetKindHeaderMap.Map(Header(key)).Should().Be(ModelType.LORA);
+
+    /// <summary>
+    /// Why the spelling above has to be a needle rather than be left to the file's other keys to
+    /// rescue. The same file's UNet half ("unet.…processor.to_q_lora.down.weight") DOES match rung 1
+    /// — but <see cref="SafetensorsHeaderReader.MaxSampledTensorKeys"/> caps the sample at the first
+    /// 64 root properties in file order, and "text_encoder…" sorts before "unet…", so an
+    /// alphabetically written header can hand this map 64 text-encoder keys and not one UNet key.
+    /// This fixture is that truncated sample: every key is text-encoder-spelled, exactly as the map
+    /// would see it, and there is nothing else in it to fall back on.
+    /// </summary>
+    [Fact]
+    public void ADiffusersLoraSampledEntirelyAtItsTextEncoderHalfIsStillALora()
+    {
+        var header = Header(
+            "text_encoder.text_model.encoder.layers.0.self_attn.k_proj.lora_linear_layer.down.weight",
+            "text_encoder.text_model.encoder.layers.0.self_attn.k_proj.lora_linear_layer.up.weight",
+            "text_encoder.text_model.encoder.layers.0.self_attn.out_proj.lora_linear_layer.down.weight",
+            "text_encoder.text_model.encoder.layers.0.self_attn.q_proj.lora_linear_layer.down.weight",
+            "text_encoder.text_model.encoder.layers.0.self_attn.v_proj.lora_linear_layer.down.weight");
+
+        AssetKindHeaderMap.Map(header).Should().Be(ModelType.LORA);
+    }
+
+    /// <summary>
     /// The guard for the rung ORDER itself, which the class remarks call load-bearing. The key
     /// order here is the whole point: a TextEncoder-only key comes FIRST, a LoRA-only key SECOND.
     /// Four sequential per-rung passes answer LoRA — the LoRA rung scans every key before the
