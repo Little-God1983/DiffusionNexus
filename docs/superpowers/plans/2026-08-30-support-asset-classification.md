@@ -1774,183 +1774,209 @@ git commit -m "fix(sorter): a support asset is identified, not an unidentified L
 
 ---
 
-### Task 12: The Viewer badges support assets and can hide them
+### Task 12: The Viewer explains why support assets are not in the grid
+
+> **Re-planned mid-execution.** The original Task 12 added a `ShowSupportAssets` filter,
+> a `HiddenSupportAssetCount`, and a kind badge on the tile. All three were built on a
+> false premise. `ModelFileSyncService.LoadCachedFilesAsync` — the only path that builds
+> the Viewer's tiles (`LoraViewerViewModel.LoadCachedTilesAsync:659`) — already drops
+> every model failing `IsLoraFamily` (`ModelFileSyncService.cs:125,157`), a deliberate
+> pre-existing rule: *"The LoRA viewer is LoRA-family only — exclude upscalers, VAEs,
+> checkpoints, text encoders etc. that may share the configured folders."*
+>
+> So the moment Tasks 6–8 stop stamping these files `LORA`, they leave the grid on their
+> own. A filter over `AllTiles` would filter a set that can never contain them, its count
+> would always read 0, and a badge on a tile that is never built would never render.
+>
+> The issue's Viewer complaint — *"they occupy tiles, get thumbnail fetches and sync
+> attempts"* — is therefore already satisfied by the earlier tasks. What is genuinely
+> missing is the other half: on a legacy library those files **silently disappear** from
+> a grid the user has been looking at for months, with nothing saying where they went.
+> That is what this task now fixes.
 
 **Files:**
-- Modify: `DiffusionNexus.UI/ViewModels/ModelTileViewModel.cs:377`
-- Modify: `DiffusionNexus.UI/ViewModels/LoraViewerViewModel.cs:2770-2833` (`ApplyFilters`), `:614`/`:629` (status line)
-- Modify: `DiffusionNexus.UI/Views/LoraViewerView.axaml` (the filter flyout and the tile template)
-- Test: `DiffusionNexus.Tests/Viewer/LoraViewerViewModelSupportAssetFilterTests.cs` (create). Mirror the harness in the existing `DiffusionNexus.Tests/Viewer/LoraViewerViewModelBaseModelFilterTests.cs` — it already builds a viewer over tiles and exercises `ApplyFilters`, which is exactly the shape needed here. Read it before writing anything.
+- Modify: `DiffusionNexus.Domain/Services/IModelSyncService.cs`
+- Modify: `DiffusionNexus.Service/Services/ModelFileSyncService.cs:98-152`
+- Modify: `DiffusionNexus.UI/ViewModels/LoraViewerViewModel.cs:609-630`
+- Test: `DiffusionNexus.Tests/Service/ModelFileSyncServiceSupportAssetCountTests.cs` (create)
 
 **Interfaces:**
-- Consumes: `Model.Type` (Task 6), `ModelTypeExtensions` (Task 1).
-- Produces: `ModelTileViewModel.IsSupportAsset` (`bool`), `ModelTileViewModel.AssetKindLabel` (`string`); `LoraViewerViewModel.ShowSupportAssets` (`bool`, observable, default `false`), `LoraViewerViewModel.HiddenSupportAssetCount` (`int`).
+- Consumes: `ModelTypeExtensions.IsSupportAsset` (Task 1), `Model.Type` as written by Tasks 6–8.
+- Produces: `IModelSyncService.CountExcludedSupportAssetsAsync(CancellationToken = default)` → `Task<int>`.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `DiffusionNexus.Tests/Viewer/LoraViewerViewModelSupportAssetFilterTests.cs`, reusing the construction helpers from `LoraViewerViewModelBaseModelFilterTests.cs`:
+Create `DiffusionNexus.Tests/Service/ModelFileSyncServiceSupportAssetCountTests.cs`, mirroring the fixture in `DiffusionNexus.Tests/Service/ModelFileSyncServiceBackfillTests.cs` — read that file first and reuse its harness shape (shared kept-open SQLite connection, `AddDataAccessLayer` with `UseSqlite`, `EnsureCreated`, mocked `IAppSettingsService` returning a temp source folder, scope disposed before the provider). Do not invent a second harness.
 
 ```csharp
     /// <summary>
-    /// #527: 35 of 328 files in a real library are VAEs and text encoders. They occupy tiles, draw
-    /// thumbnail fetches and retry Civitai forever. Hidden by default — but named in the status
-    /// line, because a file silently missing from the grid is worse than one that is merely filtered.
+    /// On a legacy library these files vanish from a grid the user has watched for months,
+    /// because LoadCachedFilesAsync drops everything outside IsLoraFamily. The count is what
+    /// turns a silent disappearance into an explained one.
     /// </summary>
     [Fact]
-    public void SupportAssetsAreHiddenByDefault()
+    public async Task CountsTheSupportAssetsTheGridIsHiding()
     {
-        var vm = GivenViewerWith(
-            Tile("MyChar_Pony_v2", ModelType.LORA),
-            Tile("Wan2_2_VAE_bf16", ModelType.VAE),
-            Tile("clip_g_hidream", ModelType.TextEncoder));
+        await GivenModelAsync("Wan2_2_VAE_bf16", ModelType.VAE);
+        await GivenModelAsync("clip_g_hidream", ModelType.TextEncoder);
+        await GivenModelAsync("MyChar_Pony_v2", ModelType.LORA);
 
-        vm.FilteredTiles.Should().ContainSingle().Which.DisplayName.Should().Be("MyChar_Pony_v2");
-        vm.HiddenSupportAssetCount.Should().Be(2);
+        (await _service.CountExcludedSupportAssetsAsync()).Should().Be(2);
+    }
+
+    /// <summary>
+    /// Only the support kinds count. A checkpoint is also excluded from the grid, but it was
+    /// never a LoRA the user expected to see there, and #527 is not about checkpoints — saying
+    /// "3 support assets hidden" when one of them is a checkpoint would be a wrong explanation.
+    /// </summary>
+    [Fact]
+    public async Task DoesNotCountOtherNonLoraTypes()
+    {
+        await GivenModelAsync("SomeCheckpoint", ModelType.Checkpoint);
+        await GivenModelAsync("SomeEmbedding", ModelType.TextualInversion);
+        await GivenModelAsync("SD3-VAE", ModelType.VAE);
+
+        (await _service.CountExcludedSupportAssetsAsync()).Should().Be(1);
+    }
+
+    /// <summary>
+    /// The count describes the grid, so it must honour the same enabled-source-folder rule the
+    /// grid does — a VAE under a source the user disabled is not being hidden by this feature.
+    /// </summary>
+    [Fact]
+    public async Task IgnoresFilesOutsideTheEnabledSources()
+    {
+        await GivenModelAsync("Wan2_2_VAE_bf16", ModelType.VAE, underEnabledSource: false);
+
+        (await _service.CountExcludedSupportAssetsAsync()).Should().Be(0);
     }
 
     [Fact]
-    public void TurningTheToggleOnShowsThem()
+    public async Task IsZeroWhenTheLibraryHoldsOnlyLoras()
     {
-        var vm = GivenViewerWith(
-            Tile("MyChar_Pony_v2", ModelType.LORA),
-            Tile("Wan2_2_VAE_bf16", ModelType.VAE));
+        await GivenModelAsync("MyChar_Pony_v2", ModelType.LORA);
 
-        vm.ShowSupportAssets = true;
-
-        vm.FilteredTiles.Should().HaveCount(2);
-        vm.HiddenSupportAssetCount.Should().Be(0);
+        (await _service.CountExcludedSupportAssetsAsync()).Should().Be(0);
     }
-
-    /// <summary>The badge names the kind with the same string the sorter's folder uses.</summary>
-    [Fact]
-    public void ASupportAssetTileCarriesItsKindLabel()
-    {
-        var tile = Tile("Wan2_2_VAE_bf16", ModelType.VAE);
-
-        tile.IsSupportAsset.Should().BeTrue();
-        tile.AssetKindLabel.Should().Be("VAE");
-    }
-
-    [Fact]
-    public void ALoraTileCarriesNoBadge()
-        => Tile("MyChar_Pony_v2", ModelType.LORA).IsSupportAsset.Should().BeFalse();
 ```
+
+Write the helper `GivenModelAsync(string name, ModelType type, bool underEnabledSource = true)` → `Task<int>`, inserting a `Model` with one `ModelVersion` and one `ModelFile` whose `LocalPath` sits under the mocked enabled source (or under an unrelated temp folder when `underEnabledSource` is false), `IsLocalFileValid = true`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `dotnet test DiffusionNexus.Tests/DiffusionNexus.Tests.csproj --filter "FullyQualifiedName~LoraViewerViewModelFilterTests"`
-Expected: FAIL — none of the members exist.
+Run: `dotnet test DiffusionNexus.Tests/DiffusionNexus.Tests.csproj --filter "FullyQualifiedName~DiffusionNexus.Tests.Service.ModelFileSyncServiceSupportAssetCountTests"`
+Expected: FAIL — `CountExcludedSupportAssetsAsync` does not exist.
 
-- [ ] **Step 3: Add the tile members**
+- [ ] **Step 3: Add the interface member**
 
-In `ModelTileViewModel.cs`, beside `ModelTypeDisplay` (line 377):
-
-```csharp
-    /// <summary>
-    /// Whether this tile is one of the VAEs, text encoders, ControlNets or upscalers a LoRA folder
-    /// also holds (#527) — the things that can never match on Civitai and are not what this grid
-    /// is for.
-    /// </summary>
-    public bool IsSupportAsset => ModelEntity?.Type.IsSupportAsset() ?? false;
-
-    /// <summary>
-    /// The badge text — the same string the sorter names its destination folder with, so a user
-    /// who sees "VAE" here finds the file in "VAE\" there. Empty for an ordinary LoRA.
-    /// </summary>
-    public string AssetKindLabel => IsSupportAsset ? ModelEntity!.Type.DisplayName() : string.Empty;
-```
-
-Raise both alongside `ModelTypeDisplay` at line ~1061:
-
-```csharp
-        OnPropertyChanged(nameof(IsSupportAsset));
-        OnPropertyChanged(nameof(AssetKindLabel));
-```
-
-- [ ] **Step 4: Add the filter**
-
-In `LoraViewerViewModel.cs`, beside the other filter state:
+In `DiffusionNexus.Domain/Services/IModelSyncService.cs`:
 
 ```csharp
     /// <summary>
-    /// Whether the grid shows support assets — VAEs, text encoders, ControlNets, upscalers (#527).
-    /// Off by default: they can never match on Civitai, so every one of them is a tile that draws
-    /// a thumbnail fetch and a sync attempt for nothing. Never a silent disappearance — the status
-    /// line names how many are hidden.
+    /// How many support assets — VAEs, ControlNets, upscalers, text encoders — the LoRA grid is
+    /// currently leaving out (#527).
     /// </summary>
-    [ObservableProperty]
-    private bool _showSupportAssets;
-
-    /// <summary>How many tiles the support-asset filter is currently hiding.</summary>
-    [ObservableProperty]
-    private int _hiddenSupportAssetCount;
-
-    partial void OnShowSupportAssetsChanged(bool value) => ApplyFilters();
+    /// <remarks>
+    /// <see cref="LoadCachedFilesAsync"/> has always dropped everything outside the LoRA family,
+    /// which is correct and predates this feature. What is new is that these files now have a
+    /// TYPE saying what they are, so on a legacy library they leave a grid the user has been
+    /// looking at for months. A file that disappears with no explanation reads as data loss;
+    /// this count is what lets the Viewer say where it went. Counted separately from the load
+    /// rather than returned by it, so no existing caller's shape changes for a number only one
+    /// of them wants.
+    /// <para>
+    /// Honours the enabled LoRA sources for the same reason the load does: a VAE under a source
+    /// the user has disabled is not being hidden by this feature, and counting it would send
+    /// them looking for a file that was never going to show.
+    /// </para>
+    /// </remarks>
+    Task<int> CountExcludedSupportAssetsAsync(CancellationToken cancellationToken = default);
 ```
 
-In `ApplyFilters`, after the NSFW predicate and before the base-model predicate:
+- [ ] **Step 4: Implement it**
+
+In `ModelFileSyncService.cs`, beside `LoadCachedFilesAsync` so the two rules stay adjacent. Reuse whatever this file already uses to resolve and normalize enabled roots and to test a path against them — read `LoadCachedFilesAsync` (`:98-152`) first and follow it exactly rather than restating the root-matching logic:
 
 ```csharp
-        if (!ShowSupportAssets)
-        {
-            query = query.Where(t => !t.IsSupportAsset);
-        }
-```
-
-and — **above** the `if (filtered.SequenceEqual(FilteredTiles)) return;` early return, not after it, or a pass that changes no tiles would leave the count stale:
-
-```csharp
-        // Before the unchanged-result early return: this count describes what the filter is
-        // holding back, which is true whether or not the visible set changed this pass.
-        HiddenSupportAssetCount = ShowSupportAssets ? 0 : AllTiles.Count(t => t.IsSupportAsset);
-```
-
-Update both status-line assignments (lines ~614 and ~629) to name the hidden count when there is one — extract a helper so the two sites cannot drift:
-
-```csharp
-    /// <summary>
-    /// "Loaded 293 models (312 tiles)", plus "· 35 support assets hidden" when the filter is
-    /// holding some back. Naming them is the whole reason hiding them by default is acceptable.
-    /// </summary>
-    private string BuildLoadedStatus(int modelCount)
+    /// <inheritdoc />
+    public async Task<int> CountExcludedSupportAssetsAsync(CancellationToken cancellationToken = default)
     {
-        var status = $"Loaded {modelCount} models ({AllTiles.Count} tiles)";
-        return HiddenSupportAssetCount > 0
-            ? $"{status} · {HiddenSupportAssetCount} support assets hidden"
-            : status;
+        var all = await _unitOfWork.Models
+            .GetModelsWithLocalFilesLightAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var enabledRoots = await _settingsService.GetEnabledLoraSourcesAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var normalizedRoots = NormalizeRoots(enabledRoots);
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var model in all)
+        {
+            // Only the kinds this feature classifies. A checkpoint is also kept out of the grid,
+            // but it was never a LoRA the user expected to see there — counting it would make the
+            // Viewer's explanation wrong rather than merely broad.
+            if (!model.Type.IsSupportAsset()) continue;
+
+            foreach (var file in model.Versions.SelectMany(v => v.Files))
+            {
+                if (string.IsNullOrEmpty(file.LocalPath)) continue;
+                if (!file.IsLocalFileValid && file.LocalFileVerifiedAt != null) continue;
+                if (MatchEnabledRoot(file.LocalPath, normalizedRoots) is null) continue;
+                seen.Add(file.LocalPath);
+            }
+        }
+
+        return seen.Count;
     }
 ```
 
-Call it in place of both interpolated strings, after `ReplaceTiles(...)` (which runs `ApplyFilters`, so the count is current).
-
-Add `using DiffusionNexus.Domain.Enums;` to both files if not present.
+`NormalizeRoots` may not exist as a named helper — `LoadCachedFilesAsync` normalizes inline. If so, extract that normalization into a private helper and call it from both, so the count and the load cannot disagree about what an enabled root is. Do not copy the expression.
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `dotnet test DiffusionNexus.Tests/DiffusionNexus.Tests.csproj --filter "FullyQualifiedName~LoraViewer"`
-Expected: PASS.
+Run: `dotnet test DiffusionNexus.Tests/DiffusionNexus.Tests.csproj --filter "FullyQualifiedName~DiffusionNexus.Tests.Service.ModelFileSyncServiceSupportAssetCountTests"`
+Expected: PASS (4 cases).
 
-- [ ] **Step 6: Wire the view**
+- [ ] **Step 6: Say it in the status line**
 
-In `DiffusionNexus.UI/Views/LoraViewerView.axaml`:
+In `LoraViewerViewModel.cs`, both status assignments after a cached load (`:614` and `:629`) currently read `$"Loaded {count} models ({AllTiles.Count} tiles)"`. Extract one helper so the two cannot drift, and append the explanation only when there is something to explain:
 
-- In the filter flyout that hosts the base-model filter, add a `CheckBox` bound to `ShowSupportAssets` with the content `Show support assets (VAE, ControlNet, …)`. Match the surrounding controls' styling exactly — do not introduce new brushes or spacing values.
-- In the tile template, add a badge `Border` bound to `AssetKindLabel` with `IsVisible="{Binding IsSupportAsset}"`. Copy the chip styling from `LoraSorterView.axaml:123-127` (`Background="#2F2F33"`, `BorderBrush="#454549"`, `BorderThickness="1"`, `CornerRadius="3"`, `Padding="5,0,5,1"`, `FontSize="10"`, `Opacity="0.85"`) so the two surfaces read as the same label.
+```csharp
+    /// <summary>
+    /// "Loaded 293 models (312 tiles)", plus "· 35 support assets (VAE, ControlNet, …) not shown"
+    /// when the library holds some. Naming them is the whole point: on a legacy library these
+    /// files leave a grid the user has watched for months, and a file that vanishes without a
+    /// reason reads as data loss rather than as tidying.
+    /// </summary>
+    private static string BuildLoadedStatus(int modelCount, int tileCount, int excludedSupportAssets)
+        => excludedSupportAssets > 0
+            ? $"Loaded {modelCount} models ({tileCount} tiles) · {excludedSupportAssets} support assets (VAE, ControlNet, …) not shown"
+            : $"Loaded {modelCount} models ({tileCount} tiles)";
+```
 
-- [ ] **Step 7: Build the UI project**
+Call `CountExcludedSupportAssetsAsync` inside the same background `Task.Run` scope that `LoadCachedTilesAsync` already uses, so the count is fetched off the UI thread with the tiles rather than adding a second round trip on the UI thread. If that means widening `LoadCachedTilesAsync`'s return tuple, do that.
+
+- [ ] **Step 7: Run the viewer suites**
+
+Run: `dotnet test DiffusionNexus.Tests/DiffusionNexus.Tests.csproj --filter "FullyQualifiedName~DiffusionNexus.Tests.Viewer"`
+Expected: PASS. Any viewer test asserting on the exact `SyncStatus` string will need updating — update it to the new expected text, do not weaken it to a substring match.
+
+- [ ] **Step 8: Build the UI project**
 
 Run: `dotnet build DiffusionNexus.UI/DiffusionNexus.UI.csproj -c Debug`
-Expected: 0 errors, 0 warnings. XAML binding errors surface as build warnings here — treat any as a failure.
+Expected: 0 errors, 0 warnings.
 
-- [ ] **Step 8: Full suite and commit**
+- [ ] **Step 9: Full suite and commit**
 
 Run: `dotnet test DiffusionNexus.Tests/DiffusionNexus.Tests.csproj`
-Expected: all green except the two opt-in online canaries, which skip.
+Expected: all green except the opt-in online canaries, which skip.
 
 ```bash
 git add -A
-git commit -m "feat(viewer): badge support assets and keep them out of the grid by default"
+git commit -m "feat(viewer): say how many support assets the grid is leaving out"
 ```
+
+**Not doing, deliberately:** a `ShowSupportAssets` toggle that relaxes `IsLoraFamily`. The pre-existing exclusion is correct and deliberate, the sorter's preview is where these files are meant to be seen and acted on, and adding a second place to view them would mean re-admitting to the grid exactly the tiles the issue asks to get out of it. If a user ever needs one back, the per-tile "Download Metadata" path and the sorter both still reach it.
 
 ---
 
@@ -1959,6 +1985,6 @@ git commit -m "feat(viewer): badge support assets and keep them out of the grid 
 Automated tests cannot see the two things this feature is actually judged on.
 
 1. **Sorter preview.** Point the sorter at a real library holding VAEs and upscalers. The After Sorting tree must grow `VAE`, `ControlNet`, `Text Encoder` and `Upscaler` rows carrying their own chips and a ✓; `Unknown` must shrink by roughly the number of support assets; no base-model row may still show a non-LoRA chip. Then **run the sort** and confirm the files physically land in those folders.
-2. **Viewer.** The grid loses those tiles, the status line names how many are hidden, the toggle brings them back, and opening one shows `Type: VAE` rather than `Type: LORA` in the detail panel.
+2. **Viewer.** Run a sync, then reopen the LoRA Viewer. The grid should lose the support-asset tiles and the status line should say how many it left out — e.g. `Loaded 293 models (312 tiles) · 35 support assets (VAE, ControlNet, …) not shown`. The important half of this check is that the number is **plausible for your library**: it is the only thing standing between "the app tidied up" and "the app lost 35 of my files."
 
 Record the outcome on the PR — this repo's convention is that a smoke that was not run is stated as not run.

@@ -202,14 +202,35 @@ the issue's own question 4 settles the trade — misfiling a real LoRA is the wo
 `ModelTypeDisplay` already binds `Model.Type` into the detail panel's `Type:` line
 (`ModelDetailView.axaml:306`), so that line starts telling the truth with no view change.
 
-Added:
+**The filter this section originally specified turned out to be unnecessary, and would
+have been inert.** `ModelFileSyncService.LoadCachedFilesAsync` — the only path that builds
+the Viewer's tiles (`LoraViewerViewModel.LoadCachedTilesAsync:659`) — already drops every
+model failing `IsLoraFamily` (`ModelFileSyncService.cs:125,157`), under a deliberate
+pre-existing rule: *"The LoRA viewer is LoRA-family only — exclude upscalers, VAEs,
+checkpoints, text encoders etc. that may share the configured folders."*
 
-- A kind badge on the tile for any support asset.
-- A **Support assets** toggle in the same filter surface as the base-model filter,
-  applied in `LoraViewerViewModel.ApplyFilters` alongside the existing predicates.
+So the moment §3 stops stamping these files `LORA`, they leave the grid by themselves. A
+`ShowSupportAssets` predicate over the tile collection would filter a set that can never
+contain them, its hidden-count would always read zero, and a per-tile badge would render
+on a tile that is never built. The issue's Viewer complaint — *"they occupy tiles, get
+thumbnail fetches and sync attempts"* — is satisfied by §3 alone.
 
-Default **hidden**, with the status line naming the count —
-`Loaded 293 models (35 support assets hidden)` — so nothing disappears silently.
+What §3 does create is a new problem this section owns instead: on a legacy library those
+files **silently disappear** from a grid the user has been looking at for months. A file
+that vanishes without a reason reads as data loss, not as tidying. So the Viewer's work is
+to explain the exclusion, not to perform it:
+
+- `IModelSyncService.CountExcludedSupportAssetsAsync` counts the support assets under the
+  enabled sources — honouring the same enabled-root rule the load honours, and counting
+  only the four support kinds, never checkpoints or embeddings, which were never LoRAs the
+  user expected to see.
+- The status line says so: `Loaded 293 models (312 tiles) · 35 support assets (VAE,
+  ControlNet, …) not shown`.
+
+Deliberately **not** added: a toggle that relaxes `IsLoraFamily`. The exclusion is correct
+and predates this work; the sorter's preview is where these files are meant to be seen and
+acted on; and re-admitting them to the grid behind a switch would put back exactly the
+tiles the issue asks to remove.
 
 ## §6 Testing
 
