@@ -22,9 +22,10 @@ namespace DiffusionNexus.Service.Services.Sync.Identity;
 /// Mirrors the same shape as the base-model chain (header, then
 /// <see cref="FilenameBaseModelHeuristic"/>), for the same reason.
 /// <para>
-/// Rung 2 is additionally gated on the container being one that could never have had a header —
-/// see <see cref="Resolve(SafetensorsHeaderInfo?, string?)"/>: a <c>.safetensors</c> we merely
-/// FAILED to read is not evidence, and must not be named from its file name.
+/// Rung 2 is reached only where there was evidence to gather — a header we DID read that matched
+/// no rung, or a pickle that could never have had one. A <c>.safetensors</c> we merely FAILED to
+/// read is neither, and answers <see cref="ModelType.LORA"/> rather than being named from its file
+/// name; see <see cref="Resolve(SafetensorsHeaderInfo?, string?)"/>.
 /// </para>
 /// </remarks>
 public static class AssetKindResolver

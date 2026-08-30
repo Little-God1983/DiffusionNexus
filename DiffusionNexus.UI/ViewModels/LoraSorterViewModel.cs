@@ -962,12 +962,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 ModelType? fileIdentityKind = null;
                 if (LoraPathBuilder.IsPlaceholderBaseModel(baseModelRaw))
                 {
-                    // Real I/O — a FileStream open plus up to SafetensorsHeaderReader.MaxHeaderBytes
-                    // of reads, serially, over what may well be a NAS. Reported for the same reason
-                    // the unknown-file loop below reports: without it the overlay sits on the static
-                    // "Computing preview…" for the whole phase and an exported log has nothing
-                    // between the enumeration line and the end of the pass, so slow and hung look
-                    // identical.
+                    // Real I/O, reported for the reason ReportHeaderRead states.
                     headersRead++;
                     ReportHeaderRead();
 
