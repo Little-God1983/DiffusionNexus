@@ -132,20 +132,53 @@ re-stamps `Type` from that same read, so a row classified by name alone is corre
 once its weights are read. A Civitai `Matched` answer is authoritative and always wins.
 
 **Backfill.** Every row in an existing library says `LORA`. A one-shot, name-only pass
-runs after discovery over rows that are all of:
+runs inside `DiscoverNewFilesAsync` — so every discovery path gets it, not only the
+bulk-sync step — over rows that are all of:
 
 - `Source == DataSource.LocalFile`
 - `Type == ModelType.LORA`
 - sync outcome `NotIdentified` or `None`
+- **a file whose header cannot speak**: a `.pth` / `.ckpt` pickle, never a
+  `.safetensors` container
 
 That is exactly the cohort Civitai has already failed to identify, which is where the
 support assets live. A `Matched` LoRA is never touched. The pass is idempotent and
-self-terminating: a row reclassified to `VAE` no longer satisfies `Type == LORA`.
+self-terminating: a row reclassified to `VAE` no longer satisfies `Type == LORA`. It also
+excludes the rows the calling discovery pass has just created, which were already
+classified from their weights — without that, the pass would overwrite a correct header
+verdict with a worse name guess inside the same call.
 
-Accepted residual: a self-trained LoRA named `my_vae_test.safetensors` is flipped by
-name alone, and corrected the next time `IdentifyModelStep` reads its header, because
-the header proves `LORA`. A bounded, self-closing window — not a permanent mislabel.
-No new column is required to track it.
+### Why the extension condition is load-bearing
+
+An earlier draft of this design let the pass classify any candidate by name, and argued
+the residual was acceptable: a self-trained LoRA named `my_vae_test.safetensors` would be
+flipped by name alone, then corrected the next time `IdentifyModelStep` read its header —
+"a bounded, self-closing window, not a permanent mislabel". **That argument was wrong,
+and the error was material.**
+
+`SyncStateRepository` filters every non-`Models`-scoped sync to
+`LoraFamily = [LORA, LoCon, DoRA, Unknown]`, and `ModelFileSyncService.IsLoraFamily`
+mirrors that same set to decide what the LoRA Viewer displays. A row stamped `VAE` is
+therefore *both* invisible in the Viewer *and* never selected by a bulk sync again. The
+window neither was bounded nor closed: a misfired name marker made a real LoRA vanish
+from the user's library permanently, recoverable only by editing the database by hand.
+
+Restricting the pass to pickles removes the hazard at its source instead of mitigating
+it. Every irreversible stamp now rests on the best evidence that could exist for that
+file. A pickle has no readable header, so its name is the only signal there will ever be —
+and the markers that fire there (`4x-`, `ultrasharp`, `esrgan`, `lsdir`) do not occur in
+LoRA names. A `.safetensors` file is decided by its weights, always, by the Identify rung
+above.
+
+The rejected alternative was widening `LoraFamily` to include the support kinds. That
+would put every bulk run onto VAEs and text encoders — precisely the wasted sync attempts
+the issue complains about — to buy a correction path that scoping the pass makes
+unnecessary.
+
+The cost of the chosen rule: a `.safetensors` support asset stays `LORA`-typed until a
+sync classifies it from its weights, so on a legacy library the sorter's kind folders
+appear one sync later than they otherwise would. That is a delay, not a wrong answer, and
+the issue's own question 4 settles the trade — misfiling a real LoRA is the worse failure.
 
 ## §4 Sorter
 
