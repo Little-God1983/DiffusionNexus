@@ -5,10 +5,24 @@ using DiffusionNexus.Domain.Utilities;
 namespace DiffusionNexus.Service.Services.Sync.Identity;
 
 /// <summary>The identity-relevant fields of a safetensors JSON header's __metadata__ block.</summary>
+/// <param name="TensorKeys">
+/// A bounded sample of the header's TENSOR NAMES — every root property other than
+/// <c>__metadata__</c>, capped at <see cref="SafetensorsHeaderReader.MaxSampledTensorKeys"/>.
+/// These say what the container actually is (<c>lora_up</c> vs <c>post_quant_conv</c> vs
+/// <c>text_model.encoder.layers</c>) where the metadata block says only what it was trained
+/// against — and a VAE or text encoder extracted from a checkpoint carries no metadata block at
+/// all. Defaults to null so existing three-argument construction sites keep compiling; callers
+/// read it through the non-null <see cref="Keys"/>.
+/// </param>
 public sealed record SafetensorsHeaderInfo(
     string? BaseModelVersion,   // __metadata__["ss_base_model_version"]
     string? Architecture,       // __metadata__["modelspec.architecture"]
-    string? ModelNameHint);     // __metadata__["ss_sd_model_name"]
+    string? ModelNameHint,      // __metadata__["ss_sd_model_name"]
+    IReadOnlyList<string>? TensorKeys = null)
+{
+    /// <summary>The sampled tensor names, never null.</summary>
+    public IReadOnlyList<string> Keys => TensorKeys ?? [];
+}
 
 /// <summary>
 /// Reads the JSON header a safetensors file carries in its first bytes, without ever touching
@@ -19,6 +33,13 @@ public static class SafetensorsHeaderReader
 {
     // spec §4.5: cap 16 MB, never the tensors.
     public const long MaxHeaderBytes = 16 * 1024 * 1024;
+
+    /// <summary>
+    /// How many tensor names are kept. A checkpoint has thousands and we need none of them
+    /// individually — a container's keys are homogeneous, so a small prefix answers the same
+    /// question the full set would, without holding the whole list.
+    /// </summary>
+    public const int MaxSampledTensorKeys = 64;
 
     private const int LengthPrefixBytes = 8;
 
@@ -74,7 +95,15 @@ public static class SafetensorsHeaderReader
                 modelNameHint = ReadStringProperty(metadata, "ss_sd_model_name");
             }
 
-            return new SafetensorsHeaderInfo(baseModelVersion, architecture, modelNameHint);
+            var tensorKeys = new List<string>(MaxSampledTensorKeys);
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (tensorKeys.Count == MaxSampledTensorKeys) break;
+                if (property.NameEquals("__metadata__")) continue;
+                tensorKeys.Add(property.Name);
+            }
+
+            return new SafetensorsHeaderInfo(baseModelVersion, architecture, modelNameHint, tensorKeys);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

@@ -38,6 +38,23 @@ public static class SafetensorsFixture
         "},\"tensor.weight\":{\"dtype\":\"F16\",\"shape\":[4],\"data_offsets\":[0,8]}}";
 
     /// <summary>
+    /// A header carrying only tensor entries — no <c>__metadata__</c> block at all, which is the
+    /// normal shape for a VAE or a text encoder extracted from a checkpoint. Those files are
+    /// exactly the ones the metadata rungs cannot answer for, so the fixture has to be able to
+    /// build one without metadata rather than always emitting an empty block.
+    /// </summary>
+    public static string Tensors(params string[] tensorKeys) =>
+        "{" + string.Join(",", tensorKeys.Select(TensorEntry)) + "}";
+
+    /// <summary>A header with both a <c>__metadata__</c> block and named tensors.</summary>
+    public static string MetaAndTensors((string Key, string Value)[] pairs, params string[] tensorKeys) =>
+        "{\"__metadata__\":{" + string.Join(",", pairs.Select(p => $"\"{p.Key}\":\"{p.Value}\"")) + "}," +
+        string.Join(",", tensorKeys.Select(TensorEntry)) + "}";
+
+    private static string TensorEntry(string key) =>
+        $"\"{key}\":{{\"dtype\":\"F16\",\"shape\":[4],\"data_offsets\":[0,8]}}";
+
+    /// <summary>
     /// <see cref="CivitaiBaseModelCatalog"/>'s private bundled label snapshot, reflected once here
     /// instead of duplicated per suite — backs the "every output is a real Civitai label" assertion
     /// in <c>BaseModelHeaderMapTests</c> and <c>FilenameBaseModelHeuristicTests</c>.
