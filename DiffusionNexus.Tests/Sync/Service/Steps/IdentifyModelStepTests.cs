@@ -93,7 +93,8 @@ public sealed class IdentifyModelStepTests : IDisposable
         string? sidecarSignature = null,
         bool withState = false,
         int? civitaiId = null,
-        bool isUserEdited = false)
+        bool isUserEdited = false,
+        ModelType type = ModelType.LORA)
     {
         using var scope = NewScope();
         var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
@@ -101,7 +102,7 @@ public sealed class IdentifyModelStepTests : IDisposable
         var model = new Model
         {
             Name = name,
-            Type = ModelType.LORA,
+            Type = type,
             Source = civitaiId is null ? DataSource.LocalFile : DataSource.CivitaiApi,
             CivitaiId = civitaiId,
             IsUserEdited = isUserEdited,
@@ -139,6 +140,57 @@ public sealed class IdentifyModelStepTests : IDisposable
         using var scope = NewScope();
         var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
         return await uow.SyncStates.GetByModelIdAsync(modelId);
+    }
+
+    /// <summary>The stored <see cref="Model.Type"/> — what the kind-correction tests assert on.</summary>
+    private async Task<ModelType> LoadTypeAsync(int modelId)
+    {
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var model = await uow.Models.GetByIdAsync(modelId);
+        return model!.Type;
+    }
+
+    /// <summary>
+    /// Seeds a local-only model (no sidecar, no Civitai id — see <see cref="SeedAsync"/>) whose file
+    /// is a real safetensors container built from <paramref name="headerJson"/>, stamped with a
+    /// starting <see cref="Model.Type"/> the way the name-only backfill (or a legacy row) would have
+    /// left it, and hands back a hand-built <see cref="IdentifyCandidate"/> — the same
+    /// skip-<c>SelectAsync</c> pattern <see cref="BuildCandidateAsync"/> already uses below.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately bypasses <see cref="IdentifyModelStep.SelectAsync"/>: <c>SelectIdentifyCandidatesAsync</c>
+    /// filters a library-scoped run to <c>LoraFamily</c> (LORA/LoCon/DoRA/Unknown), so a row already
+    /// typed <see cref="ModelType.VAE"/> — the exact starting point <see cref="CorrectsAMisnamedLoraFromItsWeights"/>
+    /// needs — would never come back as a candidate at all under that scope, for a reason that has
+    /// nothing to do with the correction logic under test here. These tests are about what
+    /// <c>ExecuteOneAsync</c> does once handed such a row, not about whether a bulk scan would ever
+    /// hand it one — the same reasoning <see cref="ExecuteOneAsync_WithASidecarPresent_NeverCallsCivitai"/>
+    /// already relies on for its own hand-built candidate.
+    /// </remarks>
+    private async Task<IdentifyCandidate> GivenLocalModelAsync(string fileName, ModelType type, string headerJson)
+    {
+        var path = NewModelFile(fileName, Safetensors(headerJson));
+        var name = Path.GetFileNameWithoutExtension(fileName);
+        var (modelId, fileId) = await SeedAsync(name, path, type: type);
+
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var model = await uow.Models.GetByIdWithIncludesAsync(modelId);
+        var versionId = model!.Versions.Single().Id;
+
+        return new IdentifyCandidate(modelId, versionId, fileId, name, path, Sha256: null,
+            BaseModelRaw: "???", Outcome: SyncOutcome.None, CheckedAt: null, Attempts: 0, SidecarSignature: null);
+    }
+
+    /// <summary>
+    /// Runs the step directly over <paramref name="candidate"/> against a 404-on-Civitai client, with
+    /// no sidecar on disk — the "not on Civitai and no sidecar" branch that reads the file's header.
+    /// </summary>
+    private async Task WhenIdentifiedAsync(IdentifyCandidate candidate)
+    {
+        var step = NewNotFoundStep();
+        await step.ExecuteOneAsync(new SyncItem(candidate.ModelId, candidate.Name, candidate), apiKey: null, CancellationToken.None);
     }
 
     private static CivitaiModelVersion NewCivitaiVersion(int id = 700, int modelId = 77) => new()
@@ -609,6 +661,42 @@ public sealed class IdentifyModelStepTests : IDisposable
         // Stamped at Now like everything else — the same run's clock is not due again immediately.
         var again = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
         again.Select(i => i.ModelId).Should().NotContain(modelId);
+    }
+
+    /// <summary>
+    /// The backfill (#527) classifies by name alone, which is fast but fallible. This is the rung
+    /// that closes that window: the moment the step reads a file's weights, the row's kind is
+    /// corrected from them.
+    /// </summary>
+    [Fact]
+    public async Task CorrectsAMisnamedLoraFromItsWeights()
+    {
+        // A row the name-only backfill flipped to VAE, whose weights are a LoRA's.
+        var candidate = await GivenLocalModelAsync(
+            fileName: "vae_finetune_lora.safetensors",
+            type: ModelType.VAE,
+            headerJson: Tensors("lora_unet_blocks_0.lora_up.weight"));
+
+        await WhenIdentifiedAsync(candidate);
+
+        (await LoadTypeAsync(candidate.ModelId)).Should().Be(ModelType.LORA);
+    }
+
+    /// <summary>
+    /// And the other direction: a VAE discovered before the feature existed, whose row still says
+    /// LORA and whose name carries no marker, is named by its weights.
+    /// </summary>
+    [Fact]
+    public async Task NamesASupportAssetFromItsWeights()
+    {
+        var candidate = await GivenLocalModelAsync(
+            fileName: "opaque_name_nobody_can_read.safetensors",
+            type: ModelType.LORA,
+            headerJson: Tensors("post_quant_conv.weight"));
+
+        await WhenIdentifiedAsync(candidate);
+
+        (await LoadTypeAsync(candidate.ModelId)).Should().Be(ModelType.VAE);
     }
 
     /// <summary>

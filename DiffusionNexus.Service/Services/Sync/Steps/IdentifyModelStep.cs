@@ -220,6 +220,17 @@ public sealed class IdentifyModelStep : ISyncStep
             // Not on Civitai and no sidecar — read the file's own header, then guess from its name.
             var header = await SafetensorsHeaderReader.TryReadAsync(candidate.LocalPath, ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
+
+            // What the file IS, from the weights we just read (#527). Distinct from what it was
+            // trained on, which is what the rungs below answer. Corrects rows the name-only
+            // backfill guessed at, and names support assets discovered before the feature existed.
+            //
+            // Only ever moves BETWEEN our own verdicts: a model Civitai matched never reaches this
+            // branch at all, so an authoritative type cannot be overwritten from here.
+            var kind = AssetKindResolver.Resolve(header, Path.GetFileName(candidate.LocalPath));
+            if (dbModel.Type != kind && (dbModel.Type == ModelType.LORA || dbModel.Type.IsSupportAsset()))
+                dbModel.Type = kind;
+
             var headerCheckedAt = header is not null ? now : (DateTimeOffset?)null;
             var label = header is not null ? BaseModelHeaderMap.Map(header) : null;
             var rung = label is not null ? SyncOutcome.Header : (SyncOutcome?)null;
