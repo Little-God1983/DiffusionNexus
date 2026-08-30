@@ -43,6 +43,13 @@
                Foreground="#CCCCCC"
                TextWrapping="Wrap"/>
 
+    <!-- The scan's third write (#527): pre-existing rows reclassified as support assets -->
+    <TextBlock Text="{Binding ReclassifiedText}"
+               IsVisible="{Binding HasReclassifiedFiles}"
+               FontSize="12"
+               Foreground="#CCCCCC"
+               TextWrapping="Wrap"/>
+
     <TextBlock Text="{Binding UnexpectedText}"
                IsVisible="{Binding HasUnexpected}"
                FontSize="12"

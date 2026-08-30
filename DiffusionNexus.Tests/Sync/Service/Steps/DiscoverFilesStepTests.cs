@@ -84,6 +84,30 @@ public sealed class DiscoverFilesStepTests
         step.RepointedCount.Should().Be(12, "but twelve rows changed, and the report is how anyone learns that");
     }
 
+    /// <summary>
+    /// #527. The reclassify pass runs every time discovery does, from the same
+    /// <see cref="IModelSyncService"/> the step already holds — this pins that the step actually
+    /// reads the pass's return value onto its own property rather than, say, leaving it at its
+    /// reset default.
+    /// </summary>
+    [Fact]
+    public async Task Execute_StoresTheReclassifiedCountForTheReport()
+    {
+        var sync = new Mock<IModelSyncService>();
+        sync.Setup(s => s.DiscoverNewFilesAsync(It.IsAny<IProgress<SyncProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DiscoveryResult());
+        sync.Setup(s => s.ReclassifySupportAssetsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(35);
+        var (step, provider) = NewStep(sync);
+        using var _ = provider;
+
+        var items = await step.SelectAsync(SyncScope.Library, Options(), DateTimeOffset.UtcNow, CancellationToken.None);
+        var result = await step.ExecuteOneAsync(items[0], apiKey: null, CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+        step.ReclassifiedCount.Should().Be(35, "35 rows just stopped claiming to be LoRAs, and the report is how anyone learns that");
+    }
+
     [Fact]
     public async Task Execute_FailureReportsTheReasonAndLeavesNoStaleCount()
     {

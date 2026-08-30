@@ -934,6 +934,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         // may have committed work.
         var discovered = 0;
         var repointed = 0;
+        var reclassified = 0;
         var rebuilt = false;
         var rebuildOwed = false;
         try
@@ -989,6 +990,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 
             discovered = discoverReport.NewFilesDiscovered;
             repointed = discoverReport.FilesRepointed;
+            reclassified = discoverReport.FilesReclassified;
 
             // ExecuteAsync is total now (#535): a throw outside its item loop comes back as
             // AbortReason instead of escaping. For the scan that keeps the abort semantics it had
@@ -1138,7 +1140,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             // constructor keeps the stale one — the dialog would print "Discovered 0" above "40 new
             // files discovered" and the status bar would carry the same contradiction.
             //
-            // Four things travel, not just the count (F4, F5):
+            // Five things travel, not just the count (F4, F5, #527):
             //  · Failures — DiscoverFilesStep deliberately records IOException /
             //    UnauthorizedAccessException / DbUpdateException as SyncItemResult.Failure so a
             //    report can show them. Dropped, a disconnected source folder produced a dialog with
@@ -1149,6 +1151,10 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             //  · UnexpectedFailures / FirstUnexpectedError — same reasoning, summed, scan first.
             //  · Elapsed — on a real library the scan is often the slowest part of the press, and
             //    the run's own stopwatch never saw it. "~40 s" for four minutes of waiting.
+            //  · FilesReclassified — the scan's third write (#527): pre-existing rows a library
+            //    predating support-asset detection stamped LORA, corrected in place. Dropped here,
+            //    a legacy library would silently reclassify ~35 rows with nothing anywhere saying
+            //    so — the same shape of bug this whole fold-in exists to prevent for the other two.
             report = new SyncReport(
                 report.Plan,
                 report.Steps,
@@ -1162,7 +1168,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 // but if that abort is ever made non-fatal, dropping it here would lose the
                 // reason silently. The coalesce order matches the other folded fields: scan first.
                 discoverReport.AbortReason ?? report.AbortReason,
-                discoverReport.FilesRepointed + report.FilesRepointed);
+                discoverReport.FilesRepointed + report.FilesRepointed,
+                discoverReport.FilesReclassified + report.FilesReclassified);
 
             // "Last full sync" is what the next plan dialog tells the user about staleness, so it
             // records a run that actually finished. Deliberately CancellationToken.None: this
@@ -1282,6 +1289,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             // (F3). Nothing else refreshes it — ILibraryChangeNotifier.ModelDownloaded is raised
             // only by CivitaiModelDownloader, never by DiscoverFilesStep — so without this a
             // cancelled dialog leaves twelve new LoRAs in the database and none of them on screen.
+            // reclassified belongs beside discovered/repointed for the same reason (#527): a row
+            // just reclassified out of LORA has to drop out of this LoRA-family grid on its own,
+            // not wait for a manual Refresh.
             // rebuildOwed covers the doors the run path's own rebuild can leave open: that rebuild
             // failing (#539 — this retry is deliberate, and can succeed once the post-run WAL
             // contention clears), and a service regression that makes ExecuteAsync escape again
@@ -1290,7 +1300,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             // above stands, with the staleness appended rather than replacing it.
             // BEFORE the sync-running flag drops: re-enabling the per-tile button while the tile
             // collection is mid-swap would let a fetch update a tile the rebuild is discarding.
-            if ((discovered > 0 || repointed > 0 || rebuildOwed) && !rebuilt)
+            if ((discovered > 0 || repointed > 0 || reclassified > 0 || rebuildOwed) && !rebuilt)
             {
                 IsBusy = true;
                 BusyMessage = "Refreshing library view…";
@@ -1605,10 +1615,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         // one whose failures and repoints must not go unsaid.
         if (report.AbortReason is null
             && report.NewFilesDiscovered == 0 && report.FilesRepointed == 0
+            && report.FilesReclassified == 0
             && report.Steps.All(s => s.Planned == 0))
         {
             // Repoints veto "up to date" too (#537): models the grid had hidden just came back on
-            // screen, and this line is where the user learns why.
+            // screen, and this line is where the user learns why. Reclassifications veto it for
+            // the same reason (#527): a legacy library's VAEs and text encoders just stopped
+            // claiming to be LoRAs, and "up to date — nothing to do" would flatly contradict that.
             return UpToDateStatus;
         }
 
@@ -1618,6 +1631,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 
         if (report.FilesRepointed > 0)
             status += $" · {SyncCopy.DescribeRepointed(report.FilesRepointed)}";
+
+        if (report.FilesReclassified > 0)
+            status += $" · {SyncCopy.DescribeReclassified(report.FilesReclassified)}";
 
         if (report.UnexpectedFailures > 0)
         {

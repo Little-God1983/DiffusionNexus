@@ -32,6 +32,13 @@ public sealed record SyncStepReport(SyncStepKind Kind, int Planned, int Processe
 /// honest. Repoint candidates are invalid-path rows, i.e. exactly the ones the grid hides, so a
 /// caller deciding whether to re-project the grid must treat this as a yes.
 /// </param>
+/// <param name="FilesReclassified">
+/// Existing rows the scan reclassified as support assets (#527) — changed, not added, so it sits
+/// beside <paramref name="FilesRepointed"/> rather than folding into it. A library that predates
+/// support-asset detection has every VAE, text encoder, ControlNet and upscaler stamped LORA; this
+/// is the one-time count of how many of those a run just corrected, and the only place a caller
+/// learns that those rows stopped claiming to be LoRAs.
+/// </param>
 public sealed record SyncReport(
     SyncPlan Plan,
     IReadOnlyList<SyncStepReport> Steps,
@@ -42,7 +49,8 @@ public sealed record SyncReport(
     int UnexpectedFailures = 0,
     string? FirstUnexpectedError = null,
     string? AbortReason = null,
-    int FilesRepointed = 0)
+    int FilesRepointed = 0,
+    int FilesReclassified = 0)
 {
     public string Summary { get; } = BuildSummary(Steps, Cancelled, NewFilesDiscovered, AbortReason is not null);
 

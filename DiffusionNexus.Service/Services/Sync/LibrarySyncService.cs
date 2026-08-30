@@ -209,7 +209,8 @@ public sealed class LibrarySyncService : ILibrarySyncService
 
             var syncReport = new SyncReport(
                 plan, tally.Steps, tally.Failures, cancelled, stopwatch.Elapsed, tally.Discovered,
-                tally.UnexpectedFailures, tally.FirstUnexpectedError, abortReason, tally.Repointed);
+                tally.UnexpectedFailures, tally.FirstUnexpectedError, abortReason, tally.Repointed,
+                tally.Reclassified);
             _logger?.Info(LogCategory.Network, LogSource, $"Sync finished: {syncReport.Summary} in {Describe(stopwatch.Elapsed)}");
 
             return syncReport;
@@ -400,6 +401,7 @@ public sealed class LibrarySyncService : ILibrarySyncService
             {
                 tally.Discovered = discoverStep.DiscoveredCount;
                 tally.Repointed = discoverStep.RepointedCount;
+                tally.Reclassified = discoverStep.ReclassifiedCount;
             }
 
             _logger?.Info(LogCategory.Network, LogSource,
@@ -416,6 +418,9 @@ public sealed class LibrarySyncService : ILibrarySyncService
 
         /// <summary>Rows the scan re-pointed at moved files — changed, not added (#537).</summary>
         public int Repointed { get; set; }
+
+        /// <summary>Rows the scan reclassified as support assets — changed, not added (#527).</summary>
+        public int Reclassified { get; set; }
 
         /// <summary>Items that failed with an exception no step claimed — bugs, counted rather than fatal (R5).</summary>
         public int UnexpectedFailures { get; set; }

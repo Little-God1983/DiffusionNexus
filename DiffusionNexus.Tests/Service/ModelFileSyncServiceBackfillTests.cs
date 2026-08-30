@@ -86,6 +86,31 @@ public sealed class ModelFileSyncServiceBackfillTests : IDisposable
     }
 
     /// <summary>
+    /// The other legacy shape the candidate query has to reach: a row discovered before the sync
+    /// state table existed (or before this model was ever planned) has no <see cref="ModelSyncState"/>
+    /// row at all — not one carrying <see cref="SyncOutcome.None"/>, but no row, period. That is
+    /// precisely the cohort #527 exists for, so it has to be a candidate too.
+    /// </summary>
+    private async Task<int> GivenModelWithoutSyncStateAsync(string name, ModelType type, DataSource source)
+    {
+        var model = new Model { Name = name, Type = type, Source = source };
+        var version = new ModelVersion { Name = "v1", BaseModelRaw = "???", Model = model };
+        version.Files.Add(new ModelFile
+        {
+            FileName = $"{name}.safetensors",
+            IsPrimary = true,
+            ModelVersion = version,
+        });
+        model.Versions.Add(version);
+
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        await uow.Models.AddAsync(model);
+        await uow.SaveChangesAsync();
+        return model.Id;
+    }
+
+    /// <summary>
     /// Re-reads Type through a brand-new scope, so the assertion proves what round-tripped through
     /// the real Type-as-string SQLite column — not merely what the in-memory instance still holds
     /// after ReclassifySupportAssetsAsync returned. Same technique as the Kind/Repoint suites'
@@ -151,5 +176,38 @@ public sealed class ModelFileSyncServiceBackfillTests : IDisposable
 
         (await _service.ReclassifySupportAssetsAsync(CancellationToken.None)).Should().Be(1);
         (await _service.ReclassifySupportAssetsAsync(CancellationToken.None)).Should().Be(0);
+    }
+
+    /// <summary>
+    /// A model discovered before any sync state row existed for it has no ModelSyncState at all —
+    /// not one carrying <see cref="SyncOutcome.None"/>, but no row, period. That is exactly the
+    /// legacy shape #527 exists for, and the candidate query's <c>m.SyncState == null</c> branch
+    /// has to reach it, not just the two MetadataOutcome branches.
+    /// </summary>
+    [Fact]
+    public async Task ReclassifiesARowWithNoSyncStateAtAll()
+    {
+        var id = await GivenModelWithoutSyncStateAsync("LTX_T5_encoder", ModelType.LORA, DataSource.LocalFile);
+
+        var changed = await _service.ReclassifySupportAssetsAsync(CancellationToken.None);
+
+        changed.Should().Be(1);
+        (await LoadTypeAsync(id)).Should().Be(ModelType.TextEncoder);
+    }
+
+    /// <summary>
+    /// SyncOutcome.None is "never attempted" — distinct from both the no-row case above (no state
+    /// exists yet) and NotIdentified ("attempted, and nothing answered"). The candidate query's
+    /// third OR branch exists specifically for this outcome and has to reach it too.
+    /// </summary>
+    [Fact]
+    public async Task ReclassifiesARowWithSyncOutcomeNone()
+    {
+        var id = await GivenModelAsync("SDXL_VAE_fp16", ModelType.LORA, DataSource.LocalFile, SyncOutcome.None);
+
+        var changed = await _service.ReclassifySupportAssetsAsync(CancellationToken.None);
+
+        changed.Should().Be(1);
+        (await LoadTypeAsync(id)).Should().Be(ModelType.VAE);
     }
 }

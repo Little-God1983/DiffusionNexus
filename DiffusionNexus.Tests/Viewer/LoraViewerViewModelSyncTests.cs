@@ -189,6 +189,7 @@ public class LoraViewerViewModelSyncTests
         string? discoverAbortReason = null,
         string? runAbortReason = null,
         int repointed = 0,
+        int reclassified = 0,
         bool runHasNoSteps = false,
         params SyncFailure[] failures)
     {
@@ -214,7 +215,7 @@ public class LoraViewerViewModelSyncTests
                 return isDiscovery
                     ? ReportFor(plan, discovered, cancelled: false, discoverFailures ?? [], discoverElapsed,
                         discoverUnexpected, discoverUnexpected > 0 ? "scan: NullReferenceException" : null,
-                        discoverAbortReason, repointed)
+                        discoverAbortReason, repointed, reclassified: reclassified)
                     : ReportFor(plan, discovered: 0, cancelled, failures, runElapsed,
                         abortReason: runAbortReason, noSteps: runHasNoSteps);
             });
@@ -249,7 +250,8 @@ public class LoraViewerViewModelSyncTests
         string? firstUnexpectedError = null,
         string? abortReason = null,
         int repointed = 0,
-        bool noSteps = false)
+        bool noSteps = false,
+        int reclassified = 0)
         => new(
             plan,
             noSteps
@@ -267,7 +269,8 @@ public class LoraViewerViewModelSyncTests
             UnexpectedFailures: unexpected,
             FirstUnexpectedError: firstUnexpectedError,
             AbortReason: abortReason,
-            FilesRepointed: IsDiscovery(plan.Options) ? repointed : 0);
+            FilesRepointed: IsDiscovery(plan.Options) ? repointed : 0,
+            FilesReclassified: IsDiscovery(plan.Options) ? reclassified : 0);
 
     /// <summary>The report the run (not the discovery pre-run) produced, as the ViewModel saw it.</summary>
     private SyncReport RunReport() => ReportFor(_executed[^1], discovered: 0, cancelled: false, []);
@@ -534,6 +537,46 @@ public class LoraViewerViewModelSyncTests
 
         vm.SyncStatus.Should().Contain("5 moved files re-linked",
             "five models just came back on screen, and the status line is where the user learns why");
+    }
+
+    /// <summary>
+    /// #527, the completed-run half — mirrors <see cref="DownloadMissingMetadata_ARepointOnlyScanIsNotReportedAsUpToDate"/>
+    /// exactly: five rows just stopped claiming to be LoRAs, so the verdict may not be
+    /// "Library is up to date — nothing to do" even though nothing was planned in any step. Without
+    /// this veto a legacy library's backfill would run silently — the rows change type in the
+    /// database, the LoRA-only grid drops them, and the status line says nothing happened.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_AReclassifyOnlyScanIsNotReportedAsUpToDate()
+    {
+        var vm = CreateViewModel();
+        _identifyCount = 0;              // no step has work — only the scan's reclassifications happened
+        SetupSyncService(reclassified: 5);
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        vm.SyncStatus.Should().Contain("5 files reclassified as support assets",
+            "five rows just stopped claiming to be LoRAs, and the status line is where the user learns why");
+    }
+
+    /// <summary>
+    /// #527. The rebuild backstop that re-projects the grid however the press ended already checks
+    /// discovered/repointed for exactly this reason (#537); a reclassified-only scan needs the same
+    /// treatment; or a row that just dropped out of this LoRA-family grid would sit there stale
+    /// until a manual Refresh. Cancelling at the dialog (rather than letting the run complete) is
+    /// the sharper case: nothing else in this path owes a rebuild once the dialog is declined.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_CancellingTheDialogStillRebuildsAfterAReclassifyOnlyScan()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService(reclassified: 5);   // discovered: 0, repointed: 0 — the scan only reclassified
+        _planDialogAnswer = _ => Task.FromResult(SyncPlanDialogResult.Cancelled());
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Once,
+            "the reclassified rows changed type and stay stale in the grid until a rebuild");
     }
 
     /// <summary>

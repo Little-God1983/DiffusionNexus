@@ -30,6 +30,7 @@ public sealed class LibrarySyncServiceTests : IDisposable
     private readonly ServiceProvider _serviceProvider;
     private readonly List<Model> _discovered = [];
     private int _repointed;
+    private int _reclassified;
 
     private const string ApiKey = "test-api-key";
 
@@ -56,6 +57,8 @@ public sealed class LibrarySyncServiceTests : IDisposable
         var modelSync = new Mock<IModelSyncService>();
         modelSync.Setup(s => s.DiscoverNewFilesAsync(It.IsAny<IProgress<SyncProgress>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => new DiscoveryResult { NewModels = _discovered, RepointedCount = _repointed });
+        modelSync.Setup(s => s.ReclassifySupportAssetsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => _reclassified);
         services.AddScoped(_ => modelSync.Object);
 
         _serviceProvider = services.BuildServiceProvider();
@@ -289,6 +292,27 @@ public sealed class LibrarySyncServiceTests : IDisposable
 
         report.NewFilesDiscovered.Should().Be(0, "nothing was added");
         report.FilesRepointed.Should().Be(12, "twelve rows changed, and the caller's rebuild decision hangs on knowing that");
+    }
+
+    /// <summary>
+    /// #527. The discover step's third write: pre-existing rows a library predating support-asset
+    /// detection still stamped LORA, corrected in place. Changed, not added, so it travels beside
+    /// <see cref="SyncReport.FilesRepointed"/> rather than folding into either existing count.
+    /// </summary>
+    [Fact]
+    public async Task Execute_ReportsReclassifiedFilesFromTheDiscoverStep()
+    {
+        _reclassified = 35;
+
+        var discover = new DiscoverFilesStep(Scopes);
+        var service = NewService([discover]);
+        var plan = await service.PlanAsync(SyncScope.Library, OptionsFor(SyncStepKind.DiscoverFiles));
+
+        var report = await service.ExecuteAsync(plan);
+
+        report.NewFilesDiscovered.Should().Be(0, "nothing was added");
+        report.FilesRepointed.Should().Be(0, "nothing moved");
+        report.FilesReclassified.Should().Be(35, "35 rows just stopped claiming to be LoRAs, and the caller's rebuild decision hangs on knowing that");
     }
 
     [Fact]
