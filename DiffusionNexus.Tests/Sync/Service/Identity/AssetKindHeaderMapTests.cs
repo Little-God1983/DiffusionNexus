@@ -103,6 +103,50 @@ public sealed class AssetKindHeaderMapTests
     }
 
     /// <summary>
+    /// Final-review Important #3. A full checkpoint is a UNet, a VAE and a text encoder in one
+    /// container, and the reader samples only the first
+    /// <see cref="SafetensorsHeaderReader.MaxSampledTensorKeys"/> root properties IN FILE ORDER — so
+    /// for an alphabetically-keyed checkpoint that whole sample can be "cond_stage_model.…", which
+    /// would hit the TextEncoder rung and file somebody's checkpoint into <c>Text Encoder\</c>.
+    /// The keys here are in exactly that hostile order: the encoder-shaped key comes FIRST, so a
+    /// rung 0 placed anywhere later would already have answered.
+    /// </summary>
+    [Fact]
+    public void ACompositeCheckpointSaysNothingRatherThanNamingOneOfItsParts()
+    {
+        var header = Header(
+            "cond_stage_model.transformer.text_model.encoder.layers.0.self_attn.q_proj.weight",
+            "model.diffusion_model.input_blocks.0.0.weight");
+
+        AssetKindHeaderMap.Map(header).Should().BeNull();
+    }
+
+    /// <summary>
+    /// The other sampling order the same file can present, hitting a different wrong rung: the
+    /// autoencoder half of the checkpoint lands in the sample instead of the encoder half.
+    /// </summary>
+    [Fact]
+    public void ACompositeCheckpointSampledAtItsAutoencoderHalfStillSaysNothing()
+    {
+        var header = Header(
+            "first_stage_model.encoder.down.0.block.0.norm1.weight",
+            "first_stage_model.post_quant_conv.weight");
+
+        AssetKindHeaderMap.Map(header).Should().BeNull();
+    }
+
+    /// <summary>
+    /// Rung 0 must only excuse the map from composite containers, never from ordinary ones: a LoRA
+    /// carries none of the checkpoint prefixes, and ComfyUI-format LoRAs spell theirs
+    /// "diffusion_model." with no "model." ahead of it — which is why the needle keeps its prefix.
+    /// </summary>
+    [Theory]
+    [InlineData("diffusion_model.double_blocks.0.img_attn.qkv.lora_a.weight")]
+    [InlineData("lora_unet_single_blocks_0_linear1.lora_up.weight")]
+    public void RungZeroDoesNotReachAnOrdinaryLora(string key)
+        => AssetKindHeaderMap.Map(Header(key)).Should().Be(ModelType.LORA);
+
+    /// <summary>
     /// Mirrors the AllLabels guards on BaseModelHeaderMap and FilenameBaseModelHeuristic: nothing
     /// may be returned from here that the rest of the app has no name for.
     /// </summary>

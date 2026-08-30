@@ -23,9 +23,32 @@ namespace DiffusionNexus.Service.Services.Sync.Identity;
 /// it was trained on, exactly as <see cref="BaseModelHeaderMap"/> checks its name hint before the
 /// architecture that every SDXL refinement shares.
 /// </para>
+/// <para>
+/// Every rung below assumes ONE purpose per container, so a rung 0 first excuses this map from the
+/// files where that assumption does not hold — a full checkpoint, which bundles a UNet, a VAE and a
+/// text encoder together. It answers null rather than a kind; see the comment on it for why.
+/// </para>
 /// </remarks>
 public static class AssetKindHeaderMap
 {
+    // Rung 0 — composite container. Every rung below assumes ONE purpose per file, and a full
+    // checkpoint breaks that assumption outright: it is a UNet, a VAE and a text encoder in one
+    // container. SafetensorsHeaderReader samples only the first MaxSampledTensorKeys root
+    // properties in file order, so for an alphabetically-keyed checkpoint that sample can be
+    // entirely "cond_stage_model.transformer.text_model.…" — which hits the TextEncoder rung — while
+    // another ordering lands the "first_stage_model.…encoder.down." block and hits VAE. Both are
+    // confident, both are wrong, and either would move the user's checkpoint into a support-asset
+    // folder.
+    //
+    // These three prefixes are the CompVis/A1111 state-dict layout that only a bundled checkpoint
+    // has; nothing that is only a VAE, only an encoder, or only a LoRA carries them (ComfyUI-format
+    // LoRAs use a bare "diffusion_model." with no "model." ahead of it, which is why the needle
+    // keeps its prefix).
+    private static readonly string[] CompositeCheckpointNeedles =
+    {
+        "model.diffusion_model.", "first_stage_model.", "cond_stage_model.",
+    };
+
     // Rung 1 — LoRA. Checked first; see class remarks. ".alpha" is matched as a SUFFIX because it
     // is the per-module scale a LoRA writes beside each up/down pair, and as a substring it would
     // hit any tensor whose path merely contains the letters.
@@ -82,6 +105,18 @@ public static class AssetKindHeaderMap
         var lowered = new string[keys.Count];
         for (var i = 0; i < keys.Count; i++)
             lowered[i] = keys[i].ToLowerInvariant();
+
+        // Rung 0 answers NULL, never a ModelType — deliberately. Returning ModelType.Checkpoint
+        // here would be a truer statement about the file and a worse thing to do: it would create a
+        // second class of row that silently vanishes from the Viewer (ModelFileSyncService's
+        // IsLoraFamily) and from every bulk sync (SyncStateRepository's LoraFamily filter), which is
+        // exactly the disappearance #527's §5 exists to stop causing. Null falls through to the name
+        // rung, which is where a checkpoint has always been decided, so this rung only ever REMOVES
+        // a wrong confident answer.
+        foreach (var key in lowered)
+        {
+            if (ContainsAny(key, CompositeCheckpointNeedles)) return null;
+        }
 
         foreach (var key in lowered)
         {
