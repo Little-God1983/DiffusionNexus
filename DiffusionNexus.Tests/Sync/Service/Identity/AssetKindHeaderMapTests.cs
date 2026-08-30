@@ -280,14 +280,15 @@ public sealed class AssetKindHeaderMapTests
     }
 
     /// <summary>
-    /// The converse of the case above, and why <c>model.embed_tokens</c> is not redundant with
-    /// <c>mlp.gate_proj</c>: this file's first 64 keys in file order contain NO gate projection —
-    /// its fp8 cast left the layernorms unquantized, so they sort ahead of the mlp block — and the
-    /// embedding table is the only thing in the sample left to match. Keys verbatim from
-    /// <c>gemma_3_12B_it_fp8_e4m3fn.safetensors</c> (1066 tensors).
+    /// Why the rung keys on the decoder's MODULE PATH and not on any one projection. This file's
+    /// first 64 keys in file order contain NO gate projection at all — its fp8 cast left the
+    /// layernorms unquantized, so they sort ahead of the mlp block — and a rung built on
+    /// <c>mlp.gate_proj</c> would miss it outright. <c>model.layers.</c> carries it, as it carries
+    /// fifteen of the sixteen. Keys verbatim from <c>gemma_3_12B_it_fp8_e4m3fn.safetensors</c>
+    /// (1066 tensors).
     /// </summary>
     [Fact]
-    public void ADecoderSampleWithNoGateProjectionIsStillNamedByItsEmbeddingTable()
+    public void ADecoderSampleWithNoGateProjectionIsStillNamedByItsModulePath()
     {
         var header = Header(
             "model.embed_tokens.weight",
@@ -321,30 +322,84 @@ public sealed class AssetKindHeaderMapTests
     }
 
     /// <summary>
-    /// Each LLM-decoder needle standing alone, so an edit that drops one fails here rather than
-    /// only on whichever real file happened to carry it.
+    /// Each LLM-decoder prefix standing alone, so an edit that drops one fails here rather than only
+    /// on whichever real file happened to carry it. Both are load-bearing across the 1552 real
+    /// containers swept: "model.layers." is the only match for seven of the sixteen Group A files,
+    /// "language_model.layers." the only match for qwen3vl_8b_fp8-nf4.
     /// </summary>
     [Theory]
     [InlineData("model.layers.0.mlp.gate_proj.weight")]
-    [InlineData("model.embed_tokens.weight")]
+    [InlineData("model.layers.0.input_layernorm.weight")]
     [InlineData("language_model.layers.0.self_attn.q_proj.weight")]
-    [InlineData("lm_head.weight")]
     public void LlmDecoderWeightsNameATextEncoder(string key)
         => AssetKindHeaderMap.Map(Header(key)).Should().Be(ModelType.TextEncoder);
 
     /// <summary>
-    /// The LLM needles sit in the NORMAL TextEncoder rung, BELOW the composite guard, and this is
-    /// what that placement buys: a full checkpoint that BUNDLES an LLM encoder — HiDream bundles
-    /// Llama — carries both a checkpoint prefix and decoder keys, and must still be excused rather
-    /// than named after whichever part of itself leads the sample. None of the sixteen real Group A
-    /// files carries a composite prefix in ANY of its keys, so the ordering costs them nothing.
+    /// The negative twin, and the reason the prefixes are matched with StartsWith rather than
+    /// Contains. Every key here carries a decoder path SOMEWHERE inside it while belonging to a
+    /// container that is not a standalone encoder — nested under a checkpoint's own component name,
+    /// or under a TTS backbone. A substring needle names all three; an anchored one names none.
+    /// The first two are verbatim keys from hidream_o1_image_bf16.safetensors, the third from
+    /// chatterbox t3_cfg.safetensors, and both files regressed on the substring spelling.
+    /// </summary>
+    [Theory]
+    [InlineData("model.language_model.layers.0.mlp.gate_proj.weight")]
+    [InlineData("model.language_model.embed_tokens.weight")]
+    [InlineData("tfmr.layers.0.mlp.gate_proj.weight")]
+    public void ADecoderPathNestedInsideSomethingElseNamesNothing(string key)
+        => AssetKindHeaderMap.Map(Header(key)).Should().BeNull();
+
+    /// <summary>
+    /// The regression this map's LLM rung was one substring away from shipping, and the reason its
+    /// fixture is transcribed rather than hand-built. hidream_o1_image_bf16.safetensors and its dev
+    /// sibling are 758-tensor image checkpoints that carry NONE of the CompositeCheckpointNeedles —
+    /// HiDream keys its bundle off a bare "model." — so the guard below never fires on them, and
+    /// they bundle a Llama-shaped decoder under "model.language_model.". A free-substring
+    /// "model.embed_tokens" matches their "model.language_model.embed_tokens.weight" (the needle
+    /// sits inside the longer word), and "mlp.gate_proj" matched 6 of their 64 sampled keys. Either
+    /// names a multi-GB checkpoint TextEncoder, i.e. a support asset: gone from the Viewer,
+    /// unselectable by bulk sync, and handed to the sorter as a file to physically move.
+    /// <para>
+    /// The keys are the first 8 of the real 64-key sample, in file order. The first two matter most:
+    /// HiDream's header is alphabetically ordered, so "model.final_layer2" lands ahead of
+    /// "model.language_model" — which means a UNIVERSAL "is every sampled key LLM-shaped" test would
+    /// reject this file on a two-key accident of naming rather than on principle. Anchoring does not
+    /// depend on those two keys being sampled at all.
+    /// </para>
     /// </summary>
     [Fact]
-    public void ACheckpointBundlingAnLlmEncoderIsStillExcused()
+    public void AHiDreamCheckpointBundlingALlamaDecoderIsNotATextEncoder()
     {
         var header = Header(
-            "cond_stage_model.model.embed_tokens.weight",
-            "model.diffusion_model.double_blocks.0.img_attn.qkv.weight");
+            "model.final_layer2.linear.bias",
+            "model.final_layer2.linear.weight",
+            "model.language_model.embed_tokens.weight",
+            "model.language_model.layers.0.input_layernorm.weight",
+            "model.language_model.layers.0.mlp.down_proj.weight",
+            "model.language_model.layers.0.mlp.gate_proj.weight",
+            "model.language_model.layers.0.mlp.up_proj.weight",
+            "model.language_model.layers.0.self_attn.q_proj.weight");
+
+        AssetKindHeaderMap.Map(header).Should().BeNull();
+    }
+
+    /// <summary>
+    /// The same trap from the other direction, and the one no checkpoint guard would ever catch:
+    /// Chatterbox's T3 text-to-token model is a TTS component with a Llama backbone mounted at
+    /// "tfmr.", and its sampled keys carry gate projections. It is not a prompt encoder for a
+    /// diffusion model and must keep saying nothing here. Keys verbatim from
+    /// chatterbox/resembleai_default_voice/t3_cfg.safetensors (292 tensors).
+    /// </summary>
+    [Fact]
+    public void ATtsBackboneIsNotAPromptEncoder()
+    {
+        var header = Header(
+            "cond_enc.perceiver.attn.to_q.weight",
+            "speech_emb.weight",
+            "text_emb.weight",
+            "tfmr.embed_tokens.weight",
+            "tfmr.layers.0.mlp.gate_proj.weight",
+            "tfmr.layers.0.self_attn.q_proj.weight");
 
         AssetKindHeaderMap.Map(header).Should().BeNull();
     }

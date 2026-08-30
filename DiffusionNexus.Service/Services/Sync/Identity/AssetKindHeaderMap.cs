@@ -159,50 +159,62 @@ public static class AssetKindHeaderMap
     // Rung 6 — text encoder. "shared.weight" is T5's tied embedding table; "logit_scale" is CLIP's
     // learned temperature. Both are single, whole keys rather than path fragments, so they are
     // matched exactly — "shared.weight" as a substring would hit unrelated paths.
-    //
-    // The second group is the HuggingFace CAUSAL-LM layout, which the first group does not reach at
-    // all: a decoder-only LLM shipped as a prompt encoder (Gemma, Llama, Qwen 3 / Qwen-VL, Mistral,
-    // ERNIE) writes "model.layers.N.…", never "text_model.encoder.layers", and carries neither
-    // logit_scale nor shared.weight. Sixteen such files sat in one real library's TextEncoders\
-    // folder and every one of them fell past this rung, past the name rung — which has markers for
-    // "t5"/"umt5"/"mistral" but none for gemma, llama, qwen3vl, ernie or ministral — and landed on
-    // AssetKindClassifier's LORA default.
-    //
-    // "mlp.gate_proj" is the strongest of the four and carries fifteen of those sixteen on their
-    // real sampled keys: it is the SwiGLU gate every model in that family has and nothing in a
-    // U-Net, a VAE, a ControlNet or a CLIP/T5 encoder is spelled that way. It survives quantization,
-    // which matters more than it sounds — an fp8 or nf4 cast replaces every plain ".weight" with
-    // ".scale_weight"/".weight_scale"/".absmax", so needles anchored on the tensor's SUFFIX die
-    // while a needle anchored on the MODULE PATH does not.
-    //
-    // "model.embed_tokens" is not redundant with it. gemma_3_12B_it_fp8_e4m3fn.safetensors is the
-    // sixteenth file: its cast left the layernorms unquantized, so they sort ahead of the mlp block
-    // and its first 64 keys in file order contain no gate projection at all. The embedding table is
-    // the only thing in that sample to match, so this needle is the one that catches it.
-    //
-    // "language_model.layers." is the multimodal spelling — a VL container nests the decoder under
-    // "language_model." rather than "model.", so "model.embed_tokens" misses it outright — and
-    // "lm_head." is the tied output head. Neither is load-bearing on the observed library
-    // (qwen3vl_8b_fp8-nf4 carries the "language_model." spelling but its sample also has a gate
-    // projection, and no real file's first 64 keys reach its lm_head at all). They are here because
-    // the sample is the first 64 root properties IN FILE ORDER and nothing guarantees which slice of
-    // a decoder that is: both are keys the family genuinely writes, so unlike a needle for a
-    // spelling no tool emits, they can be right without ever being wrong.
-    //
-    // These belong in the NORMAL rung, below the composite guard, and that is load-bearing. A full
-    // checkpoint that BUNDLES an LLM encoder — HiDream bundles Llama — carries decoder keys AND a
-    // checkpoint prefix, and the guard running first is what stops it being named after one of its
-    // parts. It costs the sixteen real files nothing: not one of them carries a composite prefix in
-    // any of its keys.
     private static readonly string[] TextEncoderNeedles =
     {
         "text_model.encoder.layers", "token_embedding",
-        "mlp.gate_proj", "model.embed_tokens", "language_model.layers.", "lm_head.",
     };
 
     private static readonly string[] TextEncoderExactKeys =
     {
         "logit_scale", "shared.weight",
+    };
+
+    // Rung 6, second table — the HuggingFace CAUSAL-LM layout, matched as a key PREFIX and not as a
+    // substring. A decoder-only LLM shipped as a prompt encoder (Gemma, Llama, Qwen 3 / Qwen-VL,
+    // Mistral, ERNIE) writes "model.layers.N.…", never "text_model.encoder.layers", and carries
+    // neither logit_scale nor shared.weight, so the table above cannot reach it. Sixteen such files
+    // sat in one real library's TextEncoders\ folder and every one fell past this rung, past the
+    // name rung — which has markers for "t5"/"umt5"/"mistral" but none for gemma, llama, qwen3vl,
+    // ernie or ministral — and landed on AssetKindClassifier's LORA default.
+    //
+    // PREFIX matching is the whole design, and it is what a substring needle got wrong. The property
+    // that makes a container a standalone encoder is not that an LLM key appears SOMEWHERE in it —
+    // every multimodal checkpoint contains one — it is that the decoder stack is at the ROOT of the
+    // key path, with no component prefix ahead of it. A checkpoint that bundles an LLM nests it one
+    // level down, and the nesting is the evidence:
+    //
+    //   standalone   "model.layers.0.mlp.gate_proj.weight"                  ← decoder at the root
+    //   HiDream      "model.language_model.layers.0.mlp.gate_proj.weight"   ← nested under a part
+    //   Chatterbox   "tfmr.layers.0.mlp.gate_proj.weight"                   ← a TTS backbone
+    //
+    // Free substrings could not tell those apart and named all three. "mlp.gate_proj" matched the
+    // Llama backbone inside Chatterbox's T3 text-to-token model; "model.embed_tokens" matched
+    // HiDream's "model.language_model.embed_tokens.weight", because the needle sits inside the
+    // longer word "language_model.embed_tokens". The two HiDream image checkpoints are 758 tensors
+    // and carry NONE of the CompositeCheckpointNeedles — HiDream keys its bundle off a bare
+    // "model." — so the guard below never saw them and a multi-GB checkpoint was named TextEncoder,
+    // i.e. a support asset: gone from the Viewer, unselectable by bulk sync, and handed to the
+    // sorter as a file to physically move. Every substring needle that could do that is gone.
+    //
+    // Extending CompositeCheckpointNeedles with HiDream's markers was the alternative and is a
+    // losing game: every architecture invents its own layout, and "x_embedder" — one of HiDream's —
+    // also appears in the Z-Image ControlNets, so that route needs its own exceptions immediately.
+    // Anchoring costs nothing and needs no list of the things it excludes.
+    //
+    // Both prefixes are load-bearing over the 1552 real containers swept. "model.layers." carries
+    // fifteen of the sixteen and is the ONLY match for seven of them; "language_model.layers." is
+    // the multimodal spelling, where a VL container puts the decoder at the root under that name
+    // instead, and is the only match for qwen3vl_8b_fp8-nf4. Neither matches any non-LLM container
+    // in that sweep. A rooted "model.embed_tokens" would be safe here too but is redundant on every
+    // observed file, so it is left out until a sample turns up that needs it.
+    //
+    // This is an existential test, unlike rung 2's, and deliberately: rung 2's universal quantifier
+    // cannot be reused here. It is guarded on an UNTRUNCATED sample, and every one of these sixteen
+    // files is 237–2417 tensors and fills the 64-key cap, so a universal rung would name none of
+    // them. Anchoring gives the same discrimination without needing the whole container.
+    private static readonly string[] LlmDecoderRootPrefixes =
+    {
+        "model.layers.", "language_model.layers.",
     };
 
     /// <summary>
@@ -276,6 +288,13 @@ public static class AssetKindHeaderMap
         foreach (var key in lowered)
         {
             if (ContainsAny(key, TextEncoderNeedles)) return ModelType.TextEncoder;
+
+            // Matched as a PREFIX, never as a substring: a standalone decoder writes its stack at
+            // the root of the key path, while a checkpoint that bundles one nests it under a
+            // component name ("model.language_model.layers.…"). The nesting is the evidence, and a
+            // substring match throws exactly that away — see the table for the checkpoints it cost.
+            if (StartsWithAny(key, LlmDecoderRootPrefixes)) return ModelType.TextEncoder;
+
             foreach (var exact in TextEncoderExactKeys)
             {
                 if (string.Equals(key, exact, StringComparison.Ordinal)) return ModelType.TextEncoder;
@@ -320,6 +339,16 @@ public static class AssetKindHeaderMap
         foreach (var needle in needles)
         {
             if (key.Contains(needle, StringComparison.Ordinal)) return true;
+        }
+
+        return false;
+    }
+
+    private static bool StartsWithAny(string key, string[] prefixes)
+    {
+        foreach (var prefix in prefixes)
+        {
+            if (key.StartsWith(prefix, StringComparison.Ordinal)) return true;
         }
 
         return false;
