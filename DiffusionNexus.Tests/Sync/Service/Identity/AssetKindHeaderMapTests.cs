@@ -80,6 +80,29 @@ public sealed class AssetKindHeaderMapTests
     }
 
     /// <summary>
+    /// The guard for the rung ORDER itself, which the class remarks call load-bearing. The key
+    /// order here is the whole point: a TextEncoder-only key comes FIRST, a LoRA-only key SECOND.
+    /// Four sequential per-rung passes answer LoRA — the LoRA rung scans every key before the
+    /// encoder rung runs at all. A single pass that checked all four rungs per key would answer
+    /// TextEncoder on the first key and never reach the second.
+    /// </summary>
+    /// <remarks>
+    /// This case exists because the sibling test above cannot serve as the guard: kohya writes
+    /// "text_model_encoder_layers" with underscores, which never matches the dotted
+    /// "text_model.encoder.layers" needle, so both of its keys are LoRA-only and it passes under
+    /// either implementation.
+    /// </remarks>
+    [Fact]
+    public void TheLoraRungScansEveryKeyBeforeTheEncoderRungRunsAtAll()
+    {
+        var header = Header(
+            "text_model.encoder.layers.0.self_attn.q_proj.weight",
+            "lora_unet_single_blocks_0_linear1.lora_up.weight");
+
+        AssetKindHeaderMap.Map(header).Should().Be(ModelType.LORA);
+    }
+
+    /// <summary>
     /// Mirrors the AllLabels guards on BaseModelHeaderMap and FilenameBaseModelHeuristic: nothing
     /// may be returned from here that the rest of the app has no name for.
     /// </summary>
