@@ -415,6 +415,43 @@ public class LoraSortPlannerTests
             .Moves.Single().TargetDirectory.Should().Be(expected);
     }
 
+    /// <summary>
+    /// A shard of a split model is never routed into a kind folder, however confidently its header
+    /// named it. Three of the four shards of a real LLaVA-OneVision checkpoint are root-keyed Qwen2
+    /// decoders and answer TextEncoder, while the fourth is a vision tower and does not — so
+    /// routing on the verdict alone would file three into <c>Text Encoder\</c> and strand the
+    /// fourth. The planner sees one file at a time and cannot check for siblings, and half a shard
+    /// set is worse than none: the loader needs the whole complement plus its index.
+    /// </summary>
+    [Fact]
+    public void AShardOfASplitModelIsNeverRoutedIntoAKindFolder()
+    {
+        var candidate = Candidate(@"C:\src\model-00001-of-00004.safetensors", baseModel: "Qwen",
+            category: "Style") with { AssetKind = ModelType.TextEncoder };
+
+        var move = Planner()
+            .BuildPlan([candidate], Options(includeCategory: true, source: @"C:\src", target: @"C:\dst"))
+            .Moves.Single();
+
+        move.Action.Should().Be(PlannedAction.AlreadyInPlace);
+        move.TargetDirectory.Should().Be(@"C:\src");
+        move.TargetFilePath.Should().Be(@"C:\src\model-00001-of-00004.safetensors");
+    }
+
+    /// <summary>
+    /// The guard is about shard SETS, not about the digits: a support asset whose name merely
+    /// contains that shape mid-name still goes to its kind folder. Only the anchored suffix counts.
+    /// </summary>
+    [Fact]
+    public void ASupportAssetMerelyCONTAININGTheShardShapeStillGetsItsKindFolder()
+    {
+        var candidate = Candidate(@"C:\src\clip-00001-of-00004-finetune.safetensors", baseModel: "Qwen",
+            category: "Style") with { AssetKind = ModelType.TextEncoder };
+
+        Planner().BuildPlan([candidate], Options(includeCategory: true, source: @"C:\src", target: @"C:\dst"))
+            .Moves.Single().TargetDirectory.Should().Be(@"C:\dst\Text Encoder");
+    }
+
     /// <summary>The change must be invisible to the thing the sorter is actually for.</summary>
     [Fact]
     public void ALoraStillGoesToItsBaseModelAndCategory()
