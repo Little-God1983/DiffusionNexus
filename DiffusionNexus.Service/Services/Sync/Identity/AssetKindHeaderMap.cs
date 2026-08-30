@@ -201,17 +201,27 @@ public static class AssetKindHeaderMap
     // also appears in the Z-Image ControlNets, so that route needs its own exceptions immediately.
     // Anchoring costs nothing and needs no list of the things it excludes.
     //
-    // Both prefixes are load-bearing over the 1552 real containers swept. "model.layers." carries
-    // fifteen of the sixteen and is the ONLY match for seven of them; "language_model.layers." is
-    // the multimodal spelling, where a VL container puts the decoder at the root under that name
-    // instead, and is the only match for qwen3vl_8b_fp8-nf4. Neither matches any non-LLM container
-    // in that sweep. A rooted "model.embed_tokens" would be safe here too but is redundant on every
-    // observed file, so it is left out until a sample turns up that needs it.
+    // Both prefixes are load-bearing over the 1552 real containers swept, measured by dropping each
+    // from THIS two-entry table: without "model.layers." fifteen of the sixteen encoders go
+    // unnamed (eighteen files, counting the three LLaVA decoder shards); without
+    // "language_model.layers." — the multimodal spelling, where a VL container puts the decoder at
+    // the root under that name instead — qwen3vl_8b_fp8-nf4 does. Neither matches any non-LLM
+    // container in that sweep. A rooted "model.embed_tokens" would be safe here too but is
+    // redundant on every observed file, so it is left out until a sample turns up that needs it.
+    //
+    // Why anchoring is a rule and not a heuristic: a safetensors key set is the flattened module
+    // path of the SAVED TOP-LEVEL OBJECT, so anything the container merely bundles is reached
+    // through the attribute name holding it and therefore sits at depth 2 or deeper. "The decoder
+    // stack is at depth 1" is thus not evidence about the container, it is the same statement as
+    // "the saved object IS the decoder". HiDream is the general rule playing out, not a special
+    // case, and the exclusion holds however the 64-key window happens to fall.
     //
     // This is an existential test, unlike rung 2's, and deliberately: rung 2's universal quantifier
     // cannot be reused here. It is guarded on an UNTRUNCATED sample, and every one of these sixteen
     // files is 237–2417 tensors and fills the 64-key cap, so a universal rung would name none of
-    // them. Anchoring gives the same discrimination without needing the whole container.
+    // them. Nor is dropping that cap an escape: a universal test excludes HiDream only on the two
+    // "model.final_layer2." keys that happen to sort into the window, where anchoring excludes it
+    // on every key it has.
     private static readonly string[] LlmDecoderRootPrefixes =
     {
         "model.layers.", "language_model.layers.",

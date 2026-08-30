@@ -20,6 +20,10 @@ public sealed class AssetKindHeaderMapTests
     [InlineData("transformer.blocks.0.attn.to_q.lora_A.weight")]
     [InlineData("transformer.blocks.0.attn.to_q.lora_B.weight")]
     [InlineData("lora_unet_single_blocks_0_linear1.alpha")]
+    // A LoRA trained over an LLM decoder: the one shape where a key can satisfy both this rung and
+    // the root-anchored LLM prefixes in rung 6. It is a LoRA, and it stays one because rung 1 scans
+    // every key before rung 6 runs at all — the same ordering the text-encoder cases above rely on.
+    [InlineData("model.layers.0.self_attn.q_proj.lora_A.weight")]
     public void LoraWeightsNameALora(string key)
         => AssetKindHeaderMap.Map(Header(key)).Should().Be(ModelType.LORA);
 
@@ -324,8 +328,9 @@ public sealed class AssetKindHeaderMapTests
     /// <summary>
     /// Each LLM-decoder prefix standing alone, so an edit that drops one fails here rather than only
     /// on whichever real file happened to carry it. Both are load-bearing across the 1552 real
-    /// containers swept: "model.layers." is the only match for seven of the sixteen Group A files,
-    /// "language_model.layers." the only match for qwen3vl_8b_fp8-nf4.
+    /// containers swept, measured by dropping each from the shipped two-entry table: without
+    /// "model.layers." fifteen of the sixteen Group A files go unnamed, without
+    /// "language_model.layers." qwen3vl_8b_fp8-nf4 does.
     /// </summary>
     [Theory]
     [InlineData("model.layers.0.mlp.gate_proj.weight")]
@@ -360,7 +365,9 @@ public sealed class AssetKindHeaderMapTests
     /// names a multi-GB checkpoint TextEncoder, i.e. a support asset: gone from the Viewer,
     /// unselectable by bulk sync, and handed to the sorter as a file to physically move.
     /// <para>
-    /// The keys are the first 8 of the real 64-key sample, in file order. The first two matter most:
+    /// The keys are indices 0-6 of the real 64-key sample in file order, plus its index-12
+    /// self-attention projection so the fixture carries one; every key is transcribed, but they are
+    /// not a contiguous prefix and the summary must not claim they are. The first two matter most:
     /// HiDream's header is alphabetically ordered, so "model.final_layer2" lands ahead of
     /// "model.language_model" — which means a UNIVERSAL "is every sampled key LLM-shaped" test would
     /// reject this file on a two-key accident of naming rather than on principle. Anchoring does not
