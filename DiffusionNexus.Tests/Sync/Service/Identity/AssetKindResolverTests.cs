@@ -70,15 +70,53 @@ public sealed class AssetKindResolverTests
     /// <summary>
     /// The real open-failure path: a .safetensors container that cannot be opened at all. This must
     /// not throw into a discovery loop — Tasks 6/8/10 call this over whole user libraries, where a
-    /// file locked by a running backend or deleted mid-scan is routine. TryReadAsync's catch-all
-    /// answers null and the name rung takes over.
+    /// file locked by a running backend, mid-copy onto a NAS, or deleted mid-scan is routine.
+    /// TryReadAsync's catch-all answers null.
+    /// <para>
+    /// It must also not let the NAME answer instead. An unreadable container is not evidence: we
+    /// learned nothing about this file, and "we learned nothing" is not grounds for the one verdict
+    /// the user cannot undo. A wrong support-asset stamp makes a real LoRA both invisible in the
+    /// Viewer (<c>ModelFileSyncService.IsLoraFamily</c>) and unselectable by any bulk sync
+    /// (<c>SyncStateRepository</c>'s <c>LoraFamily</c> filter) — recoverable only by hand-editing the
+    /// database. Discovery is often the first thing ever to open the file, so there is no earlier
+    /// verdict to fall back on either. LORA leaves the row exactly where the next readable pass can
+    /// still correct it.
+    /// </para>
+    /// <para>
+    /// This test previously asserted <c>VAE</c> — the whole-branch review's Critical #1. Same
+    /// fixture, inverted expectation.
+    /// </para>
     /// </summary>
     [Fact]
-    public async Task ResolveAsyncFallsBackToTheNameWhenASafetensorsFileCannotBeOpened()
+    public async Task ResolveAsyncStaysALoraWhenASafetensorsFileCannotBeOpened()
     {
         var missing = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}", "Wan2_2_VAE_bf16.safetensors");
 
-        (await AssetKindResolver.ResolveAsync(missing)).Should().Be(ModelType.VAE);
+        (await AssetKindResolver.ResolveAsync(missing)).Should().Be(ModelType.LORA);
+    }
+
+    /// <summary>
+    /// The case the guard above must NOT swallow: a .safetensors whose header we genuinely read,
+    /// which matched no rung. That is evidence saying nothing, not an absence of evidence, so the
+    /// name still decides — and it has to, because <see cref="AssetKindHeaderMap"/> deliberately has
+    /// no upscaler rung (an upscaler's keys are ordinary conv stacks), so a safetensors upscaler can
+    /// only ever be named from its file name.
+    /// </summary>
+    [Fact]
+    public async Task ResolveAsyncStillNamesASafetensorsWhoseHeaderWasReadButProvedNothing()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}_4x-UltraSharp.safetensors");
+        await File.WriteAllBytesAsync(path, SafetensorsFixture.Safetensors(
+            SafetensorsFixture.Tensors("body.0.rdb1.conv1.weight", "conv_first.weight")));
+
+        try
+        {
+            (await AssetKindResolver.ResolveAsync(path)).Should().Be(ModelType.Upscaler);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 
     /// <summary>

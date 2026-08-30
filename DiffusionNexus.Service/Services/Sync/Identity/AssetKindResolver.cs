@@ -1,4 +1,5 @@
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Utilities;
 
 namespace DiffusionNexus.Service.Services.Sync.Identity;
 
@@ -20,18 +21,57 @@ namespace DiffusionNexus.Service.Services.Sync.Identity;
 /// called <c>vae_finetune_lora</c> must not be filed as a VAE because of what its author called it.
 /// Mirrors the same shape as the base-model chain (header, then
 /// <see cref="FilenameBaseModelHeuristic"/>), for the same reason.
+/// <para>
+/// Rung 2 is additionally gated on the container being one that could never have had a header —
+/// see <see cref="Resolve(SafetensorsHeaderInfo?, string?)"/>: a <c>.safetensors</c> we merely
+/// FAILED to read is not evidence, and must not be named from its file name.
+/// </para>
 /// </remarks>
 public static class AssetKindResolver
 {
-    /// <summary>The kind, from an already-parsed header and a file name.</summary>
+    /// <summary>
+    /// The kind, from an already-parsed header and a file name.
+    /// </summary>
+    /// <remarks>
+    /// <b>An unreadable container is not evidence.</b> A null <paramref name="header"/> means two
+    /// very different things and they must not be conflated: for a pickle it means "there was never
+    /// a header to read", and for a <c>.safetensors</c>/<c>.sft</c> container it means "we failed to
+    /// open or parse one" — a file still being copied onto a NAS (<see cref="SafetensorsHeaderReader"/>
+    /// answers null while the declared header runs past the current length), a transient IO fault, a
+    /// writer holding it with <c>FileShare.None</c>. Discovery is frequently the FIRST thing ever to
+    /// open such a file, so there is no earlier verdict to fall back on.
+    /// <para>
+    /// Letting the name rung answer in that case is unrecoverable: a wrong support-asset stamp makes
+    /// a real LoRA both invisible in the Viewer (<c>ModelFileSyncService.IsLoraFamily</c>) and
+    /// unselectable by any bulk sync (<c>SyncStateRepository</c>'s <c>LoraFamily</c> filter), fixable
+    /// only by hand-editing the database. This is the same hazard the design's "Why the extension
+    /// condition is load-bearing" section removed from the backfill, reached by a different route.
+    /// So a container we could not read stays <see cref="ModelType.LORA"/> and is re-asked on the
+    /// next pass that can actually open it.
+    /// </para>
+    /// <para>
+    /// A header we DID read that matched no rung still reaches the name — that is not a failure to
+    /// gather evidence, it is evidence that says nothing, and it is what lets a <c>.safetensors</c>
+    /// upscaler be named at all (<see cref="AssetKindHeaderMap"/> has no upscaler rung by design).
+    /// </para>
+    /// </remarks>
     public static ModelType Resolve(SafetensorsHeaderInfo? header, string? fileName)
-        => AssetKindHeaderMap.Map(header) ?? AssetKindClassifier.Classify(fileName);
+    {
+        if (AssetKindHeaderMap.Map(header) is { } fromWeights) return fromWeights;
+
+        if (header is null && fileName is not null
+            && ModelFileExtensions.Matches(fileName, ModelFileExtensions.SafetensorsContainers))
+            return ModelType.LORA;
+
+        return AssetKindClassifier.Classify(fileName);
+    }
 
     /// <summary>
     /// The kind for a file on disk. Reads the header when the file is a safetensors container and
-    /// can be opened; falls back to the name otherwise. Never throws for an unreadable file —
-    /// <see cref="SafetensorsHeaderReader.TryReadAsync"/> already answers null for that, and a
-    /// file we could not read is exactly the case the name rung exists to cover.
+    /// can be opened. Never throws for an unreadable file —
+    /// <see cref="SafetensorsHeaderReader.TryReadAsync"/> already answers null for that — and per
+    /// <see cref="Resolve(SafetensorsHeaderInfo?, string?)"/> a safetensors container we could not
+    /// open answers <see cref="ModelType.LORA"/> rather than letting its name decide.
     /// </summary>
     public static async Task<ModelType> ResolveAsync(string filePath, CancellationToken ct = default)
     {

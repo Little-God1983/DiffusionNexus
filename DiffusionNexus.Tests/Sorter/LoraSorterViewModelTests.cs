@@ -481,11 +481,19 @@ public sealed class LoraSorterViewModelTests : IDisposable
     /// <c>VAE\</c> folder regardless of base model, so the lookup path changed. Task 11 changes the
     /// mark itself, too: a VAE has no base model to be missing, so its placeholder no longer counts
     /// against it — <c>IdentityOf</c> now reports it Identified rather than Unidentified.
+    /// <para>
+    /// Final-review Critical #1: the fixture writes a REAL safetensors header now, because a
+    /// <c>.safetensors</c> whose header cannot be read is no longer named from its file name — an
+    /// unreadable container is not evidence, and guessing there is the one verdict a user cannot
+    /// undo. A genuine VAE has readable weights that say <c>post_quant_conv</c>, so this fixture is
+    /// also the more honest one.
+    /// </para>
     /// </remarks>
     [Fact]
     public async Task AFileNodeCarriesItsOwnKindAndMark()
     {
-        var vae = WriteLora(@"flat\sdxl_vae.safetensors");
+        var vae = WriteSafetensors(@"flat\sdxl_vae.safetensors",
+            SafetensorsFixture.Tensors("post_quant_conv.weight"));
         var vm = CreateVm(cached: [Installed(vae, "???", "character")]);
 
         await vm.InitializeAsync();
@@ -507,9 +515,11 @@ public sealed class LoraSorterViewModelTests : IDisposable
     public async Task TheHintDoesNotCountSupportAssetsAsUnidentifiedLoras()
     {
         // Browsed (not DB-known), so the kind comes from SorterMetadataResolver rather than a row's
-        // Type — the file's own name still carries "vae" and "lora" markers for readability, but
-        // what matters here is that only the actual LoRA can inflate the hint's count.
-        WriteLora(@"flat\Wan2_2_VAE_bf16.safetensors");
+        // Type. The VAE carries a real header (final-review Critical #1: a .safetensors we cannot
+        // read stays LORA, so a name-only fixture would no longer stand for a VAE at all); the LoRA
+        // stays header-less because nothing here needs it to be readable.
+        WriteSafetensors(@"flat\Wan2_2_VAE_bf16.safetensors",
+            SafetensorsFixture.Tensors("post_quant_conv.weight"));
         WriteLora(@"flat\mystery_lora.safetensors");
         var vm = CreateVm();
 
@@ -521,12 +531,14 @@ public sealed class LoraSorterViewModelTests : IDisposable
 
     /// <summary>
     /// A VAE has no base model and never will. Marking its folder ✗ for that would ask the wrong
-    /// question of it and leave the tree permanently unfinished.
+    /// question of it and leave the tree permanently unfinished. Real header, for the reason given
+    /// on <see cref="AFileNodeCarriesItsOwnKindAndMark"/> (final-review Critical #1).
     /// </summary>
     [Fact]
     public async Task ASupportAssetDoesNotPoisonItsFoldersMark()
     {
-        WriteLora(@"flat\Wan2_2_VAE_bf16.safetensors");
+        WriteSafetensors(@"flat\Wan2_2_VAE_bf16.safetensors",
+            SafetensorsFixture.Tensors("post_quant_conv.weight"));
         var vm = CreateVm();
 
         await vm.InitializeAsync();
