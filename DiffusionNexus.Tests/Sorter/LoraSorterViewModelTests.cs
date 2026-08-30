@@ -1,4 +1,5 @@
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.Services;
@@ -44,9 +45,15 @@ public sealed class LoraSorterViewModelTests : IDisposable
         return path;
     }
 
-    private static InstalledModelFile Installed(string path, string baseModel, string tag)
+    /// <summary>
+    /// <paramref name="type"/> stands in for the DB row's own <c>Model.Type</c> column — the source
+    /// Task 11 reads a DB-known candidate's kind from, now that discovery and the identify step
+    /// (Tasks 6-8) keep it current. Defaults to <see cref="ModelType.LORA"/> so the large majority of
+    /// call sites that only care about the base model need not think about kind at all.
+    /// </summary>
+    private static InstalledModelFile Installed(string path, string baseModel, string tag, ModelType type = ModelType.LORA)
     {
-        var model = new Model { Tags = { new ModelTag { Tag = new Tag { Name = tag } } } };
+        var model = new Model { Type = type, Tags = { new ModelTag { Tag = new Tag { Name = tag } } } };
         var version = new ModelVersion { BaseModelRaw = baseModel };
         var file = new ModelFile { LocalPath = path };
         return new InstalledModelFile(model, version, file, Path.GetDirectoryName(path)!);
@@ -227,13 +234,20 @@ public sealed class LoraSorterViewModelTests : IDisposable
     /// (<c>Absorb</c>) still matters and is still exercised — just now proven by confirming the VAE
     /// landed, correctly labelled, in its own folder instead of by finding it mixed into someone
     /// else's.
+    /// <para>
+    /// Task 11: a DB-known row's kind now comes from its own <c>Model.Type</c> rather than its file
+    /// name whenever the base model is already real (not a placeholder) — this row's is "Qwen" — so
+    /// the VAE is typed explicitly via <c>Installed</c>'s <c>type:</c> rather than relying on the
+    /// "vae" token the file name still carries for readability.
+    /// </para>
     /// </summary>
     [Fact]
     public async Task ASupportAssetNoLongerMixesIntoItsBaseModelFoldersChips()
     {
         var lora = WriteLora(@"flat\MyChar.safetensors");
         var vae = WriteLora(@"flat\qwen_image_vae.safetensors");
-        var vm = CreateVm(cached: [Installed(lora, "Qwen", "character"), Installed(vae, "Qwen", "character")]);
+        var vm = CreateVm(cached:
+            [Installed(lora, "Qwen", "character"), Installed(vae, "Qwen", "character", type: ModelType.VAE)]);
 
         await vm.InitializeAsync();
 
@@ -260,6 +274,11 @@ public sealed class LoraSorterViewModelTests : IDisposable
     /// sides of the pane (<c>LoraSorterViewModel.AddFileNode</c>) — so <c>SourceRoots</c>' "flat"
     /// node is now the one place all five still co-occur, and the ChipOrder comparer under test is
     /// the exact same one used for both trees.
+    /// <para>
+    /// Task 11: with a real ("Qwen") base model already on the row, none of these enters the
+    /// placeholder-only header-read branch, so each kind has to be stated via <c>Installed</c>'s
+    /// <c>type:</c> — the DB row's own <c>Model.Type</c> — rather than left to the file name.
+    /// </para>
     /// </remarks>
     [Fact]
     public async Task AFolderOrdersItsChipsDeliberatelyNotByModelTypesRawPersistedValue()
@@ -272,10 +291,10 @@ public sealed class LoraSorterViewModelTests : IDisposable
         var vm = CreateVm(cached:
         [
             Installed(lora, "Qwen", "character"),
-            Installed(vae, "Qwen", "character"),
-            Installed(controlNet, "Qwen", "character"),
-            Installed(upscaler, "Qwen", "character"),
-            Installed(textEncoder, "Qwen", "character"),
+            Installed(vae, "Qwen", "character", type: ModelType.VAE),
+            Installed(controlNet, "Qwen", "character", type: ModelType.Controlnet),
+            Installed(upscaler, "Qwen", "character", type: ModelType.Upscaler),
+            Installed(textEncoder, "Qwen", "character", type: ModelType.TextEncoder),
         ]);
 
         await vm.InitializeAsync();
@@ -436,10 +455,9 @@ public sealed class LoraSorterViewModelTests : IDisposable
     /// <remarks>
     /// Pre-#527 this VAE (placeholder base model) sorted into <c>Unknown\Character\</c>, which is
     /// where the file node used to be found. Task 9 routes a support asset to its own flat
-    /// <c>VAE\</c> folder regardless of base model, so the lookup path changed — but the thing this
-    /// test actually guards, the leaf file node's own independent kind and mark, is untouched:
-    /// nothing about #527 changes what <c>IdentityOf</c> says about a placeholder base model, only
-    /// where the resulting node sits in the tree.
+    /// <c>VAE\</c> folder regardless of base model, so the lookup path changed. Task 11 changes the
+    /// mark itself, too: a VAE has no base model to be missing, so its placeholder no longer counts
+    /// against it — <c>IdentityOf</c> now reports it Identified rather than Unidentified.
     /// </remarks>
     [Fact]
     public async Task AFileNodeCarriesItsOwnKindAndMark()
@@ -454,8 +472,46 @@ public sealed class LoraSorterViewModelTests : IDisposable
             .Children.Single(c => c.IsFile);
 
         fileNode.AssetKinds.Should().ContainSingle().Which.Should().Be("VAE");
-        fileNode.IsUnidentified.Should().BeTrue();
-        fileNode.StatusTooltip.Should().Contain("This file has no base model");
+        fileNode.IsIdentified.Should().BeTrue("a support asset has no base model to be missing (#527)");
+        fileNode.StatusTooltip.Should().Be("Every file here has a base model.");
+    }
+
+    /// <summary>
+    /// #527: the count could never reach zero because ~35 files in a real library are not LoRAs at
+    /// all. They are identified — we know exactly what they are — just not as LoRAs.
+    /// </summary>
+    [Fact]
+    public async Task TheHintDoesNotCountSupportAssetsAsUnidentifiedLoras()
+    {
+        // Browsed (not DB-known), so the kind comes from SorterMetadataResolver rather than a row's
+        // Type — the file's own name still carries "vae" and "lora" markers for readability, but
+        // what matters here is that only the actual LoRA can inflate the hint's count.
+        WriteLora(@"flat\Wan2_2_VAE_bf16.safetensors");
+        WriteLora(@"flat\mystery_lora.safetensors");
+        var vm = CreateVm();
+
+        await vm.InitializeAsync();
+
+        vm.NameGuessHint.Should().NotContain("2 LoRAs",
+            "only the one file that is actually a LoRA can be an unidentified LoRA");
+    }
+
+    /// <summary>
+    /// A VAE has no base model and never will. Marking its folder ✗ for that would ask the wrong
+    /// question of it and leave the tree permanently unfinished.
+    /// </summary>
+    [Fact]
+    public async Task ASupportAssetDoesNotPoisonItsFoldersMark()
+    {
+        WriteLora(@"flat\Wan2_2_VAE_bf16.safetensors");
+        var vm = CreateVm();
+
+        await vm.InitializeAsync();
+
+        var folder = vm.PreviewRoots.Single(n => n.Name == "VAE");
+        folder.IsUnidentified.Should().BeFalse();
+        folder.IsIdentified.Should().BeTrue();
+        folder.AssetKinds.Should().ContainSingle().Which.Should().Be("VAE");
     }
 
     [Fact]

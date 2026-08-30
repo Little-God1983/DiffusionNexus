@@ -8,7 +8,6 @@ using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Service.Services.IO;
 using DiffusionNexus.Service.Services.Lora;
-using DiffusionNexus.Service.Services.Sync.Identity;
 using DiffusionNexus.UI.Helpers;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.Lora.Sorting;
@@ -939,6 +938,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 // already carries a base model pays nothing.
                 var baseModelRaw = f.Version.BaseModelRaw;
                 string? nameGuess = null;
+                ModelType? fileIdentityKind = null;
                 if (LoraPathBuilder.IsPlaceholderBaseModel(baseModelRaw))
                 {
                     // Real I/O — a FileStream open plus up to SafetensorsHeaderReader.MaxHeaderBytes
@@ -959,11 +959,17 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                     var fileIdentity = await _metadataResolver.IdentifyFromFileAsync(path, ct);
                     baseModelRaw = fileIdentity.FromHeader ?? baseModelRaw;
                     nameGuess = fileIdentity.FromName;
+                    fileIdentityKind = fileIdentity.AssetKind;
                 }
+
+                // The row's own type, which discovery and the identify step keep current (#527).
+                // A placeholder row that had to be read from disk above gets the kind from that
+                // same read instead — it is a better answer than a row nothing has classified yet.
+                var assetKind = fileIdentityKind ?? f.Model.Type;
 
                 candidates.Add(new SortCandidate(path, baseModelRaw, category,
                     f.Version.CivitaiId, f.File.HashSHA256, sizeBytes, SidecarLocator.FindSidecars(path), nameGuess,
-                    AssetKindClassifier.Classify(Path.GetFileName(path))));
+                    assetKind));
                 knownAdded++;
             }
             catch (Exception ex) when (IsSkippableFileFailure(ex))
@@ -1014,7 +1020,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                     ?? LoraPathBuilder.UnknownFolderName;
                 candidates.Add(new SortCandidate(path, metadata.BaseModelRaw, category,
                     metadata.CivitaiVersionId, metadata.Sha256, sizeBytes, SidecarLocator.FindSidecars(path),
-                    metadata.NameGuess, AssetKindClassifier.Classify(Path.GetFileName(path))));
+                    metadata.NameGuess, metadata.AssetKind));
                 unknownAdded++;
             }
             catch (Exception ex) when (IsSkippableFileFailure(ex))
@@ -1085,6 +1091,11 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         var fixable = 0;
         foreach (var candidate in candidates)
         {
+            // A support asset is identified — we know exactly what it is — it simply is not a
+            // LoRA, and it has no base model to be missing (#527). Counting one here is what kept
+            // this number from ever reaching zero however good the identity chain got.
+            if (candidate.AssetKind.IsSupportAsset()) continue;
+
             if (!LoraPathBuilder.IsPlaceholderBaseModel(candidate.BaseModelRaw)) continue;
             unidentified++;
             if (candidate.NameGuess is not null) fixable++;
@@ -1099,9 +1110,19 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 
     private static string LoraWord(int count) => count == 1 ? "LoRA" : "LoRAs";
 
-    /// <summary>How well this candidate's destination folder is known, as the tree reports it.</summary>
+    /// <summary>
+    /// The mark a candidate contributes to its own row and to every folder above it.
+    /// </summary>
+    /// <remarks>
+    /// A support asset is <see cref="SortPreviewIdentity.Identified"/> whatever its base model says
+    /// (#527). The three marks answer "is this file's destination known", and a VAE's destination is
+    /// its kind — it has no base model, never will, and asking it the base-model question would
+    /// leave the new VAE\ folder permanently ✗. A wrong question answered honestly is still
+    /// misleading.
+    /// </remarks>
     private static SortPreviewIdentity IdentityOf(SortCandidate candidate)
-        => LoraPathBuilder.IsPlaceholderBaseModel(candidate.BaseModelRaw) ? SortPreviewIdentity.Unidentified
+        => candidate.AssetKind.IsSupportAsset() ? SortPreviewIdentity.Identified
+            : LoraPathBuilder.IsPlaceholderBaseModel(candidate.BaseModelRaw) ? SortPreviewIdentity.Unidentified
             : candidate.BaseModelIsGuess ? SortPreviewIdentity.Guessed
             : SortPreviewIdentity.Identified;
 
