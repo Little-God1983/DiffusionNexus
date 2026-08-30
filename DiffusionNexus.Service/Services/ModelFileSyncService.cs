@@ -55,10 +55,7 @@ public class ModelFileSyncService : IModelSyncService
         var enabledRoots = await _settingsService.GetEnabledLoraSourcesAsync(cancellationToken)
             .ConfigureAwait(false);
 
-        var normalizedRoots = enabledRoots
-            .Where(r => !string.IsNullOrWhiteSpace(r))
-            .Select(r => r.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
-            .ToList();
+        var normalizedRoots = NormalizeRoots(enabledRoots);
 
         if (normalizedRoots.Count == 0)
         {
@@ -104,10 +101,7 @@ public class ModelFileSyncService : IModelSyncService
         var enabledRoots = await _settingsService.GetEnabledLoraSourcesAsync(cancellationToken)
             .ConfigureAwait(false);
 
-        var normalizedRoots = enabledRoots
-            .Where(r => !string.IsNullOrWhiteSpace(r))
-            .Select(r => r.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
-            .ToList();
+        var normalizedRoots = NormalizeRoots(enabledRoots);
 
         if (normalizedRoots.Count == 0)
         {
@@ -151,11 +145,55 @@ public class ModelFileSyncService : IModelSyncService
         return seen.Values.ToList();
     }
 
+    /// <inheritdoc />
+    public async Task<int> CountExcludedSupportAssetsAsync(CancellationToken cancellationToken = default)
+    {
+        var all = await _unitOfWork.Models
+            .GetModelsWithLocalFilesLightAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var enabledRoots = await _settingsService.GetEnabledLoraSourcesAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var normalizedRoots = NormalizeRoots(enabledRoots);
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var model in all)
+        {
+            // Only the kinds this feature classifies. A checkpoint is also kept out of the grid,
+            // but it was never a LoRA the user expected to see there — counting it would make the
+            // Viewer's explanation wrong rather than merely broad.
+            if (!model.Type.IsSupportAsset()) continue;
+
+            foreach (var file in model.Versions.SelectMany(v => v.Files))
+            {
+                if (string.IsNullOrEmpty(file.LocalPath)) continue;
+                if (!file.IsLocalFileValid && file.LocalFileVerifiedAt != null) continue;
+                if (MatchEnabledRoot(file.LocalPath, normalizedRoots) is null) continue;
+                seen.Add(file.LocalPath);
+            }
+        }
+
+        return seen.Count;
+    }
+
     // Unknown is included so legacy rows (Type never set explicitly) still appear —
     // the explicit non-LoRA types (Checkpoint, Upscaler, VAE, TextualInversion, etc.)
     // are the ones we want filtered out of the LoRA viewer.
     private static bool IsLoraFamily(ModelType type) =>
         type is ModelType.LORA or ModelType.LoCon or ModelType.DoRA or ModelType.Unknown;
+
+    /// <summary>
+    /// Enabled LoRA-source roots, trimmed of a trailing separator and stripped of blanks — the one
+    /// definition of "an enabled root", shared by every reader of <c>GetEnabledLoraSourcesAsync</c>
+    /// in this class (<see cref="LoadCachedModelsAsync"/>, <see cref="LoadCachedFilesAsync"/>,
+    /// <see cref="CountExcludedSupportAssetsAsync"/>) so the grid and this count cannot disagree
+    /// about what counts as enabled.
+    /// </summary>
+    private static List<string> NormalizeRoots(IReadOnlyList<string> enabledRoots) =>
+        enabledRoots
+            .Where(r => !string.IsNullOrWhiteSpace(r))
+            .Select(r => r.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+            .ToList();
 
     /// <summary>
     /// Returns the normalized root that contains <paramref name="filePath"/>, or

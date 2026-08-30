@@ -188,4 +188,24 @@ public interface IModelSyncService
     Task<int> ReclassifySupportAssetsAsync(
         CancellationToken cancellationToken = default,
         IReadOnlySet<int>? excludeModelIds = null);
+
+    /// <summary>
+    /// How many support assets — VAEs, ControlNets, upscalers, text encoders — the LoRA grid is
+    /// currently leaving out (#527).
+    /// </summary>
+    /// <remarks>
+    /// <see cref="LoadCachedFilesAsync"/> has always dropped everything outside the LoRA family,
+    /// which is correct and predates this feature. What is new is that these files now have a
+    /// TYPE saying what they are, so on a legacy library they leave a grid the user has been
+    /// looking at for months. A file that disappears with no explanation reads as data loss;
+    /// this count is what lets the Viewer say where it went. Counted separately from the load
+    /// rather than returned by it, so no existing caller's shape changes for a number only one
+    /// of them wants.
+    /// <para>
+    /// Honours the enabled LoRA sources for the same reason the load does: a VAE under a source
+    /// the user has disabled is not being hidden by this feature, and counting it would send
+    /// them looking for a file that was never going to show.
+    /// </para>
+    /// </remarks>
+    Task<int> CountExcludedSupportAssetsAsync(CancellationToken cancellationToken = default);
 }

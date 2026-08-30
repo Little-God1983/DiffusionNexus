@@ -606,12 +606,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             SyncStatus = "Loading models from database...";
 
             // 1. Show whatever is already cached — instantly.
-            var (uniqueModelCount, tiles) = await Task.Run(LoadCachedTilesAsync);
+            var (uniqueModelCount, tiles, excludedSupportAssets) = await Task.Run(LoadCachedTilesAsync);
 
             if (tiles.Count > 0)
             {
                 ReplaceTiles(tiles);
-                SyncStatus = $"Loaded {uniqueModelCount} models ({AllTiles.Count} tiles)";
+                SyncStatus = BuildLoadedStatus(uniqueModelCount, AllTiles.Count, excludedSupportAssets);
                 showedCachedTiles = true;
             }
             else
@@ -624,9 +624,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                     await DiscoverNewFilesAsync();
                     await BackfillCivitaiModelPageIdAsync();
                 });
-                var (freshCount, freshTiles) = await Task.Run(LoadCachedTilesAsync);
+                var (freshCount, freshTiles, freshExcludedSupportAssets) = await Task.Run(LoadCachedTilesAsync);
                 ReplaceTiles(freshTiles);
-                SyncStatus = $"Loaded {freshCount} models ({AllTiles.Count} tiles)";
+                SyncStatus = BuildLoadedStatus(freshCount, AllTiles.Count, freshExcludedSupportAssets);
             }
         }
         catch (Exception ex)
@@ -650,17 +650,32 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     /// <summary>
     /// Loads the installed-file rows from the catalog DB (a lightweight projection — no
     /// thumbnail BLOBs, no filesystem access) and groups them into per-location tiles
-    /// (issue #380: one tile per (Model, LoRA-source root)). Runs on the thread pool.
+    /// (issue #380: one tile per (Model, LoRA-source root)). Also counts the support assets
+    /// (#527) the load just left out, in the same background scope, so the Viewer's status line
+    /// can name them without a second round trip to the database on the UI thread. Runs on the
+    /// thread pool.
     /// </summary>
-    private async Task<(int UniqueModelCount, List<ModelTileViewModel> Tiles)> LoadCachedTilesAsync()
+    private async Task<(int UniqueModelCount, List<ModelTileViewModel> Tiles, int ExcludedSupportAssets)> LoadCachedTilesAsync()
     {
         using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
         var freshSyncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
         var files = await freshSyncService.LoadCachedFilesAsync();
         var distinctModels = files.Select(f => f.Model.Id).Distinct().Count();
         var tiles = BuildPerLocationTiles(files);
-        return (distinctModels, tiles);
+        var excludedSupportAssets = await freshSyncService.CountExcludedSupportAssetsAsync();
+        return (distinctModels, tiles, excludedSupportAssets);
     }
+
+    /// <summary>
+    /// "Loaded 293 models (312 tiles)", plus "· 35 support assets (VAE, ControlNet, …) not shown"
+    /// when the library holds some. Naming them is the whole point: on a legacy library these
+    /// files leave a grid the user has watched for months, and a file that vanishes without a
+    /// reason reads as data loss rather than as tidying.
+    /// </summary>
+    private static string BuildLoadedStatus(int modelCount, int tileCount, int excludedSupportAssets)
+        => excludedSupportAssets > 0
+            ? $"Loaded {modelCount} models ({tileCount} tiles) · {excludedSupportAssets} support assets (VAE, ControlNet, …) not shown"
+            : $"Loaded {modelCount} models ({tileCount} tiles)";
 
     /// <summary>
     /// Swaps the tile set on the UI thread: unsubscribes the outgoing tiles, replaces
