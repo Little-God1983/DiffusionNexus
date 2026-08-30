@@ -1877,6 +1877,51 @@ public class LoraViewerViewModelSyncTests
         vm.ScrollRetryPolicyLoad.IsCompletedSuccessfully.Should().BeTrue("and it does finish");
     }
 
+    /// <summary>
+    /// Final-review Important #5. A rebuild triggered by a reclassification makes tiles the user has
+    /// been looking at for months disappear, and the verify pass's progress handler has just left
+    /// <see cref="LoraViewerViewModel.SyncStatus"/> on a trailing null — so on a legacy library's
+    /// first launch after the upgrade the files vanished under a blank status line, and §5's
+    /// explanation only turned up on the NEXT launch. This is the recompute that puts the
+    /// explanation on the same frame as the disappearance.
+    /// </summary>
+    /// <remarks>
+    /// Exercised directly rather than through <c>ReconcileLibraryInBackgroundAsync</c>: that method
+    /// is started fire-and-forget from <c>RefreshAsync</c> with nothing to await, so there is no
+    /// seam onto the wiring itself. What is covered here is the payload — a fresh scope, a fresh
+    /// count, and the status line rewritten on the UI thread.
+    /// </remarks>
+    [Fact]
+    public async Task RestatingTheLoadedStatusNamesTheSupportAssetsTheRebuildJustRemoved()
+    {
+        _modelSync.Setup(s => s.CountExcludedSupportAssetsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(35);
+        var vm = CreateViewModel();
+
+        await vm.RestateLoadedStatusAsync(modelCount: 293);
+
+        vm.SyncStatus.Should().Be(
+            "Loaded 293 models (0 tiles) · 35 support assets (VAE, ControlNet, …) not shown",
+            "the count has to be re-read after the rebuild — the load's own value was taken before "
+            + "the backfill ran and said 0");
+    }
+
+    /// <summary>
+    /// The other branch: a library with nothing to explain gets the plain line back, not a dangling
+    /// "· 0 support assets".
+    /// </summary>
+    [Fact]
+    public async Task RestatingTheLoadedStatusSaysNothingExtraWhenNothingWasExcluded()
+    {
+        _modelSync.Setup(s => s.CountExcludedSupportAssetsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(0);
+        var vm = CreateViewModel();
+
+        await vm.RestateLoadedStatusAsync(modelCount: 12);
+
+        vm.SyncStatus.Should().Be("Loaded 12 models (0 tiles)");
+    }
+
     private static ModelTileViewModel CreateTile(int modelId)
     {
         var model = new Model { Id = modelId, Name = "Local Only LoRA", Type = ModelType.LORA };

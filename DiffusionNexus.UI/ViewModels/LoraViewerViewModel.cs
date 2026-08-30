@@ -752,7 +752,17 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 $"{missing} missing (deleted from disk), {moved} moved → rebuild={changed}");
 
             if (changed)
-                await RebuildTilesFromDatabaseAsync();
+            {
+                var modelCount = await RebuildTilesFromDatabaseAsync();
+
+                // Only when rows actually changed KIND. Any other rebuild reason (a new file, a
+                // deletion, a move) leaves the status line's own trailing null alone, as before —
+                // but a reclassification is the one that makes tiles the user has been looking at
+                // for months disappear, and that has to come with its explanation attached rather
+                // than a launch later (§5).
+                if (reclassified > 0)
+                    await RestateLoadedStatusAsync(modelCount);
+            }
         }
         catch (Exception ex)
         {
@@ -1704,7 +1714,14 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             ? _uiScheduler.InvokeAsync(action)
             : Dispatcher.UIThread.InvokeAsync(action).GetTask();
 
-    private async Task RebuildTilesFromDatabaseAsync()
+    /// <summary>
+    /// Rebuilds the grid from the database. Returns the number of DISTINCT models behind the new
+    /// tiles — the same number <see cref="LoadCachedTilesAsync"/> computes for the status line, and
+    /// the reason this returns anything at all: a caller that has just made tiles disappear
+    /// (<see cref="RestateLoadedStatusAsync"/>) needs it to say so, and it is free here because the
+    /// rows are already in hand. Callers that only want the rebuild ignore it.
+    /// </summary>
+    private async Task<int> RebuildTilesFromDatabaseAsync()
     {
         using var scope = RequireScopeFactory().CreateScope();
         var syncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
@@ -1712,6 +1729,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         // Issue #380: per-location fan-out — one tile per (Model, LoRA-source).
         var files = await syncService.LoadCachedFilesAsync();
         var tiles = BuildPerLocationTiles(files);
+        var distinctModels = files.Select(f => f.Model.Id).Distinct().Count();
 
         await InvokeOnUiAsync(() =>
         {
@@ -1735,6 +1753,40 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             RebuildAvailableBaseModels();
             ApplyFilters();
         });
+
+        return distinctModels;
+    }
+
+    /// <summary>
+    /// Re-states the "Loaded N models … M support assets not shown" line after a rebuild that
+    /// removed tiles.
+    /// </summary>
+    /// <remarks>
+    /// §5 of the design exists for exactly this moment and was missing from it. On a legacy
+    /// library's first launch after the upgrade, the initial load paints every tile with a support
+    /// count of 0 (nothing has been reclassified yet); the background reconcile then backfills,
+    /// rebuilds, and the tiles disappear — while the verify pass's own progress handler has just
+    /// set <see cref="SyncStatus"/> to phase text and then null. The user watches files vanish under
+    /// a blank status line, and the only explanation appears on the NEXT launch. A file that
+    /// vanishes without a reason reads as data loss, not as tidying.
+    /// <para>
+    /// Internal so <c>LoraViewerViewModelSyncTests</c>' existing scope-factory + UI-scheduler seam
+    /// can exercise it directly; <c>ReconcileLibraryInBackgroundAsync</c> itself is started
+    /// fire-and-forget from a command and offers nothing to await.
+    /// </para>
+    /// </remarks>
+    internal async Task RestateLoadedStatusAsync(int modelCount)
+    {
+        using var scope = RequireScopeFactory().CreateScope();
+        var syncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
+        var excludedSupportAssets = await syncService.CountExcludedSupportAssetsAsync();
+
+        // Through the UI hop rather than assigned here: the progress handler's own Dispatcher.Post
+        // calls are still queued at this point, and posts run in order — assigning directly would
+        // race them and lose to the trailing null. AllTiles is read inside the hop for the same
+        // reason the load path reads it there.
+        await InvokeOnUiAsync(() =>
+            SyncStatus = BuildLoadedStatus(modelCount, AllTiles.Count, excludedSupportAssets));
     }
 
     /// <summary>
