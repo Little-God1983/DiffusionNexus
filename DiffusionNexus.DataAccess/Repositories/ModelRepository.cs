@@ -473,6 +473,29 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// The pickle restriction is in the WHERE clause, not only in the caller's loop, because this
+    /// runs on EVERY <c>DiscoverNewFilesAsync</c> — every Viewer open, every background reconcile,
+    /// every sync — and it is a three-query split load of the whole version/file graph. Without the
+    /// clause, a library with thousands of unidentified LoRAs materialised all of them on every one
+    /// of those calls, forever, only for the caller to discard each one on its extension and change
+    /// zero rows. Now the candidate set is only what the pass can actually act on.
+    /// <para>
+    /// <c>ModelFileExtensions.Matches</c> stays the authoritative rule and the caller still applies
+    /// it — this clause is an optimisation and must never become the only guard. The two agree by
+    /// construction rather than by restating one rule twice: any file the caller would act on is a
+    /// non-safetensors file, so <c>Any</c> holds and the row is selected. The reverse does not have
+    /// to hold — a model whose PRIMARY file is a container but which also carries a pickle is
+    /// selected here and then correctly skipped in the loop, which is a superset, not a
+    /// disagreement.
+    /// </para>
+    /// <para>
+    /// <c>EF.Functions.Like</c> rather than <c>EndsWith</c>: it translates to a SQL <c>LIKE</c>,
+    /// which SQLite evaluates case-insensitively for ASCII — matching the caller's
+    /// <c>OrdinalIgnoreCase</c> comparison — where <c>string.EndsWith(…, OrdinalIgnoreCase)</c> does
+    /// not translate at all.
+    /// </para>
+    /// </remarks>
     public async Task<IReadOnlyList<Model>> GetSupportAssetBackfillCandidatesAsync(
         CancellationToken cancellationToken = default)
         => await Context.Models
@@ -482,7 +505,10 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
                         && m.Source == DataSource.LocalFile
                         && (m.SyncState == null
                             || m.SyncState.MetadataOutcome == SyncOutcome.NotIdentified
-                            || m.SyncState.MetadataOutcome == SyncOutcome.None))
+                            || m.SyncState.MetadataOutcome == SyncOutcome.None)
+                        && m.Versions.Any(v => v.Files.Any(f =>
+                            !EF.Functions.Like(f.FileName, "%.safetensors")
+                            && !EF.Functions.Like(f.FileName, "%.sft"))))
             .AsSplitQuery()
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);

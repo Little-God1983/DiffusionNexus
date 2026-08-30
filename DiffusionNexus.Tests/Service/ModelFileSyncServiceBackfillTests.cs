@@ -174,6 +174,28 @@ public sealed class ModelFileSyncServiceBackfillTests : IDisposable
     }
 
     /// <summary>
+    /// Final-review Important #4. The sibling test above proves the LOOP skips a safetensors row;
+    /// this proves the QUERY never loads it. That distinction is the whole finding: this query runs
+    /// on every <c>DiscoverNewFilesAsync</c> — every Viewer open, every background reconcile, every
+    /// sync — as a three-query split load of the full version/file graph, so on a library with
+    /// thousands of unidentified LoRAs it materialised all of them, forever, to change zero rows.
+    /// The candidate set now holds only what the pass can act on.
+    /// </summary>
+    [Fact]
+    public async Task TheCandidateQueryDoesNotEvenLoadASafetensorsRow()
+    {
+        await GivenModelAsync("Wan2_2_VAE_bf16", ModelType.LORA, DataSource.LocalFile, SyncOutcome.NotIdentified, extension: ".safetensors");
+        await GivenModelAsync("clip_l", ModelType.LORA, DataSource.LocalFile, SyncOutcome.NotIdentified, extension: ".sft");
+        var pickleId = await GivenModelAsync("SD3-VAE", ModelType.LORA, DataSource.LocalFile, SyncOutcome.NotIdentified, extension: ".ckpt");
+
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var candidates = await uow.Models.GetSupportAssetBackfillCandidatesAsync();
+
+        candidates.Select(m => m.Id).Should().Equal(pickleId);
+    }
+
+    /// <summary>
     /// A model Civitai identified carries an authoritative type. Our name guess must never
     /// overrule it — that is the difference between filling a blank and overwriting an answer.
     /// Left on <c>.safetensors</c> (the default extension): the candidate query itself excludes a

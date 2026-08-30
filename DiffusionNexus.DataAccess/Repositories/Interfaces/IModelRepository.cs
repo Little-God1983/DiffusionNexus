@@ -163,6 +163,12 @@ public interface IModelRepository : IRepository<Model>
     /// identified — the cohort a library's VAEs, text encoders, ControlNets and upscalers sit in
     /// (#527). Deliberately excludes <c>Matched</c> rows: those carry an authoritative Civitai
     /// type, and a name guess may fill a blank but never overwrite an answer.
+    /// <para>
+    /// Also restricted to rows carrying a PICKLE — the only shape the name-only pass may act on
+    /// (design §3, "Why the extension condition is load-bearing"). That restriction is in the query
+    /// rather than left entirely to the caller because this runs on every discovery pass; see the
+    /// implementation's remarks.
+    /// </para>
     /// </summary>
     Task<IReadOnlyList<Model>> GetSupportAssetBackfillCandidatesAsync(CancellationToken cancellationToken = default);
 
