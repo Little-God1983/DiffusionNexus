@@ -52,9 +52,26 @@ public static class AssetKindHeaderMap
     // Rung 1 — LoRA. Checked first; see class remarks. ".alpha" is matched as a SUFFIX because it
     // is the per-module scale a LoRA writes beside each up/down pair, and as a substring it would
     // hit any tensor whose path merely contains the letters.
+    //
+    // Both SPELLINGS of the up/down pair are needed. kohya and PEFT write "lora_up"/"lora_down";
+    // diffusers before v0.21 wrote "lora.down.weight"/"lora.up.weight" with dots, and its attention
+    // processors spelled them "…to_q_lora.down.weight". Missing the dotted form was not a missed
+    // detection but a WRONG one: an old-format LoRA that also trained the text encoder carries
+    // "text_encoder.text_model.encoder.layers.…lora.down.weight", so it fell past this rung into the
+    // TextEncoder rung, whose needle those keys match — a real LoRA stamped TextEncoder from its
+    // weights, which every guard on this feature trusts, leaving it invisible in the Viewer and
+    // unselectable by any bulk sync.
+    //
+    // There is no dotted A/B pair to add: the A/B naming arrives with PEFT's lora_A/lora_B module
+    // dict, which serializes with underscores, while the dot-spelled legacy format only ever named
+    // its pair up/down. A needle for a spelling no tool writes is a needle that can only misfire.
+    //
+    // Normalizing "." to "_" before matching would collapse both spellings into one needle and is
+    // deliberately NOT done: the VAE rung's "encoder.down."/"decoder.up.", the TextEncoder rung's
+    // "text_model.encoder.layers" and the ".alpha" suffix rule all depend on the dots being real.
     private static readonly string[] LoraNeedles =
     {
-        "lora_up", "lora_down", "lora_a.", "lora_b.", "lora_unet", "lora_te",
+        "lora_up", "lora_down", "lora.up", "lora.down", "lora_a.", "lora_b.", "lora_unet", "lora_te",
     };
 
     private const string LoraAlphaSuffix = ".alpha";

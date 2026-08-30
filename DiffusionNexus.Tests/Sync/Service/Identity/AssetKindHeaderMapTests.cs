@@ -80,6 +80,23 @@ public sealed class AssetKindHeaderMapTests
     }
 
     /// <summary>
+    /// Diffusers before v0.21 spelled a LoRA's pair with DOTS — <c>lora.down.weight</c> /
+    /// <c>lora.up.weight</c> — where kohya and PEFT use underscores. The needle table was
+    /// underscore-only, so an old-format LoRA that also trained the text encoder missed the LoRA
+    /// rung and fell into the TextEncoder rung, whose "text_model.encoder.layers" needle its keys
+    /// match exactly. A real LoRA was then stamped TextEncoder <i>from its weights</i>, which every
+    /// guard on this feature trusts — they were built to stop a NAME overriding the weights, not to
+    /// stop the weights being read wrong. That row is invisible in the Viewer and unselectable by
+    /// any bulk sync, i.e. unrecoverable without hand-editing the database.
+    /// </summary>
+    [Theory]
+    [InlineData("text_encoder.text_model.encoder.layers.0.self_attn.q_proj.lora.down.weight")]
+    [InlineData("text_encoder.text_model.encoder.layers.0.self_attn.q_proj.lora.up.weight")]
+    [InlineData("unet.down_blocks.0.attentions.0.processor.to_q_lora.down.weight")]
+    public void DotSpelledLegacyDiffusersLoraWeightsStillNameALora(string key)
+        => AssetKindHeaderMap.Map(Header(key)).Should().Be(ModelType.LORA);
+
+    /// <summary>
     /// The guard for the rung ORDER itself, which the class remarks call load-bearing. The key
     /// order here is the whole point: a TextEncoder-only key comes FIRST, a LoRA-only key SECOND.
     /// Four sequential per-rung passes answer LoRA — the LoRA rung scans every key before the
