@@ -114,9 +114,45 @@ public static class AssetKindHeaderMap
     // Rung 5 — text encoder. "shared.weight" is T5's tied embedding table; "logit_scale" is CLIP's
     // learned temperature. Both are single, whole keys rather than path fragments, so they are
     // matched exactly — "shared.weight" as a substring would hit unrelated paths.
+    //
+    // The second group is the HuggingFace CAUSAL-LM layout, which the first group does not reach at
+    // all: a decoder-only LLM shipped as a prompt encoder (Gemma, Llama, Qwen 3 / Qwen-VL, Mistral,
+    // ERNIE) writes "model.layers.N.…", never "text_model.encoder.layers", and carries neither
+    // logit_scale nor shared.weight. Sixteen such files sat in one real library's TextEncoders\
+    // folder and every one of them fell past this rung, past the name rung — which has markers for
+    // "t5"/"umt5"/"mistral" but none for gemma, llama, qwen3vl, ernie or ministral — and landed on
+    // AssetKindClassifier's LORA default.
+    //
+    // "mlp.gate_proj" is the strongest of the four and carries fifteen of those sixteen on their
+    // real sampled keys: it is the SwiGLU gate every model in that family has and nothing in a
+    // U-Net, a VAE, a ControlNet or a CLIP/T5 encoder is spelled that way. It survives quantization,
+    // which matters more than it sounds — an fp8 or nf4 cast replaces every plain ".weight" with
+    // ".scale_weight"/".weight_scale"/".absmax", so needles anchored on the tensor's SUFFIX die
+    // while a needle anchored on the MODULE PATH does not.
+    //
+    // "model.embed_tokens" is not redundant with it. gemma_3_12B_it_fp8_e4m3fn.safetensors is the
+    // sixteenth file: its cast left the layernorms unquantized, so they sort ahead of the mlp block
+    // and its first 64 keys in file order contain no gate projection at all. The embedding table is
+    // the only thing in that sample to match, so this needle is the one that catches it.
+    //
+    // "language_model.layers." is the multimodal spelling — a VL container nests the decoder under
+    // "language_model." rather than "model.", so "model.embed_tokens" misses it outright — and
+    // "lm_head." is the tied output head. Neither is load-bearing on the observed library
+    // (qwen3vl_8b_fp8-nf4 carries the "language_model." spelling but its sample also has a gate
+    // projection, and no real file's first 64 keys reach its lm_head at all). They are here because
+    // the sample is the first 64 root properties IN FILE ORDER and nothing guarantees which slice of
+    // a decoder that is: both are keys the family genuinely writes, so unlike a needle for a
+    // spelling no tool emits, they can be right without ever being wrong.
+    //
+    // These belong in the NORMAL rung, below the composite guard, and that is load-bearing. A full
+    // checkpoint that BUNDLES an LLM encoder — HiDream bundles Llama — carries decoder keys AND a
+    // checkpoint prefix, and the guard running first is what stops it being named after one of its
+    // parts. It costs the sixteen real files nothing: not one of them carries a composite prefix in
+    // any of its keys.
     private static readonly string[] TextEncoderNeedles =
     {
         "text_model.encoder.layers", "token_embedding",
+        "mlp.gate_proj", "model.embed_tokens", "language_model.layers.", "lm_head.",
     };
 
     private static readonly string[] TextEncoderExactKeys =

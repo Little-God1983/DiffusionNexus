@@ -231,4 +231,138 @@ public sealed class AssetKindHeaderMapTests
             if (kind != ModelType.LORA) kind.IsSupportAsset().Should().BeTrue();
         }
     }
+
+    // ---------------------------------------------------------------------------------------
+    // Manual-smoke coverage: a real library's TextEncoders\ folder, 29 safetensors containers,
+    // every fixture below transcribed verbatim from that file's own header.
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Group A — the HuggingFace causal-LM layout that ComfyUI now ships as a prompt encoder.
+    /// Sixteen real files in that folder carry it and not one matched a needle here, so the map
+    /// said nothing; the name rung has no marker for "gemma" / "llama" / "qwen3vl" / "ernie" /
+    /// "ministral" either, so every one of them fell to <see cref="AssetKindClassifier"/>'s LORA
+    /// default. A text encoder filed as a LoRA is the mirror of the bug the dotted-spelling tests
+    /// above fix, and it pollutes the Viewer instead of emptying it.
+    /// Keys verbatim from <c>gemma_3_12B_it.safetensors</c> (1066 tensors).
+    /// </summary>
+    [Fact]
+    public void AGemmaDecoderSampleNamesATextEncoder()
+    {
+        var header = Header(
+            "model.embed_tokens.weight",
+            "model.layers.0.input_layernorm.weight",
+            "model.layers.0.mlp.down_proj.weight",
+            "model.layers.0.mlp.gate_proj.weight",
+            "model.layers.0.mlp.up_proj.weight",
+            "model.layers.0.post_attention_layernorm.weight");
+
+        AssetKindHeaderMap.Map(header).Should().Be(ModelType.TextEncoder);
+    }
+
+    /// <summary>
+    /// The same layout with every tensor replaced by its fp8 scale, so the sample carries no
+    /// embedding table at all and <c>mlp.gate_proj</c> is the only needle left standing. Keys
+    /// verbatim from <c>llama_3.1_8b_instruct_fp8_scaled.safetensors</c> (516 tensors).
+    /// </summary>
+    [Fact]
+    public void AnFp8ScaledLlamaSampleNamesATextEncoder()
+    {
+        var header = Header(
+            "model.layers.0.mlp.down_proj.scale_weight",
+            "model.layers.0.mlp.gate_proj.scale_weight",
+            "model.layers.0.mlp.up_proj.scale_weight",
+            "model.layers.0.self_attn.k_proj.scale_weight",
+            "model.layers.0.self_attn.o_proj.scale_weight",
+            "model.layers.0.self_attn.q_proj.scale_weight");
+
+        AssetKindHeaderMap.Map(header).Should().Be(ModelType.TextEncoder);
+    }
+
+    /// <summary>
+    /// The converse of the case above, and why <c>model.embed_tokens</c> is not redundant with
+    /// <c>mlp.gate_proj</c>: this file's first 64 keys in file order contain NO gate projection —
+    /// its fp8 cast left the layernorms unquantized, so they sort ahead of the mlp block — and the
+    /// embedding table is the only thing in the sample left to match. Keys verbatim from
+    /// <c>gemma_3_12B_it_fp8_e4m3fn.safetensors</c> (1066 tensors).
+    /// </summary>
+    [Fact]
+    public void ADecoderSampleWithNoGateProjectionIsStillNamedByItsEmbeddingTable()
+    {
+        var header = Header(
+            "model.embed_tokens.weight",
+            "model.layers.0.input_layernorm.weight",
+            "model.layers.0.post_attention_layernorm.weight",
+            "model.layers.0.post_feedforward_layernorm.weight",
+            "model.layers.0.pre_feedforward_layernorm.weight",
+            "model.layers.0.self_attn.k_norm.weight");
+
+        AssetKindHeaderMap.Map(header).Should().Be(ModelType.TextEncoder);
+    }
+
+    /// <summary>
+    /// The vision-language spelling: a multimodal container puts the decoder under
+    /// <c>language_model.</c> instead of <c>model.</c>, so <c>model.embed_tokens</c> misses it
+    /// outright. Keys verbatim from <c>qwen3vl_8b_fp8-nf4.safetensors</c> (1853 tensors), whose
+    /// nf4 quantization also strips every plain <c>.weight</c> down to an absmax/quant_map pair.
+    /// </summary>
+    [Fact]
+    public void ALanguageModelPrefixedDecoderSampleNamesATextEncoder()
+    {
+        var header = Header(
+            "language_model.layers.0.mlp.down_proj.weight.absmax",
+            "language_model.layers.0.mlp.down_proj.weight.quant_map",
+            "language_model.layers.0.mlp.gate_proj.weight.absmax",
+            "language_model.layers.0.mlp.gate_proj.weight.quant_map",
+            "language_model.layers.0.mlp.up_proj.weight.absmax",
+            "language_model.layers.0.mlp.up_proj.weight.quant_map");
+
+        AssetKindHeaderMap.Map(header).Should().Be(ModelType.TextEncoder);
+    }
+
+    /// <summary>
+    /// Each LLM-decoder needle standing alone, so an edit that drops one fails here rather than
+    /// only on whichever real file happened to carry it.
+    /// </summary>
+    [Theory]
+    [InlineData("model.layers.0.mlp.gate_proj.weight")]
+    [InlineData("model.embed_tokens.weight")]
+    [InlineData("language_model.layers.0.self_attn.q_proj.weight")]
+    [InlineData("lm_head.weight")]
+    public void LlmDecoderWeightsNameATextEncoder(string key)
+        => AssetKindHeaderMap.Map(Header(key)).Should().Be(ModelType.TextEncoder);
+
+    /// <summary>
+    /// The LLM needles sit in the NORMAL TextEncoder rung, BELOW the composite guard, and this is
+    /// what that placement buys: a full checkpoint that BUNDLES an LLM encoder — HiDream bundles
+    /// Llama — carries both a checkpoint prefix and decoder keys, and must still be excused rather
+    /// than named after whichever part of itself leads the sample. None of the sixteen real Group A
+    /// files carries a composite prefix in ANY of its keys, so the ordering costs them nothing.
+    /// </summary>
+    [Fact]
+    public void ACheckpointBundlingAnLlmEncoderIsStillExcused()
+    {
+        var header = Header(
+            "cond_stage_model.model.embed_tokens.weight",
+            "model.diffusion_model.double_blocks.0.img_attn.qkv.weight");
+
+        AssetKindHeaderMap.Map(header).Should().BeNull();
+    }
+
+    /// <summary>
+    /// The verdicts the smoke found already correct, pinned so this change cannot move them. The
+    /// CLIP files match on header; the T5 family does NOT — their sampled keys are
+    /// <c>encoder.block.…</c> or <c>blocks.0.attn.…</c>, which no needle here reaches (widening to a
+    /// bare "encoder.block." would sit one path segment from the VAE rung's "encoder.down."), so
+    /// they are named from their file names and must keep saying nothing here.
+    /// </summary>
+    [Theory]
+    // clip_l / clip_g_sdxl_base / clip_g_hidream / clip_l_hidream / ViT-L-14-…-TE-only-HF
+    [InlineData(ModelType.TextEncoder, "text_model.embeddings.position_embedding.weight", "text_model.encoder.layers.0.layer_norm1.bias")]
+    // t5xxl_fp16 / google_t5-v1_1-xxl_encoderonly-fp8_e4m3fn / umt5_xxl_fp8_e4m3fn_scaled
+    [InlineData(null, "encoder.block.0.layer.0.SelfAttention.k.weight", "encoder.block.0.layer.0.layer_norm.weight")]
+    // umt5-xxl-enc-bf16
+    [InlineData(null, "blocks.0.attn.k.weight", "blocks.0.ffn.fc1.weight")]
+    public void TheVerdictsTheSmokeFoundCorrectAreUnchanged(ModelType? expected, string first, string second)
+        => AssetKindHeaderMap.Map(Header(first, second)).Should().Be(expected);
 }
