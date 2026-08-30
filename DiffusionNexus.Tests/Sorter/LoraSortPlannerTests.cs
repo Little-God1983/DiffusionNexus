@@ -439,8 +439,31 @@ public class LoraSortPlannerTests
     }
 
     /// <summary>
-    /// The guard is about shard SETS, not about the digits: a support asset whose name merely
-    /// contains that shape mid-name still goes to its kind folder. Only the anchored suffix counts.
+    /// The same refusal on the OTHER route, and the reason the test sits above the destination
+    /// choice rather than inside its support-asset arm. This shard is an ordinary LoRA candidate
+    /// with a real base model and category, and it still plans no move: a mixed-kind shard set —
+    /// LLaVA's three decoder shards answer TextEncoder, its vision-tower shard answers LORA —
+    /// would otherwise be split through this door instead, which is the outcome the guard exists to
+    /// prevent. Relocating a subset is wrong whichever folder the subset was headed for.
+    /// </summary>
+    [Fact]
+    public void AShardOfASplitModelIsNotRoutedByItsBaseModelEither()
+    {
+        var candidate = Candidate(@"C:\src\model-00002-of-00004.safetensors", baseModel: "SDXL 1.0",
+            category: "Character");
+
+        var move = Planner()
+            .BuildPlan([candidate], Options(includeCategory: true, source: @"C:\src", target: @"C:\dst"))
+            .Moves.Single();
+
+        move.Action.Should().Be(PlannedAction.AlreadyInPlace);
+        move.TargetDirectory.Should().Be(@"C:\src");
+        move.TargetFilePath.Should().Be(@"C:\src\model-00002-of-00004.safetensors");
+    }
+
+    /// <summary>
+    /// The guard is about shard SETS, not about the digits, on both routes: a name that merely
+    /// contains that shape mid-name still gets its destination. Only the anchored suffix counts.
     /// </summary>
     [Fact]
     public void ASupportAssetMerelyCONTAININGTheShardShapeStillGetsItsKindFolder()

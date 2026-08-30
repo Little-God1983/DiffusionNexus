@@ -38,12 +38,23 @@ public static partial class LoraPathBuilder
     /// and the loader needs the whole complement plus its index to open anything at all. Refusing
     /// the move is the only answer the planner can give correctly from the information it has.
     /// <para>
-    /// This became reachable when <see cref="Sync.Identity.AssetKindHeaderMap"/> learned to read a root-anchored
-    /// LLM decoder: three of the four shards of a LLaVA-OneVision checkpoint are decoders and now
-    /// answer TextEncoder, while the fourth is a vision tower and does not — so a sort would have
-    /// filed three into <c>Text Encoder\</c> and left the fourth behind. Every one of those
-    /// per-file verdicts is correct; it is the ROUTING that has to know better, which is why the
-    /// rule lives here and not in the header map. What the file IS is still recorded.
+    /// The reason holds for EVERY destination, so <see cref="LoraSortPlanner"/> applies it to the
+    /// whole routing decision and not to the support-asset arm alone — which folder a subset was
+    /// headed for has nothing to do with why splitting the set is wrong. Guarding one arm splits a
+    /// mixed-kind set through the other: this became reachable when
+    /// <see cref="Sync.Identity.AssetKindHeaderMap"/> learned to read a root-anchored LLM decoder,
+    /// and three of the four shards of a LLaVA-OneVision checkpoint now answer TextEncoder while
+    /// the fourth is a vision tower and answers LORA — so a kind-folder-only guard would keep three
+    /// in place and let the fourth sort away by base model. Every one of those per-file verdicts is
+    /// correct; it is the ROUTING that has to know better, which is why the rule lives here and not
+    /// in the header map. What the file IS is still recorded.
+    /// </para>
+    /// <para>
+    /// This does not cost ordinary LoRA sorting anything: the convention belongs to large
+    /// multi-gigabyte base models, and a LoRA is single-file by nature. A file in a LoRA source that
+    /// genuinely carries the pattern IS a fragment of a split model, and leaving it alone is right
+    /// whatever base model it claims — the failure direction is "left where it was", which is always
+    /// recoverable.
     /// </para>
     /// <para>
     /// The pattern is HuggingFace's <c>save_pretrained</c> convention and nothing else in a model
