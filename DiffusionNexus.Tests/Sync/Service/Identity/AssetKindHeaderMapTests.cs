@@ -125,8 +125,10 @@ public sealed class AssetKindHeaderMapTests
     /// <see cref="SafetensorsHeaderReader.MaxSampledTensorKeys"/> root properties IN FILE ORDER — so
     /// for an alphabetically-keyed checkpoint that whole sample can be "cond_stage_model.…", which
     /// would hit the TextEncoder rung and file somebody's checkpoint into <c>Text Encoder\</c>.
-    /// The keys here are in exactly that hostile order: the encoder-shaped key comes FIRST, so a
-    /// rung 0 placed anywhere later would already have answered.
+    /// The keys here are in exactly that hostile order: the encoder-shaped key comes FIRST, so the
+    /// composite guard placed anywhere below the KIND-answering rungs would already have been beaten
+    /// to it. Its one legitimate position is the one it has — after the LoRA rung, which answers no
+    /// kind for a checkpoint at all, and before every other one.
     /// </summary>
     [Fact]
     public void ACompositeCheckpointSaysNothingRatherThanNamingOneOfItsParts()
@@ -153,14 +155,30 @@ public sealed class AssetKindHeaderMapTests
     }
 
     /// <summary>
-    /// Rung 0 must only excuse the map from composite containers, never from ordinary ones: a LoRA
-    /// carries none of the checkpoint prefixes, and ComfyUI-format LoRAs spell theirs
-    /// "diffusion_model." with no "model." ahead of it — which is why the needle keeps its prefix.
+    /// The other half of the composite guard's ordering, and the reason it sits BELOW the LoRA rung
+    /// rather than above it. The risk is one-sided. A LoRA saved in the checkpoint-prefixed layout
+    /// carries both a "model.diffusion_model." path and its own up/down pair, and with the guard
+    /// first it lost its weights verdict and fell to the name rung — a guess, which is the one thing
+    /// this class exists to pre-empt. The reverse cannot happen: a genuine composite checkpoint
+    /// carries no lora_up / lora_te / ".alpha" key for the LoRA rung to mis-fire on, which is what
+    /// the two tests above assert.
+    /// </summary>
+    [Theory]
+    [InlineData("model.diffusion_model.input_blocks.1.1.transformer_blocks.0.attn1.to_q.lora_up.weight")]
+    [InlineData("model.diffusion_model.output_blocks.5.1.transformer_blocks.0.attn2.to_k.alpha")]
+    public void ALoraKeyedLikeACheckpointIsStillALora(string key)
+        => AssetKindHeaderMap.Map(Header(key)).Should().Be(ModelType.LORA);
+
+    /// <summary>
+    /// The composite guard must only excuse the map from composite containers, never from ordinary
+    /// ones: an ordinary LoRA carries none of the checkpoint prefixes, and ComfyUI-format LoRAs spell
+    /// theirs "diffusion_model." with no "model." ahead of it — which is why the needle keeps its
+    /// prefix.
     /// </summary>
     [Theory]
     [InlineData("diffusion_model.double_blocks.0.img_attn.qkv.lora_a.weight")]
     [InlineData("lora_unet_single_blocks_0_linear1.lora_up.weight")]
-    public void RungZeroDoesNotReachAnOrdinaryLora(string key)
+    public void TheCompositeGuardDoesNotReachAnOrdinaryLora(string key)
         => AssetKindHeaderMap.Map(Header(key)).Should().Be(ModelType.LORA);
 
     /// <summary>
