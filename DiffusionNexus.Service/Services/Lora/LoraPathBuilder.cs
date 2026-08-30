@@ -1,3 +1,4 @@
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Service.Services.Sync;
 namespace DiffusionNexus.Service.Services.Lora;
 
@@ -89,6 +90,25 @@ public static class LoraPathBuilder
     public static bool IsUnresolvedCategory(string? categoryFolderName)
         => string.IsNullOrWhiteSpace(categoryFolderName)
            || string.Equals(categoryFolderName.Trim(), UnknownFolderName, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Where a support asset goes: a flat, per-kind folder directly under the target root, beside
+    /// the base-model folders (#527). No base-model segment and no category segment — both answer
+    /// questions about a LoRA's provenance, and neither means anything for a VAE.
+    /// </summary>
+    /// <remarks>
+    /// The folder name comes from <see cref="ModelTypeExtensions.SupportFolderName"/>, which is the
+    /// same string the preview's chip shows, so the tree can never advertise a folder the sorter
+    /// does not create. Throws for a non-support kind rather than inventing a folder: a LoRA's
+    /// destination is its base model, and reaching here with one is a caller bug.
+    /// </remarks>
+    public static string BuildSupportAssetDirectory(string targetRoot, ModelType kind)
+    {
+        var folder = kind.SupportFolderName()
+            ?? throw new ArgumentOutOfRangeException(nameof(kind), kind,
+                "Only a support asset has a per-kind folder; a LoRA's folder is its base model.");
+        return Path.Combine(targetRoot, SanitizeFolderName(folder));
+    }
 
     /// <summary>
     /// The naming sequence a colliding file walks: the plain name, then <c>{stem}_{versionId}</c>

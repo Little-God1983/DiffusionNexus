@@ -1,3 +1,4 @@
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.UI.Services.Lora.Sorting;
 using FluentAssertions;
 
@@ -382,5 +383,45 @@ public class LoraSortPlannerTests
             Options(isMove: true, source: @"E:\Loras", target: @"D:\Sorted"));
 
         plan.RequiredBytes.Should().Be(5000);
+    }
+
+    /// <summary>
+    /// #527: a VAE has no base model and no category — both describe a LoRA's provenance — so it
+    /// gets a flat folder of its own beside the base-model folders rather than being filed under
+    /// whichever base model its file name happened to suggest.
+    /// </summary>
+    [Fact]
+    public void ASupportAssetGoesToItsOwnFlatFolder()
+    {
+        var candidate = Candidate(@"C:\src\Wan2_2_VAE_bf16.safetensors", baseModel: "Wan Video",
+            category: "Style") with { AssetKind = ModelType.VAE };
+
+        var plan = Planner().BuildPlan([candidate],
+            Options(includeCategory: true, source: @"C:\src", target: @"C:\dst"));
+
+        plan.Moves.Single().TargetDirectory.Should().Be(@"C:\dst\VAE");
+    }
+
+    [Theory]
+    [InlineData(ModelType.Controlnet, @"C:\dst\ControlNet")]
+    [InlineData(ModelType.TextEncoder, @"C:\dst\Text Encoder")]
+    [InlineData(ModelType.Upscaler, @"C:\dst\Upscaler")]
+    public void EveryKindGetsTheFolderItsChipNames(ModelType kind, string expected)
+    {
+        var candidate = Candidate(@"C:\src\thing.safetensors", baseModel: "Qwen",
+            category: "Style") with { AssetKind = kind };
+
+        Planner().BuildPlan([candidate], Options(includeCategory: true, source: @"C:\src", target: @"C:\dst"))
+            .Moves.Single().TargetDirectory.Should().Be(expected);
+    }
+
+    /// <summary>The change must be invisible to the thing the sorter is actually for.</summary>
+    [Fact]
+    public void ALoraStillGoesToItsBaseModelAndCategory()
+    {
+        var candidate = Candidate(@"C:\src\MyChar.safetensors", baseModel: "Pony", category: "Character");
+
+        Planner().BuildPlan([candidate], Options(includeCategory: true, source: @"C:\src", target: @"C:\dst"))
+            .Moves.Single().TargetDirectory.Should().Be(@"C:\dst\Pony\Character");
     }
 }

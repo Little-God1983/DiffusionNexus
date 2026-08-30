@@ -1,3 +1,4 @@
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Service.Services.Lora;
 
 namespace DiffusionNexus.UI.Services.Lora.Sorting;
@@ -59,8 +60,10 @@ public sealed class LoraSortPlanner
         {
             ct.ThrowIfCancellationRequested();
 
-            var targetDir = LoraPathBuilder.BuildTargetDirectory(
-                options.TargetRoot, candidate.BaseModelRaw, candidate.CategoryFolderName, options.IncludeCategory);
+            var targetDir = candidate.AssetKind.IsSupportAsset()
+                ? LoraPathBuilder.BuildSupportAssetDirectory(options.TargetRoot, candidate.AssetKind)
+                : LoraPathBuilder.BuildTargetDirectory(
+                    options.TargetRoot, candidate.BaseModelRaw, candidate.CategoryFolderName, options.IncludeCategory);
             var names = claimed.TryGetValue(targetDir, out var existing)
                 ? existing
                 : claimed[targetDir] = new Dictionary<string, SortCandidate>(StringComparer.OrdinalIgnoreCase);
