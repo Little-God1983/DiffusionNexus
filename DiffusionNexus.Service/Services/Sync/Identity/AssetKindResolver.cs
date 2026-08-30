@@ -60,12 +60,28 @@ public static class AssetKindResolver
     {
         if (AssetKindHeaderMap.Map(header) is { } fromWeights) return fromWeights;
 
-        if (header is null && fileName is not null
-            && ModelFileExtensions.Matches(fileName, ModelFileExtensions.SafetensorsContainers))
-            return ModelType.LORA;
+        if (ContainerWasUnreadable(header, fileName)) return ModelType.LORA;
 
         return AssetKindClassifier.Classify(fileName);
     }
+
+    /// <summary>
+    /// Whether a null header means we could not READ a container, as opposed to a file that has no
+    /// header to read. The distinction matters because <see cref="Resolve"/> answers
+    /// <see cref="ModelType.LORA"/> for the first case — an unreadable container is not evidence —
+    /// and a caller holding a stored, weight-derived verdict must not let that default demote it.
+    /// </summary>
+    /// <remarks>
+    /// It is public, and the rule is stated here once, because that ambiguity is not local: a
+    /// <see cref="ModelType.LORA"/> coming out of <see cref="Resolve"/> can mean either "the weights
+    /// say LoRA" or "we never got to see the weights", and every caller that writes the answer over
+    /// something already established has to tell the two apart. <c>IdentifyModelStep</c> declines the
+    /// write, and the sorter declines to prefer the file's kind over the row's, both off this
+    /// predicate rather than off two hand-copied conditions that could drift.
+    /// </remarks>
+    public static bool ContainerWasUnreadable(SafetensorsHeaderInfo? header, string? fileName)
+        => header is null && fileName is not null
+           && ModelFileExtensions.Matches(fileName, ModelFileExtensions.SafetensorsContainers);
 
     /// <summary>
     /// The kind for a file on disk. Reads the header when the file is a safetensors container and

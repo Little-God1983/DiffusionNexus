@@ -6,7 +6,6 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
-using DiffusionNexus.Domain.Utilities;
 using DiffusionNexus.Service.Services.Sync.Identity;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -241,8 +240,7 @@ public sealed class IdentifyModelStep : ISyncStep
             // that offers a support-typed row here at all: SelectIdentifyCandidatesAsync filters
             // every other scope to LoraFamily.) For a row already saying LORA the default changes
             // nothing either way, so declining the write outright is the whole rule.
-            var containerUnreadable = header is null
-                && ModelFileExtensions.Matches(candidate.LocalPath, ModelFileExtensions.SafetensorsContainers);
+            var containerUnreadable = AssetKindResolver.ContainerWasUnreadable(header, candidate.LocalPath);
 
             var typeIsOurs = dbModel.Source != DataSource.CivitaiApi && !dbModel.IsUserEdited;
             if (typeIsOurs && !containerUnreadable && dbModel.Type != kind

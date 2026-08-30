@@ -120,6 +120,30 @@ public sealed class AssetKindResolverTests
     }
 
     /// <summary>
+    /// The predicate the two writing callers share, asserted directly because they act on the
+    /// distinction rather than merely observe it: <c>IdentifyModelStep</c> declines to write
+    /// <c>Model.Type</c> when it is true, and the sorter declines to prefer the file's kind over the
+    /// row's. It separates "there was never a header" (a pickle — the name is all there will ever
+    /// be) from "we failed to read one" (a container — we learned nothing, and LORA is a default).
+    /// </summary>
+    [Theory]
+    [InlineData("Wan2_2_VAE_bf16.safetensors", true)]
+    [InlineData("Wan2_2_VAE_bf16.sft", true)]
+    [InlineData("4x-UltraSharp.pth", false)]
+    [InlineData("v1-5-pruned.ckpt", false)]
+    public void AnUnreadableContainerIsToldApartFromAFileThatNeverHadAHeader(string fileName, bool expected)
+        => AssetKindResolver.ContainerWasUnreadable(header: null, fileName).Should().Be(expected);
+
+    /// <summary>
+    /// A header we DID read is never "unreadable", whatever it turned out to say — otherwise the
+    /// callers would decline every write, including the corrections this feature exists to make.
+    /// </summary>
+    [Fact]
+    public void AHeaderWeActuallyReadIsNeverUnreadable()
+        => AssetKindResolver.ContainerWasUnreadable(Header("some.opaque.tensor"), "x.safetensors")
+            .Should().BeFalse();
+
+    /// <summary>
     /// A .pth pickle short-circuits earlier still — TryReadAsync rejects the extension before it
     /// opens anything — which is why upscalers, which ship almost exclusively as .pth, can only
     /// ever be named from their file name.

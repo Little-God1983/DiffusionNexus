@@ -969,13 +969,24 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                     var fileIdentity = await _metadataResolver.IdentifyFromFileAsync(path, ct);
                     baseModelRaw = fileIdentity.FromHeader ?? baseModelRaw;
                     nameGuess = fileIdentity.FromName;
-                    fileIdentityKind = fileIdentity.AssetKind;
+
+                    // A DEFAULT is not a reading. AssetKindResolver deliberately answers LORA for a
+                    // .safetensors it could not open — mid-copy, locked, transient IO fault — because a
+                    // name guess on an unreadable container is the one verdict a user cannot undo. That
+                    // makes its LORA ambiguous, and taking it here would DEMOTE a row an earlier,
+                    // successful read had already established: a VAE still carrying the "???" placeholder
+                    // (the normal state for a VAE — it has no base model and never will) would be planned
+                    // into Unknown\ the one pass its file happened to be busy. Leaving the kind null drops
+                    // the row to the rungs below, where its stored Type gets its say. IdentifyModelStep
+                    // declines its own write on the same predicate.
+                    fileIdentityKind = fileIdentity.ContainerWasUnreadable ? null : fileIdentity.AssetKind;
                 }
 
                 // The row's own type when it says something specific — Tasks 6-8 keep those current. LORA is
                 // NOT evidence: it is what discovery stamped on every file it ever found before this feature
                 // existed, so for those rows ask the file itself. A row whose base model is a placeholder was
-                // read from disk above and that reading wins over both.
+                // read from disk above and that READING wins over both — but only when it was one; an
+                // unreadable container left the kind null above and takes no part here.
                 //
                 // But a NAME is not evidence either, and this verdict decides a physical move: a genuine LoRA
                 // called "sdxl_vae_boost.safetensors" would be relocated to <Target>\VAE\ and its row

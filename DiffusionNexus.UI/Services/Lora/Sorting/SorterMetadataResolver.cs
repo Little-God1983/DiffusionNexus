@@ -56,6 +56,18 @@ public sealed record FileIdentity(string? FromHeader, string? FromName)
     /// merely a label.
     /// </summary>
     public ModelType AssetKind { get; init; } = ModelType.LORA;
+
+    /// <summary>
+    /// Whether <see cref="AssetKind"/> is a DEFAULT rather than a reading — see
+    /// <see cref="AssetKindResolver.ContainerWasUnreadable"/>. A <c>.safetensors</c> we could not
+    /// open deliberately answers <see cref="ModelType.LORA"/> there (a name guess on an unreadable
+    /// container is the one verdict a user cannot undo), which makes a bare LORA ambiguous: it may
+    /// mean "the weights say LoRA" or "we never saw the weights". Surfaced here rather than left for
+    /// the caller to re-derive, because the caller would have to re-open the file to learn it, and
+    /// the sorter's DB-known branch has a stored, weight-derived <c>Model.Type</c> that this default
+    /// must not be allowed to demote.
+    /// </summary>
+    public bool ContainerWasUnreadable { get; init; }
 }
 
 /// <summary>
@@ -240,13 +252,15 @@ public sealed class SorterMetadataResolver
         // and what it is), and opening the file twice for them would be the duplication this
         // class's own remarks argue against.
         var assetKind = AssetKindResolver.Resolve(header, fileName);
+        var containerWasUnreadable = AssetKindResolver.ContainerWasUnreadable(header, fileName);
 
         var fromHeader = header is null ? null : BaseModelHeaderMap.Map(header);
         if (fromHeader is not null)
         {
             _logger?.Debug(LogCategory.FileSystem, LogSource,
                 $"{fileName}: nothing on record knows this file; its own safetensors header says {fromHeader}.");
-            return new FileIdentity(fromHeader, null) { AssetKind = assetKind };
+            return new FileIdentity(fromHeader, null)
+                { AssetKind = assetKind, ContainerWasUnreadable = containerWasUnreadable };
         }
 
         // GetFileNameWithoutExtension, matching IdentifyModelStep's call site exactly. The heuristic
@@ -262,8 +276,9 @@ public sealed class SorterMetadataResolver
         }
 
         return fromName is null
-            ? FileIdentity.None with { AssetKind = assetKind }
-            : new FileIdentity(null, fromName) { AssetKind = assetKind };
+            ? FileIdentity.None with { AssetKind = assetKind, ContainerWasUnreadable = containerWasUnreadable }
+            : new FileIdentity(null, fromName)
+                { AssetKind = assetKind, ContainerWasUnreadable = containerWasUnreadable };
     }
 
     /// <summary>

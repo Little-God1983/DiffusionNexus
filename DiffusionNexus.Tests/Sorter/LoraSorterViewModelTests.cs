@@ -543,6 +543,37 @@ public sealed class LoraSorterViewModelTests : IDisposable
     }
 
     /// <summary>
+    /// The sibling of the Critical #1 guard, on the sorter side. <c>AssetKindResolver</c> answers
+    /// LORA for a <c>.safetensors</c> whose header it could not read — deliberately, because a name
+    /// guess there is unrecoverable — so that LORA is a DEFAULT, not a reading, and it must not
+    /// unstamp a kind an earlier successful read already established.
+    /// <para>
+    /// This row is the exact shape where that bit: a VAE established as such in the database, whose
+    /// base model is still the <c>"???"</c> placeholder — the normal, permanent state for a VAE,
+    /// since it has no base model — and whose file happens to be unreadable on this pass (mid-copy,
+    /// locked by a running backend). The placeholder sends it down the ask-the-file branch, the file
+    /// says nothing, and before the fix the resolver's default LORA won unconditionally over the
+    /// row's stored VAE: the file was planned into <c>Unknown\</c>, and the sorter MOVES bytes off
+    /// that plan.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task AStoredSupportKindSurvivesAPassWhereTheFileCouldNotBeRead()
+    {
+        // Not a valid safetensors container: TryReadAsync answers null for it, which is what a
+        // locked or mid-copy file looks like from here.
+        var vae = WriteLora(@"flat\some_vae.safetensors");
+        var vm = CreateVm(cached: [Installed(vae, "???", "character", type: ModelType.VAE)]);
+
+        await vm.InitializeAsync();
+
+        vm.PreviewRoots.Select(n => n.Name).Should().NotContain("Unknown",
+            "a container we could not read is not grounds for demoting a kind its weights already proved");
+        vm.PreviewRoots.Single(n => n.Name == "VAE")
+            .AssetKinds.Should().ContainSingle().Which.Should().Be("VAE");
+    }
+
+    /// <summary>
     /// #527: the count could never reach zero because ~35 files in a real library are not LoRAs at
     /// all. They are identified — we know exactly what they are — just not as LoRAs.
     /// </summary>
