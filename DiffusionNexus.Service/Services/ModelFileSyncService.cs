@@ -4,6 +4,7 @@ using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Utilities;
+using DiffusionNexus.Service.Services.Sync.Identity;
 
 namespace DiffusionNexus.Service.Services;
 
@@ -310,7 +311,7 @@ public class ModelFileSyncService : IModelSyncService
             else
             {
                 // Create new model entry
-                var model = CreateModelFromFile(filePath, fileInfo);
+                var model = await CreateModelFromFileAsync(filePath, fileInfo, cancellationToken).ConfigureAwait(false);
                 await _unitOfWork.Models.AddAsync(model, cancellationToken).ConfigureAwait(false);
                 newModels.Add(model);
             }
@@ -612,16 +613,23 @@ public class ModelFileSyncService : IModelSyncService
     }
 
     /// <summary>
-    /// Creates a new Model entity from a local file.
+    /// Builds the row for a newly discovered file. Async because the file's KIND is read from its
+    /// safetensors header rather than assumed: this method used to stamp
+    /// <c>Type = ModelType.LORA</c> unconditionally, which made every VAE, text encoder,
+    /// ControlNet and upscaler in a LoRA folder indistinguishable from a LoRA everywhere
+    /// downstream (#527). One bounded header read per NEW file — the same order of I/O as the
+    /// 10 MB partial hash this loop already takes, and paid once per file ever.
     /// </summary>
-    private static Model CreateModelFromFile(string filePath, FileInfo fileInfo)
+    private static async Task<Model> CreateModelFromFileAsync(
+        string filePath, FileInfo fileInfo, CancellationToken cancellationToken)
     {
         var fileName = Path.GetFileNameWithoutExtension(filePath);
+        var kind = await AssetKindResolver.ResolveAsync(filePath, cancellationToken).ConfigureAwait(false);
 
         var model = new Model
         {
             Name = fileName,
-            Type = ModelType.LORA,
+            Type = kind,
             Source = DataSource.LocalFile,
             CreatedAt = fileInfo.CreationTimeUtc
         };
