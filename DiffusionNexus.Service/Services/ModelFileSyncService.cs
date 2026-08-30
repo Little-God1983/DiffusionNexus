@@ -148,29 +148,35 @@ public class ModelFileSyncService : IModelSyncService
     /// <inheritdoc />
     public async Task<int> CountExcludedSupportAssetsAsync(CancellationToken cancellationToken = default)
     {
-        var all = await _unitOfWork.Models
-            .GetModelsWithLocalFilesLightAsync(cancellationToken)
-            .ConfigureAwait(false);
-
         var enabledRoots = await _settingsService.GetEnabledLoraSourcesAsync(cancellationToken)
             .ConfigureAwait(false);
         var normalizedRoots = NormalizeRoots(enabledRoots);
 
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var model in all)
+        // No enabled sources → nothing is being shown, so nothing is being hidden either.
+        // Matches LoadCachedModelsAsync/LoadCachedFilesAsync: an empty root list is not
+        // "everything", it is "nothing scannable is configured".
+        if (normalizedRoots.Count == 0)
         {
-            // Only the kinds this feature classifies. A checkpoint is also kept out of the grid,
-            // but it was never a LoRA the user expected to see there — counting it would make the
-            // Viewer's explanation wrong rather than merely broad.
-            if (!model.Type.IsSupportAsset()) continue;
+            return 0;
+        }
 
-            foreach (var file in model.Versions.SelectMany(v => v.Files))
-            {
-                if (string.IsNullOrEmpty(file.LocalPath)) continue;
-                if (!file.IsLocalFileValid && file.LocalFileVerifiedAt != null) continue;
-                if (MatchEnabledRoot(file.LocalPath, normalizedRoots) is null) continue;
-                seen.Add(file.LocalPath);
-            }
+        // A narrow projection (LocalPath, IsLocalFileValid, LocalFileVerifiedAt only) rather than
+        // GetModelsWithLocalFilesLightAsync — that query's multi-include AsSplitQuery over
+        // Creator/Tags/Versions/TriggerWords is the same heavy read LoadCachedFilesAsync just ran
+        // moments earlier in the same Viewer load; running it a second time for a number that
+        // never looks at any of that graph would double the Viewer's heaviest query on every
+        // refresh.
+        var files = await _unitOfWork.Models
+            .GetSupportAssetFilePathsAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var file in files)
+        {
+            if (string.IsNullOrEmpty(file.LocalPath)) continue;
+            if (!file.IsLocalFileValid && file.LocalFileVerifiedAt != null) continue;
+            if (MatchEnabledRoot(file.LocalPath, normalizedRoots) is null) continue;
+            seen.Add(file.LocalPath);
         }
 
         return seen.Count;

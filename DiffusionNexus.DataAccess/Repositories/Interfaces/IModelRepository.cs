@@ -165,4 +165,17 @@ public interface IModelRepository : IRepository<Model>
     /// type, and a name guess may fill a blank but never overwrite an answer.
     /// </summary>
     Task<IReadOnlyList<Model>> GetSupportAssetBackfillCandidatesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The <c>LocalPath</c>, validity flag and verification timestamp of every file belonging to a
+    /// support-asset model (VAE, ControlNet, Upscaler, TextEncoder) — nothing else. Backs
+    /// <c>ModelFileSyncService.CountExcludedSupportAssetsAsync</c> (#527): that count only ever
+    /// needs these three columns, so it must not run through
+    /// <see cref="GetModelsWithLocalFilesLightAsync"/>, whose multi-include <c>AsSplitQuery</c>
+    /// over Creator/Tags/Versions/TriggerWords is the heaviest read in the Viewer's load path —
+    /// paying it twice on every refresh, for a number that never looks at any of that graph, is
+    /// exactly the query-count-vs-payload mistake the light variant exists to avoid.
+    /// </summary>
+    Task<IReadOnlyList<(string LocalPath, bool IsLocalFileValid, DateTimeOffset? LocalFileVerifiedAt)>>
+        GetSupportAssetFilePathsAsync(CancellationToken cancellationToken = default);
 }

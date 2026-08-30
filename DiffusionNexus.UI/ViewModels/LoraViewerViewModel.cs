@@ -672,7 +672,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     /// files leave a grid the user has watched for months, and a file that vanishes without a
     /// reason reads as data loss rather than as tidying.
     /// </summary>
-    private static string BuildLoadedStatus(int modelCount, int tileCount, int excludedSupportAssets)
+    /// <remarks>
+    /// Internal rather than private so <c>LoraViewerViewModelLoadedStatusTests</c> can exercise
+    /// both branches directly — reached through <c>InternalsVisibleTo("DiffusionNexus.Tests")</c>
+    /// (same technique <c>SortHistoryWriter</c> uses) — without constructing a full view model or
+    /// wiring the App.Services locator this class's DB-backed load path needs.
+    /// </remarks>
+    internal static string BuildLoadedStatus(int modelCount, int tileCount, int excludedSupportAssets)
         => excludedSupportAssets > 0
             ? $"Loaded {modelCount} models ({tileCount} tiles) · {excludedSupportAssets} support assets (VAE, ControlNet, …) not shown"
             : $"Loaded {modelCount} models ({tileCount} tiles)";

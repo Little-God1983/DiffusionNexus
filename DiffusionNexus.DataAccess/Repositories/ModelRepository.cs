@@ -486,4 +486,29 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
             .AsSplitQuery()
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<(string LocalPath, bool IsLocalFileValid, DateTimeOffset? LocalFileVerifiedAt)>>
+        GetSupportAssetFilePathsAsync(CancellationToken cancellationToken = default)
+    {
+        // Flattened from ModelFiles with a filter on the owning Model's Type, the same shape
+        // GetInstalledCivitaiVersionIdsAsync/GetInstalledFileHashesAsync already use for a
+        // narrow projection — no Include, no entity graph, just the three columns the caller
+        // needs. ModelTypeExtensions.SupportAssetKinds.Contains(...) rather than
+        // Type.IsSupportAsset(): the latter is a custom extension method EF cannot translate to
+        // SQL (the same constraint the #527 backfill query hit), while Enumerable.Contains
+        // against SupportAssetKinds — the one definition of the support-asset set — is a
+        // standard EF pattern that becomes a parameterized IN, so this can never drift from
+        // IsSupportAsset() the way restating the four types inline here could.
+        var rows = await Context.ModelFiles
+            .Where(f => f.LocalPath != null && f.LocalPath != ""
+                        && ModelTypeExtensions.SupportAssetKinds.Contains(f.ModelVersion!.Model!.Type))
+            .Select(f => new { f.LocalPath, f.IsLocalFileValid, f.LocalFileVerifiedAt })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return rows
+            .Select(r => (r.LocalPath!, r.IsLocalFileValid, r.LocalFileVerifiedAt))
+            .ToList();
+    }
 }
