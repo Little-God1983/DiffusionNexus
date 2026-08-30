@@ -1,6 +1,7 @@
 using System.Text.Json;
 using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Service.Services.Lora;
 using DiffusionNexus.Service.Services.Sync.Identity;
@@ -29,6 +30,14 @@ public sealed record ResolvedLoraMetadata(string? BaseModelRaw, int? CivitaiVers
     /// user how many files it would resolve.
     /// </summary>
     public string? NameGuess { get; init; }
+
+    /// <summary>
+    /// What this file IS — a LoRA, or one of the support assets a LoRA folder also holds (#527).
+    /// Read from the safetensors tensor keys where there are any, else guessed from the file name.
+    /// The sorter files a support asset into its own folder, so this decides a destination and not
+    /// merely a label.
+    /// </summary>
+    public ModelType AssetKind { get; init; } = ModelType.LORA;
 }
 
 /// <summary>
@@ -39,6 +48,14 @@ public sealed record ResolvedLoraMetadata(string? BaseModelRaw, int? CivitaiVers
 public sealed record FileIdentity(string? FromHeader, string? FromName)
 {
     public static FileIdentity None { get; } = new(null, null);
+
+    /// <summary>
+    /// What this file IS — a LoRA, or one of the support assets a LoRA folder also holds (#527).
+    /// Read from the safetensors tensor keys where there are any, else guessed from the file name.
+    /// The sorter files a support asset into its own folder, so this decides a destination and not
+    /// merely a label.
+    /// </summary>
+    public ModelType AssetKind { get; init; } = ModelType.LORA;
 }
 
 /// <summary>
@@ -146,9 +163,10 @@ public sealed class SorterMetadataResolver
         var identity = await IdentifyFromFileAsync(filePath, ct);
 
         // The header is applied outright; the name is only offered. See FileIdentity.
+        var withKind = resolved with { AssetKind = identity.AssetKind };
         return identity.FromHeader is not null
-            ? resolved with { BaseModelRaw = identity.FromHeader }
-            : resolved with { NameGuess = identity.FromName };
+            ? withKind with { BaseModelRaw = identity.FromHeader }
+            : withKind with { NameGuess = identity.FromName };
     }
 
     /// <summary>
@@ -217,12 +235,18 @@ public sealed class SorterMetadataResolver
         var fileName = Path.GetFileName(filePath);
 
         var header = await SafetensorsHeaderReader.TryReadAsync(filePath, ct);
+
+        // From the SAME header read — the weights answer both questions (what it was trained on,
+        // and what it is), and opening the file twice for them would be the duplication this
+        // class's own remarks argue against.
+        var assetKind = AssetKindResolver.Resolve(header, fileName);
+
         var fromHeader = header is null ? null : BaseModelHeaderMap.Map(header);
         if (fromHeader is not null)
         {
             _logger?.Debug(LogCategory.FileSystem, LogSource,
                 $"{fileName}: nothing on record knows this file; its own safetensors header says {fromHeader}.");
-            return new FileIdentity(fromHeader, null);
+            return new FileIdentity(fromHeader, null) { AssetKind = assetKind };
         }
 
         // GetFileNameWithoutExtension, matching IdentifyModelStep's call site exactly. The heuristic
@@ -237,7 +261,9 @@ public sealed class SorterMetadataResolver
                 $"{fileName}: no usable header either; its name suggests {fromName} — offered, not applied.");
         }
 
-        return fromName is null ? FileIdentity.None : new FileIdentity(null, fromName);
+        return fromName is null
+            ? FileIdentity.None with { AssetKind = assetKind }
+            : new FileIdentity(null, fromName) { AssetKind = assetKind };
     }
 
     /// <summary>
