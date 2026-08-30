@@ -8,6 +8,7 @@ using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Service.Services.IO;
 using DiffusionNexus.Service.Services.Lora;
+using DiffusionNexus.Service.Services.Sync.Identity;
 using DiffusionNexus.UI.Helpers;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.Lora.Sorting;
@@ -962,10 +963,12 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                     fileIdentityKind = fileIdentity.AssetKind;
                 }
 
-                // The row's own type, which discovery and the identify step keep current (#527).
-                // A placeholder row that had to be read from disk above gets the kind from that
-                // same read instead — it is a better answer than a row nothing has classified yet.
-                var assetKind = fileIdentityKind ?? f.Model.Type;
+                // The row's own type when it says something specific — Tasks 6-8 keep those current. LORA is
+                // NOT evidence: it is what discovery stamped on every file it ever found before this feature
+                // existed, so for those rows ask the file itself, exactly as this code did before. A row whose
+                // base model is a placeholder was read from disk above and that reading wins over both.
+                var assetKind = fileIdentityKind
+                    ?? (f.Model.Type.IsSupportAsset() ? f.Model.Type : AssetKindClassifier.Classify(Path.GetFileName(path)));
 
                 candidates.Add(new SortCandidate(path, baseModelRaw, category,
                     f.Version.CivitaiId, f.File.HashSHA256, sizeBytes, SidecarLocator.FindSidecars(path), nameGuess,

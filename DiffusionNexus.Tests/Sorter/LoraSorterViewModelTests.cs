@@ -258,6 +258,29 @@ public sealed class LoraSorterViewModelTests : IDisposable
     }
 
     /// <summary>
+    /// #527 regression: <c>CivitaiMetadataApplier</c> writes <c>BaseModelRaw</c> unconditionally on a
+    /// hash match, not gated on <c>Type</c> — so a support asset synced against Civitai before this
+    /// feature existed keeps discovery's old blanket <c>Type = LORA</c> stamp forever; nothing in the
+    /// identify pipeline ever revisits it once its base model is real. Before Task 11 this file was
+    /// still reclassified from its name on every preview pass regardless of the DB row, so it
+    /// displayed correctly despite the stale column. Edit (a) must not trust that stale "LORA" as
+    /// though it were evidence: a row saying LORA proves nothing (it is what every file was stamped
+    /// before this feature existed), so the file's own name still gets asked, exactly as before.
+    /// </summary>
+    [Fact]
+    public async Task ARealBaseModelRowStuckAtTypeLoraStillClassifiesFromItsName()
+    {
+        var vae = WriteLora(@"flat\sdxl_vae.safetensors");
+        // type: defaults to ModelType.LORA — the stale value a legacy, Civitai-matched row keeps.
+        var vm = CreateVm(cached: [Installed(vae, "SDXL 1.0", "character")]);
+
+        await vm.InitializeAsync();
+
+        vm.PreviewRoots.Single(n => n.Name == "VAE")
+            .AssetKinds.Should().ContainSingle().Which.Should().Be("VAE");
+    }
+
+    /// <summary>
     /// Pins the FULL chip order deliberately, not incidentally: LoRA first, then VAE, ControlNet,
     /// Upscaler, Text Encoder — the <c>ModelTypeExtensions.SupportAssetKinds</c> order — via
     /// <c>SortPreviewNodeViewModel</c>'s <c>ChipOrder</c> comparer. The sibling test above (LoRA +
