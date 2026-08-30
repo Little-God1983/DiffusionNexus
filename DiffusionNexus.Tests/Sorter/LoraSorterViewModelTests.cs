@@ -218,12 +218,18 @@ public sealed class LoraSorterViewModelTests : IDisposable
     }
 
     /// <summary>
-    /// A folder's chips are the union of everything beneath it, so a base-model folder about to
-    /// receive a VAE alongside its LoRAs says so before anything moves — that mixing is invisible
-    /// today and only shows up as a stray file after the sort.
+    /// #527 (Task 9): this used to demonstrate the bug itself — a VAE misfiled into its LoRAs'
+    /// base-model folder, invisible until a stray file turned up after the sort ("a folder's chips
+    /// are the union of everything beneath it, so a base-model folder about to receive a VAE
+    /// alongside its LoRAs says so before anything moves"). Task 9 fixes that at the routing layer
+    /// instead: a support asset never lands under a base-model folder at all, so <c>Qwen</c>'s chip
+    /// set can no longer show anything but the LoRA it actually holds. The union mechanism itself
+    /// (<c>Absorb</c>) still matters and is still exercised — just now proven by confirming the VAE
+    /// landed, correctly labelled, in its own folder instead of by finding it mixed into someone
+    /// else's.
     /// </summary>
     [Fact]
-    public async Task AFolderIsLabelledWithEveryAssetKindBeneathIt()
+    public async Task ASupportAssetNoLongerMixesIntoItsBaseModelFoldersChips()
     {
         var lora = WriteLora(@"flat\MyChar.safetensors");
         var vae = WriteLora(@"flat\qwen_image_vae.safetensors");
@@ -231,8 +237,10 @@ public sealed class LoraSorterViewModelTests : IDisposable
 
         await vm.InitializeAsync();
 
-        var qwen = vm.PreviewRoots.Single(n => n.Name == "Qwen");
-        qwen.AssetKinds.Should().BeEquivalentTo(["LoRA", "VAE"], o => o.WithStrictOrdering());
+        vm.PreviewRoots.Single(n => n.Name == "Qwen")
+            .AssetKinds.Should().ContainSingle().Which.Should().Be("LoRA");
+        vm.PreviewRoots.Single(n => n.Name == "VAE")
+            .AssetKinds.Should().ContainSingle().Which.Should().Be("VAE");
     }
 
     /// <summary>
@@ -244,6 +252,15 @@ public sealed class LoraSorterViewModelTests : IDisposable
     /// (LORA=5, Controlnet=8, Upscaler=10, VAE=12, TextEncoder=19) would put ControlNet and Upscaler
     /// BEFORE VAE if nothing overrode them — the opposite of the order asserted here.
     /// </summary>
+    /// <remarks>
+    /// #527 (Task 9): five kinds can no longer land under one DESTINATION folder — each support kind
+    /// now gets its own flat folder beside the base-model ones, so <c>PreviewRoots</c> never again
+    /// absorbs more than one kind into a single node. They still share a SOURCE folder before the
+    /// sort runs, though, and <c>Absorb</c> rolls every kind up through the ancestor chain on both
+    /// sides of the pane (<c>LoraSorterViewModel.AddFileNode</c>) — so <c>SourceRoots</c>' "flat"
+    /// node is now the one place all five still co-occur, and the ChipOrder comparer under test is
+    /// the exact same one used for both trees.
+    /// </remarks>
     [Fact]
     public async Task AFolderOrdersItsChipsDeliberatelyNotByModelTypesRawPersistedValue()
     {
@@ -263,8 +280,8 @@ public sealed class LoraSorterViewModelTests : IDisposable
 
         await vm.InitializeAsync();
 
-        var qwen = vm.PreviewRoots.Single(n => n.Name == "Qwen");
-        qwen.AssetKinds.Should().BeEquivalentTo(
+        var flat = vm.SourceRoots.Single(n => n.Name == "flat");
+        flat.AssetKinds.Should().BeEquivalentTo(
             ["LoRA", "VAE", "ControlNet", "Upscaler", "Text Encoder"],
             o => o.WithStrictOrdering());
     }
@@ -416,6 +433,14 @@ public sealed class LoraSorterViewModelTests : IDisposable
 
     /// <summary>A file node carries its own kind and its own mark, so expanding an unfinished folder
     /// shows which files are the problem rather than only that some are.</summary>
+    /// <remarks>
+    /// Pre-#527 this VAE (placeholder base model) sorted into <c>Unknown\Character\</c>, which is
+    /// where the file node used to be found. Task 9 routes a support asset to its own flat
+    /// <c>VAE\</c> folder regardless of base model, so the lookup path changed — but the thing this
+    /// test actually guards, the leaf file node's own independent kind and mark, is untouched:
+    /// nothing about #527 changes what <c>IdentityOf</c> says about a placeholder base model, only
+    /// where the resulting node sits in the tree.
+    /// </remarks>
     [Fact]
     public async Task AFileNodeCarriesItsOwnKindAndMark()
     {
@@ -425,9 +450,8 @@ public sealed class LoraSorterViewModelTests : IDisposable
         await vm.InitializeAsync();
 
         var fileNode = vm.PreviewRoots
-            .Single(n => n.Name == LoraPathBuilder.UnknownFolderName)
-            .Children.SelectMany(c => c.IsFile ? [c] : c.Children)
-            .Single(c => c.IsFile);
+            .Single(n => n.Name == "VAE")
+            .Children.Single(c => c.IsFile);
 
         fileNode.AssetKinds.Should().ContainSingle().Which.Should().Be("VAE");
         fileNode.IsUnidentified.Should().BeTrue();
