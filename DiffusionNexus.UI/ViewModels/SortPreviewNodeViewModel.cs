@@ -1,6 +1,7 @@
 using Avalonia;
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.UI.Helpers;
 using DiffusionNexus.UI.Services.Lora.Sorting;
 
@@ -152,7 +153,7 @@ public partial class SortPreviewNodeViewModel : ObservableObject
 
     // Ordered by the enum so the chips read the same way every pass; a folder's chips are the union
     // of everything beneath it, not just its direct children.
-    private readonly SortedSet<SorterAssetKind> _kinds = [];
+    private readonly SortedSet<ModelType> _kinds = [];
 
     /// <summary>
     /// Chip labels for the asset kinds under this node — "LoRA", "VAE", "ControlNet". A folder that
@@ -212,7 +213,7 @@ public partial class SortPreviewNodeViewModel : ObservableObject
     /// at the worst seen so far. Called for the file's own node and for every ancestor, which is
     /// what makes both values subtree-wide.
     /// </summary>
-    public void Absorb(SorterAssetKind kind, SortPreviewIdentity identity)
+    public void Absorb(ModelType kind, SortPreviewIdentity identity)
     {
         if (_kinds.Add(kind))
         {
@@ -221,7 +222,7 @@ public partial class SortPreviewNodeViewModel : ObservableObject
             // it is still being built.
             AssetKinds.Clear();
             foreach (var known in _kinds)
-                AssetKinds.Add(SorterAssetKindClassifier.DisplayName(known));
+                AssetKinds.Add(known.DisplayName());
         }
 
         if (identity > Identity)

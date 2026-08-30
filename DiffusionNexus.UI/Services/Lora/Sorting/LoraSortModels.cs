@@ -1,3 +1,5 @@
+using DiffusionNexus.Domain.Enums;
+
 namespace DiffusionNexus.UI.Services.Lora.Sorting;
 
 /// <summary>One LoRA the sorter may act on — decoupled from the DB graph so the planner is pure.</summary>
@@ -19,7 +21,7 @@ public sealed record SortCandidate(
 
     // What this file actually is. Never decides where it goes — it drives the preview's per-folder
     // labels, so a base-model folder about to receive a VAE says so before anything moves.
-    SorterAssetKind AssetKind = SorterAssetKind.Lora,
+    ModelType AssetKind = ModelType.LORA,
 
     // True once "sort by name" has folded NameGuess into BaseModelRaw. Comparing the two strings
     // would answer the same question most of the time and silently wrongly the rest: a header and a

@@ -1,28 +1,15 @@
-namespace DiffusionNexus.UI.Services.Lora.Sorting;
+using DiffusionNexus.Domain.Enums;
 
-/// <summary>
-/// What a file in a LoRA folder actually is. The library scan enumerates by extension, so a
-/// "LoRA folder" routinely also holds the VAEs, text encoders, ControlNets and upscalers a
-/// workflow needs — on one real library, 35 of 328 unidentified files were one of these.
-/// </summary>
-public enum SorterAssetKind
-{
-    /// <summary>The default, and what the sorter is for. Assumed unless a marker says otherwise.</summary>
-    Lora,
-    Vae,
-    TextEncoder,
-    ControlNet,
-    Upscaler,
-}
+namespace DiffusionNexus.Service.Services.Sync.Identity;
 
 /// <summary>
 /// Names a file's asset kind from its FILE NAME alone.
 /// </summary>
 /// <remarks>
-/// Name-based and therefore fallible, which is why nothing here decides where a file goes: the kind
-/// drives a label in the preview so the user can see that a base-model folder is about to receive
-/// something that is not a LoRA. Whether such a file should be sorted differently — or discovered
-/// at all — is a separate question, deliberately not answered here.
+/// Name-based and therefore fallible, which is why it is the SECOND rung: a safetensors file is
+/// named by its tensor keys (<see cref="AssetKindHeaderMap"/>) and only a container with no
+/// readable header — a .pth or .ckpt pickle — is named from here. That is what bounds the risk of
+/// a verdict the sorter turns into a physical move.
 /// <para>
 /// Every marker below is drawn from names observed in a real library rather than invented, and the
 /// bar for adding one is that it cannot plausibly occur in a LoRA's own name. That is why
@@ -32,7 +19,7 @@ public enum SorterAssetKind
 /// <c>Chris.pth</c> in that same library is a perfectly ordinary model.
 /// </para>
 /// </remarks>
-public static class SorterAssetKindClassifier
+public static class AssetKindClassifier
 {
     private static readonly string[] VaeTokens = { "vae" };
 
@@ -65,49 +52,46 @@ public static class SorterAssetKindClassifier
         "ultrasharp", "esrgan", "realesrgan", "lsdirplus", "lsdir", "swinir", "upscaler",
     };
 
-    /// <summary>Asset kind for a file name, defaulting to <see cref="SorterAssetKind.Lora"/>.</summary>
-    public static SorterAssetKind Classify(string? fileName)
+    /// <summary>
+    /// Every kind this classifier can ever return. Test-only seam (DiffusionNexus.Tests,
+    /// InternalsVisibleTo) — mirrors <see cref="AssetKindHeaderMap.AllKinds"/>.
+    /// </summary>
+    internal static IReadOnlyCollection<ModelType> AllKinds { get; } =
+        [ModelType.LORA, ModelType.VAE, ModelType.Controlnet, ModelType.TextEncoder, ModelType.Upscaler];
+
+    /// <summary>Asset kind for a file name, defaulting to <see cref="ModelType.LORA"/>.</summary>
+    public static ModelType Classify(string? fileName)
     {
         if (string.IsNullOrWhiteSpace(fileName))
-            return SorterAssetKind.Lora;
+            return ModelType.LORA;
 
         var stem = Path.GetFileNameWithoutExtension(fileName).ToLowerInvariant();
         var tokens = stem.Split(['_', '-', '.', ' ', '(', ')', '[', ']'], StringSplitOptions.RemoveEmptyEntries);
         if (tokens.Length == 0)
-            return SorterAssetKind.Lora;
+            return ModelType.LORA;
 
         // Order matters where a name carries two markers: "LTX23_audio_vae_bf16" is a VAE, and
         // "Qwen-Image-InstantX-ControlNet-Inpainting" is a ControlNet, so the more specific
         // component wins over the family name it belongs to.
-        if (ContainsAny(tokens, VaeTokens)) return SorterAssetKind.Vae;
-        if (ContainsAny(tokens, ControlNetTokens)) return SorterAssetKind.ControlNet;
+        if (ContainsAny(tokens, VaeTokens)) return ModelType.VAE;
+        if (ContainsAny(tokens, ControlNetTokens)) return ModelType.Controlnet;
 
         // Leading "clip" only — see class remarks.
-        if (string.Equals(tokens[0], "clip", StringComparison.Ordinal)) return SorterAssetKind.TextEncoder;
-        if (ContainsAny(tokens, TextEncoderTokens)) return SorterAssetKind.TextEncoder;
+        if (string.Equals(tokens[0], "clip", StringComparison.Ordinal)) return ModelType.TextEncoder;
+        if (ContainsAny(tokens, TextEncoderTokens)) return ModelType.TextEncoder;
         if (ContainsAny(tokens, [ShortEncoderToken]) && ContainsAny(tokens, [ShortEncoderQualifier]))
-            return SorterAssetKind.TextEncoder;
+            return ModelType.TextEncoder;
 
-        if (ContainsAny(tokens, UpscalerTokens)) return SorterAssetKind.Upscaler;
+        if (ContainsAny(tokens, UpscalerTokens)) return ModelType.Upscaler;
 
         // "4x-UltraSharp", "4xLSDIRplus", "2xNomosUni" — a scale factor leading the name is an
         // upscaler naming convention and nothing else in a model library is named that way. It
         // appears both as its own token and glued straight onto the model name, so both spellings
         // count.
-        if (LeadsWithAScaleFactor(tokens[0])) return SorterAssetKind.Upscaler;
+        if (LeadsWithAScaleFactor(tokens[0])) return ModelType.Upscaler;
 
-        return SorterAssetKind.Lora;
+        return ModelType.LORA;
     }
-
-    /// <summary>Display label for a chip in the preview tree.</summary>
-    public static string DisplayName(SorterAssetKind kind) => kind switch
-    {
-        SorterAssetKind.Vae => "VAE",
-        SorterAssetKind.TextEncoder => "Text Encoder",
-        SorterAssetKind.ControlNet => "ControlNet",
-        SorterAssetKind.Upscaler => "Upscaler",
-        _ => "LoRA",
-    };
 
     private static bool ContainsAny(string[] tokens, string[] markers)
     {

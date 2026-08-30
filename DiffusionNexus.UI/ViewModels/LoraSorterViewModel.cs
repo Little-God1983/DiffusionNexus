@@ -963,7 +963,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 
                 candidates.Add(new SortCandidate(path, baseModelRaw, category,
                     f.Version.CivitaiId, f.File.HashSHA256, sizeBytes, SidecarLocator.FindSidecars(path), nameGuess,
-                    SorterAssetKindClassifier.Classify(Path.GetFileName(path))));
+                    AssetKindClassifier.Classify(Path.GetFileName(path))));
                 knownAdded++;
             }
             catch (Exception ex) when (IsSkippableFileFailure(ex))
@@ -1014,7 +1014,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                     ?? LoraPathBuilder.UnknownFolderName;
                 candidates.Add(new SortCandidate(path, metadata.BaseModelRaw, category,
                     metadata.CivitaiVersionId, metadata.Sha256, sizeBytes, SidecarLocator.FindSidecars(path),
-                    metadata.NameGuess, SorterAssetKindClassifier.Classify(Path.GetFileName(path))));
+                    metadata.NameGuess, AssetKindClassifier.Classify(Path.GetFileName(path))));
                 unknownAdded++;
             }
             catch (Exception ex) when (IsSkippableFileFailure(ex))
