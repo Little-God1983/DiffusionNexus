@@ -36,6 +36,10 @@ public static class AssetKindResolver
     public static async Task<ModelType> ResolveAsync(string filePath, CancellationToken ct = default)
     {
         var header = await SafetensorsHeaderReader.TryReadAsync(filePath, ct).ConfigureAwait(false);
+        // Pass only the file name to Resolve, not the full path — parent directory segments must
+        // never influence the verdict (see the base-model chain for why). Classify also strips the
+        // path, so this is the first of two defenses; if Classify stops stripping, it must not
+        // silently break this rule.
         return Resolve(header, Path.GetFileName(filePath));
     }
 }

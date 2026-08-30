@@ -68,11 +68,26 @@ public sealed class AssetKindResolverTests
     }
 
     /// <summary>
-    /// A file that cannot be opened at all must not throw into a discovery loop — it is simply a
-    /// file whose weights we could not read, which is what the name rung is for.
+    /// The real open-failure path: a .safetensors container that cannot be opened at all. This must
+    /// not throw into a discovery loop — Tasks 6/8/10 call this over whole user libraries, where a
+    /// file locked by a running backend or deleted mid-scan is routine. TryReadAsync's catch-all
+    /// answers null and the name rung takes over.
     /// </summary>
     [Fact]
-    public async Task ResolveAsyncFallsBackToTheNameWhenTheFileIsUnreadable()
+    public async Task ResolveAsyncFallsBackToTheNameWhenASafetensorsFileCannotBeOpened()
+    {
+        var missing = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}", "Wan2_2_VAE_bf16.safetensors");
+
+        (await AssetKindResolver.ResolveAsync(missing)).Should().Be(ModelType.VAE);
+    }
+
+    /// <summary>
+    /// A .pth pickle short-circuits earlier still — TryReadAsync rejects the extension before it
+    /// opens anything — which is why upscalers, which ship almost exclusively as .pth, can only
+    /// ever be named from their file name.
+    /// </summary>
+    [Fact]
+    public async Task APickleIsNamedFromItsFileNameWithoutAnyFileAccess()
     {
         var missing = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}", "4xLSDIRplus.pth");
 
