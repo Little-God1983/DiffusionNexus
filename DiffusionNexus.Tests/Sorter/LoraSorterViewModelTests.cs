@@ -265,12 +265,19 @@ public sealed class LoraSorterViewModelTests : IDisposable
     /// still reclassified from its name on every preview pass regardless of the DB row, so it
     /// displayed correctly despite the stale column. Edit (a) must not trust that stale "LORA" as
     /// though it were evidence: a row saying LORA proves nothing (it is what every file was stamped
-    /// before this feature existed), so the file's own name still gets asked, exactly as before.
+    /// before this feature existed), so the file itself still gets asked.
+    /// <para>
+    /// Final-review Important #2: what gets asked is now the WEIGHTS, not the name — a support-asset
+    /// name only triggers the header read, it no longer decides the move on its own. The fixture is
+    /// a real VAE header accordingly, which is what a legacy Civitai-matched VAE actually looks like
+    /// on disk. The assertion is unchanged: this row still has to reach <c>VAE\</c>.
+    /// </para>
     /// </summary>
     [Fact]
-    public async Task ARealBaseModelRowStuckAtTypeLoraStillClassifiesFromItsName()
+    public async Task ARealBaseModelRowStuckAtTypeLoraIsStillClassifiedFromItsWeights()
     {
-        var vae = WriteLora(@"flat\sdxl_vae.safetensors");
+        var vae = WriteSafetensors(@"flat\sdxl_vae.safetensors",
+            SafetensorsFixture.Tensors("post_quant_conv.weight"));
         // type: defaults to ModelType.LORA — the stale value a legacy, Civitai-matched row keeps.
         var vm = CreateVm(cached: [Installed(vae, "SDXL 1.0", "character")]);
 
@@ -278,6 +285,34 @@ public sealed class LoraSorterViewModelTests : IDisposable
 
         vm.PreviewRoots.Single(n => n.Name == "VAE")
             .AssetKinds.Should().ContainSingle().Which.Should().Be("VAE");
+    }
+
+    /// <summary>
+    /// Final-review Important #2, the case the fix exists for. Before it, a DB-known row with a REAL
+    /// base model and <c>Type == LORA</c> — which is every LoRA Civitai has ever matched — had its
+    /// destination chosen from its FILE NAME, so a genuine LoRA called "sdxl_vae_boost" was
+    /// physically moved into <c>&lt;Target&gt;\VAE\</c> and its row rewritten to point there. Names
+    /// like that are ordinary: a LoRA is routinely named after what it was trained beside.
+    /// <para>
+    /// Neither pure rule is safe — trusting the row misfiles the legacy VAE the sibling test above
+    /// covers, trusting the name misfiles this LoRA — so a suspicious NAME now only triggers a
+    /// header read, and the weights settle it. Here they say <c>lora_up</c>, and the file stays with
+    /// its base model.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task ALoraNamedLikeAVaeIsNotMovedIntoTheVaeFolder()
+    {
+        var lora = WriteSafetensors(@"flat\sdxl_vae_boost.safetensors",
+            SafetensorsFixture.Tensors("lora_unet_blocks_0.lora_up.weight"));
+        var vm = CreateVm(cached: [Installed(lora, "SDXL 1.0", "character")]);
+
+        await vm.InitializeAsync();
+
+        vm.PreviewRoots.Select(n => n.Name).Should().NotContain("VAE",
+            "the weights say lora_up — a file name is not grounds for relocating somebody's LoRA");
+        vm.PreviewRoots.Single(n => n.Name == "SDXL 1.0")
+            .AssetKinds.Should().ContainSingle().Which.Should().Be("LoRA");
     }
 
     /// <summary>
