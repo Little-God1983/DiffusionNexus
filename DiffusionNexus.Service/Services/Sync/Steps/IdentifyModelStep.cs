@@ -225,10 +225,16 @@ public sealed class IdentifyModelStep : ISyncStep
             // trained on, which is what the rungs below answer. Corrects rows the name-only
             // backfill guessed at, and names support assets discovered before the feature existed.
             //
-            // Only ever moves BETWEEN our own verdicts: a model Civitai matched never reaches this
-            // branch at all, so an authoritative type cannot be overwritten from here.
+            // A model Civitai matched can still reach this branch — a duplicate-page-id row with a
+            // null CivitaiId (SelectIdentifyCandidatesAsync's CivitaiId == null filter lets it
+            // through), or an explicit per-model re-check (includeMatched: true, which skips that
+            // filter entirely) whose hash lookup happens to miss on THIS run — so it is the
+            // Source/IsUserEdited check below, not branch-unreachability, that keeps an
+            // authoritative or user-authored Type from being overwritten: this only ever moves a
+            // row BETWEEN our own weight-derived verdicts.
             var kind = AssetKindResolver.Resolve(header, Path.GetFileName(candidate.LocalPath));
-            if (dbModel.Type != kind && (dbModel.Type == ModelType.LORA || dbModel.Type.IsSupportAsset()))
+            var typeIsOurs = dbModel.Source != DataSource.CivitaiApi && !dbModel.IsUserEdited;
+            if (typeIsOurs && dbModel.Type != kind && (dbModel.Type == ModelType.LORA || dbModel.Type.IsSupportAsset()))
                 dbModel.Type = kind;
 
             var headerCheckedAt = header is not null ? now : (DateTimeOffset?)null;

@@ -664,9 +664,13 @@ public sealed class IdentifyModelStepTests : IDisposable
     }
 
     /// <summary>
-    /// The backfill (#527) classifies by name alone, which is fast but fallible. This is the rung
-    /// that closes that window: the moment the step reads a file's weights, the row's kind is
-    /// corrected from them.
+    /// A row already stamped VAE, whose weights are actually a LoRA's: this rung corrects it, but
+    /// only via an explicit per-model sync. A bulk library run's own candidate-selection filter
+    /// (<c>SelectIdentifyCandidatesAsync</c>'s LoraFamily set) excludes a VAE-typed row before
+    /// <c>ExecuteOneAsync</c> is ever reached, so this direction never fires on an ordinary sync —
+    /// see <see cref="GivenLocalModelAsync"/>'s remarks for why this test bypasses
+    /// <c>SelectAsync</c> to reach the branch directly instead of asserting on a path that, for
+    /// this starting type, a bulk run would never take.
     /// </summary>
     [Fact]
     public async Task CorrectsAMisnamedLoraFromItsWeights()
@@ -683,8 +687,10 @@ public sealed class IdentifyModelStepTests : IDisposable
     }
 
     /// <summary>
-    /// And the other direction: a VAE discovered before the feature existed, whose row still says
-    /// LORA and whose name carries no marker, is named by its weights.
+    /// The other direction fires on any run, bulk or explicit: a VAE discovered before the feature
+    /// existed, whose row still says LORA and whose name carries no marker, is named by its
+    /// weights the moment <c>ExecuteOneAsync</c> reads them — LORA stays inside the LoraFamily set,
+    /// so an ordinary library sync reaches this row exactly as an explicit one would.
     /// </summary>
     [Fact]
     public async Task NamesASupportAssetFromItsWeights()
@@ -697,6 +703,61 @@ public sealed class IdentifyModelStepTests : IDisposable
         await WhenIdentifiedAsync(candidate);
 
         (await LoadTypeAsync(candidate.ModelId)).Should().Be(ModelType.VAE);
+    }
+
+    /// <summary>
+    /// I2 (Task 8 review fix). A duplicate-page-id row — <c>CivitaiId</c> null but <c>Source</c>
+    /// already <see cref="DataSource.CivitaiApi"/> from an earlier match, the same shape
+    /// <see cref="Execute_HeaderWriteDoesNotRelabelACivitaiSourcedModel"/> exercises for the
+    /// base-model label — is NOT excluded by <c>SelectIdentifyCandidatesAsync</c>'s
+    /// <c>CivitaiId == null</c> filter, so it reaches this branch on an ordinary library run
+    /// whenever this run's own hash lookup misses. The kind guard must not treat that model's
+    /// <c>Type</c> as ours to move just because it is LORA and the header disagrees — <c>Source</c>
+    /// is what protects it, not branch-unreachability.
+    /// </summary>
+    [Fact]
+    public async Task Execute_HeaderDoesNotOverwriteACivitaiSourcedModelsType()
+    {
+        var path = NewModelFile("civitai-sourced-type.safetensors", Safetensors(Tensors("post_quant_conv.weight")));
+        var (modelId, _) = await SeedAsync("civitai-sourced-type", path);
+
+        // Duplicate-page-id shape: Source already CivitaiApi, CivitaiId still null.
+        using (var seedScope = NewScope())
+        {
+            var seedUow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var seeded = await seedUow.Models.GetByIdAsync(modelId);
+            seeded!.Source = DataSource.CivitaiApi;
+            await seedUow.SaveChangesAsync();
+        }
+
+        var step = NewNotFoundStep();
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        (await LoadTypeAsync(modelId)).Should().Be(ModelType.LORA,
+            "a Civitai-sourced model's Type is not ours to move, even though the header disagrees");
+    }
+
+    /// <summary>
+    /// I2 (Task 8 review fix), the <c>IsUserEdited</c> half. An explicit per-model re-check (the
+    /// per-tile "Download Metadata" button, <see cref="SyncScope.ForModels"/>) passes
+    /// <c>includeMatched: true</c>, which skips <c>SelectIdentifyCandidatesAsync</c>'s
+    /// <c>CivitaiId == null &amp;&amp; !IsUserEdited</c> filter entirely — a hand-edited row is
+    /// selected, and if this run's hash lookup misses, it reaches the guard just like the
+    /// Civitai-sourced row above.
+    /// </summary>
+    [Fact]
+    public async Task Execute_HeaderDoesNotOverwriteAUserEditedModelsType()
+    {
+        var path = NewModelFile("user-edited-type.safetensors", Safetensors(Tensors("post_quant_conv.weight")));
+        var (modelId, _) = await SeedAsync("user-edited-type", path, isUserEdited: true);
+
+        var step = NewNotFoundStep();
+        var items = await step.SelectAsync(SyncScope.ForModels(modelId), Options(), Now, CancellationToken.None);
+        await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        (await LoadTypeAsync(modelId)).Should().Be(ModelType.LORA,
+            "a user-edited model's Type is not ours to move, even though the header disagrees");
     }
 
     /// <summary>

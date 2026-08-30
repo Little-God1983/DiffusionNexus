@@ -586,6 +586,15 @@ public class ModelFileSyncService : IModelSyncService
                 ?? model.Versions.SelectMany(v => v.Files).FirstOrDefault()?.FileName;
             if (fileName is null) continue;
 
+            // A safetensors container's real kind is a fact IdentifyModelStep can read directly
+            // from its weights — guessing from its name here would be strictly worse evidence, and
+            // the row is not left stuck waiting for that: every candidate this query selects is
+            // NotIdentified/None, which IdentifyModelStep already treats as due. Only a pickle
+            // (.ckpt/.pt/.pth — Sortable minus SafetensorsContainers) has no header to fall back
+            // on, so its file name is the only evidence this pass, or anything else, will ever
+            // have for it — that is where a name guess is actually warranted.
+            if (ModelFileExtensions.Matches(fileName, ModelFileExtensions.SafetensorsContainers)) continue;
+
             var kind = AssetKindClassifier.Classify(fileName);
             if (!kind.IsSupportAsset()) continue;
 

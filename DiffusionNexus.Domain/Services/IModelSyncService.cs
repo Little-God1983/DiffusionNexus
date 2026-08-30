@@ -154,8 +154,11 @@ public interface IModelSyncService
     Task<string> ComputeFileHashAsync(string filePath, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// One-shot reclassification of rows that predate support-asset detection (#527), from the
-    /// FILE NAME only. Returns how many rows changed.
+    /// One-shot reclassification of rows that predate support-asset detection (#527), scoped to the
+    /// files a header cannot help with — a pickle (<c>.ckpt</c>/<c>.pt</c>/<c>.pth</c>), named from
+    /// its FILE NAME only. A safetensors container (<c>.safetensors</c>/<c>.sft</c>) is left exactly
+    /// as it is: it is decided by <c>IdentifyModelStep</c> from its weights instead. Returns how
+    /// many rows changed.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <param name="excludeModelIds">
@@ -169,9 +172,17 @@ public interface IModelSyncService
     /// this method's own direct tests, has no such batch to protect.
     /// </param>
     /// <remarks>
-    /// Name-only on purpose: a header read per row would cost minutes on a large library over a
-    /// NAS, and any row this gets wrong is corrected the next time <c>IdentifyModelStep</c> reads
-    /// that file's weights. Idempotent and self-terminating — a row reclassified to VAE no longer
+    /// A pickle has no readable header at all, so its file name is the only evidence this pass — or
+    /// anything else — will ever have for it; that is where a name guess is warranted, and its
+    /// result is final. A safetensors container is a different case entirely, not a cheaper version
+    /// of the same one: reading a header per row here would cost minutes on a large library over a
+    /// NAS, but that read does not need to happen in THIS pass, because it already happens for free
+    /// the next time <c>IdentifyModelStep</c> looks at the row — every row this candidate query
+    /// selects is <c>NotIdentified</c>/<c>None</c>, i.e. already due for that step. Guessing a
+    /// safetensors row's kind from its name here, on weaker evidence, only to have the real answer
+    /// overwrite it moments or days later, is strictly worse than never guessing at all — so this
+    /// pass skips every safetensors row outright, regardless of what its name says. Idempotent and
+    /// self-terminating for the pickles it does classify — a row reclassified to VAE no longer
     /// satisfies the candidate query's <c>Type == LORA</c>.
     /// </remarks>
     Task<int> ReclassifySupportAssetsAsync(
