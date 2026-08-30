@@ -1,6 +1,7 @@
 using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 
 namespace DiffusionNexus.DataAccess.Repositories;
@@ -470,4 +471,19 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
                 cancellationToken)
             .ConfigureAwait(false);
     }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<Model>> GetSupportAssetBackfillCandidatesAsync(
+        CancellationToken cancellationToken = default)
+        => await Context.Models
+            .Include(m => m.Versions)
+                .ThenInclude(v => v.Files)
+            .Where(m => m.Type == ModelType.LORA
+                        && m.Source == DataSource.LocalFile
+                        && (m.SyncState == null
+                            || m.SyncState.MetadataOutcome == SyncOutcome.NotIdentified
+                            || m.SyncState.MetadataOutcome == SyncOutcome.None))
+            .AsSplitQuery()
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
 }

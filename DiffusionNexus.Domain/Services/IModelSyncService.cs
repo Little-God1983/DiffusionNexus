@@ -139,4 +139,16 @@ public interface IModelSyncService
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The computed hash.</returns>
     Task<string> ComputeFileHashAsync(string filePath, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// One-shot reclassification of rows that predate support-asset detection (#527), from the
+    /// FILE NAME only. Returns how many rows changed.
+    /// </summary>
+    /// <remarks>
+    /// Name-only on purpose: a header read per row would cost minutes on a large library over a
+    /// NAS, and any row this gets wrong is corrected the next time <c>IdentifyModelStep</c> reads
+    /// that file's weights. Idempotent and self-terminating — a row reclassified to VAE no longer
+    /// satisfies the candidate query's <c>Type == LORA</c>.
+    /// </remarks>
+    Task<int> ReclassifySupportAssetsAsync(CancellationToken cancellationToken = default);
 }

@@ -534,6 +534,39 @@ public class ModelFileSyncService : IModelSyncService
         }
     }
 
+    /// <inheritdoc />
+    public async Task<int> ReclassifySupportAssetsAsync(CancellationToken cancellationToken = default)
+    {
+        var candidates = await _unitOfWork.Models
+            .GetSupportAssetBackfillCandidatesAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var changed = 0;
+        foreach (var model in candidates)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // The file name, not the model name: a user may have renamed the model in the app,
+            // and it is the file on disk whose name carries the marker.
+            var fileName = model.Versions
+                .SelectMany(v => v.Files)
+                .FirstOrDefault(f => f.IsPrimary)?.FileName
+                ?? model.Versions.SelectMany(v => v.Files).FirstOrDefault()?.FileName;
+            if (fileName is null) continue;
+
+            var kind = AssetKindClassifier.Classify(fileName);
+            if (!kind.IsSupportAsset()) continue;
+
+            model.Type = kind;
+            changed++;
+        }
+
+        if (changed > 0)
+            await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        return changed;
+    }
+
     /// <summary>
     /// Tries to match a file by hash and size to find moved files.
     /// </summary>

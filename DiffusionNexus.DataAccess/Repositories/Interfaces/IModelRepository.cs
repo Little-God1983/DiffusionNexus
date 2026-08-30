@@ -157,4 +157,12 @@ public interface IModelRepository : IRepository<Model>
         int totalVersionCount,
         DateTime checkedAtUtc,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Local rows still carrying discovery's old blanket <c>LORA</c> stamp that Civitai has never
+    /// identified — the cohort a library's VAEs, text encoders, ControlNets and upscalers sit in
+    /// (#527). Deliberately excludes <c>Matched</c> rows: those carry an authoritative Civitai
+    /// type, and a name guess may fill a blank but never overwrite an answer.
+    /// </summary>
+    Task<IReadOnlyList<Model>> GetSupportAssetBackfillCandidatesAsync(CancellationToken cancellationToken = default);
 }
