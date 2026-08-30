@@ -169,6 +169,10 @@ public interface IModelRepository : IRepository<Model>
     /// rather than left entirely to the caller because this runs on every discovery pass; see the
     /// implementation's remarks.
     /// </para>
+    /// <para>
+    /// Excludes <c>IsUserEdited</c> rows, matching <c>IdentifyModelStep</c>'s refusal to re-stamp
+    /// <c>Type</c> on one: a type the user set by hand is an answer, not a blank.
+    /// </para>
     /// </summary>
     Task<IReadOnlyList<Model>> GetSupportAssetBackfillCandidatesAsync(CancellationToken cancellationToken = default);
 

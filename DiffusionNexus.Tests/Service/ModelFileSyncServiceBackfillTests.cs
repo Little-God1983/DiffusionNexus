@@ -76,9 +76,14 @@ public sealed class ModelFileSyncServiceBackfillTests : IDisposable
     /// their name). Callers that want to prove the pass still fires pass a pickle extension
     /// (<c>.ckpt</c>/<c>.pt</c>/<c>.pth</c>) instead — the one shape this pass still classifies.
     /// </param>
-    private async Task<int> GivenModelAsync(string name, ModelType type, DataSource source, SyncOutcome outcome, string extension = ".safetensors")
+    /// <param name="isUserEdited">
+    /// A type the user set by hand. Excluded by the candidate query for the same reason
+    /// <c>IdentifyModelStep</c> refuses to re-stamp such a row (final-review Important #7): the two
+    /// write sites have to agree about what a user's edit means.
+    /// </param>
+    private async Task<int> GivenModelAsync(string name, ModelType type, DataSource source, SyncOutcome outcome, string extension = ".safetensors", bool isUserEdited = false)
     {
-        var model = new Model { Name = name, Type = type, Source = source };
+        var model = new Model { Name = name, Type = type, Source = source, IsUserEdited = isUserEdited };
         var version = new ModelVersion { Name = "v1", BaseModelRaw = "???", Model = model };
         version.Files.Add(new ModelFile
         {
@@ -171,6 +176,41 @@ public sealed class ModelFileSyncServiceBackfillTests : IDisposable
 
         changed.Should().Be(0);
         (await LoadTypeAsync(id)).Should().Be(ModelType.LORA);
+    }
+
+    /// <summary>
+    /// Final-review Important #7. <c>IdentifyModelStep</c> already refuses to re-stamp <c>Type</c>
+    /// on a row the user edited; this pass did not, so a user who deliberately typed
+    /// <c>4x-detail-helper.pth</c> as a LoRA had it flipped back to <c>Upscaler</c> on the next
+    /// discovery — which is every Viewer open, so the edit would never survive. A type the user set
+    /// by hand is an answer, not a blank, and both write sites now say so.
+    /// </summary>
+    [Fact]
+    public async Task LeavesARowTheUserTypedByHandAlone()
+    {
+        var id = await GivenModelAsync("4x-detail-helper", ModelType.LORA, DataSource.LocalFile,
+            SyncOutcome.NotIdentified, extension: ".pth", isUserEdited: true);
+
+        var changed = await _service.ReclassifySupportAssetsAsync(CancellationToken.None);
+
+        changed.Should().Be(0);
+        (await LoadTypeAsync(id)).Should().Be(ModelType.LORA);
+    }
+
+    /// <summary>
+    /// The other half of the same guard: without <c>isUserEdited</c> the identical row IS
+    /// reclassified, so the test above pins the flag rather than something about the fixture.
+    /// </summary>
+    [Fact]
+    public async Task StillReclassifiesTheSameRowWhenTheUserNeverTouchedIt()
+    {
+        var id = await GivenModelAsync("4x-detail-helper", ModelType.LORA, DataSource.LocalFile,
+            SyncOutcome.NotIdentified, extension: ".pth");
+
+        var changed = await _service.ReclassifySupportAssetsAsync(CancellationToken.None);
+
+        changed.Should().Be(1);
+        (await LoadTypeAsync(id)).Should().Be(ModelType.Upscaler);
     }
 
     /// <summary>

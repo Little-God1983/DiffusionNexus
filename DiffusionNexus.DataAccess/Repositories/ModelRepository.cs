@@ -490,6 +490,12 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
     /// disagreement.
     /// </para>
     /// <para>
+    /// <c>IsUserEdited</c> is excluded for the same reason <c>IdentifyModelStep</c> refuses to
+    /// re-stamp <c>Type</c> on such a row: the two write sites must agree about what a user's edit
+    /// means, or a user who deliberately typed <c>4x-detail-helper.pth</c> as <c>LORA</c> has it
+    /// flipped back on the next discovery — which is every Viewer open.
+    /// </para>
+    /// <para>
     /// <c>EF.Functions.Like</c> rather than <c>EndsWith</c>: it translates to a SQL <c>LIKE</c>,
     /// which SQLite evaluates case-insensitively for ASCII — matching the caller's
     /// <c>OrdinalIgnoreCase</c> comparison — where <c>string.EndsWith(…, OrdinalIgnoreCase)</c> does
@@ -503,6 +509,7 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
                 .ThenInclude(v => v.Files)
             .Where(m => m.Type == ModelType.LORA
                         && m.Source == DataSource.LocalFile
+                        && !m.IsUserEdited
                         && (m.SyncState == null
                             || m.SyncState.MetadataOutcome == SyncOutcome.NotIdentified
                             || m.SyncState.MetadataOutcome == SyncOutcome.None)
