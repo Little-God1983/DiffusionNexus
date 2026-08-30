@@ -1781,10 +1781,17 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         var syncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
         var excludedSupportAssets = await syncService.CountExcludedSupportAssetsAsync();
 
-        // Through the UI hop rather than assigned here: the progress handler's own Dispatcher.Post
-        // calls are still queued at this point, and posts run in order — assigning directly would
-        // race them and lose to the trailing null. AllTiles is read inside the hop for the same
-        // reason the load path reads it there.
+        // Through the UI hop rather than assigned here, for thread affinity — not for ordering. The
+        // await above resumes on whichever pool thread completed it, so a direct assignment would
+        // raise PropertyChanged off the UI thread, and AllTiles.Count would be read while the UI
+        // thread may be mutating that ObservableCollection. Both are why the load path does the same.
+        //
+        // It buys no ordering against the reconcile's progress handler, and must not be read as if it
+        // did: that Progress<SyncProgress> is constructed inside Task.Run with no SynchronizationContext
+        // captured, so its callbacks run on the pool rather than in the dispatcher queue, and one still
+        // in flight can reach Dispatcher.UIThread.Post after this write does. The status line is
+        // re-stated on every rebuild that removes tiles, so a lost race costs the explanation for one
+        // pass, not the correctness of anything.
         await InvokeOnUiAsync(() =>
             SyncStatus = BuildLoadedStatus(modelCount, AllTiles.Count, excludedSupportAssets));
     }
