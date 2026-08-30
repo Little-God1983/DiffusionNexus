@@ -25,13 +25,21 @@ namespace DiffusionNexus.Service.Services.Sync.Identity;
 /// </para>
 /// <para>
 /// Every rung BELOW the LoRA rung assumes ONE purpose per container, so a composite-container guard
-/// sits directly beneath it and excuses this map from the files where that assumption does not hold
+/// sits near the top and excuses this map from the files where that assumption does not hold
 /// — a full checkpoint, which bundles a UNet, a VAE and a text encoder together. It answers null
 /// rather than a kind; see the comment on it for why. It sits below the LoRA rung and not above it
 /// because the risk is one-sided: a LoRA whose keys happen to carry a checkpoint-shaped prefix would
 /// lose its weights verdict and be handed to the name rung, while the reverse cannot happen — a
 /// genuine composite checkpoint carries no <c>lora_up</c>, <c>lora_te</c> or <c>.alpha</c> keys, so
 /// the LoRA rung has nothing to mis-fire on.
+/// </para>
+/// <para>
+/// One rung sits between those two, and it is the only UNIVERSAL test here — every other rung asks
+/// whether ANY sampled key carries a needle, this one asks whether ALL of them do. It earns that
+/// position on the same argument the LoRA rung does: if every key belongs to one named component,
+/// the container IS that component and cannot be composite, whatever prefix those keys happen to
+/// carry. Without it a standalone LTX embeddings connector — 59 tensors, all of them connector,
+/// written under <c>model.diffusion_model.</c> — is read as a bundled checkpoint by the guard.
 /// </para>
 /// </remarks>
 public static class AssetKindHeaderMap
@@ -78,7 +86,44 @@ public static class AssetKindHeaderMap
 
     private const string LoraAlphaSuffix = ".alpha";
 
-    // Rung 2 — composite container. Every rung below assumes ONE purpose per file, and a full
+    // Rung 2 — whole-container component, and the ONLY rung in this class with a UNIVERSAL
+    // quantifier. Every other rung is existential ("does ANY sampled key contain this needle"),
+    // which is right for a marker that identifies a container by a part unique to it. These markers
+    // are not that: a full LTX checkpoint contains an embeddings connector, so "any key mentions a
+    // connector" would file somebody's checkpoint as a text encoder off one embedded part. What
+    // distinguishes the standalone component is that there is nothing ELSE in the container — so the
+    // test is that EVERY sampled key belongs to one of these components. A checkpoint that merely
+    // holds a connector also holds transformer, patchify and VAE keys, and fails that test on the
+    // first of them.
+    //
+    // It sits above the composite guard for the same reason the LoRA rung does, and the reason is
+    // the same sentence: if every key belongs to one named component, the container IS that
+    // component and cannot be composite, whatever prefix those keys happen to carry. That prefix is
+    // the whole bug. ltx-2-19b-embeddings_connector_dev_bf16.safetensors is 59 tensors, every one of
+    // them a connector — but the audio and video halves are written under "model.diffusion_model.",
+    // so the guard read a 59-tensor component as a bundled checkpoint, answered null, and dropped it
+    // on the name rung and the LORA default.
+    //
+    // The quantifier is over the marker SET, not one marker: that same file is 29 keys of
+    // "audio_embeddings_connector", 29 of "video_embeddings_connector" and one trailing
+    // "text_embedding_projection.aggregate_embed.weight". No single needle is in all 59, so a
+    // per-needle universal test would name none of it. "embeddings_connector" is deliberately
+    // unprefixed so it spans the audio and video halves.
+    //
+    // ltx-2.3_text_projection_bf16.safetensors and ltx-2.3-22b-dev_embeddings_connectors.safetensors
+    // are the other shape: 4 tensors, all "text_embedding_projection.", no checkpoint prefix at all
+    // and no needle anywhere in the map that reached them.
+    //
+    // TextEncoder rather than a kind of its own because that is what these components do — they
+    // project text (and the pooled audio/video embeddings that ride alongside it) into the
+    // transformer's conditioning space — and because a kind this map returns must be one the rest of
+    // the app can name; see AllKinds.
+    private static readonly string[] WholeContainerComponentNeedles =
+    {
+        "embeddings_connector", "text_embedding_projection",
+    };
+
+    // Rung 3 — composite container. Every rung below assumes ONE purpose per file, and a full
     // checkpoint breaks that assumption outright: it is a UNet, a VAE and a text encoder in one
     // container. SafetensorsHeaderReader samples only the first MaxSampledTensorKeys root
     // properties in file order, so for an alphabetically-keyed checkpoint that sample can be
@@ -96,14 +141,14 @@ public static class AssetKindHeaderMap
         "model.diffusion_model.", "first_stage_model.", "cond_stage_model.",
     };
 
-    // Rung 3 — autoencoder. "post_quant_conv"/"quant_conv" are unique to a VAE's latent bottleneck;
+    // Rung 4 — autoencoder. "post_quant_conv"/"quant_conv" are unique to a VAE's latent bottleneck;
     // the down/up block paths are the encoder and decoder stacks either side of it.
     private static readonly string[] VaeNeedles =
     {
         "post_quant_conv", "quant_conv", "encoder.down.", "decoder.up.",
     };
 
-    // Rung 4 — ControlNet. "control_model." is the prefix a bundled ControlNet carries;
+    // Rung 5 — ControlNet. "control_model." is the prefix a bundled ControlNet carries;
     // "controlnet_cond_embedding" and "input_hint_block" are the hint-conditioning stem that only
     // a ControlNet has.
     private static readonly string[] ControlNetNeedles =
@@ -111,7 +156,7 @@ public static class AssetKindHeaderMap
         "control_model.", "controlnet_cond_embedding", "input_hint_block",
     };
 
-    // Rung 5 — text encoder. "shared.weight" is T5's tied embedding table; "logit_scale" is CLIP's
+    // Rung 6 — text encoder. "shared.weight" is T5's tied embedding table; "logit_scale" is CLIP's
     // learned temperature. Both are single, whole keys rather than path fragments, so they are
     // matched exactly — "shared.weight" as a substring would hit unrelated paths.
     //
@@ -179,21 +224,34 @@ public static class AssetKindHeaderMap
         for (var i = 0; i < keys.Count; i++)
             lowered[i] = keys[i].ToLowerInvariant();
 
-        // Rung 1 — LoRA, and it runs before the composite guard below, which the class remarks call
+        // Rung 1 — LoRA, and it runs before both rungs below it, which the class remarks call
         // load-bearing in BOTH directions. What a file IS outranks what it was trained on, so a
         // LoRA trained on the text encoder is a LoRA and never a text encoder. And the ordering
-        // against rung 2 is safe only this way round, because the risk there is one-sided: a LoRA
-        // whose keys happen to carry a checkpoint-shaped prefix would lose its weights verdict to a
-        // guard meant for bundled checkpoints and fall to the name rung — the guess this whole class
-        // exists to pre-empt — whereas a genuine composite checkpoint carries no lora_up, lora_te or
-        // ".alpha" keys, so this rung cannot mis-fire on one.
+        // against the composite guard is safe only this way round, because the risk there is
+        // one-sided: a LoRA whose keys happen to carry a checkpoint-shaped prefix would lose its
+        // weights verdict to a guard meant for bundled checkpoints and fall to the name rung — the
+        // guess this whole class exists to pre-empt — whereas a genuine composite checkpoint carries
+        // no lora_up, lora_te or ".alpha" keys, so this rung cannot mis-fire on one. The same
+        // asymmetry holds against rung 2: a LoRA trained on nothing but an embeddings connector has
+        // every key inside that connector and would pass its universal test, while a genuine
+        // connector carries no up/down pair for this rung to mis-fire on.
         foreach (var key in lowered)
         {
             if (key.EndsWith(LoraAlphaSuffix, StringComparison.Ordinal)) return ModelType.LORA;
             if (ContainsAny(key, LoraNeedles)) return ModelType.LORA;
         }
 
-        // Rung 2 answers NULL, never a ModelType — deliberately. Returning ModelType.Checkpoint
+        // Rung 2 — whole-container component, and the only UNIVERSAL test in this class: if EVERY
+        // sampled key belongs to one named component, the container IS that component and cannot be
+        // composite, whatever prefix those keys carry. That is the same argument that puts the LoRA
+        // rung first, which is why this one sits above the composite guard rather than below it: the
+        // guard would otherwise read a 59-tensor LTX connector written under "model.diffusion_model."
+        // as a bundled checkpoint and drop it on the name rung. Existential markers cannot make this
+        // claim — a checkpoint that merely CONTAINS a connector matches those — so this rung must
+        // stay universal; see the needle table for the full argument.
+        if (IsWholeContainerComponent(lowered)) return ModelType.TextEncoder;
+
+        // Rung 3 answers NULL, never a ModelType — deliberately. Returning ModelType.Checkpoint
         // here would be a truer statement about the file and a worse thing to do: it would create a
         // second class of row that silently vanishes from the Viewer (ModelFileSyncService's
         // IsLoraFamily) and from every bulk sync (SyncStateRepository's LoraFamily filter), which is
@@ -225,6 +283,36 @@ public static class AssetKindHeaderMap
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// True when EVERY sampled key belongs to one of the named components — i.e. the container holds
+    /// that component and nothing else. The universal quantifier is the whole point: see rung 2.
+    /// </summary>
+    private static bool IsWholeContainerComponent(string[] lowered)
+    {
+        // "All of them" over nothing is vacuously true, and a rung that fires on an empty sample
+        // would name every unreadable header a text encoder. Map already returns early on an empty
+        // key list, but a universal quantifier is not a thing to leave guarded from a distance.
+        if (lowered.Length == 0) return false;
+
+        // The claim is about the WHOLE container and the evidence is a SAMPLE — the first
+        // MaxSampledTensorKeys root properties in file order. A sample that fills the cap says
+        // nothing about the keys past it, so a container that reaches it is not eligible however
+        // uniform its first 64 keys look: a checkpoint whose connector block happened to lead its
+        // header would otherwise be named after that block, which is the truncation hazard the
+        // composite guard exists for, reached through this rung and past it. Erring this way loses
+        // nothing that was ever working — an ineligible container falls to the guard and the name
+        // rung, exactly where it fell before this rung existed — while erring the other way moves a
+        // user's checkpoint into a support-asset folder. Both real connectors are 59 and 4 tensors.
+        if (lowered.Length >= SafetensorsHeaderReader.MaxSampledTensorKeys) return false;
+
+        foreach (var key in lowered)
+        {
+            if (!ContainsAny(key, WholeContainerComponentNeedles)) return false;
+        }
+
+        return true;
     }
 
     private static bool ContainsAny(string key, string[] needles)

@@ -350,6 +350,102 @@ public sealed class AssetKindHeaderMapTests
     }
 
     /// <summary>
+    /// Group B — a standalone LTX-2 embeddings connector. Every one of its 59 keys belongs to the
+    /// connector family (29 audio, 29 video, 1 text projection), but the audio and video halves are
+    /// written under <c>model.diffusion_model.</c>, so the composite guard swallowed the file and it
+    /// fell to the name rung and the LORA default. A 59-tensor component is not a checkpoint.
+    /// Keys verbatim from <c>ltx-2-19b-embeddings_connector_dev_bf16.safetensors</c>, including the
+    /// single trailing <c>text_embedding_projection.</c> key — that key is the whole reason the rung
+    /// quantifies over the marker SET rather than over one marker: no single needle is in all 59.
+    /// </summary>
+    [Fact]
+    public void AStandaloneEmbeddingsConnectorNamesATextEncoder()
+    {
+        var header = Header(
+            "model.diffusion_model.audio_embeddings_connector.learnable_registers",
+            "model.diffusion_model.audio_embeddings_connector.transformer_1d_blocks.0.attn1.to_q.weight",
+            "model.diffusion_model.audio_embeddings_connector.transformer_1d_blocks.1.ff.net.2.weight",
+            "model.diffusion_model.video_embeddings_connector.learnable_registers",
+            "model.diffusion_model.video_embeddings_connector.transformer_1d_blocks.0.attn1.to_q.weight",
+            "model.diffusion_model.video_embeddings_connector.transformer_1d_blocks.1.ff.net.2.weight",
+            "text_embedding_projection.aggregate_embed.weight");
+
+        AssetKindHeaderMap.Map(header).Should().Be(ModelType.TextEncoder);
+    }
+
+    /// <summary>
+    /// Group C — a 4-tensor LTX-2.3 text projection. It carries no checkpoint prefix and matched no
+    /// needle at all, so the map said nothing and the name rung defaulted it to LORA. All four keys
+    /// verbatim from <c>ltx-2.3_text_projection_bf16.safetensors</c>; the sibling
+    /// <c>ltx-2.3-22b-dev_embeddings_connectors.safetensors</c> carries the identical key set.
+    /// </summary>
+    [Fact]
+    public void AStandaloneTextProjectionNamesATextEncoder()
+    {
+        var header = Header(
+            "text_embedding_projection.audio_aggregate_embed.bias",
+            "text_embedding_projection.audio_aggregate_embed.weight",
+            "text_embedding_projection.video_aggregate_embed.bias",
+            "text_embedding_projection.video_aggregate_embed.weight");
+
+        AssetKindHeaderMap.Map(header).Should().Be(ModelType.TextEncoder);
+    }
+
+    /// <summary>
+    /// The guard that proves the component rung's UNIVERSAL quantifier is doing real work. Make the
+    /// rung existential — "does any key mention a connector" — and this header passes it, and a full
+    /// LTX checkpoint gets filed as a text encoder off one embedded part of itself. Every other rung
+    /// in the map is existential; this one alone is not, because "all of it is this component" is
+    /// the only reading that separates a standalone component from a container that merely holds one.
+    /// </summary>
+    [Fact]
+    public void ACheckpointContainingAConnectorIsNotAConnector()
+    {
+        var header = Header(
+            "model.diffusion_model.audio_embeddings_connector.learnable_registers",
+            "model.diffusion_model.transformer_blocks.0.attn1.to_q.weight");
+
+        AssetKindHeaderMap.Map(header).Should().BeNull();
+    }
+
+    /// <summary>
+    /// The other half of that guard: the universal claim is made about the SAMPLE, and the sample is
+    /// capped at <see cref="SafetensorsHeaderReader.MaxSampledTensorKeys"/> root properties in file
+    /// order. A sample that fills the cap proves nothing about the keys past it, so such a container
+    /// is not eligible however uniform its first 64 keys look — a checkpoint whose connector block
+    /// happened to lead its header would otherwise be named after it, which is exactly the truncation
+    /// hazard the composite guard exists for, reached through the new rung. Both real connectors are
+    /// 59 and 4 tensors, comfortably inside the cap.
+    /// </summary>
+    [Fact]
+    public void AConnectorSampleThatFillsTheCapProvesNothingAndIsNotNamed()
+    {
+        var keys = Enumerable
+            .Range(0, SafetensorsHeaderReader.MaxSampledTensorKeys)
+            .Select(i => $"model.diffusion_model.audio_embeddings_connector.transformer_1d_blocks.{i}.attn1.to_q.weight")
+            .ToArray();
+
+        AssetKindHeaderMap.Map(Header(keys)).Should().BeNull();
+    }
+
+    /// <summary>
+    /// The component rung sits BELOW the LoRA rung for the same one-sided reason the composite guard
+    /// does. A LoRA trained on nothing but the connector has every key inside it, so the universal
+    /// test passes on a file that is not a connector at all — and a real LoRA stamped TextEncoder
+    /// from its weights is invisible in the Viewer and unselectable by any bulk sync. The reverse
+    /// cannot happen: a genuine connector carries no up/down pair.
+    /// </summary>
+    [Fact]
+    public void AConnectorLoraIsALoraNotATextEncoder()
+    {
+        var header = Header(
+            "model.diffusion_model.audio_embeddings_connector.transformer_1d_blocks.0.attn1.to_q.lora_down.weight",
+            "model.diffusion_model.audio_embeddings_connector.transformer_1d_blocks.0.attn1.to_q.lora_up.weight");
+
+        AssetKindHeaderMap.Map(header).Should().Be(ModelType.LORA);
+    }
+
+    /// <summary>
     /// The verdicts the smoke found already correct, pinned so this change cannot move them. The
     /// CLIP files match on header; the T5 family does NOT — their sampled keys are
     /// <c>encoder.block.…</c> or <c>blocks.0.attn.…</c>, which no needle here reaches (widening to a
