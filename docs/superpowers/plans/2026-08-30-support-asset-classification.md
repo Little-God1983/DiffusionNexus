@@ -1491,8 +1491,8 @@ Add `using DiffusionNexus.Domain.Enums;` to the planner.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `dotnet test DiffusionNexus.Tests/DiffusionNexus.Tests.csproj --filter "FullyQualifiedName~LoraSortPlanner|FullyQualifiedName~LoraPathBuilder"`
-Expected: PASS.
+Run: `dotnet test DiffusionNexus.Tests/DiffusionNexus.Tests.csproj --filter "FullyQualifiedName~Sorter"`
+Expected: PASS — the whole sorter namespace, not just the planner. This task changes where files land, and `LoraSorterViewModelTests` asserts on destination folder names, so a routing regression has to surface here rather than two tasks later.
 
 - [ ] **Step 5: Commit**
 
@@ -1517,7 +1517,7 @@ git commit -m "feat(sorter): file support assets into flat per-kind folders"
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `DiffusionNexus.Tests/Sorter/SorterMetadataResolverTests.cs`, using its existing temp-file and resolver-construction helpers:
+Add to `DiffusionNexus.Tests/Sorter/SorterMetadataResolverTests.cs`. That file has **no** shared resolver field and no file-writing helper — every test constructs its own with `new SorterMetadataResolver(_client.Object, () => Task.FromResult<string?>(null), …)` and writes its own temp file (see the test at `:38` and `:216` for the two shapes). Follow that pattern: construct the resolver inline in each test below and write the bytes yourself. The assertions are the part that matters and must not change:
 
 ```csharp
     /// <summary>
@@ -1673,14 +1673,14 @@ Add to `DiffusionNexus.Tests/Sorter/LoraSorterViewModelTests.cs`, following its 
     {
         var vm = await GivenPreviewAsync(File("Wan2_2_VAE_bf16.safetensors", assetKind: ModelType.VAE));
 
-        var folder = vm.TargetRoots.Single(n => n.Name == "VAE");
+        var folder = vm.PreviewRoots.Single(n => n.Name == "VAE");
         folder.IsUnidentified.Should().BeFalse();
         folder.IsIdentified.Should().BeTrue();
         folder.AssetKinds.Should().ContainSingle().Which.Should().Be("VAE");
     }
 ```
 
-Adapt `GivenPreviewAsync` / `File(...)` / `TargetRoots` to whatever the file already calls them — read it first.
+`PreviewRoots` is the destination tree (`LoraSorterViewModel.cs:303`); `SourceRoots` is the other side. Adapt `GivenPreviewAsync` / `File(...)` to whatever the file already calls its arrangement helpers — read it first.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1897,9 +1897,11 @@ In `ApplyFilters`, after the NSFW predicate and before the base-model predicate:
         }
 ```
 
-and after `FilteredTiles.ReplaceAll(filtered)`:
+and — **above** the `if (filtered.SequenceEqual(FilteredTiles)) return;` early return, not after it, or a pass that changes no tiles would leave the count stale:
 
 ```csharp
+        // Before the unchanged-result early return: this count describes what the filter is
+        // holding back, which is true whether or not the visible set changed this pass.
         HiddenSupportAssetCount = ShowSupportAssets ? 0 : AllTiles.Count(t => t.IsSupportAsset);
 ```
 
