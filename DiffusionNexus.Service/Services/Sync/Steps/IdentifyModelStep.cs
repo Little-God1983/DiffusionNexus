@@ -6,6 +6,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Domain.Utilities;
 using DiffusionNexus.Service.Services.Sync.Identity;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -233,8 +234,19 @@ public sealed class IdentifyModelStep : ISyncStep
             // authoritative or user-authored Type from being overwritten: this only ever moves a
             // row BETWEEN our own weight-derived verdicts.
             var kind = AssetKindResolver.Resolve(header, Path.GetFileName(candidate.LocalPath));
+
+            // A safetensors container we FAILED to open answers LORA from AssetKindResolver, and
+            // that answer is a safe default rather than a reading — so it may not unstamp a support
+            // kind an earlier, successful reading established. (A Models-scoped run is the one path
+            // that offers a support-typed row here at all: SelectIdentifyCandidatesAsync filters
+            // every other scope to LoraFamily.) For a row already saying LORA the default changes
+            // nothing either way, so declining the write outright is the whole rule.
+            var containerUnreadable = header is null
+                && ModelFileExtensions.Matches(candidate.LocalPath, ModelFileExtensions.SafetensorsContainers);
+
             var typeIsOurs = dbModel.Source != DataSource.CivitaiApi && !dbModel.IsUserEdited;
-            if (typeIsOurs && dbModel.Type != kind && (dbModel.Type == ModelType.LORA || dbModel.Type.IsSupportAsset()))
+            if (typeIsOurs && !containerUnreadable && dbModel.Type != kind
+                && (dbModel.Type == ModelType.LORA || dbModel.Type.IsSupportAsset()))
                 dbModel.Type = kind;
 
             var headerCheckedAt = header is not null ? now : (DateTimeOffset?)null;

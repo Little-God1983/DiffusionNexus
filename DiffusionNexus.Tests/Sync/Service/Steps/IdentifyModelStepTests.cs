@@ -168,9 +168,15 @@ public sealed class IdentifyModelStepTests : IDisposable
     /// hand it one — the same reasoning <see cref="ExecuteOneAsync_WithASidecarPresent_NeverCallsCivitai"/>
     /// already relies on for its own hand-built candidate.
     /// </remarks>
-    private async Task<IdentifyCandidate> GivenLocalModelAsync(string fileName, ModelType type, string headerJson)
+    /// <param name="rawBytes">
+    /// Bytes to write instead of a real container — for the one case that needs a
+    /// <c>.safetensors</c> whose header CANNOT be parsed. Default null writes
+    /// <paramref name="headerJson"/> as a proper container.
+    /// </param>
+    private async Task<IdentifyCandidate> GivenLocalModelAsync(string fileName, ModelType type, string headerJson,
+        byte[]? rawBytes = null)
     {
-        var path = NewModelFile(fileName, Safetensors(headerJson));
+        var path = NewModelFile(fileName, rawBytes ?? Safetensors(headerJson));
         var name = Path.GetFileNameWithoutExtension(fileName);
         var (modelId, fileId) = await SeedAsync(name, path, type: type);
 
@@ -684,6 +690,30 @@ public sealed class IdentifyModelStepTests : IDisposable
         await WhenIdentifiedAsync(candidate);
 
         (await LoadTypeAsync(candidate.ModelId)).Should().Be(ModelType.LORA);
+    }
+
+    /// <summary>
+    /// The second-order effect of the final review's Critical #1, caught in self-review. A
+    /// <c>.safetensors</c> we FAILED to open now answers <c>LORA</c> from <c>AssetKindResolver</c> —
+    /// correctly, as a safe default for a row that already says LORA. But a default is not a
+    /// reading, and it must not unstamp a support kind an earlier, successful reading established:
+    /// a VAE row would otherwise be demoted to LORA by a moment's file lock. (Reached only through
+    /// an explicit per-model re-check; <c>SelectIdentifyCandidatesAsync</c> filters every other
+    /// scope to LoraFamily — see <see cref="GivenLocalModelAsync"/>'s remarks.)
+    /// </summary>
+    [Fact]
+    public async Task AnUnreadableContainerDoesNotDemoteAnAlreadyClassifiedSupportAsset()
+    {
+        var candidate = await GivenLocalModelAsync(
+            fileName: "opaque_name_nobody_can_read.safetensors",
+            type: ModelType.VAE,
+            headerJson: "",
+            rawBytes: [0x01, 0x02, 0x03]);   // not a parsable safetensors header
+
+        await WhenIdentifiedAsync(candidate);
+
+        (await LoadTypeAsync(candidate.ModelId)).Should().Be(ModelType.VAE,
+            "we learned nothing about this file, and nothing is not grounds for rewriting its kind");
     }
 
     /// <summary>
