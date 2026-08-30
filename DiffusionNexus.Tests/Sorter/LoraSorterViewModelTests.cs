@@ -235,6 +235,40 @@ public sealed class LoraSorterViewModelTests : IDisposable
         qwen.AssetKinds.Should().BeEquivalentTo(["LoRA", "VAE"], o => o.WithStrictOrdering());
     }
 
+    /// <summary>
+    /// Pins the FULL chip order deliberately, not incidentally: LoRA first, then VAE, ControlNet,
+    /// Upscaler, Text Encoder — the <c>ModelTypeExtensions.SupportAssetKinds</c> order — via
+    /// <c>SortPreviewNodeViewModel</c>'s <c>ChipOrder</c> comparer. The sibling test above (LoRA +
+    /// VAE only) cannot discriminate ChipOrder from <c>ModelType</c>'s own raw numeric order:
+    /// LoRA(5) sorts before VAE(12) either way. Five kinds can, because ModelType's persisted values
+    /// (LORA=5, Controlnet=8, Upscaler=10, VAE=12, TextEncoder=19) would put ControlNet and Upscaler
+    /// BEFORE VAE if nothing overrode them — the opposite of the order asserted here.
+    /// </summary>
+    [Fact]
+    public async Task AFolderOrdersItsChipsDeliberatelyNotByModelTypesRawPersistedValue()
+    {
+        var lora = WriteLora(@"flat\MyChar.safetensors");
+        var vae = WriteLora(@"flat\qwen_image_vae.safetensors");
+        var controlNet = WriteLora(@"flat\qwen_image_controlnet.safetensors");
+        var upscaler = WriteLora(@"flat\qwen_image_upscaler.safetensors");
+        var textEncoder = WriteLora(@"flat\clip_l.safetensors");
+        var vm = CreateVm(cached:
+        [
+            Installed(lora, "Qwen", "character"),
+            Installed(vae, "Qwen", "character"),
+            Installed(controlNet, "Qwen", "character"),
+            Installed(upscaler, "Qwen", "character"),
+            Installed(textEncoder, "Qwen", "character"),
+        ]);
+
+        await vm.InitializeAsync();
+
+        var qwen = vm.PreviewRoots.Single(n => n.Name == "Qwen");
+        qwen.AssetKinds.Should().BeEquivalentTo(
+            ["LoRA", "VAE", "ControlNet", "Upscaler", "Text Encoder"],
+            o => o.WithStrictOrdering());
+    }
+
     /// <summary>The mark is subtree-wide: a base-model folder is finished only when everything
     /// under it is, which is the whole point of rolling it up rather than reading one node.</summary>
     [Fact]

@@ -151,9 +151,29 @@ public partial class SortPreviewNodeViewModel : ObservableObject
         }
     }
 
-    // Ordered by the enum so the chips read the same way every pass; a folder's chips are the union
-    // of everything beneath it, not just its direct children.
-    private readonly SortedSet<ModelType> _kinds = [];
+    // ModelType's own member order is not a display order — it is governed by persistence: the
+    // enum's TextEncoder member documents that it was appended last, out of any natural grouping,
+    // because the value is stored as a string and reordering would silently repoint every existing
+    // row. Left to SortedSet<ModelType>'s default comparer, this chip set would show them in an
+    // order nobody actually chose. ChipOrder picks one on purpose instead: LoRA first — the thing
+    // the sorter is actually for — then the support kinds in the order
+    // ModelTypeExtensions.SupportAssetKinds defines them, the one place that set exists. Anything
+    // else (nothing reaches here today) falls back to the enum's own numeric value, offset past
+    // every ranked kind, so the comparer stays total and can never throw.
+    private static readonly ModelType[] ChipRank = [ModelType.LORA, .. ModelTypeExtensions.SupportAssetKinds];
+
+    private static int ChipRankOf(ModelType kind)
+    {
+        var index = Array.IndexOf(ChipRank, kind);
+        return index >= 0 ? index : ChipRank.Length + (int)kind;
+    }
+
+    private static readonly IComparer<ModelType> ChipOrder =
+        Comparer<ModelType>.Create((x, y) => ChipRankOf(x).CompareTo(ChipRankOf(y)));
+
+    // A folder's chips are the union of everything beneath it, not just its direct children —
+    // Absorb below is called for the file's own node and for every ancestor.
+    private readonly SortedSet<ModelType> _kinds = new(ChipOrder);
 
     /// <summary>
     /// Chip labels for the asset kinds under this node — "LoRA", "VAE", "ControlNet". A folder that
@@ -217,7 +237,7 @@ public partial class SortPreviewNodeViewModel : ObservableObject
     {
         if (_kinds.Add(kind))
         {
-            // Rebuilt rather than appended so the displayed order follows the enum regardless of
+            // Rebuilt rather than appended so the displayed order follows ChipOrder regardless of
             // the order files happen to arrive in — the tree is built incrementally and bound while
             // it is still being built.
             AssetKinds.Clear();
