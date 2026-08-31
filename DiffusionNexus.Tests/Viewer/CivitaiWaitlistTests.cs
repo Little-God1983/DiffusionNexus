@@ -115,6 +115,54 @@ public sealed class CivitaiWaitlistTests : IDisposable
     }
 
     [Fact]
+    public void TryAddRaw_CapturesPayloadWithoutBrowserTypes()
+    {
+        // The detail panel has no CivitaiResultViewModel/pick pair — it adds straight
+        // from the version DTO plus the model facts it already displays.
+        var wl = Create();
+        var version = Version(90, Now.AddDays(4));
+
+        wl.TryAdd(modelId: 88, modelName: "Detail LoRA", category: "Style",
+            isNsfw: true, version: version, utcNow: Now).Should().BeTrue();
+
+        var e = wl.Entries.Single();
+        e.ModelId.Should().Be(88);
+        e.VersionId.Should().Be(90);
+        e.ModelName.Should().Be("Detail LoRA");
+        e.VersionName.Should().Be("v90");
+        e.Category.Should().Be("Style");
+        e.IsNsfw.Should().BeTrue();
+        e.EarlyAccessDeadline.Should().Be(Now.AddDays(4));
+        e.DownloadUrl.Should().Be("https://civitai.example/api/download/models/90");
+        e.Status.Should().Be(WaitlistEntryStatus.Waiting);
+    }
+
+    [Fact]
+    public void TryAddRaw_DuplicateOfBrowserAdd_IsRejected()
+    {
+        var wl = Create();
+        var version = Version(91, Now.AddDays(4));
+        var (result, pick) = Card(version);
+        wl.TryAdd(result, pick, Now).Should().BeTrue();
+
+        wl.TryAdd(modelId: 77, modelName: "Test LoRA", category: "",
+            isNsfw: false, version: version, utcNow: Now)
+            .Should().BeFalse("both overloads must share one dedup rule");
+        wl.Entries.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public void TryAddRaw_PermanentlyPaidVersion_IsRejected()
+    {
+        var wl = Create();
+
+        wl.TryAdd(modelId: 88, modelName: "Detail LoRA", category: "",
+            isNsfw: false, version: Version(92, deadline: null, permanent: true), utcNow: Now)
+            .Should().BeFalse("permanently paid versions never become free");
+        wl.Entries.Should().BeEmpty();
+    }
+
+    [Fact]
     public void PersistRestore_RoundTripsEntries()
     {
         var file = "roundtrip.json";

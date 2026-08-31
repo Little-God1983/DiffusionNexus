@@ -48,6 +48,10 @@ public partial class DownloadLoraDialog : Window
         {
             Confirmed = true,
             ModelName = _viewModel.ResolvedModel?.Name ?? _viewModel.PreviewName,
+            ModelId = _viewModel.ResolvedModel?.Id ?? _viewModel.ResolvedVersion.ModelId,
+            Category = _viewModel.Category,
+            IsNsfw = _viewModel.ResolvedModel is { } model
+                && Services.CivitaiBrowser.CivitaiNsfwPolicy.IsCardNsfw(model),
             Version = _viewModel.ResolvedVersion,
             DownloadUrl = primaryFile?.DownloadUrl ?? _viewModel.ResolvedVersion.DownloadUrl,
             FileName = primaryFile?.Name,
@@ -70,6 +74,16 @@ public sealed record DownloadLoraResult
 {
     public bool Confirmed { get; init; }
     public string ModelName { get; init; } = string.Empty;
+
+    /// <summary>The resolved model's id — fallback when the version DTO omits its own.</summary>
+    public int ModelId { get; init; }
+
+    /// <summary>Category inferred from the model's tags; carried for the EA waitlist entry.</summary>
+    public string Category { get; init; } = string.Empty;
+
+    /// <summary>Card-NSFW per <see cref="Services.CivitaiBrowser.CivitaiNsfwPolicy"/>; picks the Civitai host.</summary>
+    public bool IsNsfw { get; init; }
+
     public CivitaiModelVersion? Version { get; init; }
     public string? DownloadUrl { get; init; }
     public string? FileName { get; init; }

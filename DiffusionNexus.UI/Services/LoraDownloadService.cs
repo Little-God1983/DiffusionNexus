@@ -176,7 +176,10 @@ public sealed class LoraDownloadService : ILoraDownloadService
                         {
                             (System.Net.HttpStatusCode.Unauthorized, true) or
                             (System.Net.HttpStatusCode.Forbidden, true) =>
-                                $"This version is Early Access on Civitai (deadline={civitaiVersion.EarlyAccessDeadline?.ToString("u") ?? "(none)"}, paidAccess permanent={civitaiVersion.PaidAccess?.Permanent?.ToString() ?? "(null)"} endsAt={civitaiVersion.PaidAccess?.EndsAt?.ToString("u") ?? "(null)"}, availability={civitaiVersion.Availability ?? "(null)"}). EA content requires a Civitai Supporter / membership subscription on the account whose API key is in use. Either wait for EA to expire, or use a key from an account that has the entitlement.",
+                                // Stance decided in d0e7bfb4 (and stated by the preflight dialog): the
+                                // retry with the key appended is refused either way — buying access does
+                                // not make the in-app download work, so don't advise swapping keys.
+                                $"This version is Early Access on Civitai (deadline={civitaiVersion.EarlyAccessDeadline?.ToString("u") ?? "(none)"}, paidAccess permanent={civitaiVersion.PaidAccess?.Permanent?.ToString() ?? "(null)"} endsAt={civitaiVersion.PaidAccess?.EndsAt?.ToString("u") ?? "(null)"}, availability={civitaiVersion.Availability ?? "(null)"}). Civitai serves paid files through the website only, so the in-app download is refused even with a valid API key. Wait for early access to end (the Browse Civitai tab's waitlist can track it), or buy and download it manually on civitai.com.",
                             (System.Net.HttpStatusCode.Unauthorized, false) =>
                                 "Civitai rejected the API key. Likely causes: (a) the key is invalid or expired — regenerate it on civitai.com under Account Settings → API Keys; (b) the account doesn't have NSFW enabled but the model is NSFW-tagged.",
                             (System.Net.HttpStatusCode.Forbidden, false) =>

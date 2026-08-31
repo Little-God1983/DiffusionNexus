@@ -47,7 +47,7 @@ public partial class CivitaiVersionPickItemViewModel : ObservableObject
     [ObservableProperty]
     private bool _isInstalled;
 
-    private static string FormatSize(long bytes)
+    internal static string FormatSize(long bytes)
     {
         if (bytes >= 1L << 30) return $"{bytes / (double)(1L << 30):F2} GB";
         if (bytes >= 1L << 20) return $"{bytes / (double)(1L << 20):F1} MB";

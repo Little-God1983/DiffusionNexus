@@ -63,46 +63,60 @@ public sealed class CivitaiWaitlist : ObservableObject
     public bool TryAdd(CivitaiResultViewModel result, CivitaiVersionPickItemViewModel pick, DateTimeOffset? utcNow = null)
     {
         if (result.Model is null) return false;
+        return TryAdd(result.Model.Id, result.Name, result.Category, result.IsNsfw, pick.Version, utcNow);
+    }
 
-        if (pick.Version.IsPermanentlyPaid())
+    /// <summary>
+    /// Raw-data overload for surfaces that hold no browse card — the LoRA viewer's detail
+    /// panel adds straight from the version DTO plus the model facts it already displays.
+    /// Same rules as the browse overload (which delegates here): duplicates and permanently
+    /// paid versions are rejected, the deadline comes from data already in hand, no API call.
+    /// </summary>
+    public bool TryAdd(int modelId, string modelName, string category, bool isNsfw,
+        CivitaiModelVersion version, DateTimeOffset? utcNow = null)
+    {
+        var versionName = version.Name;
+
+        if (version.IsPermanentlyPaid())
         {
             _logger?.Info(LogCategory.Download, "CivitaiWaitlist",
-                $"Not waitlisted (permanently paid): {result.Name} — {pick.Name}");
+                $"Not waitlisted (permanently paid): {modelName} — {versionName}");
             return false;
         }
 
-        if (Entries.Any(e => e.VersionId == pick.Version.Id))
+        if (Entries.Any(e => e.VersionId == version.Id))
         {
             _logger?.Debug(LogCategory.Download, "CivitaiWaitlist",
-                $"Duplicate waitlist add skipped: {result.Name} ({pick.Name}) — version {pick.Version.Id} already listed");
+                $"Duplicate waitlist add skipped: {modelName} ({versionName}) — version {version.Id} already listed");
             return false;
         }
 
-        var primary = pick.Version.Files.FirstOrDefault(f => f.Primary == true) ?? pick.Version.Files.FirstOrDefault();
+        var primary = version.Files.FirstOrDefault(f => f.Primary == true) ?? version.Files.FirstOrDefault();
+        var sizeBytes = (long)((primary?.SizeKB ?? 0) * 1024);
         var entry = new CivitaiWaitlistEntry
         {
-            ModelId = result.Model.Id,
-            VersionId = pick.Version.Id,
-            ModelName = result.Name,
-            VersionName = pick.Name,
-            BaseModel = pick.BaseModel,
-            Category = result.Category,
-            FileName = primary?.Name ?? $"{result.Name}_{pick.Version.Id}.safetensors",
-            DownloadUrl = primary?.DownloadUrl ?? pick.Version.DownloadUrl ?? string.Empty,
-            SizeBytes = pick.SizeBytes,
-            SizeDisplay = pick.SizeDisplay,
+            ModelId = modelId,
+            VersionId = version.Id,
+            ModelName = modelName,
+            VersionName = versionName,
+            BaseModel = version.BaseModel,
+            Category = category,
+            FileName = primary?.Name ?? $"{modelName}_{version.Id}.safetensors",
+            DownloadUrl = primary?.DownloadUrl ?? version.DownloadUrl ?? string.Empty,
+            SizeBytes = sizeBytes,
+            SizeDisplay = CivitaiVersionPickItemViewModel.FormatSize(sizeBytes),
             ExpectedSha256 = primary?.Hashes?.SHA256,
-            PreviewImageUrl = pick.Version.Images.FirstOrDefault(i => !string.IsNullOrWhiteSpace(i.Url))?.Url,
-            IsNsfw = result.IsNsfw,
+            PreviewImageUrl = version.Images.FirstOrDefault(i => !string.IsNullOrWhiteSpace(i.Url))?.Url,
+            IsNsfw = isNsfw,
             AddedAt = utcNow ?? DateTimeOffset.UtcNow,
-            EarlyAccessDeadline = pick.Version.EarlyAccessDeadline ?? pick.Version.PaidAccess?.EndsAt
+            EarlyAccessDeadline = version.EarlyAccessDeadline ?? version.PaidAccess?.EndsAt
         };
         entry.RefreshAvailability(utcNow);
         Entries.Add(entry);
         Persist();
         _logger?.Info(LogCategory.Download, "CivitaiWaitlist",
-            $"Waitlisted: {result.Name} — {pick.Name} (free {entry.EarlyAccessDeadline?.ToString("u") ?? "at unknown date"})",
-            $"VersionId: {pick.Version.Id}\nDeadline: {entry.EarlyAccessDeadline?.ToString("u") ?? "(none)"}\nFile: {entry.FileName}");
+            $"Waitlisted: {modelName} — {versionName} (free {entry.EarlyAccessDeadline?.ToString("u") ?? "at unknown date"})",
+            $"VersionId: {version.Id}\nDeadline: {entry.EarlyAccessDeadline?.ToString("u") ?? "(none)"}\nFile: {entry.FileName}");
         return true;
     }
 
