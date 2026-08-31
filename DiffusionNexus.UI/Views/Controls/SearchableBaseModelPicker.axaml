@@ -1,0 +1,85 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:DiffusionNexus.UI.Views.Controls"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             x:Class="DiffusionNexus.UI.Views.Controls.SearchableBaseModelPicker">
+
+  <!-- The engine (SearchableBaseModelPickerViewModel) is set as this button's DataContext
+       in code-behind, so everything inside — including the flyout, which inherits the
+       DataContext through the popup — binds plainly. The UserControl's own DataContext
+       stays inherited from the page so call-site bindings keep resolving against it. -->
+  <Button x:Name="PickerButton"
+          x:DataType="vm:SearchableBaseModelPickerViewModel"
+          HorizontalAlignment="Stretch"
+          HorizontalContentAlignment="Stretch"
+          Padding="8,6"
+          Background="#2A2A2A"
+          BorderBrush="#555"
+          BorderThickness="1"
+          CornerRadius="4"
+          ToolTip.Tip="{Binding DisplayText}">
+    <Grid ColumnDefinitions="*,Auto">
+      <TextBlock Grid.Column="0"
+                 Text="{Binding DisplayText}"
+                 TextTrimming="CharacterEllipsis"
+                 VerticalAlignment="Center"/>
+      <TextBlock Grid.Column="1"
+                 Text="&#9662;"
+                 FontSize="10"
+                 Opacity="0.6"
+                 Margin="8,0,0,0"
+                 VerticalAlignment="Center"/>
+    </Grid>
+    <Button.Flyout>
+      <Flyout Placement="BottomEdgeAlignedLeft">
+        <Border CornerRadius="4"
+                Padding="8"
+                MinWidth="240"
+                MaxHeight="420">
+          <Grid RowDefinitions="Auto,*">
+            <TextBox x:Name="SearchBox"
+                     Grid.Row="0"
+                     Text="{Binding SearchText, Mode=TwoWay}"
+                     Watermark="Search base models..."
+                     Margin="4,0,4,8"/>
+
+            <ScrollViewer Grid.Row="1"
+                          MaxHeight="340"
+                          HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto">
+              <StackPanel>
+                <TextBlock Text="No matches."
+                           FontSize="12"
+                           Opacity="0.6"
+                           Margin="4,2"
+                           IsVisible="{Binding !VisibleItems.Count}"/>
+                <ItemsControl ItemsSource="{Binding VisibleItems}">
+                  <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                      <StackPanel Spacing="2"/>
+                    </ItemsPanelTemplate>
+                  </ItemsControl.ItemsPanel>
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="x:String">
+                      <Button Content="{Binding}"
+                              Command="{Binding $parent[ItemsControl].((vm:SearchableBaseModelPickerViewModel)DataContext).SelectCommand}"
+                              CommandParameter="{Binding}"
+                              HorizontalAlignment="Stretch"
+                              HorizontalContentAlignment="Left"
+                              Padding="8,6"
+                              Background="Transparent"
+                              BorderThickness="1"
+                              BorderBrush="#333"
+                              CornerRadius="4"
+                              FontSize="13"/>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </StackPanel>
+            </ScrollViewer>
+          </Grid>
+        </Border>
+      </Flyout>
+    </Button.Flyout>
+  </Button>
+</UserControl>

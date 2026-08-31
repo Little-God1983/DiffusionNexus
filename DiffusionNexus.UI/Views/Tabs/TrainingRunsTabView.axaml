@@ -5,6 +5,7 @@
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
              xmlns:vmTabs="using:DiffusionNexus.UI.ViewModels.Tabs"
              xmlns:views="using:DiffusionNexus.UI.Views.Tabs"
+             xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
              mc:Ignorable="d" d:DesignWidth="1000" d:DesignHeight="700"
              x:Class="DiffusionNexus.UI.Views.Tabs.TrainingRunsTabView"
              x:DataType="vmTabs:DatasetManagementViewModel">
@@ -85,13 +86,12 @@
         <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto">
           <Button Grid.Column="0" Content="&#8592; Back to Runs" Command="{Binding BackToTrainingRunsCommand}" Padding="10,6" Margin="0,0,12,0"/>
           <TextBlock Grid.Column="1" Text="{Binding SelectedTrainingRun.Name}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
-          <ComboBox Grid.Column="2"
+          <controls:SearchableBaseModelPicker Grid.Column="2"
                     ItemsSource="{Binding SelectedTrainingRun.AvailableBaseModels}"
                     SelectedItem="{Binding SelectedTrainingRun.SelectedBaseModel, Mode=TwoWay}"
                     PlaceholderText="Base model…"
-                    Margin="12,0,0,0" Padding="8,5" FontSize="13"
-                    VerticalAlignment="Center" Background="#2A2A2A"
-                    BorderBrush="#555" CornerRadius="4" MinWidth="160"/>
+                    Margin="12,0,0,0" FontSize="13"
+                    VerticalAlignment="Center" MinWidth="160"/>
           <TextBox Grid.Column="3" Text="{Binding SelectedTrainingRun.TriggerWordsText, Mode=TwoWay}" Watermark="Trigger words (comma-separated)…" MinWidth="220" Margin="8,0,0,0" Padding="8,5" FontSize="13" VerticalAlignment="Center" Background="#2A2A2A" BorderBrush="#555" CornerRadius="4"/>
           <Border Grid.Column="4"/>
           <Button Grid.Column="5" Content="Rename" Command="{Binding RenameTrainingRunCommand}" CommandParameter="{Binding SelectedTrainingRun}" Padding="10,6" Margin="0,0,4,0"/>

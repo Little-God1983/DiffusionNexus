@@ -3,6 +3,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
              mc:Ignorable="d" d:DesignWidth="500" d:DesignHeight="800"
              x:Class="DiffusionNexus.UI.Views.Controls.ModelDetailView"
              x:DataType="vm:ModelDetailViewModel">
@@ -297,11 +298,9 @@
                              FontWeight="SemiBold"
                              Margin="0,0,12,6"
                              VerticalAlignment="Center"/>
-                  <ComboBox Grid.Row="2" Grid.Column="1"
+                  <controls:SearchableBaseModelPicker Grid.Row="2" Grid.Column="1"
                             ItemsSource="{Binding AvailableBaseModels}"
                             SelectedItem="{Binding SelectedBaseModel, Mode=TwoWay}"
-                            Background="#1A1A1A"
-                            Foreground="White"
                             Margin="0,0,0,6"
                             HorizontalAlignment="Stretch"
                             ToolTip.Tip="Override the base model for the currently selected version (saved per-version)"/>

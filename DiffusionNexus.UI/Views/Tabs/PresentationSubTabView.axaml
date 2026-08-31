@@ -7,6 +7,7 @@
              xmlns:enums="using:DiffusionNexus.Domain.Enums"
              xmlns:sys="using:System"
              xmlns:converters="using:DiffusionNexus.UI.Converters"
+             xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
              x:Class="DiffusionNexus.UI.Views.Tabs.PresentationSubTabView"
              x:DataType="vm:PresentationTabViewModel">
@@ -106,10 +107,9 @@
 
               <StackPanel Spacing="4">
                 <TextBlock Text="Base Model" FontSize="12" Opacity="0.7"/>
-                <ComboBox ItemsSource="{Binding $parent[TabControl].((vmBase:TrainingRunCardViewModel)DataContext).AvailableBaseModels}"
+                <controls:SearchableBaseModelPicker ItemsSource="{Binding $parent[TabControl].((vmBase:TrainingRunCardViewModel)DataContext).AvailableBaseModels}"
                           SelectedItem="{Binding $parent[TabControl].((vmBase:TrainingRunCardViewModel)DataContext).SelectedBaseModel, Mode=TwoWay}"
                           PlaceholderText="Select base model…"
-                          Background="#2A2A2A" BorderBrush="#555" CornerRadius="4"
                           HorizontalAlignment="Stretch"/>
               </StackPanel>
 
