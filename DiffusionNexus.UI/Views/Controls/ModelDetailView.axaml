@@ -168,9 +168,29 @@
                                   CornerRadius="4"
                                   MinWidth="60"
                                   BorderThickness="1">
-                      <TextBlock Text="{Binding Label}"
-                                 TextTrimming="CharacterEllipsis"
-                                 MaxWidth="160"/>
+                      <StackPanel Orientation="Horizontal" Spacing="5">
+                        <TextBlock Text="{Binding Label}"
+                                   TextTrimming="CharacterEllipsis"
+                                   MaxWidth="160"/>
+                        <!-- Same badge rule and colors as the browser's version picker:
+                             purple EA only for a gate that expires, red PAID wins otherwise. -->
+                        <Border IsVisible="{Binding IsPermanentlyPaid}"
+                                Background="#66DC2626"
+                                CornerRadius="3"
+                                Padding="4,1"
+                                VerticalAlignment="Center"
+                                ToolTip.Tip="Paywalled indefinitely — buy and download it on Civitai">
+                          <TextBlock Text="PAID" FontSize="9" Foreground="White"/>
+                        </Border>
+                        <Border IsVisible="{Binding ShowEarlyAccessBadge}"
+                                Background="#669333EA"
+                                CornerRadius="3"
+                                Padding="4,1"
+                                VerticalAlignment="Center"
+                                ToolTip.Tip="Early Access — free once the creator's window ends">
+                          <TextBlock Text="EA" FontSize="9" Foreground="White"/>
+                        </Border>
+                      </StackPanel>
                     </ToggleButton>
                   </DataTemplate>
                 </ItemsControl.ItemTemplate>
@@ -181,16 +201,30 @@
           <!-- Download Button (visible when a non-downloaded version is selected) -->
           <Border Padding="16,8,16,4"
                   IsVisible="{Binding SelectedVersionTab.IsDownloaded, Converter={x:Static BoolConverters.Not}, FallbackValue=False}">
-            <Button Content="Download This Version"
-                    Command="{Binding DownloadSelectedVersionCommand}"
-                    HorizontalAlignment="Stretch"
-                    HorizontalContentAlignment="Center"
-                    Padding="12,10"
-                    FontSize="14"
-                    FontWeight="SemiBold"
-                    Background="#FFCC00"
-                    Foreground="#1E1E1E"
-                    CornerRadius="4"/>
+            <StackPanel Spacing="6">
+              <!-- Gating notice — the same facts the Browse tab's preflight dialog explains,
+                   surfaced before the click so the button never feels like a trap. -->
+              <TextBlock IsVisible="{Binding SelectedVersionTab.ShowEarlyAccessBadge, FallbackValue=False}"
+                         Text="Early Access — the creator has paywalled this version on Civitai for a limited time. The app can't download it yet, but you can put it on the waitlist."
+                         Foreground="#C084FC"
+                         FontSize="12"
+                         TextWrapping="Wrap"/>
+              <TextBlock IsVisible="{Binding SelectedVersionTab.IsPermanentlyPaid, FallbackValue=False}"
+                         Text="Permanently paid — this version never becomes free; buying and downloading it on Civitai is the only way."
+                         Foreground="#F87171"
+                         FontSize="12"
+                         TextWrapping="Wrap"/>
+              <Button Content="Download This Version"
+                      Command="{Binding DownloadSelectedVersionCommand}"
+                      HorizontalAlignment="Stretch"
+                      HorizontalContentAlignment="Center"
+                      Padding="12,10"
+                      FontSize="14"
+                      FontWeight="SemiBold"
+                      Background="#FFCC00"
+                      Foreground="#1E1E1E"
+                      CornerRadius="4"/>
+            </StackPanel>
           </Border>
 
           <!-- Image + Metadata Row -->

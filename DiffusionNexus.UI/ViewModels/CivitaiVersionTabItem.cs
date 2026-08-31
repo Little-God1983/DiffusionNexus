@@ -56,6 +56,18 @@ public partial class CivitaiVersionTabItem : ObservableObject
     /// </summary>
     public string? DownloadUrl => CivitaiVersion.DownloadUrl;
 
+    /// <summary>True when the version is early-access gated right now (paywalled on Civitai).</summary>
+    public bool IsEarlyAccess { get; }
+
+    /// <summary>True when the version is paywalled forever — waiting for it is pointless.</summary>
+    public bool IsPermanentlyPaid { get; }
+
+    /// <summary>
+    /// Purple "EA" only for a gate that actually expires; permanently paid versions
+    /// get the red "PAID" badge instead. Mirrors the browser card and version-picker rule.
+    /// </summary>
+    public bool ShowEarlyAccessBadge => IsEarlyAccess && !IsPermanentlyPaid;
+
     /// <summary>
     /// Whether this tab is currently selected.
     /// </summary>
@@ -78,6 +90,8 @@ public partial class CivitaiVersionTabItem : ObservableObject
         LocalVersion = localVersion;
         Label = label;
         _onSelected = onSelected;
+        IsEarlyAccess = civitaiVersion.IsEarlyAccessActive();
+        IsPermanentlyPaid = civitaiVersion.IsPermanentlyPaid();
     }
 
     /// <summary>

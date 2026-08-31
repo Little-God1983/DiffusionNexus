@@ -1999,7 +1999,10 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             sp?.GetService<IUiScheduler>(),
             apiKeyProvider: _apiKeyProvider,
             modelDownloader: _modelDownloader,
-            apiCache: sp?.GetService<ICivitaiApiCache>());
+            apiCache: sp?.GetService<ICivitaiApiCache>(),
+            // The browser tab's instance, never a new one — the waitlist persists a JSON
+            // snapshot per instance, so a second copy would clobber the first's file.
+            waitlist: BrowserViewModel.Waitlist);
 
         detailVm.CloseRequested += OnDetailCloseRequested;
         detailVm.MetadataDeleted += OnDetailMetadataDeleted;

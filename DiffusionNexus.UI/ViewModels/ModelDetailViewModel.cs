@@ -47,10 +47,21 @@ public partial class ModelDetailViewModel : ViewModelBase
     private ICivitaiApiKeyProvider? _apiKeyProvider;
 
     /// <summary>
+    /// Early-access waitlist shared with the Browse Civitai tab. One instance app-wide:
+    /// a second one would clobber the first's JSON snapshot on every persist.
+    /// </summary>
+    private readonly Services.CivitaiBrowser.CivitaiWaitlist? _waitlist;
+
+    /// <summary>
     /// Cached Civitai model data from the initial API fetch.
     /// Reused after download to rebuild version tabs without an extra API call.
+    /// Internal so gated-download tests can stage a fetched model without a live client.
     /// </summary>
-    private CivitaiModel? _cachedCivitaiModel;
+    internal CivitaiModel? CachedCivitaiModel { get; set; }
+
+    /// <summary>Seam for "open in browser", same pattern as the browse tab's opener.</summary>
+    public Action<string> UrlOpener { get; set; } = url =>
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
 
     /// <summary>
     /// Cancels any in-flight Civitai thumbnail download when the selected version tab changes.
@@ -292,7 +303,8 @@ public partial class ModelDetailViewModel : ViewModelBase
         IUiScheduler? uiScheduler = null,
         ICivitaiApiKeyProvider? apiKeyProvider = null,
         ICivitaiModelDownloader? modelDownloader = null,
-        ICivitaiApiCache? apiCache = null)
+        ICivitaiApiCache? apiCache = null,
+        Services.CivitaiBrowser.CivitaiWaitlist? waitlist = null)
     {
         _civitaiClient = civitaiClient;
         _settingsService = settingsService;
@@ -306,6 +318,7 @@ public partial class ModelDetailViewModel : ViewModelBase
         _apiKeyProvider = apiKeyProvider;
         _apiCache = apiCache;
         _modelDownloader = modelDownloader;
+        _waitlist = waitlist;
     }
 
     #endregion
@@ -317,7 +330,7 @@ public partial class ModelDetailViewModel : ViewModelBase
     /// </summary>
     public async Task LoadAsync(ModelTileViewModel tile)
     {
-        _cachedCivitaiModel = null;
+        CachedCivitaiModel = null;
         SourceTile = tile;
 
         // Populate from local data immediately
@@ -411,6 +424,14 @@ public partial class ModelDetailViewModel : ViewModelBase
         var tab = SelectedVersionTab;
         if (tab is null || tab.IsDownloaded) return;
 
+        // Gated versions can't be downloaded by the app at all — Civitai serves paid files
+        // through the website only. Mirror the Browse tab: one preflight dialog offering
+        // waitlist/website instead of letting the transfer die with a red failure line.
+        // Checked before the token prompt — no point demanding a key for a refused download.
+        if (tab.CivitaiVersion.IsEarlyAccessActive()
+            && !ApplyGatedVersionChoice(await ShowGatedVersionPreflightAsync(tab), tab))
+            return;
+
         // Ensure a Civitai API token is configured before downloading.
         // If missing, show the token dialog so the user can paste one.
         if (!await EnsureCivitaiTokenAsync())
@@ -494,6 +515,86 @@ public partial class ModelDetailViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// Shows the Browse tab's pre-download dialog for one early-access/paywalled version.
+    /// Needs a window owner; headless hosts (tests, tools) get <see cref="DownloadPreflightResult.DownloadAnyway"/>
+    /// so the plain download path — whose failure line still reports the 403 — stays reachable.
+    /// </summary>
+    private async Task<DownloadPreflightResult> ShowGatedVersionPreflightAsync(CivitaiVersionTabItem tab)
+    {
+        var owner = (Avalonia.Application.Current?.ApplicationLifetime
+            as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.MainWindow;
+        if (owner is null) return DownloadPreflightResult.DownloadAnyway;
+
+        var title = $"{ModelName} — {tab.Label}";
+        var dialog = tab.IsPermanentlyPaid
+            ? new DownloadPreflightDialog([], permanentTitles: [title])
+            : new DownloadPreflightDialog([title]);
+        await dialog.ShowDialog(owner);
+        return dialog.Result;
+    }
+
+    /// <summary>
+    /// Applies the user's choice from the gated-version dialog. Returns true only when the
+    /// download should still proceed. The sibling of <c>CivitaiBrowserViewModel.ApplyPreflightChoice</c>,
+    /// collapsed to the single version this panel downloads at a time; internal so every branch is
+    /// unit-testable without showing the dialog.
+    /// </summary>
+    internal bool ApplyGatedVersionChoice(DownloadPreflightResult choice, CivitaiVersionTabItem tab)
+    {
+        // The version DTO names its own model; the cached fetch is the fallback for
+        // payloads (older sidecars) that omit it.
+        var modelId = tab.CivitaiVersion.ModelId > 0
+            ? tab.CivitaiVersion.ModelId
+            : CachedCivitaiModel?.Id ?? 0;
+        var isNsfw = CachedCivitaiModel is { } model
+            && Services.CivitaiBrowser.CivitaiNsfwPolicy.IsCardNsfw(model);
+
+        switch (choice)
+        {
+            case DownloadPreflightResult.DownloadAnyway:
+                return true;
+
+            case DownloadPreflightResult.AddToWaitlist:
+                if (_waitlist is null)
+                {
+                    _logger?.Warn(LogCategory.Download, "CivitaiWaitlist",
+                        $"Waitlist unavailable — '{ModelName} — {tab.Label}' not added.");
+                    return false;
+                }
+                StatusMessage = _waitlist.TryAdd(modelId, ModelName, CategoryDisplay, isNsfw, tab.CivitaiVersion)
+                    ? $"Added '{ModelName} — {tab.Label}' to the waitlist (Browse Civitai › Waitlist tab)."
+                    : $"'{ModelName} — {tab.Label}' is already on the waitlist.";
+                return false;
+
+            case DownloadPreflightResult.OpenWebsite:
+                if (modelId > 0)
+                {
+                    // civitai.com hides NSFW from unauthenticated visitors; route those to the mirror.
+                    var host = isNsfw ? "civitai.red" : "civitai.com";
+                    OpenUrl($"https://{host}/models/{modelId}?modelVersionId={tab.CivitaiVersion.Id}");
+                }
+                return false;
+
+            default:
+                _logger?.Info(LogCategory.Download, "LoraDownload",
+                    $"Gated download declined by user: {ModelName} — {tab.Label}");
+                return false;
+        }
+    }
+
+    private void OpenUrl(string url)
+    {
+        try
+        {
+            UrlOpener(url);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Warn(LogCategory.General, "LoraDownload", $"Failed to launch browser for {url}: {ex.Message}");
+        }
+    }
+
+    /// <summary>
     /// The user-visible line for a download that did not succeed, or null when there is nothing to
     /// report. Mirrors <c>LoraViewerViewModel.DownloadLoraAsync</c>'s switch: cancelling is not
     /// failing, and a hash mismatch is not a clean download — Task 5 made those distinguishable, so
@@ -512,7 +613,7 @@ public partial class ModelDetailViewModel : ViewModelBase
     /// <summary>
     /// Reloads the model from the database and refreshes the source tile and detail panel
     /// so the newly downloaded version appears as "downloaded" (blue tab).
-    /// Uses <see cref="_cachedCivitaiModel"/> to rebuild tabs without an extra API call.
+    /// Uses <see cref="CachedCivitaiModel"/> to rebuild tabs without an extra API call.
     /// </summary>
     private async Task RefreshAfterDownloadAsync(string downloadedFilePath)
     {
@@ -544,9 +645,9 @@ public partial class ModelDetailViewModel : ViewModelBase
                                      ?? "\u2014";
                     CreatorDisplay = refreshedModel.Creator?.Username ?? "Unknown";
 
-                    if (_cachedCivitaiModel is not null)
+                    if (CachedCivitaiModel is not null)
                     {
-                        BuildCivitaiVersionTabs(_cachedCivitaiModel, sourceTile);
+                        BuildCivitaiVersionTabs(CachedCivitaiModel, sourceTile);
                     }
                     else
                     {
@@ -892,7 +993,7 @@ public partial class ModelDetailViewModel : ViewModelBase
                 return;
             }
 
-            _cachedCivitaiModel = civitaiModel;
+            CachedCivitaiModel = civitaiModel;
 
             // Persist the remote version count so the "+N more versions" tile badge
             // reflects what Civitai reports right now, even for models whose metadata

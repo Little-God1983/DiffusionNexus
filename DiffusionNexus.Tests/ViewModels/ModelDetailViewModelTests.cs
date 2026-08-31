@@ -1,5 +1,6 @@
 using System.Reflection;
 using DiffusionNexus.Civitai;
+using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
@@ -8,8 +9,10 @@ using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Installer.SDK.Shared.Services;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.CivitaiBrowser;
 using DiffusionNexus.UI.Services.Download;
 using DiffusionNexus.UI.ViewModels;
+using DiffusionNexus.UI.Views.Dialogs;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
@@ -41,7 +44,8 @@ public class ModelDetailViewModelTests
     private static ModelDetailViewModel CreateVm(
         IClipboardService? clipboard = null,
         IUiScheduler? scheduler = null,
-        IServiceScopeFactory? scopeFactory = null)
+        IServiceScopeFactory? scopeFactory = null,
+        CivitaiWaitlist? waitlist = null)
         => new(
             civitaiClient: new Mock<ICivitaiClient>().Object,
             settingsService: new Mock<IAppSettingsService>().Object,
@@ -51,7 +55,8 @@ public class ModelDetailViewModelTests
             scopeFactory: scopeFactory ?? new Mock<IServiceScopeFactory>().Object,
             dialogService: new Mock<IDialogService>().Object,
             clipboard: clipboard,
-            uiScheduler: scheduler ?? new Helpers.ImmediateUiScheduler());
+            uiScheduler: scheduler ?? new Helpers.ImmediateUiScheduler(),
+            waitlist: waitlist);
 
     [Fact]
     public void ConstructorWithMocksDoesNotThrowAndNeedsNoLocator()
@@ -245,4 +250,110 @@ public class ModelDetailViewModelTests
         mapped.Primary.Should().BeTrue();
         mapped.DownloadUrl.Should().Be("https://civitai.test/api/download/models/1");
     }
+
+    #region Gated-version preflight (EA/paywall parity with the Browse tab)
+
+    private static readonly DateTimeOffset Now =
+        new(DateTime.UtcNow.Date.AddHours(10), TimeSpan.Zero);
+
+    private static CivitaiVersionTabItem GatedTab(int versionId = 2, int modelId = 102, bool permanent = false)
+        => new(
+            new CivitaiModelVersion
+            {
+                Id = versionId,
+                ModelId = modelId,
+                Name = $"v{versionId}",
+                BaseModel = "Krea 2",
+                DownloadUrl = $"https://civitai.example/api/download/models/{versionId}",
+                EarlyAccessDeadline = permanent ? null : Now.AddDays(7),
+                PaidAccess = permanent ? new CivitaiPaidAccess { Permanent = true } : null
+            },
+            localVersion: null, label: $"v{versionId}", onSelected: _ => { });
+
+    private static (ModelDetailViewModel Vm,
+        CivitaiWaitlist Waitlist,
+        List<string> Opened) CreateGatedVm()
+    {
+        var waitlist = new CivitaiWaitlist(null, null,
+            persistPathOverride: Path.Combine(Path.GetTempPath(), $"dn-detail-wl-{Guid.NewGuid():N}.json"));
+        var vm = CreateVm(waitlist: waitlist);
+        vm.ModelName = "Detail LoRA";
+        vm.CategoryDisplay = "Style";
+        var opened = new List<string>();
+        vm.UrlOpener = opened.Add;
+        return (vm, waitlist, opened);
+    }
+
+    [Fact]
+    public void GatedChoice_AddToWaitlist_LandsOnTheSharedWaitlistAndStopsTheDownload()
+    {
+        var (vm, waitlist, _) = CreateGatedVm();
+
+        var proceed = vm.ApplyGatedVersionChoice(
+            DownloadPreflightResult.AddToWaitlist, GatedTab());
+
+        proceed.Should().BeFalse("waitlisting replaces the download");
+        var e = waitlist.Entries.Single();
+        e.ModelId.Should().Be(102);
+        e.VersionId.Should().Be(2);
+        e.ModelName.Should().Be("Detail LoRA");
+        e.Category.Should().Be("Style");
+        vm.StatusMessage.Should().Contain("waitlist");
+    }
+
+    [Theory]
+    [InlineData(DownloadPreflightResult.Cancel)]
+    [InlineData(DownloadPreflightResult.SkipFlagged)]
+    public void GatedChoice_CancelOrSkip_DoesNothing(
+        DownloadPreflightResult choice)
+    {
+        var (vm, waitlist, opened) = CreateGatedVm();
+
+        vm.ApplyGatedVersionChoice(choice, GatedTab()).Should().BeFalse();
+
+        waitlist.Entries.Should().BeEmpty();
+        opened.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void GatedChoice_DownloadAnyway_LetsTheDownloadContinue()
+    {
+        var (vm, waitlist, _) = CreateGatedVm();
+
+        vm.ApplyGatedVersionChoice(
+            DownloadPreflightResult.DownloadAnyway, GatedTab())
+            .Should().BeTrue("an explicit override falls through to the normal download path");
+
+        waitlist.Entries.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void GatedChoice_OpenWebsite_DeepLinksTheExactVersion()
+    {
+        var (vm, _, opened) = CreateGatedVm();
+
+        vm.ApplyGatedVersionChoice(
+            DownloadPreflightResult.OpenWebsite, GatedTab())
+            .Should().BeFalse();
+
+        opened.Should().ContainSingle().Which.Should()
+            .Be("https://civitai.com/models/102?modelVersionId=2");
+    }
+
+    [Fact]
+    public void GatedChoice_OpenWebsite_NsfwModelUsesCivitaiRedAndCachedModelIdFallback()
+    {
+        var (vm, _, opened) = CreateGatedVm();
+        // civitai.com hides NSFW from unauthenticated visitors; the mirror does not.
+        vm.CachedCivitaiModel = new CivitaiModel { Id = 5, Name = "Detail LoRA", Nsfw = true };
+
+        vm.ApplyGatedVersionChoice(
+            DownloadPreflightResult.OpenWebsite,
+            GatedTab(versionId: 9, modelId: 0));
+
+        opened.Should().ContainSingle().Which.Should()
+            .Be("https://civitai.red/models/5?modelVersionId=9");
+    }
+
+    #endregion
 }
