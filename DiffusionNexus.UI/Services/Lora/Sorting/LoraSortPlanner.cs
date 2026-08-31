@@ -1,3 +1,4 @@
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Service.Services.Lora;
 
 namespace DiffusionNexus.UI.Services.Lora.Sorting;
@@ -59,8 +60,29 @@ public sealed class LoraSortPlanner
         {
             ct.ThrowIfCancellationRequested();
 
-            var targetDir = LoraPathBuilder.BuildTargetDirectory(
-                options.TargetRoot, candidate.BaseModelRaw, candidate.CategoryFolderName, options.IncludeCategory);
+            var candidateSourceDir = Path.GetDirectoryName(candidate.FilePath) ?? string.Empty;
+
+            // A shard of a split model keeps its own directory as its target — whatever it is, and
+            // wherever it would otherwise have gone — which the already-in-place branch below then
+            // turns into "no move". The test sits ABOVE the kind/base-model choice rather than
+            // inside one arm of it because the reason is route-independent: a shard is a fragment
+            // of ONE logical model, the planner sees a single file at a time and cannot tell
+            // whether a sibling shard is routed anywhere near it, and relocating a SUBSET of a set
+            // is worse than relocating none of it — the pieces are individually useless and the
+            // loader needs the whole complement plus its index. None of that depends on which
+            // folder the subset was headed for.
+            //
+            // Guarding only the support-asset arm, as this first did, splits a mixed-kind set
+            // through the other door: a LLaVA-OneVision checkpoint's three decoder shards answer
+            // TextEncoder and would stay put, while its vision-tower shard answers LORA and would
+            // sort away by base model — the exact outcome the guard exists to prevent. Recording
+            // what the file IS stays untouched; only the physical move is refused.
+            var targetDir = LoraPathBuilder.IsShardOfASplitModel(candidate.FilePath)
+                ? candidateSourceDir
+                : candidate.AssetKind.IsSupportAsset()
+                    ? LoraPathBuilder.BuildSupportAssetDirectory(options.TargetRoot, candidate.AssetKind)
+                    : LoraPathBuilder.BuildTargetDirectory(
+                        options.TargetRoot, candidate.BaseModelRaw, candidate.CategoryFolderName, options.IncludeCategory);
             var names = claimed.TryGetValue(targetDir, out var existing)
                 ? existing
                 : claimed[targetDir] = new Dictionary<string, SortCandidate>(StringComparer.OrdinalIgnoreCase);
@@ -76,7 +98,7 @@ public sealed class LoraSortPlanner
                     ? HashOfCandidate(claimant)
                     : HashOfFile(Path.Combine(targetDir, name));
 
-            var sourceDir = Path.GetDirectoryName(candidate.FilePath) ?? string.Empty;
+            var sourceDir = candidateSourceDir;
             if (string.Equals(sourceDir, targetDir, StringComparison.OrdinalIgnoreCase)
                 && !names.ContainsKey(fileName))
             {

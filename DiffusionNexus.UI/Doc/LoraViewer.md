@@ -127,11 +127,14 @@ RefreshAsync
 │   │   │   │   but invalid path (file was moved), update the path — counted
 │   │   │   │   as DiscoveryResult.RepointedCount (#537): a grid-visible
 │   │   │   │   change that is not a new file
-│   │   │   └── Otherwise → CreateModelFromFile:
+│   │   │   └── Otherwise → CreateModelFromFileAsync:
 │   │   │       Creates Model + ModelVersion + ModelFile with:
 │   │   │         Source = LocalFile
 │   │   │         Name = filename (no extension)
 │   │   │         BaseModelRaw = "???" (unknown without metadata)
+│   │   │         Type = AssetKindResolver's verdict (#527) — one
+│   │   │           size-capped header read per new file, not the old
+│   │   │           blanket ModelType.LORA
 │   │   └── SaveChangesAsync
 │   │
 ├── 2. BackfillCivitaiModelPageIdAsync
@@ -1159,7 +1162,14 @@ Each node in the preview tree carries two things beyond its name and size:
 
 **One extension list, split by the question.** `ModelFileExtensions` (Domain) has `Sortable` — what the app enumerates, discovers into the library, and physically **moves** — and the wider `Recognized`, for deciding whether a *name* reads as a model's (stripping an extension before a name hint, spotting a model reference while hashing). The distinction is load-bearing: over-recognizing costs nothing, but every entry in `Sortable` is a file the sorter will relocate, which is why `.bin` and `.gguf` are recognized and not sortable. Discovery and the sorter read the same `Sortable` set, so a file the sorter would file can never be one the library refuses to discover.
 
-`SorterAssetKindClassifier` names the kind from the file name alone and is therefore fallible, which is why nothing it decides moves a file — it drives the label only. Its markers are drawn from names observed in a real library, and the bar for adding one is that it cannot plausibly occur in a LoRA's own name: `clip` counts only as the first token (`clip_g_hidream` leads with it, `hair_clip_v1` does not), a bare `.pth` is not an upscaler (`Chris.pth` is an ordinary model), and a leading scale factor is (`4x-UltraSharp`, `4xLSDIRplus`) — but neither `4x4` nor `2x2x2` is, because a chained dimension is not a scale factor. Markers that failed that bar were removed rather than kept: `upscale` (`detail_upscale_v2` is an ordinary LoRA, and no real file needed it), `redux` (Redux is an adapter rather than a ControlNet, *and* Flux Redux LoRAs exist), and bare `vl`, which is two characters and now counts only alongside `qwen`, the family whose encoders spell it that way.
+`AssetKindClassifier` (`DiffusionNexus.Service.Services.Sync.Identity`) names the kind from the file name alone and is therefore fallible. Since #527 the planner **does** route on the kind — a support asset goes to its own flat `<TargetRoot>\VAE\`-style folder — so a wrong verdict now moves somebody's file. What holds it safe is not that the classifier is powerless but that it is **last**, and that a name-only verdict never gets to decide a move on a container we could read:
+
+- `AssetKindResolver` asks the **weights** first (`AssetKindHeaderMap` over the tensor keys). When they answer, the name is never consulted — that is what makes a LoRA called `vae_finetune_lora` safe.
+- A `.safetensors` whose header we merely *failed* to open is **not** evidence: it stays `LORA` and is re-asked on the next pass that can read it. Guessing there would be unrecoverable, because a row stamped `VAE` is both invisible in this grid (`IsLoraFamily`) and unselectable by any bulk sync (`SyncStateRepository`'s `LoraFamily` filter).
+- In the sorter, a DB row that says `LORA` proves nothing (it is what every file was stamped before #527) — so a support-asset *name* on such a row triggers a header read rather than deciding the destination, and the weights settle it.
+- The name is therefore the sole evidence in two cases, and only those. A `.pth` / `.ckpt` pickle, which has no header for anything to read; and a `.safetensors` whose header we **did** read and which matched no rung — evidence that says nothing, as opposed to an absence of evidence, and the case that lets a `.safetensors` upscaler be named at all, since `AssetKindHeaderMap` has no upscaler rung by design (an upscaler's keys are ordinary conv stacks). In both, the markers that can fire (`4x-`, `esrgan`, `ultrasharp`, `lsdir`) do not occur in LoRA names — and the legacy backfill is scoped to the pickle cohort alone for the same reason.
+
+Its markers are drawn from names observed in a real library, and the bar for adding one is that it cannot plausibly occur in a LoRA's own name: `clip` counts only as the first token (`clip_g_hidream` leads with it, `hair_clip_v1` does not), a bare `.pth` is not an upscaler (`Chris.pth` is an ordinary model), and a leading scale factor is (`4x-UltraSharp`, `4xLSDIRplus`) — but neither `4x4` nor `2x2x2` is, because a chained dimension is not a scale factor. Markers that failed that bar were removed rather than kept: `upscale` (`detail_upscale_v2` is an ordinary LoRA, and no real file needed it), `redux` (Redux is an adapter rather than a ControlNet, *and* Flux Redux LoRAs exist), and bare `vl`, which is two characters and now counts only alongside `qwen`, the family whose encoders spell it that way.
 
 ### Execution
 

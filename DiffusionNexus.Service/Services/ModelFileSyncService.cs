@@ -4,6 +4,7 @@ using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Utilities;
+using DiffusionNexus.Service.Services.Sync.Identity;
 
 namespace DiffusionNexus.Service.Services;
 
@@ -20,6 +21,14 @@ public class ModelFileSyncService : IModelSyncService
     /// Number of bytes to read for partial hash (10MB).
     /// </summary>
     private const int PartialHashBytes = 10 * 1024 * 1024;
+
+    /// <summary>
+    /// How many rows the header reclassify arm commits at a time. Progress is committed in batches
+    /// so a cancelled sweep of a large library converges instead of restarting from nothing: every
+    /// row it examines is stamped <c>HeaderCheckedAt</c>, so a committed batch is a batch that will
+    /// never be read again. Matches <c>SyncStateInitializer</c>'s own batch size.
+    /// </summary>
+    private const int HeaderReclassifyBatchSize = 200;
 
     /// <summary>
     /// Supported model file extensions — the shared Sortable set, so what the library DISCOVERS and
@@ -54,10 +63,7 @@ public class ModelFileSyncService : IModelSyncService
         var enabledRoots = await _settingsService.GetEnabledLoraSourcesAsync(cancellationToken)
             .ConfigureAwait(false);
 
-        var normalizedRoots = enabledRoots
-            .Where(r => !string.IsNullOrWhiteSpace(r))
-            .Select(r => r.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
-            .ToList();
+        var normalizedRoots = NormalizeRoots(enabledRoots);
 
         if (normalizedRoots.Count == 0)
         {
@@ -103,10 +109,7 @@ public class ModelFileSyncService : IModelSyncService
         var enabledRoots = await _settingsService.GetEnabledLoraSourcesAsync(cancellationToken)
             .ConfigureAwait(false);
 
-        var normalizedRoots = enabledRoots
-            .Where(r => !string.IsNullOrWhiteSpace(r))
-            .Select(r => r.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
-            .ToList();
+        var normalizedRoots = NormalizeRoots(enabledRoots);
 
         if (normalizedRoots.Count == 0)
         {
@@ -150,11 +153,61 @@ public class ModelFileSyncService : IModelSyncService
         return seen.Values.ToList();
     }
 
+    /// <inheritdoc />
+    public async Task<int> CountExcludedSupportAssetsAsync(CancellationToken cancellationToken = default)
+    {
+        var enabledRoots = await _settingsService.GetEnabledLoraSourcesAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var normalizedRoots = NormalizeRoots(enabledRoots);
+
+        // No enabled sources → nothing is being shown, so nothing is being hidden either.
+        // Matches LoadCachedModelsAsync/LoadCachedFilesAsync: an empty root list is not
+        // "everything", it is "nothing scannable is configured".
+        if (normalizedRoots.Count == 0)
+        {
+            return 0;
+        }
+
+        // A narrow projection (LocalPath, IsLocalFileValid, LocalFileVerifiedAt only) rather than
+        // GetModelsWithLocalFilesLightAsync — that query's multi-include AsSplitQuery over
+        // Creator/Tags/Versions/TriggerWords is the same heavy read LoadCachedFilesAsync just ran
+        // moments earlier in the same Viewer load; running it a second time for a number that
+        // never looks at any of that graph would double the Viewer's heaviest query on every
+        // refresh.
+        var files = await _unitOfWork.Models
+            .GetSupportAssetFilePathsAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var file in files)
+        {
+            if (string.IsNullOrEmpty(file.LocalPath)) continue;
+            if (!file.IsLocalFileValid && file.LocalFileVerifiedAt != null) continue;
+            if (MatchEnabledRoot(file.LocalPath, normalizedRoots) is null) continue;
+            seen.Add(file.LocalPath);
+        }
+
+        return seen.Count;
+    }
+
     // Unknown is included so legacy rows (Type never set explicitly) still appear —
     // the explicit non-LoRA types (Checkpoint, Upscaler, VAE, TextualInversion, etc.)
     // are the ones we want filtered out of the LoRA viewer.
     private static bool IsLoraFamily(ModelType type) =>
         type is ModelType.LORA or ModelType.LoCon or ModelType.DoRA or ModelType.Unknown;
+
+    /// <summary>
+    /// Enabled LoRA-source roots, trimmed of a trailing separator and stripped of blanks — the one
+    /// definition of "an enabled root", shared by every reader of <c>GetEnabledLoraSourcesAsync</c>
+    /// in this class (<see cref="LoadCachedModelsAsync"/>, <see cref="LoadCachedFilesAsync"/>,
+    /// <see cref="CountExcludedSupportAssetsAsync"/>) so the grid and this count cannot disagree
+    /// about what counts as enabled.
+    /// </summary>
+    private static List<string> NormalizeRoots(IReadOnlyList<string> enabledRoots) =>
+        enabledRoots
+            .Where(r => !string.IsNullOrWhiteSpace(r))
+            .Select(r => r.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+            .ToList();
 
     /// <summary>
     /// Returns the normalized root that contains <paramref name="filePath"/>, or
@@ -266,68 +319,94 @@ public class ModelFileSyncService : IModelSyncService
             Phase = $"Found {allFiles.Count} total files, {newFiles.Count} are new"
         });
 
-        if (newFiles.Count == 0)
-        {
-            return new DiscoveryResult();
-        }
-
-        progress?.Report(new SyncProgress
-        {
-            Phase = "Processing new files",
-            TotalCount = newFiles.Count
-        });
-
         var newModels = new List<Model>();
         var repointed = 0;
-        var processedCount = 0;
 
-        foreach (var filePath in newFiles)
+        // Deliberately NOT an early return when newFiles.Count == 0 (#527 round 2): a returning
+        // library that has already been fully indexed once hits exactly this branch on every
+        // ordinary refresh, and that — not "new files just appeared" — is the common case a
+        // pre-#527 library's mislabelled rows need the backfill below to reach. An early return
+        // here is precisely how the passive Refresh/reconcile path (which never calls
+        // ReclassifySupportAssetsAsync on its own) used to never trigger it at all.
+        if (newFiles.Count > 0)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var fileName = Path.GetFileName(filePath);
             progress?.Report(new SyncProgress
             {
                 Phase = "Processing new files",
-                CurrentItem = fileName,
-                ProcessedCount = processedCount,
                 TotalCount = newFiles.Count
             });
 
-            // First check if we can match by hash (file was moved)
-            var fileInfo = new FileInfo(filePath);
-            var matchedFile = await TryMatchByHashAndSizeAsync(filePath, fileInfo.Length, cancellationToken);
+            var processedCount = 0;
 
-            if (matchedFile is not null)
+            foreach (var filePath in newFiles)
             {
-                // Update the existing file's path. Counted (#537): the row was stamped invalid —
-                // hidden from the grid — so this is a grid-visible change, just not a new file.
-                matchedFile.LocalPath = filePath;
-                matchedFile.IsLocalFileValid = true;
-                matchedFile.LocalFileVerifiedAt = DateTimeOffset.UtcNow;
-                repointed++;
-            }
-            else
-            {
-                // Create new model entry
-                var model = CreateModelFromFile(filePath, fileInfo);
-                await _unitOfWork.Models.AddAsync(model, cancellationToken).ConfigureAwait(false);
-                newModels.Add(model);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var fileName = Path.GetFileName(filePath);
+                progress?.Report(new SyncProgress
+                {
+                    Phase = "Processing new files",
+                    CurrentItem = fileName,
+                    ProcessedCount = processedCount,
+                    TotalCount = newFiles.Count
+                });
+
+                // First check if we can match by hash (file was moved)
+                var fileInfo = new FileInfo(filePath);
+                var matchedFile = await TryMatchByHashAndSizeAsync(filePath, fileInfo.Length, cancellationToken);
+
+                if (matchedFile is not null)
+                {
+                    // Update the existing file's path. Counted (#537): the row was stamped invalid —
+                    // hidden from the grid — so this is a grid-visible change, just not a new file.
+                    matchedFile.LocalPath = filePath;
+                    matchedFile.IsLocalFileValid = true;
+                    matchedFile.LocalFileVerifiedAt = DateTimeOffset.UtcNow;
+                    repointed++;
+                }
+                else
+                {
+                    // Create new model entry
+                    var model = await CreateModelFromFileAsync(filePath, fileInfo, cancellationToken).ConfigureAwait(false);
+                    await _unitOfWork.Models.AddAsync(model, cancellationToken).ConfigureAwait(false);
+                    newModels.Add(model);
+                }
+
+                processedCount++;
             }
 
-            processedCount++;
+            await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+            progress?.Report(new SyncProgress
+            {
+                Phase = "Discovery complete",
+                ProcessedCount = newFiles.Count,
+                TotalCount = newFiles.Count
+            });
         }
 
-        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        // Legacy-library backfill (#527 round 2): runs on every discovery call, not only the bulk
+        // "Download Missing Metadata" button. ReclassifySupportAssetsAsync used to be reachable
+        // only through DiscoverFilesStep's own separate call, so the passive background reconcile
+        // path — which calls this method directly and never went through that step — never ran it
+        // at all. Placed after the SaveChangesAsync above (same reasoning RepointedCount already
+        // follows: a moved-in support asset discovered THIS scan is caught up in the same call)
+        // but honours cancellationToken itself and only saves after its own loop completes in
+        // full, so a cancellation here throws rather than reporting a partial pass as a finished
+        // count — it never leaves this call returning a result the caller reads as complete.
+        //
+        // excludeModelIds protects newModels specifically: those rows were JUST classified from
+        // their weights by CreateModelFromFileAsync above (the accurate rung), and — having no
+        // ModelSyncState row yet, same as a genuinely old row — would otherwise look like an
+        // ordinary candidate to the query below. A file correctly discovered as LORA by its
+        // weights despite a name like "vae_finetune_lora.safetensors" must not have that correct
+        // verdict immediately overwritten by the weaker name-only guess this pass makes.
+        var reclassified = await ReclassifySupportAssetsAsync(
+            cancellationToken,
+            excludeModelIds: newModels.Count > 0 ? newModels.Select(m => m.Id).ToHashSet() : null)
+            .ConfigureAwait(false);
 
-        progress?.Report(new SyncProgress
-        {
-            Phase = "Discovery complete",
-            ProcessedCount = newFiles.Count,
-            TotalCount = newFiles.Count
-        });
-
-        return new DiscoveryResult { NewModels = newModels, RepointedCount = repointed };
+        return new DiscoveryResult { NewModels = newModels, RepointedCount = repointed, ReclassifiedCount = reclassified };
     }
 
     /// <inheritdoc />
@@ -533,6 +612,168 @@ public class ModelFileSyncService : IModelSyncService
         }
     }
 
+    /// <inheritdoc />
+    public async Task<int> ReclassifySupportAssetsAsync(
+        CancellationToken cancellationToken = default,
+        IReadOnlySet<int>? excludeModelIds = null)
+    {
+        // Two arms, partitioning the legacy library by the only thing that decides which rung may
+        // touch a row: what evidence the file can offer. A pickle has no header, so its NAME is all
+        // there will ever be; a safetensors container has weights, so its name must never be
+        // consulted. Between them every legacy row is reached exactly once, by the only rung that
+        // has any evidence for it.
+        var byName = await ReclassifyPicklesByNameAsync(excludeModelIds, cancellationToken).ConfigureAwait(false);
+        var byWeights = await ReclassifyContainersByHeaderAsync(excludeModelIds, cancellationToken).ConfigureAwait(false);
+
+        return byName + byWeights;
+    }
+
+    /// <summary>
+    /// The name arm — a legacy PICKLE row (<c>.ckpt</c>/<c>.pt</c>/<c>.pth</c>) named from its file
+    /// name, which is the only evidence such a file will ever offer. See
+    /// <see cref="IModelSyncService.ReclassifySupportAssetsAsync"/> for why that restriction is
+    /// load-bearing rather than merely cheap.
+    /// </summary>
+    private async Task<int> ReclassifyPicklesByNameAsync(
+        IReadOnlySet<int>? excludeModelIds, CancellationToken cancellationToken)
+    {
+        var candidates = await _unitOfWork.Models
+            .GetSupportAssetBackfillCandidatesAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var changed = 0;
+        foreach (var model in candidates)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // See the interface doc: a model DiscoverNewFilesAsync just created in the same call
+            // is already weight-classified and must never be re-guessed from its name here.
+            if (excludeModelIds is not null && excludeModelIds.Contains(model.Id)) continue;
+
+            // The file name, not the model name: a user may have renamed the model in the app,
+            // and it is the file on disk whose name carries the marker.
+            var fileName = model.Versions
+                .SelectMany(v => v.Files)
+                .FirstOrDefault(f => f.IsPrimary)?.FileName
+                ?? model.Versions.SelectMany(v => v.Files).FirstOrDefault()?.FileName;
+            if (fileName is null) continue;
+
+            // A safetensors container's real kind is a fact IdentifyModelStep can read directly
+            // from its weights — guessing from its name here would be strictly worse evidence, and
+            // the row is not left stuck waiting for that: every candidate this query selects is
+            // NotIdentified/None, which IdentifyModelStep already treats as due. Only a pickle
+            // (.ckpt/.pt/.pth — Sortable minus SafetensorsContainers) has no header to fall back
+            // on, so its file name is the only evidence this pass, or anything else, will ever
+            // have for it — that is where a name guess is actually warranted.
+            if (ModelFileExtensions.Matches(fileName, ModelFileExtensions.SafetensorsContainers)) continue;
+
+            var kind = AssetKindClassifier.Classify(fileName);
+            if (!kind.IsSupportAsset()) continue;
+
+            model.Type = kind;
+            changed++;
+        }
+
+        if (changed > 0)
+            await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        return changed;
+    }
+
+    /// <summary>
+    /// The weights arm — a legacy safetensors row named from its own tensor keys, once per file
+    /// ever.
+    /// </summary>
+    /// <remarks>
+    /// <c>IdentifyModelStep</c> was meant to cover every container: it corrects a row's kind
+    /// whenever it reads that file's weights. But it only ever reaches rows a bulk run SELECTS, and
+    /// <c>Matched</c> is terminal for the retry policy, so a support asset that Civitai happened to
+    /// match is re-read by nothing and keeps its <c>LORA</c> stamp permanently. Three real text
+    /// encoders sat in exactly that state — <c>ministral-3-3b</c>, <c>ViT-L-14-…-TE-only-HF</c> and
+    /// <c>qwen_3_4b</c> — all three unambiguous from their weights, none of them reachable. This
+    /// arm is the one pass that does not care how a row was identified.
+    /// <para>
+    /// Cost is one bounded header read per file, EVER, gated on
+    /// <c>ModelSyncState.HeaderCheckedAt</c>: a full sweep of one real 1553-container library
+    /// measured 4.5 s, about 3 ms a file. The header is a small JSON block at the front of the
+    /// container and <see cref="SafetensorsHeaderReader"/> never touches the tensor payload behind
+    /// it, so this is nothing like the partial hash the discovery loop already pays.
+    /// </para>
+    /// <para>
+    /// Only ever <c>LORA</c> → support asset: the candidate query admits no other type, and a
+    /// verdict of LoRA — or no verdict at all — leaves such a row exactly as it was.
+    /// </para>
+    /// </remarks>
+    private async Task<int> ReclassifyContainersByHeaderAsync(
+        IReadOnlySet<int>? excludeModelIds, CancellationToken cancellationToken)
+    {
+        var candidates = await _unitOfWork.Models
+            .GetHeaderReclassifyCandidatesAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var changed = 0;
+        var uncommitted = 0;
+
+        foreach (var model in candidates)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // Same reason as the name arm: a row DiscoverNewFilesAsync created in THIS call was
+            // resolved from its weights moments ago by the very same AssetKindResolver, so reading
+            // it again here can only cost I/O — it cannot improve on an answer it would reproduce.
+            if (excludeModelIds is not null && excludeModelIds.Contains(model.Id)) continue;
+
+            // The primary file first, and only a container: a model whose primary is a pickle but
+            // which also carries a .safetensors satisfies the candidate query, and the container is
+            // the file this arm has anything to say about.
+            var path = model.Versions
+                .SelectMany(v => v.Files)
+                .Where(f => !string.IsNullOrEmpty(f.LocalPath)
+                            && ModelFileExtensions.Matches(f.FileName, ModelFileExtensions.SafetensorsContainers))
+                .OrderByDescending(f => f.IsPrimary)
+                .Select(f => f.LocalPath!)
+                .FirstOrDefault(File.Exists);
+            if (path is null) continue;
+
+            var header = await SafetensorsHeaderReader.TryReadAsync(path, cancellationToken).ConfigureAwait(false);
+
+            // Only a header we actually READ closes the question for this file. A container we could
+            // not open — still copying onto a NAS, held open by a trainer, a transient IO fault —
+            // stays unstamped so the next pass asks again; stamping it would settle the row's kind
+            // forever on a failure that had nothing to do with its contents. This is the same rule
+            // AssetKindResolver.ContainerWasUnreadable states for the callers that write a verdict.
+            if (header is null) continue;
+
+            var kind = AssetKindResolver.Resolve(header, Path.GetFileName(path));
+            if (kind.IsSupportAsset())
+            {
+                model.Type = kind;
+                changed++;
+            }
+
+            // Stamped whatever the verdict was, including "the weights say nothing": the question
+            // this arm asks has been asked, and asking it again would read the same bytes for the
+            // same answer. The candidate query is what turns that into termination.
+            var now = DateTimeOffset.UtcNow;
+            if (model.SyncState is { } state)
+            {
+                state.HeaderCheckedAt = now;
+                state.UpdatedAt = now;
+            }
+
+            if (++uncommitted >= HeaderReclassifyBatchSize)
+            {
+                await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                uncommitted = 0;
+            }
+        }
+
+        if (uncommitted > 0)
+            await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        return changed;
+    }
+
     /// <summary>
     /// Tries to match a file by hash and size to find moved files.
     /// </summary>
@@ -612,16 +853,23 @@ public class ModelFileSyncService : IModelSyncService
     }
 
     /// <summary>
-    /// Creates a new Model entity from a local file.
+    /// Builds the row for a newly discovered file. Async because the file's KIND is read from its
+    /// safetensors header rather than assumed: this method used to stamp
+    /// <c>Type = ModelType.LORA</c> unconditionally, which made every VAE, text encoder,
+    /// ControlNet and upscaler in a LoRA folder indistinguishable from a LoRA everywhere
+    /// downstream (#527). One bounded header read per NEW file — the same order of I/O as the
+    /// 10 MB partial hash this loop already takes, and paid once per file ever.
     /// </summary>
-    private static Model CreateModelFromFile(string filePath, FileInfo fileInfo)
+    private static async Task<Model> CreateModelFromFileAsync(
+        string filePath, FileInfo fileInfo, CancellationToken cancellationToken)
     {
         var fileName = Path.GetFileNameWithoutExtension(filePath);
+        var kind = await AssetKindResolver.ResolveAsync(filePath, cancellationToken).ConfigureAwait(false);
 
         var model = new Model
         {
             Name = fileName,
-            Type = ModelType.LORA,
+            Type = kind,
             Source = DataSource.LocalFile,
             CreatedAt = fileInfo.CreationTimeUtc
         };

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Tests.Sync.Service.Identity;
 using DiffusionNexus.UI.Services.Lora.Sorting;
 using FluentAssertions;
@@ -717,5 +718,51 @@ public sealed class SorterMetadataResolverTests : IDisposable
         var act = () => Resolver(client: null).ResolveAsync(model, cts.Token);
 
         await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    // ---- Asset kind for a browsed file (#527): same header read, no second pass over the bytes ----
+
+    /// <summary>
+    /// The "browse any folder" path has no DB row to read a kind from, so it has to come from the
+    /// same header read the base-model rungs already perform — not a second pass over the bytes.
+    /// </summary>
+    [Fact]
+    public async Task IdentifyFromFileNamesASupportAssetFromItsWeights()
+    {
+        var model = WriteSafetensors("opaque_name.safetensors",
+            SafetensorsFixture.Tensors("post_quant_conv.weight"));
+
+        var identity = await Resolver().IdentifyFromFileAsync(model);
+
+        identity.AssetKind.Should().Be(ModelType.VAE);
+    }
+
+    [Fact]
+    public async Task IdentifyFromFileNamesAnUpscalerFromItsNameWhenThereIsNoHeader()
+    {
+        var path = In("4x-UltraSharp.pth");
+        File.WriteAllBytes(path, new byte[64]);
+
+        var identity = await Resolver().IdentifyFromFileAsync(path);
+
+        identity.AssetKind.Should().Be(ModelType.Upscaler);
+    }
+
+    [Fact]
+    public async Task AnOrdinaryLoraIsStillALora()
+    {
+        var model = WriteModel("MyChar_Pony_v2.safetensors");
+
+        (await Resolver().IdentifyFromFileAsync(model)).AssetKind.Should().Be(ModelType.LORA);
+    }
+
+    /// <summary>ResolveAsync is the sorter's real entry point, so the kind has to survive it.</summary>
+    [Fact]
+    public async Task ResolveAsyncCarriesTheKind()
+    {
+        var model = WriteSafetensors("Wan2_2_VAE_bf16.safetensors",
+            SafetensorsFixture.Tensors("post_quant_conv.weight"));
+
+        (await Resolver().ResolveAsync(model)).AssetKind.Should().Be(ModelType.VAE);
     }
 }

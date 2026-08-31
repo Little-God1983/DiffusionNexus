@@ -84,6 +84,35 @@ public sealed class DiscoverFilesStepTests
         step.RepointedCount.Should().Be(12, "but twelve rows changed, and the report is how anyone learns that");
     }
 
+    /// <summary>
+    /// #527 round 2. ReclassifySupportAssetsAsync now runs INSIDE DiscoverNewFilesAsync itself, so
+    /// the step reads the count off the DiscoveryResult rather than calling the pass a second
+    /// time. This pins that reading, and — just as importantly — that the step does NOT also call
+    /// ReclassifySupportAssetsAsync directly any more: since the pass is self-terminating (a
+    /// reclassified row no longer matches its own candidate query), a second direct call here
+    /// would silently return 0 and overwrite the real count with it, undoing the whole fix.
+    /// </summary>
+    [Fact]
+    public async Task Execute_StoresTheReclassifiedCountForTheReport()
+    {
+        var sync = new Mock<IModelSyncService>();
+        sync.Setup(s => s.DiscoverNewFilesAsync(It.IsAny<IProgress<SyncProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DiscoveryResult { ReclassifiedCount = 35 });
+        var (step, provider) = NewStep(sync);
+        using var _ = provider;
+
+        var items = await step.SelectAsync(SyncScope.Library, Options(), DateTimeOffset.UtcNow, CancellationToken.None);
+        var result = await step.ExecuteOneAsync(items[0], apiKey: null, CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+        step.ReclassifiedCount.Should().Be(35, "35 rows just stopped claiming to be LoRAs, and the report is how anyone learns that");
+        // Both parameters use It.IsAny: the compiler bakes a bare It.IsAny<CancellationToken>()
+        // call into an expression pinning excludeModelIds to its literal default (null), which
+        // would let a future call made with a non-null exclusion set slip past this guard unseen.
+        sync.Verify(s => s.ReclassifySupportAssetsAsync(It.IsAny<CancellationToken>(), It.IsAny<IReadOnlySet<int>?>()), Times.Never,
+            "DiscoverNewFilesAsync already ran the pass internally; a second direct call here would double-run it and, being self-terminating, silently report 0");
+    }
+
     [Fact]
     public async Task Execute_FailureReportsTheReasonAndLeavesNoStaleCount()
     {

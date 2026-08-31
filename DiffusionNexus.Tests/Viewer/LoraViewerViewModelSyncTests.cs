@@ -189,6 +189,7 @@ public class LoraViewerViewModelSyncTests
         string? discoverAbortReason = null,
         string? runAbortReason = null,
         int repointed = 0,
+        int reclassified = 0,
         bool runHasNoSteps = false,
         params SyncFailure[] failures)
     {
@@ -214,7 +215,7 @@ public class LoraViewerViewModelSyncTests
                 return isDiscovery
                     ? ReportFor(plan, discovered, cancelled: false, discoverFailures ?? [], discoverElapsed,
                         discoverUnexpected, discoverUnexpected > 0 ? "scan: NullReferenceException" : null,
-                        discoverAbortReason, repointed)
+                        discoverAbortReason, repointed, reclassified: reclassified)
                     : ReportFor(plan, discovered: 0, cancelled, failures, runElapsed,
                         abortReason: runAbortReason, noSteps: runHasNoSteps);
             });
@@ -249,7 +250,8 @@ public class LoraViewerViewModelSyncTests
         string? firstUnexpectedError = null,
         string? abortReason = null,
         int repointed = 0,
-        bool noSteps = false)
+        bool noSteps = false,
+        int reclassified = 0)
         => new(
             plan,
             noSteps
@@ -267,7 +269,8 @@ public class LoraViewerViewModelSyncTests
             UnexpectedFailures: unexpected,
             FirstUnexpectedError: firstUnexpectedError,
             AbortReason: abortReason,
-            FilesRepointed: IsDiscovery(plan.Options) ? repointed : 0);
+            FilesRepointed: IsDiscovery(plan.Options) ? repointed : 0,
+            FilesReclassified: IsDiscovery(plan.Options) ? reclassified : 0);
 
     /// <summary>The report the run (not the discovery pre-run) produced, as the ViewModel saw it.</summary>
     private SyncReport RunReport() => ReportFor(_executed[^1], discovered: 0, cancelled: false, []);
@@ -534,6 +537,46 @@ public class LoraViewerViewModelSyncTests
 
         vm.SyncStatus.Should().Contain("5 moved files re-linked",
             "five models just came back on screen, and the status line is where the user learns why");
+    }
+
+    /// <summary>
+    /// #527, the completed-run half — mirrors <see cref="DownloadMissingMetadata_ARepointOnlyScanIsNotReportedAsUpToDate"/>
+    /// exactly: five rows just stopped claiming to be LoRAs, so the verdict may not be
+    /// "Library is up to date — nothing to do" even though nothing was planned in any step. Without
+    /// this veto a legacy library's backfill would run silently — the rows change type in the
+    /// database, the LoRA-only grid drops them, and the status line says nothing happened.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_AReclassifyOnlyScanIsNotReportedAsUpToDate()
+    {
+        var vm = CreateViewModel();
+        _identifyCount = 0;              // no step has work — only the scan's reclassifications happened
+        SetupSyncService(reclassified: 5);
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        vm.SyncStatus.Should().Contain("5 files reclassified as support assets",
+            "five rows just stopped claiming to be LoRAs, and the status line is where the user learns why");
+    }
+
+    /// <summary>
+    /// #527. The rebuild backstop that re-projects the grid however the press ended already checks
+    /// discovered/repointed for exactly this reason (#537); a reclassified-only scan needs the same
+    /// treatment; or a row that just dropped out of this LoRA-family grid would sit there stale
+    /// until a manual Refresh. Cancelling at the dialog (rather than letting the run complete) is
+    /// the sharper case: nothing else in this path owes a rebuild once the dialog is declined.
+    /// </summary>
+    [Fact]
+    public async Task DownloadMissingMetadata_CancellingTheDialogStillRebuildsAfterAReclassifyOnlyScan()
+    {
+        var vm = CreateViewModel();
+        SetupSyncService(reclassified: 5);   // discovered: 0, repointed: 0 — the scan only reclassified
+        _planDialogAnswer = _ => Task.FromResult(SyncPlanDialogResult.Cancelled());
+
+        await vm.DownloadMissingMetadataCommand.ExecuteAsync(null);
+
+        _modelSync.Verify(s => s.LoadCachedFilesAsync(It.IsAny<CancellationToken>()), Times.Once,
+            "the reclassified rows changed type and stay stale in the grid until a rebuild");
     }
 
     /// <summary>
@@ -1832,6 +1875,51 @@ public class LoraViewerViewModelSyncTests
         release.Set();
         await vm.ScrollRetryPolicyLoad.WaitAsync(TimeSpan.FromSeconds(10));
         vm.ScrollRetryPolicyLoad.IsCompletedSuccessfully.Should().BeTrue("and it does finish");
+    }
+
+    /// <summary>
+    /// Final-review Important #5. A rebuild triggered by a reclassification makes tiles the user has
+    /// been looking at for months disappear, and the verify pass's progress handler has just left
+    /// <see cref="LoraViewerViewModel.SyncStatus"/> on a trailing null — so on a legacy library's
+    /// first launch after the upgrade the files vanished under a blank status line, and §5's
+    /// explanation only turned up on the NEXT launch. This is the recompute that puts the
+    /// explanation on the same frame as the disappearance.
+    /// </summary>
+    /// <remarks>
+    /// Exercised directly rather than through <c>ReconcileLibraryInBackgroundAsync</c>: that method
+    /// is started fire-and-forget from <c>RefreshAsync</c> with nothing to await, so there is no
+    /// seam onto the wiring itself. What is covered here is the payload — a fresh scope, a fresh
+    /// count, and the status line rewritten on the UI thread.
+    /// </remarks>
+    [Fact]
+    public async Task RestatingTheLoadedStatusNamesTheSupportAssetsTheRebuildJustRemoved()
+    {
+        _modelSync.Setup(s => s.CountExcludedSupportAssetsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(35);
+        var vm = CreateViewModel();
+
+        await vm.RestateLoadedStatusAsync(modelCount: 293);
+
+        vm.SyncStatus.Should().Be(
+            "Loaded 293 models (0 tiles) · 35 support assets (VAE, ControlNet, …) not shown",
+            "the count has to be re-read after the rebuild — the load's own value was taken before "
+            + "the backfill ran and said 0");
+    }
+
+    /// <summary>
+    /// The other branch: a library with nothing to explain gets the plain line back, not a dangling
+    /// "· 0 support assets".
+    /// </summary>
+    [Fact]
+    public async Task RestatingTheLoadedStatusSaysNothingExtraWhenNothingWasExcluded()
+    {
+        _modelSync.Setup(s => s.CountExcludedSupportAssetsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(0);
+        var vm = CreateViewModel();
+
+        await vm.RestateLoadedStatusAsync(modelCount: 12);
+
+        vm.SyncStatus.Should().Be("Loaded 12 models (0 tiles)");
     }
 
     private static ModelTileViewModel CreateTile(int modelId)

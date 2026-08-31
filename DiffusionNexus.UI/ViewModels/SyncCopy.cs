@@ -39,6 +39,19 @@ internal static class SyncCopy
     };
 
     /// <summary>
+    /// The scan's third write (#527): existing rows reclassified as support assets — a VAE, text
+    /// encoder, ControlNet or upscaler a pre-#527 library still stamped LORA. Changed, not added,
+    /// same reasoning as <see cref="DescribeRepointed"/>; empty when none, for the same
+    /// hide-the-line reason.
+    /// </summary>
+    public static string DescribeReclassified(int count) => count switch
+    {
+        <= 0 => "",
+        1 => "1 file reclassified as a support asset",
+        _ => $"{count} files reclassified as support assets",
+    };
+
+    /// <summary>
     /// A predicted duration: "~45 s" under 90 s, "~4 min" under 90 min, else "~1.5 h". The tilde
     /// is load-bearing — this is what a run is expected to take, not what one took.
     /// </summary>

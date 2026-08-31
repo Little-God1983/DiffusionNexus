@@ -153,4 +153,58 @@ public class SafetensorsHeaderReaderTests : IDisposable
             .Awaiting(() => SafetensorsHeaderReader.TryReadAsync(path, cts.Token))
             .Should().ThrowAsync<OperationCanceledException>("a cancelled read is not an unreadable file");
     }
+
+    /// <summary>
+    /// The tensor key names are the only thing in a safetensors file that says what it actually is,
+    /// and the reader was already parsing and discarding them. A VAE extracted from a checkpoint
+    /// has no __metadata__ block at all, so the keys are the ONLY signal it carries.
+    /// </summary>
+    [Fact]
+    public async Task ReadsTheTensorKeyNames()
+    {
+        var path = Path.Combine(_dir, $"{Guid.NewGuid():N}.safetensors");
+        await File.WriteAllBytesAsync(path, Safetensors(
+            Tensors("encoder.down.0.block.0.norm1.weight", "post_quant_conv.weight")));
+
+        var info = await SafetensorsHeaderReader.TryReadAsync(path);
+
+        info.Should().NotBeNull();
+        info!.Keys.Should().BeEquivalentTo(
+            ["encoder.down.0.block.0.norm1.weight", "post_quant_conv.weight"]);
+    }
+
+    /// <summary>
+    /// A checkpoint has thousands of tensors and the sample exists to bound memory, not to be
+    /// complete: a container's keys are homogeneous, so the first 64 answer the same question the
+    /// full set would.
+    /// </summary>
+    [Fact]
+    public async Task SamplesTheTensorKeysRatherThanKeepingThemAll()
+    {
+        var keys = Enumerable.Range(0, SafetensorsHeaderReader.MaxSampledTensorKeys + 40)
+            .Select(i => $"block.{i}.weight")
+            .ToArray();
+        var path = Path.Combine(_dir, $"{Guid.NewGuid():N}.safetensors");
+        await File.WriteAllBytesAsync(path, Safetensors(Tensors(keys)));
+
+        var info = await SafetensorsHeaderReader.TryReadAsync(path);
+
+        info.Should().NotBeNull();
+        info!.Keys.Should().HaveCount(SafetensorsHeaderReader.MaxSampledTensorKeys);
+    }
+
+    /// <summary>The metadata block is not a tensor and must never appear among the keys.</summary>
+    [Fact]
+    public async Task TheMetadataBlockIsNotATensorKey()
+    {
+        var path = Path.Combine(_dir, $"{Guid.NewGuid():N}.safetensors");
+        await File.WriteAllBytesAsync(path, Safetensors(
+            MetaAndTensors([("modelspec.architecture", "flux-1-dev")], "lora_unet_0.lora_up.weight")));
+
+        var info = await SafetensorsHeaderReader.TryReadAsync(path);
+
+        info.Should().NotBeNull();
+        info!.Keys.Should().ContainSingle().Which.Should().Be("lora_unet_0.lora_up.weight");
+        info.Architecture.Should().Be("flux-1-dev", "the existing metadata rungs must keep working");
+    }
 }

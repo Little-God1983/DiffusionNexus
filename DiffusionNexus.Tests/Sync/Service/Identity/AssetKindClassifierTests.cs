@@ -1,7 +1,8 @@
-using DiffusionNexus.UI.Services.Lora.Sorting;
+using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Service.Services.Sync.Identity;
 using FluentAssertions;
 
-namespace DiffusionNexus.Tests.Sorter;
+namespace DiffusionNexus.Tests.Sync.Service.Identity;
 
 /// <summary>
 /// Every name here is a real one, taken from a library where 35 of 328 unidentified files turned
@@ -9,7 +10,7 @@ namespace DiffusionNexus.Tests.Sorter;
 /// is why it only drives a label — but a marker that fires on an ordinary LoRA name would put a
 /// wrong chip on a folder, so the negative cases matter as much as the positive ones.
 /// </summary>
-public sealed class SorterAssetKindClassifierTests
+public sealed class AssetKindClassifierTests
 {
     [Theory]
     [InlineData("Wan2_2_VAE_bf16.safetensors")]
@@ -18,7 +19,7 @@ public sealed class SorterAssetKindClassifierTests
     [InlineData("ltx-2.3-22b-dev_audio_vae.safetensors")]
     [InlineData("flux2-vae.safetensors")]
     public void Classify_NamesAVae(string fileName)
-        => SorterAssetKindClassifier.Classify(fileName).Should().Be(SorterAssetKind.Vae);
+        => AssetKindClassifier.Classify(fileName).Should().Be(ModelType.VAE);
 
     [Theory]
     [InlineData("CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors")]
@@ -29,20 +30,20 @@ public sealed class SorterAssetKindClassifierTests
     [InlineData("mistral_3_small_flux2_fp8.safetensors")]
     [InlineData("qwen_2.5_vl_7b_fp8_scaled.safetensors")]
     public void Classify_NamesATextEncoder(string fileName)
-        => SorterAssetKindClassifier.Classify(fileName).Should().Be(SorterAssetKind.TextEncoder);
+        => AssetKindClassifier.Classify(fileName).Should().Be(ModelType.TextEncoder);
 
     [Theory]
     [InlineData("Qwen-Image-InstantX-ControlNet-Inpainting.safetensors")]
     [InlineData("Z-Image-Turbo-Fun-Controlnet-Union-2.1.safetensors")]
     public void Classify_NamesAControlNet(string fileName)
-        => SorterAssetKindClassifier.Classify(fileName).Should().Be(SorterAssetKind.ControlNet);
+        => AssetKindClassifier.Classify(fileName).Should().Be(ModelType.Controlnet);
 
     [Theory]
     [InlineData("4x-UltraSharp.pth")]
     [InlineData("4xLSDIRplus.pth")]
     [InlineData("ltx-2.3-spatial-upscaler-x2-1.1.safetensors")]
     public void Classify_NamesAnUpscaler(string fileName)
-        => SorterAssetKindClassifier.Classify(fileName).Should().Be(SorterAssetKind.Upscaler);
+        => AssetKindClassifier.Classify(fileName).Should().Be(ModelType.Upscaler);
 
     /// <summary>
     /// The default has to hold for ordinary LoRA names, including the awkward ones: a bare ".pth"
@@ -67,17 +68,17 @@ public sealed class SorterAssetKindClassifierTests
     [InlineData("2x2x2_grid_lora.safetensors")]
     [InlineData("4x4_tiles.safetensors")]
     public void Classify_DefaultsToLora(string fileName)
-        => SorterAssetKindClassifier.Classify(fileName).Should().Be(SorterAssetKind.Lora);
+        => AssetKindClassifier.Classify(fileName).Should().Be(ModelType.LORA);
 
     /// <summary>A more specific component wins over the family name it belongs to — an LTX VAE is a
     /// VAE, not an LTX LoRA.</summary>
     [Fact]
     public void Classify_PrefersTheComponentOverTheFamily()
     {
-        SorterAssetKindClassifier.Classify("LTX23_video_vae_bf16.safetensors")
-            .Should().Be(SorterAssetKind.Vae);
-        SorterAssetKindClassifier.Classify("Wan2_1-T2V-1_3B_FlashVSR_fp32.safetensors")
-            .Should().Be(SorterAssetKind.Lora, "no marker fires, so the default stands");
+        AssetKindClassifier.Classify("LTX23_video_vae_bf16.safetensors")
+            .Should().Be(ModelType.VAE);
+        AssetKindClassifier.Classify("Wan2_1-T2V-1_3B_FlashVSR_fp32.safetensors")
+            .Should().Be(ModelType.LORA, "no marker fires, so the default stands");
     }
 
     [Theory]
@@ -85,5 +86,19 @@ public sealed class SorterAssetKindClassifierTests
     [InlineData("")]
     [InlineData("   ")]
     public void Classify_ToleratesAMissingName(string? fileName)
-        => SorterAssetKindClassifier.Classify(fileName).Should().Be(SorterAssetKind.Lora);
+        => AssetKindClassifier.Classify(fileName).Should().Be(ModelType.LORA);
+
+    /// <summary>
+    /// Mirrors the AllLabels guards elsewhere in this folder: nothing may come out of here that
+    /// ModelTypeExtensions has no name for.
+    /// </summary>
+    [Fact]
+    public void EveryKindItCanReturnIsOneTheAppCanName()
+    {
+        foreach (var kind in AssetKindClassifier.AllKinds)
+        {
+            kind.DisplayName().Should().NotBeNullOrWhiteSpace();
+            if (kind != ModelType.LORA) kind.SupportFolderName().Should().NotBeNullOrWhiteSpace();
+        }
+    }
 }

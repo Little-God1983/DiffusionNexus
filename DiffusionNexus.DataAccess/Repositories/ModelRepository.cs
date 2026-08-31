@@ -1,6 +1,7 @@
 using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 
 namespace DiffusionNexus.DataAccess.Repositories;
@@ -469,5 +470,101 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
                 .SetProperty(m => m.LastCheckedForUpdatesUtc, checkedAtUtc),
                 cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The pickle restriction is in the WHERE clause, not only in the caller's loop, because this
+    /// runs on EVERY <c>DiscoverNewFilesAsync</c> — every Viewer open, every background reconcile,
+    /// every sync — and it is a three-query split load of the whole version/file graph. Without the
+    /// clause, a library with thousands of unidentified LoRAs materialised all of them on every one
+    /// of those calls, forever, only for the caller to discard each one on its extension and change
+    /// zero rows. Now the candidate set is only what the pass can actually act on.
+    /// <para>
+    /// <c>ModelFileExtensions.Matches</c> stays the authoritative rule and the caller still applies
+    /// it — this clause is an optimisation and must never become the only guard. The two agree by
+    /// construction rather than by restating one rule twice: any file the caller would act on is a
+    /// non-safetensors file, so <c>Any</c> holds and the row is selected. The reverse does not have
+    /// to hold — a model whose PRIMARY file is a container but which also carries a pickle is
+    /// selected here and then correctly skipped in the loop, which is a superset, not a
+    /// disagreement.
+    /// </para>
+    /// <para>
+    /// <c>IsUserEdited</c> is excluded for the same reason <c>IdentifyModelStep</c> refuses to
+    /// re-stamp <c>Type</c> on such a row: the two write sites must agree about what a user's edit
+    /// means, or a user who deliberately typed <c>4x-detail-helper.pth</c> as <c>LORA</c> has it
+    /// flipped back on the next discovery — which is every Viewer open.
+    /// </para>
+    /// <para>
+    /// <c>EF.Functions.Like</c> rather than <c>EndsWith</c>: it translates to a SQL <c>LIKE</c>,
+    /// which SQLite evaluates case-insensitively for ASCII — matching the caller's
+    /// <c>OrdinalIgnoreCase</c> comparison — where <c>string.EndsWith(…, OrdinalIgnoreCase)</c> does
+    /// not translate at all.
+    /// </para>
+    /// </remarks>
+    public async Task<IReadOnlyList<Model>> GetSupportAssetBackfillCandidatesAsync(
+        CancellationToken cancellationToken = default)
+        => await Context.Models
+            .Include(m => m.Versions)
+                .ThenInclude(v => v.Files)
+            .Where(m => m.Type == ModelType.LORA
+                        && m.Source == DataSource.LocalFile
+                        && !m.IsUserEdited
+                        && (m.SyncState == null
+                            || m.SyncState.MetadataOutcome == SyncOutcome.NotIdentified
+                            || m.SyncState.MetadataOutcome == SyncOutcome.None)
+                        && m.Versions.Any(v => v.Files.Any(f =>
+                            !EF.Functions.Like(f.FileName, "%.safetensors")
+                            && !EF.Functions.Like(f.FileName, "%.sft"))))
+            .AsSplitQuery()
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<Model>> GetHeaderReclassifyCandidatesAsync(
+        CancellationToken cancellationToken = default)
+        => await Context.Models
+            .Include(m => m.SyncState)
+            .Include(m => m.Versions)
+                .ThenInclude(v => v.Files)
+            // No Source filter and no outcome filter: a Matched row is exactly the case this query
+            // exists for — nothing else re-reads one. HeaderCheckedAt is what bounds it instead, and
+            // the SyncState != null half keeps this from admitting rows SyncStateInitializer has not
+            // derived yet; see the interface remarks for why creating those here would be harmful.
+            .Where(m => m.Type == ModelType.LORA
+                        && !m.IsUserEdited
+                        && m.SyncState != null
+                        && m.SyncState.HeaderCheckedAt == null
+                        && m.Versions.Any(v => v.Files.Any(f =>
+                            f.LocalPath != null && f.LocalPath != ""
+                            && (EF.Functions.Like(f.FileName, "%.safetensors")
+                                || EF.Functions.Like(f.FileName, "%.sft")))))
+            .AsSplitQuery()
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<(string LocalPath, bool IsLocalFileValid, DateTimeOffset? LocalFileVerifiedAt)>>
+        GetSupportAssetFilePathsAsync(CancellationToken cancellationToken = default)
+    {
+        // Flattened from ModelFiles with a filter on the owning Model's Type, the same shape
+        // GetInstalledCivitaiVersionIdsAsync/GetInstalledFileHashesAsync already use for a
+        // narrow projection — no Include, no entity graph, just the three columns the caller
+        // needs. ModelTypeExtensions.SupportAssetKinds.Contains(...) rather than
+        // Type.IsSupportAsset(): the latter is a custom extension method EF cannot translate to
+        // SQL (the same constraint the #527 backfill query hit), while Enumerable.Contains
+        // against SupportAssetKinds — the one definition of the support-asset set — is a
+        // standard EF pattern that becomes a parameterized IN, so this can never drift from
+        // IsSupportAsset() the way restating the four types inline here could.
+        var rows = await Context.ModelFiles
+            .Where(f => f.LocalPath != null && f.LocalPath != ""
+                        && ModelTypeExtensions.SupportAssetKinds.Contains(f.ModelVersion!.Model!.Type))
+            .Select(f => new { f.LocalPath, f.IsLocalFileValid, f.LocalFileVerifiedAt })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return rows
+            .Select(r => (r.LocalPath!, r.IsLocalFileValid, r.LocalFileVerifiedAt))
+            .ToList();
     }
 }

@@ -23,7 +23,14 @@ public enum ModelType
     Other,
     Embedding,
     Detection,
-    Motion
+    Motion,
+    /// <summary>
+    /// CLIP / T5 / LLM text encoders. Not a Civitai model type: Civitai has no such category, so
+    /// this member only ever arrives from our own classification of a local file. Appended last —
+    /// the value is persisted as a string (ModelConfiguration.cs:24), so appending is free and
+    /// reordering would silently repoint every existing row.
+    /// </summary>
+    TextEncoder
 }
 
 /// <summary>

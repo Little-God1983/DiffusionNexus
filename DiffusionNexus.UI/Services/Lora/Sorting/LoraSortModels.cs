@@ -1,3 +1,5 @@
+using DiffusionNexus.Domain.Enums;
+
 namespace DiffusionNexus.UI.Services.Lora.Sorting;
 
 /// <summary>One LoRA the sorter may act on — decoupled from the DB graph so the planner is pure.</summary>
@@ -17,9 +19,12 @@ public sealed record SortCandidate(
     // because the guess travels with the candidate instead of being baked into it.
     string? NameGuess = null,
 
-    // What this file actually is. Never decides where it goes — it drives the preview's per-folder
-    // labels, so a base-model folder about to receive a VAE says so before anything moves.
-    SorterAssetKind AssetKind = SorterAssetKind.Lora,
+    // What this file actually is. Drives the preview's per-folder labels, so a base-model folder
+    // about to receive a VAE says so before anything moves — and, since #527, the destination too:
+    // a support asset is routed to its kind's flat folder rather than to a base model it does not
+    // have. It does NOT get the last word on that, though; LoraSortPlanner refuses to move a shard
+    // of a split model at all, to any destination, however confidently this names it.
+    ModelType AssetKind = ModelType.LORA,
 
     // True once "sort by name" has folded NameGuess into BaseModelRaw. Comparing the two strings
     // would answer the same question most of the time and silently wrongly the rest: a header and a

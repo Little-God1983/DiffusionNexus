@@ -1,0 +1,587 @@
+using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Service.Services.Sync.Identity;
+using FluentAssertions;
+
+namespace DiffusionNexus.Tests.Sync.Service.Identity;
+
+/// <summary>
+/// Every key pattern here is one a real container carries. This is the rung that makes the whole
+/// feature safe to act on: the sorter physically MOVES files off this verdict, and a name-based
+/// guess is not a good enough reason to move somebody's weights.
+/// </summary>
+public sealed class AssetKindHeaderMapTests
+{
+    private static SafetensorsHeaderInfo Header(params string[] keys) => new(null, null, null, keys);
+
+    [Theory]
+    [InlineData("lora_unet_single_blocks_0_linear1.lora_up.weight")]
+    [InlineData("lora_unet_single_blocks_0_linear1.lora_down.weight")]
+    [InlineData("lora_te_text_model_encoder_layers_0_mlp_fc1.lora_up.weight")]
+    [InlineData("transformer.blocks.0.attn.to_q.lora_A.weight")]
+    [InlineData("transformer.blocks.0.attn.to_q.lora_B.weight")]
+    [InlineData("lora_unet_single_blocks_0_linear1.alpha")]
+    // A LoRA trained over an LLM decoder: the one shape where a key can satisfy both this rung and
+    // the root-anchored LLM prefixes in rung 6. It is a LoRA, and it stays one because rung 1 scans
+    // every key before rung 6 runs at all — the same ordering the text-encoder cases above rely on.
+    [InlineData("model.layers.0.self_attn.q_proj.lora_A.weight")]
+    public void LoraWeightsNameALora(string key)
+        => AssetKindHeaderMap.Map(Header(key)).Should().Be(ModelType.LORA);
+
+    [Theory]
+    [InlineData("post_quant_conv.weight")]
+    [InlineData("quant_conv.bias")]
+    [InlineData("encoder.down.0.block.0.norm1.weight")]
+    [InlineData("decoder.up.3.block.2.conv2.bias")]
+    public void AutoencoderWeightsNameAVae(string key)
+        => AssetKindHeaderMap.Map(Header(key)).Should().Be(ModelType.VAE);
+
+    [Theory]
+    [InlineData("text_model.encoder.layers.0.self_attn.q_proj.weight")]
+    [InlineData("logit_scale")]
+    [InlineData("text_model.embeddings.token_embedding.weight")]
+    [InlineData("shared.weight")]
+    public void EncoderWeightsNameATextEncoder(string key)
+        => AssetKindHeaderMap.Map(Header(key)).Should().Be(ModelType.TextEncoder);
+
+    [Theory]
+    [InlineData("control_model.input_blocks.0.0.weight")]
+    [InlineData("controlnet_cond_embedding.conv_in.weight")]
+    [InlineData("input_hint_block.0.weight")]
+    public void ControlWeightsNameAControlNet(string key)
+        => AssetKindHeaderMap.Map(Header(key)).Should().Be(ModelType.Controlnet);
+
+    /// <summary>
+    /// A header whose keys match nothing must say nothing, so the caller falls through to the
+    /// file name rather than being handed a confident wrong answer.
+    /// </summary>
+    [Theory]
+    [InlineData("model.diffusion_model.input_blocks.0.0.weight")]
+    [InlineData("some.opaque.tensor")]
+    public void UnrecognizedWeightsSayNothing(string key)
+        => AssetKindHeaderMap.Map(Header(key)).Should().BeNull();
+
+    [Fact]
+    public void ANullHeaderSaysNothing()
+        => AssetKindHeaderMap.Map(null).Should().BeNull();
+
+    [Fact]
+    public void AHeaderWithNoTensorsSaysNothing()
+        => AssetKindHeaderMap.Map(new SafetensorsHeaderInfo(null, null, null)).Should().BeNull();
+
+    /// <summary>
+    /// A LoRA trained on a text encoder carries BOTH "lora_te_" and "text_model.encoder.layers"
+    /// shaped keys. It is a LoRA — that is what the file is — so the LoRA evidence has to be
+    /// checked before the encoder evidence, not merely be present in the table.
+    /// </summary>
+    [Fact]
+    public void ATextEncoderLoraIsALoraNotATextEncoder()
+    {
+        var header = Header(
+            "lora_te_text_model_encoder_layers_0_mlp_fc1.lora_up.weight",
+            "lora_te_text_model_encoder_layers_0_mlp_fc1.lora_down.weight");
+
+        AssetKindHeaderMap.Map(header).Should().Be(ModelType.LORA);
+    }
+
+    /// <summary>
+    /// Diffusers before v0.21 spelled a LoRA's pair with DOTS — <c>lora.down.weight</c> /
+    /// <c>lora.up.weight</c> — where kohya and PEFT use underscores. The needle table was
+    /// underscore-only, so an old-format LoRA that also trained the text encoder missed the LoRA
+    /// rung and fell into the TextEncoder rung, whose "text_model.encoder.layers" needle its keys
+    /// match exactly. A real LoRA was then stamped TextEncoder <i>from its weights</i>, which every
+    /// guard on this feature trusts — they were built to stop a NAME overriding the weights, not to
+    /// stop the weights being read wrong. That row is invisible in the Viewer and unselectable by
+    /// any bulk sync, i.e. unrecoverable without hand-editing the database.
+    /// </summary>
+    [Theory]
+    [InlineData("text_encoder.text_model.encoder.layers.0.self_attn.q_proj.lora.down.weight")]
+    [InlineData("text_encoder.text_model.encoder.layers.0.self_attn.q_proj.lora.up.weight")]
+    [InlineData("unet.down_blocks.0.attentions.0.processor.to_q_lora.down.weight")]
+    public void DotSpelledLegacyDiffusersLoraWeightsStillNameALora(string key)
+        => AssetKindHeaderMap.Map(Header(key)).Should().Be(ModelType.LORA);
+
+    /// <summary>
+    /// The OTHER legacy diffusers spelling, and the one the dotted needles still miss. Its text
+    /// encoder half was patched through <c>PatchedLoraProjection</c>, which holds the adapter as an
+    /// attribute named <c>lora_linear_layer</c>, so the pair serializes as
+    /// "…q_proj.lora_linear_layer.down.weight". That segment sits BETWEEN "lora" and "down", so the
+    /// key contains neither "lora_down" nor "lora.down" — it misses rung 1 and matches the
+    /// TextEncoder rung's "text_model.encoder.layers" instead. Same bug shape as the dotted one
+    /// above, same unrecoverable consequence: a real LoRA stamped TextEncoder from its weights.
+    /// </summary>
+    [Theory]
+    [InlineData("text_encoder.text_model.encoder.layers.0.self_attn.q_proj.lora_linear_layer.down.weight")]
+    [InlineData("text_encoder.text_model.encoder.layers.0.self_attn.q_proj.lora_linear_layer.up.weight")]
+    public void LegacyDiffusersTextEncoderProjectionKeysStillNameALora(string key)
+        => AssetKindHeaderMap.Map(Header(key)).Should().Be(ModelType.LORA);
+
+    /// <summary>
+    /// Why the spelling above has to be a needle rather than be left to the file's other keys to
+    /// rescue. The same file's UNet half ("unet.…processor.to_q_lora.down.weight") DOES match rung 1
+    /// — but <see cref="SafetensorsHeaderReader.MaxSampledTensorKeys"/> caps the sample at the first
+    /// 64 root properties in file order, and "text_encoder…" sorts before "unet…", so an
+    /// alphabetically written header can hand this map 64 text-encoder keys and not one UNet key.
+    /// This fixture is that truncated sample: every key is text-encoder-spelled, exactly as the map
+    /// would see it, and there is nothing else in it to fall back on.
+    /// </summary>
+    [Fact]
+    public void ADiffusersLoraSampledEntirelyAtItsTextEncoderHalfIsStillALora()
+    {
+        var header = Header(
+            "text_encoder.text_model.encoder.layers.0.self_attn.k_proj.lora_linear_layer.down.weight",
+            "text_encoder.text_model.encoder.layers.0.self_attn.k_proj.lora_linear_layer.up.weight",
+            "text_encoder.text_model.encoder.layers.0.self_attn.out_proj.lora_linear_layer.down.weight",
+            "text_encoder.text_model.encoder.layers.0.self_attn.q_proj.lora_linear_layer.down.weight",
+            "text_encoder.text_model.encoder.layers.0.self_attn.v_proj.lora_linear_layer.down.weight");
+
+        AssetKindHeaderMap.Map(header).Should().Be(ModelType.LORA);
+    }
+
+    /// <summary>
+    /// The guard for the rung ORDER itself, which the class remarks call load-bearing. The key
+    /// order here is the whole point: a TextEncoder-only key comes FIRST, a LoRA-only key SECOND.
+    /// Four sequential per-rung passes answer LoRA — the LoRA rung scans every key before the
+    /// encoder rung runs at all. A single pass that checked all four rungs per key would answer
+    /// TextEncoder on the first key and never reach the second.
+    /// </summary>
+    /// <remarks>
+    /// This case exists because the sibling test above cannot serve as the guard: kohya writes
+    /// "text_model_encoder_layers" with underscores, which never matches the dotted
+    /// "text_model.encoder.layers" needle, so both of its keys are LoRA-only and it passes under
+    /// either implementation.
+    /// </remarks>
+    [Fact]
+    public void TheLoraRungScansEveryKeyBeforeTheEncoderRungRunsAtAll()
+    {
+        var header = Header(
+            "text_model.encoder.layers.0.self_attn.q_proj.weight",
+            "lora_unet_single_blocks_0_linear1.lora_up.weight");
+
+        AssetKindHeaderMap.Map(header).Should().Be(ModelType.LORA);
+    }
+
+    /// <summary>
+    /// Final-review Important #3. A full checkpoint is a UNet, a VAE and a text encoder in one
+    /// container, and the reader samples only the first
+    /// <see cref="SafetensorsHeaderReader.MaxSampledTensorKeys"/> root properties IN FILE ORDER — so
+    /// for an alphabetically-keyed checkpoint that whole sample can be "cond_stage_model.…", which
+    /// would hit the TextEncoder rung and file somebody's checkpoint into <c>Text Encoder\</c>.
+    /// The keys here are in exactly that hostile order: the encoder-shaped key comes FIRST, so the
+    /// composite guard placed anywhere below the KIND-answering rungs would already have been beaten
+    /// to it. Its one legitimate position is the one it has — after the LoRA rung, which answers no
+    /// kind for a checkpoint at all, and before every other one.
+    /// </summary>
+    [Fact]
+    public void ACompositeCheckpointSaysNothingRatherThanNamingOneOfItsParts()
+    {
+        var header = Header(
+            "cond_stage_model.transformer.text_model.encoder.layers.0.self_attn.q_proj.weight",
+            "model.diffusion_model.input_blocks.0.0.weight");
+
+        AssetKindHeaderMap.Map(header).Should().BeNull();
+    }
+
+    /// <summary>
+    /// The other sampling order the same file can present, hitting a different wrong rung: the
+    /// autoencoder half of the checkpoint lands in the sample instead of the encoder half.
+    /// </summary>
+    [Fact]
+    public void ACompositeCheckpointSampledAtItsAutoencoderHalfStillSaysNothing()
+    {
+        var header = Header(
+            "first_stage_model.encoder.down.0.block.0.norm1.weight",
+            "first_stage_model.post_quant_conv.weight");
+
+        AssetKindHeaderMap.Map(header).Should().BeNull();
+    }
+
+    /// <summary>
+    /// The other half of the composite guard's ordering, and the reason it sits BELOW the LoRA rung
+    /// rather than above it. The risk is one-sided. A LoRA saved in the checkpoint-prefixed layout
+    /// carries both a "model.diffusion_model." path and its own up/down pair, and with the guard
+    /// first it lost its weights verdict and fell to the name rung — a guess, which is the one thing
+    /// this class exists to pre-empt. The reverse cannot happen: a genuine composite checkpoint
+    /// carries no lora_up / lora_te / ".alpha" key for the LoRA rung to mis-fire on, which is what
+    /// the two tests above assert.
+    /// </summary>
+    [Theory]
+    [InlineData("model.diffusion_model.input_blocks.1.1.transformer_blocks.0.attn1.to_q.lora_up.weight")]
+    [InlineData("model.diffusion_model.output_blocks.5.1.transformer_blocks.0.attn2.to_k.alpha")]
+    public void ALoraKeyedLikeACheckpointIsStillALora(string key)
+        => AssetKindHeaderMap.Map(Header(key)).Should().Be(ModelType.LORA);
+
+    /// <summary>
+    /// The composite guard must only excuse the map from composite containers, never from ordinary
+    /// ones: an ordinary LoRA carries none of the checkpoint prefixes, and ComfyUI-format LoRAs spell
+    /// theirs "diffusion_model." with no "model." ahead of it — which is why the needle keeps its
+    /// prefix.
+    /// </summary>
+    [Theory]
+    [InlineData("diffusion_model.double_blocks.0.img_attn.qkv.lora_a.weight")]
+    [InlineData("lora_unet_single_blocks_0_linear1.lora_up.weight")]
+    public void TheCompositeGuardDoesNotReachAnOrdinaryLora(string key)
+        => AssetKindHeaderMap.Map(Header(key)).Should().Be(ModelType.LORA);
+
+    /// <summary>
+    /// Mirrors the AllLabels guards on BaseModelHeaderMap and FilenameBaseModelHeuristic: nothing
+    /// may be returned from here that the rest of the app has no name for.
+    /// </summary>
+    [Fact]
+    public void EveryKindItCanReturnIsOneTheAppCanName()
+    {
+        foreach (var kind in AssetKindHeaderMap.AllKinds)
+        {
+            kind.DisplayName().Should().NotBeNullOrWhiteSpace();
+            if (kind != ModelType.LORA) kind.IsSupportAsset().Should().BeTrue();
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Manual-smoke coverage: a real library's TextEncoders\ folder, 29 safetensors containers,
+    // every fixture below transcribed verbatim from that file's own header.
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Group A — the HuggingFace causal-LM layout that ComfyUI now ships as a prompt encoder.
+    /// Sixteen real files in that folder carry it and not one matched a needle here, so the map
+    /// said nothing; the name rung has no marker for "gemma" / "llama" / "qwen3vl" / "ernie" /
+    /// "ministral" either, so every one of them fell to <see cref="AssetKindClassifier"/>'s LORA
+    /// default. A text encoder filed as a LoRA is the mirror of the bug the dotted-spelling tests
+    /// above fix, and it pollutes the Viewer instead of emptying it.
+    /// Keys verbatim from <c>gemma_3_12B_it.safetensors</c> (1066 tensors).
+    /// </summary>
+    [Fact]
+    public void AGemmaDecoderSampleNamesATextEncoder()
+    {
+        var header = Header(
+            "model.embed_tokens.weight",
+            "model.layers.0.input_layernorm.weight",
+            "model.layers.0.mlp.down_proj.weight",
+            "model.layers.0.mlp.gate_proj.weight",
+            "model.layers.0.mlp.up_proj.weight",
+            "model.layers.0.post_attention_layernorm.weight");
+
+        AssetKindHeaderMap.Map(header).Should().Be(ModelType.TextEncoder);
+    }
+
+    /// <summary>
+    /// The same layout with every tensor replaced by its fp8 scale, so the sample carries no
+    /// embedding table at all and <c>mlp.gate_proj</c> is the only needle left standing. Keys
+    /// verbatim from <c>llama_3.1_8b_instruct_fp8_scaled.safetensors</c> (516 tensors).
+    /// </summary>
+    [Fact]
+    public void AnFp8ScaledLlamaSampleNamesATextEncoder()
+    {
+        var header = Header(
+            "model.layers.0.mlp.down_proj.scale_weight",
+            "model.layers.0.mlp.gate_proj.scale_weight",
+            "model.layers.0.mlp.up_proj.scale_weight",
+            "model.layers.0.self_attn.k_proj.scale_weight",
+            "model.layers.0.self_attn.o_proj.scale_weight",
+            "model.layers.0.self_attn.q_proj.scale_weight");
+
+        AssetKindHeaderMap.Map(header).Should().Be(ModelType.TextEncoder);
+    }
+
+    /// <summary>
+    /// Why the rung keys on the decoder's MODULE PATH and not on any one projection. This file's
+    /// first 64 keys in file order contain NO gate projection at all — its fp8 cast left the
+    /// layernorms unquantized, so they sort ahead of the mlp block — and a rung built on
+    /// <c>mlp.gate_proj</c> would miss it outright. <c>model.layers.</c> carries it, as it carries
+    /// fifteen of the sixteen. Keys verbatim from <c>gemma_3_12B_it_fp8_e4m3fn.safetensors</c>
+    /// (1066 tensors).
+    /// </summary>
+    [Fact]
+    public void ADecoderSampleWithNoGateProjectionIsStillNamedByItsModulePath()
+    {
+        var header = Header(
+            "model.embed_tokens.weight",
+            "model.layers.0.input_layernorm.weight",
+            "model.layers.0.post_attention_layernorm.weight",
+            "model.layers.0.post_feedforward_layernorm.weight",
+            "model.layers.0.pre_feedforward_layernorm.weight",
+            "model.layers.0.self_attn.k_norm.weight");
+
+        AssetKindHeaderMap.Map(header).Should().Be(ModelType.TextEncoder);
+    }
+
+    /// <summary>
+    /// The vision-language spelling: a multimodal container puts the decoder under
+    /// <c>language_model.</c> instead of <c>model.</c>, so <c>model.embed_tokens</c> misses it
+    /// outright. Keys verbatim from <c>qwen3vl_8b_fp8-nf4.safetensors</c> (1853 tensors), whose
+    /// nf4 quantization also strips every plain <c>.weight</c> down to an absmax/quant_map pair.
+    /// </summary>
+    [Fact]
+    public void ALanguageModelPrefixedDecoderSampleNamesATextEncoder()
+    {
+        var header = Header(
+            "language_model.layers.0.mlp.down_proj.weight.absmax",
+            "language_model.layers.0.mlp.down_proj.weight.quant_map",
+            "language_model.layers.0.mlp.gate_proj.weight.absmax",
+            "language_model.layers.0.mlp.gate_proj.weight.quant_map",
+            "language_model.layers.0.mlp.up_proj.weight.absmax",
+            "language_model.layers.0.mlp.up_proj.weight.quant_map");
+
+        AssetKindHeaderMap.Map(header).Should().Be(ModelType.TextEncoder);
+    }
+
+    /// <summary>
+    /// Each LLM-decoder prefix standing alone, so an edit that drops one fails here rather than only
+    /// on whichever real file happened to carry it. Both are load-bearing across the 1552 real
+    /// containers swept, measured by dropping each from the shipped two-entry table: without
+    /// "model.layers." fifteen of the sixteen Group A files go unnamed, without
+    /// "language_model.layers." qwen3vl_8b_fp8-nf4 does.
+    /// </summary>
+    [Theory]
+    [InlineData("model.layers.0.mlp.gate_proj.weight")]
+    [InlineData("model.layers.0.input_layernorm.weight")]
+    [InlineData("language_model.layers.0.self_attn.q_proj.weight")]
+    public void LlmDecoderWeightsNameATextEncoder(string key)
+        => AssetKindHeaderMap.Map(Header(key)).Should().Be(ModelType.TextEncoder);
+
+    /// <summary>
+    /// The negative twin, and the reason the prefixes are matched with StartsWith rather than
+    /// Contains. Every key here carries a decoder path SOMEWHERE inside it while belonging to a
+    /// container that is not a standalone encoder — nested under a checkpoint's own component name,
+    /// or under a TTS backbone. A substring needle names all three; an anchored one names none.
+    /// The first two are verbatim keys from hidream_o1_image_bf16.safetensors, the third from
+    /// chatterbox t3_cfg.safetensors, and both files regressed on the substring spelling.
+    /// </summary>
+    [Theory]
+    [InlineData("model.language_model.layers.0.mlp.gate_proj.weight")]
+    [InlineData("model.language_model.embed_tokens.weight")]
+    [InlineData("tfmr.layers.0.mlp.gate_proj.weight")]
+    public void ADecoderPathNestedInsideSomethingElseNamesNothing(string key)
+        => AssetKindHeaderMap.Map(Header(key)).Should().BeNull();
+
+    /// <summary>
+    /// The regression this map's LLM rung was one substring away from shipping, and the reason its
+    /// fixture is transcribed rather than hand-built. hidream_o1_image_bf16.safetensors and its dev
+    /// sibling are 758-tensor image checkpoints that carry NONE of the CompositeCheckpointNeedles —
+    /// HiDream keys its bundle off a bare "model." — so the guard below never fires on them, and
+    /// they bundle a Llama-shaped decoder under "model.language_model.". A free-substring
+    /// "model.embed_tokens" matches their "model.language_model.embed_tokens.weight" (the needle
+    /// sits inside the longer word), and "mlp.gate_proj" matched 6 of their 64 sampled keys. Either
+    /// names a multi-GB checkpoint TextEncoder, i.e. a support asset: gone from the Viewer,
+    /// unselectable by bulk sync, and handed to the sorter as a file to physically move.
+    /// <para>
+    /// The keys are indices 0-6 of the real 64-key sample in file order, plus its index-12
+    /// self-attention projection so the fixture carries one; every key is transcribed, but they are
+    /// not a contiguous prefix and the summary must not claim they are. The first two matter most:
+    /// HiDream's header is alphabetically ordered, so "model.final_layer2" lands ahead of
+    /// "model.language_model" — which means a UNIVERSAL "is every sampled key LLM-shaped" test would
+    /// reject this file on a two-key accident of naming rather than on principle. Anchoring does not
+    /// depend on those two keys being sampled at all.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AHiDreamCheckpointBundlingALlamaDecoderIsNotATextEncoder()
+    {
+        var header = Header(
+            "model.final_layer2.linear.bias",
+            "model.final_layer2.linear.weight",
+            "model.language_model.embed_tokens.weight",
+            "model.language_model.layers.0.input_layernorm.weight",
+            "model.language_model.layers.0.mlp.down_proj.weight",
+            "model.language_model.layers.0.mlp.gate_proj.weight",
+            "model.language_model.layers.0.mlp.up_proj.weight",
+            "model.language_model.layers.0.self_attn.q_proj.weight");
+
+        AssetKindHeaderMap.Map(header).Should().BeNull();
+    }
+
+    /// <summary>
+    /// The same trap from the other direction, and the one no checkpoint guard would ever catch:
+    /// Chatterbox's T3 text-to-token model is a TTS component with a Llama backbone mounted at
+    /// "tfmr.", and its sampled keys carry gate projections. It is not a prompt encoder for a
+    /// diffusion model and must keep saying nothing here. Keys verbatim from
+    /// chatterbox/resembleai_default_voice/t3_cfg.safetensors (292 tensors).
+    /// </summary>
+    [Fact]
+    public void ATtsBackboneIsNotAPromptEncoder()
+    {
+        var header = Header(
+            "cond_enc.perceiver.attn.to_q.weight",
+            "speech_emb.weight",
+            "text_emb.weight",
+            "tfmr.embed_tokens.weight",
+            "tfmr.layers.0.mlp.gate_proj.weight",
+            "tfmr.layers.0.self_attn.q_proj.weight");
+
+        AssetKindHeaderMap.Map(header).Should().BeNull();
+    }
+
+    /// <summary>
+    /// Group B — a standalone LTX-2 embeddings connector. Every one of its 59 keys belongs to the
+    /// connector family (29 audio, 29 video, 1 text projection), but the audio and video halves are
+    /// written under <c>model.diffusion_model.</c>, so the composite guard swallowed the file and it
+    /// fell to the name rung and the LORA default. A 59-tensor component is not a checkpoint.
+    /// Keys verbatim from <c>ltx-2-19b-embeddings_connector_dev_bf16.safetensors</c>, including the
+    /// single trailing <c>text_embedding_projection.</c> key — that key is the whole reason the rung
+    /// quantifies over the marker SET rather than over one marker: no single needle is in all 59.
+    /// </summary>
+    [Fact]
+    public void AStandaloneEmbeddingsConnectorNamesATextEncoder()
+    {
+        var header = Header(
+            "model.diffusion_model.audio_embeddings_connector.learnable_registers",
+            "model.diffusion_model.audio_embeddings_connector.transformer_1d_blocks.0.attn1.to_q.weight",
+            "model.diffusion_model.audio_embeddings_connector.transformer_1d_blocks.1.ff.net.2.weight",
+            "model.diffusion_model.video_embeddings_connector.learnable_registers",
+            "model.diffusion_model.video_embeddings_connector.transformer_1d_blocks.0.attn1.to_q.weight",
+            "model.diffusion_model.video_embeddings_connector.transformer_1d_blocks.1.ff.net.2.weight",
+            "text_embedding_projection.aggregate_embed.weight");
+
+        AssetKindHeaderMap.Map(header).Should().Be(ModelType.TextEncoder);
+    }
+
+    /// <summary>
+    /// Group C — a 4-tensor LTX-2.3 text projection. It carries no checkpoint prefix and matched no
+    /// needle at all, so the map said nothing and the name rung defaulted it to LORA. All four keys
+    /// verbatim from <c>ltx-2.3_text_projection_bf16.safetensors</c>; the sibling
+    /// <c>ltx-2.3-22b-dev_embeddings_connectors.safetensors</c> carries the identical key set.
+    /// </summary>
+    [Fact]
+    public void AStandaloneTextProjectionNamesATextEncoder()
+    {
+        var header = Header(
+            "text_embedding_projection.audio_aggregate_embed.bias",
+            "text_embedding_projection.audio_aggregate_embed.weight",
+            "text_embedding_projection.video_aggregate_embed.bias",
+            "text_embedding_projection.video_aggregate_embed.weight");
+
+        AssetKindHeaderMap.Map(header).Should().Be(ModelType.TextEncoder);
+    }
+
+    /// <summary>
+    /// The guard that proves the component rung's UNIVERSAL quantifier is doing real work. Make the
+    /// rung existential — "does any key mention a connector" — and this header passes it, and a full
+    /// LTX checkpoint gets filed as a text encoder off one embedded part of itself. Every other rung
+    /// in the map is existential; this one alone is not, because "all of it is this component" is
+    /// the only reading that separates a standalone component from a container that merely holds one.
+    /// </summary>
+    [Fact]
+    public void ACheckpointContainingAConnectorIsNotAConnector()
+    {
+        var header = Header(
+            "model.diffusion_model.audio_embeddings_connector.learnable_registers",
+            "model.diffusion_model.transformer_blocks.0.attn1.to_q.weight");
+
+        AssetKindHeaderMap.Map(header).Should().BeNull();
+    }
+
+    /// <summary>
+    /// The other half of that guard: the universal claim is made about the SAMPLE, and the sample is
+    /// capped at <see cref="SafetensorsHeaderReader.MaxSampledTensorKeys"/> root properties in file
+    /// order. A sample that fills the cap proves nothing about the keys past it, so such a container
+    /// is not eligible however uniform its first 64 keys look — a checkpoint whose connector block
+    /// happened to lead its header would otherwise be named after it, which is exactly the truncation
+    /// hazard the composite guard exists for, reached through the new rung. Both real connectors are
+    /// 59 and 4 tensors, comfortably inside the cap.
+    /// </summary>
+    [Fact]
+    public void AConnectorSampleThatFillsTheCapProvesNothingAndIsNotNamed()
+    {
+        var keys = Enumerable
+            .Range(0, SafetensorsHeaderReader.MaxSampledTensorKeys)
+            .Select(i => $"model.diffusion_model.audio_embeddings_connector.transformer_1d_blocks.{i}.attn1.to_q.weight")
+            .ToArray();
+
+        AssetKindHeaderMap.Map(Header(keys)).Should().BeNull();
+    }
+
+    /// <summary>
+    /// The component rung sits BELOW the LoRA rung for the same one-sided reason the composite guard
+    /// does. A LoRA trained on nothing but the connector has every key inside it, so the universal
+    /// test passes on a file that is not a connector at all — and a real LoRA stamped TextEncoder
+    /// from its weights is invisible in the Viewer and unselectable by any bulk sync. The reverse
+    /// cannot happen: a genuine connector carries no up/down pair.
+    /// </summary>
+    [Fact]
+    public void AConnectorLoraIsALoraNotATextEncoder()
+    {
+        var header = Header(
+            "model.diffusion_model.audio_embeddings_connector.transformer_1d_blocks.0.attn1.to_q.lora_down.weight",
+            "model.diffusion_model.audio_embeddings_connector.transformer_1d_blocks.0.attn1.to_q.lora_up.weight");
+
+        AssetKindHeaderMap.Map(header).Should().Be(ModelType.LORA);
+    }
+
+    /// <summary>
+    /// The verdicts the smoke found already correct, pinned so this change cannot move them. The
+    /// CLIP files match on header; the T5 family does NOT — their sampled keys are
+    /// <c>encoder.block.…</c> or <c>blocks.0.attn.…</c>, which no needle here reaches (widening to a
+    /// bare "encoder.block." would sit one path segment from the VAE rung's "encoder.down."), so
+    /// they are named from their file names and must keep saying nothing here.
+    /// </summary>
+    [Theory]
+    // clip_l / clip_g_sdxl_base / clip_g_hidream / clip_l_hidream / ViT-L-14-…-TE-only-HF
+    [InlineData(ModelType.TextEncoder, "text_model.embeddings.position_embedding.weight", "text_model.encoder.layers.0.layer_norm1.bias")]
+    // t5xxl_fp16 / google_t5-v1_1-xxl_encoderonly-fp8_e4m3fn / umt5_xxl_fp8_e4m3fn_scaled
+    [InlineData(null, "encoder.block.0.layer.0.SelfAttention.k.weight", "encoder.block.0.layer.0.layer_norm.weight")]
+    // umt5-xxl-enc-bf16
+    [InlineData(null, "blocks.0.attn.k.weight", "blocks.0.ffn.fc1.weight")]
+    public void TheVerdictsTheSmokeFoundCorrectAreUnchanged(ModelType? expected, string first, string second)
+        => AssetKindHeaderMap.Map(Header(first, second)).Should().Be(expected);
+
+    /// <summary>
+    /// The regression the second #527 smoke found, and the reason every text-encoder marker is now
+    /// matched as a key ROOT PREFIX. These are the real first keys of two 13.8 GB SDXL/Pony
+    /// checkpoints (2515 tensors each): the conditioner block leads the header, so the whole 64-key
+    /// sample is "conditioner.embedders.0.transformer.text_model.…" and carries no
+    /// <c>first_stage_model.</c> or <c>model.diffusion_model.</c> key at all — the composite guard
+    /// above has nothing to fire on, exactly as it has nothing to fire on for HiDream. A free
+    /// "text_model.encoder.layers" substring then named both files TextEncoder: a support asset,
+    /// i.e. gone from the Viewer, unselectable by bulk sync, and handed to the sorter as a file to
+    /// physically move.
+    /// <para>
+    /// It went unseen because nothing re-read an already-<c>Matched</c> row; it became reachable
+    /// the moment <c>ModelFileSyncService</c>'s header reclassify arm existed. Anchoring is what
+    /// stops it, and it is not a heuristic: a safetensors key set is the flattened module path of
+    /// the SAVED TOP-LEVEL OBJECT, so a bundled encoder is always reached through the attribute
+    /// holding it and always sits at depth 2 or deeper.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ACheckpointSampledEntirelyAtItsConditionerBlockSaysNothing()
+    {
+        var header = Header(
+            "conditioner.embedders.0.transformer.text_model.embeddings.token_embedding.weight",
+            "conditioner.embedders.0.transformer.text_model.encoder.layers.0.layer_norm1.bias",
+            "conditioner.embedders.0.transformer.text_model.encoder.layers.0.mlp.fc1.weight");
+
+        AssetKindHeaderMap.Map(header).Should().BeNull();
+    }
+
+    /// <summary>
+    /// The rule stated as a rule rather than as one file's bug: wherever an encoder-shaped path is
+    /// NESTED under the attribute that holds it, the container is not that encoder. Each of these is
+    /// a real bundling spelling — SDXL's conditioner, a diffusers pipeline's text_encoder, HiDream's
+    /// bare "model." and Chatterbox's TTS backbone — and none of them carries a composite-checkpoint
+    /// needle, so anchoring is the only thing standing between them and a support-asset stamp.
+    /// </summary>
+    [Theory]
+    [InlineData("conditioner.embedders.0.transformer.text_model.encoder.layers.0.mlp.fc1.weight")]
+    [InlineData("text_encoder.text_model.encoder.layers.0.self_attn.q_proj.weight")]
+    [InlineData("model.language_model.layers.0.mlp.gate_proj.weight")]
+    [InlineData("tfmr.layers.0.mlp.gate_proj.weight")]
+    public void ANestedEncoderPathIsNotAStandaloneEncoder(string key)
+        => AssetKindHeaderMap.Map(Header(key)).Should().BeNull();
+
+    /// <summary>
+    /// The other side of the same rule, and what keeps the anchoring from being a silent loss: the
+    /// real first tensor keys of the encoders in one live library still name themselves. Dropping
+    /// any one of the three prefixes costs files here — "text_model." the four CLIP encoders,
+    /// "model.layers." eighteen (fifteen LLM encoders plus three LLaVA decoder shards),
+    /// "language_model.layers." qwen3vl_8b_fp8-nf4 — measured over its 1553 readable containers.
+    /// </summary>
+    [Theory]
+    // clip_l / clip_g_sdxl_base / clip_g_hidream / clip_l_hidream / ViT-L-14-…-TE-only-HF
+    [InlineData("text_model.encoder.layers.0.layer_norm1.bias")]
+    // qwen_3_4b / ministral-3-3b / gemma_3_12B_it / llama_3.1_8b_instruct / mistral_3_small_flux2
+    [InlineData("model.layers.0.mlp.gate_proj.weight")]
+    // qwen3vl_8b_fp8-nf4 — the multimodal spelling, decoder at the root under its own name
+    [InlineData("language_model.layers.0.mlp.gate_proj.weight")]
+    public void AStandaloneEncoderStackAtTheRootStillNamesATextEncoder(string key)
+        => AssetKindHeaderMap.Map(Header(key)).Should().Be(ModelType.TextEncoder);
+}

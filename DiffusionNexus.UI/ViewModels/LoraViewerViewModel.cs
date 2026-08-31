@@ -606,12 +606,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             SyncStatus = "Loading models from database...";
 
             // 1. Show whatever is already cached — instantly.
-            var (uniqueModelCount, tiles) = await Task.Run(LoadCachedTilesAsync);
+            var (uniqueModelCount, tiles, excludedSupportAssets) = await Task.Run(LoadCachedTilesAsync);
 
             if (tiles.Count > 0)
             {
                 ReplaceTiles(tiles);
-                SyncStatus = $"Loaded {uniqueModelCount} models ({AllTiles.Count} tiles)";
+                SyncStatus = BuildLoadedStatus(uniqueModelCount, AllTiles.Count, excludedSupportAssets);
                 showedCachedTiles = true;
             }
             else
@@ -624,9 +624,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                     await DiscoverNewFilesAsync();
                     await BackfillCivitaiModelPageIdAsync();
                 });
-                var (freshCount, freshTiles) = await Task.Run(LoadCachedTilesAsync);
+                var (freshCount, freshTiles, freshExcludedSupportAssets) = await Task.Run(LoadCachedTilesAsync);
                 ReplaceTiles(freshTiles);
-                SyncStatus = $"Loaded {freshCount} models ({AllTiles.Count} tiles)";
+                SyncStatus = BuildLoadedStatus(freshCount, AllTiles.Count, freshExcludedSupportAssets);
             }
         }
         catch (Exception ex)
@@ -650,17 +650,38 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     /// <summary>
     /// Loads the installed-file rows from the catalog DB (a lightweight projection — no
     /// thumbnail BLOBs, no filesystem access) and groups them into per-location tiles
-    /// (issue #380: one tile per (Model, LoRA-source root)). Runs on the thread pool.
+    /// (issue #380: one tile per (Model, LoRA-source root)). Also counts the support assets
+    /// (#527) the load just left out, in the same background scope, so the Viewer's status line
+    /// can name them without a second round trip to the database on the UI thread. Runs on the
+    /// thread pool.
     /// </summary>
-    private async Task<(int UniqueModelCount, List<ModelTileViewModel> Tiles)> LoadCachedTilesAsync()
+    private async Task<(int UniqueModelCount, List<ModelTileViewModel> Tiles, int ExcludedSupportAssets)> LoadCachedTilesAsync()
     {
         using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
         var freshSyncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
         var files = await freshSyncService.LoadCachedFilesAsync();
         var distinctModels = files.Select(f => f.Model.Id).Distinct().Count();
         var tiles = BuildPerLocationTiles(files);
-        return (distinctModels, tiles);
+        var excludedSupportAssets = await freshSyncService.CountExcludedSupportAssetsAsync();
+        return (distinctModels, tiles, excludedSupportAssets);
     }
+
+    /// <summary>
+    /// "Loaded 293 models (312 tiles)", plus "· 35 support assets (VAE, ControlNet, …) not shown"
+    /// when the library holds some. Naming them is the whole point: on a legacy library these
+    /// files leave a grid the user has watched for months, and a file that vanishes without a
+    /// reason reads as data loss rather than as tidying.
+    /// </summary>
+    /// <remarks>
+    /// Internal rather than private so <c>LoraViewerViewModelLoadedStatusTests</c> can exercise
+    /// both branches directly — reached through <c>InternalsVisibleTo("DiffusionNexus.Tests")</c>
+    /// (same technique <c>SortHistoryWriter</c> uses) — without constructing a full view model or
+    /// wiring the App.Services locator this class's DB-backed load path needs.
+    /// </remarks>
+    internal static string BuildLoadedStatus(int modelCount, int tileCount, int excludedSupportAssets)
+        => excludedSupportAssets > 0
+            ? $"Loaded {modelCount} models ({tileCount} tiles) · {excludedSupportAssets} support assets (VAE, ControlNet, …) not shown"
+            : $"Loaded {modelCount} models ({tileCount} tiles)";
 
     /// <summary>
     /// Swaps the tile set on the UI thread: unsubscribes the outgoing tiles, replaces
@@ -701,7 +722,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         {
             _logger?.Info(LogCategory.General, "LoraReconcile", "Background reconcile started (discover + verify)");
 
-            var (added, repointed, missing, moved) = await Task.Run(async () =>
+            var (added, repointed, reclassified, missing, moved) = await Task.Run(async () =>
             {
                 var discovery = await DiscoverNewFilesAsync();
                 await BackfillCivitaiModelPageIdAsync();
@@ -717,15 +738,31 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 // and so does a row the DISCOVERY half re-pointed (#537): the verify pass then sees
                 // a valid path and counts it as merely verified, so its own MovedCount misses it.
                 var result = await syncService.VerifyAndSyncFilesAsync(progress);
-                return (discovery.NewModels.Count, discovery.RepointedCount, result.MissingCount, result.MovedCount);
+                return (discovery.NewModels.Count, discovery.RepointedCount, discovery.ReclassifiedCount,
+                    result.MissingCount, result.MovedCount);
             });
 
-            var changed = added > 0 || repointed > 0 || missing > 0 || moved > 0;
+            // reclassified belongs beside repointed for the same reason (#527): DiscoverNewFilesAsync
+            // now runs the legacy-library backfill on every call, including this passive one, and a
+            // row that just dropped out of the LoRA-family grid has to trigger the same rebuild a
+            // repointed row triggers by reappearing in it.
+            var changed = added > 0 || repointed > 0 || reclassified > 0 || missing > 0 || moved > 0;
             _logger?.Info(LogCategory.General, "LoraReconcile",
-                $"Reconcile done: {added} new, {repointed} re-pointed, {missing} missing (deleted from disk), {moved} moved → rebuild={changed}");
+                $"Reconcile done: {added} new, {repointed} re-pointed, {reclassified} reclassified, " +
+                $"{missing} missing (deleted from disk), {moved} moved → rebuild={changed}");
 
             if (changed)
-                await RebuildTilesFromDatabaseAsync();
+            {
+                var modelCount = await RebuildTilesFromDatabaseAsync();
+
+                // Only when rows actually changed KIND. Any other rebuild reason (a new file, a
+                // deletion, a move) leaves the status line's own trailing null alone, as before —
+                // but a reclassification is the one that makes tiles the user has been looking at
+                // for months disappear, and that has to come with its explanation attached rather
+                // than a launch later (§5).
+                if (reclassified > 0)
+                    await RestateLoadedStatusAsync(modelCount);
+            }
         }
         catch (Exception ex)
         {
@@ -934,6 +971,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         // may have committed work.
         var discovered = 0;
         var repointed = 0;
+        var reclassified = 0;
         var rebuilt = false;
         var rebuildOwed = false;
         try
@@ -989,6 +1027,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 
             discovered = discoverReport.NewFilesDiscovered;
             repointed = discoverReport.FilesRepointed;
+            reclassified = discoverReport.FilesReclassified;
 
             // ExecuteAsync is total now (#535): a throw outside its item loop comes back as
             // AbortReason instead of escaping. For the scan that keeps the abort semantics it had
@@ -1138,7 +1177,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             // constructor keeps the stale one — the dialog would print "Discovered 0" above "40 new
             // files discovered" and the status bar would carry the same contradiction.
             //
-            // Four things travel, not just the count (F4, F5):
+            // Five things travel, not just the count (F4, F5, #527):
             //  · Failures — DiscoverFilesStep deliberately records IOException /
             //    UnauthorizedAccessException / DbUpdateException as SyncItemResult.Failure so a
             //    report can show them. Dropped, a disconnected source folder produced a dialog with
@@ -1149,6 +1188,10 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             //  · UnexpectedFailures / FirstUnexpectedError — same reasoning, summed, scan first.
             //  · Elapsed — on a real library the scan is often the slowest part of the press, and
             //    the run's own stopwatch never saw it. "~40 s" for four minutes of waiting.
+            //  · FilesReclassified — the scan's third write (#527): pre-existing rows a library
+            //    predating support-asset detection stamped LORA, corrected in place. Dropped here,
+            //    a legacy library would silently reclassify ~35 rows with nothing anywhere saying
+            //    so — the same shape of bug this whole fold-in exists to prevent for the other two.
             report = new SyncReport(
                 report.Plan,
                 report.Steps,
@@ -1162,7 +1205,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 // but if that abort is ever made non-fatal, dropping it here would lose the
                 // reason silently. The coalesce order matches the other folded fields: scan first.
                 discoverReport.AbortReason ?? report.AbortReason,
-                discoverReport.FilesRepointed + report.FilesRepointed);
+                discoverReport.FilesRepointed + report.FilesRepointed,
+                discoverReport.FilesReclassified + report.FilesReclassified);
 
             // "Last full sync" is what the next plan dialog tells the user about staleness, so it
             // records a run that actually finished. Deliberately CancellationToken.None: this
@@ -1282,6 +1326,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             // (F3). Nothing else refreshes it — ILibraryChangeNotifier.ModelDownloaded is raised
             // only by CivitaiModelDownloader, never by DiscoverFilesStep — so without this a
             // cancelled dialog leaves twelve new LoRAs in the database and none of them on screen.
+            // reclassified belongs beside discovered/repointed for the same reason (#527): a row
+            // just reclassified out of LORA has to drop out of this LoRA-family grid on its own,
+            // not wait for a manual Refresh.
             // rebuildOwed covers the doors the run path's own rebuild can leave open: that rebuild
             // failing (#539 — this retry is deliberate, and can succeed once the post-run WAL
             // contention clears), and a service regression that makes ExecuteAsync escape again
@@ -1290,7 +1337,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             // above stands, with the staleness appended rather than replacing it.
             // BEFORE the sync-running flag drops: re-enabling the per-tile button while the tile
             // collection is mid-swap would let a fetch update a tile the rebuild is discarding.
-            if ((discovered > 0 || repointed > 0 || rebuildOwed) && !rebuilt)
+            if ((discovered > 0 || repointed > 0 || reclassified > 0 || rebuildOwed) && !rebuilt)
             {
                 IsBusy = true;
                 BusyMessage = "Refreshing library view…";
@@ -1605,10 +1652,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         // one whose failures and repoints must not go unsaid.
         if (report.AbortReason is null
             && report.NewFilesDiscovered == 0 && report.FilesRepointed == 0
+            && report.FilesReclassified == 0
             && report.Steps.All(s => s.Planned == 0))
         {
             // Repoints veto "up to date" too (#537): models the grid had hidden just came back on
-            // screen, and this line is where the user learns why.
+            // screen, and this line is where the user learns why. Reclassifications veto it for
+            // the same reason (#527): a legacy library's VAEs and text encoders just stopped
+            // claiming to be LoRAs, and "up to date — nothing to do" would flatly contradict that.
             return UpToDateStatus;
         }
 
@@ -1618,6 +1668,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 
         if (report.FilesRepointed > 0)
             status += $" · {SyncCopy.DescribeRepointed(report.FilesRepointed)}";
+
+        if (report.FilesReclassified > 0)
+            status += $" · {SyncCopy.DescribeReclassified(report.FilesReclassified)}";
 
         if (report.UnexpectedFailures > 0)
         {
@@ -1661,7 +1714,14 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             ? _uiScheduler.InvokeAsync(action)
             : Dispatcher.UIThread.InvokeAsync(action).GetTask();
 
-    private async Task RebuildTilesFromDatabaseAsync()
+    /// <summary>
+    /// Rebuilds the grid from the database. Returns the number of DISTINCT models behind the new
+    /// tiles — the same number <see cref="LoadCachedTilesAsync"/> computes for the status line, and
+    /// the reason this returns anything at all: a caller that has just made tiles disappear
+    /// (<see cref="RestateLoadedStatusAsync"/>) needs it to say so, and it is free here because the
+    /// rows are already in hand. Callers that only want the rebuild ignore it.
+    /// </summary>
+    private async Task<int> RebuildTilesFromDatabaseAsync()
     {
         using var scope = RequireScopeFactory().CreateScope();
         var syncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
@@ -1669,6 +1729,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         // Issue #380: per-location fan-out — one tile per (Model, LoRA-source).
         var files = await syncService.LoadCachedFilesAsync();
         var tiles = BuildPerLocationTiles(files);
+        var distinctModels = files.Select(f => f.Model.Id).Distinct().Count();
 
         await InvokeOnUiAsync(() =>
         {
@@ -1692,6 +1753,47 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             RebuildAvailableBaseModels();
             ApplyFilters();
         });
+
+        return distinctModels;
+    }
+
+    /// <summary>
+    /// Re-states the "Loaded N models … M support assets not shown" line after a rebuild that
+    /// removed tiles.
+    /// </summary>
+    /// <remarks>
+    /// §5 of the design exists for exactly this moment and was missing from it. On a legacy
+    /// library's first launch after the upgrade, the initial load paints every tile with a support
+    /// count of 0 (nothing has been reclassified yet); the background reconcile then backfills,
+    /// rebuilds, and the tiles disappear — while the verify pass's own progress handler has just
+    /// set <see cref="SyncStatus"/> to phase text and then null. The user watches files vanish under
+    /// a blank status line, and the only explanation appears on the NEXT launch. A file that
+    /// vanishes without a reason reads as data loss, not as tidying.
+    /// <para>
+    /// Internal so <c>LoraViewerViewModelSyncTests</c>' existing scope-factory + UI-scheduler seam
+    /// can exercise it directly; <c>ReconcileLibraryInBackgroundAsync</c> itself is started
+    /// fire-and-forget from a command and offers nothing to await.
+    /// </para>
+    /// </remarks>
+    internal async Task RestateLoadedStatusAsync(int modelCount)
+    {
+        using var scope = RequireScopeFactory().CreateScope();
+        var syncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
+        var excludedSupportAssets = await syncService.CountExcludedSupportAssetsAsync();
+
+        // Through the UI hop rather than assigned here, for thread affinity — not for ordering. The
+        // await above resumes on whichever pool thread completed it, so a direct assignment would
+        // raise PropertyChanged off the UI thread, and AllTiles.Count would be read while the UI
+        // thread may be mutating that ObservableCollection. Both are why the load path does the same.
+        //
+        // It buys no ordering against the reconcile's progress handler, and must not be read as if it
+        // did: that Progress<SyncProgress> is constructed inside Task.Run with no SynchronizationContext
+        // captured, so its callbacks run on the pool rather than in the dispatcher queue, and one still
+        // in flight can reach Dispatcher.UIThread.Post after this write does. The status line is
+        // re-stated on every rebuild that removes tiles, so a lost race costs the explanation for one
+        // pass, not the correctness of anything.
+        await InvokeOnUiAsync(() =>
+            SyncStatus = BuildLoadedStatus(modelCount, AllTiles.Count, excludedSupportAssets));
     }
 
     /// <summary>

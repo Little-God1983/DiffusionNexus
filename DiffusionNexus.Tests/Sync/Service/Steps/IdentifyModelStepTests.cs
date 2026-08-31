@@ -93,7 +93,8 @@ public sealed class IdentifyModelStepTests : IDisposable
         string? sidecarSignature = null,
         bool withState = false,
         int? civitaiId = null,
-        bool isUserEdited = false)
+        bool isUserEdited = false,
+        ModelType type = ModelType.LORA)
     {
         using var scope = NewScope();
         var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
@@ -101,7 +102,7 @@ public sealed class IdentifyModelStepTests : IDisposable
         var model = new Model
         {
             Name = name,
-            Type = ModelType.LORA,
+            Type = type,
             Source = civitaiId is null ? DataSource.LocalFile : DataSource.CivitaiApi,
             CivitaiId = civitaiId,
             IsUserEdited = isUserEdited,
@@ -139,6 +140,63 @@ public sealed class IdentifyModelStepTests : IDisposable
         using var scope = NewScope();
         var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
         return await uow.SyncStates.GetByModelIdAsync(modelId);
+    }
+
+    /// <summary>The stored <see cref="Model.Type"/> — what the kind-correction tests assert on.</summary>
+    private async Task<ModelType> LoadTypeAsync(int modelId)
+    {
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var model = await uow.Models.GetByIdAsync(modelId);
+        return model!.Type;
+    }
+
+    /// <summary>
+    /// Seeds a local-only model (no sidecar, no Civitai id — see <see cref="SeedAsync"/>) whose file
+    /// is a real safetensors container built from <paramref name="headerJson"/>, stamped with a
+    /// starting <see cref="Model.Type"/> the way the name-only backfill (or a legacy row) would have
+    /// left it, and hands back a hand-built <see cref="IdentifyCandidate"/> — the same
+    /// skip-<c>SelectAsync</c> pattern <see cref="BuildCandidateAsync"/> already uses below.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately bypasses <see cref="IdentifyModelStep.SelectAsync"/>: <c>SelectIdentifyCandidatesAsync</c>
+    /// filters a library-scoped run to <c>LoraFamily</c> (LORA/LoCon/DoRA/Unknown), so a row already
+    /// typed <see cref="ModelType.VAE"/> — the exact starting point <see cref="CorrectsAMisnamedLoraFromItsWeights"/>
+    /// needs — would never come back as a candidate at all under that scope, for a reason that has
+    /// nothing to do with the correction logic under test here. These tests are about what
+    /// <c>ExecuteOneAsync</c> does once handed such a row, not about whether a bulk scan would ever
+    /// hand it one — the same reasoning <see cref="ExecuteOneAsync_WithASidecarPresent_NeverCallsCivitai"/>
+    /// already relies on for its own hand-built candidate.
+    /// </remarks>
+    /// <param name="rawBytes">
+    /// Bytes to write instead of a real container — for the one case that needs a
+    /// <c>.safetensors</c> whose header CANNOT be parsed. Default null writes
+    /// <paramref name="headerJson"/> as a proper container.
+    /// </param>
+    private async Task<IdentifyCandidate> GivenLocalModelAsync(string fileName, ModelType type, string headerJson,
+        byte[]? rawBytes = null)
+    {
+        var path = NewModelFile(fileName, rawBytes ?? Safetensors(headerJson));
+        var name = Path.GetFileNameWithoutExtension(fileName);
+        var (modelId, fileId) = await SeedAsync(name, path, type: type);
+
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var model = await uow.Models.GetByIdWithIncludesAsync(modelId);
+        var versionId = model!.Versions.Single().Id;
+
+        return new IdentifyCandidate(modelId, versionId, fileId, name, path, Sha256: null,
+            BaseModelRaw: "???", Outcome: SyncOutcome.None, CheckedAt: null, Attempts: 0, SidecarSignature: null);
+    }
+
+    /// <summary>
+    /// Runs the step directly over <paramref name="candidate"/> against a 404-on-Civitai client, with
+    /// no sidecar on disk — the "not on Civitai and no sidecar" branch that reads the file's header.
+    /// </summary>
+    private async Task WhenIdentifiedAsync(IdentifyCandidate candidate)
+    {
+        var step = NewNotFoundStep();
+        await step.ExecuteOneAsync(new SyncItem(candidate.ModelId, candidate.Name, candidate), apiKey: null, CancellationToken.None);
     }
 
     private static CivitaiModelVersion NewCivitaiVersion(int id = 700, int modelId = 77) => new()
@@ -609,6 +667,137 @@ public sealed class IdentifyModelStepTests : IDisposable
         // Stamped at Now like everything else — the same run's clock is not due again immediately.
         var again = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
         again.Select(i => i.ModelId).Should().NotContain(modelId);
+    }
+
+    /// <summary>
+    /// A row already stamped VAE, whose weights are actually a LoRA's: this rung corrects it, but
+    /// only via an explicit per-model sync. A bulk library run's own candidate-selection filter
+    /// (<c>SelectIdentifyCandidatesAsync</c>'s LoraFamily set) excludes a VAE-typed row before
+    /// <c>ExecuteOneAsync</c> is ever reached, so this direction never fires on an ordinary sync —
+    /// see <see cref="GivenLocalModelAsync"/>'s remarks for why this test bypasses
+    /// <c>SelectAsync</c> to reach the branch directly instead of asserting on a path that, for
+    /// this starting type, a bulk run would never take.
+    /// </summary>
+    [Fact]
+    public async Task CorrectsAMisnamedLoraFromItsWeights()
+    {
+        // A row the name-only backfill flipped to VAE, whose weights are a LoRA's.
+        var candidate = await GivenLocalModelAsync(
+            fileName: "vae_finetune_lora.safetensors",
+            type: ModelType.VAE,
+            headerJson: Tensors("lora_unet_blocks_0.lora_up.weight"));
+
+        await WhenIdentifiedAsync(candidate);
+
+        (await LoadTypeAsync(candidate.ModelId)).Should().Be(ModelType.LORA);
+    }
+
+    /// <summary>
+    /// The second-order effect of the final review's Critical #1, caught in self-review. A
+    /// <c>.safetensors</c> we FAILED to open now answers <c>LORA</c> from <c>AssetKindResolver</c> —
+    /// correctly, as a safe default for a row that already says LORA. But a default is not a
+    /// reading, and it must not unstamp a support kind an earlier, successful reading established:
+    /// a VAE row would otherwise be demoted to LORA by a moment's file lock. (Reached only through
+    /// an explicit per-model re-check; <c>SelectIdentifyCandidatesAsync</c> filters every other
+    /// scope to LoraFamily — see <see cref="GivenLocalModelAsync"/>'s remarks.)
+    /// </summary>
+    [Fact]
+    public async Task AnUnreadableContainerDoesNotDemoteAnAlreadyClassifiedSupportAsset()
+    {
+        var candidate = await GivenLocalModelAsync(
+            fileName: "opaque_name_nobody_can_read.safetensors",
+            type: ModelType.VAE,
+            headerJson: "",
+            rawBytes: [0x01, 0x02, 0x03]);   // not a parsable safetensors header
+
+        await WhenIdentifiedAsync(candidate);
+
+        (await LoadTypeAsync(candidate.ModelId)).Should().Be(ModelType.VAE,
+            "we learned nothing about this file, and nothing is not grounds for rewriting its kind");
+    }
+
+    /// <summary>
+    /// The other direction fires on any run, bulk or explicit: a VAE discovered before the feature
+    /// existed, whose row still says LORA and whose name carries no marker, is named by its
+    /// weights the moment <c>ExecuteOneAsync</c> reads them — LORA stays inside the LoraFamily set,
+    /// so an ordinary library sync reaches this row exactly as an explicit one would.
+    /// </summary>
+    [Fact]
+    public async Task NamesASupportAssetFromItsWeights()
+    {
+        var candidate = await GivenLocalModelAsync(
+            fileName: "opaque_name_nobody_can_read.safetensors",
+            type: ModelType.LORA,
+            headerJson: Tensors("post_quant_conv.weight"));
+
+        await WhenIdentifiedAsync(candidate);
+
+        (await LoadTypeAsync(candidate.ModelId)).Should().Be(ModelType.VAE);
+    }
+
+    /// <summary>
+    /// <b>This test asserted the opposite until the #527 smoke, and the assertion was wrong.</b> It
+    /// was written for the Task 8 guard <c>Source != DataSource.CivitaiApi</c>, on the reasoning
+    /// that a Civitai-sourced row carries an authoritative <c>Type</c> that is not ours to move.
+    /// Nothing in a Civitai payload has ever written <c>Model.Type</c>: the column has exactly two
+    /// writers in the whole codebase, this step and discovery's own <c>AssetKindResolver</c> call,
+    /// while <c>CivitaiMetadataApplier</c> and <c>SidecarMetadataApplier</c> write name, creator,
+    /// tags, images, ids and hashes and leave <c>Type</c> alone. So the guard protected a value
+    /// Civitai never set, and blocked the correction on every Civitai-touched row — three real text
+    /// encoders stayed LORA behind it, one of them (<c>qwen_3_4b</c>) carrying <c>CivitaiApi</c>
+    /// with a NULL <c>CivitaiId</c>, i.e. a row Civitai had never identified at all.
+    /// <para>
+    /// The shape is still worth pinning, because it is still the shape that reaches this branch on
+    /// an ordinary library run: a duplicate-page-id row, <c>Source</c> already
+    /// <see cref="DataSource.CivitaiApi"/> from an earlier match and <c>CivitaiId</c> still null, is
+    /// NOT excluded by <c>SelectIdentifyCandidatesAsync</c>'s <c>CivitaiId == null</c> filter. What
+    /// changed is the expected answer. See #550 for the writer that would make Civitai's type
+    /// authoritative — and would need a signal saying so, which the <c>Source</c> column is not.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Execute_HeaderCorrectsACivitaiSourcedModelsType()
+    {
+        var path = NewModelFile("civitai-sourced-type.safetensors", Safetensors(Tensors("post_quant_conv.weight")));
+        var (modelId, _) = await SeedAsync("civitai-sourced-type", path);
+
+        // Duplicate-page-id shape: Source already CivitaiApi, CivitaiId still null.
+        using (var seedScope = NewScope())
+        {
+            var seedUow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var seeded = await seedUow.Models.GetByIdAsync(modelId);
+            seeded!.Source = DataSource.CivitaiApi;
+            await seedUow.SaveChangesAsync();
+        }
+
+        var step = NewNotFoundStep();
+        var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
+        await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        (await LoadTypeAsync(modelId)).Should().Be(ModelType.VAE,
+            "the weights are the only thing that has ever decided this column, whatever the Source says");
+    }
+
+    /// <summary>
+    /// I2 (Task 8 review fix), the <c>IsUserEdited</c> half. An explicit per-model re-check (the
+    /// per-tile "Download Metadata" button, <see cref="SyncScope.ForModels"/>) passes
+    /// <c>includeMatched: true</c>, which skips <c>SelectIdentifyCandidatesAsync</c>'s
+    /// <c>CivitaiId == null &amp;&amp; !IsUserEdited</c> filter entirely — a hand-edited row is
+    /// selected, and if this run's hash lookup misses, it reaches the guard just like the
+    /// Civitai-sourced row above.
+    /// </summary>
+    [Fact]
+    public async Task Execute_HeaderDoesNotOverwriteAUserEditedModelsType()
+    {
+        var path = NewModelFile("user-edited-type.safetensors", Safetensors(Tensors("post_quant_conv.weight")));
+        var (modelId, _) = await SeedAsync("user-edited-type", path, isUserEdited: true);
+
+        var step = NewNotFoundStep();
+        var items = await step.SelectAsync(SyncScope.ForModels(modelId), Options(), Now, CancellationToken.None);
+        await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
+
+        (await LoadTypeAsync(modelId)).Should().Be(ModelType.LORA,
+            "a user-edited model's Type is not ours to move, even though the header disagrees");
     }
 
     /// <summary>

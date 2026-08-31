@@ -30,6 +30,7 @@ public sealed class LibrarySyncServiceTests : IDisposable
     private readonly ServiceProvider _serviceProvider;
     private readonly List<Model> _discovered = [];
     private int _repointed;
+    private int _reclassified;
 
     private const string ApiKey = "test-api-key";
 
@@ -53,9 +54,18 @@ public sealed class LibrarySyncServiceTests : IDisposable
 
         // The real DiscoverFilesStep delegates the disk scan to this; the sync service reads the
         // resulting count back off the step for the report.
+        // #527 round 2: ReclassifySupportAssetsAsync now runs inside DiscoverNewFilesAsync itself,
+        // so its count travels on the same DiscoveryResult RepointedCount already does — no
+        // separate ReclassifySupportAssetsAsync setup here, matching what DiscoverFilesStep
+        // actually calls now.
         var modelSync = new Mock<IModelSyncService>();
         modelSync.Setup(s => s.DiscoverNewFilesAsync(It.IsAny<IProgress<SyncProgress>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => new DiscoveryResult { NewModels = _discovered, RepointedCount = _repointed });
+            .ReturnsAsync(() => new DiscoveryResult
+            {
+                NewModels = _discovered,
+                RepointedCount = _repointed,
+                ReclassifiedCount = _reclassified,
+            });
         services.AddScoped(_ => modelSync.Object);
 
         _serviceProvider = services.BuildServiceProvider();
@@ -289,6 +299,29 @@ public sealed class LibrarySyncServiceTests : IDisposable
 
         report.NewFilesDiscovered.Should().Be(0, "nothing was added");
         report.FilesRepointed.Should().Be(12, "twelve rows changed, and the caller's rebuild decision hangs on knowing that");
+    }
+
+    /// <summary>
+    /// #527 round 2. The discover step's third write: pre-existing rows a library predating
+    /// support-asset detection still stamped LORA, corrected in place inside
+    /// <see cref="IModelSyncService.DiscoverNewFilesAsync"/> itself now, not via a second call
+    /// this service makes on its own. Changed, not added, so it travels beside
+    /// <see cref="SyncReport.FilesRepointed"/> rather than folding into either existing count.
+    /// </summary>
+    [Fact]
+    public async Task Execute_ReportsReclassifiedFilesFromTheDiscoverStep()
+    {
+        _reclassified = 35;
+
+        var discover = new DiscoverFilesStep(Scopes);
+        var service = NewService([discover]);
+        var plan = await service.PlanAsync(SyncScope.Library, OptionsFor(SyncStepKind.DiscoverFiles));
+
+        var report = await service.ExecuteAsync(plan);
+
+        report.NewFilesDiscovered.Should().Be(0, "nothing was added");
+        report.FilesRepointed.Should().Be(0, "nothing moved");
+        report.FilesReclassified.Should().Be(35, "35 rows just stopped claiming to be LoRAs, and the caller's rebuild decision hangs on knowing that");
     }
 
     [Fact]

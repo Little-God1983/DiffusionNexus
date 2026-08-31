@@ -1,4 +1,5 @@
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.Services;
@@ -44,9 +45,15 @@ public sealed class LoraSorterViewModelTests : IDisposable
         return path;
     }
 
-    private static InstalledModelFile Installed(string path, string baseModel, string tag)
+    /// <summary>
+    /// <paramref name="type"/> stands in for the DB row's own <c>Model.Type</c> column — the source
+    /// Task 11 reads a DB-known candidate's kind from, now that discovery and the identify step
+    /// (Tasks 6-8) keep it current. Defaults to <see cref="ModelType.LORA"/> so the large majority of
+    /// call sites that only care about the base model need not think about kind at all.
+    /// </summary>
+    private static InstalledModelFile Installed(string path, string baseModel, string tag, ModelType type = ModelType.LORA)
     {
-        var model = new Model { Tags = { new ModelTag { Tag = new Tag { Name = tag } } } };
+        var model = new Model { Type = type, Tags = { new ModelTag { Tag = new Tag { Name = tag } } } };
         var version = new ModelVersion { BaseModelRaw = baseModel };
         var file = new ModelFile { LocalPath = path };
         return new InstalledModelFile(model, version, file, Path.GetDirectoryName(path)!);
@@ -218,21 +225,142 @@ public sealed class LoraSorterViewModelTests : IDisposable
     }
 
     /// <summary>
-    /// A folder's chips are the union of everything beneath it, so a base-model folder about to
-    /// receive a VAE alongside its LoRAs says so before anything moves — that mixing is invisible
-    /// today and only shows up as a stray file after the sort.
+    /// #527 (Task 9): this used to demonstrate the bug itself — a VAE misfiled into its LoRAs'
+    /// base-model folder, invisible until a stray file turned up after the sort ("a folder's chips
+    /// are the union of everything beneath it, so a base-model folder about to receive a VAE
+    /// alongside its LoRAs says so before anything moves"). Task 9 fixes that at the routing layer
+    /// instead: a support asset never lands under a base-model folder at all, so <c>Qwen</c>'s chip
+    /// set can no longer show anything but the LoRA it actually holds. The union mechanism itself
+    /// (<c>Absorb</c>) still matters and is still exercised — just now proven by confirming the VAE
+    /// landed, correctly labelled, in its own folder instead of by finding it mixed into someone
+    /// else's.
+    /// <para>
+    /// Task 11: a DB-known row's kind now comes from its own <c>Model.Type</c> rather than its file
+    /// name whenever the base model is already real (not a placeholder) — this row's is "Qwen" — so
+    /// the VAE is typed explicitly via <c>Installed</c>'s <c>type:</c> rather than relying on the
+    /// "vae" token the file name still carries for readability.
+    /// </para>
     /// </summary>
     [Fact]
-    public async Task AFolderIsLabelledWithEveryAssetKindBeneathIt()
+    public async Task ASupportAssetNoLongerMixesIntoItsBaseModelFoldersChips()
     {
         var lora = WriteLora(@"flat\MyChar.safetensors");
         var vae = WriteLora(@"flat\qwen_image_vae.safetensors");
-        var vm = CreateVm(cached: [Installed(lora, "Qwen", "character"), Installed(vae, "Qwen", "character")]);
+        var vm = CreateVm(cached:
+            [Installed(lora, "Qwen", "character"), Installed(vae, "Qwen", "character", type: ModelType.VAE)]);
 
         await vm.InitializeAsync();
 
-        var qwen = vm.PreviewRoots.Single(n => n.Name == "Qwen");
-        qwen.AssetKinds.Should().BeEquivalentTo(["LoRA", "VAE"], o => o.WithStrictOrdering());
+        vm.PreviewRoots.Single(n => n.Name == "Qwen")
+            .AssetKinds.Should().ContainSingle().Which.Should().Be("LoRA");
+        vm.PreviewRoots.Single(n => n.Name == "VAE")
+            .AssetKinds.Should().ContainSingle().Which.Should().Be("VAE");
+    }
+
+    /// <summary>
+    /// #527 regression: <c>CivitaiMetadataApplier</c> writes <c>BaseModelRaw</c> unconditionally on a
+    /// hash match, not gated on <c>Type</c> — so a support asset synced against Civitai before this
+    /// feature existed keeps discovery's old blanket <c>Type = LORA</c> stamp forever; nothing in the
+    /// identify pipeline ever revisits it once its base model is real. Before Task 11 this file was
+    /// still reclassified from its name on every preview pass regardless of the DB row, so it
+    /// displayed correctly despite the stale column. Edit (a) must not trust that stale "LORA" as
+    /// though it were evidence: a row saying LORA proves nothing (it is what every file was stamped
+    /// before this feature existed), so the file itself still gets asked.
+    /// <para>
+    /// Final-review Important #2: what gets asked is now the WEIGHTS, not the name — a support-asset
+    /// name only triggers the header read, it no longer decides the move on its own. The fixture is
+    /// a real VAE header accordingly, which is what a legacy Civitai-matched VAE actually looks like
+    /// on disk. The assertion is unchanged: this row still has to reach <c>VAE\</c>.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task ARealBaseModelRowStuckAtTypeLoraIsStillClassifiedFromItsWeights()
+    {
+        var vae = WriteSafetensors(@"flat\sdxl_vae.safetensors",
+            SafetensorsFixture.Tensors("post_quant_conv.weight"));
+        // type: defaults to ModelType.LORA — the stale value a legacy, Civitai-matched row keeps.
+        var vm = CreateVm(cached: [Installed(vae, "SDXL 1.0", "character")]);
+
+        await vm.InitializeAsync();
+
+        vm.PreviewRoots.Single(n => n.Name == "VAE")
+            .AssetKinds.Should().ContainSingle().Which.Should().Be("VAE");
+    }
+
+    /// <summary>
+    /// Final-review Important #2, the case the fix exists for. Before it, a DB-known row with a REAL
+    /// base model and <c>Type == LORA</c> — which is every LoRA Civitai has ever matched — had its
+    /// destination chosen from its FILE NAME, so a genuine LoRA called "sdxl_vae_boost" was
+    /// physically moved into <c>&lt;Target&gt;\VAE\</c> and its row rewritten to point there. Names
+    /// like that are ordinary: a LoRA is routinely named after what it was trained beside.
+    /// <para>
+    /// Neither pure rule is safe — trusting the row misfiles the legacy VAE the sibling test above
+    /// covers, trusting the name misfiles this LoRA — so a suspicious NAME now only triggers a
+    /// header read, and the weights settle it. Here they say <c>lora_up</c>, and the file stays with
+    /// its base model.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task ALoraNamedLikeAVaeIsNotMovedIntoTheVaeFolder()
+    {
+        var lora = WriteSafetensors(@"flat\sdxl_vae_boost.safetensors",
+            SafetensorsFixture.Tensors("lora_unet_blocks_0.lora_up.weight"));
+        var vm = CreateVm(cached: [Installed(lora, "SDXL 1.0", "character")]);
+
+        await vm.InitializeAsync();
+
+        vm.PreviewRoots.Select(n => n.Name).Should().NotContain("VAE",
+            "the weights say lora_up — a file name is not grounds for relocating somebody's LoRA");
+        vm.PreviewRoots.Single(n => n.Name == "SDXL 1.0")
+            .AssetKinds.Should().ContainSingle().Which.Should().Be("LoRA");
+    }
+
+    /// <summary>
+    /// Pins the FULL chip order deliberately, not incidentally: LoRA first, then VAE, ControlNet,
+    /// Upscaler, Text Encoder — the <c>ModelTypeExtensions.SupportAssetKinds</c> order — via
+    /// <c>SortPreviewNodeViewModel</c>'s <c>ChipOrder</c> comparer. The sibling test above (LoRA +
+    /// VAE only) cannot discriminate ChipOrder from <c>ModelType</c>'s own raw numeric order:
+    /// LoRA(5) sorts before VAE(12) either way. Five kinds can, because ModelType's persisted values
+    /// (LORA=5, Controlnet=8, Upscaler=10, VAE=12, TextEncoder=19) would put ControlNet and Upscaler
+    /// BEFORE VAE if nothing overrode them — the opposite of the order asserted here.
+    /// </summary>
+    /// <remarks>
+    /// #527 (Task 9): five kinds can no longer land under one DESTINATION folder — each support kind
+    /// now gets its own flat folder beside the base-model ones, so <c>PreviewRoots</c> never again
+    /// absorbs more than one kind into a single node. They still share a SOURCE folder before the
+    /// sort runs, though, and <c>Absorb</c> rolls every kind up through the ancestor chain on both
+    /// sides of the pane (<c>LoraSorterViewModel.AddFileNode</c>) — so <c>SourceRoots</c>' "flat"
+    /// node is now the one place all five still co-occur, and the ChipOrder comparer under test is
+    /// the exact same one used for both trees.
+    /// <para>
+    /// Task 11: with a real ("Qwen") base model already on the row, none of these enters the
+    /// placeholder-only header-read branch, so each kind has to be stated via <c>Installed</c>'s
+    /// <c>type:</c> — the DB row's own <c>Model.Type</c> — rather than left to the file name.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AFolderOrdersItsChipsDeliberatelyNotByModelTypesRawPersistedValue()
+    {
+        var lora = WriteLora(@"flat\MyChar.safetensors");
+        var vae = WriteLora(@"flat\qwen_image_vae.safetensors");
+        var controlNet = WriteLora(@"flat\qwen_image_controlnet.safetensors");
+        var upscaler = WriteLora(@"flat\qwen_image_upscaler.safetensors");
+        var textEncoder = WriteLora(@"flat\clip_l.safetensors");
+        var vm = CreateVm(cached:
+        [
+            Installed(lora, "Qwen", "character"),
+            Installed(vae, "Qwen", "character", type: ModelType.VAE),
+            Installed(controlNet, "Qwen", "character", type: ModelType.Controlnet),
+            Installed(upscaler, "Qwen", "character", type: ModelType.Upscaler),
+            Installed(textEncoder, "Qwen", "character", type: ModelType.TextEncoder),
+        ]);
+
+        await vm.InitializeAsync();
+
+        var flat = vm.SourceRoots.Single(n => n.Name == "flat");
+        flat.AssetKinds.Should().BeEquivalentTo(
+            ["LoRA", "VAE", "ControlNet", "Upscaler", "Text Encoder"],
+            o => o.WithStrictOrdering());
     }
 
     /// <summary>The mark is subtree-wide: a base-model folder is finished only when everything
@@ -382,22 +510,109 @@ public sealed class LoraSorterViewModelTests : IDisposable
 
     /// <summary>A file node carries its own kind and its own mark, so expanding an unfinished folder
     /// shows which files are the problem rather than only that some are.</summary>
+    /// <remarks>
+    /// Pre-#527 this VAE (placeholder base model) sorted into <c>Unknown\Character\</c>, which is
+    /// where the file node used to be found. Task 9 routes a support asset to its own flat
+    /// <c>VAE\</c> folder regardless of base model, so the lookup path changed. Task 11 changes the
+    /// mark itself, too: a VAE has no base model to be missing, so its placeholder no longer counts
+    /// against it — <c>IdentityOf</c> now reports it Identified rather than Unidentified.
+    /// <para>
+    /// Final-review Critical #1: the fixture writes a REAL safetensors header now, because a
+    /// <c>.safetensors</c> whose header cannot be read is no longer named from its file name — an
+    /// unreadable container is not evidence, and guessing there is the one verdict a user cannot
+    /// undo. A genuine VAE has readable weights that say <c>post_quant_conv</c>, so this fixture is
+    /// also the more honest one.
+    /// </para>
+    /// </remarks>
     [Fact]
     public async Task AFileNodeCarriesItsOwnKindAndMark()
     {
-        var vae = WriteLora(@"flat\sdxl_vae.safetensors");
+        var vae = WriteSafetensors(@"flat\sdxl_vae.safetensors",
+            SafetensorsFixture.Tensors("post_quant_conv.weight"));
         var vm = CreateVm(cached: [Installed(vae, "???", "character")]);
 
         await vm.InitializeAsync();
 
         var fileNode = vm.PreviewRoots
-            .Single(n => n.Name == LoraPathBuilder.UnknownFolderName)
-            .Children.SelectMany(c => c.IsFile ? [c] : c.Children)
-            .Single(c => c.IsFile);
+            .Single(n => n.Name == "VAE")
+            .Children.Single(c => c.IsFile);
 
         fileNode.AssetKinds.Should().ContainSingle().Which.Should().Be("VAE");
-        fileNode.IsUnidentified.Should().BeTrue();
-        fileNode.StatusTooltip.Should().Contain("This file has no base model");
+        fileNode.IsIdentified.Should().BeTrue("a support asset has no base model to be missing (#527)");
+        fileNode.StatusTooltip.Should().Be("Every file here has a base model.");
+    }
+
+    /// <summary>
+    /// The sibling of the Critical #1 guard, on the sorter side. <c>AssetKindResolver</c> answers
+    /// LORA for a <c>.safetensors</c> whose header it could not read — deliberately, because a name
+    /// guess there is unrecoverable — so that LORA is a DEFAULT, not a reading, and it must not
+    /// unstamp a kind an earlier successful read already established.
+    /// <para>
+    /// This row is the exact shape where that bit: a VAE established as such in the database, whose
+    /// base model is still the <c>"???"</c> placeholder — the normal, permanent state for a VAE,
+    /// since it has no base model — and whose file happens to be unreadable on this pass (mid-copy,
+    /// locked by a running backend). The placeholder sends it down the ask-the-file branch, the file
+    /// says nothing, and before the fix the resolver's default LORA won unconditionally over the
+    /// row's stored VAE: the file was planned into <c>Unknown\</c>, and the sorter MOVES bytes off
+    /// that plan.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task AStoredSupportKindSurvivesAPassWhereTheFileCouldNotBeRead()
+    {
+        // Not a valid safetensors container: TryReadAsync answers null for it, which is what a
+        // locked or mid-copy file looks like from here.
+        var vae = WriteLora(@"flat\some_vae.safetensors");
+        var vm = CreateVm(cached: [Installed(vae, "???", "character", type: ModelType.VAE)]);
+
+        await vm.InitializeAsync();
+
+        vm.PreviewRoots.Select(n => n.Name).Should().NotContain("Unknown",
+            "a container we could not read is not grounds for demoting a kind its weights already proved");
+        vm.PreviewRoots.Single(n => n.Name == "VAE")
+            .AssetKinds.Should().ContainSingle().Which.Should().Be("VAE");
+    }
+
+    /// <summary>
+    /// #527: the count could never reach zero because ~35 files in a real library are not LoRAs at
+    /// all. They are identified — we know exactly what they are — just not as LoRAs.
+    /// </summary>
+    [Fact]
+    public async Task TheHintDoesNotCountSupportAssetsAsUnidentifiedLoras()
+    {
+        // Browsed (not DB-known), so the kind comes from SorterMetadataResolver rather than a row's
+        // Type. The VAE carries a real header (final-review Critical #1: a .safetensors we cannot
+        // read stays LORA, so a name-only fixture would no longer stand for a VAE at all); the LoRA
+        // stays header-less because nothing here needs it to be readable.
+        WriteSafetensors(@"flat\Wan2_2_VAE_bf16.safetensors",
+            SafetensorsFixture.Tensors("post_quant_conv.weight"));
+        WriteLora(@"flat\mystery_lora.safetensors");
+        var vm = CreateVm();
+
+        await vm.InitializeAsync();
+
+        vm.NameGuessHint.Should().NotContain("2 LoRAs",
+            "only the one file that is actually a LoRA can be an unidentified LoRA");
+    }
+
+    /// <summary>
+    /// A VAE has no base model and never will. Marking its folder ✗ for that would ask the wrong
+    /// question of it and leave the tree permanently unfinished. Real header, for the reason given
+    /// on <see cref="AFileNodeCarriesItsOwnKindAndMark"/> (final-review Critical #1).
+    /// </summary>
+    [Fact]
+    public async Task ASupportAssetDoesNotPoisonItsFoldersMark()
+    {
+        WriteSafetensors(@"flat\Wan2_2_VAE_bf16.safetensors",
+            SafetensorsFixture.Tensors("post_quant_conv.weight"));
+        var vm = CreateVm();
+
+        await vm.InitializeAsync();
+
+        var folder = vm.PreviewRoots.Single(n => n.Name == "VAE");
+        folder.IsUnidentified.Should().BeFalse();
+        folder.IsIdentified.Should().BeTrue();
+        folder.AssetKinds.Should().ContainSingle().Which.Should().Be("VAE");
     }
 
     [Fact]

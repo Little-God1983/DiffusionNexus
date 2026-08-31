@@ -90,4 +90,22 @@ public class LoraPathBuilderTests
     public void BuildTargetDirectory_DownloadShape_SanitizesTheSegments()
         => LoraPathBuilder.BuildTargetDirectory(@"C:\root", "SD 3.5?", "Chara<cter", includeBaseModel: true, includeCategory: true)
             .Should().Be(@"C:\root\SD 3.5_\Chara_cter");
+
+    /// <summary>
+    /// HuggingFace's save_pretrained shard convention, and only it. The suffix is anchored at the
+    /// end of the stem because the rule is "this file is a fragment of a set", not "this name has
+    /// digits in it" — a LoRA carrying the same shape mid-name owns its destination as usual.
+    /// </summary>
+    [Theory]
+    [InlineData(@"C:\m\model-00001-of-00004.safetensors", true)]
+    [InlineData(@"C:\m\model-00004-of-00004.safetensors", true)]
+    [InlineData(@"C:\m\diffusion_pytorch_model-00002-of-00003.safetensors", true)]
+    [InlineData(@"C:\m\model-00001-of-00004-finetune.safetensors", false)]
+    [InlineData(@"C:\m\model-1-of-4.safetensors", false)]
+    [InlineData(@"C:\m\MyCharacterLora.safetensors", false)]
+    [InlineData(@"C:\m\clip_l.safetensors", false)]
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    public void AShardOfASplitModelIsRecognizedByItsAnchoredSuffix(string? path, bool expected)
+        => LoraPathBuilder.IsShardOfASplitModel(path).Should().Be(expected);
 }

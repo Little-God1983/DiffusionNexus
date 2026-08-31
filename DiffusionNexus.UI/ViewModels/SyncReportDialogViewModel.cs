@@ -82,6 +82,9 @@ public sealed class SyncReportDialogViewModel
         HasRepointedFiles = report.FilesRepointed > 0;
         RepointedText = SyncCopy.DescribeRepointed(report.FilesRepointed);
 
+        HasReclassifiedFiles = report.FilesReclassified > 0;
+        ReclassifiedText = SyncCopy.DescribeReclassified(report.FilesReclassified);
+
         HasUnexpected = report.UnexpectedFailures > 0;
         UnexpectedText = report.UnexpectedFailures switch
         {
@@ -102,6 +105,8 @@ public sealed class SyncReportDialogViewModel
     public bool HasDiscoveredFiles { get; }
     public string RepointedText { get; }
     public bool HasRepointedFiles { get; }
+    public string ReclassifiedText { get; }
+    public bool HasReclassifiedFiles { get; }
     public string UnexpectedText { get; }
     public bool HasUnexpected { get; }
 

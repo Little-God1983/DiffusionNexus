@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Service.Services.Sync;
 namespace DiffusionNexus.Service.Services.Lora;
 
@@ -8,7 +10,7 @@ namespace DiffusionNexus.Service.Services.Lora;
 /// DownloadCollisionPolicy
 /// ({stem}_{versionId}{ext}), so re-runs are idempotent.
 /// </summary>
-public static class LoraPathBuilder
+public static partial class LoraPathBuilder
 {
     public const string UnknownFolderName = "Unknown";
 
@@ -24,6 +26,53 @@ public static class LoraPathBuilder
     /// is exactly the drift the sorter's own doc comments argue against.
     /// </remarks>
     public static bool IsPlaceholderBaseModel(string? baseModel) => SyncStateDeriver.IsPlaceholder(baseModel);
+
+    /// <summary>
+    /// Whether a file is one shard of a model split across several files —
+    /// <c>model-00001-of-00004.safetensors</c> — and therefore has no destination of its own.
+    /// </summary>
+    /// <remarks>
+    /// A shard is a fragment of ONE logical model, not a model. The sorter plans file by file and
+    /// cannot see a candidate's siblings, so it can route one shard somewhere its siblings do not
+    /// go, and a split shard set is worse than an unsorted one: the halves are individually useless
+    /// and the loader needs the whole complement plus its index to open anything at all. Refusing
+    /// the move is the only answer the planner can give correctly from the information it has.
+    /// <para>
+    /// The reason holds for EVERY destination, so <see cref="LoraSortPlanner"/> applies it to the
+    /// whole routing decision and not to the support-asset arm alone — which folder a subset was
+    /// headed for has nothing to do with why splitting the set is wrong. Guarding one arm splits a
+    /// mixed-kind set through the other: this became reachable when
+    /// <see cref="Sync.Identity.AssetKindHeaderMap"/> learned to read a root-anchored LLM decoder,
+    /// and three of the four shards of a LLaVA-OneVision checkpoint now answer TextEncoder while
+    /// the fourth is a vision tower and answers LORA — so a kind-folder-only guard would keep three
+    /// in place and let the fourth sort away by base model. Every one of those per-file verdicts is
+    /// correct; it is the ROUTING that has to know better, which is why the rule lives here and not
+    /// in the header map. What the file IS is still recorded.
+    /// </para>
+    /// <para>
+    /// This does not cost ordinary LoRA sorting anything: the convention belongs to large
+    /// multi-gigabyte base models, and a LoRA is single-file by nature. A file in a LoRA source that
+    /// genuinely carries the pattern IS a fragment of a split model, and leaving it alone is right
+    /// whatever base model it claims — the failure direction is "left where it was", which is always
+    /// recoverable.
+    /// </para>
+    /// <para>
+    /// The pattern is HuggingFace's <c>save_pretrained</c> convention and nothing else in a model
+    /// library is named that way: a five-digit index, "-of-", a five-digit total, immediately before
+    /// the extension. Anchored at the end for that reason — a LoRA merely CONTAINING those digits
+    /// mid-name keeps its destination.
+    /// </para>
+    /// </remarks>
+    public static bool IsShardOfASplitModel(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return false;
+
+        var stem = Path.GetFileNameWithoutExtension(path);
+        return ShardSuffix().IsMatch(stem);
+    }
+
+    [GeneratedRegex(@"-\d{5}-of-\d{5}$", RegexOptions.CultureInvariant)]
+    private static partial Regex ShardSuffix();
 
     /// <summary>
     /// Folder-name sanitization. Windows-only rules today.
@@ -89,6 +138,25 @@ public static class LoraPathBuilder
     public static bool IsUnresolvedCategory(string? categoryFolderName)
         => string.IsNullOrWhiteSpace(categoryFolderName)
            || string.Equals(categoryFolderName.Trim(), UnknownFolderName, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Where a support asset goes: a flat, per-kind folder directly under the target root, beside
+    /// the base-model folders (#527). No base-model segment and no category segment — both answer
+    /// questions about a LoRA's provenance, and neither means anything for a VAE.
+    /// </summary>
+    /// <remarks>
+    /// The folder name comes from <see cref="ModelTypeExtensions.SupportFolderName"/>, which is the
+    /// same string the preview's chip shows, so the tree can never advertise a folder the sorter
+    /// does not create. Throws for a non-support kind rather than inventing a folder: a LoRA's
+    /// destination is its base model, and reaching here with one is a caller bug.
+    /// </remarks>
+    public static string BuildSupportAssetDirectory(string targetRoot, ModelType kind)
+    {
+        var folder = kind.SupportFolderName()
+            ?? throw new ArgumentOutOfRangeException(nameof(kind), kind,
+                "Only a support asset has a per-kind folder; a LoRA's folder is its base model.");
+        return Path.Combine(targetRoot, SanitizeFolderName(folder));
+    }
 
     /// <summary>
     /// The naming sequence a colliding file walks: the plain name, then <c>{stem}_{versionId}</c>

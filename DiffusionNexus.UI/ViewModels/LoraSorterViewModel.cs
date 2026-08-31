@@ -871,9 +871,29 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 
         // ModelFileSyncService stamps every locally-discovered model "???", so on a registered root
         // the header reads below are not a rare row — they can be most of the library. Counted up
-        // front so the progress line can say how far through them the pass is.
-        var placeholderRows = cached.Count(f => LoraPathBuilder.IsPlaceholderBaseModel(f.Version.BaseModelRaw));
+        // front so the progress line can say how far through them the pass is. The second term is
+        // the far smaller support-name cohort (see NeedsAKindHeaderRead): both read a header in this
+        // loop, so both belong in the denominator the progress line divides by.
+        var headerReadRows = cached.Count(f =>
+            LoraPathBuilder.IsPlaceholderBaseModel(f.Version.BaseModelRaw) || NeedsAKindHeaderRead(f));
         var headersRead = 0;
+
+        // Both header-read sites in the loop below report through here, so the line can never show
+        // two denominators or run past 100%. Reported at all because each read is real I/O — a
+        // FileStream open plus up to SafetensorsHeaderReader.MaxHeaderBytes of reads, serially, over
+        // what may well be a NAS. Without it the overlay sits on the static "Computing preview…" for
+        // the whole phase and an exported log has nothing between the enumeration line and the end
+        // of the pass, so slow and hung look identical.
+        void ReportHeaderRead()
+        {
+            progress?.Report($"Reading headers {headersRead}/{headerReadRows}…");
+            if (headersRead % ResolveLogInterval == 0)
+            {
+                _logger?.Info(LogCategory.FileSystem, LogSource,
+                    $"Read {headersRead}/{headerReadRows} headers for rows with no base model, or whose " +
+                    $"file name reads as a support asset ({stopwatch.ElapsedMilliseconds} ms elapsed)");
+            }
+        }
 
         foreach (var f in cached)
         {
@@ -939,31 +959,70 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 // already carries a base model pays nothing.
                 var baseModelRaw = f.Version.BaseModelRaw;
                 string? nameGuess = null;
+                ModelType? fileIdentityKind = null;
                 if (LoraPathBuilder.IsPlaceholderBaseModel(baseModelRaw))
                 {
-                    // Real I/O — a FileStream open plus up to SafetensorsHeaderReader.MaxHeaderBytes
-                    // of reads, serially, over what may well be a NAS. Reported for the same reason
-                    // the unknown-file loop below reports: without it the overlay sits on the static
-                    // "Computing preview…" for the whole phase and an exported log has nothing
-                    // between the enumeration line and the end of the pass, so slow and hung look
-                    // identical.
+                    // Real I/O, reported for the reason ReportHeaderRead states.
                     headersRead++;
-                    progress?.Report($"Reading headers {headersRead}/{placeholderRows}…");
-                    if (headersRead % ResolveLogInterval == 0)
-                    {
-                        _logger?.Info(LogCategory.FileSystem, LogSource,
-                            $"Read {headersRead}/{placeholderRows} headers for rows with no base model " +
-                            $"({stopwatch.ElapsedMilliseconds} ms elapsed)");
-                    }
+                    ReportHeaderRead();
 
                     var fileIdentity = await _metadataResolver.IdentifyFromFileAsync(path, ct);
                     baseModelRaw = fileIdentity.FromHeader ?? baseModelRaw;
                     nameGuess = fileIdentity.FromName;
+
+                    // A DEFAULT is not a reading. AssetKindResolver deliberately answers LORA for a
+                    // .safetensors it could not open — mid-copy, locked, transient IO fault — because a
+                    // name guess on an unreadable container is the one verdict a user cannot undo. That
+                    // makes its LORA ambiguous, and taking it here would DEMOTE a row an earlier,
+                    // successful read had already established: a VAE still carrying the "???" placeholder
+                    // (the normal state for a VAE — it has no base model and never will) would be planned
+                    // into Unknown\ the one pass its file happened to be busy. Leaving the kind null drops
+                    // the row to the rungs below, where its stored Type gets its say. IdentifyModelStep
+                    // declines its own write on the same predicate.
+                    fileIdentityKind = fileIdentity.ContainerWasUnreadable ? null : fileIdentity.AssetKind;
+                }
+
+                // The row's own type when it says something specific — Tasks 6-8 keep those current. LORA is
+                // NOT evidence: it is what discovery stamped on every file it ever found before this feature
+                // existed, so for those rows ask the file itself. A row whose base model is a placeholder was
+                // read from disk above and that READING wins over both — but only when it was one; an
+                // unreadable container left the kind null above and takes no part here.
+                //
+                // But a NAME is not evidence either, and this verdict decides a physical move: a genuine LoRA
+                // called "sdxl_vae_boost.safetensors" would be relocated to <Target>\VAE\ and its row
+                // rewritten to point there. Neither pure rule is safe — trusting the row misfiles a legacy
+                // VAE that Civitai matched (CivitaiMetadataApplier never writes Type, so it keeps a stale
+                // LORA forever), trusting the name misfiles a real LoRA — so a support-asset NAME triggers a
+                // header read and lets the WEIGHTS settle it. Costs one read per suspicious-named row, a
+                // handful in a library, not one per row; and per AssetKindResolver a container we could not
+                // read answers LORA, so the failure case is safe too.
+                ModelType assetKind;
+                if (fileIdentityKind is { } known)
+                {
+                    assetKind = known;
+                }
+                else if (f.Model.Type.IsSupportAsset())
+                {
+                    assetKind = f.Model.Type;
+                }
+                else
+                {
+                    var nameKind = AssetKindClassifier.Classify(Path.GetFileName(path));
+                    if (nameKind.IsSupportAsset())
+                    {
+                        headersRead++;
+                        ReportHeaderRead();
+                        assetKind = await AssetKindResolver.ResolveAsync(path, ct);
+                    }
+                    else
+                    {
+                        assetKind = nameKind;
+                    }
                 }
 
                 candidates.Add(new SortCandidate(path, baseModelRaw, category,
                     f.Version.CivitaiId, f.File.HashSHA256, sizeBytes, SidecarLocator.FindSidecars(path), nameGuess,
-                    SorterAssetKindClassifier.Classify(Path.GetFileName(path))));
+                    assetKind));
                 knownAdded++;
             }
             catch (Exception ex) when (IsSkippableFileFailure(ex))
@@ -1014,7 +1073,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                     ?? LoraPathBuilder.UnknownFolderName;
                 candidates.Add(new SortCandidate(path, metadata.BaseModelRaw, category,
                     metadata.CivitaiVersionId, metadata.Sha256, sizeBytes, SidecarLocator.FindSidecars(path),
-                    metadata.NameGuess, SorterAssetKindClassifier.Classify(Path.GetFileName(path))));
+                    metadata.NameGuess, metadata.AssetKind));
                 unknownAdded++;
             }
             catch (Exception ex) when (IsSkippableFileFailure(ex))
@@ -1062,6 +1121,20 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         => ex is IOException or UnauthorizedAccessException or JsonException;
 
     /// <summary>
+    /// Whether <see cref="ResolveCandidatesAsync"/> will have to open this row's file to settle what
+    /// KIND it is — a row whose own <c>Model.Type</c> proves nothing (i.e. says <c>LORA</c>, the
+    /// blanket stamp every file carried before #527) but whose FILE NAME reads as a support asset.
+    /// </summary>
+    /// <remarks>
+    /// Pure and cheap — no I/O — so it can be run over the whole cached set up front purely to size
+    /// the progress line's denominator, and again per row to decide. Kept as one predicate so those
+    /// two uses cannot drift and leave the line counting past its own total.
+    /// </remarks>
+    private static bool NeedsAKindHeaderRead(InstalledModelFile f)
+        => !f.Model.Type.IsSupportAsset()
+           && AssetKindClassifier.Classify(Path.GetFileName(f.File.LocalPath)).IsSupportAsset();
+
+    /// <summary>
     /// Folds each candidate's name guess into its base model, but only when the user asked for it
     /// and only where nothing better answered. Returns the input list unchanged when the option is
     /// off, so the common path allocates nothing.
@@ -1085,6 +1158,11 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         var fixable = 0;
         foreach (var candidate in candidates)
         {
+            // A support asset is identified — we know exactly what it is — it simply is not a
+            // LoRA, and it has no base model to be missing (#527). Counting one here is what kept
+            // this number from ever reaching zero however good the identity chain got.
+            if (candidate.AssetKind.IsSupportAsset()) continue;
+
             if (!LoraPathBuilder.IsPlaceholderBaseModel(candidate.BaseModelRaw)) continue;
             unidentified++;
             if (candidate.NameGuess is not null) fixable++;
@@ -1099,9 +1177,19 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 
     private static string LoraWord(int count) => count == 1 ? "LoRA" : "LoRAs";
 
-    /// <summary>How well this candidate's destination folder is known, as the tree reports it.</summary>
+    /// <summary>
+    /// The mark a candidate contributes to its own row and to every folder above it.
+    /// </summary>
+    /// <remarks>
+    /// A support asset is <see cref="SortPreviewIdentity.Identified"/> whatever its base model says
+    /// (#527). The three marks answer "is this file's destination known", and a VAE's destination is
+    /// its kind — it has no base model, never will, and asking it the base-model question would
+    /// leave the new VAE\ folder permanently ✗. A wrong question answered honestly is still
+    /// misleading.
+    /// </remarks>
     private static SortPreviewIdentity IdentityOf(SortCandidate candidate)
-        => LoraPathBuilder.IsPlaceholderBaseModel(candidate.BaseModelRaw) ? SortPreviewIdentity.Unidentified
+        => candidate.AssetKind.IsSupportAsset() ? SortPreviewIdentity.Identified
+            : LoraPathBuilder.IsPlaceholderBaseModel(candidate.BaseModelRaw) ? SortPreviewIdentity.Unidentified
             : candidate.BaseModelIsGuess ? SortPreviewIdentity.Guessed
             : SortPreviewIdentity.Identified;
 

@@ -220,6 +220,48 @@ public sealed class IdentifyModelStep : ISyncStep
             // Not on Civitai and no sidecar — read the file's own header, then guess from its name.
             var header = await SafetensorsHeaderReader.TryReadAsync(candidate.LocalPath, ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
+
+            // What the file IS, from the weights we just read (#527). Distinct from what it was
+            // trained on, which is what the rungs below answer. Corrects rows the name-only
+            // backfill guessed at, and names support assets discovered before the feature existed.
+            //
+            // A model Civitai matched can still reach this branch — a duplicate-page-id row with a
+            // null CivitaiId (SelectIdentifyCandidatesAsync's CivitaiId == null filter lets it
+            // through), or an explicit per-model re-check (includeMatched: true, which skips that
+            // filter entirely) whose hash lookup happens to miss on THIS run — so it is the
+            // IsUserEdited check below, not branch-unreachability, that keeps a user-authored Type
+            // from being overwritten: this only ever moves a row BETWEEN our own verdicts.
+            var kind = AssetKindResolver.Resolve(header, Path.GetFileName(candidate.LocalPath));
+
+            // A safetensors container we FAILED to open answers LORA from AssetKindResolver, and
+            // that answer is a safe default rather than a reading — so it may not unstamp a support
+            // kind an earlier, successful reading established. (A Models-scoped run is the one path
+            // that offers a support-typed row here at all: SelectIdentifyCandidatesAsync filters
+            // every other scope to LoraFamily.) For a row already saying LORA the default changes
+            // nothing either way, so declining the write outright is the whole rule.
+            var containerUnreadable = AssetKindResolver.ContainerWasUnreadable(header, candidate.LocalPath);
+
+            // Whether the stored Type is ours to correct — and today it always is unless the user
+            // authored it. Model.Type has exactly two writers in the whole codebase, this line and
+            // discovery's own AssetKindResolver call; CivitaiMetadataApplier and
+            // SidecarMetadataApplier both write name, creator, tags, images, ids and hashes and
+            // leave Type alone. So a matched row's LORA is OUR default, not an upstream verdict.
+            //
+            // This used to also require Source != CivitaiApi, which protected a value Civitai never
+            // set while blocking the correction on every Civitai-touched row. Three real text
+            // encoders sat behind it as LoRAs — ministral-3-3b, ViT-L-14-…-TE-only-HF and
+            // qwen_3_4b, the last carrying Source=CivitaiApi with a NULL CivitaiId, i.e. a row
+            // Civitai had never identified at all. Their weights say TextEncoder unambiguously.
+            //
+            // When Civitai's model type does start being written (#550), an authoritative third
+            // writer will exist and this guard will need a signal saying which rows it authored.
+            // The Source column is not that signal and never was: it records where a model's
+            // METADATA came from, not who decided its kind.
+            var typeIsOurs = !dbModel.IsUserEdited;
+            if (typeIsOurs && !containerUnreadable && dbModel.Type != kind
+                && (dbModel.Type == ModelType.LORA || dbModel.Type.IsSupportAsset()))
+                dbModel.Type = kind;
+
             var headerCheckedAt = header is not null ? now : (DateTimeOffset?)null;
             var label = header is not null ? BaseModelHeaderMap.Map(header) : null;
             var rung = label is not null ? SyncOutcome.Header : (SyncOutcome?)null;
