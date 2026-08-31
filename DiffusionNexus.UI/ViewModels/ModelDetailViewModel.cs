@@ -428,9 +428,12 @@ public partial class ModelDetailViewModel : ViewModelBase
         // through the website only. Mirror the Browse tab: one preflight dialog offering
         // waitlist/website instead of letting the transfer die with a red failure line.
         // Checked before the token prompt — no point demanding a key for a refused download.
-        if (tab.CivitaiVersion.IsEarlyAccessActive()
-            && !ApplyGatedVersionChoice(await ShowGatedVersionPreflightAsync(tab), tab))
-            return;
+        if (tab.CivitaiVersion.IsEarlyAccessActive())
+        {
+            var outcome = await CreateGatedPreflight().RunAsync(GatedSubjectFor(tab));
+            if (outcome.StatusMessage is not null) StatusMessage = outcome.StatusMessage;
+            if (!outcome.Proceed) return;
+        }
 
         // Ensure a Civitai API token is configured before downloading.
         // If missing, show the token dialog so the user can paste one.
@@ -515,107 +518,34 @@ public partial class ModelDetailViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Shows the Browse tab's pre-download dialog for one early-access/paywalled version.
-    /// Fails closed: with no window to own the dialog (headless host, or MainWindow briefly
-    /// unavailable — elsewhere the app treats that as an error, see the DialogService
-    /// registration) the answer is Cancel plus a status line, never a silent bypass into the
-    /// doomed token-prompt/transfer path this gate exists to prevent.
+    /// The shared single-version preflight (also used by the toolbar's Download-LoRA dialog
+    /// path), built per call so it always carries this panel's current <see cref="UrlOpener"/>.
     /// </summary>
-    private async Task<DownloadPreflightResult> ShowGatedVersionPreflightAsync(CivitaiVersionTabItem tab)
-    {
-        var owner = (Avalonia.Application.Current?.ApplicationLifetime
-            as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.MainWindow;
-        if (owner is null)
-        {
-            StatusMessage = $"'{ModelName} — {tab.Label}' is paywalled on Civitai and the options "
-                + "dialog could not be shown — download not attempted.";
-            _logger?.Warn(LogCategory.Download, "LoraDownload",
-                $"Gated download blocked without dialog (no owner window): {ModelName} — {tab.Label}");
-            return DownloadPreflightResult.Cancel;
-        }
+    private GatedDownloadPreflight CreateGatedPreflight()
+        => new(_waitlist, _logger) { UrlOpener = UrlOpener };
 
-        var title = $"{ModelName} — {tab.Label}";
-        var dialog = tab.IsPermanentlyPaid
-            ? new DownloadPreflightDialog([], permanentTitles: [title])
-            : new DownloadPreflightDialog([title]);
-        try
-        {
-            await dialog.ShowDialog(owner);
-        }
-        catch (Exception ex)
-        {
-            _logger?.Warn(LogCategory.Download, "LoraDownload",
-                $"Gated-download dialog failed for {ModelName} — {tab.Label}: {ex.Message}");
-            return DownloadPreflightResult.Cancel;
-        }
-        return dialog.Result;
-    }
+    /// <summary>
+    /// This panel's facts about the gated version. The version DTO names its own model; the
+    /// cached fetch is the fallback for payloads (older sidecars) that omit it.
+    /// </summary>
+    private GatedDownloadPreflight.Subject GatedSubjectFor(CivitaiVersionTabItem tab) => new(
+        ModelId: tab.CivitaiVersion.ModelId > 0 ? tab.CivitaiVersion.ModelId : CachedCivitaiModel?.Id ?? 0,
+        ModelName: ModelName,
+        VersionLabel: tab.Label,
+        Version: tab.CivitaiVersion,
+        Category: CategoryDisplay,
+        IsNsfw: CachedCivitaiModel is { } model && Services.CivitaiBrowser.CivitaiNsfwPolicy.IsCardNsfw(model));
 
     /// <summary>
     /// Applies the user's choice from the gated-version dialog. Returns true only when the
-    /// download should still proceed. The sibling of <c>CivitaiBrowserViewModel.ApplyPreflightChoice</c>,
-    /// collapsed to the single version this panel downloads at a time; internal so every branch is
-    /// unit-testable without showing the dialog.
+    /// download should still proceed. Thin wrapper over the shared preflight, kept so tests
+    /// can prove this panel's state (name, category, cached model) feeds the choice correctly.
     /// </summary>
     internal bool ApplyGatedVersionChoice(DownloadPreflightResult choice, CivitaiVersionTabItem tab)
     {
-        // The version DTO names its own model; the cached fetch is the fallback for
-        // payloads (older sidecars) that omit it.
-        var modelId = tab.CivitaiVersion.ModelId > 0
-            ? tab.CivitaiVersion.ModelId
-            : CachedCivitaiModel?.Id ?? 0;
-        var isNsfw = CachedCivitaiModel is { } model
-            && Services.CivitaiBrowser.CivitaiNsfwPolicy.IsCardNsfw(model);
-
-        switch (choice)
-        {
-            case DownloadPreflightResult.DownloadAnyway:
-                return true;
-
-            case DownloadPreflightResult.AddToWaitlist:
-                if (_waitlist is null)
-                {
-                    _logger?.Warn(LogCategory.Download, "CivitaiWaitlist",
-                        $"Waitlist unavailable — '{ModelName} — {tab.Label}' not added.");
-                    return false;
-                }
-                StatusMessage = _waitlist.TryAdd(modelId, ModelName, CategoryDisplay, isNsfw, tab.CivitaiVersion)
-                    ? $"Added '{ModelName} — {tab.Label}' to the waitlist (Browse Civitai › Waitlist tab)."
-                    : $"'{ModelName} — {tab.Label}' is already on the waitlist.";
-                return false;
-
-            case DownloadPreflightResult.OpenWebsite:
-                if (modelId > 0)
-                {
-                    // civitai.com hides NSFW from unauthenticated visitors; route those to the mirror.
-                    var host = isNsfw ? "civitai.red" : "civitai.com";
-                    OpenUrl($"https://{host}/models/{modelId}?modelVersionId={tab.CivitaiVersion.Id}");
-                }
-                else
-                {
-                    StatusMessage = $"No Civitai model id for '{ModelName}' — run 'Download Metadata' first.";
-                    _logger?.Warn(LogCategory.Download, "LoraDownload",
-                        $"Cannot open Civitai page: no model id for '{ModelName} — {tab.Label}'.");
-                }
-                return false;
-
-            default:
-                _logger?.Info(LogCategory.Download, "LoraDownload",
-                    $"Gated download declined by user: {ModelName} — {tab.Label}");
-                return false;
-        }
-    }
-
-    private void OpenUrl(string url)
-    {
-        try
-        {
-            UrlOpener(url);
-        }
-        catch (Exception ex)
-        {
-            _logger?.Warn(LogCategory.General, "LoraDownload", $"Failed to launch browser for {url}: {ex.Message}");
-        }
+        var outcome = CreateGatedPreflight().ApplyChoice(choice, GatedSubjectFor(tab));
+        if (outcome.StatusMessage is not null) StatusMessage = outcome.StatusMessage;
+        return outcome.Proceed;
     }
 
     /// <summary>

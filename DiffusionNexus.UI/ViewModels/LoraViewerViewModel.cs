@@ -4,6 +4,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Civitai;
+using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
@@ -1455,6 +1456,17 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         if (!result.Confirmed || result.Version is null || string.IsNullOrWhiteSpace(result.DownloadUrl) || string.IsNullOrWhiteSpace(result.TargetFolder))
             return;
 
+        // Same gate as the detail panel: a gated version can't be downloaded by the app
+        // (Civitai serves paid files through the website only), so offer the shared
+        // waitlist/website preflight instead of running a transfer that ends in a red line.
+        if (result.Version.IsEarlyAccessActive())
+        {
+            var preflight = new GatedDownloadPreflight(BrowserViewModel.Waitlist, _logger);
+            var outcome = await preflight.RunAsync(GatedSubjectFrom(result));
+            if (outcome.StatusMessage is not null) SyncStatus = outcome.StatusMessage;
+            if (!outcome.Proceed) return;
+        }
+
         var fileName = !string.IsNullOrWhiteSpace(result.FileName)
             ? result.FileName
             : $"{result.ModelName}_{result.Version.Name}.safetensors";
@@ -1500,6 +1512,20 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             });
         });
     }
+
+    /// <summary>
+    /// Maps the URL dialog's result onto the shared preflight subject. The version DTO names
+    /// its own model; the dialog's resolved model id is the fallback for payloads that omit
+    /// it, and the label follows the detail tabs' rule (version name, else base model).
+    /// Internal so the mapping is testable without showing either dialog.
+    /// </summary>
+    internal static GatedDownloadPreflight.Subject GatedSubjectFrom(Views.Dialogs.DownloadLoraResult result) => new(
+        ModelId: result.Version!.ModelId > 0 ? result.Version.ModelId : result.ModelId,
+        ModelName: result.ModelName,
+        VersionLabel: string.IsNullOrWhiteSpace(result.Version.Name) ? result.Version.BaseModel : result.Version.Name,
+        Version: result.Version,
+        Category: result.Category,
+        IsNsfw: result.IsNsfw);
 
     /// <summary>
     /// Rebuilds the Installed tab whenever any surface adds a model to the library — the

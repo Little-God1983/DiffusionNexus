@@ -78,6 +78,22 @@ public partial class DownloadLoraDialogViewModel : ObservableObject
     [ObservableProperty]
     private string _fileSizeDisplay = string.Empty;
 
+    /// <summary>True when the resolved version is early-access gated right now (paywalled on Civitai).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowEarlyAccessNotice))]
+    private bool _isEarlyAccess;
+
+    /// <summary>True when the resolved version is paywalled forever.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowEarlyAccessNotice))]
+    private bool _isPermanentlyPaid;
+
+    /// <summary>
+    /// Purple Early Access notice only for a gate that actually expires; permanently paid
+    /// versions get the red notice instead. Same rule as the browser and the detail panel.
+    /// </summary>
+    public bool ShowEarlyAccessNotice => IsEarlyAccess && !IsPermanentlyPaid;
+
     [ObservableProperty]
     private bool _isDownloadToExisting = true;
 
@@ -202,6 +218,8 @@ public partial class DownloadLoraDialogViewModel : ObservableObject
         ResolvedVersion = null;
         Category = string.Empty;
         StatusMessage = null;
+        IsEarlyAccess = false;
+        IsPermanentlyPaid = false;
         OnDownloadStateChanged();
 
         if (_civitaiClient is null)
@@ -275,6 +293,8 @@ public partial class DownloadLoraDialogViewModel : ObservableObject
             ResolvedModel = model;
             ResolvedVersion = version;
             Category = InferCategoryFromTags(model.Tags) ?? string.Empty;
+            IsEarlyAccess = version.IsEarlyAccessActive();
+            IsPermanentlyPaid = version.IsPermanentlyPaid();
 
             PopulatePreview(model, version, primaryFile);
             await LoadPreviewImageAsync(model, version);
