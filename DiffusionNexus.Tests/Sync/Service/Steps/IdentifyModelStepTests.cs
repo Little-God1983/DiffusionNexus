@@ -736,17 +736,27 @@ public sealed class IdentifyModelStepTests : IDisposable
     }
 
     /// <summary>
-    /// I2 (Task 8 review fix). A duplicate-page-id row — <c>CivitaiId</c> null but <c>Source</c>
-    /// already <see cref="DataSource.CivitaiApi"/> from an earlier match, the same shape
-    /// <see cref="Execute_HeaderWriteDoesNotRelabelACivitaiSourcedModel"/> exercises for the
-    /// base-model label — is NOT excluded by <c>SelectIdentifyCandidatesAsync</c>'s
-    /// <c>CivitaiId == null</c> filter, so it reaches this branch on an ordinary library run
-    /// whenever this run's own hash lookup misses. The kind guard must not treat that model's
-    /// <c>Type</c> as ours to move just because it is LORA and the header disagrees — <c>Source</c>
-    /// is what protects it, not branch-unreachability.
+    /// <b>This test asserted the opposite until the #527 smoke, and the assertion was wrong.</b> It
+    /// was written for the Task 8 guard <c>Source != DataSource.CivitaiApi</c>, on the reasoning
+    /// that a Civitai-sourced row carries an authoritative <c>Type</c> that is not ours to move.
+    /// Nothing in a Civitai payload has ever written <c>Model.Type</c>: the column has exactly two
+    /// writers in the whole codebase, this step and discovery's own <c>AssetKindResolver</c> call,
+    /// while <c>CivitaiMetadataApplier</c> and <c>SidecarMetadataApplier</c> write name, creator,
+    /// tags, images, ids and hashes and leave <c>Type</c> alone. So the guard protected a value
+    /// Civitai never set, and blocked the correction on every Civitai-touched row — three real text
+    /// encoders stayed LORA behind it, one of them (<c>qwen_3_4b</c>) carrying <c>CivitaiApi</c>
+    /// with a NULL <c>CivitaiId</c>, i.e. a row Civitai had never identified at all.
+    /// <para>
+    /// The shape is still worth pinning, because it is still the shape that reaches this branch on
+    /// an ordinary library run: a duplicate-page-id row, <c>Source</c> already
+    /// <see cref="DataSource.CivitaiApi"/> from an earlier match and <c>CivitaiId</c> still null, is
+    /// NOT excluded by <c>SelectIdentifyCandidatesAsync</c>'s <c>CivitaiId == null</c> filter. What
+    /// changed is the expected answer. See #550 for the writer that would make Civitai's type
+    /// authoritative — and would need a signal saying so, which the <c>Source</c> column is not.
+    /// </para>
     /// </summary>
     [Fact]
-    public async Task Execute_HeaderDoesNotOverwriteACivitaiSourcedModelsType()
+    public async Task Execute_HeaderCorrectsACivitaiSourcedModelsType()
     {
         var path = NewModelFile("civitai-sourced-type.safetensors", Safetensors(Tensors("post_quant_conv.weight")));
         var (modelId, _) = await SeedAsync("civitai-sourced-type", path);
@@ -764,8 +774,8 @@ public sealed class IdentifyModelStepTests : IDisposable
         var items = await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None);
         await step.ExecuteOneAsync(items.Single(i => i.ModelId == modelId), apiKey: null, CancellationToken.None);
 
-        (await LoadTypeAsync(modelId)).Should().Be(ModelType.LORA,
-            "a Civitai-sourced model's Type is not ours to move, even though the header disagrees");
+        (await LoadTypeAsync(modelId)).Should().Be(ModelType.VAE,
+            "the weights are the only thing that has ever decided this column, whatever the Source says");
     }
 
     /// <summary>

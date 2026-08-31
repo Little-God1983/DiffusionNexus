@@ -154,11 +154,10 @@ public interface IModelSyncService
     Task<string> ComputeFileHashAsync(string filePath, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// One-shot reclassification of rows that predate support-asset detection (#527), scoped to the
-    /// files a header cannot help with — a pickle (<c>.ckpt</c>/<c>.pt</c>/<c>.pth</c>), named from
-    /// its FILE NAME only. A safetensors container (<c>.safetensors</c>/<c>.sft</c>) is left exactly
-    /// as it is: it is decided by <c>IdentifyModelStep</c> from its weights instead. Returns how
-    /// many rows changed.
+    /// One-shot reclassification of rows that predate support-asset detection (#527), in two arms
+    /// that partition the legacy library by the evidence each file can offer: a pickle
+    /// (<c>.ckpt</c>/<c>.pt</c>/<c>.pth</c>) is named from its FILE NAME, a safetensors container
+    /// (<c>.safetensors</c>/<c>.sft</c>) from its WEIGHTS. Returns how many rows changed in total.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <param name="excludeModelIds">
@@ -168,22 +167,36 @@ public interface IModelSyncService
     /// accurate rung — moments earlier, and looks identical to a genuinely old, never-classified
     /// row to this query (neither has a <c>ModelSyncState</c> row yet). Re-examining a
     /// just-created row here by name alone can only make an already-correct weight-based verdict
-    /// worse, never better. Null (the default) excludes nothing — every other caller, including
-    /// this method's own direct tests, has no such batch to protect.
+    /// worse, never better; the container arm would merely reproduce the identical verdict at the
+    /// cost of a second header read. Null (the default) excludes nothing — every other caller,
+    /// including this method's own direct tests, has no such batch to protect.
     /// </param>
     /// <remarks>
     /// A pickle has no readable header at all, so its file name is the only evidence this pass — or
     /// anything else — will ever have for it; that is where a name guess is warranted, and its
-    /// result is final. A safetensors container is a different case entirely, not a cheaper version
-    /// of the same one: reading a header per row here would cost minutes on a large library over a
-    /// NAS, but that read does not need to happen in THIS pass, because it already happens for free
-    /// the next time <c>IdentifyModelStep</c> looks at the row — every row this candidate query
-    /// selects is <c>NotIdentified</c>/<c>None</c>, i.e. already due for that step. Guessing a
-    /// safetensors row's kind from its name here, on weaker evidence, only to have the real answer
-    /// overwrite it moments or days later, is strictly worse than never guessing at all — so this
-    /// pass skips every safetensors row outright, regardless of what its name says. Idempotent and
-    /// self-terminating for the pickles it does classify — a row reclassified to VAE no longer
-    /// satisfies the candidate query's <c>Type == LORA</c>.
+    /// result is final. A safetensors container is never guessed at from its name, on weaker
+    /// evidence, when its weights can be read: that asymmetry is the design's, not this method's.
+    /// <para>
+    /// <b>The container arm was originally omitted, and the argument for omitting it was wrong.</b>
+    /// It ran: a header read here would cost minutes on a large library over a NAS, and does not
+    /// need to happen in this pass anyway, because every row the pickle candidate query selects is
+    /// <c>NotIdentified</c>/<c>None</c> — already due for <c>IdentifyModelStep</c>, which reads the
+    /// header for free. Both halves failed. The scope claim was circular: it described the rows THAT
+    /// query selects, while the containers at issue are the ones it does not, and a <c>Matched</c>
+    /// row is terminal for the retry policy, so <c>IdentifyModelStep</c> never selects it again —
+    /// its correction is unreachable for exactly the rows that need it, permanently. Three real text
+    /// encoders sat in that state behind a Civitai match, unambiguous from their weights and read by
+    /// nothing. The cost claim was simply unmeasured: a sweep of one real 1553-container library
+    /// takes 4.5 s, about 3 ms a file, because a safetensors header is a small JSON block at the
+    /// front of the file and the tensor payload is never touched.
+    /// </para>
+    /// <para>
+    /// Both arms are idempotent and self-terminating, by different means. A pickle reclassified to
+    /// VAE no longer satisfies its candidate query's <c>Type == LORA</c>. A container is stamped
+    /// <c>ModelSyncState.HeaderCheckedAt</c> whatever its weights said — including "nothing" —
+    /// which is what makes the read once per file EVER rather than once per pass, and what stops a
+    /// container whose keys match no rung from being re-read forever.
+    /// </para>
     /// </remarks>
     Task<int> ReclassifySupportAssetsAsync(
         CancellationToken cancellationToken = default,

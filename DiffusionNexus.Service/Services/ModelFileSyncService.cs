@@ -23,6 +23,14 @@ public class ModelFileSyncService : IModelSyncService
     private const int PartialHashBytes = 10 * 1024 * 1024;
 
     /// <summary>
+    /// How many rows the header reclassify arm commits at a time. Progress is committed in batches
+    /// so a cancelled sweep of a large library converges instead of restarting from nothing: every
+    /// row it examines is stamped <c>HeaderCheckedAt</c>, so a committed batch is a batch that will
+    /// never be read again. Matches <c>SyncStateInitializer</c>'s own batch size.
+    /// </summary>
+    private const int HeaderReclassifyBatchSize = 200;
+
+    /// <summary>
     /// Supported model file extensions — the shared Sortable set, so what the library DISCOVERS and
     /// what the sorter enumerates cannot diverge. They had: a ".sft" was visible to the sorter and
     /// still never got a DB row, so the sorter would file a model the Viewer could never show.
@@ -609,6 +617,26 @@ public class ModelFileSyncService : IModelSyncService
         CancellationToken cancellationToken = default,
         IReadOnlySet<int>? excludeModelIds = null)
     {
+        // Two arms, partitioning the legacy library by the only thing that decides which rung may
+        // touch a row: what evidence the file can offer. A pickle has no header, so its NAME is all
+        // there will ever be; a safetensors container has weights, so its name must never be
+        // consulted. Between them every legacy row is reached exactly once, by the only rung that
+        // has any evidence for it.
+        var byName = await ReclassifyPicklesByNameAsync(excludeModelIds, cancellationToken).ConfigureAwait(false);
+        var byWeights = await ReclassifyContainersByHeaderAsync(excludeModelIds, cancellationToken).ConfigureAwait(false);
+
+        return byName + byWeights;
+    }
+
+    /// <summary>
+    /// The name arm — a legacy PICKLE row (<c>.ckpt</c>/<c>.pt</c>/<c>.pth</c>) named from its file
+    /// name, which is the only evidence such a file will ever offer. See
+    /// <see cref="IModelSyncService.ReclassifySupportAssetsAsync"/> for why that restriction is
+    /// load-bearing rather than merely cheap.
+    /// </summary>
+    private async Task<int> ReclassifyPicklesByNameAsync(
+        IReadOnlySet<int>? excludeModelIds, CancellationToken cancellationToken)
+    {
         var candidates = await _unitOfWork.Models
             .GetSupportAssetBackfillCandidatesAsync(cancellationToken)
             .ConfigureAwait(false);
@@ -647,6 +675,100 @@ public class ModelFileSyncService : IModelSyncService
         }
 
         if (changed > 0)
+            await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        return changed;
+    }
+
+    /// <summary>
+    /// The weights arm — a legacy safetensors row named from its own tensor keys, once per file
+    /// ever.
+    /// </summary>
+    /// <remarks>
+    /// <c>IdentifyModelStep</c> was meant to cover every container: it corrects a row's kind
+    /// whenever it reads that file's weights. But it only ever reaches rows a bulk run SELECTS, and
+    /// <c>Matched</c> is terminal for the retry policy, so a support asset that Civitai happened to
+    /// match is re-read by nothing and keeps its <c>LORA</c> stamp permanently. Three real text
+    /// encoders sat in exactly that state — <c>ministral-3-3b</c>, <c>ViT-L-14-…-TE-only-HF</c> and
+    /// <c>qwen_3_4b</c> — all three unambiguous from their weights, none of them reachable. This
+    /// arm is the one pass that does not care how a row was identified.
+    /// <para>
+    /// Cost is one bounded header read per file, EVER, gated on
+    /// <c>ModelSyncState.HeaderCheckedAt</c>: a full sweep of one real 1553-container library
+    /// measured 4.5 s, about 3 ms a file. The header is a small JSON block at the front of the
+    /// container and <see cref="SafetensorsHeaderReader"/> never touches the tensor payload behind
+    /// it, so this is nothing like the partial hash the discovery loop already pays.
+    /// </para>
+    /// <para>
+    /// Only ever <c>LORA</c> → support asset: the candidate query admits no other type, and a
+    /// verdict of LoRA — or no verdict at all — leaves such a row exactly as it was.
+    /// </para>
+    /// </remarks>
+    private async Task<int> ReclassifyContainersByHeaderAsync(
+        IReadOnlySet<int>? excludeModelIds, CancellationToken cancellationToken)
+    {
+        var candidates = await _unitOfWork.Models
+            .GetHeaderReclassifyCandidatesAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var changed = 0;
+        var uncommitted = 0;
+
+        foreach (var model in candidates)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // Same reason as the name arm: a row DiscoverNewFilesAsync created in THIS call was
+            // resolved from its weights moments ago by the very same AssetKindResolver, so reading
+            // it again here can only cost I/O — it cannot improve on an answer it would reproduce.
+            if (excludeModelIds is not null && excludeModelIds.Contains(model.Id)) continue;
+
+            // The primary file first, and only a container: a model whose primary is a pickle but
+            // which also carries a .safetensors satisfies the candidate query, and the container is
+            // the file this arm has anything to say about.
+            var path = model.Versions
+                .SelectMany(v => v.Files)
+                .Where(f => !string.IsNullOrEmpty(f.LocalPath)
+                            && ModelFileExtensions.Matches(f.FileName, ModelFileExtensions.SafetensorsContainers))
+                .OrderByDescending(f => f.IsPrimary)
+                .Select(f => f.LocalPath!)
+                .FirstOrDefault(File.Exists);
+            if (path is null) continue;
+
+            var header = await SafetensorsHeaderReader.TryReadAsync(path, cancellationToken).ConfigureAwait(false);
+
+            // Only a header we actually READ closes the question for this file. A container we could
+            // not open — still copying onto a NAS, held open by a trainer, a transient IO fault —
+            // stays unstamped so the next pass asks again; stamping it would settle the row's kind
+            // forever on a failure that had nothing to do with its contents. This is the same rule
+            // AssetKindResolver.ContainerWasUnreadable states for the callers that write a verdict.
+            if (header is null) continue;
+
+            var kind = AssetKindResolver.Resolve(header, Path.GetFileName(path));
+            if (kind.IsSupportAsset())
+            {
+                model.Type = kind;
+                changed++;
+            }
+
+            // Stamped whatever the verdict was, including "the weights say nothing": the question
+            // this arm asks has been asked, and asking it again would read the same bytes for the
+            // same answer. The candidate query is what turns that into termination.
+            var now = DateTimeOffset.UtcNow;
+            if (model.SyncState is { } state)
+            {
+                state.HeaderCheckedAt = now;
+                state.UpdatedAt = now;
+            }
+
+            if (++uncommitted >= HeaderReclassifyBatchSize)
+            {
+                await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                uncommitted = 0;
+            }
+        }
+
+        if (uncommitted > 0)
             await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
         return changed;

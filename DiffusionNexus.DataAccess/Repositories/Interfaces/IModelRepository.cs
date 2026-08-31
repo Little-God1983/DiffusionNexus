@@ -177,6 +177,40 @@ public interface IModelRepository : IRepository<Model>
     Task<IReadOnlyList<Model>> GetSupportAssetBackfillCandidatesAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Rows still carrying discovery's old blanket <c>LORA</c> stamp whose safetensors WEIGHTS have
+    /// never been read (#527) — the legacy cohort nothing else will ever revisit.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately filtered by neither <c>Source</c> nor sync outcome, and that is the whole point.
+    /// <c>IdentifyModelStep</c> corrects a row's kind whenever it reads that file's weights, but it
+    /// only ever reaches rows a bulk run selects, and <c>Matched</c> is terminal for the retry
+    /// policy — so a support asset Civitai happened to match is re-read by nothing, ever, and keeps
+    /// its wrong type permanently. Three real text encoders sat in exactly that state behind a
+    /// Civitai match (see the smoke notes on PR #549).
+    /// <para>
+    /// Bounded by <c>ModelSyncState.HeaderCheckedAt</c> rather than by an outcome, which makes this
+    /// one header read per file EVER rather than per run, and empties the pass as it goes. Rows with
+    /// no state row at all are excluded rather than given one here: <c>SyncStateInitializer</c> is
+    /// what creates those, deriving each from the model's own history, and a bare row Added by this
+    /// query's caller would be <c>None</c>/unstamped — i.e. immediately due for a metadata check,
+    /// which is the first-run herd <c>SyncStateDeriver</c> exists to prevent. The initializer runs
+    /// at the head of every sync plan, so such a row is simply picked up by the next pass.
+    /// </para>
+    /// <para>
+    /// Restricted to safetensors containers, the mirror image of
+    /// <see cref="GetSupportAssetBackfillCandidatesAsync"/>'s pickle restriction: this pass reads
+    /// weights and a pickle has none, that one guesses from a name and a container must never be
+    /// guessed at. Between them every legacy row is reached exactly once, by the only rung that has
+    /// any evidence for it.
+    /// </para>
+    /// <para>
+    /// Excludes <c>IsUserEdited</c> rows for the reason every rung does: a type the user set by hand
+    /// is an answer, not a blank.
+    /// </para>
+    /// </remarks>
+    Task<IReadOnlyList<Model>> GetHeaderReclassifyCandidatesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// The <c>LocalPath</c>, validity flag and verification timestamp of every file belonging to a
     /// support-asset model (VAE, ControlNet, Upscaler, TextEncoder) — nothing else. Backs
     /// <c>ModelFileSyncService.CountExcludedSupportAssetsAsync</c> (#527): that count only ever

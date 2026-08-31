@@ -229,9 +229,8 @@ public sealed class IdentifyModelStep : ISyncStep
             // null CivitaiId (SelectIdentifyCandidatesAsync's CivitaiId == null filter lets it
             // through), or an explicit per-model re-check (includeMatched: true, which skips that
             // filter entirely) whose hash lookup happens to miss on THIS run — so it is the
-            // Source/IsUserEdited check below, not branch-unreachability, that keeps an
-            // authoritative or user-authored Type from being overwritten: this only ever moves a
-            // row BETWEEN our own weight-derived verdicts.
+            // IsUserEdited check below, not branch-unreachability, that keeps a user-authored Type
+            // from being overwritten: this only ever moves a row BETWEEN our own verdicts.
             var kind = AssetKindResolver.Resolve(header, Path.GetFileName(candidate.LocalPath));
 
             // A safetensors container we FAILED to open answers LORA from AssetKindResolver, and
@@ -242,7 +241,23 @@ public sealed class IdentifyModelStep : ISyncStep
             // nothing either way, so declining the write outright is the whole rule.
             var containerUnreadable = AssetKindResolver.ContainerWasUnreadable(header, candidate.LocalPath);
 
-            var typeIsOurs = dbModel.Source != DataSource.CivitaiApi && !dbModel.IsUserEdited;
+            // Whether the stored Type is ours to correct — and today it always is unless the user
+            // authored it. Model.Type has exactly two writers in the whole codebase, this line and
+            // discovery's own AssetKindResolver call; CivitaiMetadataApplier and
+            // SidecarMetadataApplier both write name, creator, tags, images, ids and hashes and
+            // leave Type alone. So a matched row's LORA is OUR default, not an upstream verdict.
+            //
+            // This used to also require Source != CivitaiApi, which protected a value Civitai never
+            // set while blocking the correction on every Civitai-touched row. Three real text
+            // encoders sat behind it as LoRAs — ministral-3-3b, ViT-L-14-…-TE-only-HF and
+            // qwen_3_4b, the last carrying Source=CivitaiApi with a NULL CivitaiId, i.e. a row
+            // Civitai had never identified at all. Their weights say TextEncoder unambiguously.
+            //
+            // When Civitai's model type does start being written (#550), an authoritative third
+            // writer will exist and this guard will need a signal saying which rows it authored.
+            // The Source column is not that signal and never was: it records where a model's
+            // METADATA came from, not who decided its kind.
+            var typeIsOurs = !dbModel.IsUserEdited;
             if (typeIsOurs && !containerUnreadable && dbModel.Type != kind
                 && (dbModel.Type == ModelType.LORA || dbModel.Type.IsSupportAsset()))
                 dbModel.Type = kind;

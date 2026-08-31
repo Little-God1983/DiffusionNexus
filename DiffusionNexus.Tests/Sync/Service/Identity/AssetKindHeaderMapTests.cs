@@ -523,4 +523,65 @@ public sealed class AssetKindHeaderMapTests
     [InlineData(null, "blocks.0.attn.k.weight", "blocks.0.ffn.fc1.weight")]
     public void TheVerdictsTheSmokeFoundCorrectAreUnchanged(ModelType? expected, string first, string second)
         => AssetKindHeaderMap.Map(Header(first, second)).Should().Be(expected);
+
+    /// <summary>
+    /// The regression the second #527 smoke found, and the reason every text-encoder marker is now
+    /// matched as a key ROOT PREFIX. These are the real first keys of two 13.8 GB SDXL/Pony
+    /// checkpoints (2515 tensors each): the conditioner block leads the header, so the whole 64-key
+    /// sample is "conditioner.embedders.0.transformer.text_model.…" and carries no
+    /// <c>first_stage_model.</c> or <c>model.diffusion_model.</c> key at all — the composite guard
+    /// above has nothing to fire on, exactly as it has nothing to fire on for HiDream. A free
+    /// "text_model.encoder.layers" substring then named both files TextEncoder: a support asset,
+    /// i.e. gone from the Viewer, unselectable by bulk sync, and handed to the sorter as a file to
+    /// physically move.
+    /// <para>
+    /// It went unseen because nothing re-read an already-<c>Matched</c> row; it became reachable
+    /// the moment <c>ModelFileSyncService</c>'s header reclassify arm existed. Anchoring is what
+    /// stops it, and it is not a heuristic: a safetensors key set is the flattened module path of
+    /// the SAVED TOP-LEVEL OBJECT, so a bundled encoder is always reached through the attribute
+    /// holding it and always sits at depth 2 or deeper.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ACheckpointSampledEntirelyAtItsConditionerBlockSaysNothing()
+    {
+        var header = Header(
+            "conditioner.embedders.0.transformer.text_model.embeddings.token_embedding.weight",
+            "conditioner.embedders.0.transformer.text_model.encoder.layers.0.layer_norm1.bias",
+            "conditioner.embedders.0.transformer.text_model.encoder.layers.0.mlp.fc1.weight");
+
+        AssetKindHeaderMap.Map(header).Should().BeNull();
+    }
+
+    /// <summary>
+    /// The rule stated as a rule rather than as one file's bug: wherever an encoder-shaped path is
+    /// NESTED under the attribute that holds it, the container is not that encoder. Each of these is
+    /// a real bundling spelling — SDXL's conditioner, a diffusers pipeline's text_encoder, HiDream's
+    /// bare "model." and Chatterbox's TTS backbone — and none of them carries a composite-checkpoint
+    /// needle, so anchoring is the only thing standing between them and a support-asset stamp.
+    /// </summary>
+    [Theory]
+    [InlineData("conditioner.embedders.0.transformer.text_model.encoder.layers.0.mlp.fc1.weight")]
+    [InlineData("text_encoder.text_model.encoder.layers.0.self_attn.q_proj.weight")]
+    [InlineData("model.language_model.layers.0.mlp.gate_proj.weight")]
+    [InlineData("tfmr.layers.0.mlp.gate_proj.weight")]
+    public void ANestedEncoderPathIsNotAStandaloneEncoder(string key)
+        => AssetKindHeaderMap.Map(Header(key)).Should().BeNull();
+
+    /// <summary>
+    /// The other side of the same rule, and what keeps the anchoring from being a silent loss: the
+    /// real first tensor keys of the encoders in one live library still name themselves. Dropping
+    /// any one of the three prefixes costs files here — "text_model." the four CLIP encoders,
+    /// "model.layers." eighteen (fifteen LLM encoders plus three LLaVA decoder shards),
+    /// "language_model.layers." qwen3vl_8b_fp8-nf4 — measured over its 1553 readable containers.
+    /// </summary>
+    [Theory]
+    // clip_l / clip_g_sdxl_base / clip_g_hidream / clip_l_hidream / ViT-L-14-…-TE-only-HF
+    [InlineData("text_model.encoder.layers.0.layer_norm1.bias")]
+    // qwen_3_4b / ministral-3-3b / gemma_3_12B_it / llama_3.1_8b_instruct / mistral_3_small_flux2
+    [InlineData("model.layers.0.mlp.gate_proj.weight")]
+    // qwen3vl_8b_fp8-nf4 — the multimodal spelling, decoder at the root under its own name
+    [InlineData("language_model.layers.0.mlp.gate_proj.weight")]
+    public void AStandaloneEncoderStackAtTheRootStillNamesATextEncoder(string key)
+        => AssetKindHeaderMap.Map(Header(key)).Should().Be(ModelType.TextEncoder);
 }

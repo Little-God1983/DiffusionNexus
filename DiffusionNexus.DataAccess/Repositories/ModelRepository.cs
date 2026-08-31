@@ -521,6 +521,29 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
             .ConfigureAwait(false);
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<Model>> GetHeaderReclassifyCandidatesAsync(
+        CancellationToken cancellationToken = default)
+        => await Context.Models
+            .Include(m => m.SyncState)
+            .Include(m => m.Versions)
+                .ThenInclude(v => v.Files)
+            // No Source filter and no outcome filter: a Matched row is exactly the case this query
+            // exists for — nothing else re-reads one. HeaderCheckedAt is what bounds it instead, and
+            // the SyncState != null half keeps this from admitting rows SyncStateInitializer has not
+            // derived yet; see the interface remarks for why creating those here would be harmful.
+            .Where(m => m.Type == ModelType.LORA
+                        && !m.IsUserEdited
+                        && m.SyncState != null
+                        && m.SyncState.HeaderCheckedAt == null
+                        && m.Versions.Any(v => v.Files.Any(f =>
+                            f.LocalPath != null && f.LocalPath != ""
+                            && (EF.Functions.Like(f.FileName, "%.safetensors")
+                                || EF.Functions.Like(f.FileName, "%.sft")))))
+            .AsSplitQuery()
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+    /// <inheritdoc />
     public async Task<IReadOnlyList<(string LocalPath, bool IsLocalFileValid, DateTimeOffset? LocalFileVerifiedAt)>>
         GetSupportAssetFilePathsAsync(CancellationToken cancellationToken = default)
     {

@@ -10,8 +10,9 @@ namespace DiffusionNexus.Service.Services.Sync.Identity;
 /// This is the rung that makes #527 safe to act on. The sorter physically relocates files off this
 /// verdict, and a LoRA called <c>vae_finetune_lora</c> must not be filed as a VAE because of how
 /// its author named it. The keys cannot lie about this: a LoRA carries <c>lora_up</c>/<c>lora_A</c>
-/// pairs, an autoencoder carries <c>post_quant_conv</c>, a text encoder carries
-/// <c>text_model.encoder.layers</c>.
+/// pairs, an autoencoder carries <c>post_quant_conv</c>, a text encoder carries its encoder stack
+/// at the ROOT of its key paths (<c>text_model.…</c>, <c>model.layers.…</c>) where a checkpoint
+/// that merely bundles one nests it a level down.
 /// <para>
 /// There is deliberately no upscaler rung: ESRGAN-family upscalers ship as <c>.pth</c> pickles with
 /// no readable header at all, so a rule for them here would never fire. They are named by
@@ -156,75 +157,74 @@ public static class AssetKindHeaderMap
         "control_model.", "controlnet_cond_embedding", "input_hint_block",
     };
 
-    // Rung 6 — text encoder. "shared.weight" is T5's tied embedding table; "logit_scale" is CLIP's
-    // learned temperature. Both are single, whole keys rather than path fragments, so they are
-    // matched exactly — "shared.weight" as a substring would hit unrelated paths.
-    private static readonly string[] TextEncoderNeedles =
+    // Rung 6 — text encoder, matched as a key ROOT PREFIX and never as a substring. Each entry
+    // names the stack a STANDALONE encoder writes at the top of its key path: HuggingFace
+    // CLIPTextModel ("text_model.…"), and the HuggingFace CAUSAL-LM layout used by a decoder-only
+    // LLM shipped as a prompt encoder (Gemma, Llama, Qwen 3 / Qwen-VL, Mistral, ERNIE), which
+    // writes "model.layers.N.…" — or, in the multimodal spelling, "language_model.layers.N.…" —
+    // and carries neither logit_scale nor shared.weight, so the exact-key table below cannot
+    // reach it.
+    //
+    // ANCHORING IS THE WHOLE DESIGN, and both halves of this table were paid for by real
+    // checkpoints that substring needles mis-filed. The property that makes a container a
+    // standalone encoder is not that an encoder key appears SOMEWHERE in it — every image
+    // checkpoint bundles a text encoder — it is that the encoder stack sits at the ROOT of the key
+    // path, with no component prefix ahead of it:
+    //
+    //   standalone HF CLIP  "text_model.encoder.layers.0.layer_norm1.bias"
+    //   SDXL checkpoint     "conditioner.embedders.0.transformer.text_model.encoder.layers.0.…"
+    //   standalone LLM      "model.layers.0.mlp.gate_proj.weight"
+    //   HiDream checkpoint  "model.language_model.layers.0.mlp.gate_proj.weight"
+    //   Chatterbox (TTS)    "tfmr.layers.0.mlp.gate_proj.weight"
+    //
+    // Why the composite guard above cannot cover for a substring needle here: that guard also sees
+    // only the sampled window. A 2515-tensor SDXL checkpoint presents its conditioner block FIRST
+    // — 64 keys of "conditioner.embedders.0.transformer.text_model.…" and not one
+    // "first_stage_model."/"model.diffusion_model." key among them, though the file carries both
+    // further down — so the guard finds nothing and a free "text_model.encoder.layers" fires.
+    // Two real 13.8 GB Pony checkpoints were named TextEncoder exactly that way, i.e. support
+    // assets: gone from the Viewer, unselectable by bulk sync, and handed to the sorter as files to
+    // physically move. The same substring route had already cost two HiDream checkpoints, through
+    // "model.embed_tokens" matching inside "model.language_model.embed_tokens".
+    //
+    // Adding "conditioner.embedders." to CompositeCheckpointNeedles instead is the alternative and
+    // is a losing game: every architecture invents its own layout, so that route needs a fresh
+    // exception per checkpoint family, forever. Anchoring costs nothing and needs no list of the
+    // things it excludes — and it is not a heuristic but a restatement of the format: a safetensors
+    // key set is the flattened module path of the SAVED TOP-LEVEL OBJECT, so anything the container
+    // merely bundles is reached through the attribute name holding it and therefore sits at depth 2
+    // or deeper. "The encoder stack is at depth 1" is thus not evidence ABOUT the container, it is
+    // the same statement as "the saved object IS the encoder", and it holds however the 64-key
+    // window happens to fall.
+    //
+    // Measured over the 1553 readable containers of one real library, anchoring changes exactly two
+    // verdicts against the substring version — the two Pony checkpoints — and leaves all 28 real
+    // text encoders, all 1435 LoRAs and all 9 VAEs where they were. Every prefix is load-bearing
+    // over that sweep, measured by dropping each one: without "text_model." the four CLIP encoders
+    // go unnamed; without "model.layers." eighteen files do (fifteen LLM encoders plus the three
+    // LLaVA decoder shards); without "language_model.layers." qwen3vl_8b_fp8-nf4 does. A rooted
+    // "token_embedding." and a rooted "model.embed_tokens" would both be safe here too, but each is
+    // redundant on every one of those 1553 files, so neither is carried: a needle that earns
+    // nothing can only misfire.
+    //
+    // This is an existential test, unlike rung 2's, and deliberately: rung 2's universal quantifier
+    // cannot be reused here. It is guarded on an UNTRUNCATED sample, and every one of the LLM files
+    // is 237–2417 tensors and fills the 64-key cap, so a universal rung would name none of them.
+    // Nor is dropping that cap an escape: a universal test excludes HiDream only on the two
+    // "model.final_layer2." keys that happen to sort into the window, where anchoring excludes it
+    // on every key it has.
+    private static readonly string[] TextEncoderRootPrefixes =
     {
-        "text_model.encoder.layers", "token_embedding",
+        "text_model.", "model.layers.", "language_model.layers.",
     };
 
+    // Two WHOLE keys rather than path fragments, so they are matched exactly: "shared.weight" is
+    // T5's tied embedding table and "logit_scale" is CLIP's learned temperature. Either as a
+    // substring would hit a bundled copy of the same component one path segment down — the same
+    // hazard the prefix table above exists for, which is why neither is relaxed into one.
     private static readonly string[] TextEncoderExactKeys =
     {
         "logit_scale", "shared.weight",
-    };
-
-    // Rung 6, second table — the HuggingFace CAUSAL-LM layout, matched as a key PREFIX and not as a
-    // substring. A decoder-only LLM shipped as a prompt encoder (Gemma, Llama, Qwen 3 / Qwen-VL,
-    // Mistral, ERNIE) writes "model.layers.N.…", never "text_model.encoder.layers", and carries
-    // neither logit_scale nor shared.weight, so the table above cannot reach it. Sixteen such files
-    // sat in one real library's TextEncoders\ folder and every one fell past this rung, past the
-    // name rung — which has markers for "t5"/"umt5"/"mistral" but none for gemma, llama, qwen3vl,
-    // ernie or ministral — and landed on AssetKindClassifier's LORA default.
-    //
-    // PREFIX matching is the whole design, and it is what a substring needle got wrong. The property
-    // that makes a container a standalone encoder is not that an LLM key appears SOMEWHERE in it —
-    // every multimodal checkpoint contains one — it is that the decoder stack is at the ROOT of the
-    // key path, with no component prefix ahead of it. A checkpoint that bundles an LLM nests it one
-    // level down, and the nesting is the evidence:
-    //
-    //   standalone   "model.layers.0.mlp.gate_proj.weight"                  ← decoder at the root
-    //   HiDream      "model.language_model.layers.0.mlp.gate_proj.weight"   ← nested under a part
-    //   Chatterbox   "tfmr.layers.0.mlp.gate_proj.weight"                   ← a TTS backbone
-    //
-    // Free substrings could not tell those apart and named all three. "mlp.gate_proj" matched the
-    // Llama backbone inside Chatterbox's T3 text-to-token model; "model.embed_tokens" matched
-    // HiDream's "model.language_model.embed_tokens.weight", because the needle sits inside the
-    // longer word "language_model.embed_tokens". The two HiDream image checkpoints are 758 tensors
-    // and carry NONE of the CompositeCheckpointNeedles — HiDream keys its bundle off a bare
-    // "model." — so the guard below never saw them and a multi-GB checkpoint was named TextEncoder,
-    // i.e. a support asset: gone from the Viewer, unselectable by bulk sync, and handed to the
-    // sorter as a file to physically move. Every substring needle that could do that is gone.
-    //
-    // Extending CompositeCheckpointNeedles with HiDream's markers was the alternative and is a
-    // losing game: every architecture invents its own layout, and "x_embedder" — one of HiDream's —
-    // also appears in the Z-Image ControlNets, so that route needs its own exceptions immediately.
-    // Anchoring costs nothing and needs no list of the things it excludes.
-    //
-    // Both prefixes are load-bearing over the 1552 real containers swept, measured by dropping each
-    // from THIS two-entry table: without "model.layers." fifteen of the sixteen encoders go
-    // unnamed (eighteen files, counting the three LLaVA decoder shards); without
-    // "language_model.layers." — the multimodal spelling, where a VL container puts the decoder at
-    // the root under that name instead — qwen3vl_8b_fp8-nf4 does. Neither matches any non-LLM
-    // container in that sweep. A rooted "model.embed_tokens" would be safe here too but is
-    // redundant on every observed file, so it is left out until a sample turns up that needs it.
-    //
-    // Why anchoring is a rule and not a heuristic: a safetensors key set is the flattened module
-    // path of the SAVED TOP-LEVEL OBJECT, so anything the container merely bundles is reached
-    // through the attribute name holding it and therefore sits at depth 2 or deeper. "The decoder
-    // stack is at depth 1" is thus not evidence about the container, it is the same statement as
-    // "the saved object IS the decoder". HiDream is the general rule playing out, not a special
-    // case, and the exclusion holds however the 64-key window happens to fall.
-    //
-    // This is an existential test, unlike rung 2's, and deliberately: rung 2's universal quantifier
-    // cannot be reused here. It is guarded on an UNTRUNCATED sample, and every one of these sixteen
-    // files is 237–2417 tensors and fills the 64-key cap, so a universal rung would name none of
-    // them. Nor is dropping that cap an escape: a universal test excludes HiDream only on the two
-    // "model.final_layer2." keys that happen to sort into the window, where anchoring excludes it
-    // on every key it has.
-    private static readonly string[] LlmDecoderRootPrefixes =
-    {
-        "model.layers.", "language_model.layers.",
     };
 
     /// <summary>
@@ -297,13 +297,12 @@ public static class AssetKindHeaderMap
 
         foreach (var key in lowered)
         {
-            if (ContainsAny(key, TextEncoderNeedles)) return ModelType.TextEncoder;
-
-            // Matched as a PREFIX, never as a substring: a standalone decoder writes its stack at
+            // Matched as a PREFIX, never as a substring: a standalone encoder writes its stack at
             // the root of the key path, while a checkpoint that bundles one nests it under a
-            // component name ("model.language_model.layers.…"). The nesting is the evidence, and a
-            // substring match throws exactly that away — see the table for the checkpoints it cost.
-            if (StartsWithAny(key, LlmDecoderRootPrefixes)) return ModelType.TextEncoder;
+            // component name ("conditioner.embedders.0.transformer.text_model.…",
+            // "model.language_model.layers.…"). The nesting IS the evidence, and a substring match
+            // throws exactly that away — see the table for the checkpoints it cost.
+            if (StartsWithAny(key, TextEncoderRootPrefixes)) return ModelType.TextEncoder;
 
             foreach (var exact in TextEncoderExactKeys)
             {
