@@ -341,6 +341,36 @@ public class ModelDetailViewModelTests
     }
 
     [Fact]
+    public void GatedChoice_OpenWebsite_WithNoModelId_ReportsInsteadOfSilentlyDoingNothing()
+    {
+        // Review fix (PR #551): with no model id from either the version DTO or the cached
+        // fetch, the click must not close the dialog into dead air — every branch reports.
+        var (vm, _, opened) = CreateGatedVm();
+
+        vm.ApplyGatedVersionChoice(DownloadPreflightResult.OpenWebsite, GatedTab(versionId: 9, modelId: 0))
+            .Should().BeFalse();
+
+        opened.Should().BeEmpty();
+        vm.StatusMessage.Should().NotBeNullOrEmpty("a click that opens nothing must say why");
+    }
+
+    [Fact]
+    public async Task GatedDownload_WithNoOwnerWindow_FailsClosedInsteadOfBypassingTheGate()
+    {
+        // Review fix (PR #551): when no window can own the preflight dialog, the gate must
+        // hold (Cancel + status line), not fall through to the doomed token-prompt/transfer
+        // path this feature exists to prevent.
+        var (vm, waitlist, opened) = CreateGatedVm();
+        vm.SelectedVersionTab = GatedTab();
+
+        await vm.DownloadSelectedVersionCommand.ExecuteAsync(null);
+
+        vm.StatusMessage.Should().NotBeNullOrEmpty("the user must learn why nothing was downloaded");
+        waitlist.Entries.Should().BeEmpty();
+        opened.Should().BeEmpty();
+    }
+
+    [Fact]
     public void GatedChoice_OpenWebsite_NsfwModelUsesCivitaiRedAndCachedModelIdFallback()
     {
         var (vm, _, opened) = CreateGatedVm();

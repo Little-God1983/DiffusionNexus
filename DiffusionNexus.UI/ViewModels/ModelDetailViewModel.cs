@@ -516,20 +516,38 @@ public partial class ModelDetailViewModel : ViewModelBase
 
     /// <summary>
     /// Shows the Browse tab's pre-download dialog for one early-access/paywalled version.
-    /// Needs a window owner; headless hosts (tests, tools) get <see cref="DownloadPreflightResult.DownloadAnyway"/>
-    /// so the plain download path — whose failure line still reports the 403 — stays reachable.
+    /// Fails closed: with no window to own the dialog (headless host, or MainWindow briefly
+    /// unavailable — elsewhere the app treats that as an error, see the DialogService
+    /// registration) the answer is Cancel plus a status line, never a silent bypass into the
+    /// doomed token-prompt/transfer path this gate exists to prevent.
     /// </summary>
     private async Task<DownloadPreflightResult> ShowGatedVersionPreflightAsync(CivitaiVersionTabItem tab)
     {
         var owner = (Avalonia.Application.Current?.ApplicationLifetime
             as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.MainWindow;
-        if (owner is null) return DownloadPreflightResult.DownloadAnyway;
+        if (owner is null)
+        {
+            StatusMessage = $"'{ModelName} — {tab.Label}' is paywalled on Civitai and the options "
+                + "dialog could not be shown — download not attempted.";
+            _logger?.Warn(LogCategory.Download, "LoraDownload",
+                $"Gated download blocked without dialog (no owner window): {ModelName} — {tab.Label}");
+            return DownloadPreflightResult.Cancel;
+        }
 
         var title = $"{ModelName} — {tab.Label}";
         var dialog = tab.IsPermanentlyPaid
             ? new DownloadPreflightDialog([], permanentTitles: [title])
             : new DownloadPreflightDialog([title]);
-        await dialog.ShowDialog(owner);
+        try
+        {
+            await dialog.ShowDialog(owner);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Warn(LogCategory.Download, "LoraDownload",
+                $"Gated-download dialog failed for {ModelName} — {tab.Label}: {ex.Message}");
+            return DownloadPreflightResult.Cancel;
+        }
         return dialog.Result;
     }
 
@@ -572,6 +590,12 @@ public partial class ModelDetailViewModel : ViewModelBase
                     // civitai.com hides NSFW from unauthenticated visitors; route those to the mirror.
                     var host = isNsfw ? "civitai.red" : "civitai.com";
                     OpenUrl($"https://{host}/models/{modelId}?modelVersionId={tab.CivitaiVersion.Id}");
+                }
+                else
+                {
+                    StatusMessage = $"No Civitai model id for '{ModelName}' — run 'Download Metadata' first.";
+                    _logger?.Warn(LogCategory.Download, "LoraDownload",
+                        $"Cannot open Civitai page: no model id for '{ModelName} — {tab.Label}'.");
                 }
                 return false;
 
