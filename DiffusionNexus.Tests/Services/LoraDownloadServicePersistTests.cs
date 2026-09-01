@@ -239,7 +239,6 @@ public sealed class LoraDownloadServicePersistTests : IDisposable
                 Name = "my version",
                 Description = "my version description",
                 BaseModelRaw = "Pony",
-                BaseModel = BaseModelType.Pony,
                 IsUserEdited = true,
             };
             seedVersion.Files.Add(new ModelFile
@@ -272,7 +271,6 @@ public sealed class LoraDownloadServicePersistTests : IDisposable
         var version = saved!.Versions.Should().ContainSingle().Which;
 
         version.BaseModelRaw.Should().Be("Pony", "the user hand-fixed this and it must survive the re-download");
-        version.BaseModel.Should().Be(BaseModelType.Pony);
         version.Name.Should().Be("my version");
         version.Description.Should().Be("my version description");
 
@@ -312,7 +310,6 @@ public sealed class LoraDownloadServicePersistTests : IDisposable
                 Name = "v500 name",
                 Description = "v500 description",
                 BaseModelRaw = "Pony",
-                BaseModel = BaseModelType.Pony,
                 IsUserEdited = false,
             };
             seedVersion.Files.Add(new ModelFile

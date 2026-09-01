@@ -501,17 +501,15 @@ public sealed class SidecarMetadataApplier
     private static bool CanWriteVersionText(ModelVersion dbVersion) => !dbVersion.IsUserEdited;
 
     /// <summary>
-    /// Writes both spellings of the base model — the raw upstream string and the
-    /// <see cref="BaseModelType"/> the viewer's filter reads — using the same parser the detail
-    /// view's editor uses. Writing only the raw one left the enum reporting the previous base
-    /// model forever. Callers must check <see cref="CanWriteVersionText"/> first.
+    /// Writes the version's base model — the raw upstream string, the only spelling the app
+    /// stores. Callers must check <see cref="CanWriteVersionText"/> first.
     /// </summary>
     /// <returns>Whether anything was written.</returns>
     /// <remarks>
     /// A blank <c>baseModel</c> is a missing answer, not an instruction to forget the stored one
     /// (F6). The call sites only rejected an <i>absent</i> key, so a sidecar carrying
-    /// <c>"baseModel": ""</c> blanked the raw string and set the enum to <c>Unknown</c> on a version
-    /// nobody had edited. The check lives here so all four of them inherit it. Delegates to
+    /// <c>"baseModel": ""</c> blanked the stored base model on a version nobody had edited. The
+    /// check lives here so all four of them inherit it. Delegates to
     /// <see cref="BaseModelWriter.Write"/>, the same rule the identify step's header/heuristic
     /// rungs use so every source agrees on what counts as an answer.
     /// </remarks>

@@ -73,7 +73,19 @@ public sealed class SyncSchemaMigrationTests : IDisposable
         {
             var after = Columns(ctx, "Models", "ModelVersions", "ModelFiles", "ModelImages");
             foreach (var (table, cols) in before)
+            {
+                if (table == "ModelVersions") continue;
                 after[table].Should().StartWith(cols, $"existing columns of {table} must be untouched (additive-only)");
+            }
+
+            // ModelVersions is the one table the additive-only rule no longer covers verbatim.
+            // #553 dropped its write-only BaseModel column on purpose, and dropping a column on
+            // SQLite rebuilds the table, so the surviving columns come back re-ordered rather than
+            // in their original positions. The invariant that still holds — and the one that
+            // actually matters — is that nothing BUT that column went missing.
+            after["ModelVersions"].Should().BeEquivalentTo(
+                before["ModelVersions"].Where(c => c != "BaseModel:TEXT:1"),
+                "the only column ModelVersions may lose is the one #553 dropped deliberately");
             after["ModelImages"].Should().Contain("ThumbnailAttemptedAt:TEXT:0").And.Contain("ThumbnailFailure:TEXT:0");
 
             var syncStateCols = Columns(ctx, "ModelSyncStates")["ModelSyncStates"];
@@ -83,6 +95,8 @@ public sealed class SyncSchemaMigrationTests : IDisposable
             hash.Should().Be("ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789");
 
             ctx.Set<DiffusionNexus.Domain.Entities.ModelImage>().Single().Url.Should().Be("https://x/y.jpeg", "rows survive");
+            ctx.Set<DiffusionNexus.Domain.Entities.ModelVersion>().Single().Name.Should().Be(
+                "v1", "the BaseModel drop rebuilds ModelVersions — its rows must come through the rebuild");
             ctx.Set<DiffusionNexus.Domain.Entities.ModelSyncState>().Should().BeEmpty("the migration never invents state rows");
             ctx.Database.GetAppliedMigrations().Should().Contain(m => m.EndsWith(NewMigration));
         }

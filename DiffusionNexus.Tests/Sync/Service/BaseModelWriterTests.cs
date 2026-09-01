@@ -1,5 +1,4 @@
 using DiffusionNexus.Domain.Entities;
-using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Service.Services.Sync;
 using FluentAssertions;
 
@@ -56,22 +55,19 @@ public class BaseModelWriterTests
     public void Write_BlankIsAMissingAnswer_NothingWritten()
     {
         var version = NewVersion("Pony");
-        version.BaseModel = BaseModelType.Pony;
 
         BaseModelWriter.Write(version, "  ").Should().BeFalse();
 
         version.BaseModelRaw.Should().Be("Pony");
-        version.BaseModel.Should().Be(BaseModelType.Pony);
     }
 
     [Fact]
-    public void Write_WritesBothSpellings()
+    public void Write_WritesTheRawBaseModel()
     {
         var version = NewVersion(null);
 
         BaseModelWriter.Write(version, "SDXL 1.0").Should().BeTrue();
 
         version.BaseModelRaw.Should().Be("SDXL 1.0");
-        version.BaseModel.Should().Be(BaseModelType.SDXL10);
     }
 }

@@ -1,5 +1,4 @@
 using DiffusionNexus.Domain.Entities;
-using DiffusionNexus.Domain.Enums;
 
 namespace DiffusionNexus.Service.Services.Sync;
 
@@ -14,32 +13,27 @@ namespace DiffusionNexus.Service.Services.Sync;
 /// is a deliberate exception, not an oversight. It is the one place a user is allowed to blank a
 /// version's base model outright, which <see cref="Write"/> refuses by design — a blank is "no new
 /// answer", never "forget the old one" (see <see cref="Write"/>'s remarks). Routing a clearing UI
-/// through a method that cannot clear would mean either losing that ability or growing a second
-/// flag no automatic caller needs, so the editor keeps its own two-line write of the same two
-/// spellings instead of calling in here.
+/// through a method that cannot clear would mean either losing that ability or growing a flag no
+/// automatic caller needs, so the editor keeps its own write instead of calling in here.
 /// </para>
 /// </summary>
 public static class BaseModelWriter
 {
     /// <summary>
-    /// Writes both spellings of the base model — the raw Civitai string and the
-    /// <see cref="BaseModelType"/> the viewer's filter reads — using the same parser the detail
-    /// view's editor uses. Writing only the raw one left the enum reporting the previous base
-    /// model forever.
+    /// Writes the version's base model — the raw Civitai string, which is the only spelling the
+    /// app stores and the one every filter and picker reads.
     /// </summary>
     /// <returns>Whether anything was written.</returns>
     /// <remarks>
     /// A blank <paramref name="baseModelRaw"/> is a missing answer, not an instruction to forget
     /// the stored one — the call sites only reject an <i>absent</i> value, so a source carrying an
-    /// empty string must not blank the raw string and set the enum to <c>Unknown</c> on a version
-    /// nobody had edited.
+    /// empty string must not blank the stored base model on a version nobody had edited.
     /// </remarks>
     public static bool Write(ModelVersion dbVersion, string? baseModelRaw)
     {
         if (string.IsNullOrWhiteSpace(baseModelRaw)) return false;
 
         dbVersion.BaseModelRaw = baseModelRaw;
-        dbVersion.BaseModel = BaseModelTypeExtensions.ParseCivitai(baseModelRaw);
         return true;
     }
 

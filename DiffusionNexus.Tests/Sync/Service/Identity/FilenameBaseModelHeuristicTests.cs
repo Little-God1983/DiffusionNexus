@@ -45,11 +45,11 @@ public class FilenameBaseModelHeuristicTests
     [InlineData("noobie_lora", null)]        // A1: "noob" prefix with a non-decoration remainder must NOT match
     [InlineData("obi_wan_kenobi", null)]     // the bare "wan" key stays absent — Star Wars-character false-positive magnet
     // REVERSED from the A3 review ruling, on evidence. A3 dropped every wan* key because
-    // "Wan Video" cannot round-trip through BaseModelType and so stores as Other. That reasoning
-    // held the label hostage to a gap in the ENUM: a Civitai-identified Wan model already stores
-    // this exact raw label and this exact Other, so withholding it here bought nothing and cost
-    // the sorter — which files by the raw string — a correct folder. Measured on a live library,
-    // Wan was 12 of the files the table could not name. The enum gap is tracked separately.
+    // "Wan Video" could not round-trip through the old BaseModelType enum and so stored as Other.
+    // That reasoning held the label hostage to a gap in an enum nothing ever read; withholding it
+    // bought nothing and cost the sorter — which files by the raw string — a correct folder.
+    // Measured on a live library, Wan was 12 of the files the table could not name. The enum has
+    // since been deleted outright (#553).
     [InlineData("wan21_motion", "Wan Video")]
     [InlineData("", null)]
     [InlineData(null, null)]

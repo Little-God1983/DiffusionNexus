@@ -431,7 +431,6 @@ public partial class ModelDetailViewModel
             if (dbVersion is null) return;
 
             dbVersion.BaseModelRaw = newValue;
-            dbVersion.BaseModel = BaseModelTypeExtensions.ParseCivitai(newValue);
             dbVersion.IsUserEdited = true;
 
             await unitOfWork.SaveChangesAsync();
@@ -887,7 +886,6 @@ public partial class ModelDetailViewModel
     {
         version.CivitaiId = null;
         version.Description = null;
-        version.BaseModel = BaseModelType.Unknown;
         version.BaseModelRaw = "???";
         version.PublishedAt = null;
         version.DownloadUrl = null;

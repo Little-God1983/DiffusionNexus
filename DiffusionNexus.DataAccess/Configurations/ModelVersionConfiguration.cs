@@ -14,13 +14,11 @@ internal sealed class ModelVersionConfiguration : IEntityTypeConfiguration<Model
         // Indexes
         entity.HasIndex(e => e.CivitaiId).IsUnique().HasFilter("[CivitaiId] IS NOT NULL");
         entity.HasIndex(e => e.ModelId);
-        entity.HasIndex(e => e.BaseModel);
         entity.HasIndex(e => e.CreatedAt);
 
         // Properties
         entity.Property(e => e.Name).IsRequired().HasMaxLength(500);
         entity.Property(e => e.Description).HasColumnType("TEXT");
-        entity.Property(e => e.BaseModel).HasConversion<string>().HasMaxLength(50);
         entity.Property(e => e.BaseModelRaw).HasMaxLength(100);
         entity.Property(e => e.DownloadUrl).HasMaxLength(2000);
         entity.Property(e => e.IsUserEdited).HasDefaultValue(false);

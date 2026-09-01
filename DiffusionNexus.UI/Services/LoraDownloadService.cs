@@ -507,7 +507,6 @@ public sealed class LoraDownloadService : ILoraDownloadService
                 CivitaiId = bestVersion.Id > 0 ? bestVersion.Id : null,
                 Name = bestVersion.Name,
                 Description = bestVersion.Description,
-                BaseModel = ParseBaseModel(bestVersion.BaseModel),
                 BaseModelRaw = bestVersion.BaseModel,
                 DownloadUrl = bestVersion.DownloadUrl,
                 PublishedAt = bestVersion.PublishedAt,
@@ -635,7 +634,6 @@ public sealed class LoraDownloadService : ILoraDownloadService
                     {
                         duplicateVersion.Name = version.Name;
                         duplicateVersion.Description ??= version.Description;
-                        duplicateVersion.BaseModel = version.BaseModel;
                         duplicateVersion.BaseModelRaw = version.BaseModelRaw;
                         duplicateVersion.DownloadUrl ??= version.DownloadUrl;
                         duplicateVersion.PublishedAt ??= version.PublishedAt;
@@ -778,6 +776,4 @@ public sealed class LoraDownloadService : ILoraDownloadService
         }
     }
 
-    private static BaseModelType ParseBaseModel(string? baseModelRaw)
-        => BaseModelTypeExtensions.ParseCivitai(baseModelRaw);
 }

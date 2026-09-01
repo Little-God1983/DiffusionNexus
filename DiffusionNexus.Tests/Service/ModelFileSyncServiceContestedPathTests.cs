@@ -77,7 +77,7 @@ public sealed class ModelFileSyncServiceContestedPathTests : IDisposable
         bool valid = true, DateTimeOffset? verifiedAt = null)
     {
         var model = new Model { Name = name, Type = ModelType.LORA, Source = DataSource.CivitaiApi };
-        var version = new ModelVersion { Name = "v1", BaseModel = BaseModelType.Other, BaseModelRaw = "Krea 2", Model = model };
+        var version = new ModelVersion { Name = "v1", BaseModelRaw = "Krea 2", Model = model };
         version.Files.Add(new ModelFile
         {
             FileName = Path.GetFileName(localPath),

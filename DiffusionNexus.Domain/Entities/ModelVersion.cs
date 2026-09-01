@@ -1,5 +1,3 @@
-using DiffusionNexus.Domain.Enums;
-
 namespace DiffusionNexus.Domain.Entities;
 
 /// <summary>
@@ -19,9 +17,6 @@ public class ModelVersion : BaseEntity
 
     /// <summary>Version description or changelog.</summary>
     public string? Description { get; set; }
-
-    /// <summary>The base model this version is trained for.</summary>
-    public BaseModelType BaseModel { get; set; } = BaseModelType.Unknown;
 
     /// <summary>Original base model string from Civitai (for display).</summary>
     public string? BaseModelRaw { get; set; }

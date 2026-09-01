@@ -655,7 +655,6 @@ public sealed class IdentifyModelStepTests : IDisposable
         var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
         var saved = await uow.Models.GetByIdWithIncludesAsync(modelId);
         saved!.Versions.Single().BaseModelRaw.Should().Be("SDXL 1.0");
-        saved.Versions.Single().BaseModel.Should().Be(BaseModelType.SDXL10);
 
         // C2: the write landed, so the model is stamped exactly like the sidecar branch stamps it —
         // no longer "never synced" to anything that reads LastSyncedAt (TileGroupingHelper's tile

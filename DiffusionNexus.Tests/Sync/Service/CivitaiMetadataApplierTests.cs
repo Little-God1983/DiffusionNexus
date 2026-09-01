@@ -313,7 +313,6 @@ public sealed class CivitaiMetadataApplierTests : IDisposable
             var model = NewLocalModel("local", @"C:\m\edited-base.safetensors", versionUserEdited: true);
             var version = model.Versions.First();
             version.BaseModelRaw = "Pony";
-            version.BaseModel = BaseModelType.Pony;
             await uow.Models.AddAsync(model);
             await uow.SaveChangesAsync();
             modelId = model.Id;
@@ -337,7 +336,6 @@ public sealed class CivitaiMetadataApplierTests : IDisposable
             var version = saved!.Versions.Single();
 
             version.BaseModelRaw.Should().Be("Pony");
-            version.BaseModel.Should().Be(BaseModelType.Pony);
 
             // Everything that is genuinely upstream still lands.
             saved.CivitaiId.Should().Be(77);
@@ -379,7 +377,6 @@ public sealed class CivitaiMetadataApplierTests : IDisposable
             var version = (await uow.Models.GetByIdWithIncludesAsync(modelId))!.Versions.Single();
 
             version.BaseModelRaw.Should().Be("SDXL 1.0");
-            version.BaseModel.Should().Be(BaseModelType.SDXL10);
         }
     }
 
@@ -709,7 +706,6 @@ public sealed class CivitaiMetadataApplierTests : IDisposable
             var model = NewLocalModel("local", @"C:\m\blank-base.safetensors");
             var version = model.Versions.First();
             version.BaseModelRaw = "Pony";
-            version.BaseModel = BaseModelType.Pony;
             await uow.Models.AddAsync(model);
             await uow.SaveChangesAsync();
             modelId = model.Id;
@@ -732,7 +728,6 @@ public sealed class CivitaiMetadataApplierTests : IDisposable
             var version = saved!.Versions.Single();
 
             version.BaseModelRaw.Should().Be("Pony", "a blank upstream answer says nothing, so it replaces nothing");
-            version.BaseModel.Should().Be(BaseModelType.Pony);
 
             // The rest of the response still landed — this is a guard on one field, not a bail-out.
             version.CivitaiId.Should().Be(700);

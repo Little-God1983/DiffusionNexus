@@ -326,8 +326,8 @@ public sealed class DatabaseRecoveryServiceTests : IDisposable
         MigrateFresh();
         Exec("INSERT INTO Models (Id, Name, Type, Mode, Source, IsNsfw, IsPoi, AllowNoCredit, AllowCommercialUse, AllowDerivatives, AllowDifferentLicense, CreatedAt, IsUserEdited, TotalVersionCount) " +
              "VALUES (1, 'legacy', 'LORA', 'Available', 'LocalFile', 0, 0, 0, 'None', 0, 0, '2026-01-01T00:00:00+00:00', 0, 0);");
-        Exec("INSERT INTO ModelVersions (Id, ModelId, Name, BaseModel, EarlyAccessDays, CreatedAt, IsUserEdited, DownloadCount, RatingCount, Rating, ThumbsUpCount, ThumbsDownCount) " +
-             "VALUES (1, 1, 'v1', 'Unknown', 0, '2026-01-01T00:00:00+00:00', 0, 0, 0, 0, 0, 0);");
+        Exec("INSERT INTO ModelVersions (Id, ModelId, Name, EarlyAccessDays, CreatedAt, IsUserEdited, DownloadCount, RatingCount, Rating, ThumbsUpCount, ThumbsDownCount) " +
+             "VALUES (1, 1, 'v1', 0, '2026-01-01T00:00:00+00:00', 0, 0, 0, 0, 0, 0);");
         Exec("INSERT INTO ModelFiles (Id, ModelVersionId, FileName, SizeKB, FileType, IsPrimary, Format, Precision, SizeType, PickleScanResult, VirusScanResult, HashSHA256, LocalPath, IsLocalFileValid) " +
              "VALUES (1, 1, 'a.safetensors', 1, 'Model', 1, 'SafeTensor', 'Unknown', 'Unknown', 'Pending', 'Pending', 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789', 'C:\\l\\a.safetensors', 1);");
 
@@ -401,8 +401,8 @@ public sealed class DatabaseRecoveryServiceTests : IDisposable
     {
         Exec("INSERT INTO Models (Id, Name, Type, Mode, Source, IsNsfw, IsPoi, AllowNoCredit, AllowCommercialUse, AllowDerivatives, AllowDifferentLicense, CreatedAt, IsUserEdited, TotalVersionCount) " +
              "VALUES (1, 'legacy', 'LORA', 'Available', 'LocalFile', 0, 0, 0, 'None', 0, 0, '2026-01-01T00:00:00+00:00', 0, 0);");
-        Exec("INSERT INTO ModelVersions (Id, ModelId, Name, BaseModel, EarlyAccessDays, CreatedAt, IsUserEdited, DownloadCount, RatingCount, Rating, ThumbsUpCount, ThumbsDownCount) " +
-             "VALUES (1, 1, 'v1', 'Unknown', 0, '2026-01-01T00:00:00+00:00', 0, 0, 0, 0, 0, 0);");
+        Exec("INSERT INTO ModelVersions (Id, ModelId, Name, EarlyAccessDays, CreatedAt, IsUserEdited, DownloadCount, RatingCount, Rating, ThumbsUpCount, ThumbsDownCount) " +
+             "VALUES (1, 1, 'v1', 0, '2026-01-01T00:00:00+00:00', 0, 0, 0, 0, 0, 0);");
         Exec("INSERT INTO ModelFiles (Id, ModelVersionId, FileName, SizeKB, FileType, IsPrimary, Format, Precision, SizeType, PickleScanResult, VirusScanResult, HashSHA256, LocalPath, IsLocalFileValid) " +
              $"VALUES (1, 1, 'a.safetensors', 1, 'Model', 1, 'SafeTensor', 'Unknown', 'Unknown', 'Pending', 'Pending', '{hash}', 'C:\\l\\a.safetensors', 1);");
     }
