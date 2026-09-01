@@ -2,6 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:DiffusionNexus.UI.ViewModels"
         xmlns:enums="using:DiffusionNexus.Domain.Enums"
+        xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
         x:Class="DiffusionNexus.UI.Views.Dialogs.CreateTrainingRunDialog"
         x:DataType="vm:CreateTrainingRunDialogViewModel"
         Title="New Training Run"
@@ -42,7 +43,7 @@
       <TextBlock Text="Base Model"
                  FontWeight="SemiBold"
                  Margin="0,0,0,8"/>
-      <ComboBox ItemsSource="{Binding AvailableBaseModels}"
+      <controls:SearchableBaseModelPicker ItemsSource="{Binding AvailableBaseModels}"
                 SelectedItem="{Binding SelectedBaseModel, Mode=TwoWay}"
                 PlaceholderText="Select a base model..."
                 HorizontalAlignment="Stretch"/>

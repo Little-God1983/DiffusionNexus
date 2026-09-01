@@ -12,6 +12,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Service.Services.Sync.Thumbnails;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.UI.Views.Dialogs;
 using Microsoft.Extensions.DependencyInjection;
 using SkiaSharp;
@@ -294,9 +295,9 @@ public partial class ModelDetailViewModel
     /// list is sourced from <see cref="ICivitaiBaseModelCatalog"/> at load time
     /// and matches Civitai's own base-model filter dropdown. The currently
     /// persisted value is always present, even when the catalog hasn't heard of
-    /// it yet, so the ComboBox can round-trip arbitrary legacy strings.
+    /// it yet, so the picker can round-trip arbitrary legacy strings.
     /// </summary>
-    public ObservableCollection<string> AvailableBaseModels { get; } = [];
+    public BatchObservableCollection<string> AvailableBaseModels { get; } = [];
 
     /// <summary>Currently selected base model in the ComboBox (two-way bound).</summary>
     [ObservableProperty]
@@ -338,19 +339,19 @@ public partial class ModelDetailViewModel
             _suppressBaseModelSave = true;
             try
             {
-                AvailableBaseModels.Clear();
-                foreach (var label in labels)
-                {
-                    AvailableBaseModels.Add(label);
-                }
-
                 // Make sure the currently-stored value is selectable even if it
                 // isn't in the Civitai catalog (e.g. legacy / custom labels).
+                var rebuilt = new List<string>(labels.Count + 1);
                 if (!string.IsNullOrWhiteSpace(current)
-                    && !AvailableBaseModels.Any(b => string.Equals(b, current, StringComparison.OrdinalIgnoreCase)))
+                    && !labels.Any(b => string.Equals(b, current, StringComparison.OrdinalIgnoreCase)))
                 {
-                    AvailableBaseModels.Insert(0, current);
+                    rebuilt.Add(current);
                 }
+                rebuilt.AddRange(labels);
+
+                // One Reset instead of Clear + N Adds — this reload runs on every
+                // tile selection and every subscribed picker rebuilds per event.
+                AvailableBaseModels.ReplaceAll(rebuilt);
 
                 SelectedBaseModel = string.IsNullOrWhiteSpace(current) ? null : current;
             }
