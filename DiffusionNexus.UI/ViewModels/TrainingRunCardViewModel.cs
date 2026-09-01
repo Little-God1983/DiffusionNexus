@@ -75,9 +75,9 @@ public partial class TrainingRunCardViewModel : ObservableObject, IDialogService
     /// and matches Civitai's own base-model filter dropdown (same source used by
     /// the LoRA Viewer's model detail panel). The currently persisted value is
     /// always present in the collection, even when the catalog hasn't heard of it
-    /// yet, so the ComboBox can round-trip arbitrary legacy strings.
+    /// yet, so the picker can round-trip arbitrary legacy strings.
     /// </summary>
-    public ObservableCollection<string> AvailableBaseModels { get; } = [];
+    public BatchObservableCollection<string> AvailableBaseModels { get; } = [];
 
     /// <summary>
     /// Available Civitai categories for the dropdown.
@@ -523,23 +523,19 @@ public partial class TrainingRunCardViewModel : ObservableObject, IDialogService
             _suppressBaseModelSave = true;
             try
             {
-                AvailableBaseModels.Clear();
-                foreach (var label in labels)
-                {
-                    AvailableBaseModels.Add(label);
-                }
-
                 // Keep arbitrary persisted values selectable (e.g. legacy strings
                 // not in Civitai's catalog) by surfacing them at the top.
+                var rebuilt = new List<string>(labels.Count + 1);
                 if (!string.IsNullOrWhiteSpace(current)
-                    && !AvailableBaseModels.Any(b => string.Equals(b, current, StringComparison.OrdinalIgnoreCase)))
+                    && !labels.Any(b => string.Equals(b, current, StringComparison.OrdinalIgnoreCase)))
                 {
-                    AvailableBaseModels.Insert(0, current);
+                    rebuilt.Add(current);
                 }
+                rebuilt.AddRange(labels);
 
-                // Re-raise so the ComboBox re-binds to the (possibly new) instance
-                // sitting in AvailableBaseModels.
-                OnPropertyChanged(nameof(SelectedBaseModel));
+                // One Reset instead of Clear + N Adds — two pickers (runs header +
+                // Presentation sub-tab) rebuild per event on this collection.
+                AvailableBaseModels.ReplaceAll(rebuilt);
             }
             finally
             {

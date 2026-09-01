@@ -1,6 +1,8 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Data;
+using Avalonia.Input;
+using Avalonia.LogicalTree;
 using Avalonia.Threading;
 using DiffusionNexus.UI.ViewModels;
 
@@ -34,13 +36,12 @@ public partial class SearchableBaseModelPicker : UserControl
     /// </summary>
     public static readonly StyledProperty<string> PlaceholderTextProperty =
         AvaloniaProperty.Register<SearchableBaseModelPicker, string>(
-            nameof(PlaceholderText), "Select base model…");
+            nameof(PlaceholderText), SearchableBaseModelPickerViewModel.DefaultPlaceholder);
 
-    /// <summary>
-    /// Per-instance engine holding the search/narrowing/selection state. Exposed for the
-    /// control's own XAML; consumers bind the styled properties instead.
-    /// </summary>
-    public SearchableBaseModelPickerViewModel Engine { get; } = new();
+    // Per-instance engine holding the search/narrowing/selection state. It becomes the
+    // DataContext of the button subtree in the ctor; consumers bind the styled
+    // properties, never the engine.
+    private readonly SearchableBaseModelPickerViewModel _engine = new();
 
     /// <summary>The full label list offered by the picker.</summary>
     public IEnumerable<string>? ItemsSource
@@ -70,27 +71,57 @@ public partial class SearchableBaseModelPicker : UserControl
         // The engine becomes the DataContext of the button subtree only — the
         // UserControl's own DataContext stays inherited so call-site bindings
         // ({Binding AvailableBaseModels} etc.) still resolve against the page VM.
-        PickerButton.DataContext = Engine;
+        PickerButton.DataContext = _engine;
 
-        Engine.PropertyChanged += (_, e) =>
+        _engine.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(SearchableBaseModelPickerViewModel.SelectedItem))
             {
                 // SetCurrentValue keeps the two-way binding to the consumer VM intact.
-                SetCurrentValue(SelectedItemProperty, Engine.SelectedItem);
+                SetCurrentValue(SelectedItemProperty, _engine.SelectedItem);
             }
         };
-        Engine.CloseRequested += (_, _) => PickerButton.Flyout?.Hide();
+        _engine.CloseRequested += (_, _) => PickerButton.Flyout?.Hide();
+
+        SearchBox.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Enter && _engine.TryCommitSingleMatch())
+            {
+                e.Handled = true;
+            }
+        };
 
         if (PickerButton.Flyout is { } flyout)
         {
             flyout.Opened += (_, _) =>
             {
-                Engine.OnFlyoutOpened();
-                // Focus lands after the popup finishes opening.
-                Dispatcher.UIThread.Post(() => SearchBox?.Focus());
+                _engine.OnFlyoutOpened();
+                // The popup is content-sized; opening at least as wide as the button
+                // matches how the replaced ComboBox dropdown behaved.
+                FlyoutRoot.MinWidth = Math.Max(240, PickerButton.Bounds.Width);
+                // Focus and scroll land after the popup finishes opening and laying out.
+                Dispatcher.UIThread.Post(() =>
+                {
+                    SearchBox?.Focus();
+                    ScrollSelectionIntoView();
+                });
             };
         }
+    }
+
+    protected override void OnAttachedToLogicalTree(LogicalTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToLogicalTree(e);
+        _engine.ItemsSource = ItemsSource;
+    }
+
+    protected override void OnDetachedFromLogicalTree(LogicalTreeAttachmentEventArgs e)
+    {
+        base.OnDetachedFromLogicalTree(e);
+        // Drop the engine's CollectionChanged subscription on the source so a discarded
+        // picker never keeps its subtree alive (or rebuilding) through a long-lived
+        // collection. Reattach restores it above.
+        _engine.ItemsSource = null;
     }
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
@@ -99,15 +130,28 @@ public partial class SearchableBaseModelPicker : UserControl
 
         if (change.Property == ItemsSourceProperty)
         {
-            Engine.ItemsSource = change.GetNewValue<IEnumerable<string>?>();
+            _engine.ItemsSource = change.GetNewValue<IEnumerable<string>?>();
         }
         else if (change.Property == SelectedItemProperty)
         {
-            Engine.SelectedItem = change.GetNewValue<string?>();
+            _engine.SelectedItem = change.GetNewValue<string?>();
         }
         else if (change.Property == PlaceholderTextProperty)
         {
-            Engine.PlaceholderText = change.GetNewValue<string>();
+            _engine.PlaceholderText = change.GetNewValue<string>();
+        }
+    }
+
+    private void ScrollSelectionIntoView()
+    {
+        var items = _engine.VisibleItems;
+        for (var i = 0; i < items.Count; i++)
+        {
+            if (items[i].IsSelected)
+            {
+                ItemsList.ContainerFromIndex(i)?.BringIntoView();
+                return;
+            }
         }
     }
 }

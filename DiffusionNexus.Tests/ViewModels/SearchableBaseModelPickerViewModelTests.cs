@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
 
@@ -21,12 +22,15 @@ public class SearchableBaseModelPickerViewModelTests
         return sut;
     }
 
+    private static IEnumerable<string> VisibleLabels(SearchableBaseModelPickerViewModel sut)
+        => sut.VisibleItems.Select(i => i.Label);
+
     [Fact]
     public void VisibleItems_MirrorsItemsSourceInOrder_WhenSearchIsEmpty()
     {
         var sut = CreateSut();
 
-        sut.VisibleItems.Should().Equal(Labels);
+        VisibleLabels(sut).Should().Equal(Labels);
     }
 
     [Fact]
@@ -36,7 +40,7 @@ public class SearchableBaseModelPickerViewModelTests
 
         sut.SearchText = "sdxl";
 
-        sut.VisibleItems.Should().Equal("SDXL 1.0", "SDXL Turbo");
+        VisibleLabels(sut).Should().Equal("SDXL 1.0", "SDXL Turbo");
     }
 
     [Fact]
@@ -47,7 +51,7 @@ public class SearchableBaseModelPickerViewModelTests
 
         sut.SearchText = "";
 
-        sut.VisibleItems.Should().Equal(Labels);
+        VisibleLabels(sut).Should().Equal(Labels);
     }
 
     [Fact]
@@ -57,7 +61,7 @@ public class SearchableBaseModelPickerViewModelTests
 
         sut.SearchText = "   ";
 
-        sut.VisibleItems.Should().Equal(Labels);
+        VisibleLabels(sut).Should().Equal(Labels);
     }
 
     [Fact]
@@ -82,14 +86,14 @@ public class SearchableBaseModelPickerViewModelTests
         sut.OnFlyoutOpened();
 
         sut.SearchText.Should().BeEmpty();
-        sut.VisibleItems.Should().Equal(Labels);
+        VisibleLabels(sut).Should().Equal(Labels);
     }
 
     [Fact]
     public void VisibleItems_FollowsObservableSourceChanges_RespectingActiveSearch()
     {
-        // The real sources are ObservableCollection<string> the VMs Clear() and re-Add()
-        // when the Civitai catalog resolves asynchronously — the picker must follow.
+        // The real sources are observable collections the VMs refill when the
+        // Civitai catalog resolves asynchronously — the picker must follow.
         var source = new ObservableCollection<string> { "SD 1.5" };
         var sut = CreateSut(source);
         sut.SearchText = "sdxl";
@@ -97,7 +101,7 @@ public class SearchableBaseModelPickerViewModelTests
         source.Add("SDXL 1.0");
         source.Add("Wan Video");
 
-        sut.VisibleItems.Should().Equal("SDXL 1.0");
+        VisibleLabels(sut).Should().Equal("SDXL 1.0");
     }
 
     [Fact]
@@ -109,7 +113,7 @@ public class SearchableBaseModelPickerViewModelTests
 
         oldSource.Add("Ghost");
 
-        sut.VisibleItems.Should().Equal("SDXL 1.0");
+        VisibleLabels(sut).Should().Equal("SDXL 1.0");
     }
 
     [Fact]
@@ -123,5 +127,101 @@ public class SearchableBaseModelPickerViewModelTests
         sut.SelectedItem = "Pony";
 
         sut.DisplayText.Should().Be("Pony");
+    }
+
+    [Fact]
+    public void Rebuild_FiresASingleResetNotification_NotOnePerItem()
+    {
+        // The owning VMs refill their source with dozens of events per catalog
+        // refresh; each one must cost the realized flyout list exactly one Reset,
+        // not Clear + N Adds.
+        var sut = CreateSut();
+        var events = new List<NotifyCollectionChangedEventArgs>();
+        sut.VisibleItems.CollectionChanged += (_, e) => events.Add(e);
+
+        sut.SearchText = "sdxl";
+
+        events.Should().ContainSingle().Which.Action.Should().Be(NotifyCollectionChangedAction.Reset);
+    }
+
+    [Fact]
+    public void HasNoMatches_OnlyWhenAnActiveSearchYieldsNothing()
+    {
+        var sut = CreateSut();
+        sut.HasNoMatches.Should().BeFalse();
+
+        sut.SearchText = "zzz";
+        sut.HasNoMatches.Should().BeTrue();
+
+        sut.SearchText = "";
+        sut.HasNoMatches.Should().BeFalse();
+    }
+
+    [Fact]
+    public void HasNoMatches_StaysFalse_WhileTheSourceIsSimplyEmpty()
+    {
+        // An empty source with no search typed is a loading/empty state,
+        // not a failed search — "No matches." must not show.
+        var sut = CreateSut(new ObservableCollection<string>());
+
+        sut.HasNoMatches.Should().BeFalse();
+
+        sut.SearchText = "sdxl";
+        sut.HasNoMatches.Should().BeTrue();
+    }
+
+    [Fact]
+    public void TryCommitSingleMatch_PicksTheOnlyVisibleItem_AndCloses()
+    {
+        var sut = CreateSut();
+        var closeRequests = 0;
+        sut.CloseRequested += (_, _) => closeRequests++;
+        sut.SearchText = "turbo";
+
+        var committed = sut.TryCommitSingleMatch();
+
+        committed.Should().BeTrue();
+        sut.SelectedItem.Should().Be("SDXL Turbo");
+        closeRequests.Should().Be(1);
+    }
+
+    [Fact]
+    public void TryCommitSingleMatch_DoesNothing_WhenZeroOrSeveralItemsAreVisible()
+    {
+        var sut = CreateSut();
+        var closeRequests = 0;
+        sut.CloseRequested += (_, _) => closeRequests++;
+
+        sut.SearchText = "sdxl";
+        sut.TryCommitSingleMatch().Should().BeFalse();
+
+        sut.SearchText = "zzz";
+        sut.TryCommitSingleMatch().Should().BeFalse();
+
+        sut.SelectedItem.Should().BeNull();
+        closeRequests.Should().Be(0);
+    }
+
+    [Fact]
+    public void IsSelected_MarksExactlyTheActiveLabel_AndFollowsSelectionChanges()
+    {
+        var sut = CreateSut();
+
+        sut.SelectedItem = "SDXL Turbo";
+        sut.VisibleItems.Where(i => i.IsSelected).Select(i => i.Label).Should().Equal("SDXL Turbo");
+
+        sut.SelectedItem = "SD 1.5";
+        sut.VisibleItems.Where(i => i.IsSelected).Select(i => i.Label).Should().Equal("SD 1.5");
+    }
+
+    [Fact]
+    public void IsSelected_SurvivesARebuild_WhenTheSelectionStaysVisible()
+    {
+        var sut = CreateSut();
+        sut.SelectedItem = "SDXL Turbo";
+
+        sut.SearchText = "sdxl";
+
+        sut.VisibleItems.Where(i => i.IsSelected).Select(i => i.Label).Should().Equal("SDXL Turbo");
     }
 }
