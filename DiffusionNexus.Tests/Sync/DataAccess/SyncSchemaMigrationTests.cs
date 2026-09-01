@@ -82,10 +82,12 @@ public sealed class SyncSchemaMigrationTests : IDisposable
             // #553 dropped its write-only BaseModel column on purpose, and dropping a column on
             // SQLite rebuilds the table, so the surviving columns come back re-ordered rather than
             // in their original positions. The invariant that still holds — and the one that
-            // actually matters — is that nothing BUT that column went missing.
-            after["ModelVersions"].Should().BeEquivalentTo(
+            // actually matters — is that nothing BUT that column went missing. Contain (superset),
+            // not set-equality: later migrations may still ADD ModelVersions columns.
+            after["ModelVersions"].Should().Contain(
                 before["ModelVersions"].Where(c => c != "BaseModel:TEXT:1"),
                 "the only column ModelVersions may lose is the one #553 dropped deliberately");
+            after["ModelVersions"].Should().NotContain("BaseModel:TEXT:1");
             after["ModelImages"].Should().Contain("ThumbnailAttemptedAt:TEXT:0").And.Contain("ThumbnailFailure:TEXT:0");
 
             var syncStateCols = Columns(ctx, "ModelSyncStates")["ModelSyncStates"];

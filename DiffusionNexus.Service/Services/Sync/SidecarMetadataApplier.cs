@@ -272,7 +272,7 @@ public sealed class SidecarMetadataApplier
             if (CanWriteVersionText(dbVersion)
                 && root.TryGetProperty("baseModel", out var baseModel) && baseModel.GetString() is { } baseModelStr)
             {
-                dirty |= WriteBaseModel(dbVersion, baseModelStr);
+                dirty |= BaseModelWriter.Write(dbVersion, baseModelStr);
             }
 
             // Trained words / trigger words
@@ -395,7 +395,7 @@ public sealed class SidecarMetadataApplier
                 if (CanWriteVersionText(dbVersion)
                     && versionElement.TryGetProperty("baseModel", out var baseModel) && baseModel.GetString() is { } baseModelStr)
                 {
-                    dirty |= WriteBaseModel(dbVersion, baseModelStr);
+                    dirty |= BaseModelWriter.Write(dbVersion, baseModelStr);
                 }
 
                 if (CanWriteVersionText(dbVersion)
@@ -461,7 +461,7 @@ public sealed class SidecarMetadataApplier
             if (CanWriteVersionText(dbVersion)
                 && root.TryGetProperty("baseModel", out var baseModel) && baseModel.GetString() is { } baseModelStr)
             {
-                dirty |= WriteBaseModel(dbVersion, baseModelStr);
+                dirty |= BaseModelWriter.Write(dbVersion, baseModelStr);
             }
 
             // Fallback: "sd version" for very old sidecar format. Only when "baseModel" above left
@@ -472,7 +472,7 @@ public sealed class SidecarMetadataApplier
                 && SyncStateDeriver.IsPlaceholder(dbVersion.BaseModelRaw)
                 && root.TryGetProperty("sd version", out var sdVer) && sdVer.GetString() is { } sdVerStr)
             {
-                dirty |= WriteBaseModel(dbVersion, sdVerStr);
+                dirty |= BaseModelWriter.Write(dbVersion, sdVerStr);
             }
 
             if (CanWriteVersionText(dbVersion)
@@ -499,22 +499,6 @@ public sealed class SidecarMetadataApplier
     /// keeps the rest of the model syncing normally.
     /// </summary>
     private static bool CanWriteVersionText(ModelVersion dbVersion) => !dbVersion.IsUserEdited;
-
-    /// <summary>
-    /// Writes the version's base model — the raw upstream string, the only spelling the app
-    /// stores. Callers must check <see cref="CanWriteVersionText"/> first.
-    /// </summary>
-    /// <returns>Whether anything was written.</returns>
-    /// <remarks>
-    /// A blank <c>baseModel</c> is a missing answer, not an instruction to forget the stored one
-    /// (F6). The call sites only rejected an <i>absent</i> key, so a sidecar carrying
-    /// <c>"baseModel": ""</c> blanked the stored base model on a version nobody had edited. The
-    /// check lives here so all four of them inherit it. Delegates to
-    /// <see cref="BaseModelWriter.Write"/>, the same rule the identify step's header/heuristic
-    /// rungs use so every source agrees on what counts as an answer.
-    /// </remarks>
-    private static bool WriteBaseModel(ModelVersion dbVersion, string? baseModelRaw) =>
-        BaseModelWriter.Write(dbVersion, baseModelRaw);
 
     /// <summary>
     /// Replaces a version's trigger words with the sidecar's <c>trainedWords</c>, returning whether

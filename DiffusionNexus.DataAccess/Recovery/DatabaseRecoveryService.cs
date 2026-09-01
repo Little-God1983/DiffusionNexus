@@ -319,6 +319,7 @@ public sealed class DatabaseRecoveryService
             // "no such column: …". Mirrors the AppSettings repair above.
             RepairModelsTableColumns(dbContext, connection);
             RepairModelImagesTableColumns(dbContext, connection);
+            DropLeftoverModelVersionsBaseModelColumn(dbContext, connection);
             EnsureModelSyncStatesTable(dbContext);
             if (migrationsTouchedThisStart) NormalizeModelFileHashCasing(dbContext, connection);
         }
@@ -404,6 +405,36 @@ public sealed class DatabaseRecoveryService
             {
                 _log.Error(ex, $"CheckAndRepairSchema: Failed to add ModelImages.'{col.Key}'");
             }
+        }
+    }
+
+    /// <summary>
+    /// Inverse of the two repair methods above — the first migration in this project's history
+    /// that DROPS a column (20260901222123_RemoveDeadBaseModelTypeColumn, #553) needs the inverse
+    /// self-heal. When that migration is stamped as applied (<see cref="MarkPendingMigrationsAsApplied"/>)
+    /// without its body running, <c>ModelVersions.BaseModel</c> stays physically present as
+    /// <c>TEXT NOT NULL</c> with no default while EF no longer maps the property — so every
+    /// subsequent INSERT into ModelVersions omits the column and dies with
+    /// "NOT NULL constraint failed: ModelVersions.BaseModel", permanently. Nothing read the
+    /// column, so dropping it is always safe in this build. The index goes first because SQLite
+    /// refuses to drop an indexed column.
+    /// </summary>
+    private void DropLeftoverModelVersionsBaseModelColumn(DiffusionNexusCoreDbContext dbContext, DbConnection connection)
+    {
+        var existingColumns = ReadColumnNames(connection, "ModelVersions");
+        if (existingColumns.Count == 0 || !existingColumns.Contains("BaseModel")) return;
+
+        _log.Warning("CheckAndRepairSchema: Leftover ModelVersions.'BaseModel' column found " +
+                     "(its drop migration was stamped without running). Attempting to drop...");
+        try
+        {
+            dbContext.Database.ExecuteSqlRaw("DROP INDEX IF EXISTS IX_ModelVersions_BaseModel;");
+            dbContext.Database.ExecuteSqlRaw("ALTER TABLE ModelVersions DROP COLUMN BaseModel;");
+            _log.Information("CheckAndRepairSchema: Successfully dropped ModelVersions.'BaseModel'");
+        }
+        catch (Exception ex)
+        {
+            _log.Error(ex, "CheckAndRepairSchema: Failed to drop ModelVersions.'BaseModel'");
         }
     }
 

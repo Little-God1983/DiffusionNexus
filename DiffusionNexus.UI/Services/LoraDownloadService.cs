@@ -634,7 +634,10 @@ public sealed class LoraDownloadService : ILoraDownloadService
                     {
                         duplicateVersion.Name = version.Name;
                         duplicateVersion.Description ??= version.Description;
-                        duplicateVersion.BaseModelRaw = version.BaseModelRaw;
+                        // Via BaseModelWriter so a blank upstream baseModel (Civitai's DTO
+                        // defaults to "") cannot erase what a sidecar/header rung already
+                        // established on the orphan version being adopted.
+                        BaseModelWriter.Write(duplicateVersion, version.BaseModelRaw);
                         duplicateVersion.DownloadUrl ??= version.DownloadUrl;
                         duplicateVersion.PublishedAt ??= version.PublishedAt;
                         duplicateVersion.EarlyAccessDays = version.EarlyAccessDays;

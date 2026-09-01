@@ -304,9 +304,9 @@ text?" in one place each (`CanWriteModelText` / `CanWriteVersionText`) and refer
 write site, all three sidecar formats included. Model name, description and tags hang off
 `Model.IsUserEdited`; version name, description, trigger words **and base model** off
 `ModelVersion.IsUserEdited` — the detail view lets the user pick a base model and stamps the
-version as edited, so a refresh that rewrote it undid that choice. Every write of `BaseModelRaw`
-also writes the `BaseModel` enum (`BaseModelTypeExtensions.ParseCivitai`, the same helper the
-editor uses), so the viewer's base-model filter and the label the detail view shows never disagree —
+version as edited, so a refresh that rewrote it undid that choice. `BaseModelRaw` is the only stored
+spelling of the base model (#553 removed the write-only enum that used to shadow it), so the
+viewer's base-model filter and the label the detail view shows read the same value by construction —
 and a *blank* upstream base model is treated as a missing answer rather than an instruction to
 forget the stored one (Civitai's `baseModel` is a non-nullable string that defaults to `""`, so an
 omitted field and an empty one are the same value).
@@ -652,7 +652,6 @@ ModelDetailViewModel.DownloadSelectedVersionAsync
 |-------|---------------|
 | **`TileGroupingHelper`** | Pure-logic helper (no DI). Groups `Model` entities into `ModelTileViewModel` tiles. Phase 1: group by `CivitaiModelPageId`. Phase 2: group remaining by `Name` (case-insensitive). Deduplicates re-discovery duplicates within each group by primary filename. |
 | **`HtmlTextHelper`** | Converts Civitai HTML descriptions to plain text for display in the detail panel. |
-| **`BaseModelTypeExtensions`** | Parses Civitai base model strings (e.g., "SDXL 1.0") to the `BaseModelType` enum. Convention-based `Enum.TryParse` — no hardcoded mapping to maintain. |
 
 ---
 
