@@ -3097,7 +3097,6 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 CivitaiId = Random.Shared.Next(100000, 9999999),
                 Name = baseModels.Length > 1 ? $"{name} - {baseModel}" : $"{name} v{versionNum}.0",
                 BaseModelRaw = baseModel,
-                BaseModel = ParseBaseModel(baseModel),
                 DownloadCount = downloads / baseModels.Length + Random.Shared.Next(-1000, 1000),
                 Rating = 4.0 + Random.Shared.NextDouble(),
                 RatingCount = Random.Shared.Next(10, 500),
@@ -3189,7 +3188,6 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             CivitaiId = Random.Shared.Next(100000, 9999999),
             Name = $"{name} - {baseModel}",
             BaseModelRaw = baseModel,
-            BaseModel = ParseBaseModel(baseModel),
             DownloadCount = downloads + Random.Shared.Next(-1000, 1000),
             Rating = 4.0 + Random.Shared.NextDouble(),
             RatingCount = Random.Shared.Next(10, 500),
@@ -3225,9 +3223,6 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         model.Versions.Add(version);
         return model;
     }
-
-    private static BaseModelType ParseBaseModel(string baseModelRaw)
-        => BaseModelTypeExtensions.ParseCivitai(baseModelRaw);
 
     #endregion
 }

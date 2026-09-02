@@ -57,38 +57,6 @@ public enum CivitaiCategory
 }
 
 /// <summary>
-/// Base model architectures.
-/// </summary>
-public enum BaseModelType
-{
-    Unknown = 0,
-    SD14,
-    SD15,
-    SD15LCM,
-    SD20,
-    SD21,
-    SDXL09,
-    SDXL10,
-    SDXLTurbo,
-    SDXLLightning,
-    SDXLDistilled,
-    SD3,
-    SD35,
-    SD35Large,
-    SD35Medium,
-    Flux1D,
-    Flux1S,
-    Pony,
-    Illustrious,
-    NoobAI,
-    Hunyuan,
-    HunyuanVideo,
-    WanVideo21,
-    WanVideo22,
-    Other
-}
-
-/// <summary>
 /// Model availability mode.
 /// </summary>
 public enum ModelMode

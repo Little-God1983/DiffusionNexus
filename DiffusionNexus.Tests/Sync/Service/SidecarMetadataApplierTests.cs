@@ -269,7 +269,6 @@ public sealed class SidecarMetadataApplierTests : IDisposable
 
         // R1: the base model is authored too — the detail view writes it and stamps IsUserEdited.
         version.BaseModelRaw.Should().Be("???", "the user's base model is not the sidecar's to replace");
-        version.BaseModel.Should().Be(BaseModelType.Unknown);
 
         // Facts the user did not author are still applied.
         saved.IsNsfw.Should().BeTrue();
@@ -293,7 +292,6 @@ public sealed class SidecarMetadataApplierTests : IDisposable
             var model = NewLocalModel("my name", modelPath, versionUserEdited: true);
             var version = model.Versions.First();
             version.BaseModelRaw = "Pony";
-            version.BaseModel = BaseModelType.Pony;
             await uow.Models.AddAsync(model);
             await uow.SaveChangesAsync();
             modelId = model.Id;
@@ -312,7 +310,6 @@ public sealed class SidecarMetadataApplierTests : IDisposable
             var version = saved!.Versions.Single();
 
             version.BaseModelRaw.Should().Be("Pony");
-            version.BaseModel.Should().Be(BaseModelType.Pony);
 
             // The ids are not authored, so they still land.
             saved.CivitaiModelPageId.Should().Be(77);
@@ -342,7 +339,6 @@ public sealed class SidecarMetadataApplierTests : IDisposable
             var version = (await uow.Models.GetByIdWithIncludesAsync(modelId))!.Versions.Single();
 
             version.BaseModelRaw.Should().Be("SDXL 1.0");
-            version.BaseModel.Should().Be(BaseModelType.SDXL10);
         }
     }
 
@@ -363,7 +359,6 @@ public sealed class SidecarMetadataApplierTests : IDisposable
             var model = NewLocalModel("local", modelPath);
             var version = model.Versions.First();
             version.BaseModelRaw = "Pony";
-            version.BaseModel = BaseModelType.Pony;
             await uow.Models.AddAsync(model);
             await uow.SaveChangesAsync();
             modelId = model.Id;
@@ -381,7 +376,6 @@ public sealed class SidecarMetadataApplierTests : IDisposable
             var version = (await uow.Models.GetByIdWithIncludesAsync(modelId))!.Versions.Single();
 
             version.BaseModelRaw.Should().Be("Pony", "a blank sidecar answer says nothing, so it replaces nothing");
-            version.BaseModel.Should().Be(BaseModelType.Pony);
             version.CivitaiId.Should().Be(700, "the rest of the sidecar still applies");
         }
     }

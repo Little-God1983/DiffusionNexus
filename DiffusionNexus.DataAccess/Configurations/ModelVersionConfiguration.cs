@@ -14,13 +14,17 @@ internal sealed class ModelVersionConfiguration : IEntityTypeConfiguration<Model
         // Indexes
         entity.HasIndex(e => e.CivitaiId).IsUnique().HasFilter("[CivitaiId] IS NOT NULL");
         entity.HasIndex(e => e.ModelId);
-        entity.HasIndex(e => e.BaseModel);
+        entity.HasIndex("BaseModel");
         entity.HasIndex(e => e.CreatedAt);
 
         // Properties
         entity.Property(e => e.Name).IsRequired().HasMaxLength(500);
         entity.Property(e => e.Description).HasColumnType("TEXT");
-        entity.Property(e => e.BaseModel).HasConversion<string>().HasMaxLength(50);
+        // Dead column kept for downgrade safety — see ModelVersion.BaseModel. Configured by name
+        // so nothing compiles against the [Obsolete(error: true)] property. Must keep producing
+        // the exact snapshot shape (TEXT NOT NULL, max 50, indexed): there is deliberately no
+        // migration, and SyncSchemaMigrationTests pins the model against the snapshot.
+        entity.Property<string>("BaseModel").IsRequired().HasMaxLength(50);
         entity.Property(e => e.BaseModelRaw).HasMaxLength(100);
         entity.Property(e => e.DownloadUrl).HasMaxLength(2000);
         entity.Property(e => e.IsUserEdited).HasDefaultValue(false);

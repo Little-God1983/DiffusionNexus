@@ -878,7 +878,6 @@ public class ModelFileSyncService : IModelSyncService
         {
             Name = fileName,
             BaseModelRaw = "???", // Unknown without metadata
-            BaseModel = BaseModelType.Other,
             CreatedAt = fileInfo.CreationTimeUtc,
             Model = model
         };

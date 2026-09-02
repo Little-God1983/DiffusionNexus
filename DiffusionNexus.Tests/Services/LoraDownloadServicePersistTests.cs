@@ -239,7 +239,6 @@ public sealed class LoraDownloadServicePersistTests : IDisposable
                 Name = "my version",
                 Description = "my version description",
                 BaseModelRaw = "Pony",
-                BaseModel = BaseModelType.Pony,
                 IsUserEdited = true,
             };
             seedVersion.Files.Add(new ModelFile
@@ -272,12 +271,75 @@ public sealed class LoraDownloadServicePersistTests : IDisposable
         var version = saved!.Versions.Should().ContainSingle().Which;
 
         version.BaseModelRaw.Should().Be("Pony", "the user hand-fixed this and it must survive the re-download");
-        version.BaseModel.Should().Be(BaseModelType.Pony);
         version.Name.Should().Be("my version");
         version.Description.Should().Be("my version description");
 
         // Files are facts about disk, not user text — the new download's file must still attach.
         version.Files.Select(f => f.LocalPath).Should().BeEquivalentTo(new[] { oldPath, newPath });
+    }
+
+    /// <summary>
+    /// PR #554 review finding: the hash-fallback backfill's raw-string write was the one
+    /// base-model write site left outside <c>BaseModelWriter</c> — and Civitai's <c>baseModel</c>
+    /// is a non-nullable string defaulting to <c>""</c>, so a response that omits it blanked a
+    /// base model the sidecar/header rungs had already established on the orphan version being
+    /// adopted. Blank upstream is a missing answer, not an instruction to forget the stored one.
+    /// (An id-matched duplicate never reaches this write — linked versions freeze the whole
+    /// backfill block.)
+    /// </summary>
+    [Fact]
+    public async Task Persist_DuplicateVersionBlankUpstreamBaseModel_KeepsStoredOne()
+    {
+        const string oldPath = @"C:\m\old-version.safetensors";
+
+        int modelId;
+        using (var seedScope = NewScope())
+        {
+            var uow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = new Model
+            {
+                Name = "local model",
+                Type = ModelType.LORA,
+                Source = DataSource.LocalFile,
+                IsUserEdited = false,
+            };
+            var seedVersion = new ModelVersion
+            {
+                CivitaiId = null, // orphan local discovery — routes to the hash-fallback match, the only
+                                  // branch whose backfill writes version text at all.
+                Name = "old name",
+                BaseModelRaw = "Pony", // established by an earlier sync rung, NOT by the user.
+                IsUserEdited = false,
+            };
+            seedVersion.Files.Add(new ModelFile
+            {
+                FileName = Path.GetFileName(oldPath),
+                LocalPath = oldPath,
+                HashSHA256 = "ABC", // same bytes as the file NewCivitaiVersion() describes.
+                IsLocalFileValid = true,
+                IsPrimary = true,
+            });
+            model.Versions.Add(seedVersion);
+
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+        }
+
+        var civVersion = NewCivitaiVersion() with { BaseModel = "" }; // upstream says nothing.
+        var service = NewService(NewCivitaiModel(civVersion));
+        var newPath = NewRealFile("blank-base-model.safetensors");
+
+        var outcome = await service.PersistDownloadedModelAsync(newPath, civVersion, existingModelId: modelId);
+
+        outcome.Should().Be(MetadataPersistOutcome.Complete);
+
+        using var scope = NewScope();
+        var check = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var version = (await check.Models.GetByIdWithIncludesAsync(modelId))!.Versions.Should().ContainSingle().Which;
+
+        version.BaseModelRaw.Should().Be("Pony", "a blank upstream answer says nothing, so it replaces nothing");
+        version.Name.Should().Be("civitai v1", "the version is not user-edited, so real upstream text still lands");
     }
 
     /// <summary>
@@ -312,7 +374,6 @@ public sealed class LoraDownloadServicePersistTests : IDisposable
                 Name = "v500 name",
                 Description = "v500 description",
                 BaseModelRaw = "Pony",
-                BaseModel = BaseModelType.Pony,
                 IsUserEdited = false,
             };
             seedVersion.Files.Add(new ModelFile

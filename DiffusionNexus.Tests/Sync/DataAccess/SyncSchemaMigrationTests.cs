@@ -97,6 +97,56 @@ public sealed class SyncSchemaMigrationTests : IDisposable
         check.Database.GetPendingMigrations().Should().BeEmpty();
     }
 
+    /// <summary>
+    /// The production DbContext registration ignores <c>PendingModelChangesWarning</c>, so a model
+    /// that drifts from the snapshot would migrate silently and only surface as a runtime SQL error
+    /// for users. This is the guard the warning would have been. It also pins the #553 decision:
+    /// the dead <c>ModelVersions.BaseModel</c> column is mapped by name from an obsolete property
+    /// and deliberately has no migration — if that mapping ever stops matching the snapshot, this
+    /// is where it shows.
+    /// </summary>
+    [Fact]
+    public void ModelHasNoPendingChangesAgainstSnapshot()
+    {
+        using var ctx = NewContext();
+        ctx.Database.HasPendingModelChanges().Should().BeFalse(
+            "the EF model must match DiffusionNexusCoreDbContextModelSnapshot exactly — add a migration or fix the mapping");
+    }
+
+    /// <summary>
+    /// #553 kept <c>ModelVersions.BaseModel</c> (TEXT NOT NULL, no DB default) for downgrade
+    /// safety while removing every code path that wrote it. EF must therefore still send a value on
+    /// INSERT, and it has to be one the pre-#553 enum converter can parse — "Unknown" — or a
+    /// rollback fails on the first materialized version. This proves both halves without any
+    /// production code touching the property.
+    /// </summary>
+    [Fact]
+    public void EfInsertStillFillsTheKeptBaseModelColumnWithUnknown()
+    {
+        using (var ctx = NewContext()) ctx.Database.Migrate();
+
+        using (var ctx = NewContext())
+        {
+            var model = new DiffusionNexus.Domain.Entities.Model { Name = "m", Type = DiffusionNexus.Domain.Enums.ModelType.LORA };
+            model.Versions.Add(new DiffusionNexus.Domain.Entities.ModelVersion { Name = "v1", BaseModelRaw = "Pony" });
+            ctx.Add(model);
+            ctx.SaveChanges();
+        }
+
+        using (var ctx = NewContext())
+        {
+            var conn = ctx.Database.GetDbConnection();
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT BaseModel, BaseModelRaw FROM ModelVersions;";
+            using var r = cmd.ExecuteReader();
+            r.Read().Should().BeTrue();
+            r["BaseModel"].Should().Be("Unknown", "the kept column must hold a value every older build's enum converter can parse");
+            r["BaseModelRaw"].Should().Be("Pony");
+            conn.Close();
+        }
+    }
+
     public void Dispose()
     {
         SqliteConnection.ClearAllPools();

@@ -89,13 +89,11 @@ public static partial class FilenameBaseModelHeuristic
     // "obi_wan_2" produces "wan2" and used to resolve to Wan Video despite that guard. See
     // NamesObiWan: the collision is one specific name, and naming it is what actually holds.
     //
-    // Several labels here (LTXV*, Wan Video, Qwen, Chroma, HiDream, Flux.2*) are real Civitai
-    // catalog labels that BaseModelTypeExtensions.ParseCivitai cannot map to a BaseModelType
-    // member, so they store as Other. That is a gap in the ENUM, not a reason to withhold the
-    // label: a Civitai-identified model of the same family already stores exactly this raw label
-    // and exactly that Other, so emitting it here changes nothing for the worse — while the sorter,
-    // which files by the raw string, gets a correct folder instead of dumping the file into
-    // Unknown. Tracked separately; do not "fix" it by deleting these keys.
+    // Several labels here (LTXV*, Wan Video, Qwen, Chroma, HiDream, Flux.2*) once had no
+    // BaseModelType enum member and so stored as Other, which was argued as a reason to withhold
+    // them. That enum is gone (#553): the raw label is now the only spelling stored, and the
+    // sorter files by it, so every key here reaches a correct folder. Do not "fix" this table by
+    // deleting keys — the guard that matters is the token rules above, not the label set.
     private static readonly Dictionary<string, string> ExactTokenOrPairMap = new(StringComparer.Ordinal)
     {
         ["sd15"] = "SD 1.5",

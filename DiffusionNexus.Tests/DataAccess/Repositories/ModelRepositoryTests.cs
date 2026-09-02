@@ -310,7 +310,6 @@ public class ModelRepositoryTests : IDisposable
         var version = new ModelVersion
         {
             Name = name,
-            BaseModel = BaseModelType.Other,
             Model = model
         };
 
