@@ -102,6 +102,7 @@ CREATE TABLE "ModelVersions" (
     "ModelId" INTEGER NOT NULL,
     "Name" TEXT NOT NULL,
     "Description" TEXT NULL,
+    "BaseModel" TEXT NOT NULL,
     "BaseModelRaw" TEXT NULL,
     "CreatedAt" TEXT NOT NULL,
     "UpdatedAt" TEXT NULL,
@@ -250,6 +251,9 @@ CREATE INDEX "IX_Models_Type" ON "Models" ("Type");
 
 
 CREATE INDEX "IX_ModelTags_TagId" ON "ModelTags" ("TagId");
+
+
+CREATE INDEX "IX_ModelVersions_BaseModel" ON "ModelVersions" ("BaseModel");
 
 
 CREATE UNIQUE INDEX "IX_ModelVersions_CivitaiId" ON "ModelVersions" ("CivitaiId") WHERE [CivitaiId] IS NOT NULL;

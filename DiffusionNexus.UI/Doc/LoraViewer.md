@@ -304,9 +304,11 @@ text?" in one place each (`CanWriteModelText` / `CanWriteVersionText`) and refer
 write site, all three sidecar formats included. Model name, description and tags hang off
 `Model.IsUserEdited`; version name, description, trigger words **and base model** off
 `ModelVersion.IsUserEdited` — the detail view lets the user pick a base model and stamps the
-version as edited, so a refresh that rewrote it undid that choice. `BaseModelRaw` is the only stored
-spelling of the base model (#553 removed the write-only enum that used to shadow it), so the
-viewer's base-model filter and the label the detail view shows read the same value by construction —
+version as edited, so a refresh that rewrote it undid that choice. `BaseModelRaw` is the only
+base-model value the app reads or writes (#553 removed the write-only enum that used to shadow it;
+its `ModelVersions.BaseModel` column stays as dead weight, always `"Unknown"` for new rows, so an
+older build can still open the database), so the viewer's base-model filter and the label the
+detail view shows read the same value by construction —
 and a *blank* upstream base model is treated as a missing answer rather than an instruction to
 forget the stored one (Civitai's `baseModel` is a non-nullable string that defaults to `""`, so an
 omitted field and an empty one are the same value).

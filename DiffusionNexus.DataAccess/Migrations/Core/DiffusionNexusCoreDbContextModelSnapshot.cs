@@ -926,6 +926,11 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("BaseModel")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("BaseModelRaw")
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
@@ -981,6 +986,8 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("BaseModel");
 
                     b.HasIndex("CivitaiId")
                         .IsUnique()

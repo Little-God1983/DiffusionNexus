@@ -18,6 +18,20 @@ public class ModelVersion : BaseEntity
     /// <summary>Version description or changelog.</summary>
     public string? Description { get; set; }
 
+    /// <summary>
+    /// Dead column, kept on purpose. Until #553 this stored the name of a hardcoded
+    /// <c>BaseModelType</c> enum that nothing ever read; the enum is gone and
+    /// <see cref="BaseModelRaw"/> is the only base-model spelling the app uses. The column
+    /// itself stays (every new row gets "Unknown") because dropping it would make the schema
+    /// forward-only: every build before #553 still maps this column, and its startup recovery
+    /// un-stamps migrations it does not know about, so a user rolling back to an older installer
+    /// would hit "no such column: BaseModel" on the first LoRA query. "Unknown" was a member of
+    /// that enum, so old builds parse it. Nothing may read or write this; the EF configuration
+    /// refers to it by name so no code has to reference it.
+    /// </summary>
+    [Obsolete("Dead column kept only for downgrade safety (#553) — use BaseModelRaw.", error: true)]
+    public string BaseModel { get; set; } = "Unknown";
+
     /// <summary>Original base model string from Civitai (for display).</summary>
     public string? BaseModelRaw { get; set; }
 
