@@ -90,8 +90,10 @@ New in the base:
 - `event EventHandler? ShrinkAttempted`: raised by `SetTargetSize` (per call) and by
   `OnPointerMoved` when the active handle's requested extension went below zero and was
   clamped, **at most once per drag gesture** (a flag cleared in `OnPointerPressed`).
-- `bool IsShrinkBlocked` — true from the first clamped move of a gesture until pointer
-  release; the Extend renderer colours the active handle amber from it.
+- `bool IsShrinkBlocked` — true while the last pointer move of the current gesture was
+  clamped (the handle is being held past the image edge); false again as soon as the
+  pointer moves outward or is released. The Extend renderer colours the active handle
+  amber from it.
 
 ### 2. `OutpaintTool : CanvasExtensionTool`
 
@@ -136,6 +138,12 @@ extension and zero margin it equals today's `CalculateFitRectInternal`.
 The core asks "which extension tool is active": `CanvasExtendTool` if active, else
 `OutpaintTool` if active, else none (zero extension, zero margin). Only fit mode is
 affected; when the user has zoomed manually nothing changes.
+
+One existing defect has to go with it: today `RenderWithZoom` writes the fit scale through
+the `Viewport.ZoomLevel` setter, and that setter clears `IsFitMode`, so fit mode switches
+itself off on the first render after load. The extend rule would then never apply. The fit
+branch writes through `Viewport.SetFitModeWithZoom(scale)` instead (only when the scale
+changed), which keeps fit mode on until the user zooms manually.
 
 After Apply the tool resets, the image is larger, and fit mode re-fits it on the next
 frame, so the result lands at the new zoom without extra code.
