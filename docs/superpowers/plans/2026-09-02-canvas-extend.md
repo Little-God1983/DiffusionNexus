@@ -1397,9 +1397,16 @@ with
                 imageRect = FitImageRect(imageWidth, imageHeight, canvasWidth, canvasHeight, out var fitScale);
                 // Write through SetFitModeWithZoom, NOT the _zoomLevel setter: that setter goes to
                 // Viewport.ZoomLevel, which clears IsFitMode, so fit mode used to switch itself off
-                // on the very first render after load.
-                if (Math.Abs(_zoomLevel - fitScale) > 0.0001f)
-                    _services?.Viewport.SetFitModeWithZoom(fitScale);
+                // on the very first render after load. Compare against the CLAMPED value: a fit
+                // scale below MinZoom (huge image, small canvas) would otherwise differ from the
+                // stored zoom on every frame and re-fire Changed each render.
+                var viewport = _services?.Viewport;
+                if (viewport is not null)
+                {
+                    var clampedFit = Math.Clamp(fitScale, viewport.MinZoom, viewport.MaxZoom);
+                    if (Math.Abs(viewport.ZoomLevel - clampedFit) > 0.0001f)
+                        viewport.SetFitModeWithZoom(clampedFit);
+                }
             }
 ```
 
