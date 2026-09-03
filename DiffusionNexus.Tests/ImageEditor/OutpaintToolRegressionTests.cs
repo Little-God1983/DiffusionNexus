@@ -146,4 +146,18 @@ public class OutpaintToolRegressionTests
         tool.ExtendRight.Should().Be(20);
         tool.IsShrinkBlocked.Should().BeFalse();
     }
+
+    [Fact]
+    public void Placement_StaysCentred_AndTheImageCannotBeDragged()
+    {
+        var tool = CreateActive();
+        tool.Anchor.Should().Be(CanvasAnchor.Center);
+        tool.SetTargetSize(1400, 1000);
+
+        tool.IsMovePoint(new SKPoint(Size / 2f, Size / 2f)).Should().BeFalse();
+        tool.OnPointerPressed(new SKPoint(Size / 2f, Size / 2f)).Should().BeFalse("a press inside the image is not the outpaint tool's business");
+
+        tool.ExtendLeft.Should().Be(200);
+        tool.ExtendRight.Should().Be(200);
+    }
 }

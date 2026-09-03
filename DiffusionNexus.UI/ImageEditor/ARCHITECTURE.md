@@ -128,7 +128,8 @@ ImageEditorControl ? EditorCore.ZoomIn()
 ```
 User → Extend toggle → CanvasExtendViewModel.IsPanelOpen = true
      → View sets ImageEditorControl.IsCanvasExtendToolActive → CanvasExtendTool.IsActive
-     → drag / SetTargetSize / SetAspectRatio → RegionChanged → View → ViewModel.UpdateResolution
+     → handle drag / image drag (moves the image inside the frame) / SetTargetSize / SetAspectRatio / SetAnchor
+       → RegionChanged → View → ViewModel.UpdateResolution + UpdateAnchor (grid cell, none when dragged)
      → RenderWithZoom fit includes the frame + FitMargin while any extension tool is active
      → Apply (button / Enter) → ImageEditorCore.ApplyCanvasExtend()
      → LayerManager.ResizeCanvas + working bitmap grown, transparent new pixels → ImageChanged

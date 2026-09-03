@@ -512,6 +512,7 @@ public partial class ImageEditView : UserControl
             tool.ImagePixelHeight = _imageEditorCanvas.EditorCore.Height;
             var (w, h) = tool.GetNewDimensions();
             imageEditor.CanvasExtend.UpdateResolution(w, h, tool.HasExtension);
+            imageEditor.CanvasExtend.UpdateAnchor(tool.Anchor);
         };
         imageEditor.CanvasExtend.ToolActivated += onActivated;
         _eventCleanup.Add(() => imageEditor.CanvasExtend.ToolActivated -= onActivated);
@@ -541,6 +542,14 @@ public partial class ImageEditView : UserControl
         imageEditor.CanvasExtend.SetAspectRatioRequested += onAspect;
         _eventCleanup.Add(() => imageEditor.CanvasExtend.SetAspectRatioRequested -= onAspect);
 
+        EventHandler<CanvasAnchor> onAnchor = (_, anchor) =>
+        {
+            _imageEditorCanvas!.EditorCore.CanvasExtendTool.SetAnchor(anchor);
+            _imageEditorCanvas.InvalidateVisual();
+        };
+        imageEditor.CanvasExtend.AnchorRequested += onAnchor;
+        _eventCleanup.Add(() => imageEditor.CanvasExtend.AnchorRequested -= onAnchor);
+
         EventHandler onApply = (_, _) => _imageEditorCanvas!.ApplyCanvasExtend();
         imageEditor.CanvasExtend.ApplyRequested += onApply;
         _eventCleanup.Add(() => imageEditor.CanvasExtend.ApplyRequested -= onApply);
@@ -550,6 +559,7 @@ public partial class ImageEditView : UserControl
             var tool = _imageEditorCanvas!.EditorCore.CanvasExtendTool;
             var (w, h) = tool.GetNewDimensions();
             imageEditor.CanvasExtend.UpdateResolution(w, h, tool.HasExtension);
+            imageEditor.CanvasExtend.UpdateAnchor(tool.Anchor);
         };
         _imageEditorCanvas!.CanvasExtendRegionChanged += onRegionChanged;
         _eventCleanup.Add(() => _imageEditorCanvas!.CanvasExtendRegionChanged -= onRegionChanged);

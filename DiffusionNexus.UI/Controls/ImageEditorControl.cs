@@ -1087,10 +1087,13 @@ public class ImageEditorControl : Control
             return;
         }
 
-        // Canvas extend tool cursors (handles sit on the frame)
+        // Canvas extend tool cursors (handles sit on the frame; the image itself can be dragged)
         if (_isCanvasExtendToolActive)
         {
-            Cursor = CursorForExtensionHandle(_editorCore.CanvasExtendTool.GetCursorForPoint(point));
+            var tool = _editorCore.CanvasExtendTool;
+            Cursor = tool.IsMovePoint(point)
+                ? new Cursor(StandardCursorType.SizeAll)
+                : CursorForExtensionHandle(tool.GetCursorForPoint(point));
             return;
         }
 

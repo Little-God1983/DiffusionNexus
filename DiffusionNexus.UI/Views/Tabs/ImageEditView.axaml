@@ -7,6 +7,7 @@
              xmlns:converters="using:DiffusionNexus.UI.Converters"
              xmlns:controls="using:DiffusionNexus.UI.Controls"
              xmlns:reusable="using:DiffusionNexus.UI.Views.Controls"
+             xmlns:editor="using:DiffusionNexus.UI.ImageEditor"
              mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
              x:Class="DiffusionNexus.UI.Views.Tabs.ImageEditView"
              x:DataType="vmTabs:ImageEditTabViewModel">
@@ -555,15 +556,18 @@
                   <TextBlock Grid.Column="0" Text="W" FontSize="11" Opacity="0.7" VerticalAlignment="Center" Margin="0,0,6,0"/>
                   <!-- Minimum stays at 1 and the value is not clipped here: the ViewModel owns the
                        clamp to the image size and the "use Crop to shrink" hint, which a coerced
-                       value would never reach. -->
+                       value would never reach. The spinner buttons are hidden: two of them side by
+                       side left the text box room for three digits in a ~280 px panel. -->
                   <NumericUpDown Grid.Column="1" Value="{Binding ImageEditor.CanvasExtend.TargetWidth, Mode=TwoWay}"
                                  Minimum="1" Maximum="32768" Increment="1"
                                  FormatString="0" FontSize="12" MinWidth="0"
+                                 ShowButtonSpinner="False"
                                  ToolTip.Tip="New canvas width in pixels. A value below the image width snaps back to it - use Crop to make the image smaller."/>
                   <TextBlock Grid.Column="3" Text="H" FontSize="11" Opacity="0.7" VerticalAlignment="Center" Margin="0,0,6,0"/>
                   <NumericUpDown Grid.Column="4" Value="{Binding ImageEditor.CanvasExtend.TargetHeight, Mode=TwoWay}"
                                  Minimum="1" Maximum="32768" Increment="1"
                                  FormatString="0" FontSize="12" MinWidth="0"
+                                 ShowButtonSpinner="False"
                                  ToolTip.Tip="New canvas height in pixels. A value below the image height snaps back to it - use Crop to make the image smaller."/>
                 </Grid>
                 <StackPanel Orientation="Horizontal" Spacing="4" HorizontalAlignment="Center">
@@ -591,6 +595,48 @@
                   <Button Content="1:1" Command="{Binding ImageEditor.CanvasExtend.SetAspectRatioCommand}" CommandParameter="1:1"
                           Padding="8,4" FontSize="10" ToolTip.Tip="Extend to 1:1 square"/>
                 </StackPanel>
+
+                <!-- Image placement: a 3x3 anchor grid (selected cell highlighted via the brush
+                     converter, same pattern as OutputResolutionControl). No cell is lit once the
+                     image has been dragged to a custom spot. -->
+                <TextBlock Text="Image position" FontSize="11" Opacity="0.7"/>
+                <Grid ColumnDefinitions="Auto,12,*">
+                  <UniformGrid Grid.Column="0" Columns="3" Rows="3" VerticalAlignment="Top">
+                    <UniformGrid.Styles>
+                      <Style Selector="Button">
+                        <Setter Property="Width" Value="24"/>
+                        <Setter Property="Height" Value="24"/>
+                        <Setter Property="Padding" Value="0"/>
+                        <Setter Property="Margin" Value="1"/>
+                        <Setter Property="FontSize" Value="11"/>
+                        <Setter Property="Foreground" Value="White"/>
+                        <Setter Property="HorizontalContentAlignment" Value="Center"/>
+                        <Setter Property="VerticalContentAlignment" Value="Center"/>
+                        <Setter Property="Command" Value="{Binding ImageEditor.CanvasExtend.SetAnchorCommand}"/>
+                      </Style>
+                    </UniformGrid.Styles>
+                    <Button Content="&#x2196;" CommandParameter="{x:Static editor:CanvasAnchor.TopLeft}" ToolTip.Tip="Image top-left: the canvas grows right and down"
+                            Background="{Binding ImageEditor.CanvasExtend.SelectedAnchor, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static editor:CanvasAnchor.TopLeft}}"/>
+                    <Button Content="&#x2191;" CommandParameter="{x:Static editor:CanvasAnchor.Top}" ToolTip.Tip="Image top-centre"
+                            Background="{Binding ImageEditor.CanvasExtend.SelectedAnchor, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static editor:CanvasAnchor.Top}}"/>
+                    <Button Content="&#x2197;" CommandParameter="{x:Static editor:CanvasAnchor.TopRight}" ToolTip.Tip="Image top-right"
+                            Background="{Binding ImageEditor.CanvasExtend.SelectedAnchor, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static editor:CanvasAnchor.TopRight}}"/>
+                    <Button Content="&#x2190;" CommandParameter="{x:Static editor:CanvasAnchor.Left}" ToolTip.Tip="Image centre-left"
+                            Background="{Binding ImageEditor.CanvasExtend.SelectedAnchor, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static editor:CanvasAnchor.Left}}"/>
+                    <Button Content="&#x25CF;" CommandParameter="{x:Static editor:CanvasAnchor.Center}" ToolTip.Tip="Image centred: the canvas grows on all sides"
+                            Background="{Binding ImageEditor.CanvasExtend.SelectedAnchor, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static editor:CanvasAnchor.Center}}"/>
+                    <Button Content="&#x2192;" CommandParameter="{x:Static editor:CanvasAnchor.Right}" ToolTip.Tip="Image centre-right"
+                            Background="{Binding ImageEditor.CanvasExtend.SelectedAnchor, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static editor:CanvasAnchor.Right}}"/>
+                    <Button Content="&#x2199;" CommandParameter="{x:Static editor:CanvasAnchor.BottomLeft}" ToolTip.Tip="Image bottom-left"
+                            Background="{Binding ImageEditor.CanvasExtend.SelectedAnchor, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static editor:CanvasAnchor.BottomLeft}}"/>
+                    <Button Content="&#x2193;" CommandParameter="{x:Static editor:CanvasAnchor.Bottom}" ToolTip.Tip="Image bottom-centre"
+                            Background="{Binding ImageEditor.CanvasExtend.SelectedAnchor, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static editor:CanvasAnchor.Bottom}}"/>
+                    <Button Content="&#x2198;" CommandParameter="{x:Static editor:CanvasAnchor.BottomRight}" ToolTip.Tip="Image bottom-right"
+                            Background="{Binding ImageEditor.CanvasExtend.SelectedAnchor, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static editor:CanvasAnchor.BottomRight}}"/>
+                  </UniformGrid>
+                  <TextBlock Grid.Column="2" Text="Pick where the image sits, or drag the image on the canvas to place it freely."
+                             FontSize="11" Opacity="0.7" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                </Grid>
 
                 <Border Height="1" Background="#444" Margin="0,4"/>
 

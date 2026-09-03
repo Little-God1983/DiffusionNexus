@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.UI.ImageEditor;
 using DiffusionNexus.UI.ImageEditor.Services;
 using Serilog;
 
@@ -33,6 +34,7 @@ public partial class CanvasExtendViewModel : ObservableObject
     private int _targetWidth;
     private int _targetHeight;
     private bool _isShrinkHintVisible;
+    private CanvasAnchor? _selectedAnchor = CanvasAnchor.TopLeft;
     private bool _syncing;
     private long _lastReportedArea;
 
@@ -59,6 +61,7 @@ public partial class CanvasExtendViewModel : ObservableObject
         ApplyCommand = new RelayCommand(ExecuteApply, () => _hasImage() && IsPanelOpen && HasExtension);
         MultiplyCommand = new RelayCommand<string>(ExecuteMultiply, _ => _hasImage() && IsPanelOpen);
         SetAspectRatioCommand = new RelayCommand<string>(ExecuteSetAspectRatio, _ => _hasImage() && IsPanelOpen);
+        SetAnchorCommand = new RelayCommand<CanvasAnchor>(ExecuteSetAnchor, _ => _hasImage() && IsPanelOpen);
         OpenCropCommand = new RelayCommand(() => OpenCropRequested?.Invoke(this, EventArgs.Empty), () => IsPanelOpen);
     }
 
@@ -139,6 +142,17 @@ public partial class CanvasExtendViewModel : ObservableObject
         private set => SetProperty(ref _isShrinkHintVisible, value);
     }
 
+    /// <summary>
+    /// The placement cell highlighted in the panel's 3x3 grid, or null once the user has
+    /// dragged the image to a spot of their own. Set through <see cref="SetAnchorCommand"/>
+    /// and reported back by the tool through <see cref="UpdateAnchor"/>.
+    /// </summary>
+    public CanvasAnchor? SelectedAnchor
+    {
+        get => _selectedAnchor;
+        private set => SetProperty(ref _selectedAnchor, value);
+    }
+
     #endregion
 
     #region Commands
@@ -150,6 +164,8 @@ public partial class CanvasExtendViewModel : ObservableObject
     public IRelayCommand<string> MultiplyCommand { get; }
     /// <summary>Parameter: "W:H", e.g. "16:9".</summary>
     public IRelayCommand<string> SetAspectRatioCommand { get; }
+    /// <summary>Parameter: one of the nine <see cref="CanvasAnchor"/> positions (not Custom).</summary>
+    public IRelayCommand<CanvasAnchor> SetAnchorCommand { get; }
     public IRelayCommand OpenCropCommand { get; }
 
     #endregion
@@ -164,6 +180,7 @@ public partial class CanvasExtendViewModel : ObservableObject
     public event EventHandler? ApplyRequested;
     public event EventHandler<(int Width, int Height)>? TargetSizeRequested;
     public event EventHandler<(float W, float H)>? SetAspectRatioRequested;
+    public event EventHandler<CanvasAnchor>? AnchorRequested;
     public event EventHandler? OpenCropRequested;
 
     #endregion
@@ -178,6 +195,7 @@ public partial class CanvasExtendViewModel : ObservableObject
         ApplyCommand.NotifyCanExecuteChanged();
         MultiplyCommand.NotifyCanExecuteChanged();
         SetAspectRatioCommand.NotifyCanExecuteChanged();
+        SetAnchorCommand.NotifyCanExecuteChanged();
         OpenCropCommand.NotifyCanExecuteChanged();
     }
 
@@ -218,6 +236,15 @@ public partial class CanvasExtendViewModel : ObservableObject
         {
             _syncing = false;
         }
+    }
+
+    /// <summary>
+    /// Called by the view whenever the tool reports its placement (with every region change).
+    /// A dragged image reports <see cref="CanvasAnchor.Custom"/>, which clears the grid.
+    /// </summary>
+    public void UpdateAnchor(CanvasAnchor anchor)
+    {
+        SelectedAnchor = anchor == CanvasAnchor.Custom ? null : anchor;
     }
 
     /// <summary>Called by the view when the tool blocked an inward drag.</summary>
@@ -291,6 +318,15 @@ public partial class CanvasExtendViewModel : ObservableObject
 
         EmitInfo($"aspect preset {ratio}");
         SetAspectRatioRequested?.Invoke(this, (w, h));
+    }
+
+    private void ExecuteSetAnchor(CanvasAnchor anchor)
+    {
+        if (anchor == CanvasAnchor.Custom) return;
+
+        EmitInfo($"image placement {anchor}");
+        SelectedAnchor = anchor;
+        AnchorRequested?.Invoke(this, anchor);
     }
 
     #endregion

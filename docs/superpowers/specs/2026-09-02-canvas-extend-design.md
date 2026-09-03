@@ -47,9 +47,10 @@ Two gaps in the existing code shape the design:
 | Share code with Outpaint? | **Yes.** The frame state and drag math move into an abstract base `CanvasExtensionTool`; `OutpaintTool` and the new `CanvasExtendTool` subclass it and differ only in handle layout, rendering and fit margin. Outpaint behaviour does not change. |
 | Handle style | **Crop-style round handles on the frame** (radius 6, hit radius 12), as in the mockup. Handles only move outward; the frame is drawn from the moment the tool activates, so one click "selects the whole canvas". |
 | New pixels | **Transparent**, shown as a checkerboard with a green tint while previewing. Colouring is the existing Fill tool's job; no colour picker in this panel. |
-| Typed width/height | Two numeric fields. A typed size grows the canvas **symmetrically** (left/right or top/bottom split as `SetAspectRatio` already does). Values below the image size clamp to the image size and show the shrink hint. No anchor grid. |
+| Typed width/height | Two numeric fields (spinner buttons hidden: with them the ~280 px panel showed only three digits). A typed size grows the canvas away from the **image placement** (below). Values below the image size clamp to the image size and show the shrink hint. |
+| Image placement | A 3×3 anchor grid ("Image position") plus **drag-to-move**: pressing on the image (off every handle) while there is any extension slides the image inside the frame, trading extension between opposite edges; the size never changes. Default anchor is **top-left** (canvas grows right and down), chosen by the user on 2026-09-03 over the centred first cut. A drag sets `CanvasAnchor.Custom`: the grid shows no cell, later typed sizes keep the image's offset from the top-left and grow/shrink at the right and bottom edges. Picking a cell redistributes the current extension at once. `Reset` reverts Custom to the default but keeps a chosen cell. Outpaint keeps its centred default and gets no drag-to-move (`AllowsImageMove` is opt-in). |
 | Multipliers | Four buttons: 2× W, 3× W, 2× H, 3× H. Each sets that dimension to *k* × the **image** dimension (not the current target), the other dimension keeps its current target. |
-| Aspect presets | 16:9, 9:16, 4:3, 3:4, 1:1 via the base class's `SetAspectRatio` (extend-only, symmetric). |
+| Aspect presets | 16:9, 9:16, 4:3, 3:4, 1:1 via the base class's `SetAspectRatio` (extend-only, grows away from the placement). |
 | Shrink attempt | A handle dragged inward stops at the image edge and turns amber; typing a smaller size clamps. Both raise `ShrinkAttempted`; the panel shows "The canvas can only grow here. To cut the image down, use the Crop tool." with an **Open Crop** button that switches to the Crop tool. |
 | Zoom-out | While an extension tool (Extend **or** Outpaint) is active and the viewport is in fit mode, fit is computed for the extended frame plus a per-tool margin for handles and label. Manual zoom is left alone; Fit brings the frame back. |
 | Keyboard | Enter applies, Escape resets the extension (Crop precedent: Escape clears the region, it does not close the tool). |
@@ -273,8 +274,13 @@ the control flag and push the initial `UpdateResolution`; deactivated → clear 
 
 xUnit + FluentAssertions, in `DiffusionNexus.Tests/ImageEditor/`, TDD per task:
 
-- `CanvasExtendToolTests`: `SetTargetSize` symmetric split (2048 → 512/512, 2049 → 512/513);
-  below-image request clamps and raises `ShrinkAttempted`; `SetExtension` clamps negatives;
+- `CanvasExtendToolTests`: default placement top-left (2000×1500 → 0/0/1000/500); each of
+  the nine anchors redistributes the current extension without changing the size; an
+  aspect preset grows away from the anchor; dragging the image shifts extension between
+  opposite edges (half zoom → 2 image px per screen px), clamps at the frame, sets
+  `Custom`, and a no-move drag keeps the anchor; `IsMovePoint` needs an extension and
+  loses to handles; Custom keeps the offset and grows/shrinks at right/bottom; `Reset`
+  reverts Custom only; below-image request clamps and raises `ShrinkAttempted`; `SetExtension` clamps negatives;
   `GetNewDimensions`; a right-handle drag of *n* screen px at scale *s* adds *n/s* image
   px; an inward drag clamps at 0 and raises `ShrinkAttempted` once per gesture;
   `IsShrinkBlocked` true during the clamped gesture and false after release; handle hit

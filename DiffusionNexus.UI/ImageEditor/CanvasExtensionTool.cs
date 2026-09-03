@@ -5,9 +5,11 @@ namespace DiffusionNexus.UI.ImageEditor;
 /// <summary>
 /// Shared state and drag math for tools that grow the canvas outward from the image:
 /// per-edge pixel extension, outward-only handle dragging, aspect-ratio and target-size
-/// presets. Subclasses decide where the handles sit (<see cref="GetHandleCenter"/>),
-/// how big their hit zone is, how the frame is drawn, and how much room the viewport
-/// must reserve around the frame (<see cref="FitMargin"/>).
+/// presets, and the placement of the image inside the frame (<see cref="Anchor"/>, plus an
+/// optional drag-to-move gesture, see <see cref="AllowsImageMove"/>). Subclasses decide
+/// where the handles sit (<see cref="GetHandleCenter"/>), how big their hit zone is, how
+/// the frame is drawn, and how much room the viewport must reserve around the frame
+/// (<see cref="FitMargin"/>).
 /// </summary>
 public abstract class CanvasExtensionTool
 {
@@ -37,6 +39,10 @@ public abstract class CanvasExtensionTool
     private bool _isActive;
     private bool _shrinkRaisedThisGesture;
     private bool _isShrinkBlocked;
+
+    // Placement of the image inside the frame; null means "the subclass default".
+    private CanvasAnchor? _anchor;
+    private bool _isMovingImage;
 
     /// <summary>Gets or sets whether the tool is active. Deactivating resets the extension.</summary>
     public bool IsActive
@@ -74,8 +80,18 @@ public abstract class CanvasExtensionTool
     /// <summary>Whether any extension has been applied.</summary>
     public bool HasExtension => _extendTop > 0 || _extendRight > 0 || _extendBottom > 0 || _extendLeft > 0;
 
-    /// <summary>Whether a handle is currently being dragged.</summary>
-    public bool IsDragging => _activeHandle != OutpaintHandle.None;
+    /// <summary>Whether a handle or the image itself is currently being dragged.</summary>
+    public bool IsDragging => _activeHandle != OutpaintHandle.None || _isMovingImage;
+
+    /// <summary>Whether the image itself is being dragged inside the frame.</summary>
+    public bool IsMovingImage => _isMovingImage;
+
+    /// <summary>
+    /// Where the image sits inside the extended canvas. Typed sizes, multipliers and aspect
+    /// presets grow the canvas away from this anchor. Starts at <see cref="DefaultAnchor"/>;
+    /// becomes <see cref="CanvasAnchor.Custom"/> once the image has been dragged.
+    /// </summary>
+    public CanvasAnchor Anchor => _anchor ?? DefaultAnchor;
 
     /// <summary>
     /// True while the last pointer move of the current gesture tried to pull a handle past the
@@ -91,6 +107,15 @@ public abstract class CanvasExtensionTool
 
     /// <summary>Hit radius in screen pixels around each handle centre.</summary>
     protected abstract float HandleHitRadius { get; }
+
+    /// <summary>Placement used until the user picks one. Outpaint grows around the image.</summary>
+    protected virtual CanvasAnchor DefaultAnchor => CanvasAnchor.Center;
+
+    /// <summary>
+    /// Whether a press inside the image (off every handle) starts dragging the image around
+    /// inside the frame. Off by default so Outpaint's pointer behaviour does not change.
+    /// </summary>
+    protected virtual bool AllowsImageMove => false;
 
     /// <summary>The image rectangle in screen coordinates, as last set by <see cref="SetImageBounds"/>.</summary>
     protected SKRect ImageRect => _imageRect;
@@ -129,7 +154,11 @@ public abstract class CanvasExtensionTool
         _imageRect = imageRect;
     }
 
-    /// <summary>Resets all extensions to zero.</summary>
+    /// <summary>
+    /// Resets all extensions to zero. A placement the user picked from the grid survives;
+    /// a <see cref="CanvasAnchor.Custom"/> placement (from dragging) has nothing left to
+    /// describe and reverts to the default.
+    /// </summary>
     public void Reset()
     {
         _extendTop = 0;
@@ -137,8 +166,38 @@ public abstract class CanvasExtensionTool
         _extendBottom = 0;
         _extendLeft = 0;
         _activeHandle = OutpaintHandle.None;
+        _isMovingImage = false;
         _isShrinkBlocked = false;
+        if (_anchor == CanvasAnchor.Custom)
+            _anchor = null;
         RegionChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Pins the image to a side or corner of the frame. The current total size is kept; the
+    /// existing extension is redistributed so the image moves to the new spot at once.
+    /// <see cref="CanvasAnchor.Custom"/> cannot be chosen here; it comes from dragging.
+    /// </summary>
+    public void SetAnchor(CanvasAnchor anchor)
+    {
+        if (anchor == CanvasAnchor.Custom) return;
+
+        _anchor = anchor;
+        DistributeWidth(_extendLeft + _extendRight);
+        DistributeHeight(_extendTop + _extendBottom);
+        RegionChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// True when a press at this point would start dragging the image inside the frame:
+    /// the tool allows it, there is room to move, and the point is on the image but not
+    /// on a handle. Used for the cursor.
+    /// </summary>
+    public bool IsMovePoint(SKPoint point)
+    {
+        if (!_isActive || !AllowsImageMove || !HasExtension) return false;
+        if (HitTestHandle(point) != OutpaintHandle.None) return false;
+        return _imageRect.Contains(point);
     }
 
     /// <summary>Sets the extension amounts for each edge in image pixels. Negative values clamp to zero.</summary>
@@ -152,7 +211,7 @@ public abstract class CanvasExtensionTool
     }
 
     /// <summary>
-    /// Sets extension to match a target aspect ratio, expanding symmetrically.
+    /// Sets extension to match a target aspect ratio, growing away from <see cref="Anchor"/>.
     /// The image is never made smaller, only extended on the necessary sides.
     /// </summary>
     public void SetAspectRatio(float ratioW, float ratioH)
@@ -177,15 +236,18 @@ public abstract class CanvasExtensionTool
             newH = (int)Math.Round(currentW / targetRatio);
         }
 
-        ApplySymmetricTarget(newW, newH);
+        DistributeWidth(Math.Max(0, newW - ImagePixelWidth));
+        DistributeHeight(Math.Max(0, newH - ImagePixelHeight));
         RegionChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>
-    /// Sets the total canvas size. Extra pixels are split evenly between left/right and
-    /// top/bottom (the odd pixel goes right / bottom). An axis whose requested total already
-    /// matches the current one keeps its existing split. A dimension below the image size is
-    /// clamped to the image size and <see cref="ShrinkAttempted"/> is raised.
+    /// Sets the total canvas size. Extra pixels go where <see cref="Anchor"/> says: away from
+    /// the pinned side, split evenly around a centred image (the odd pixel goes right /
+    /// bottom), or at the right/bottom edge of a dragged (<see cref="CanvasAnchor.Custom"/>)
+    /// image. An axis whose requested total already matches the current one keeps its
+    /// existing split. A dimension below the image size is clamped to the image size and
+    /// <see cref="ShrinkAttempted"/> is raised.
     /// </summary>
     public void SetTargetSize(int width, int height)
     {
@@ -197,42 +259,52 @@ public abstract class CanvasExtensionTool
         // Only re-split an axis whose total actually changed: typing a new height must not
         // re-centre a width the user placed with the handles (the panel sends both fields).
         if (width != ImagePixelWidth + _extendLeft + _extendRight)
-            ApplySymmetricWidth(width);
+            DistributeWidth(Math.Max(0, width - ImagePixelWidth));
         if (height != ImagePixelHeight + _extendTop + _extendBottom)
-            ApplySymmetricHeight(height);
+            DistributeHeight(Math.Max(0, height - ImagePixelHeight));
 
         if (shrinkRequested)
             ShrinkAttempted?.Invoke(this, EventArgs.Empty);
         RegionChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    private void ApplySymmetricTarget(int width, int height)
+    /// <summary>Splits <paramref name="total"/> extra columns between left and right per the anchor.</summary>
+    private void DistributeWidth(int total)
     {
-        ApplySymmetricWidth(width);
-        ApplySymmetricHeight(height);
+        _extendLeft = Anchor switch
+        {
+            CanvasAnchor.TopLeft or CanvasAnchor.Left or CanvasAnchor.BottomLeft => 0,
+            CanvasAnchor.TopRight or CanvasAnchor.Right or CanvasAnchor.BottomRight => total,
+            CanvasAnchor.Custom => Math.Min(_extendLeft, total),
+            _ => total / 2
+        };
+        _extendRight = total - _extendLeft;
     }
 
-    private void ApplySymmetricWidth(int width)
+    /// <summary>Splits <paramref name="total"/> extra rows between top and bottom per the anchor.</summary>
+    private void DistributeHeight(int total)
     {
-        var totalExtendX = Math.Max(0, width - ImagePixelWidth);
-        _extendLeft = totalExtendX / 2;
-        _extendRight = totalExtendX - _extendLeft;
+        _extendTop = Anchor switch
+        {
+            CanvasAnchor.TopLeft or CanvasAnchor.Top or CanvasAnchor.TopRight => 0,
+            CanvasAnchor.BottomLeft or CanvasAnchor.Bottom or CanvasAnchor.BottomRight => total,
+            CanvasAnchor.Custom => Math.Min(_extendTop, total),
+            _ => total / 2
+        };
+        _extendBottom = total - _extendTop;
     }
 
-    private void ApplySymmetricHeight(int height)
-    {
-        var totalExtendY = Math.Max(0, height - ImagePixelHeight);
-        _extendTop = totalExtendY / 2;
-        _extendBottom = totalExtendY - _extendTop;
-    }
-
-    /// <summary>Handles pointer pressed. Returns true when a handle was grabbed.</summary>
+    /// <summary>
+    /// Handles pointer pressed. Returns true when a handle was grabbed or, where
+    /// <see cref="AllowsImageMove"/> permits, when a drag of the image itself started.
+    /// </summary>
     public bool OnPointerPressed(SKPoint point)
     {
         if (!_isActive) return false;
 
         _activeHandle = HitTestHandle(point);
-        if (_activeHandle == OutpaintHandle.None)
+        _isMovingImage = _activeHandle == OutpaintHandle.None && IsMovePoint(point);
+        if (_activeHandle == OutpaintHandle.None && !_isMovingImage)
             return false;
 
         _dragStartPoint = point;
@@ -248,7 +320,8 @@ public abstract class CanvasExtensionTool
     /// <summary>Handles pointer moved. Returns true when a drag is in progress.</summary>
     public bool OnPointerMoved(SKPoint point)
     {
-        if (!_isActive || _activeHandle == OutpaintHandle.None) return false;
+        if (!_isActive) return false;
+        if (_activeHandle == OutpaintHandle.None && !_isMovingImage) return false;
 
         var deltaX = point.X - _dragStartPoint.X;
         var deltaY = point.Y - _dragStartPoint.Y;
@@ -256,6 +329,13 @@ public abstract class CanvasExtensionTool
         // Convert screen delta to pixel delta based on image-to-screen scale
         var scaleX = _imageRect.Width > 0 ? ImagePixelWidth / _imageRect.Width : 1f;
         var scaleY = _imageRect.Height > 0 ? ImagePixelHeight / _imageRect.Height : 1f;
+
+        if (_isMovingImage)
+        {
+            MoveImage((int)(deltaX * scaleX), (int)(deltaY * scaleY));
+            RegionChanged?.Invoke(this, EventArgs.Empty);
+            return true;
+        }
 
         // Corner handles extend two adjacent edges simultaneously from one drag.
         var extendTopDelta = -(int)(deltaY * scaleY);
@@ -319,8 +399,32 @@ public abstract class CanvasExtensionTool
     {
         if (!_isActive) return false;
         _activeHandle = OutpaintHandle.None;
+        _isMovingImage = false;
         _isShrinkBlocked = false;
         return true;
+    }
+
+    /// <summary>
+    /// Slides the image inside the frame by the given image-pixel offset from the gesture
+    /// start. The total size never changes: what one edge gains the opposite edge loses,
+    /// clamped so no edge goes negative. Any actual movement makes the placement
+    /// <see cref="CanvasAnchor.Custom"/>.
+    /// </summary>
+    private void MoveImage(int deltaXPixels, int deltaYPixels)
+    {
+        var totalX = _dragStartExtendLeft + _dragStartExtendRight;
+        var totalY = _dragStartExtendTop + _dragStartExtendBottom;
+
+        var left = Math.Clamp(_dragStartExtendLeft + deltaXPixels, 0, totalX);
+        var top = Math.Clamp(_dragStartExtendTop + deltaYPixels, 0, totalY);
+
+        if (left == _extendLeft && top == _extendTop) return;
+
+        _extendLeft = left;
+        _extendRight = totalX - left;
+        _extendTop = top;
+        _extendBottom = totalY - top;
+        _anchor = CanvasAnchor.Custom;
     }
 
     /// <summary>Gets the handle under the point, for cursor selection.</summary>

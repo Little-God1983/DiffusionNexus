@@ -1,3 +1,4 @@
+using DiffusionNexus.UI.ImageEditor;
 using DiffusionNexus.UI.ImageEditor.Services;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
@@ -170,6 +171,51 @@ public class CanvasExtendViewModelTests
         _sut.OpenCropCommand.Execute(null);
 
         raised.Should().Be(1);
+    }
+
+    [Fact]
+    public void Placement_StartsTopLeft_AndAGridClick_SelectsAndRaisesARequest()
+    {
+        _sut.SelectedAnchor.Should().Be(CanvasAnchor.TopLeft);
+        _sut.IsPanelOpen = true;
+        CanvasAnchor? requested = null;
+        _sut.AnchorRequested += (_, anchor) => requested = anchor;
+
+        _sut.SetAnchorCommand.Execute(CanvasAnchor.BottomRight);
+
+        _sut.SelectedAnchor.Should().Be(CanvasAnchor.BottomRight);
+        requested.Should().Be(CanvasAnchor.BottomRight);
+    }
+
+    [Fact]
+    public void Placement_IsDisabledWhileThePanelIsClosed_AndNeverRequestsCustom()
+    {
+        _sut.SetAnchorCommand.CanExecute(CanvasAnchor.Center).Should().BeFalse();
+
+        _sut.IsPanelOpen = true;
+        var requests = 0;
+        _sut.AnchorRequested += (_, _) => requests++;
+
+        _sut.SetAnchorCommand.Execute(CanvasAnchor.Custom);
+
+        requests.Should().Be(0);
+        _sut.SelectedAnchor.Should().Be(CanvasAnchor.TopLeft);
+    }
+
+    [Fact]
+    public void UpdateAnchor_FromTheTool_ClearsTheGridForCustom_WithoutEchoingARequest()
+    {
+        _sut.IsPanelOpen = true;
+        var requests = 0;
+        _sut.AnchorRequested += (_, _) => requests++;
+
+        _sut.UpdateAnchor(CanvasAnchor.Custom);
+        _sut.SelectedAnchor.Should().BeNull();
+
+        _sut.UpdateAnchor(CanvasAnchor.Center);
+        _sut.SelectedAnchor.Should().Be(CanvasAnchor.Center);
+
+        requests.Should().Be(0);
     }
 
     [Fact]
