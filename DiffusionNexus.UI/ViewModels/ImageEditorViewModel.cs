@@ -105,6 +105,9 @@ public partial class ImageEditorViewModel : ObservableObject
     /// <summary>Sub-ViewModel for outpainting tool.</summary>
     public OutpaintingViewModel Outpainting { get; }
 
+    /// <summary>Sub-ViewModel for the Canvas Extend tool.</summary>
+    public CanvasExtendViewModel CanvasExtend { get; }
+
     /// <summary>Sub-ViewModel for image rating.</summary>
     public RatingViewModel Rating { get; }
 
@@ -375,6 +378,7 @@ public partial class ImageEditorViewModel : ObservableObject
         BackgroundFill = new BackgroundFillViewModel(() => HasImage, DeactivateOtherTools);
         Inpainting = new InpaintingViewModel(() => HasImage, DeactivateOtherTools, comfyUiService, eventAggregator, readinessService);
         Outpainting = new OutpaintingViewModel(() => HasImage, () => ImageWidth, () => ImageHeight, DeactivateOtherTools, comfyUiService, readinessService, unifiedLogger);
+        CanvasExtend = new CanvasExtendViewModel(() => HasImage, () => ImageWidth, () => ImageHeight, DeactivateOtherTools, unifiedLogger);
         Rating = new RatingViewModel(() => HasImage, eventAggregator);
 
         WireSubViewModelEvents();
@@ -477,6 +481,19 @@ public partial class ImageEditorViewModel : ObservableObject
             else _services.Tools.Deactivate(args.ToolId);
         };
 
+        CanvasExtend.ToolStateChanged += (_, _) => NotifyToolCommandsCanExecuteChanged();
+        CanvasExtend.StatusMessageChanged += (_, msg) => StatusMessage = msg;
+        CanvasExtend.ToolToggled += (_, args) =>
+        {
+            if (args.IsActive) _services.Tools.Activate(args.ToolId);
+            else _services.Tools.Deactivate(args.ToolId);
+        };
+        // "Open Crop" from the shrink hint: same path as the Crop toolbar toggle.
+        CanvasExtend.OpenCropRequested += (_, _) =>
+        {
+            if (!IsCropToolActive) ExecuteToggleCropTool();
+        };
+
         Rating.StatusMessageChanged += (_, msg) => StatusMessage = msg;
     }
 
@@ -512,6 +529,9 @@ public partial class ImageEditorViewModel : ObservableObject
 
         if (exceptToolId != ToolIds.Outpainting)
             Outpainting.ClosePanel();
+
+        if (exceptToolId != ToolIds.CanvasExtend)
+            CanvasExtend.ClosePanel();
     }
 
     /// <summary>Closes all active tools and resets their state.</summary>
@@ -531,6 +551,7 @@ public partial class ImageEditorViewModel : ObservableObject
         BackgroundFill.ClosePanel();
         Inpainting.ClosePanel();
         Outpainting.ClosePanel();
+        CanvasExtend.ClosePanel();
     }
 
     private void NotifyToolCommandsCanExecuteChanged()
@@ -552,6 +573,7 @@ public partial class ImageEditorViewModel : ObservableObject
         BackgroundFill.RefreshCommandStates();
         Inpainting.RefreshCommandStates();
         Outpainting.RefreshCommandStates();
+        CanvasExtend.RefreshCommandStates();
     }
 
     private void NotifyCommandsCanExecuteChanged()

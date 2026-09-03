@@ -119,6 +119,17 @@ public class ToolManagerTests
         _sut.IsActive(ToolIds.ColorBalance).Should().BeFalse();
     }
 
+    [Fact]
+    public void WhenCanvasExtendActivates_CropIsDeactivated()
+    {
+        _sut.Activate(ToolIds.Crop);
+
+        _sut.Activate(ToolIds.CanvasExtend);
+
+        _sut.ActiveToolId.Should().Be(ToolIds.CanvasExtend);
+        _sut.IsActive(ToolIds.Crop).Should().BeFalse();
+    }
+
     #endregion
 
     #region Deactivate
