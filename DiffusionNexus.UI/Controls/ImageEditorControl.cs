@@ -1087,7 +1087,7 @@ public class ImageEditorControl : Control
             return;
         }
 
-        // Canvas extend tool cursors (handles sit on the frame; the image itself can be dragged)
+        // Canvas extend tool cursors (handles sit on the frame; the frame itself can be dragged)
         if (_isCanvasExtendToolActive)
         {
             var tool = _editorCore.CanvasExtendTool;

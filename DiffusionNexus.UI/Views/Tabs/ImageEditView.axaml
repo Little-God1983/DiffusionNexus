@@ -610,7 +610,7 @@
 
                 <!-- Image placement: a 3x3 anchor grid (selected cell highlighted via the brush
                      converter, same pattern as OutputResolutionControl). No cell is lit once the
-                     image has been dragged to a custom spot. -->
+                     frame has been dragged to a custom spot. -->
                 <TextBlock Text="Image position" FontSize="11" Opacity="0.7"/>
                 <Grid ColumnDefinitions="Auto,12,*">
                   <UniformGrid Grid.Column="0" Columns="3" Rows="3" VerticalAlignment="Top">
@@ -646,7 +646,7 @@
                     <Button Content="&#x2198;" CommandParameter="{x:Static editor:CanvasAnchor.BottomRight}" ToolTip.Tip="Image bottom-right"
                             Background="{Binding ImageEditor.CanvasExtend.SelectedAnchor, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static editor:CanvasAnchor.BottomRight}}"/>
                   </UniformGrid>
-                  <TextBlock Grid.Column="2" Text="Pick where the image sits, or drag the image on the canvas to place it freely."
+                  <TextBlock Grid.Column="2" Text="Pick where the image sits, or drag the green frame on the canvas to place it freely."
                              FontSize="11" Opacity="0.7" TextWrapping="Wrap" VerticalAlignment="Center"/>
                 </Grid>
 

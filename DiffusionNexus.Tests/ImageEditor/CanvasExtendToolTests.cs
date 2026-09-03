@@ -192,31 +192,35 @@ public class CanvasExtendToolTests
     }
 
     [Fact]
-    public void DraggingTheImage_ShiftsTheExtensionToTheOppositeEdges_AndMakesThePlacementCustom()
+    public void DraggingTheFrame_FollowsThePointer_MovingRoomToTheOppositeEdges_AndMakesThePlacementCustom()
     {
         var tool = CreateActive(scale: 0.5f); // 1000 px image drawn 500 px wide
-        tool.SetTargetSize(1400, 1200);       // 400 right, 200 bottom
+        tool.SetAnchor(CanvasAnchor.Center);
+        tool.SetTargetSize(1400, 1200);       // 200 left/right, 100 top/bottom
 
         tool.IsMovePoint(new SKPoint(250, 250)).Should().BeTrue();
         tool.OnPointerPressed(new SKPoint(250, 250)).Should().BeTrue();
-        tool.IsMovingImage.Should().BeTrue();
-        tool.OnPointerMoved(new SKPoint(300, 270)); // +50 screen px = +100 image px right, +20 = +40 px down
+        tool.IsMovingFrame.Should().BeTrue();
+        tool.PinnedImageRect.Should().Be(new SKRect(0, 0, 500, 500), "the image stays put while the frame moves");
+        tool.OnPointerMoved(new SKPoint(300, 270)); // frame goes +50 screen px = +100 image px right, +20 = +40 px down
         tool.OnPointerReleased();
 
-        (tool.ExtendLeft, tool.ExtendTop, tool.ExtendRight, tool.ExtendBottom).Should().Be((100, 40, 300, 160));
-        tool.GetNewDimensions().Should().Be((1400, 1200), "moving the image never changes the canvas size");
+        // The frame moved right and down, so it now has more room on the right and bottom.
+        (tool.ExtendLeft, tool.ExtendTop, tool.ExtendRight, tool.ExtendBottom).Should().Be((100, 60, 300, 140));
+        tool.GetNewDimensions().Should().Be((1400, 1200), "moving the frame never changes the canvas size");
         tool.Anchor.Should().Be(CanvasAnchor.Custom);
-        tool.IsMovingImage.Should().BeFalse();
+        tool.IsMovingFrame.Should().BeFalse();
+        tool.PinnedImageRect.Should().BeNull();
     }
 
     [Fact]
-    public void DraggingTheImage_StopsAtTheFrameEdges()
+    public void DraggingTheFrame_StopsWhenAnEdgeReachesTheImage()
     {
         var tool = CreateActive();
         tool.SetTargetSize(1400, 1000); // 400 right, nothing vertical
 
         tool.OnPointerPressed(new SKPoint(500, 500));
-        tool.OnPointerMoved(new SKPoint(1500, 900)); // way past the right edge, and down where there is no room
+        tool.OnPointerMoved(new SKPoint(-500, 100)); // frame dragged far left and up where there is no room
         tool.OnPointerReleased();
 
         (tool.ExtendLeft, tool.ExtendRight).Should().Be((400, 0));
@@ -224,7 +228,7 @@ public class CanvasExtendToolTests
     }
 
     [Fact]
-    public void DraggingTheImage_WithoutMoving_KeepsTheChosenAnchor()
+    public void DraggingTheFrame_WithoutMoving_KeepsTheChosenAnchor()
     {
         var tool = CreateActive();
         tool.SetAnchor(CanvasAnchor.Center);
@@ -238,7 +242,7 @@ public class CanvasExtendToolTests
     }
 
     [Fact]
-    public void MovePoint_NeedsRoomToMove_AndLosesToHandles()
+    public void MovePoint_IsAnywhereInsideTheFrame_NeedsRoomToMove_AndLosesToHandles()
     {
         var tool = CreateActive();
 
@@ -246,9 +250,11 @@ public class CanvasExtendToolTests
         tool.OnPointerPressed(new SKPoint(500, 500)).Should().BeFalse();
 
         tool.SetTargetSize(1400, 1000);
-        tool.IsMovePoint(new SKPoint(500, 500)).Should().BeTrue();
+        tool.IsMovePoint(new SKPoint(500, 500)).Should().BeTrue("on the image");
+        tool.IsMovePoint(new SKPoint(1200, 500)).Should().BeTrue("in the new area, still inside the frame");
         tool.IsMovePoint(new SKPoint(0, 0)).Should().BeFalse("the top-left handle sits on the image corner");
-        tool.IsMovePoint(new SKPoint(1200, 500)).Should().BeFalse("that point is in the new area, not on the image");
+        tool.IsMovePoint(new SKPoint(1400, 500)).Should().BeFalse("the right handle sits on the frame edge");
+        tool.IsMovePoint(new SKPoint(1500, 500)).Should().BeFalse("outside the frame");
     }
 
     [Fact]
@@ -257,7 +263,7 @@ public class CanvasExtendToolTests
         var tool = CreateActive();
         tool.SetTargetSize(1400, 1200);
         tool.OnPointerPressed(new SKPoint(500, 500));
-        tool.OnPointerMoved(new SKPoint(600, 550)); // image now 100 from the left, 50 from the top
+        tool.OnPointerMoved(new SKPoint(400, 450)); // frame dragged left/up: image now 100 from the left, 50 from the top
         tool.OnPointerReleased();
 
         tool.SetTargetSize(2000, 1200);
@@ -274,7 +280,7 @@ public class CanvasExtendToolTests
         var tool = CreateActive();
         tool.SetTargetSize(1400, 1000);
         tool.OnPointerPressed(new SKPoint(500, 500));
-        tool.OnPointerMoved(new SKPoint(600, 500));
+        tool.OnPointerMoved(new SKPoint(400, 500));
         tool.OnPointerReleased();
         tool.Anchor.Should().Be(CanvasAnchor.Custom);
 

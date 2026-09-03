@@ -6,7 +6,7 @@ namespace DiffusionNexus.UI.ImageEditor;
 /// Shared state and drag math for tools that grow the canvas outward from the image:
 /// per-edge pixel extension, outward-only handle dragging, aspect-ratio and target-size
 /// presets, and the placement of the image inside the frame (<see cref="Anchor"/>, plus an
-/// optional drag-to-move gesture, see <see cref="AllowsImageMove"/>). Subclasses decide
+/// optional drag-the-frame gesture, see <see cref="AllowsFrameMove"/>). Subclasses decide
 /// where the handles sit (<see cref="GetHandleCenter"/>), how big their hit zone is, how
 /// the frame is drawn, and how much room the viewport must reserve around the frame
 /// (<see cref="FitMargin"/>).
@@ -42,7 +42,8 @@ public abstract class CanvasExtensionTool
 
     // Placement of the image inside the frame; null means "the subclass default".
     private CanvasAnchor? _anchor;
-    private bool _isMovingImage;
+    private bool _isMovingFrame;
+    private SKRect _moveStartImageRect;
 
     /// <summary>Gets or sets whether the tool is active. Deactivating resets the extension.</summary>
     public bool IsActive
@@ -80,11 +81,19 @@ public abstract class CanvasExtensionTool
     /// <summary>Whether any extension has been applied.</summary>
     public bool HasExtension => _extendTop > 0 || _extendRight > 0 || _extendBottom > 0 || _extendLeft > 0;
 
-    /// <summary>Whether a handle or the image itself is currently being dragged.</summary>
-    public bool IsDragging => _activeHandle != OutpaintHandle.None || _isMovingImage;
+    /// <summary>Whether a handle or the frame itself is currently being dragged.</summary>
+    public bool IsDragging => _activeHandle != OutpaintHandle.None || _isMovingFrame;
 
-    /// <summary>Whether the image itself is being dragged inside the frame.</summary>
-    public bool IsMovingImage => _isMovingImage;
+    /// <summary>Whether the frame is being dragged around the image.</summary>
+    public bool IsMovingFrame => _isMovingFrame;
+
+    /// <summary>
+    /// While the frame is being dragged, the image's screen rectangle as it was when the
+    /// gesture started. The renderer pins the image there for the duration of the drag so
+    /// the frame, not the image, follows the pointer; a fit-mode render would otherwise
+    /// re-centre the frame every frame and make the image slide the other way.
+    /// </summary>
+    public SKRect? PinnedImageRect => _isMovingFrame ? _moveStartImageRect : null;
 
     /// <summary>
     /// Where the image sits inside the extended canvas. Typed sizes, multipliers and aspect
@@ -112,10 +121,10 @@ public abstract class CanvasExtensionTool
     protected virtual CanvasAnchor DefaultAnchor => CanvasAnchor.Center;
 
     /// <summary>
-    /// Whether a press inside the image (off every handle) starts dragging the image around
-    /// inside the frame. Off by default so Outpaint's pointer behaviour does not change.
+    /// Whether a press inside the frame (off every handle) starts dragging the frame around
+    /// the image. Off by default so Outpaint's pointer behaviour does not change.
     /// </summary>
-    protected virtual bool AllowsImageMove => false;
+    protected virtual bool AllowsFrameMove => false;
 
     /// <summary>The image rectangle in screen coordinates, as last set by <see cref="SetImageBounds"/>.</summary>
     protected SKRect ImageRect => _imageRect;
@@ -166,7 +175,7 @@ public abstract class CanvasExtensionTool
         _extendBottom = 0;
         _extendLeft = 0;
         _activeHandle = OutpaintHandle.None;
-        _isMovingImage = false;
+        _isMovingFrame = false;
         _isShrinkBlocked = false;
         if (_anchor == CanvasAnchor.Custom)
             _anchor = null;
@@ -189,15 +198,15 @@ public abstract class CanvasExtensionTool
     }
 
     /// <summary>
-    /// True when a press at this point would start dragging the image inside the frame:
-    /// the tool allows it, there is room to move, and the point is on the image but not
-    /// on a handle. Used for the cursor.
+    /// True when a press at this point would start dragging the frame: the tool allows it,
+    /// there is room to move, and the point is anywhere inside the frame (image or new
+    /// area) but not on a handle. Used for the cursor.
     /// </summary>
     public bool IsMovePoint(SKPoint point)
     {
-        if (!_isActive || !AllowsImageMove || !HasExtension) return false;
+        if (!_isActive || !AllowsFrameMove || !HasExtension) return false;
         if (HitTestHandle(point) != OutpaintHandle.None) return false;
-        return _imageRect.Contains(point);
+        return GetExtendedScreenRect().Contains(point);
     }
 
     /// <summary>Sets the extension amounts for each edge in image pixels. Negative values clamp to zero.</summary>
@@ -296,16 +305,18 @@ public abstract class CanvasExtensionTool
 
     /// <summary>
     /// Handles pointer pressed. Returns true when a handle was grabbed or, where
-    /// <see cref="AllowsImageMove"/> permits, when a drag of the image itself started.
+    /// <see cref="AllowsFrameMove"/> permits, when a drag of the frame started.
     /// </summary>
     public bool OnPointerPressed(SKPoint point)
     {
         if (!_isActive) return false;
 
         _activeHandle = HitTestHandle(point);
-        _isMovingImage = _activeHandle == OutpaintHandle.None && IsMovePoint(point);
-        if (_activeHandle == OutpaintHandle.None && !_isMovingImage)
+        _isMovingFrame = _activeHandle == OutpaintHandle.None && IsMovePoint(point);
+        if (_activeHandle == OutpaintHandle.None && !_isMovingFrame)
             return false;
+
+        _moveStartImageRect = _imageRect;
 
         _dragStartPoint = point;
         _dragStartExtendTop = _extendTop;
@@ -321,7 +332,7 @@ public abstract class CanvasExtensionTool
     public bool OnPointerMoved(SKPoint point)
     {
         if (!_isActive) return false;
-        if (_activeHandle == OutpaintHandle.None && !_isMovingImage) return false;
+        if (_activeHandle == OutpaintHandle.None && !_isMovingFrame) return false;
 
         var deltaX = point.X - _dragStartPoint.X;
         var deltaY = point.Y - _dragStartPoint.Y;
@@ -330,9 +341,9 @@ public abstract class CanvasExtensionTool
         var scaleX = _imageRect.Width > 0 ? ImagePixelWidth / _imageRect.Width : 1f;
         var scaleY = _imageRect.Height > 0 ? ImagePixelHeight / _imageRect.Height : 1f;
 
-        if (_isMovingImage)
+        if (_isMovingFrame)
         {
-            MoveImage((int)(deltaX * scaleX), (int)(deltaY * scaleY));
+            MoveFrame((int)(deltaX * scaleX), (int)(deltaY * scaleY));
             RegionChanged?.Invoke(this, EventArgs.Empty);
             return true;
         }
@@ -399,24 +410,24 @@ public abstract class CanvasExtensionTool
     {
         if (!_isActive) return false;
         _activeHandle = OutpaintHandle.None;
-        _isMovingImage = false;
+        _isMovingFrame = false;
         _isShrinkBlocked = false;
         return true;
     }
 
     /// <summary>
-    /// Slides the image inside the frame by the given image-pixel offset from the gesture
-    /// start. The total size never changes: what one edge gains the opposite edge loses,
-    /// clamped so no edge goes negative. Any actual movement makes the placement
-    /// <see cref="CanvasAnchor.Custom"/>.
+    /// Slides the frame around the image by the given image-pixel offset from the gesture
+    /// start: the frame follows the pointer, so dragging right moves room from the left
+    /// edge to the right edge. The total size never changes; each edge is clamped at zero.
+    /// Any actual movement makes the placement <see cref="CanvasAnchor.Custom"/>.
     /// </summary>
-    private void MoveImage(int deltaXPixels, int deltaYPixels)
+    private void MoveFrame(int deltaXPixels, int deltaYPixels)
     {
         var totalX = _dragStartExtendLeft + _dragStartExtendRight;
         var totalY = _dragStartExtendTop + _dragStartExtendBottom;
 
-        var left = Math.Clamp(_dragStartExtendLeft + deltaXPixels, 0, totalX);
-        var top = Math.Clamp(_dragStartExtendTop + deltaYPixels, 0, totalY);
+        var left = Math.Clamp(_dragStartExtendLeft - deltaXPixels, 0, totalX);
+        var top = Math.Clamp(_dragStartExtendTop - deltaYPixels, 0, totalY);
 
         if (left == _extendLeft && top == _extendTop) return;
 

@@ -106,6 +106,37 @@ public class ViewportFitTests
     }
 
     [Fact]
+    public void RenderWithZoom_WhileTheFrameIsDragged_PinsTheImage_AndRefitsOnRelease()
+    {
+        using var core = new ImageEditorCore();
+        core.SetServices(EditorServiceFactory.Create());
+        core.LoadImage(EncodePng(100, 100));
+        using var surface = new SKBitmap(400, 400, SKColorType.Rgba8888, SKAlphaType.Premul);
+        using var canvas = new SKCanvas(surface);
+
+        var tool = core.CanvasExtendTool;
+        tool.IsActive = true;
+        tool.ImagePixelWidth = 100;
+        tool.ImagePixelHeight = 100;
+        tool.SetAnchor(CanvasAnchor.Center);
+        tool.SetExtension(0, 100, 0, 100); // 300 x 100 frame, image in the middle
+        var before = core.RenderWithZoom(canvas, 400, 400, SKColors.Black);
+
+        // Grab the frame in the new area and drag it right: the image must not move on screen.
+        tool.OnPointerPressed(new SKPoint(before.Right + 5, before.MidY)).Should().BeTrue();
+        tool.OnPointerMoved(new SKPoint(before.Right + 45, before.MidY));
+        var during = core.RenderWithZoom(canvas, 400, 400, SKColors.Black);
+        during.Should().Be(before);
+        tool.ExtendRight.Should().BeGreaterThan(100);
+
+        // On release fit mode re-centres the frame, so the image ends up further left.
+        tool.OnPointerReleased();
+        var after = core.RenderWithZoom(canvas, 400, 400, SKColors.Black);
+        after.Left.Should().BeLessThan(before.Left);
+        after.Width.Should().BeApproximately(before.Width, 0.001f, "the total size, and so the fit scale, did not change");
+    }
+
+    [Fact]
     public void LeavingFitMode_ThenPanning_MovesTheViewportWithoutChangingZoom()
     {
         // The control's middle-drag pan clears fit mode before calling Pan, because

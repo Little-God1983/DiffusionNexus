@@ -37,8 +37,8 @@ public sealed class CanvasExtendTool : CanvasExtensionTool
     /// <summary>The canvas grows to the right and down unless the user picks another placement.</summary>
     protected override CanvasAnchor DefaultAnchor => CanvasAnchor.TopLeft;
 
-    /// <summary>The image can be dragged around inside the frame.</summary>
-    protected override bool AllowsImageMove => true;
+    /// <summary>The frame can be dragged around the image.</summary>
+    protected override bool AllowsFrameMove => true;
 
     /// <inheritdoc />
     protected override SKPoint GetHandleCenter(OutpaintHandle handle)

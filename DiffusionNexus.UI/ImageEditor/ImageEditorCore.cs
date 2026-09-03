@@ -981,7 +981,15 @@ public partial class ImageEditorCore : IDisposable
 
             SKRect imageRect;
 
-            if (_isFitMode)
+            if (ActiveExtensionTool?.PinnedImageRect is { } pinned)
+            {
+                // The frame is being dragged: keep the image where it was when the gesture
+                // started so the frame follows the pointer. Fit mode would re-centre the frame
+                // every render and slide the image the other way; the fit scale cannot change
+                // during a move (the total size stays), so nothing else needs updating.
+                imageRect = pinned;
+            }
+            else if (_isFitMode)
             {
                 // Fit honours an active extension tool's frame so it never runs off screen.
                 imageRect = FitImageRect(imageWidth, imageHeight, canvasWidth, canvasHeight, out var fitScale);
