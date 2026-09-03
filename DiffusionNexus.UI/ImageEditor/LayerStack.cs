@@ -400,13 +400,15 @@ public class LayerStack : IDisposable
     /// </summary>
     public void ResizeCanvas(int newWidth, int newHeight, int offsetX, int offsetY)
     {
-        _width = newWidth;
-        _height = newHeight;
-
         foreach (var layer in _layers)
         {
             layer.ResizeCanvas(newWidth, newHeight, offsetX, offsetY);
         }
+
+        // Recorded only once every layer is resized: a failed allocation throws out of the
+        // loop, and the stack must not claim a size its bitmaps never got.
+        _width = newWidth;
+        _height = newHeight;
 
         ContentChanged?.Invoke(this, EventArgs.Empty);
     }

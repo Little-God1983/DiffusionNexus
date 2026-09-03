@@ -1322,6 +1322,12 @@ public class ImageEditorControl : Control
     public event EventHandler? CanvasExtendApplied;
 
     /// <summary>
+    /// Event raised when an extension was requested but the core could not apply it
+    /// (for example the new canvas could not be allocated).
+    /// </summary>
+    public event EventHandler? CanvasExtendFailed;
+
+    /// <summary>
     /// Applies the canvas extend tool's current extension.
     /// </summary>
     public bool ApplyCanvasExtend()
@@ -1330,6 +1336,12 @@ public class ImageEditorControl : Control
         if (result)
         {
             CanvasExtendApplied?.Invoke(this, EventArgs.Empty);
+        }
+        else if (_editorCore.CanvasExtendTool.HasExtension)
+        {
+            // There was something to apply and it did not happen: a real failure, not the
+            // "nothing to do" false.
+            CanvasExtendFailed?.Invoke(this, EventArgs.Empty);
         }
         InvalidateVisual();
         return result;

@@ -301,6 +301,14 @@ public class Layer : IDisposable
         if (_bitmap == null) return;
 
         var newBitmap = new SKBitmap(newWidth, newHeight, SKColorType.Rgba8888, SKAlphaType.Premul);
+        // SkiaSharp can return an empty bitmap instead of throwing when the native
+        // allocation fails. Bail out before the old bitmap is disposed, so the layer
+        // keeps its content and the caller can report the failure.
+        if (newBitmap.IsEmpty || newBitmap.Width != newWidth || newBitmap.Height != newHeight)
+        {
+            newBitmap.Dispose();
+            throw new InvalidOperationException($"Could not allocate a {newWidth}x{newHeight} canvas.");
+        }
         newBitmap.Erase(SKColors.Transparent);
 
         using var canvas = new SKCanvas(newBitmap);

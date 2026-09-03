@@ -858,6 +858,13 @@ public partial class ImageEditorCore : IDisposable
                 if (_workingBitmap is not null)
                 {
                     var grown = new SKBitmap(newWidth, newHeight, SKColorType.Rgba8888, SKAlphaType.Premul);
+                    // SkiaSharp hands back an empty bitmap when the native allocation fails
+                    // instead of throwing, so an unchecked bitmap would silently lose the image.
+                    if (grown.IsEmpty || grown.Width != newWidth || grown.Height != newHeight)
+                    {
+                        grown.Dispose();
+                        throw new InvalidOperationException($"Could not allocate a {newWidth}x{newHeight} canvas.");
+                    }
                     grown.Erase(SKColors.Transparent);
                     using (var canvas = new SKCanvas(grown))
                     {
@@ -868,9 +875,11 @@ public partial class ImageEditorCore : IDisposable
                 }
             }
         }
-        catch (OutOfMemoryException ex)
+        catch (Exception ex)
         {
-            FileLogger.LogError($"Canvas extend to {newWidth}x{newHeight} ran out of memory", ex);
+            // Skia reports a failed allocation as a plain Exception (or an empty bitmap),
+            // not always an OutOfMemoryException, so catch broadly and report the failure.
+            FileLogger.LogError($"Canvas extend to {newWidth}x{newHeight} failed", ex);
             return false;
         }
 

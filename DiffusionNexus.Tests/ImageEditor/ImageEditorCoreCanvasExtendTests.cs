@@ -83,4 +83,18 @@ public class ImageEditorCoreCanvasExtendTests : IDisposable
 
         _sut.Width.Should().Be(200);
     }
+
+    [Fact]
+    public void AbsurdExtension_ReturnsFalse_AndLeavesCanvasAndToolUntouched()
+    {
+        // Skia hands back an empty bitmap instead of throwing when the native allocation
+        // fails, so the guard has to spot it. Either way the apply must fail cleanly.
+        _sut.CanvasExtendTool.SetExtension(0, 1_000_000_000, 0, 0);
+
+        _sut.ApplyCanvasExtend().Should().BeFalse();
+
+        _sut.Width.Should().Be(100);
+        _sut.Height.Should().Be(80);
+        _sut.CanvasExtendTool.HasExtension.Should().BeTrue();
+    }
 }

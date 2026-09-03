@@ -567,6 +567,14 @@ public partial class ImageEditView : UserControl
         };
         _imageEditorCanvas.CanvasExtendApplied += onApplied;
         _eventCleanup.Add(() => _imageEditorCanvas!.CanvasExtendApplied -= onApplied);
+
+        EventHandler onApplyFailed = (_, _) =>
+        {
+            imageEditor.CanvasExtend.OnApplyFailed();
+            imageEditor.StatusMessage = "The canvas could not be extended. Try a smaller size.";
+        };
+        _imageEditorCanvas.CanvasExtendFailed += onApplyFailed;
+        _eventCleanup.Add(() => _imageEditorCanvas!.CanvasExtendFailed -= onApplyFailed);
     }
 
     private void WireZoomAndTransformEvents(ImageEditorViewModel imageEditor)

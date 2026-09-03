@@ -231,11 +231,23 @@ public partial class CanvasExtendViewModel : ObservableObject
     public void OnApplied(int newWidth, int newHeight)
     {
         EmitInfo($"applied -> {newWidth}x{newHeight}");
+        // Close first: closing resets the tool, which reports a fresh region and would
+        // re-populate exactly the state cleared below.
+        IsPanelOpen = false;
         ResolutionText = string.Empty;
         HasExtension = false;
         _lastReportedArea = 0;
-        IsPanelOpen = false;
         StatusMessageChanged?.Invoke(this, $"Canvas extended to {newWidth} x {newHeight}");
+    }
+
+    /// <summary>
+    /// Called by the view when the core could not apply the extension (allocation failure).
+    /// The panel stays open with the extension intact so the user can pick a smaller size;
+    /// the view owns the status message.
+    /// </summary>
+    public void OnApplyFailed()
+    {
+        EmitInfo("apply failed");
     }
 
     #endregion

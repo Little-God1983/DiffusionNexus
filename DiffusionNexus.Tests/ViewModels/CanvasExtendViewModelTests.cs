@@ -135,6 +135,19 @@ public class CanvasExtendViewModelTests
     }
 
     [Fact]
+    public void OnApplyFailed_LeavesThePanelOpen_SoTheUserCanTryASmallerSize()
+    {
+        _sut.IsPanelOpen = true;
+        _sut.UpdateResolution(4096, 768, hasExtension: true);
+
+        _sut.OnApplyFailed();
+
+        _sut.IsPanelOpen.Should().BeTrue();
+        _sut.HasExtension.Should().BeTrue();
+        _sut.ResolutionText.Should().Be("4096 x 768");
+    }
+
+    [Fact]
     public void OpenCrop_RaisesRequest()
     {
         _sut.IsPanelOpen = true;
