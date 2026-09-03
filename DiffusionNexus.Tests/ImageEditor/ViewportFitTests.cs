@@ -104,4 +104,37 @@ public class ViewportFitTests
         // frame = image rect + 100 px * scale to the right must stay inside 400 - 32
         (extended.Right + 100f * core.ZoomLevel).Should().BeLessThanOrEqualTo(400f - 32f + 0.001f);
     }
+
+    [Fact]
+    public void LeavingFitMode_ThenPanning_MovesTheViewportWithoutChangingZoom()
+    {
+        // The control's middle-drag pan clears fit mode before calling Pan, because
+        // ViewportManager.Pan is a no-op while fit mode is on. This pins that contract.
+        using var core = new ImageEditorCore();
+        var services = EditorServiceFactory.Create();
+        core.SetServices(services);
+        core.LoadImage(EncodePng(100, 100));
+        using var surface = new SKBitmap(400, 400, SKColorType.Rgba8888, SKAlphaType.Premul);
+        using var canvas = new SKCanvas(surface);
+
+        core.RenderWithZoom(canvas, 400, 400, SKColors.Black);
+        core.RenderWithZoom(canvas, 400, 400, SKColors.Black);
+        var zoomBeforePan = services.Viewport.ZoomLevel;
+
+        core.IsFitMode = false;
+        core.Pan(10, 5);
+
+        services.Viewport.PanX.Should().BeApproximately(10f, 0.0001f);
+        services.Viewport.PanY.Should().BeApproximately(5f, 0.0001f);
+        services.Viewport.ZoomLevel.Should().BeApproximately(zoomBeforePan, 0.0001f);
+    }
+
+    private static byte[] EncodePng(int width, int height)
+    {
+        using var bitmap = new SKBitmap(width, height, SKColorType.Rgba8888, SKAlphaType.Premul);
+        bitmap.Erase(SKColors.Red);
+        using var image = SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+        return data.ToArray();
+    }
 }

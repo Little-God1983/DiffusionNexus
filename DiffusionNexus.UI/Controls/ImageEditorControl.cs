@@ -518,6 +518,10 @@ public class ImageEditorControl : Control
         // Middle mouse button for panning
         if (props.IsMiddleButtonPressed)
         {
+            // Starting a pan gesture is an explicit "leave fit" action, like the wheel:
+            // ViewportManager.Pan is a no-op while fit mode is on. The stored zoom is
+            // already the clamped fit scale, so the view does not jump.
+            _editorCore.IsFitMode = false;
             _isPanning = true;
             _lastPanPoint = point;
             e.Handled = true;
