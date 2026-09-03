@@ -827,7 +827,58 @@ public partial class ImageEditorCore : IDisposable
         return Crop(cropRect);
     }
 
+    /// <summary>
+    /// Grows the canvas by the <see cref="CanvasExtendTool"/>'s current extension. Every
+    /// layer and the working bitmap are resized; existing content keeps its position
+    /// relative to the new top-left offset; new pixels are transparent. Resets the tool.
+    /// </summary>
+    /// <returns>True when the canvas was extended.</returns>
+    public bool ApplyCanvasExtend()
+    {
+        var tool = CanvasExtendTool;
+        if (!HasImage || !tool.HasExtension)
+            return false;
 
+        var offsetX = tool.ExtendLeft;
+        var offsetY = tool.ExtendTop;
+        var newWidth = Width + tool.ExtendLeft + tool.ExtendRight;
+        var newHeight = Height + tool.ExtendTop + tool.ExtendBottom;
+        FileLogger.Log($"Canvas extend: {Width}x{Height} -> {newWidth}x{newHeight} (offset {offsetX},{offsetY})");
+
+        SKBitmap? replacedWorking = null;
+        try
+        {
+            lock (_bitmapLock)
+            {
+                if (_isLayerMode && _layers != null)
+                {
+                    _services?.Layers.ResizeCanvas(newWidth, newHeight, offsetX, offsetY);
+                }
+
+                if (_workingBitmap is not null)
+                {
+                    var grown = new SKBitmap(newWidth, newHeight, SKColorType.Rgba8888, SKAlphaType.Premul);
+                    grown.Erase(SKColors.Transparent);
+                    using (var canvas = new SKCanvas(grown))
+                    {
+                        canvas.DrawBitmap(_workingBitmap, offsetX, offsetY);
+                    }
+                    replacedWorking = _workingBitmap;
+                    _workingBitmap = grown;
+                }
+            }
+        }
+        catch (OutOfMemoryException ex)
+        {
+            FileLogger.LogError($"Canvas extend to {newWidth}x{newHeight} ran out of memory", ex);
+            return false;
+        }
+
+        replacedWorking?.Dispose();
+        tool.Reset();
+        OnImageChanged();
+        return true;
+    }
 
     /// <summary>
     /// Saves the current working image to a file.
