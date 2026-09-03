@@ -160,7 +160,7 @@ public partial class CanvasExtendViewModel : ObservableObject
     public IRelayCommand ToggleCommand { get; }
     public IRelayCommand CancelCommand { get; }
     public IRelayCommand ApplyCommand { get; }
-    /// <summary>Parameter: "2xW", "3xW", "2xH" or "3xH".</summary>
+    /// <summary>Parameter: "kxW" or "kxH" with k = 1, 2 or 3; "1x" returns that axis to the image size.</summary>
     public IRelayCommand<string> MultiplyCommand { get; }
     /// <summary>Parameter: "W:H", e.g. "16:9".</summary>
     public IRelayCommand<string> SetAspectRatioCommand { get; }

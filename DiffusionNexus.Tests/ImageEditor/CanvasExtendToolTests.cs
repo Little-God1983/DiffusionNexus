@@ -154,6 +154,21 @@ public class CanvasExtendToolTests
     }
 
     [Fact]
+    public void SetTargetSize_BackToTheImageSize_ClearsThatAxis_WithoutAShrinkAttempt()
+    {
+        var tool = CreateActive();
+        tool.SetTargetSize(2000, 3000);
+        var shrinkRaised = 0;
+        tool.ShrinkAttempted += (_, _) => shrinkRaised++;
+
+        tool.SetTargetSize(Size, 3000); // "1x W"
+
+        (tool.ExtendLeft, tool.ExtendRight).Should().Be((0, 0));
+        tool.GetNewDimensions().Should().Be((Size, 3000));
+        shrinkRaised.Should().Be(0);
+    }
+
+    [Fact]
     public void SetAnchor_Custom_IsIgnored()
     {
         var tool = CreateActive();

@@ -93,6 +93,22 @@ public class CanvasExtendViewModelTests
     }
 
     [Fact]
+    public void Multiplier_OneX_ReturnsThatAxisToTheImageSize_WithoutTheShrinkHint()
+    {
+        _sut.IsPanelOpen = true;
+        _sut.UpdateResolution(2048, 2304, hasExtension: true); // 2x W and 3x H applied
+        (int Width, int Height)? requested = null;
+        _sut.TargetSizeRequested += (_, args) => requested = args;
+
+        _sut.MultiplyCommand.Execute("1xW");
+        requested.Should().Be((1024, 2304));
+
+        _sut.MultiplyCommand.Execute("1xH");
+        requested.Should().Be((2048, 768)); // width target is still the reported 2048
+        _sut.IsShrinkHintVisible.Should().BeFalse("the image size itself is not a shrink");
+    }
+
+    [Fact]
     public void AspectPreset_IsForwarded()
     {
         _sut.IsPanelOpen = true;

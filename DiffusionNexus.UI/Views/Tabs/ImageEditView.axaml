@@ -570,16 +570,28 @@
                                  ShowButtonSpinner="False"
                                  ToolTip.Tip="New canvas height in pixels. A value below the image height snaps back to it - use Crop to make the image smaller."/>
                 </Grid>
-                <StackPanel Orientation="Horizontal" Spacing="4" HorizontalAlignment="Center">
-                  <Button Content="2× W" Command="{Binding ImageEditor.CanvasExtend.MultiplyCommand}" CommandParameter="2xW"
-                          Padding="8,4" FontSize="10" ToolTip.Tip="Double the width"/>
-                  <Button Content="3× W" Command="{Binding ImageEditor.CanvasExtend.MultiplyCommand}" CommandParameter="3xW"
-                          Padding="8,4" FontSize="10" ToolTip.Tip="Triple the width"/>
-                  <Button Content="2× H" Command="{Binding ImageEditor.CanvasExtend.MultiplyCommand}" CommandParameter="2xH"
-                          Padding="8,4" FontSize="10" ToolTip.Tip="Double the height"/>
-                  <Button Content="3× H" Command="{Binding ImageEditor.CanvasExtend.MultiplyCommand}" CommandParameter="3xH"
-                          Padding="8,4" FontSize="10" ToolTip.Tip="Triple the height"/>
-                </StackPanel>
+                <!-- Multipliers, one row per axis. 1× returns that axis to the image size (the
+                     only other way back after 2×/3× was Cancel). -->
+                <Grid ColumnDefinitions="Auto,8,*" RowDefinitions="Auto,4,Auto">
+                  <TextBlock Grid.Row="0" Grid.Column="0" Text="Width" FontSize="11" Opacity="0.7" VerticalAlignment="Center"/>
+                  <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal" Spacing="4">
+                    <Button Content="1×" Command="{Binding ImageEditor.CanvasExtend.MultiplyCommand}" CommandParameter="1xW"
+                            Padding="10,4" FontSize="10" ToolTip.Tip="Back to the image width"/>
+                    <Button Content="2×" Command="{Binding ImageEditor.CanvasExtend.MultiplyCommand}" CommandParameter="2xW"
+                            Padding="10,4" FontSize="10" ToolTip.Tip="Double the width"/>
+                    <Button Content="3×" Command="{Binding ImageEditor.CanvasExtend.MultiplyCommand}" CommandParameter="3xW"
+                            Padding="10,4" FontSize="10" ToolTip.Tip="Triple the width"/>
+                  </StackPanel>
+                  <TextBlock Grid.Row="2" Grid.Column="0" Text="Height" FontSize="11" Opacity="0.7" VerticalAlignment="Center"/>
+                  <StackPanel Grid.Row="2" Grid.Column="2" Orientation="Horizontal" Spacing="4">
+                    <Button Content="1×" Command="{Binding ImageEditor.CanvasExtend.MultiplyCommand}" CommandParameter="1xH"
+                            Padding="10,4" FontSize="10" ToolTip.Tip="Back to the image height"/>
+                    <Button Content="2×" Command="{Binding ImageEditor.CanvasExtend.MultiplyCommand}" CommandParameter="2xH"
+                            Padding="10,4" FontSize="10" ToolTip.Tip="Double the height"/>
+                    <Button Content="3×" Command="{Binding ImageEditor.CanvasExtend.MultiplyCommand}" CommandParameter="3xH"
+                            Padding="10,4" FontSize="10" ToolTip.Tip="Triple the height"/>
+                  </StackPanel>
+                </Grid>
 
                 <!-- Aspect Ratio Presets -->
                 <TextBlock Text="Extend to aspect ratio" FontSize="11" Opacity="0.7"/>
