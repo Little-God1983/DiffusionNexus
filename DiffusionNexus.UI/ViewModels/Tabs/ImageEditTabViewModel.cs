@@ -677,6 +677,15 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         {
             UpdateImageActionsCanAct();
         }
+
+        // The editor's own status line ("Canvas extended to …", tool hints, apply failures)
+        // has no binding of its own in the editor view: surface it in the shared status bar
+        // the same way the image actions' status is.
+        if (e.PropertyName == nameof(ImageEditorViewModel.StatusMessage)
+            && !string.IsNullOrEmpty(ImageEditor.StatusMessage))
+        {
+            StatusMessage = ImageEditor.StatusMessage;
+        }
     }
 
     // Surface the shared actions' status (e.g. "Added image to …") in the editor's status bar.

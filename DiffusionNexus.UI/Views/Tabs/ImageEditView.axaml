@@ -610,7 +610,9 @@
 
                 <!-- Image placement: a 3x3 anchor grid (selected cell highlighted via the brush
                      converter, same pattern as OutputResolutionControl). No cell is lit once the
-                     frame has been dragged to a custom spot. -->
+                     frame has been dragged to a custom spot. Command is set on every button rather
+                     than in the style: a compiled binding inside a style setter is the one shape
+                     that only proves itself at runtime. -->
                 <TextBlock Text="Image position" FontSize="11" Opacity="0.7"/>
                 <Grid ColumnDefinitions="Auto,12,*">
                   <UniformGrid Grid.Column="0" Columns="3" Rows="3" VerticalAlignment="Top">
@@ -624,26 +626,25 @@
                         <Setter Property="Foreground" Value="White"/>
                         <Setter Property="HorizontalContentAlignment" Value="Center"/>
                         <Setter Property="VerticalContentAlignment" Value="Center"/>
-                        <Setter Property="Command" Value="{Binding ImageEditor.CanvasExtend.SetAnchorCommand}"/>
                       </Style>
                     </UniformGrid.Styles>
-                    <Button Content="&#x2196;" CommandParameter="{x:Static editor:CanvasAnchor.TopLeft}" ToolTip.Tip="Image top-left: the canvas grows right and down"
+                    <Button Content="&#x2196;" Command="{Binding ImageEditor.CanvasExtend.SetAnchorCommand}" CommandParameter="{x:Static editor:CanvasAnchor.TopLeft}" ToolTip.Tip="Image top-left: the canvas grows right and down"
                             Background="{Binding ImageEditor.CanvasExtend.SelectedAnchor, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static editor:CanvasAnchor.TopLeft}}"/>
-                    <Button Content="&#x2191;" CommandParameter="{x:Static editor:CanvasAnchor.Top}" ToolTip.Tip="Image top-centre"
+                    <Button Content="&#x2191;" Command="{Binding ImageEditor.CanvasExtend.SetAnchorCommand}" CommandParameter="{x:Static editor:CanvasAnchor.Top}" ToolTip.Tip="Image top-centre"
                             Background="{Binding ImageEditor.CanvasExtend.SelectedAnchor, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static editor:CanvasAnchor.Top}}"/>
-                    <Button Content="&#x2197;" CommandParameter="{x:Static editor:CanvasAnchor.TopRight}" ToolTip.Tip="Image top-right"
+                    <Button Content="&#x2197;" Command="{Binding ImageEditor.CanvasExtend.SetAnchorCommand}" CommandParameter="{x:Static editor:CanvasAnchor.TopRight}" ToolTip.Tip="Image top-right"
                             Background="{Binding ImageEditor.CanvasExtend.SelectedAnchor, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static editor:CanvasAnchor.TopRight}}"/>
-                    <Button Content="&#x2190;" CommandParameter="{x:Static editor:CanvasAnchor.Left}" ToolTip.Tip="Image centre-left"
+                    <Button Content="&#x2190;" Command="{Binding ImageEditor.CanvasExtend.SetAnchorCommand}" CommandParameter="{x:Static editor:CanvasAnchor.Left}" ToolTip.Tip="Image centre-left"
                             Background="{Binding ImageEditor.CanvasExtend.SelectedAnchor, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static editor:CanvasAnchor.Left}}"/>
-                    <Button Content="&#x25CF;" CommandParameter="{x:Static editor:CanvasAnchor.Center}" ToolTip.Tip="Image centred: the canvas grows on all sides"
+                    <Button Content="&#x25CF;" Command="{Binding ImageEditor.CanvasExtend.SetAnchorCommand}" CommandParameter="{x:Static editor:CanvasAnchor.Center}" ToolTip.Tip="Image centred: the canvas grows on all sides"
                             Background="{Binding ImageEditor.CanvasExtend.SelectedAnchor, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static editor:CanvasAnchor.Center}}"/>
-                    <Button Content="&#x2192;" CommandParameter="{x:Static editor:CanvasAnchor.Right}" ToolTip.Tip="Image centre-right"
+                    <Button Content="&#x2192;" Command="{Binding ImageEditor.CanvasExtend.SetAnchorCommand}" CommandParameter="{x:Static editor:CanvasAnchor.Right}" ToolTip.Tip="Image centre-right"
                             Background="{Binding ImageEditor.CanvasExtend.SelectedAnchor, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static editor:CanvasAnchor.Right}}"/>
-                    <Button Content="&#x2199;" CommandParameter="{x:Static editor:CanvasAnchor.BottomLeft}" ToolTip.Tip="Image bottom-left"
+                    <Button Content="&#x2199;" Command="{Binding ImageEditor.CanvasExtend.SetAnchorCommand}" CommandParameter="{x:Static editor:CanvasAnchor.BottomLeft}" ToolTip.Tip="Image bottom-left"
                             Background="{Binding ImageEditor.CanvasExtend.SelectedAnchor, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static editor:CanvasAnchor.BottomLeft}}"/>
-                    <Button Content="&#x2193;" CommandParameter="{x:Static editor:CanvasAnchor.Bottom}" ToolTip.Tip="Image bottom-centre"
+                    <Button Content="&#x2193;" Command="{Binding ImageEditor.CanvasExtend.SetAnchorCommand}" CommandParameter="{x:Static editor:CanvasAnchor.Bottom}" ToolTip.Tip="Image bottom-centre"
                             Background="{Binding ImageEditor.CanvasExtend.SelectedAnchor, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static editor:CanvasAnchor.Bottom}}"/>
-                    <Button Content="&#x2198;" CommandParameter="{x:Static editor:CanvasAnchor.BottomRight}" ToolTip.Tip="Image bottom-right"
+                    <Button Content="&#x2198;" Command="{Binding ImageEditor.CanvasExtend.SetAnchorCommand}" CommandParameter="{x:Static editor:CanvasAnchor.BottomRight}" ToolTip.Tip="Image bottom-right"
                             Background="{Binding ImageEditor.CanvasExtend.SelectedAnchor, Converter={x:Static converters:EnumEqualsToBrushConverter.Instance}, ConverterParameter={x:Static editor:CanvasAnchor.BottomRight}}"/>
                   </UniformGrid>
                   <TextBlock Grid.Column="2" Text="Pick where the image sits, or drag the green frame on the canvas to place it freely."

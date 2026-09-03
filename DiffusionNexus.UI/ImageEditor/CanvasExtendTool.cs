@@ -14,13 +14,9 @@ public sealed class CanvasExtendTool : CanvasExtensionTool
 {
     private const float HandleRadius = 6f;
     private const float HandleHitRadiusPixels = 12f;
-    private const int CheckerCell = 16;
 
     private static readonly SKColor Accent = new(76, 175, 80);
     private static readonly SKColor Amber = new(255, 193, 7);
-    // One 32x32 tile for the whole process: intentionally never disposed, it lives as long
-    // as the app and is only ever read through a shader.
-    private static readonly SKBitmap CheckerTile = BuildCheckerTile();
 
     private static readonly OutpaintHandle[] AllHandles =
     [
@@ -78,13 +74,13 @@ public sealed class CanvasExtendTool : CanvasExtensionTool
 
     private void DrawNewArea(SKCanvas canvas, SKRect frame)
     {
-        using var shader = SKShader.CreateBitmap(CheckerTile, SKShaderTileMode.Repeat, SKShaderTileMode.Repeat);
-        using var checkerPaint = new SKPaint { Shader = shader };
+        // The same checkerboard the editor paints under transparent pixels after Apply, so
+        // the preview and the result look alike; the green tint marks it as "not yet".
         using var tintPaint = new SKPaint { Color = Accent.WithAlpha(40), Style = SKPaintStyle.Fill };
 
         foreach (var strip in GetExtensionStrips(frame))
         {
-            canvas.DrawRect(strip, checkerPaint);
+            TransparencyCheckerboard.Draw(canvas, strip);
             canvas.DrawRect(strip, tintPaint);
         }
     }
@@ -165,16 +161,5 @@ public sealed class CanvasExtendTool : CanvasExtensionTool
         using var bgPaint = new SKPaint { Color = new SKColor(0, 0, 0, 180), Style = SKPaintStyle.Fill, IsAntialias = true };
         canvas.DrawRoundRect(bgRect, 4f, 4f, bgPaint);
         canvas.DrawText(text, labelX, labelY, font, textPaint);
-    }
-
-    private static SKBitmap BuildCheckerTile()
-    {
-        var tile = new SKBitmap(CheckerCell * 2, CheckerCell * 2, SKColorType.Rgba8888, SKAlphaType.Premul);
-        using var canvas = new SKCanvas(tile);
-        canvas.Clear(new SKColor(0x2B, 0x2B, 0x2B));
-        using var light = new SKPaint { Color = new SKColor(0x3B, 0x3B, 0x3B), Style = SKPaintStyle.Fill };
-        canvas.DrawRect(new SKRect(0, 0, CheckerCell, CheckerCell), light);
-        canvas.DrawRect(new SKRect(CheckerCell, CheckerCell, CheckerCell * 2, CheckerCell * 2), light);
-        return tile;
     }
 }

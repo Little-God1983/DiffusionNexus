@@ -249,6 +249,35 @@ public partial class ImageEditorCore : IDisposable
         }
     }
 
+    private SKRect _lastRenderedImageRect;
+    private float _lastRenderedCanvasWidth;
+    private float _lastRenderedCanvasHeight;
+
+    /// <summary>
+    /// Leaves fit mode without moving the image on screen. The fit branch places the image
+    /// wherever an active extension tool's frame puts it (off-centre when the extension is
+    /// one-sided); the free branch centres the image at pan 0, so a plain
+    /// <c>IsFitMode = false</c> would snap it to the middle. The pan is set from the last
+    /// rendered position instead. Requires a render to have happened; otherwise it behaves
+    /// like the plain setter.
+    /// </summary>
+    public void LeaveFitModeKeepingPosition()
+    {
+        if (!_isFitMode) return;
+
+        var rect = _lastRenderedImageRect;
+        var canvasWidth = _lastRenderedCanvasWidth;
+        var canvasHeight = _lastRenderedCanvasHeight;
+
+        _isFitMode = false;
+        if (rect.Width > 0 && canvasWidth > 0 && canvasHeight > 0)
+        {
+            _panX = rect.MidX - canvasWidth / 2f;
+            _panY = rect.MidY - canvasHeight / 2f;
+        }
+        OnZoomChanged();
+    }
+
     /// <summary>
     /// Gets the image DPI (dots per inch).
     /// </summary>
@@ -850,14 +879,12 @@ public partial class ImageEditorCore : IDisposable
         {
             lock (_bitmapLock)
             {
-                if (_isLayerMode && _layers != null)
-                {
-                    _services?.Layers.ResizeCanvas(newWidth, newHeight, offsetX, offsetY);
-                }
-
+                // Working bitmap first, layers second, and nothing is swapped in until every
+                // allocation succeeded: a failure anywhere leaves the document as it was.
+                SKBitmap? grown = null;
                 if (_workingBitmap is not null)
                 {
-                    var grown = new SKBitmap(newWidth, newHeight, SKColorType.Rgba8888, SKAlphaType.Premul);
+                    grown = new SKBitmap(newWidth, newHeight, SKColorType.Rgba8888, SKAlphaType.Premul);
                     // SkiaSharp hands back an empty bitmap when the native allocation fails
                     // instead of throwing, so an unchecked bitmap would silently lose the image.
                     if (grown.IsEmpty || grown.Width != newWidth || grown.Height != newHeight)
@@ -866,10 +893,26 @@ public partial class ImageEditorCore : IDisposable
                         throw new InvalidOperationException($"Could not allocate a {newWidth}x{newHeight} canvas.");
                     }
                     grown.Erase(SKColors.Transparent);
-                    using (var canvas = new SKCanvas(grown))
+                    using var canvas = new SKCanvas(grown);
+                    canvas.DrawBitmap(_workingBitmap, offsetX, offsetY);
+                }
+
+                try
+                {
+                    if (_isLayerMode && _layers != null)
                     {
-                        canvas.DrawBitmap(_workingBitmap, offsetX, offsetY);
+                        // LayerStack.ResizeCanvas is itself all-or-nothing across layers.
+                        _services?.Layers.ResizeCanvas(newWidth, newHeight, offsetX, offsetY);
                     }
+                }
+                catch
+                {
+                    grown?.Dispose();
+                    throw;
+                }
+
+                if (grown is not null)
+                {
                     replacedWorking = _workingBitmap;
                     _workingBitmap = grown;
                 }
@@ -1018,6 +1061,12 @@ public partial class ImageEditorCore : IDisposable
 
                 imageRect = new SKRect(x, y, x + zoomedWidth, y + zoomedHeight);
             }
+
+            // Remembered for LeaveFitModeKeepingPosition. Written on the render thread, read
+            // on the UI thread; a stale value only costs a slightly off pan, never a crash.
+            _lastRenderedImageRect = imageRect;
+            _lastRenderedCanvasWidth = canvasWidth;
+            _lastRenderedCanvasHeight = canvasHeight;
 
             // Transparent pixels (extended canvas strips, removed backgrounds) must not vanish
             // into the canvas background: paint the see-through checkerboard under the image.

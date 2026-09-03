@@ -12,11 +12,13 @@ namespace DiffusionNexus.Tests.ImageEditor;
 public class ImageEditorCoreCanvasExtendTests : IDisposable
 {
     private readonly ImageEditorCore _sut;
+    private readonly EditorServices _services;
 
     public ImageEditorCoreCanvasExtendTests()
     {
         _sut = new ImageEditorCore();
-        _sut.SetServices(EditorServiceFactory.Create());
+        _services = EditorServiceFactory.Create();
+        _sut.SetServices(_services);
 
         using var bitmap = new SKBitmap(100, 80, SKColorType.Rgba8888, SKAlphaType.Premul);
         bitmap.Erase(SKColors.Red);
@@ -59,6 +61,49 @@ public class ImageEditorCoreCanvasExtendTests : IDisposable
         layerBitmap.GetPixel(139, 89).Should().Be(SKColors.Red);     // old (99,79)
         layerBitmap.GetPixel(0, 0).Alpha.Should().Be(0);             // new area transparent
         layerBitmap.GetPixel(159, 119).Alpha.Should().Be(0);
+    }
+
+    [Fact]
+    public void LayerMode_AbsurdExtension_ReturnsFalse_AndLeavesEveryLayerAndTheStackSizeUntouched()
+    {
+        _sut.EnableLayerMode();
+        _services.Layers.AddLayer("Second");
+        _sut.Layers!.Count.Should().Be(2);
+        // Both axes: a 2 million px wide strip of height 80 still allocates on a big machine.
+        _sut.CanvasExtendTool.SetExtension(top: 1_000_000, right: 1_000_000, bottom: 1_000_000, left: 1_000_000);
+
+        _sut.ApplyCanvasExtend().Should().BeFalse();
+
+        _sut.Width.Should().Be(100);
+        _sut.Height.Should().Be(80);
+        _sut.Layers.Width.Should().Be(100);
+        foreach (var layer in _sut.Layers.Layers)
+        {
+            layer.Width.Should().Be(100);
+            layer.Height.Should().Be(80);
+        }
+        _sut.Layers.Layers[0].Bitmap!.GetPixel(0, 0).Should().Be(SKColors.Red);
+        _sut.CanvasExtendTool.ExtendRight.Should().Be(1_000_000, "the tool keeps the request so the user can pick a smaller size");
+    }
+
+    [Fact]
+    public void LayerMode_Apply_GrowsEveryLayerAndTheStack()
+    {
+        _sut.EnableLayerMode();
+        _services.Layers.AddLayer("Second");
+        _sut.CanvasExtendTool.SetExtension(top: 0, right: 50, bottom: 20, left: 0);
+
+        _sut.ApplyCanvasExtend().Should().BeTrue();
+
+        _sut.Layers!.Width.Should().Be(150);
+        _sut.Layers.Height.Should().Be(100);
+        foreach (var layer in _sut.Layers.Layers)
+        {
+            layer.Width.Should().Be(150);
+            layer.Height.Should().Be(100);
+        }
+        _sut.Layers.Layers[0].Bitmap!.GetPixel(99, 79).Should().Be(SKColors.Red);
+        _sut.Layers.Layers[0].Bitmap!.GetPixel(120, 90).Alpha.Should().Be(0);
     }
 
     [Fact]

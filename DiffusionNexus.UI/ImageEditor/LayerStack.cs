@@ -400,13 +400,29 @@ public class LayerStack : IDisposable
     /// </summary>
     public void ResizeCanvas(int newWidth, int newHeight, int offsetX, int offsetY)
     {
-        foreach (var layer in _layers)
+        // Two phases: allocate every replacement first, swap only once all of them exist.
+        // Resizing layer by layer would leave the stack mixed when a later allocation fails
+        // (the compositor scales by the stack size, so grown layers would render cropped),
+        // and there is no undo to escape that. A failure here must be a no-op.
+        var resized = new List<(Layer Layer, SKBitmap Bitmap)>(_layers.Count);
+        try
         {
-            layer.ResizeCanvas(newWidth, newHeight, offsetX, offsetY);
+            foreach (var layer in _layers)
+            {
+                if (layer.Bitmap is null) continue;
+                resized.Add((layer, layer.CreateResizedBitmap(newWidth, newHeight, offsetX, offsetY)));
+            }
+        }
+        catch
+        {
+            foreach (var (_, bitmap) in resized)
+                bitmap.Dispose();
+            throw;
         }
 
-        // Recorded only once every layer is resized: a failed allocation throws out of the
-        // loop, and the stack must not claim a size its bitmaps never got.
+        foreach (var (layer, bitmap) in resized)
+            layer.AdoptBitmap(bitmap);
+
         _width = newWidth;
         _height = newHeight;
 

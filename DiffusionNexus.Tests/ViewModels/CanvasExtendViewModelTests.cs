@@ -63,7 +63,7 @@ public class CanvasExtendViewModelTests
     }
 
     [Fact]
-    public void TypedWidth_BelowImage_ClampsShowsHint_AndRaisesNothing()
+    public void TypedWidth_BelowImage_ClampsShowsHint_AndRaisesNothingWhenNothingChanges()
     {
         _sut.IsPanelOpen = true;
         _sut.UpdateResolution(1024, 768, hasExtension: false);
@@ -74,7 +74,22 @@ public class CanvasExtendViewModelTests
 
         _sut.TargetWidth.Should().Be(1024);
         _sut.IsShrinkHintVisible.Should().BeTrue();
-        requests.Should().Be(0);
+        requests.Should().Be(0, "the axis already sits at the image size");
+    }
+
+    [Fact]
+    public void TypedHeight_BelowImage_OnAnExtendedAxis_ClampsAndPushesTheClampToTheTool()
+    {
+        _sut.IsPanelOpen = true;
+        _sut.UpdateResolution(1024, 1500, hasExtension: true); // height already extended
+        (int Width, int Height)? requested = null;
+        _sut.TargetSizeRequested += (_, args) => requested = args;
+
+        _sut.TargetHeight = 500;
+
+        _sut.TargetHeight.Should().Be(768);
+        _sut.IsShrinkHintVisible.Should().BeTrue();
+        requested.Should().Be((1024, 768), "the frame must follow the field, or the panel contradicts the canvas");
     }
 
     [Fact]

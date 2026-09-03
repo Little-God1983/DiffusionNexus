@@ -519,9 +519,11 @@ public class ImageEditorControl : Control
         if (props.IsMiddleButtonPressed)
         {
             // Starting a pan gesture is an explicit "leave fit" action, like the wheel:
-            // ViewportManager.Pan is a no-op while fit mode is on. The stored zoom is
-            // already the clamped fit scale, so the view does not jump.
-            _editorCore.IsFitMode = false;
+            // ViewportManager.Pan is a no-op while fit mode is on. The pan is seeded from
+            // the last rendered position so the image stays put even while an extension
+            // frame has it off-centre. (Only a fit scale outside the viewport's zoom range
+            // still jumps, because the stored zoom is clamped and the fit render is not.)
+            _editorCore.LeaveFitModeKeepingPosition();
             _isPanning = true;
             _lastPanPoint = point;
             e.Handled = true;

@@ -350,11 +350,18 @@ public partial class CanvasExtendViewModel : ObservableObject
         var minimum = Math.Max(1, imageDimension);
         if (value < minimum)
         {
+            // Clamp to the image size AND push that to the tool: if the axis was already
+            // extended, a field that snaps back while the frame stays put would contradict
+            // the canvas. The image size itself is not a shrink, so the tool raises nothing;
+            // the hint is shown here.
             EmitInfo($"typed {propertyName} {value} is below the image ({minimum}); clamped");
-            field = minimum;
-            OnPropertyChanged(propertyName);
             IsShrinkHintVisible = true;
-            return;
+            value = minimum;
+            if (field == value)
+            {
+                OnPropertyChanged(propertyName);
+                return;
+            }
         }
 
         if (!SetProperty(ref field, value, propertyName)) return;

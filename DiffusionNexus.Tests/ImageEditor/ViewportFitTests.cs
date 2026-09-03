@@ -137,6 +137,32 @@ public class ViewportFitTests
     }
 
     [Fact]
+    public void LeaveFitModeKeepingPosition_DoesNotMoveAnOffCentreImage()
+    {
+        using var core = new ImageEditorCore();
+        core.SetServices(EditorServiceFactory.Create());
+        core.LoadImage(EncodePng(100, 100));
+        using var surface = new SKBitmap(400, 400, SKColorType.Rgba8888, SKAlphaType.Premul);
+        using var canvas = new SKCanvas(surface);
+
+        var tool = core.CanvasExtendTool;
+        tool.IsActive = true;
+        tool.ImagePixelWidth = 100;
+        tool.ImagePixelHeight = 100;
+        tool.SetExtension(0, 100, 0, 0); // one-sided: fit mode puts the image left of centre
+        var fitted = core.RenderWithZoom(canvas, 400, 400, SKColors.Black);
+        fitted.MidX.Should().BeLessThan(200f);
+
+        core.LeaveFitModeKeepingPosition();
+        var free = core.RenderWithZoom(canvas, 400, 400, SKColors.Black);
+
+        core.IsFitMode.Should().BeFalse();
+        free.Left.Should().BeApproximately(fitted.Left, 0.01f);
+        free.Top.Should().BeApproximately(fitted.Top, 0.01f);
+        free.Width.Should().BeApproximately(fitted.Width, 0.01f);
+    }
+
+    [Fact]
     public void LeavingFitMode_ThenPanning_MovesTheViewportWithoutChangingZoom()
     {
         // The control's middle-drag pan clears fit mode before calling Pan, because

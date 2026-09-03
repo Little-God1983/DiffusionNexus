@@ -1231,6 +1231,12 @@ public partial class ImageEditView : UserControl
                 if (args.Property.Name == nameof(Slider.Value) && _imageEditorCanvas is not null)
                 {
                     var percentage = (int)zoomSlider.Value;
+                    // The slider's Value is also written by the ZoomPercentage binding whenever
+                    // the viewport reports a change. Echoing that back through SetZoom would
+                    // round a fractional fit scale (42.71 % -> 43 %) and, because the zoom
+                    // setter clears fit mode, silently switch Fit off on the first render.
+                    if (percentage == _imageEditorCanvas.ZoomPercentage)
+                        return;
                     _imageEditorCanvas.SetZoom(percentage / 100f);
                 }
             };
