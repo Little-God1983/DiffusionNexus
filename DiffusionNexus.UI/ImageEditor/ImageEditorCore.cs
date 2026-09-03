@@ -124,6 +124,11 @@ public partial class ImageEditorCore : IDisposable
     public OutpaintTool OutpaintTool { get; } = new();
 
     /// <summary>
+    /// Gets the canvas extend tool instance (grow the canvas without generating content).
+    /// </summary>
+    public CanvasExtendTool CanvasExtendTool { get; } = new();
+
+    /// <summary>
     /// Commits any in-progress tool operations (placed text, placed shape, active drawing stroke).
     /// Call before saving or exporting to ensure all pending work is captured.
     /// </summary>
@@ -992,6 +997,12 @@ public partial class ImageEditorCore : IDisposable
             OutpaintTool.ImagePixelWidth = imageWidth;
             OutpaintTool.ImagePixelHeight = imageHeight;
             OutpaintTool.Render(canvas, new SKRect(0, 0, canvasWidth, canvasHeight));
+
+            // Update canvas extend tool with current image bounds and render overlay
+            CanvasExtendTool.SetImageBounds(imageRect);
+            CanvasExtendTool.ImagePixelWidth = imageWidth;
+            CanvasExtendTool.ImagePixelHeight = imageHeight;
+            CanvasExtendTool.Render(canvas, new SKRect(0, 0, canvasWidth, canvasHeight));
 
             _lastImageRect = imageRect;
             return imageRect;
