@@ -1011,6 +1011,10 @@ public partial class ImageEditorCore : IDisposable
                 imageRect = new SKRect(x, y, x + zoomedWidth, y + zoomedHeight);
             }
 
+            // Transparent pixels (extended canvas strips, removed backgrounds) must not vanish
+            // into the canvas background: paint the see-through checkerboard under the image.
+            TransparencyCheckerboard.Draw(canvas, imageRect);
+
             // Render based on mode
             if (_isPreviewActive && _previewBitmap is not null)
             {

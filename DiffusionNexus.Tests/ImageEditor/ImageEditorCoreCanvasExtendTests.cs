@@ -62,6 +62,30 @@ public class ImageEditorCoreCanvasExtendTests : IDisposable
     }
 
     [Fact]
+    public void AfterApply_TheNewAreaRendersAsATransparencyCheckerboard_NotTheCanvasBackground()
+    {
+        _sut.CanvasExtendTool.SetExtension(top: 0, right: 100, bottom: 0, left: 0); // 200 x 80
+        _sut.ApplyCanvasExtend().Should().BeTrue();
+        _sut.CanvasExtendTool.IsActive = false;
+
+        using var surface = new SKBitmap(400, 200, SKColorType.Rgba8888, SKAlphaType.Premul);
+        using var canvas = new SKCanvas(surface);
+        var background = new SKColor(0x1A, 0x1A, 0x1A);
+        var imageRect = _sut.RenderWithZoom(canvas, 400, 200, background);
+
+        // Sample by fraction of the drawn rect so the test does not care about the fit zoom:
+        // the old image is the left half, the transparent strip the right half.
+        var y = (int)(imageRect.Top + imageRect.Height / 2f);
+        var oldArea = surface.GetPixel((int)(imageRect.Left + imageRect.Width * 0.25f), y);
+        var newArea = surface.GetPixel((int)(imageRect.Left + imageRect.Width * 0.75f), y);
+        var outside = surface.GetPixel(2, 2);
+
+        oldArea.Should().Be(SKColors.Red);
+        newArea.Should().BeOneOf(TransparencyCheckerboard.Dark, TransparencyCheckerboard.Light);
+        outside.Should().Be(background);
+    }
+
+    [Fact]
     public void AfterApply_ToolIsReset()
     {
         _sut.CanvasExtendTool.SetExtension(0, 50, 0, 0);

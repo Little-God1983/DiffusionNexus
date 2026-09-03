@@ -151,6 +151,7 @@ User → Extend toggle → CanvasExtendViewModel.IsPanelOpen = true
 | `Layer.cs` | Single layer: bitmap, opacity, visibility, blend mode |
 | `LayerStack.cs` | Ordered collection of layers |
 | `LayerCompositor.cs` | Composites layers to canvas |
+| `TransparencyCheckerboard.cs` | See-through checkerboard painted under the image in `RenderWithZoom` so transparent pixels stay visible |
 | `CropTool.cs` | Crop region management and rendering |
 | `CanvasExtensionTool.cs` | Abstract base for tools that grow the canvas outward: extension state, outward-only drag math, aspect/target-size presets, `ShrinkAttempted` |
 | `OutpaintTool.cs` | Outpaint frame (arrow handles, AI severity tint) on top of `CanvasExtensionTool` |
