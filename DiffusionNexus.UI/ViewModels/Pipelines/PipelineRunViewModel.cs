@@ -11,6 +11,7 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Inference.Abstractions;
+using DiffusionNexus.UI.Controls;
 using DiffusionNexus.UI.Models.Pipelines;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.Diffusion;
@@ -124,6 +125,16 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable,
     /// feeds the before/after comparison.
     /// </summary>
     public SelectableImageResultsViewModel Results { get; }
+
+    /// <summary>
+    /// How the before/after panel lays the two images out: the hover slider overlay (Fit / Fill / 1:1)
+    /// or two panes side by side. Same option set as the standalone Compare module so the dropdown
+    /// reads identically in both places.
+    /// </summary>
+    [ObservableProperty] private CompareFitMode _compareMode = CompareFitMode.Fit;
+
+    public IReadOnlyList<CompareFitMode> CompareModeOptions { get; } =
+        [CompareFitMode.Fit, CompareFitMode.Fill, CompareFitMode.OneToOne, CompareFitMode.SideBySide];
 
     protected PipelineRunViewModel(
         PipelineManifest manifest,
