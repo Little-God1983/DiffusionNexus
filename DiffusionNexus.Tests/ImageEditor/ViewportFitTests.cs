@@ -129,6 +129,58 @@ public class ViewportFitTests
         services.Viewport.ZoomLevel.Should().BeApproximately(zoomBeforePan, 0.0001f);
     }
 
+    [Fact]
+    public void RenderWithZoom_FitBelowMinZoom_FiresChangedAtMostOnce()
+    {
+        // 8000x8000 in a 400x400 canvas fits at 0.05, below MinZoom (0.1). The fit branch
+        // compares against the CLAMPED value, so it must not re-fire Changed every frame.
+        using var core = new ImageEditorCore();
+        var services = EditorServiceFactory.Create();
+        core.SetServices(services);
+        core.LoadImage(EncodePng(8000, 8000));
+        using var surface = new SKBitmap(400, 400, SKColorType.Rgba8888, SKAlphaType.Premul);
+        using var canvas = new SKCanvas(surface);
+
+        var changed = 0;
+        services.Viewport.Changed += (_, _) => changed++;
+
+        core.RenderWithZoom(canvas, 400, 400, SKColors.Black);
+        core.RenderWithZoom(canvas, 400, 400, SKColors.Black);
+
+        changed.Should().BeLessThanOrEqualTo(1);
+        services.Viewport.IsFitMode.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ActiveExtensionTool_PrefersCanvasExtendOverOutpaint_AndFallsBackToOutpaint()
+    {
+        using var core = new ImageEditorCore();
+        core.SetServices(EditorServiceFactory.Create());
+        core.LoadImage(EncodePng(100, 100));
+        using var surface = new SKBitmap(400, 400, SKColorType.Rgba8888, SKAlphaType.Premul);
+        using var canvas = new SKCanvas(surface);
+
+        core.OutpaintTool.IsActive = true;
+        core.OutpaintTool.ImagePixelWidth = 100;
+        core.OutpaintTool.ImagePixelHeight = 100;
+        core.OutpaintTool.SetExtension(0, 100, 0, 0);
+
+        var outpaintOnly = core.RenderWithZoom(canvas, 400, 400, SKColors.Black);
+
+        // Outpaint's 72 px margin: the frame's right edge lands exactly on 400 - 72.
+        (outpaintOnly.Right + 100f * core.ZoomLevel).Should().BeApproximately(400f - 72f, 0.01f);
+
+        core.CanvasExtendTool.IsActive = true;
+        core.CanvasExtendTool.ImagePixelWidth = 100;
+        core.CanvasExtendTool.ImagePixelHeight = 100;
+        core.CanvasExtendTool.SetExtension(0, 100, 0, 0);
+
+        var bothActive = core.RenderWithZoom(canvas, 400, 400, SKColors.Black);
+
+        // Canvas Extend wins: its 32 px margin leaves the frame wider.
+        (bothActive.Right + 100f * core.ZoomLevel).Should().BeApproximately(400f - 32f, 0.01f);
+    }
+
     private static byte[] EncodePng(int width, int height)
     {
         using var bitmap = new SKBitmap(width, height, SKColorType.Rgba8888, SKAlphaType.Premul);
