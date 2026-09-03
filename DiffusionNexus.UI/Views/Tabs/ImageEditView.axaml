@@ -553,15 +553,18 @@
                 <TextBlock Text="Canvas size" FontSize="11" Opacity="0.7"/>
                 <Grid ColumnDefinitions="Auto,*,8,Auto,*">
                   <TextBlock Grid.Column="0" Text="W" FontSize="11" Opacity="0.7" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                  <!-- Minimum stays at 1 and the value is not clipped here: the ViewModel owns the
+                       clamp to the image size and the "use Crop to shrink" hint, which a coerced
+                       value would never reach. -->
                   <NumericUpDown Grid.Column="1" Value="{Binding ImageEditor.CanvasExtend.TargetWidth, Mode=TwoWay}"
-                                 Minimum="{Binding ImageEditor.ImageWidth}" Maximum="32768" Increment="1"
-                                 FormatString="0" ClipValueToMinMax="True" FontSize="12" MinWidth="0"
-                                 ToolTip.Tip="New canvas width in pixels (cannot go below the image width)"/>
+                                 Minimum="1" Maximum="32768" Increment="1"
+                                 FormatString="0" FontSize="12" MinWidth="0"
+                                 ToolTip.Tip="New canvas width in pixels. A value below the image width snaps back to it - use Crop to make the image smaller."/>
                   <TextBlock Grid.Column="3" Text="H" FontSize="11" Opacity="0.7" VerticalAlignment="Center" Margin="0,0,6,0"/>
                   <NumericUpDown Grid.Column="4" Value="{Binding ImageEditor.CanvasExtend.TargetHeight, Mode=TwoWay}"
-                                 Minimum="{Binding ImageEditor.ImageHeight}" Maximum="32768" Increment="1"
-                                 FormatString="0" ClipValueToMinMax="True" FontSize="12" MinWidth="0"
-                                 ToolTip.Tip="New canvas height in pixels (cannot go below the image height)"/>
+                                 Minimum="1" Maximum="32768" Increment="1"
+                                 FormatString="0" FontSize="12" MinWidth="0"
+                                 ToolTip.Tip="New canvas height in pixels. A value below the image height snaps back to it - use Crop to make the image smaller."/>
                 </Grid>
                 <StackPanel Orientation="Horizontal" Spacing="4" HorizontalAlignment="Center">
                   <Button Content="2× W" Command="{Binding ImageEditor.CanvasExtend.MultiplyCommand}" CommandParameter="2xW"
