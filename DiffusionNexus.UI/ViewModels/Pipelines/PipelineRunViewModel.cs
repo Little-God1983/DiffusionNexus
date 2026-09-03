@@ -161,7 +161,10 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable,
             ShowSendToAnimeToReal = manifest.Id != "anime-to-real",
             ShowSendToImageEdit = manifest.Id != "image-to-image",
         };
-        Results = new SelectableImageResultsViewModel(Outputs, actions);
+        // clearOnNewRun: false — a Workflow's strip is a session run history. Starting another run
+        // appends to it instead of wiping what the previous run produced (Captioning, which shows only
+        // the batch in flight, keeps the clearing default).
+        Results = new SelectableImageResultsViewModel(Outputs, actions, clearOnNewRun: false);
 
         // ImageListInputControl mutates SingleImagePaths in place; subscribe so HasSingleImage + the
         // command CanExecute update (binding alone doesn't notify).
@@ -359,7 +362,7 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable,
             InputPath = input,
             Status = ImageProcessingStatus.Processing,
         };
-        Outputs.Clear();
+        Results.BeginRun();
         Outputs.Add(item);
         Results.PrimaryItem = item;
         _ = LoadThumbnailAsync(item);
@@ -437,8 +440,9 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable,
         TotalProgress = 0;
 
         // Pre-populate the strip with one pending tile per input, then update each as it runs.
-        Outputs.Clear();
-        Results.PrimaryItem = null;
+        // BeginRun retains earlier runs' tiles (this host keeps a history) but releases their
+        // selection, so PrimaryItem is free for the first result of THIS run to claim below.
+        Results.BeginRun();
         var items = inputs
             .Select(p => new ImageStatusItemViewModel { FileName = Path.GetFileName(p), InputPath = p })
             .ToList();
@@ -485,8 +489,9 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable,
                 TotalProgress = (i + 1) * 100.0 / TotalImageCount;
             }
 
-            var done = Outputs.Count(o => o.Status == ImageProcessingStatus.Done);
-            var failed = Outputs.Count(o => o.Status == ImageProcessingStatus.Failed);
+            // Tally this run's tiles, not Outputs — that also carries earlier runs' history now.
+            var done = items.Count(o => o.Status == ImageProcessingStatus.Done);
+            var failed = items.Count(o => o.Status == ImageProcessingStatus.Failed);
             CurrentProcessingStatus = failed > 0
                 ? $"Done — {done} generated, {failed} failed."
                 : $"Done — {done} image(s) generated.";
