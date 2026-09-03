@@ -613,34 +613,24 @@ public partial class ImageEditorCore : IDisposable
     {
         lock (_bitmapLock)
         {
-            if (_workingBitmap is null)
+            int imageWidth, imageHeight;
+            if (_isLayerMode && _layers != null && _layers.Count > 0)
+            {
+                imageWidth = _layers.Width;
+                imageHeight = _layers.Height;
+            }
+            else if (_workingBitmap is not null)
+            {
+                imageWidth = _workingBitmap.Width;
+                imageHeight = _workingBitmap.Height;
+            }
+            else
+            {
                 return SKRect.Empty;
+            }
 
-            return CalculateFitRectInternal(_workingBitmap, containerWidth, containerHeight);
+            return FitImageRect(imageWidth, imageHeight, containerWidth, containerHeight, out _);
         }
-    }
-
-    /// <summary>
-    /// Internal method to calculate fit rect without locking (caller must hold lock).
-    /// </summary>
-    private static SKRect CalculateFitRectInternal(SKBitmap bitmap, float containerWidth, float containerHeight)
-    {
-        var imageWidth = (float)bitmap.Width;
-        var imageHeight = (float)bitmap.Height;
-
-        // Calculate scale to fit
-        var scaleX = containerWidth / imageWidth;
-        var scaleY = containerHeight / imageHeight;
-        var scale = Math.Min(scaleX, scaleY);
-
-        var scaledWidth = imageWidth * scale;
-        var scaledHeight = imageHeight * scale;
-
-        // Center the image
-        var x = (containerWidth - scaledWidth) / 2f;
-        var y = (containerHeight - scaledHeight) / 2f;
-
-        return new SKRect(x, y, x + scaledWidth, y + scaledHeight);
     }
 
     /// <summary>
@@ -933,10 +923,20 @@ public partial class ImageEditorCore : IDisposable
 
             if (_isFitMode)
             {
-                imageRect = CalculateFitRectInternal(imageWidth, imageHeight, canvasWidth, canvasHeight);
-                // Update zoom level to reflect fit
-                var fitScale = imageRect.Width / imageWidth;
-                _zoomLevel = fitScale;
+                // Fit honours an active extension tool's frame so it never runs off screen.
+                imageRect = FitImageRect(imageWidth, imageHeight, canvasWidth, canvasHeight, out var fitScale);
+                // Write through SetFitModeWithZoom, NOT the _zoomLevel setter: that setter goes to
+                // Viewport.ZoomLevel, which clears IsFitMode, so fit mode used to switch itself off
+                // on the very first render after load. Compare against the CLAMPED value: a fit
+                // scale below MinZoom (huge image, small canvas) would otherwise differ from the
+                // stored zoom on every frame and re-fire Changed each render.
+                var viewport = _services?.Viewport;
+                if (viewport is not null)
+                {
+                    var clampedFit = Math.Clamp(fitScale, viewport.MinZoom, viewport.MaxZoom);
+                    if (Math.Abs(viewport.ZoomLevel - clampedFit) > 0.0001f)
+                        viewport.SetFitModeWithZoom(clampedFit);
+                }
             }
             else
             {
@@ -1007,6 +1007,61 @@ public partial class ImageEditorCore : IDisposable
             _lastImageRect = imageRect;
             return imageRect;
         }
+    }
+
+    /// <summary>
+    /// Fits the virtual canvas (image plus the extension on each side) into the container
+    /// shrunk by <paramref name="margin"/> on every side, centred, and returns the rectangle
+    /// the <b>image</b> occupies inside that frame plus the scale (image px → screen px).
+    /// With zero extension and zero margin it equals the plain image fit.
+    /// </summary>
+    internal static (SKRect ImageRect, float Scale) CalculateFitRectWithExtension(
+        int imageWidth, int imageHeight,
+        int extendLeft, int extendTop, int extendRight, int extendBottom,
+        float margin, float containerWidth, float containerHeight)
+    {
+        var virtualWidth = imageWidth + extendLeft + extendRight;
+        var virtualHeight = imageHeight + extendTop + extendBottom;
+        var availableWidth = Math.Max(1f, containerWidth - 2f * margin);
+        var availableHeight = Math.Max(1f, containerHeight - 2f * margin);
+
+        var scale = Math.Min(availableWidth / virtualWidth, availableHeight / virtualHeight);
+
+        var frameWidth = virtualWidth * scale;
+        var frameHeight = virtualHeight * scale;
+        var frameX = (containerWidth - frameWidth) / 2f;
+        var frameY = (containerHeight - frameHeight) / 2f;
+
+        var x = frameX + extendLeft * scale;
+        var y = frameY + extendTop * scale;
+        return (new SKRect(x, y, x + imageWidth * scale, y + imageHeight * scale), scale);
+    }
+
+    /// <summary>The extension tool whose frame the viewport must keep on screen, if any.</summary>
+    private CanvasExtensionTool? ActiveExtensionTool =>
+        CanvasExtendTool.IsActive ? CanvasExtendTool
+        : OutpaintTool.IsActive ? OutpaintTool
+        : null;
+
+    /// <summary>
+    /// Fit rectangle for the image, honouring the active extension tool's frame and margin.
+    /// </summary>
+    private SKRect FitImageRect(int imageWidth, int imageHeight, float containerWidth, float containerHeight, out float scale)
+    {
+        var tool = ActiveExtensionTool;
+        if (tool is null)
+        {
+            var plain = CalculateFitRectInternal(imageWidth, imageHeight, containerWidth, containerHeight);
+            scale = plain.Width / imageWidth;
+            return plain;
+        }
+
+        var (rect, s) = CalculateFitRectWithExtension(
+            imageWidth, imageHeight,
+            tool.ExtendLeft, tool.ExtendTop, tool.ExtendRight, tool.ExtendBottom,
+            tool.FitMargin, containerWidth, containerHeight);
+        scale = s;
+        return rect;
     }
 
     /// <summary>
