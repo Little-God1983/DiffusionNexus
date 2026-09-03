@@ -40,6 +40,9 @@ public class ImageEditorControl : Control
     // Outpaint tool state
     private bool _isOutpaintToolActive;
 
+    // Canvas extend tool state
+    private bool _isCanvasExtendToolActive;
+
     // Eyedropper state
     private bool _isEyedropperActive;
 
@@ -232,6 +235,20 @@ public class ImageEditorControl : Control
         {
             _isOutpaintToolActive = value;
             _editorCore.OutpaintTool.IsActive = value;
+            InvalidateVisual();
+        }
+    }
+
+    /// <summary>
+    /// Gets or sets whether the canvas extend tool is active.
+    /// </summary>
+    public bool IsCanvasExtendToolActive
+    {
+        get => _isCanvasExtendToolActive;
+        set
+        {
+            _isCanvasExtendToolActive = value;
+            _editorCore.CanvasExtendTool.IsActive = value;
             InvalidateVisual();
         }
     }
@@ -591,6 +608,18 @@ public class ImageEditorControl : Control
             }
         }
 
+        // Canvas extend tool takes priority when active
+        if (_isCanvasExtendToolActive && props.IsLeftButtonPressed)
+        {
+            if (_editorCore.CanvasExtendTool.OnPointerPressed(skPoint))
+            {
+                e.Handled = true;
+                InvalidateVisual();
+                Focus();
+                return;
+            }
+        }
+
         if (_editorCore.CropTool.OnPointerPressed(skPoint))
         {
             e.Handled = true;
@@ -699,6 +728,17 @@ public class ImageEditorControl : Control
             }
         }
 
+        // Canvas extend tool pointer tracking
+        if (_isCanvasExtendToolActive)
+        {
+            if (_editorCore.CanvasExtendTool.OnPointerMoved(skPoint))
+            {
+                e.Handled = true;
+                InvalidateVisual();
+                return;
+            }
+        }
+
         if (_editorCore.CropTool.OnPointerMoved(skPoint))
         {
             e.Handled = true;
@@ -785,6 +825,17 @@ public class ImageEditorControl : Control
         if (_isOutpaintToolActive)
         {
             if (_editorCore.OutpaintTool.OnPointerReleased())
+            {
+                e.Handled = true;
+                InvalidateVisual();
+                return;
+            }
+        }
+
+        // Canvas extend tool release
+        if (_isCanvasExtendToolActive)
+        {
+            if (_editorCore.CanvasExtendTool.OnPointerReleased())
             {
                 e.Handled = true;
                 InvalidateVisual();
@@ -907,6 +958,24 @@ public class ImageEditorControl : Control
             }
         }
 
+        // Canvas extend: Enter applies, Escape resets the extension (tool stays open, like Crop)
+        if (_isCanvasExtendToolActive)
+        {
+            if (e.Key == Key.Enter)
+            {
+                ApplyCanvasExtend();
+                e.Handled = true;
+                return;
+            }
+            if (e.Key == Key.Escape)
+            {
+                _editorCore.CanvasExtendTool.Reset();
+                InvalidateVisual();
+                e.Handled = true;
+                return;
+            }
+        }
+
         // Apply crop with C or Enter when crop tool is active
         if (_editorCore.CropTool.IsActive && _editorCore.CropTool.HasCropRegion)
         {
@@ -1012,6 +1081,22 @@ public class ImageEditorControl : Control
         {
             var outpaintHandle = _editorCore.OutpaintTool.GetCursorForPoint(point);
             Cursor = outpaintHandle switch
+            {
+                ImageEditor.OutpaintHandle.Top or ImageEditor.OutpaintHandle.Bottom => new Cursor(StandardCursorType.SizeNorthSouth),
+                ImageEditor.OutpaintHandle.Left or ImageEditor.OutpaintHandle.Right => new Cursor(StandardCursorType.SizeWestEast),
+                ImageEditor.OutpaintHandle.TopLeft or ImageEditor.OutpaintHandle.TopRight
+                    or ImageEditor.OutpaintHandle.BottomLeft or ImageEditor.OutpaintHandle.BottomRight
+                    => new Cursor(StandardCursorType.SizeAll),
+                _ => Cursor.Default
+            };
+            return;
+        }
+
+        // Canvas extend tool cursors (handles sit on the frame)
+        if (_isCanvasExtendToolActive)
+        {
+            var extendHandle = _editorCore.CanvasExtendTool.GetCursorForPoint(point);
+            Cursor = extendHandle switch
             {
                 ImageEditor.OutpaintHandle.Top or ImageEditor.OutpaintHandle.Bottom => new Cursor(StandardCursorType.SizeNorthSouth),
                 ImageEditor.OutpaintHandle.Left or ImageEditor.OutpaintHandle.Right => new Cursor(StandardCursorType.SizeWestEast),
@@ -1228,6 +1313,25 @@ public class ImageEditorControl : Control
     }
 
     /// <summary>
+    /// Event raised when a canvas extension has been applied.
+    /// </summary>
+    public event EventHandler? CanvasExtendApplied;
+
+    /// <summary>
+    /// Applies the canvas extend tool's current extension.
+    /// </summary>
+    public bool ApplyCanvasExtend()
+    {
+        var result = _editorCore.ApplyCanvasExtend();
+        if (result)
+        {
+            CanvasExtendApplied?.Invoke(this, EventArgs.Empty);
+        }
+        InvalidateVisual();
+        return result;
+    }
+
+    /// <summary>
     /// Activates the crop tool.
     /// </summary>
     public void ActivateCropTool()
@@ -1386,6 +1490,27 @@ public class ImageEditorControl : Control
         InvalidateVisual();
     }
 
+    /// <summary>
+    /// Event raised when the canvas extend region changes.
+    /// </summary>
+    public event EventHandler? CanvasExtendRegionChanged;
+
+    /// <summary>
+    /// Event raised when the canvas extend tool blocked an attempt to shrink the canvas.
+    /// </summary>
+    public event EventHandler? CanvasExtendShrinkAttempted;
+
+    private void OnCanvasExtendRegionChanged(object? sender, EventArgs e)
+    {
+        CanvasExtendRegionChanged?.Invoke(this, EventArgs.Empty);
+        InvalidateVisual();
+    }
+
+    private void OnCanvasExtendShrinkAttempted(object? sender, EventArgs e)
+    {
+        CanvasExtendShrinkAttempted?.Invoke(this, EventArgs.Empty);
+    }
+
     protected override void OnPointerExited(PointerEventArgs e)
     {
         base.OnPointerExited(e);
@@ -1420,6 +1545,8 @@ public class ImageEditorControl : Control
         _editorCore.TextTool.FontSizeChanged += OnTextFontSizeChanged;
         _editorCore.ZoomChanged += OnEditorCoreZoomChanged;
         _editorCore.OutpaintTool.RegionChanged += OnOutpaintRegionChanged;
+        _editorCore.CanvasExtendTool.RegionChanged += OnCanvasExtendRegionChanged;
+        _editorCore.CanvasExtendTool.ShrinkAttempted += OnCanvasExtendShrinkAttempted;
         InvalidateVisual();
     }
 
@@ -1440,6 +1567,8 @@ public class ImageEditorControl : Control
         _editorCore.TextTool.FontSizeChanged -= OnTextFontSizeChanged;
         _editorCore.ZoomChanged -= OnEditorCoreZoomChanged;
         _editorCore.OutpaintTool.RegionChanged -= OnOutpaintRegionChanged;
+        _editorCore.CanvasExtendTool.RegionChanged -= OnCanvasExtendRegionChanged;
+        _editorCore.CanvasExtendTool.ShrinkAttempted -= OnCanvasExtendShrinkAttempted;
     }
 
     /// <summary>
