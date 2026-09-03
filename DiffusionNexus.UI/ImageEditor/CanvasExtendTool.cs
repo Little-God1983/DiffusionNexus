@@ -18,6 +18,8 @@ public sealed class CanvasExtendTool : CanvasExtensionTool
 
     private static readonly SKColor Accent = new(76, 175, 80);
     private static readonly SKColor Amber = new(255, 193, 7);
+    // One 32x32 tile for the whole process: intentionally never disposed, it lives as long
+    // as the app and is only ever read through a shader.
     private static readonly SKBitmap CheckerTile = BuildCheckerTile();
 
     private static readonly OutpaintHandle[] AllHandles =

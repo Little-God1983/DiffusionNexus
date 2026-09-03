@@ -183,7 +183,8 @@ public abstract class CanvasExtensionTool
 
     /// <summary>
     /// Sets the total canvas size. Extra pixels are split evenly between left/right and
-    /// top/bottom (the odd pixel goes right / bottom). A dimension below the image size is
+    /// top/bottom (the odd pixel goes right / bottom). An axis whose requested total already
+    /// matches the current one keeps its existing split. A dimension below the image size is
     /// clamped to the image size and <see cref="ShrinkAttempted"/> is raised.
     /// </summary>
     public void SetTargetSize(int width, int height)
@@ -192,7 +193,13 @@ public abstract class CanvasExtensionTool
             return;
 
         var shrinkRequested = width < ImagePixelWidth || height < ImagePixelHeight;
-        ApplySymmetricTarget(width, height);
+
+        // Only re-split an axis whose total actually changed: typing a new height must not
+        // re-centre a width the user placed with the handles (the panel sends both fields).
+        if (width != ImagePixelWidth + _extendLeft + _extendRight)
+            ApplySymmetricWidth(width);
+        if (height != ImagePixelHeight + _extendTop + _extendBottom)
+            ApplySymmetricHeight(height);
 
         if (shrinkRequested)
             ShrinkAttempted?.Invoke(this, EventArgs.Empty);
@@ -201,11 +208,20 @@ public abstract class CanvasExtensionTool
 
     private void ApplySymmetricTarget(int width, int height)
     {
-        var totalExtendX = Math.Max(0, width - ImagePixelWidth);
-        var totalExtendY = Math.Max(0, height - ImagePixelHeight);
+        ApplySymmetricWidth(width);
+        ApplySymmetricHeight(height);
+    }
 
+    private void ApplySymmetricWidth(int width)
+    {
+        var totalExtendX = Math.Max(0, width - ImagePixelWidth);
         _extendLeft = totalExtendX / 2;
         _extendRight = totalExtendX - _extendLeft;
+    }
+
+    private void ApplySymmetricHeight(int height)
+    {
+        var totalExtendY = Math.Max(0, height - ImagePixelHeight);
         _extendTop = totalExtendY / 2;
         _extendBottom = totalExtendY - _extendTop;
     }

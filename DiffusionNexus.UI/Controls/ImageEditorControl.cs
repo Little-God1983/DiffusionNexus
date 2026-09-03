@@ -1083,32 +1083,14 @@ public class ImageEditorControl : Control
         // Outpaint tool cursors
         if (_isOutpaintToolActive)
         {
-            var outpaintHandle = _editorCore.OutpaintTool.GetCursorForPoint(point);
-            Cursor = outpaintHandle switch
-            {
-                ImageEditor.OutpaintHandle.Top or ImageEditor.OutpaintHandle.Bottom => new Cursor(StandardCursorType.SizeNorthSouth),
-                ImageEditor.OutpaintHandle.Left or ImageEditor.OutpaintHandle.Right => new Cursor(StandardCursorType.SizeWestEast),
-                ImageEditor.OutpaintHandle.TopLeft or ImageEditor.OutpaintHandle.TopRight
-                    or ImageEditor.OutpaintHandle.BottomLeft or ImageEditor.OutpaintHandle.BottomRight
-                    => new Cursor(StandardCursorType.SizeAll),
-                _ => Cursor.Default
-            };
+            Cursor = CursorForExtensionHandle(_editorCore.OutpaintTool.GetCursorForPoint(point));
             return;
         }
 
         // Canvas extend tool cursors (handles sit on the frame)
         if (_isCanvasExtendToolActive)
         {
-            var extendHandle = _editorCore.CanvasExtendTool.GetCursorForPoint(point);
-            Cursor = extendHandle switch
-            {
-                ImageEditor.OutpaintHandle.Top or ImageEditor.OutpaintHandle.Bottom => new Cursor(StandardCursorType.SizeNorthSouth),
-                ImageEditor.OutpaintHandle.Left or ImageEditor.OutpaintHandle.Right => new Cursor(StandardCursorType.SizeWestEast),
-                ImageEditor.OutpaintHandle.TopLeft or ImageEditor.OutpaintHandle.TopRight
-                    or ImageEditor.OutpaintHandle.BottomLeft or ImageEditor.OutpaintHandle.BottomRight
-                    => new Cursor(StandardCursorType.SizeAll),
-                _ => Cursor.Default
-            };
+            Cursor = CursorForExtensionHandle(_editorCore.CanvasExtendTool.GetCursorForPoint(point));
             return;
         }
 
@@ -1129,6 +1111,20 @@ public class ImageEditorControl : Control
             _ => new Cursor(StandardCursorType.Cross)
         };
     }
+
+    /// <summary>
+    /// Resize cursor for a canvas-extension handle. Shared by the Outpaint and the
+    /// Canvas Extend tools, which use the same handle enum and the same gesture.
+    /// </summary>
+    private static Cursor CursorForExtensionHandle(ImageEditor.OutpaintHandle handle) => handle switch
+    {
+        ImageEditor.OutpaintHandle.Top or ImageEditor.OutpaintHandle.Bottom => new Cursor(StandardCursorType.SizeNorthSouth),
+        ImageEditor.OutpaintHandle.Left or ImageEditor.OutpaintHandle.Right => new Cursor(StandardCursorType.SizeWestEast),
+        ImageEditor.OutpaintHandle.TopLeft or ImageEditor.OutpaintHandle.TopRight
+            or ImageEditor.OutpaintHandle.BottomLeft or ImageEditor.OutpaintHandle.BottomRight
+            => new Cursor(StandardCursorType.SizeAll),
+        _ => Cursor.Default
+    };
 
     public override void Render(DrawingContext context)
     {

@@ -518,8 +518,8 @@ public partial class ImageEditView : UserControl
 
         EventHandler onDeactivated = (_, _) =>
         {
+            // Clearing IsCanvasExtendToolActive resets the tool through IsActive; no second Reset.
             _imageEditorCanvas!.IsCanvasExtendToolActive = false;
-            _imageEditorCanvas.EditorCore.CanvasExtendTool.Reset();
             _imageEditorCanvas.InvalidateVisual();
         };
         imageEditor.CanvasExtend.ToolDeactivated += onDeactivated;
@@ -560,10 +560,9 @@ public partial class ImageEditView : UserControl
 
         EventHandler onApplied = (_, _) =>
         {
+            // ImageChanged fires first and already syncs the layer panel and the dimensions.
             var core = _imageEditorCanvas!.EditorCore;
             imageEditor.CanvasExtend.OnApplied(core.Width, core.Height);
-            imageEditor.LayerPanel.SyncLayers(core.Layers);
-            imageEditor.UpdateDimensions(core.Width, core.Height);
         };
         _imageEditorCanvas.CanvasExtendApplied += onApplied;
         _eventCleanup.Add(() => _imageEditorCanvas!.CanvasExtendApplied -= onApplied);

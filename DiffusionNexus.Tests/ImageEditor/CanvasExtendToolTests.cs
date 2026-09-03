@@ -105,6 +105,20 @@ public class CanvasExtendToolTests
     }
 
     [Fact]
+    public void SetTargetSize_OnlyResplitsTheAxisThatChanged()
+    {
+        var tool = CreateActive();
+        tool.SetExtension(0, 300, 0, 0); // 1300 x 1000, all of it on the right
+
+        tool.SetTargetSize(1300, 1200); // width unchanged, height grows
+
+        tool.ExtendRight.Should().Be(300, "the width was not touched, so it must not be re-centred");
+        tool.ExtendLeft.Should().Be(0);
+        tool.ExtendTop.Should().Be(100);
+        tool.ExtendBottom.Should().Be(100);
+    }
+
+    [Fact]
     public void ToolId_IsRegistered()
     {
         DiffusionNexus.UI.ImageEditor.Services.ToolIds.CanvasExtend.Should().Be("CanvasExtend");

@@ -135,6 +135,19 @@ public class CanvasExtendViewModelTests
     }
 
     [Fact]
+    public void TypedWidth_WhileThePanelIsClosed_IsStoredWithoutRequestOrHint()
+    {
+        var requests = 0;
+        _sut.TargetSizeRequested += (_, _) => requests++;
+
+        _sut.TargetWidth = 800;
+
+        _sut.TargetWidth.Should().Be(800);
+        requests.Should().Be(0);
+        _sut.IsShrinkHintVisible.Should().BeFalse();
+    }
+
+    [Fact]
     public void OnApplyFailed_LeavesThePanelOpen_SoTheUserCanTryASmallerSize()
     {
         _sut.IsPanelOpen = true;

@@ -259,11 +259,15 @@ the control flag and push the initial `UpdateResolution`; deactivated → clear 
 
 - Apply with nothing to apply: `false`, the panel's Apply button is disabled anyway.
 - Apply on a very large target (e.g. 3× both ways on a 4k image) allocates a bitmap per
-  layer; an `OutOfMemoryException` is caught in `ApplyCanvasExtend`, logged, the tool is
-  left as it was, and the status message says the canvas could not be extended.
-- Image cleared or replaced while the panel is open: `HasImage` turns false, commands
-  refresh through the existing `NotifyToolCommandsCanExecuteChanged` path, and
-  `CloseAllTools` closes the panel as it does for Outpaint.
+  layer; the failure (Skia raises a plain exception, or hands back an empty bitmap that the
+  allocation guard rejects) is caught in `ApplyCanvasExtend`, logged, the tool is left as it
+  was, and the status message says the canvas could not be extended.
+- Image cleared while the panel is open: `HasImage` turns false, commands refresh through
+  the existing `NotifyToolCommandsCanExecuteChanged` path, and `CloseAllTools` closes the
+  panel as it does for Outpaint.
+- Image *replaced* while the panel is open (loading another image into the editor): the
+  load path does not call `CloseAllTools`, so the panel stays open on the new image. This is
+  a known gap shared with Outpaint, tracked for a follow-up rather than fixed here.
 
 ## Testing
 

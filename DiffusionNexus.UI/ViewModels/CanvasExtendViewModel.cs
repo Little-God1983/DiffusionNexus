@@ -303,6 +303,14 @@ public partial class CanvasExtendViewModel : ObservableObject
             return;
         }
 
+        if (!_isPanelOpen)
+        {
+            // The fields exist while the panel is closed (bindings stay alive). Store the
+            // value, but do not drive a tool that is not active or show a hint nobody asked for.
+            SetProperty(ref field, value, propertyName);
+            return;
+        }
+
         var minimum = Math.Max(1, imageDimension);
         if (value < minimum)
         {
