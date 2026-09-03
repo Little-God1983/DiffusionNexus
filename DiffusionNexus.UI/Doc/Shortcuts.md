@@ -18,3 +18,10 @@
 | Ctrl+S | Save caption | Rating controls visible |
 | Ctrl+Z | Revert caption | Rating controls visible |
 | M | Toggle metadata panel | Always |
+
+## Image Editor
+
+| Key | Action | Context |
+|-----|--------|---------|
+| Enter | Apply canvas extension | Extend tool active |
+| Escape | Reset canvas extension (tool stays open) | Extend tool active |
