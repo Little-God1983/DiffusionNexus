@@ -124,6 +124,17 @@ ImageEditorControl ? EditorCore.ZoomIn()
                    ? same ViewportManager instance ? single source of truth
 ```
 
+### Canvas Extend
+```
+User → Extend toggle → CanvasExtendViewModel.IsPanelOpen = true
+     → View sets ImageEditorControl.IsCanvasExtendToolActive → CanvasExtendTool.IsActive
+     → handle drag / image drag (moves the image inside the frame) / SetTargetSize / SetAspectRatio / SetAnchor
+       → RegionChanged → View → ViewModel.UpdateResolution + UpdateAnchor (grid cell, none when dragged)
+     → RenderWithZoom fit includes the frame + FitMargin while any extension tool is active
+     → Apply (button / Enter) → ImageEditorCore.ApplyCanvasExtend()
+     → LayerManager.ResizeCanvas + working bitmap grown, transparent new pixels → ImageChanged
+```
+
 ---
 
 ## File Inventory
@@ -140,7 +151,11 @@ ImageEditorControl ? EditorCore.ZoomIn()
 | `Layer.cs` | Single layer: bitmap, opacity, visibility, blend mode |
 | `LayerStack.cs` | Ordered collection of layers |
 | `LayerCompositor.cs` | Composites layers to canvas |
+| `TransparencyCheckerboard.cs` | See-through checkerboard painted under the image in `RenderWithZoom` so transparent pixels stay visible |
 | `CropTool.cs` | Crop region management and rendering |
+| `CanvasExtensionTool.cs` | Abstract base for tools that grow the canvas outward: extension state, outward-only drag math, aspect/target-size presets, `ShrinkAttempted` |
+| `OutpaintTool.cs` | Outpaint frame (arrow handles, AI severity tint) on top of `CanvasExtensionTool` |
+| `CanvasExtendTool.cs` | Canvas Extend frame (round handles on the frame, checkerboard preview of the transparent new area) |
 | `DrawingTool.cs` | Freehand drawing tool |
 | `ShapeTool.cs` | Shape tool (rectangle, ellipse, arrow, etc.) |
 | `TiffExporter.cs` | Multi-page TIFF save/load |

@@ -233,6 +233,7 @@ public partial class ImageEditView : UserControl
         WireTextToolEvents(imageEditor);
         WireInpaintingEvents(imageEditor);
         WireOutpaintingEvents(imageEditor);
+        WireCanvasExtendEvents(imageEditor);
         WireSaveAndExportEvents(vm, imageEditor);
         WireLayerEvents(vm, imageEditor);
         WireZoomSlider();
@@ -498,6 +499,91 @@ public partial class ImageEditView : UserControl
         };
         imageEditor.Outpainting.ResultReady += onOutpaintResult;
         _eventCleanup.Add(() => imageEditor.Outpainting.ResultReady -= onOutpaintResult);
+    }
+
+    private void WireCanvasExtendEvents(ImageEditorViewModel imageEditor)
+    {
+        EventHandler onActivated = (_, _) =>
+        {
+            _imageEditorCanvas!.IsCanvasExtendToolActive = true;
+            // Push the initial state so the panel shows the current size before any drag.
+            var tool = _imageEditorCanvas.EditorCore.CanvasExtendTool;
+            tool.ImagePixelWidth = _imageEditorCanvas.EditorCore.Width;
+            tool.ImagePixelHeight = _imageEditorCanvas.EditorCore.Height;
+            var (w, h) = tool.GetNewDimensions();
+            imageEditor.CanvasExtend.UpdateResolution(w, h, tool.HasExtension);
+            imageEditor.CanvasExtend.UpdateAnchor(tool.Anchor);
+        };
+        imageEditor.CanvasExtend.ToolActivated += onActivated;
+        _eventCleanup.Add(() => imageEditor.CanvasExtend.ToolActivated -= onActivated);
+
+        EventHandler onDeactivated = (_, _) =>
+        {
+            // Clearing IsCanvasExtendToolActive resets the tool through IsActive; no second Reset.
+            _imageEditorCanvas!.IsCanvasExtendToolActive = false;
+            _imageEditorCanvas.InvalidateVisual();
+        };
+        imageEditor.CanvasExtend.ToolDeactivated += onDeactivated;
+        _eventCleanup.Add(() => imageEditor.CanvasExtend.ToolDeactivated -= onDeactivated);
+
+        EventHandler<(int Width, int Height)> onTargetSize = (_, size) =>
+        {
+            _imageEditorCanvas!.EditorCore.CanvasExtendTool.SetTargetSize(size.Width, size.Height);
+            _imageEditorCanvas.InvalidateVisual();
+        };
+        imageEditor.CanvasExtend.TargetSizeRequested += onTargetSize;
+        _eventCleanup.Add(() => imageEditor.CanvasExtend.TargetSizeRequested -= onTargetSize);
+
+        EventHandler<(float W, float H)> onAspect = (_, ratio) =>
+        {
+            _imageEditorCanvas!.EditorCore.CanvasExtendTool.SetAspectRatio(ratio.W, ratio.H);
+            _imageEditorCanvas.InvalidateVisual();
+        };
+        imageEditor.CanvasExtend.SetAspectRatioRequested += onAspect;
+        _eventCleanup.Add(() => imageEditor.CanvasExtend.SetAspectRatioRequested -= onAspect);
+
+        EventHandler<CanvasAnchor> onAnchor = (_, anchor) =>
+        {
+            _imageEditorCanvas!.EditorCore.CanvasExtendTool.SetAnchor(anchor);
+            _imageEditorCanvas.InvalidateVisual();
+        };
+        imageEditor.CanvasExtend.AnchorRequested += onAnchor;
+        _eventCleanup.Add(() => imageEditor.CanvasExtend.AnchorRequested -= onAnchor);
+
+        EventHandler onApply = (_, _) => _imageEditorCanvas!.ApplyCanvasExtend();
+        imageEditor.CanvasExtend.ApplyRequested += onApply;
+        _eventCleanup.Add(() => imageEditor.CanvasExtend.ApplyRequested -= onApply);
+
+        EventHandler onRegionChanged = (_, _) =>
+        {
+            var tool = _imageEditorCanvas!.EditorCore.CanvasExtendTool;
+            var (w, h) = tool.GetNewDimensions();
+            imageEditor.CanvasExtend.UpdateResolution(w, h, tool.HasExtension);
+            imageEditor.CanvasExtend.UpdateAnchor(tool.Anchor);
+        };
+        _imageEditorCanvas!.CanvasExtendRegionChanged += onRegionChanged;
+        _eventCleanup.Add(() => _imageEditorCanvas!.CanvasExtendRegionChanged -= onRegionChanged);
+
+        EventHandler onShrink = (_, _) => imageEditor.CanvasExtend.OnShrinkAttempted();
+        _imageEditorCanvas.CanvasExtendShrinkAttempted += onShrink;
+        _eventCleanup.Add(() => _imageEditorCanvas!.CanvasExtendShrinkAttempted -= onShrink);
+
+        EventHandler onApplied = (_, _) =>
+        {
+            // ImageChanged fires first and already syncs the layer panel and the dimensions.
+            var core = _imageEditorCanvas!.EditorCore;
+            imageEditor.CanvasExtend.OnApplied(core.Width, core.Height);
+        };
+        _imageEditorCanvas.CanvasExtendApplied += onApplied;
+        _eventCleanup.Add(() => _imageEditorCanvas!.CanvasExtendApplied -= onApplied);
+
+        EventHandler onApplyFailed = (_, _) =>
+        {
+            imageEditor.CanvasExtend.OnApplyFailed();
+            imageEditor.StatusMessage = "The canvas could not be extended. Try a smaller size.";
+        };
+        _imageEditorCanvas.CanvasExtendFailed += onApplyFailed;
+        _eventCleanup.Add(() => _imageEditorCanvas!.CanvasExtendFailed -= onApplyFailed);
     }
 
     private void WireZoomAndTransformEvents(ImageEditorViewModel imageEditor)
@@ -1145,6 +1231,12 @@ public partial class ImageEditView : UserControl
                 if (args.Property.Name == nameof(Slider.Value) && _imageEditorCanvas is not null)
                 {
                     var percentage = (int)zoomSlider.Value;
+                    // The slider's Value is also written by the ZoomPercentage binding whenever
+                    // the viewport reports a change. Echoing that back through SetZoom would
+                    // round a fractional fit scale (42.71 % -> 43 %) and, because the zoom
+                    // setter clears fit mode, silently switch Fit off on the first render.
+                    if (percentage == _imageEditorCanvas.ZoomPercentage)
+                        return;
                     _imageEditorCanvas.SetZoom(percentage / 100f);
                 }
             };

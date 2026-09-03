@@ -300,13 +300,38 @@ public class Layer : IDisposable
     {
         if (_bitmap == null) return;
 
+        AdoptBitmap(CreateResizedBitmap(newWidth, newHeight, offsetX, offsetY));
+    }
+
+    /// <summary>
+    /// Builds the bitmap <see cref="ResizeCanvas"/> would swap in, without touching the
+    /// layer: a transparent canvas of the new size with the current content drawn at the
+    /// offset. Lets <see cref="LayerStack.ResizeCanvas"/> allocate for every layer before
+    /// changing any of them. Throws when SkiaSharp cannot allocate (it hands back an empty
+    /// bitmap instead of throwing), so the caller can report the failure.
+    /// </summary>
+    internal SKBitmap CreateResizedBitmap(int newWidth, int newHeight, int offsetX, int offsetY)
+    {
+        if (_bitmap == null)
+            throw new InvalidOperationException("The layer has no bitmap to resize.");
+
         var newBitmap = new SKBitmap(newWidth, newHeight, SKColorType.Rgba8888, SKAlphaType.Premul);
+        if (newBitmap.IsEmpty || newBitmap.Width != newWidth || newBitmap.Height != newHeight)
+        {
+            newBitmap.Dispose();
+            throw new InvalidOperationException($"Could not allocate a {newWidth}x{newHeight} canvas.");
+        }
         newBitmap.Erase(SKColors.Transparent);
 
         using var canvas = new SKCanvas(newBitmap);
         canvas.DrawBitmap(_bitmap, offsetX, offsetY);
+        return newBitmap;
+    }
 
-        _bitmap.Dispose();
+    /// <summary>Replaces the layer's bitmap with one prepared by <see cref="CreateResizedBitmap"/>.</summary>
+    internal void AdoptBitmap(SKBitmap newBitmap)
+    {
+        _bitmap?.Dispose();
         _bitmap = newBitmap;
         UpdateThumbnail();
         ContentChanged?.Invoke(this, EventArgs.Empty);

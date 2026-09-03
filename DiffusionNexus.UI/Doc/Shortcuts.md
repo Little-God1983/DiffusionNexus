@@ -18,3 +18,19 @@
 | Ctrl+S | Save caption | Rating controls visible |
 | Ctrl+Z | Revert caption | Rating controls visible |
 | M | Toggle metadata panel | Always |
+
+## Image Editor
+
+| Key | Action | Context |
+|-----|--------|---------|
+| Shift (held) | Constrain the stroke to a straight line | Freehand drawing tool active |
+| Ctrl (held) | Constrain the shape to a square / circle | Shape tool active |
+| Ctrl+Enter | Generate the inpaint | Inpainting tool active |
+| Enter | Commit the placed text | Text tool active with placed text |
+| Escape | Cancel the placed text | Text tool active with placed text |
+| Enter | Commit the placed shape | Shape tool active with placed shape |
+| Escape | Cancel the placed shape | Shape tool active with placed shape |
+| Enter | Apply canvas extension | Extend tool active |
+| Escape | Reset canvas extension (tool stays open) | Extend tool active |
+| C / Enter | Apply the crop | Crop tool active with a region |
+| Escape | Clear the crop region | Crop tool active with a region |

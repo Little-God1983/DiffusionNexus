@@ -124,6 +124,11 @@ public partial class ImageEditorCore : IDisposable
     public OutpaintTool OutpaintTool { get; } = new();
 
     /// <summary>
+    /// Gets the canvas extend tool instance (grow the canvas without generating content).
+    /// </summary>
+    public CanvasExtendTool CanvasExtendTool { get; } = new();
+
+    /// <summary>
     /// Commits any in-progress tool operations (placed text, placed shape, active drawing stroke).
     /// Call before saving or exporting to ensure all pending work is captured.
     /// </summary>
@@ -242,6 +247,35 @@ public partial class ImageEditorCore : IDisposable
             _isFitMode = value;
             OnZoomChanged();
         }
+    }
+
+    private SKRect _lastRenderedImageRect;
+    private float _lastRenderedCanvasWidth;
+    private float _lastRenderedCanvasHeight;
+
+    /// <summary>
+    /// Leaves fit mode without moving the image on screen. The fit branch places the image
+    /// wherever an active extension tool's frame puts it (off-centre when the extension is
+    /// one-sided); the free branch centres the image at pan 0, so a plain
+    /// <c>IsFitMode = false</c> would snap it to the middle. The pan is set from the last
+    /// rendered position instead. Requires a render to have happened; otherwise it behaves
+    /// like the plain setter.
+    /// </summary>
+    public void LeaveFitModeKeepingPosition()
+    {
+        if (!_isFitMode) return;
+
+        var rect = _lastRenderedImageRect;
+        var canvasWidth = _lastRenderedCanvasWidth;
+        var canvasHeight = _lastRenderedCanvasHeight;
+
+        _isFitMode = false;
+        if (rect.Width > 0 && canvasWidth > 0 && canvasHeight > 0)
+        {
+            _panX = rect.MidX - canvasWidth / 2f;
+            _panY = rect.MidY - canvasHeight / 2f;
+        }
+        OnZoomChanged();
     }
 
     /// <summary>
@@ -608,34 +642,24 @@ public partial class ImageEditorCore : IDisposable
     {
         lock (_bitmapLock)
         {
-            if (_workingBitmap is null)
+            int imageWidth, imageHeight;
+            if (_isLayerMode && _layers != null && _layers.Count > 0)
+            {
+                imageWidth = _layers.Width;
+                imageHeight = _layers.Height;
+            }
+            else if (_workingBitmap is not null)
+            {
+                imageWidth = _workingBitmap.Width;
+                imageHeight = _workingBitmap.Height;
+            }
+            else
+            {
                 return SKRect.Empty;
+            }
 
-            return CalculateFitRectInternal(_workingBitmap, containerWidth, containerHeight);
+            return FitImageRect(imageWidth, imageHeight, containerWidth, containerHeight, out _);
         }
-    }
-
-    /// <summary>
-    /// Internal method to calculate fit rect without locking (caller must hold lock).
-    /// </summary>
-    private static SKRect CalculateFitRectInternal(SKBitmap bitmap, float containerWidth, float containerHeight)
-    {
-        var imageWidth = (float)bitmap.Width;
-        var imageHeight = (float)bitmap.Height;
-
-        // Calculate scale to fit
-        var scaleX = containerWidth / imageWidth;
-        var scaleY = containerHeight / imageHeight;
-        var scale = Math.Min(scaleX, scaleY);
-
-        var scaledWidth = imageWidth * scale;
-        var scaledHeight = imageHeight * scale;
-
-        // Center the image
-        var x = (containerWidth - scaledWidth) / 2f;
-        var y = (containerHeight - scaledHeight) / 2f;
-
-        return new SKRect(x, y, x + scaledWidth, y + scaledHeight);
     }
 
     /// <summary>
@@ -832,7 +856,81 @@ public partial class ImageEditorCore : IDisposable
         return Crop(cropRect);
     }
 
+    /// <summary>
+    /// Grows the canvas by the <see cref="CanvasExtendTool"/>'s current extension. Every
+    /// layer and the working bitmap are resized; existing content keeps its position
+    /// relative to the new top-left offset; new pixels are transparent. Resets the tool.
+    /// </summary>
+    /// <returns>True when the canvas was extended.</returns>
+    public bool ApplyCanvasExtend()
+    {
+        var tool = CanvasExtendTool;
+        if (!HasImage || !tool.HasExtension)
+            return false;
 
+        var offsetX = tool.ExtendLeft;
+        var offsetY = tool.ExtendTop;
+        var newWidth = Width + tool.ExtendLeft + tool.ExtendRight;
+        var newHeight = Height + tool.ExtendTop + tool.ExtendBottom;
+        FileLogger.Log($"Canvas extend: {Width}x{Height} -> {newWidth}x{newHeight} (offset {offsetX},{offsetY})");
+
+        SKBitmap? replacedWorking = null;
+        try
+        {
+            lock (_bitmapLock)
+            {
+                // Working bitmap first, layers second, and nothing is swapped in until every
+                // allocation succeeded: a failure anywhere leaves the document as it was.
+                SKBitmap? grown = null;
+                if (_workingBitmap is not null)
+                {
+                    grown = new SKBitmap(newWidth, newHeight, SKColorType.Rgba8888, SKAlphaType.Premul);
+                    // SkiaSharp hands back an empty bitmap when the native allocation fails
+                    // instead of throwing, so an unchecked bitmap would silently lose the image.
+                    if (grown.IsEmpty || grown.Width != newWidth || grown.Height != newHeight)
+                    {
+                        grown.Dispose();
+                        throw new InvalidOperationException($"Could not allocate a {newWidth}x{newHeight} canvas.");
+                    }
+                    grown.Erase(SKColors.Transparent);
+                    using var canvas = new SKCanvas(grown);
+                    canvas.DrawBitmap(_workingBitmap, offsetX, offsetY);
+                }
+
+                try
+                {
+                    if (_isLayerMode && _layers != null)
+                    {
+                        // LayerStack.ResizeCanvas is itself all-or-nothing across layers.
+                        _services?.Layers.ResizeCanvas(newWidth, newHeight, offsetX, offsetY);
+                    }
+                }
+                catch
+                {
+                    grown?.Dispose();
+                    throw;
+                }
+
+                if (grown is not null)
+                {
+                    replacedWorking = _workingBitmap;
+                    _workingBitmap = grown;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Skia reports a failed allocation as a plain Exception (or an empty bitmap),
+            // not always an OutOfMemoryException, so catch broadly and report the failure.
+            FileLogger.LogError($"Canvas extend to {newWidth}x{newHeight} failed", ex);
+            return false;
+        }
+
+        replacedWorking?.Dispose();
+        tool.Reset();
+        OnImageChanged();
+        return true;
+    }
 
     /// <summary>
     /// Saves the current working image to a file.
@@ -926,12 +1024,30 @@ public partial class ImageEditorCore : IDisposable
 
             SKRect imageRect;
 
-            if (_isFitMode)
+            if (ActiveExtensionTool?.PinnedImageRect is { } pinned)
             {
-                imageRect = CalculateFitRectInternal(imageWidth, imageHeight, canvasWidth, canvasHeight);
-                // Update zoom level to reflect fit
-                var fitScale = imageRect.Width / imageWidth;
-                _zoomLevel = fitScale;
+                // The frame is being dragged: keep the image where it was when the gesture
+                // started so the frame follows the pointer. Fit mode would re-centre the frame
+                // every render and slide the image the other way; the fit scale cannot change
+                // during a move (the total size stays), so nothing else needs updating.
+                imageRect = pinned;
+            }
+            else if (_isFitMode)
+            {
+                // Fit honours an active extension tool's frame so it never runs off screen.
+                imageRect = FitImageRect(imageWidth, imageHeight, canvasWidth, canvasHeight, out var fitScale);
+                // Write through SetFitModeWithZoom, NOT the _zoomLevel setter: that setter goes to
+                // Viewport.ZoomLevel, which clears IsFitMode, so fit mode used to switch itself off
+                // on the very first render after load. Compare against the CLAMPED value: a fit
+                // scale below MinZoom (huge image, small canvas) would otherwise differ from the
+                // stored zoom on every frame and re-fire Changed each render.
+                var viewport = _services?.Viewport;
+                if (viewport is not null)
+                {
+                    var clampedFit = Math.Clamp(fitScale, viewport.MinZoom, viewport.MaxZoom);
+                    if (Math.Abs(viewport.ZoomLevel - clampedFit) > 0.0001f)
+                        viewport.SetFitModeWithZoom(clampedFit);
+                }
             }
             else
             {
@@ -945,6 +1061,16 @@ public partial class ImageEditorCore : IDisposable
 
                 imageRect = new SKRect(x, y, x + zoomedWidth, y + zoomedHeight);
             }
+
+            // Remembered for LeaveFitModeKeepingPosition. Written on the render thread, read
+            // on the UI thread; a stale value only costs a slightly off pan, never a crash.
+            _lastRenderedImageRect = imageRect;
+            _lastRenderedCanvasWidth = canvasWidth;
+            _lastRenderedCanvasHeight = canvasHeight;
+
+            // Transparent pixels (extended canvas strips, removed backgrounds) must not vanish
+            // into the canvas background: paint the see-through checkerboard under the image.
+            TransparencyCheckerboard.Draw(canvas, imageRect);
 
             // Render based on mode
             if (_isPreviewActive && _previewBitmap is not null)
@@ -993,9 +1119,70 @@ public partial class ImageEditorCore : IDisposable
             OutpaintTool.ImagePixelHeight = imageHeight;
             OutpaintTool.Render(canvas, new SKRect(0, 0, canvasWidth, canvasHeight));
 
+            // Update canvas extend tool with current image bounds and render overlay
+            CanvasExtendTool.SetImageBounds(imageRect);
+            CanvasExtendTool.ImagePixelWidth = imageWidth;
+            CanvasExtendTool.ImagePixelHeight = imageHeight;
+            CanvasExtendTool.Render(canvas, new SKRect(0, 0, canvasWidth, canvasHeight));
+
             _lastImageRect = imageRect;
             return imageRect;
         }
+    }
+
+    /// <summary>
+    /// Fits the virtual canvas (image plus the extension on each side) into the container
+    /// shrunk by <paramref name="margin"/> on every side, centred, and returns the rectangle
+    /// the <b>image</b> occupies inside that frame plus the scale (image px → screen px).
+    /// With zero extension and zero margin it equals the plain image fit.
+    /// </summary>
+    internal static (SKRect ImageRect, float Scale) CalculateFitRectWithExtension(
+        int imageWidth, int imageHeight,
+        int extendLeft, int extendTop, int extendRight, int extendBottom,
+        float margin, float containerWidth, float containerHeight)
+    {
+        var virtualWidth = imageWidth + extendLeft + extendRight;
+        var virtualHeight = imageHeight + extendTop + extendBottom;
+        var availableWidth = Math.Max(1f, containerWidth - 2f * margin);
+        var availableHeight = Math.Max(1f, containerHeight - 2f * margin);
+
+        var scale = Math.Min(availableWidth / virtualWidth, availableHeight / virtualHeight);
+
+        var frameWidth = virtualWidth * scale;
+        var frameHeight = virtualHeight * scale;
+        var frameX = (containerWidth - frameWidth) / 2f;
+        var frameY = (containerHeight - frameHeight) / 2f;
+
+        var x = frameX + extendLeft * scale;
+        var y = frameY + extendTop * scale;
+        return (new SKRect(x, y, x + imageWidth * scale, y + imageHeight * scale), scale);
+    }
+
+    /// <summary>The extension tool whose frame the viewport must keep on screen, if any.</summary>
+    private CanvasExtensionTool? ActiveExtensionTool =>
+        CanvasExtendTool.IsActive ? CanvasExtendTool
+        : OutpaintTool.IsActive ? OutpaintTool
+        : null;
+
+    /// <summary>
+    /// Fit rectangle for the image, honouring the active extension tool's frame and margin.
+    /// </summary>
+    private SKRect FitImageRect(int imageWidth, int imageHeight, float containerWidth, float containerHeight, out float scale)
+    {
+        var tool = ActiveExtensionTool;
+        if (tool is null)
+        {
+            var plain = CalculateFitRectInternal(imageWidth, imageHeight, containerWidth, containerHeight);
+            scale = plain.Width / imageWidth;
+            return plain;
+        }
+
+        var (rect, s) = CalculateFitRectWithExtension(
+            imageWidth, imageHeight,
+            tool.ExtendLeft, tool.ExtendTop, tool.ExtendRight, tool.ExtendBottom,
+            tool.FitMargin, containerWidth, containerHeight);
+        scale = s;
+        return rect;
     }
 
     /// <summary>
