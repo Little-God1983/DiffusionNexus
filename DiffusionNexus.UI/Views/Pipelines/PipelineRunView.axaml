@@ -5,6 +5,7 @@
              xmlns:vm="using:DiffusionNexus.UI.ViewModels.Pipelines"
              xmlns:models="using:DiffusionNexus.UI.Models.Pipelines"
              xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
+             xmlns:converters="using:DiffusionNexus.UI.Converters"
              mc:Ignorable="d" d:DesignWidth="1100" d:DesignHeight="720"
              x:Class="DiffusionNexus.UI.Views.Pipelines.PipelineRunView"
              x:DataType="vm:PipelineRunViewModel">
@@ -158,7 +159,20 @@
 
     <!-- Right: before/after comparison (top) + colored status strip of all outputs (bottom) -->
     <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto" Margin="16">
-      <TextBlock Grid.Row="0" Text="Before / After" FontWeight="SemiBold" Foreground="#AAA" Margin="0,0,0,8"/>
+      <DockPanel Grid.Row="0" Margin="0,0,0,8" LastChildFill="False">
+        <TextBlock Text="Before / After" FontWeight="SemiBold" Foreground="#AAA"
+                   VerticalAlignment="Center" DockPanel.Dock="Left"/>
+        <!-- Same Fit / Fill / 1:1 / Side by Side picker as the standalone Compare module. -->
+        <ComboBox DockPanel.Dock="Right" Width="130"
+                  ItemsSource="{Binding CompareModeOptions}" SelectedItem="{Binding CompareMode}"
+                  ToolTip.Tip="Overlay with a hover slider, or show before and after side by side.">
+          <ComboBox.ItemTemplate>
+            <DataTemplate>
+              <TextBlock Text="{Binding Converter={x:Static converters:CompareFitModeDisplayConverter.Instance}}"/>
+            </DataTemplate>
+          </ComboBox.ItemTemplate>
+        </ComboBox>
+      </DockPanel>
 
       <Border Grid.Row="1" Background="#141414" CornerRadius="8" ClipToBounds="True">
         <Panel>
@@ -170,6 +184,7 @@
               LeftImagePath="{Binding Results.PrimaryItem.InputPath}"
               RightImagePath="{Binding Results.PrimaryItem.OutputPath}"
               SliderValue="50"
+              FitMode="{Binding CompareMode}"
               IsVisible="{Binding Results.PrimaryItem.OutputPath, Converter={x:Static StringConverters.IsNotNullOrEmpty}, FallbackValue=False}"/>
         </Panel>
       </Border>
