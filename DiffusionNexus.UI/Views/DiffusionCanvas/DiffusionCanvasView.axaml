@@ -99,7 +99,8 @@
                                      PreviewImage="{Binding Staging.CurrentImage}"
                                      PreviewRect="{Binding Staging.CurrentRect}"
                                      IsPreviewHidden="{Binding Staging.IsComparing}"
-                                     SpacePanEnabled="{Binding !Staging.HasCandidates}" />
+                                     SpacePanEnabled="{Binding !Staging.HasCandidates}"
+                                     DeleteRasterCommand="{Binding DeleteFrameCommand}" />
 
     <!-- ─────────────────────────── Staging strip ─────────────────────────── -->
     <Border Grid.Row="3" Background="#1B1B1B" BorderBrush="#333" BorderThickness="0,1,0,0"

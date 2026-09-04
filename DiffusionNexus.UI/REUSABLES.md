@@ -38,7 +38,7 @@ All paths are relative to `DiffusionNexus.UI/`.
 | `VideoPlayerControl` | [Controls/VideoPlayerControl.axaml](Controls/VideoPlayerControl.axaml) — video playback. |
 | `ImageEditorControl` | [Controls/ImageEditorControl.cs](Controls/ImageEditorControl.cs) — canvas editing surface. |
 | `ImageDragPreview`, `ImageFileTransfer` | Drag/drop plumbing for image files — reuse instead of hand-rolling `DataObject` code. |
-| `DiffusionCanvasSurface` | [Views/Controls/DiffusionCanvasSurface.cs](Views/Controls/DiffusionCanvasSurface.cs) — world-space pan/zoom surface over an unbounded canvas, with a movable/resizable marching-ants bounding box whose handles keep a constant screen size at any zoom. Pair it with `CanvasViewport` + `GenerationBoundingBox` in [DiffusionCanvas/](DiffusionCanvas/). Prefer this over another `ZoomBorder`: its transform is a plain object you can unit-test, and it has no gesture-rotation surprise. |
+| `DiffusionCanvasSurface` | [Views/Controls/DiffusionCanvasSurface.cs](Views/Controls/DiffusionCanvasSurface.cs) — world-space pan/zoom surface over an unbounded canvas, with a movable/resizable marching-ants bounding box whose handles keep a constant screen size at any zoom. Pair it with `CanvasViewport` + `GenerationBoundingBox` in [DiffusionCanvas/](DiffusionCanvas/). Prefer this over another `ZoomBorder`: its transform is a plain object you can unit-test, and it has no gesture-rotation surprise. Right-click on a result opens a flyout bound to `DeleteRasterCommand`; the marching-ants box is drawn in its own child layer so the animation never repaints the rasters underneath. |
 
 ### Model / LoRA pickers
 | Control | Purpose |

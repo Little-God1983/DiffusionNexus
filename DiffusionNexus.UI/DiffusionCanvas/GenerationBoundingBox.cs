@@ -71,13 +71,19 @@ public sealed class GenerationBoundingBox
     /// Assigning this always re-snaps the current size, even when the value is unchanged. The early return
     /// this used to have made the re-snap conditional on the alignment actually differing, which is the
     /// rarer case — the common one is "same alignment, box needs checking".
+    ///
+    /// The value is clamped into <c>[1, MaxSize]</c>, and callers must read it back from here rather than
+    /// reusing the descriptor's raw field: a catalog entry with <c>DimensionAlignment = 0</c> is one typo
+    /// away, and dividing by it downstream surfaces as a bare "Attempted to divide by zero". Above
+    /// <see cref="MaxSize"/> the lattice has no generatable multiple at all, and <c>Math.Clamp</c> throws
+    /// when its floor exceeds its ceiling.
     /// </remarks>
     public int Alignment
     {
         get => _alignment;
         set
         {
-            _alignment = Math.Max(1, value);
+            _alignment = Math.Clamp(value, 1, MaxSize);
 
             var width = SnapSize(Width);
             var height = SnapSize(Height);

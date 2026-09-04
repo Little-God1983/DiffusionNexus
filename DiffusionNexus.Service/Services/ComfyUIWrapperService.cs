@@ -603,7 +603,14 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
     /// <inheritdoc />
     public async Task InterruptAsync(CancellationToken ct = default)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        // Deliberately not ObjectDisposedException.ThrowIf like the other methods: the contract is that
+        // this never throws. It runs from cancellation paths that may already be tearing the wrapper
+        // down, and an exception thrown from inside a caller's catch block replaces the cancellation.
+        if (_disposed)
+        {
+            Logger.Debug("Interrupt skipped: the ComfyUI wrapper is already disposed");
+            return;
+        }
 
         Logger.Debug("Interrupting the running ComfyUI prompt");
 

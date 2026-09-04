@@ -71,17 +71,26 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     private bool _disposed;
 
     /// <summary>
+    /// File name of the composited region handed to a backend as the init image. Fixed, and deliberately
+    /// distinctive — see the remarks on <see cref="_regionScratchPath"/>.
+    /// </summary>
+    internal const string RegionScratchFileName = "diffusionnexus_canvas_region.png";
+
+    /// <summary>
     /// Scratch file the composited region is written to before a backend reads it.
     /// </summary>
     /// <remarks>
-    /// Deliberately stable for the life of the view model rather than a fresh GUID per run. The engine
-    /// backend uploads this file into ComfyUI's own <c>input/</c> folder, and that copy is never deleted:
-    /// a per-run name left hundreds of multi-megabyte PNGs behind over a session. A stable name means the
-    /// upload overwrites in place (<c>UploadImageAsync</c> already posts <c>overwrite=true</c>). The GUID
-    /// still distinguishes concurrent app instances.
+    /// The <b>file name</b> is fixed for every run and every launch. The engine backend uploads this file
+    /// into ComfyUI's own <c>input/</c> folder under its own name (<c>UploadImageAsync</c> posts
+    /// <c>overwrite=true</c>), and nothing ever deletes that copy: a per-run name left hundreds of
+    /// multi-megabyte PNGs behind over a session, and a per-launch GUID merely slowed the leak to one file
+    /// per launch, forever. One fixed name means the engine holds exactly one such file, overwritten in
+    /// place. It carries the app name because <c>overwrite=true</c> would clobber any user file of the
+    /// same name in that folder. The per-process <b>directory</b> is what keeps concurrent app instances
+    /// from overwriting each other's scratch.
     /// </remarks>
-    private readonly string _regionScratchPath =
-        Path.Combine(Path.GetTempPath(), $"diffnexus_canvas_{Guid.NewGuid():N}.png");
+    private readonly string _regionScratchPath = Path.Combine(
+        Path.GetTempPath(), "DiffusionNexus", $"canvas-{Environment.ProcessId}", RegionScratchFileName);
 
     /// <summary>All accepted results on the canvas, in z-order (last = top).</summary>
     public ObservableCollection<GenerationFrameViewModel> Frames { get; } = [];
@@ -346,13 +355,21 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     // ────────────────────────────── Region under the box ──────────────────────────────
 
     /// <summary>
-    /// Recomputes whether the box currently overlaps any accepted result. Cheap — it is rectangle
-    /// intersection only, no pixel work — so it can run on every box move.
+    /// Recomputes whether the box currently overlaps any accepted result that can feed an image-to-image
+    /// run. Cheap — rectangle intersection and a null check, no pixel work and no disk access — so it can
+    /// run on every box move.
     /// </summary>
+    /// <remarks>
+    /// Only rasters that <see cref="CanContribute"/> count. A frame whose save failed is still drawn on
+    /// the canvas but has nothing the compositor can read back, so counting it would promise image-to-image
+    /// in the readout for a run that executes as text-to-image. Whether the file is still readable is not
+    /// checked here (that is a disk hit per move); <see cref="GenerateAsync"/> refuses the run instead if
+    /// the composite comes back degraded.
+    /// </remarks>
     private void RefreshRegionMode()
     {
         var region = Box.WorldRect;
-        var overlapping = Frames.Count(f => new Rect(f.CanvasX, f.CanvasY, f.Width, f.Height).Intersects(region));
+        var overlapping = Frames.Count(f => CanContribute(f) && f.WorldRect.Intersects(region));
 
         IsRegionOccupied = overlapping > 0;
         RegionModeText = overlapping switch
@@ -363,7 +380,13 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         };
     }
 
-    /// <summary>Right-click → Delete frame.</summary>
+    /// <summary>True when the raster has a saved file the compositor could read the region back from.</summary>
+    private static bool CanContribute(ICanvasRaster raster) => !string.IsNullOrWhiteSpace(raster.ImagePath);
+
+    /// <summary>
+    /// Right-click on a result → Delete. The surface opens the flyout and passes the raster under the
+    /// pointer as the parameter.
+    /// </summary>
     public IRelayCommand<GenerationFrameViewModel?>? DeleteFrameCommand { get; }
 
     private void DeleteFrame(GenerationFrameViewModel? frame)
@@ -544,12 +567,15 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
 
             // Adopt the model's alignment before validating: the backend's own ValidateRequest throws
             // lazily, on the first MoveNextAsync inside the caller's await foreach, which is long after
-            // the candidate slots already exist.
+            // the candidate slots already exist. Read the value back from the box rather than reusing the
+            // descriptor's raw field — the box sanitises it, and a catalog entry with alignment 0 would
+            // otherwise divide by zero on the very next line.
             Box.Alignment = descriptor.DimensionAlignment;
-            if (Box.Width % descriptor.DimensionAlignment != 0 || Box.Height % descriptor.DimensionAlignment != 0)
+            var alignment = Box.Alignment;
+            if (Box.Width % alignment != 0 || Box.Height % alignment != 0)
             {
-                StatusText = $"The box must be a multiple of {descriptor.DimensionAlignment} px for {descriptor.DisplayName}.";
-                EmitWarning($"Refused to generate: box {Box.Width}x{Box.Height} is not aligned to {descriptor.DimensionAlignment}.");
+                StatusText = $"The box must be a multiple of {alignment} px for {descriptor.DisplayName}.";
+                EmitWarning($"Refused to generate: box {Box.Width}x{Box.Height} is not aligned to {alignment}.");
                 return;
             }
 
@@ -557,17 +583,32 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             var width = Box.Width;
             var height = Box.Height;
 
+            // Snapshot the prompt once for the whole batch. The user is free to type the next idea while a
+            // batch runs, and reading the box per candidate (or on accept) would pick that up.
+            var prompt = PromptText;
+
             // Snapshot the rasters on the UI thread, then composite off it. The region work decodes a
             // PNG per overlapping result, walks every output pixel to measure coverage, re-encodes at
             // quality 100 and writes a file — seconds of frozen window at 2048x2048 over several
             // results. Frames is an ObservableCollection, so it must not be enumerated off the UI thread.
             var rasters = Frames.Cast<ICanvasRaster>().ToArray();
-            var (composedPath, coverage) = await Task
+            var composed = await Task
                 .Run(() => BuildRegionInitImage(rasters, region, width, height), token)
                 .ConfigureAwait(true);
 
-            regionImagePath = composedPath;
+            regionImagePath = composed.Path;
             token.ThrowIfCancellationRequested();
+
+            if (composed.Degraded)
+            {
+                // The readout promised image-to-image (it counts rasters with a saved path), but the
+                // pixels could not be read back. Running anyway would silently execute as text-to-image
+                // with the user's denoise setting meaning nothing — refuse instead and say why.
+                StatusText = "The result(s) under the box could not be read back as an image-to-image input " +
+                             "(see the Unified Console). Move the box or clear the canvas.";
+                EmitWarning("Refused to generate: the region under the box is occupied but yielded no usable pixels.");
+                return;
+            }
 
             var initImage = regionImagePath is null
                 ? null
@@ -576,17 +617,19 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             var candidates = Staging.BeginBatch(BatchCount, region);
             EmitInfo($"Staged {candidates.Count} candidate slot(s).");
 
-            await RunBatchAsync(backend, descriptor, candidates, initImage, width, height, coverage, token)
+            await RunBatchAsync(backend, descriptor, candidates, prompt, initImage, width, height, composed.Coverage, token)
                 .ConfigureAwait(true);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
-            // Caught before the generic handler so a user cancel is never reported as a failure.
+            // Caught before the generic handler so a user cancel is never reported as a failure. The
+            // filter matters: HttpClient signals its own timeout as a TaskCanceledException, and an engine
+            // that is alive but wedged would otherwise be reported as "Cancelled." with no diagnostic.
             StatusText = "Cancelled.";
             EmitInfo("Batch cancelled by the user.");
             var pruned = Staging.PruneAfterCancel();
-        if (pruned > 0)
-            EmitInfo($"Removed {pruned} cancelled slot(s) from staging.");
+            if (pruned > 0)
+                EmitInfo($"Removed {pruned} cancelled slot(s) from staging.");
         }
         catch (Exception ex)
         {
@@ -753,19 +796,34 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     /// A snapshot of the accepted results, taken on the UI thread. This method runs on the thread pool,
     /// and <see cref="Frames"/> is an <c>ObservableCollection</c> that must not be enumerated off it.
     /// </param>
-    /// <returns>The scratch file path (or null for a text2img run) and the opaque coverage fraction.</returns>
-    private (string? Path, double Coverage) BuildRegionInitImage(
+    /// <returns>
+    /// The scratch file path (or null for a text2img run), the opaque coverage fraction, and whether the
+    /// result is <b>degraded</b>: a raster the readout counted could not be read back, or the composite
+    /// came out empty. A degraded region must not run — it would execute as something other than what
+    /// the UI promised.
+    /// </returns>
+    private (string? Path, double Coverage, bool Degraded) BuildRegionInitImage(
         IReadOnlyList<ICanvasRaster> rasters, Rect region, int width, int height)
     {
+        // The same rule the readout applies, so "degraded" means exactly "the readout counted it and it
+        // could not be loaded".
+        var expected = rasters.Count(r => CanContribute(r) && r.WorldRect.Intersects(region));
         var sources = CanvasRegionCompositor.LoadIntersecting(
             rasters, region, skipped => EmitWarning($"Skipped a raster while compositing the region: {skipped}."));
 
         try
         {
+            if (sources.Count < expected)
+            {
+                // The skip reason is already in the console. Compositing the rest would hand the backend
+                // a region with known pixels missing from it.
+                return (null, 0, Degraded: true);
+            }
+
             if (sources.Count == 0)
             {
                 EmitInfo("Region is empty — running text to image.");
-                return (null, 0);
+                return (null, 0, Degraded: false);
             }
 
             using var composite = CanvasRegionCompositor.Composite(sources, region, width, height);
@@ -773,11 +831,12 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
 
             if (composite.IsEmpty)
             {
-                EmitInfo("Region overlaps results but contains no opaque pixels — running text to image.");
-                return (null, 0);
+                EmitWarning("Region overlaps results but contains no opaque pixels.");
+                return (null, 0, Degraded: true);
             }
 
             var png = CanvasRegionCompositor.EncodeAsPng(composite.Bitmap, CanvasRegionCompositor.NeutralFill);
+            Directory.CreateDirectory(Path.GetDirectoryName(_regionScratchPath)!);
             File.WriteAllBytes(_regionScratchPath, png);
 
             var percent = (int)Math.Round(coverage * 100);
@@ -789,7 +848,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
                     "neutral grey input, so the known pixels are regenerated rather than preserved.");
             }
 
-            return (_regionScratchPath, coverage);
+            return (_regionScratchPath, coverage, Degraded: false);
         }
         finally
         {
@@ -802,6 +861,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         IDiffusionBackend backend,
         ModelDescriptor descriptor,
         IReadOnlyList<StagedCandidateViewModel> candidates,
+        string prompt,
         DiffusionReferenceImage? initImage,
         int width,
         int height,
@@ -824,6 +884,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             }
 
             Staging.Current = candidate;
+            candidate.Prompt = prompt;
             candidate.State = StagedCandidateState.Loading;
             candidate.StatusText = "Preparing…";
             StatusText = $"Generating {i + 1}/{candidates.Count}…";
@@ -832,7 +893,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             var request = new DiffusionRequest
             {
                 ModelKey = descriptor.Key,
-                Prompt = PromptText,
+                Prompt = prompt,
                 Width = width,
                 Height = height,
                 // v1 leaves Steps/Cfg/Sampler/Scheduler null so the backend uses the model's own defaults.
@@ -848,8 +909,11 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
                 await foreach (var item in backend.GenerateAsync(request, token).ConfigureAwait(true))
                     ApplyProgress(candidate, item);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
+                // Filtered so a backend's own timeout (HttpClient reports it as TaskCanceledException)
+                // lands in the failure branch below and the batch carries on, instead of being recorded
+                // as a user cancel that aborts everything.
                 candidate.State = StagedCandidateState.Cancelled;
                 candidate.StatusText = "Cancelled";
                 throw;
@@ -987,13 +1051,14 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             CanvasY = candidate.WorldRect.Y,
             Width = (int)Math.Round(candidate.WorldRect.Width),
             Height = (int)Math.Round(candidate.WorldRect.Height),
-            Prompt = PromptText,
+            // The candidate's own snapshot, not the prompt box: the user may have typed the next idea
+            // while judging this one, and the frame's prompt is its provenance.
+            Prompt = candidate.Prompt,
             Seed = candidate.Seed,
             FrameImage = image,
             ImagePath = path,
             State = GenerationFrameState.Completed,
             StatusText = candidate.StatusText,
-            DeleteCommand = DeleteFrameCommand,
         };
 
         Frames.Add(frame);
@@ -1116,6 +1181,15 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             Frames.Remove(frame);
             frame.Dispose();
         }
+
+        try
+        {
+            var scratchDirectory = Path.GetDirectoryName(_regionScratchPath);
+            if (scratchDirectory is not null && Directory.Exists(scratchDirectory))
+                Directory.Delete(scratchDirectory, recursive: true);
+        }
+        catch (IOException) { /* best-effort scratch cleanup */ }
+        catch (UnauthorizedAccessException) { /* best-effort scratch cleanup */ }
 
         GC.SuppressFinalize(this);
     }

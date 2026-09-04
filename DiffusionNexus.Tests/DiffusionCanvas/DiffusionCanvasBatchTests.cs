@@ -432,17 +432,168 @@ public class DiffusionCanvasBatchTests
         // Generate assigns the model's alignment on every run precisely so the box is normalised before
         // the request is built. The backend validates lazily -- inside the caller's await foreach, long
         // after a candidate slot exists -- so a box that slipped off the lattice must be repaired here
-        // rather than discovered there.
+        // rather than discovered there. SetSize always snaps, so the only way to seed a misaligned box
+        // is through a lattice that accepts the size: 1000 is on a 100-lattice and off a 64-lattice.
         var backend = new FakeDiffusionBackend { DimensionAlignment = 64 };
         var vm = Canvas(backend);
-        vm.Box.SnapPositionToGrid = false;
+        vm.Box.Alignment = 100;
         vm.Box.SetSize(1000, 1000);
+        vm.Box.Width.Should().Be(1000, "the seed must actually be off the model's lattice");
 
         await vm.GenerateCommand.ExecuteAsync(null);
 
         backend.RunCount.Should().Be(1);
-        (backend.LastRequest!.Width % 64).Should().Be(0);
-        (backend.LastRequest.Height % 64).Should().Be(0);
+        vm.Box.Width.Should().Be(1024, "1000 rounds to the nearest multiple of 64");
+        vm.Box.Height.Should().Be(1024);
+        backend.LastRequest!.Width.Should().Be(1024);
+        backend.LastRequest.Height.Should().Be(1024);
+    }
+
+    [Fact]
+    public async Task Generate_SurvivesACatalogEntryWithZeroAlignment()
+    {
+        // DimensionAlignment is init-only with a default, so an explicit 0 is one typo away in a catalog
+        // entry. The box sanitises it; Generate has to read the sanitised value back rather than divide
+        // by the raw field.
+        var backend = new FakeDiffusionBackend { DimensionAlignment = 0 };
+        var vm = Canvas(backend);
+
+        var act = () => vm.GenerateCommand.ExecuteAsync(null);
+
+        await act.Should().NotThrowAsync();
+        vm.StatusText.Should().NotContain("divide by zero");
+        backend.RunCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ABackendTimeoutDuringPreflightIsAnErrorNotACancel()
+    {
+        // HttpClient reports its own timeout as a TaskCanceledException. An engine that is alive but
+        // wedged used to surface as "Cancelled." with the real cause swallowed.
+        var backend = new FakeDiffusionBackend();
+        var vm = Canvas(backend);
+        backend.BeforeAvailabilityCheck = () =>
+            throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout");
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+
+        vm.StatusText.Should().StartWith("Error:");
+        vm.StatusText.Should().Contain("HttpClient.Timeout");
+        vm.IsGenerating.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ABackendTimeoutMidBatchFailsThatCandidateAndTheBatchCarriesOn()
+    {
+        var backend = new FakeDiffusionBackend();
+        var vm = Canvas(backend);
+        vm.BatchCount = 3;
+        backend.BeforeRun = run =>
+        {
+            if (run == 2)
+                throw new TaskCanceledException("timed out waiting for the engine");
+        };
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+
+        backend.RunCount.Should().Be(3, "a timeout on one candidate is not a cancel of the batch");
+        vm.Staging.Candidates[1].State.Should().Be(StagedCandidateState.Failed);
+        vm.Staging.Candidates[1].StatusText.Should().Contain("timed out");
+        vm.Staging.Candidates[0].State.Should().Be(StagedCandidateState.Ready);
+        vm.Staging.Candidates[2].State.Should().Be(StagedCandidateState.Ready);
+        vm.StatusText.Should().NotBe("Cancelled.");
+    }
+
+    [Fact]
+    public async Task AcceptedFrameRecordsThePromptTheCandidateWasGeneratedFrom()
+    {
+        var backend = new FakeDiffusionBackend();
+        var vm = Canvas(backend);
+        vm.BatchCount = 2;
+        // The user starts typing the next idea while the batch is still running.
+        backend.BeforeRun = run =>
+        {
+            if (run == 1)
+                vm.PromptText = "a lighthouse at dawn, next idea";
+        };
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+        vm.Staging.AcceptCommand.Execute(null);
+
+        vm.Frames.Should().ContainSingle().Which.Prompt.Should().Be("a lighthouse at dusk",
+            "the frame's prompt is its provenance, not whatever is in the box at accept time");
+        backend.LastRequest!.Prompt.Should().Be("a lighthouse at dusk",
+            "the second candidate belongs to the batch that was started, not to the prompt being typed");
+    }
+
+    [Fact]
+    public async Task AFrameWithoutASavedFileDoesNotCountAsImageToImage()
+    {
+        // A frame whose save failed is still drawn, but the compositor has nothing to read back from it.
+        // Counting it would promise image-to-image in the readout for a run that executes as text-to-image.
+        var backend = new FakeDiffusionBackend();
+        var vm = Canvas(backend);
+        vm.Box.SetSize(1024, 1024);
+        vm.Box.SetPosition(0, 0);
+        vm.Frames.Add(new GenerationFrameViewModel
+        {
+            CanvasX = 0, CanvasY = 0, Width = 1024, Height = 1024, ImagePath = null,
+            State = GenerationFrameState.Completed,
+        });
+
+        vm.IsRegionOccupied.Should().BeFalse();
+        vm.RegionModeText.Should().Contain("Text to image");
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+
+        backend.RunCount.Should().Be(1);
+        backend.LastRequest!.InitImage.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Generate_RefusesWhenTheResultUnderTheBoxCannotBeReadBack()
+    {
+        // The readout counts the frame (it has a path), but the file is gone. Running would silently
+        // execute as text-to-image with the denoise slider meaning nothing.
+        var backend = new FakeDiffusionBackend();
+        var vm = Canvas(backend);
+        vm.Box.SetSize(1024, 1024);
+        vm.Box.SetPosition(0, 0);
+        var missing = Path.Combine(Path.GetTempPath(), $"dn-missing-{Guid.NewGuid():N}.png");
+        vm.Frames.Add(new GenerationFrameViewModel
+        {
+            CanvasX = 0, CanvasY = 0, Width = 1024, Height = 1024, ImagePath = missing,
+            State = GenerationFrameState.Completed,
+        });
+        vm.IsRegionOccupied.Should().BeTrue("the readout cannot afford a disk check per box move");
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+
+        backend.RunCount.Should().Be(0, "a run that would not do what the readout says must not start");
+        vm.Staging.Candidates.Should().BeEmpty();
+        vm.StatusText.Should().Contain("could not be read back");
+        vm.IsGenerating.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Generate_WritesTheRegionUnderOneFixedFileName()
+    {
+        // The engine backend uploads this file into ComfyUI's input folder under its own name and nothing
+        // deletes that copy, so a fresh name per run (or per launch) is an unbounded leak on the server.
+        using var canvas = new TempCanvasFile(512, 512, SKColors.White);
+        var backend = new FakeDiffusionBackend();
+        var vm = Canvas(backend);
+        vm.Box.SetSize(512, 512);
+        vm.Box.SetPosition(0, 0);
+        vm.Frames.Add(canvas.AsFrame(0, 0, 512, 512));
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+        var first = backend.LastRequest!.InitImage!.FilePath;
+        await vm.GenerateCommand.ExecuteAsync(null);
+        var second = backend.LastRequest!.InitImage!.FilePath;
+
+        Path.GetFileName(first).Should().Be(DiffusionCanvasViewModel.RegionScratchFileName);
+        second.Should().Be(first, "every run of this process reuses the same scratch path");
     }
 
     [Fact]

@@ -275,6 +275,33 @@ public class GenerationBoundingBoxTests
     }
 
     [Fact]
+    public void AZeroAlignmentIsSanitisedRatherThanStored()
+    {
+        // A catalog entry with DimensionAlignment = 0 is one typo away. The box is the sanitising point,
+        // so its consumers read the alignment back from it instead of dividing by the raw field.
+        var box = At(0, 0, 1024, 1024);
+
+        box.Alignment = 0;
+
+        box.Alignment.Should().Be(1);
+        box.SnapSize(1000).Should().Be(1000);
+    }
+
+    [Fact]
+    public void AnAlignmentAboveTheMaximumSizeCannotMakeSnappingThrow()
+    {
+        // SnapSize clamps between the alignment and MaxSize; an alignment above MaxSize would hand
+        // Math.Clamp a floor above its ceiling, which throws -- from inside the Alignment setter itself.
+        var box = At(0, 0, 1024, 1024);
+
+        var act = () => box.Alignment = GenerationBoundingBox.MaxSize * 2;
+
+        act.Should().NotThrow();
+        box.Alignment.Should().Be(GenerationBoundingBox.MaxSize);
+        box.Width.Should().Be(GenerationBoundingBox.MaxSize, "the only size on a 2048 lattice within range");
+    }
+
+    [Fact]
     public void CenterOn_PlacesTheBoxAroundAWorldPoint()
     {
         var box = At(0, 0, 1024, 512);

@@ -1,6 +1,6 @@
+using Avalonia;
 using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
-using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.DiffusionCanvas;
 
 namespace DiffusionNexus.UI.ViewModels.DiffusionCanvas;
@@ -67,18 +67,20 @@ public partial class GenerationFrameViewModel : ObservableObject, ICanvasRaster,
     [ObservableProperty]
     private long? _seed;
 
+    /// <summary>The raster's world rectangle — the one definition every intersection test uses.</summary>
+    public Rect WorldRect => new(CanvasX, CanvasY, Width, Height);
+
     /// <summary>True while generation is in flight.</summary>
     public bool IsBusy => State is GenerationFrameState.Loading or GenerationFrameState.Sampling;
 
     partial void OnStateChanged(GenerationFrameState value) => OnPropertyChanged(nameof(IsBusy));
 
-    // TODO(v2-context-menu): wire these commands when the right-click context menu ships:
+    // TODO(v2-context-menu): the surface's right-click flyout offers Delete only today (bound to the
+    // canvas view model's DeleteFrameCommand). Add these there when they ship:
     //   - SendToImageEditorCommand
     //   - UseAsControlNetReferenceCommand
     //   - CopySeedToClipboardCommand
     //   - CopyPromptToClipboardCommand
-    /// <summary>Right-click → Delete. Bound from the canvas view model.</summary>
-    public IRelayCommand<GenerationFrameViewModel>? DeleteCommand { get; set; }
 
     /// <summary>
     /// Releases the raster's bitmap. Callers must detach the frame from the bound collection first —

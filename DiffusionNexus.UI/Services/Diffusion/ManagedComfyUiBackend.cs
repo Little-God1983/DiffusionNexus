@@ -92,6 +92,10 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
     private readonly Func<Task<string?>> _resolveInstallRootAsync;
     private readonly IWorkflowTemplateSource? _templateSource;
     private readonly List<string> _missingRequirements = [];
+    private readonly UploadedInitImageCache _uploadCache = new();
+
+    /// <summary>The install root the last readiness probe accepted; null until the engine looks installed.</summary>
+    private string? _installRoot;
 
     public ManagedComfyUiBackend(
         ManagedComfyUiEngine engine,
@@ -127,11 +131,13 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
 
         if (!ManagedEngineLocator.LooksInstalled(installRoot))
         {
+            _installRoot = null;
             _missingRequirements.Add(
                 "The Diffusion Nexus Engine is not installed. Install it from the Installation Manager.");
             return false;
         }
 
+        _installRoot = installRoot;
         var searchPaths = ComfyUiPathDiscovery.EnumerateModelSearchPaths(installRoot!);
         var discovered = searchPaths.Count > 0 ? (IModelCatalog)new ComfyUiModelCatalog(searchPaths) : EmptyModelCatalog.Instance;
         Catalog = new EngineModelCatalog(Krea2Model, discovered);
@@ -221,6 +227,9 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
 
         DiffusionResult? result = null;
         string? failure = null;
+
+        // Declared outside the try so the cancellation path knows whether anything was actually queued.
+        string? promptId = null;
         try
         {
             var gguf = await ResolveInstalledKreaGgufAsync(wrapper, cancellationToken).ConfigureAwait(false);
@@ -240,7 +249,6 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
             // Krea2WorkflowPatcher already produced the fully patched graph in memory, so hand it a
             // scratch file and no modifiers instead of re-deriving per-node patches here.
             var scratchWorkflowPath = Path.Combine(Path.GetTempPath(), $"dn-engine-krea2-{Guid.NewGuid():N}.json");
-            string promptId;
             try
             {
                 await File.WriteAllTextAsync(scratchWorkflowPath, workflowJson, cancellationToken).ConfigureAwait(false);
@@ -279,7 +287,13 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
             // which aborts every request still in flight — including the interrupt that was supposed to
             // stop the GPU. Awaiting it here keeps the client alive until the POST lands.
             // InterruptAsync swallows its own failures, so this cannot mask the cancellation.
-            await wrapper.InterruptAsync(CancellationToken.None).ConfigureAwait(false);
+            //
+            // Gated on having queued: /interrupt is not prompt-scoped, it abandons whatever the server is
+            // executing right now. A cancel during pre-flight (GGUF lookup, template load, init-image
+            // upload — up to two minutes on a cold engine) has queued nothing, and firing it then would
+            // tear down some other feature's prompt on the same server.
+            if (promptId is not null)
+                await wrapper.InterruptAsync(CancellationToken.None).ConfigureAwait(false);
             throw;
         }
         catch (Exception ex)
@@ -302,7 +316,7 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
     /// than failing outright, because the file is a temp scratch file the canvas owns and losing it
     /// should not cost the user their generation.
     /// </remarks>
-    private static async Task<string?> UploadInitImageAsync(
+    private async Task<string?> UploadInitImageAsync(
         ComfyUIWrapperService wrapper, DiffusionRequest request, CancellationToken ct)
     {
         if (request.InitImage is not { } init || string.IsNullOrWhiteSpace(init.FilePath))
@@ -315,11 +329,39 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
             return null;
         }
 
+        // The canvas composites the region once per Generate and hands every candidate in the batch the
+        // same file, but this runs once per candidate. Without the cache a batch of 8 reads and POSTs the
+        // same multi-megabyte PNG eight times to produce a byte-identical file on the server.
+        if (_uploadCache.TryGet(init.FilePath, StoredInputStillExists, out var cached))
+        {
+            Logger.Debug("Reusing the already uploaded canvas region {StoredName}.", cached);
+            return cached;
+        }
+
         var stored = await wrapper.UploadImageAsync(init.FilePath, ct).ConfigureAwait(false);
+        _uploadCache.Remember(init.FilePath, stored);
         Logger.Information(
             "Uploaded the canvas region as {StoredName}; generating image-to-image at denoise {Strength}.",
             stored, init.Strength);
         return stored;
+    }
+
+    /// <summary>
+    /// Whether a previously uploaded input file is still in the engine's <c>input/</c> folder. The cache
+    /// must never mask a file that has gone (a reinstall, a manual clean-up): the graph would then name a
+    /// file the server cannot open. When the folder cannot be located the answer is "no", which costs one
+    /// redundant upload rather than a failed generation.
+    /// </summary>
+    private bool StoredInputStillExists(string storedName)
+    {
+        var mainPy = ManagedEngineLocator.ResolveMainPy(_installRoot);
+        var comfyRoot = mainPy is null ? null : Path.GetDirectoryName(mainPy);
+        if (comfyRoot is null)
+            return false;
+
+        // The engine is launched without --input-directory (see ManagedComfyUiEngine.BuildArguments), so
+        // ComfyUI's default of <ComfyUI>/input applies.
+        return File.Exists(Path.Combine(comfyRoot, "input", storedName));
     }
 
     /// <summary>

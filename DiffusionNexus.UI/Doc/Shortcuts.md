@@ -48,6 +48,7 @@
 | B | Centre the view on the generation box | Not typing in a text box |
 | G | Toggle the dot grid | Not typing in a text box |
 | Escape | Abandon the in-progress box drag | Dragging the generation box |
+| Right-click a result | Open its menu (Delete result) | Pointer over an accepted result |
 | Left / Right Arrow | Previous / next candidate | Staging strip has candidates |
 | Space (held) | Flip the candidate away to compare it against the canvas underneath | Staging strip has candidates |
 | Enter | Accept the candidate onto the canvas | Staging strip has candidates |

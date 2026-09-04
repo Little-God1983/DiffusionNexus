@@ -42,6 +42,12 @@ public partial class StagedCandidateViewModel : ObservableObject, IDisposable
     /// </summary>
     public Rect WorldRect { get; }
 
+    /// <summary>
+    /// The prompt this candidate was generated from, captured when its run started. The frame records it
+    /// on accept; reading the prompt box at that point would store whatever the user has typed since.
+    /// </summary>
+    public string Prompt { get; set; } = string.Empty;
+
     [ObservableProperty]
     private StagedCandidateState _state = StagedCandidateState.Pending;
 

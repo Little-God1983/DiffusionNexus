@@ -2,11 +2,12 @@ using System.Collections;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Globalization;
+using System.Windows.Input;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
-using Avalonia.Media.Imaging;
+using Avalonia.Media.Immutable;
 using Avalonia.Threading;
 using DiffusionNexus.UI.DiffusionCanvas;
 
@@ -25,6 +26,12 @@ namespace DiffusionNexus.UI.Views.Controls;
 /// through Avalonia's own <see cref="DrawingContext"/> instead of leasing a Skia canvas — there is no
 /// per-frame Skia work to do here, and staying on the UI thread avoids the compositor-render-thread
 /// bitmap race that <c>ImageEditorCoreRenderRaceTests</c> exists to guard.
+///
+/// The bounding box is drawn by a child visual (<see cref="BoxLayer"/>) rather than in this control's own
+/// <see cref="Render"/>: the marching ants animate at 20 fps for as long as the tab is open, and
+/// invalidating the whole surface for that re-issued the grid's hundreds of dot fills plus a
+/// <c>DrawImage</c> per accepted raster on an idle screen. The child layer is the only thing the ants tick
+/// invalidates.
 /// </summary>
 public class DiffusionCanvasSurface : Control
 {
@@ -51,11 +58,37 @@ public class DiffusionCanvasSurface : Control
     /// <summary>Smallest screen spacing the dot grid is allowed to use before it steps up a lattice multiple.</summary>
     private const double MinDotSpacing = 28;
 
-    /// <summary>Marching-ants animation tick. ~20 fps is enough to read as motion and costs nothing.</summary>
+    /// <summary>Marching-ants animation tick. ~20 fps is enough to read as motion.</summary>
     private static readonly TimeSpan AntsInterval = TimeSpan.FromMilliseconds(50);
 
+    /// <summary>Length of the ants' dash pattern (4 on, 4 off), which is the cycle of distinct offsets.</summary>
+    private const int AntsPeriod = 8;
+
+    /// <summary>
+    /// One immutable pen per dash offset, built once. The offset cycles through <see cref="AntsPeriod"/>
+    /// values, so allocating a <c>Pen</c> plus a <c>DashStyle</c> on every tick was pure garbage.
+    /// </summary>
+    private static readonly ImmutablePen[] AntsPens = BuildAntsPens();
+
+    private static ImmutablePen[] BuildAntsPens()
+    {
+        var white = new ImmutableSolidColorBrush(Colors.White);
+        var pens = new ImmutablePen[AntsPeriod];
+        for (var offset = 0; offset < AntsPeriod; offset++)
+            pens[offset] = new ImmutablePen(white, 1.5, new ImmutableDashStyle([4, 4], offset));
+        return pens;
+    }
+
+    /// <summary>
+    /// The standard cursors this control uses, created on first use. <c>Cursor</c> is disposable and
+    /// platform-backed; allocating a fresh one on every pointer move (the previous behaviour) leaked one
+    /// per event and pushed a platform cursor update even when the shape had not changed.
+    /// </summary>
+    private static readonly Dictionary<StandardCursorType, Cursor> CursorCache = [];
+
     private readonly DispatcherTimer _antsTimer;
-    private double _antsOffset;
+    private readonly BoxLayer _boxLayer;
+    private int _antsOffset;
 
     // Gesture state. A single pointer at a time — the canvas has no multi-touch gestures.
     private IPointer? _capturedPointer;
@@ -63,10 +96,17 @@ public class DiffusionCanvasSurface : Control
     private Point _panLastScreen;
     private bool _isDraggingBox;
 
+    /// <summary>The raster under a right-button press, resolved on press and acted on at release.</summary>
+    private ICanvasRaster? _contextRaster;
+
     private INotifyCollectionChanged? _observedCollection;
     private readonly List<INotifyPropertyChanged> _observedItems = [];
     private GenerationBoundingBox? _observedBox;
     private CanvasViewport? _observedViewport;
+
+    // The readout's shaped text, rebuilt only when its string changes — it is drawn on every ants tick.
+    private string? _readoutText;
+    private FormattedText? _readoutFormatted;
 
     public DiffusionCanvasSurface()
     {
@@ -75,6 +115,10 @@ public class DiffusionCanvasSurface : Control
         Viewport = new CanvasViewport();
         _observedViewport = Viewport;
         Viewport.Changed += OnViewportChanged;
+
+        _boxLayer = new BoxLayer(this);
+        VisualChildren.Add(_boxLayer);
+        LogicalChildren.Add(_boxLayer);
 
         _antsTimer = new DispatcherTimer { Interval = AntsInterval };
         _antsTimer.Tick += OnAntsTick;
@@ -164,6 +208,19 @@ public class DiffusionCanvasSurface : Control
         set => SetValue(SpacePanEnabledProperty, value);
     }
 
+    public static readonly StyledProperty<ICommand?> DeleteRasterCommandProperty =
+        AvaloniaProperty.Register<DiffusionCanvasSurface, ICommand?>(nameof(DeleteRasterCommand));
+
+    /// <summary>
+    /// Invoked with the <see cref="ICanvasRaster"/> under the pointer when the user picks "Delete result"
+    /// from the right-click flyout. Null disables the flyout entirely.
+    /// </summary>
+    public ICommand? DeleteRasterCommand
+    {
+        get => GetValue(DeleteRasterCommandProperty);
+        set => SetValue(DeleteRasterCommandProperty, value);
+    }
+
     private static readonly DirectProperty<DiffusionCanvasSurface, double> ZoomPropertyInternal =
         AvaloniaProperty.RegisterDirect<DiffusionCanvasSurface, double>(nameof(Zoom), o => o.Zoom);
 
@@ -195,6 +252,7 @@ public class DiffusionCanvasSurface : Control
         // would keep ticking (and keep this control alive) for the rest of the session.
         _antsTimer.Stop();
         IsSpaceHeld = false;
+        _contextRaster = null;
         ReleaseGesture();
         base.OnDetachedFromVisualTree(e);
     }
@@ -211,7 +269,7 @@ public class DiffusionCanvasSurface : Control
         else if (change.Property == BoxProperty)
         {
             AttachBox(change.GetNewValue<GenerationBoundingBox?>());
-            InvalidateVisual();
+            _boxLayer.InvalidateVisual();
         }
         else if (change.Property == ShowGridProperty
               || change.Property == PreviewImageProperty
@@ -227,25 +285,27 @@ public class DiffusionCanvasSurface : Control
         if (Box is null)
             return;
 
-        _antsOffset = (_antsOffset + 1) % 8;
-        InvalidateVisual();
+        _antsOffset = (_antsOffset + 1) % AntsPeriod;
+        // Only the box layer: the grid, rasters and preview underneath have not changed.
+        _boxLayer.InvalidateVisual();
     }
 
     private void OnViewportChanged(object? sender, EventArgs e)
     {
         Zoom = Viewport.Zoom;
         InvalidateVisual();
+        _boxLayer.InvalidateVisual();
     }
 
     private void AttachBox(GenerationBoundingBox? box)
     {
         if (_observedBox is not null)
-            _observedBox.Changed -= OnObservedChanged;
+            _observedBox.Changed -= OnObservedBoxChanged;
 
         _observedBox = box;
 
         if (_observedBox is not null)
-            _observedBox.Changed += OnObservedChanged;
+            _observedBox.Changed += OnObservedBoxChanged;
     }
 
     private void AttachRasters(IEnumerable? rasters)
@@ -283,7 +343,7 @@ public class DiffusionCanvasSurface : Control
 
     private void OnRasterPropertyChanged(object? sender, PropertyChangedEventArgs e) => InvalidateVisual();
 
-    private void OnObservedChanged(object? sender, EventArgs e) => InvalidateVisual();
+    private void OnObservedBoxChanged(object? sender, EventArgs e) => _boxLayer.InvalidateVisual();
 
     // ────────────────────────────────── Public gestures ──────────────────────────────────
 
@@ -320,17 +380,23 @@ public class DiffusionCanvasSurface : Control
             return;
 
         IsSpaceHeld = held;
-        Cursor = held ? new Cursor(StandardCursorType.Hand) : Cursor.Default;
+        ApplyCursor(held ? CursorFor(StandardCursorType.Hand) : Cursor.Default);
     }
 
     /// <summary>Abandons an in-progress box gesture, restoring the box to where the drag began.</summary>
     public void CancelActiveGesture()
     {
-        if (_isDraggingBox)
-            Box?.CancelDrag();
+        if (_isDraggingBox && Box is { } box)
+        {
+            box.CancelDrag();
+            // Same restore as the release paths. Escape ends the drag, so the still-held button's
+            // eventual release skips its own restore branch, and Alt would otherwise stay in effect for
+            // every later SetPosition — CenterOn included.
+            box.SnapPositionToGrid = true;
+        }
 
         ReleaseGesture();
-        InvalidateVisual();
+        _boxLayer.InvalidateVisual();
     }
 
     private Rect? GetContentWorldBounds()
@@ -339,7 +405,7 @@ public class DiffusionCanvasSurface : Control
 
         foreach (var raster in EnumerateRasters())
         {
-            var rect = new Rect(raster.CanvasX, raster.CanvasY, raster.Width, raster.Height);
+            var rect = raster.WorldRect;
             bounds = bounds is null ? rect : bounds.Value.Union(rect);
         }
 
@@ -375,6 +441,15 @@ public class DiffusionCanvasSurface : Control
         {
             BeginPan(e.Pointer, screen);
             e.Handled = true;
+            return;
+        }
+
+        if (point.Properties.IsRightButtonPressed)
+        {
+            // Context menu on a result: resolved on press, shown on release (the platform convention),
+            // and only when the press landed on a raster, so right-clicking empty canvas does nothing.
+            if (!_isPanning && !_isDraggingBox)
+                _contextRaster = CanvasRasterHitTest.TopmostAt(EnumerateRasters(), Viewport.ScreenToWorld(screen));
             return;
         }
 
@@ -423,6 +498,19 @@ public class DiffusionCanvasSurface : Control
     {
         base.OnPointerReleased(e);
 
+        if (e.InitialPressMouseButton == MouseButton.Right)
+        {
+            var raster = _contextRaster;
+            _contextRaster = null;
+            if (raster is not null && DeleteRasterCommand is { } command)
+            {
+                ShowRasterFlyout(raster, command);
+                e.Handled = true;
+            }
+
+            return;
+        }
+
         if (_isDraggingBox && Box is { } box)
         {
             box.EndDrag();
@@ -465,11 +553,28 @@ public class DiffusionCanvasSurface : Control
         e.Handled = true;
     }
 
+    /// <summary>
+    /// The per-result flyout. Delete is the only live entry for now; the placeholders the old
+    /// per-frame ContextMenu carried (send to Image Editor, ControlNet reference, copy seed / prompt) come
+    /// back as real commands when their features ship (TODO(v2-context-menu)).
+    /// </summary>
+    private void ShowRasterFlyout(ICanvasRaster raster, ICommand command)
+    {
+        var flyout = new MenuFlyout();
+        flyout.Items.Add(new MenuItem
+        {
+            Header = "Delete result",
+            Command = command,
+            CommandParameter = raster,
+        });
+        flyout.ShowAt(this, showAtPointer: true);
+    }
+
     private void BeginPan(IPointer pointer, Point screen)
     {
         _isPanning = true;
         _panLastScreen = screen;
-        Cursor = new Cursor(StandardCursorType.SizeAll);
+        ApplyCursor(CursorFor(StandardCursorType.SizeAll));
         Capture(pointer);
     }
 
@@ -492,7 +597,7 @@ public class DiffusionCanvasSurface : Control
 
         _isPanning = false;
         _isDraggingBox = false;
-        Cursor = IsSpaceHeld ? new Cursor(StandardCursorType.Hand) : Cursor.Default;
+        ApplyCursor(IsSpaceHeld ? CursorFor(StandardCursorType.Hand) : Cursor.Default);
     }
 
     private void UpdateCursor(Point screen)
@@ -502,12 +607,12 @@ public class DiffusionCanvasSurface : Control
 
         if (Box is not { } box)
         {
-            Cursor = Cursor.Default;
+            ApplyCursor(Cursor.Default);
             return;
         }
 
         var handle = box.HitTest(Viewport.ScreenToWorld(screen), Viewport.ScreenToWorldLength(HandleHitScreenRadius));
-        Cursor = new Cursor(handle switch
+        ApplyCursor(CursorFor(handle switch
         {
             BoxHandle.NorthWest or BoxHandle.SouthEast => StandardCursorType.TopLeftCorner,
             BoxHandle.NorthEast or BoxHandle.SouthWest => StandardCursorType.TopRightCorner,
@@ -515,11 +620,34 @@ public class DiffusionCanvasSurface : Control
             BoxHandle.East or BoxHandle.West => StandardCursorType.SizeWestEast,
             BoxHandle.Move => StandardCursorType.SizeAll,
             _ => StandardCursorType.Arrow,
-        });
+        }));
+    }
+
+    /// <summary>One shared <see cref="Cursor"/> per shape, created lazily on the UI thread.</summary>
+    private static Cursor CursorFor(StandardCursorType type)
+    {
+        if (type == StandardCursorType.Arrow)
+            return Cursor.Default;
+
+        if (!CursorCache.TryGetValue(type, out var cursor))
+        {
+            cursor = new Cursor(type);
+            CursorCache[type] = cursor;
+        }
+
+        return cursor;
+    }
+
+    /// <summary>Assigns only on change, so an unchanged shape costs neither a property change nor a platform call.</summary>
+    private void ApplyCursor(Cursor cursor)
+    {
+        if (!ReferenceEquals(Cursor, cursor))
+            Cursor = cursor;
     }
 
     // ────────────────────────────────── Render ──────────────────────────────────
 
+    /// <summary>Everything except the box: background, grid, origin, accepted rasters, staged preview.</summary>
     public override void Render(DrawingContext context)
     {
         var bounds = new Rect(Bounds.Size);
@@ -531,7 +659,6 @@ public class DiffusionCanvasSurface : Control
         DrawOrigin(context);
         DrawRasters(context, bounds);
         DrawPreview(context);
-        DrawBox(context);
     }
 
     private void DrawGrid(DrawingContext context, Rect bounds)
@@ -578,8 +705,7 @@ public class DiffusionCanvasSurface : Control
     {
         foreach (var raster in EnumerateRasters())
         {
-            var world = new Rect(raster.CanvasX, raster.CanvasY, raster.Width, raster.Height);
-            var screen = Viewport.WorldToScreen(world);
+            var screen = Viewport.WorldToScreen(raster.WorldRect);
             if (!screen.Intersects(bounds))
                 continue;
 
@@ -604,6 +730,7 @@ public class DiffusionCanvasSurface : Control
         context.DrawImage(image, new Rect(image.Size), Viewport.WorldToScreen(rect));
     }
 
+    /// <summary>The bounding box: ants, handles and readout. Drawn by <see cref="BoxLayer"/>.</summary>
     private void DrawBox(DrawingContext context)
     {
         if (Box is not { } box)
@@ -614,21 +741,14 @@ public class DiffusionCanvasSurface : Control
         // Marching ants: a dark backing stroke plus a dashed light stroke whose offset animates, so the
         // box never reads as a committed frame the way a solid border would.
         context.DrawRectangle(null, AntsBackPen, screen);
-        var antsPen = new Pen(Brushes.White, 1.5)
-        {
-            DashStyle = new DashStyle([4, 4], _antsOffset),
-        };
-        context.DrawRectangle(null, antsPen, screen);
+        context.DrawRectangle(null, AntsPens[_antsOffset], screen);
 
-        DrawHandles(context, screen);
+        DrawHandles(context, box);
         DrawReadout(context, box, screen);
     }
 
-    private void DrawHandles(DrawingContext context, Rect screen)
+    private void DrawHandles(DrawingContext context, GenerationBoundingBox box)
     {
-        if (Box is not { } box)
-            return;
-
         // Handles are laid out in screen space at a constant size, so they stay grabbable at 0.1x and
         // do not become dinner plates at 8x.
         foreach (var handle in GenerationBoundingBox.ResizeHandles)
@@ -654,13 +774,19 @@ public class DiffusionCanvasSurface : Control
             "{0} x {1}   @ {2}, {3}",
             box.Width, box.Height, (int)Math.Round(box.X), (int)Math.Round(box.Y));
 
-        var formatted = new FormattedText(
-            text,
-            CultureInfo.InvariantCulture,
-            FlowDirection.LeftToRight,
-            new Typeface("Segoe UI"),
-            12,
-            ReadoutForeground);
+        if (_readoutFormatted is null || !string.Equals(text, _readoutText, StringComparison.Ordinal))
+        {
+            _readoutText = text;
+            _readoutFormatted = new FormattedText(
+                text,
+                CultureInfo.InvariantCulture,
+                FlowDirection.LeftToRight,
+                new Typeface("Segoe UI"),
+                12,
+                ReadoutForeground);
+        }
+
+        var formatted = _readoutFormatted;
 
         const double padding = 5;
         var width = formatted.Width + padding * 2;
@@ -676,5 +802,23 @@ public class DiffusionCanvasSurface : Control
         var boxRect = new Rect(x, y, width, height);
         context.FillRectangle(ReadoutBackground, boxRect);
         context.DrawText(formatted, new Point(boxRect.X + padding, boxRect.Y + padding));
+    }
+
+    /// <summary>
+    /// The bounding box as its own visual, layered over the surface. Its <see cref="Render"/> is the only
+    /// thing the marching-ants timer invalidates, so the animation never re-records the grid, the rasters
+    /// or the preview. Not hit-testable: every pointer gesture belongs to the surface.
+    /// </summary>
+    private sealed class BoxLayer : Control
+    {
+        private readonly DiffusionCanvasSurface _owner;
+
+        public BoxLayer(DiffusionCanvasSurface owner)
+        {
+            _owner = owner;
+            IsHitTestVisible = false;
+        }
+
+        public override void Render(DrawingContext context) => _owner.DrawBox(context);
     }
 }

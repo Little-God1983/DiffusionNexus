@@ -135,7 +135,7 @@ public static class CanvasRegionCompositor
         {
             foreach (var raster in rasters)
             {
-                var rect = new Rect(raster.CanvasX, raster.CanvasY, raster.Width, raster.Height);
+                var rect = raster.WorldRect;
                 if (rect.Width <= 0 || rect.Height <= 0 || !rect.Intersects(worldRegion))
                     continue;
 
