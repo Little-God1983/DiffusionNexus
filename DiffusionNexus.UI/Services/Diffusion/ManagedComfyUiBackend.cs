@@ -179,6 +179,11 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
 
+        // TODO(canvas-batch-readiness): this full probe runs per request, and the canvas calls
+        // GenerateAsync once per candidate — so a batch of 8 pays install-root resolution, a models-path
+        // disk walk, a whole /object_info fetch and a /models query eight times over. Worth memoising the
+        // success case, but only with an invalidation that cannot mask a genuinely stopped engine, which
+        // is why it is not done here (issue #518 follow-up).
         var available = await IsAvailableAsync(cancellationToken).ConfigureAwait(false);
         if (!available)
         {
@@ -206,22 +211,6 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
         });
 
         using var wrapper = new ComfyUIWrapperService(_engine.BaseUrl!);
-
-        // A cancelled canvas batch must stop work on the engine, not merely stop waiting for it: without
-        // this the sampler runs to completion server-side and burns the GPU on a result nobody reads.
-        // The registration is declared after the wrapper so it is disposed first, and it swallows
-        // everything because it fires on a cancellation path where the engine may already be gone.
-        using var interrupt = cancellationToken.Register(() =>
-        {
-            try
-            {
-                _ = wrapper.InterruptAsync(CancellationToken.None);
-            }
-            catch (Exception ex)
-            {
-                Logger.Warning(ex, "Could not ask the engine to interrupt the running prompt.");
-            }
-        });
 
         // NOTE(progress): IComfyUIWrapperService.WaitForCompletionAsync reports raw WebSocket event
         // text ("Executing node 62...", "Progress: 3/8") via IProgress<string>, not a typed
@@ -282,6 +271,15 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            // A cancelled canvas batch must stop work on the engine, not merely stop waiting for it —
+            // otherwise the sampler runs to completion server-side and burns the GPU on a result nobody
+            // reads. Issued here, on the unwind, rather than from a CancellationToken.Register callback:
+            // that callback can only fire-and-forget, and the same cancellation tears down this method's
+            // `using var wrapper` moments later. Disposing the wrapper disposes the HttpClient it owns,
+            // which aborts every request still in flight — including the interrupt that was supposed to
+            // stop the GPU. Awaiting it here keeps the client alive until the POST lands.
+            // InterruptAsync swallows its own failures, so this cannot mask the cancellation.
+            await wrapper.InterruptAsync(CancellationToken.None).ConfigureAwait(false);
             throw;
         }
         catch (Exception ex)

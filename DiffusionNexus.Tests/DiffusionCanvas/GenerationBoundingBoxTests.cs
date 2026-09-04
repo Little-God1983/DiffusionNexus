@@ -26,7 +26,7 @@ public class GenerationBoundingBoxTests
         box.Width.Should().Be(1024);
         box.Height.Should().Be(1024);
         box.Alignment.Should().Be(GenerationBoundingBox.DefaultAlignment);
-        box.SnapToGrid.Should().BeTrue();
+        box.SnapPositionToGrid.Should().BeTrue();
     }
 
     [Fact]
@@ -60,7 +60,7 @@ public class GenerationBoundingBoxTests
     public void Move_WithSnapDisabledLandsExactly()
     {
         var box = At(0, 0);
-        box.SnapToGrid = false;
+        box.SnapPositionToGrid = false;
         box.BeginDrag(BoxHandle.Move, new Point(0, 0));
 
         box.DragTo(new Point(100, 37));
@@ -105,17 +105,59 @@ public class GenerationBoundingBoxTests
     public void ResizingFromTheNorthEastPinsTheBottomLeftCorner()
     {
         var box = At(500, 500, 1024, 1024);
-        box.SnapToGrid = false;
         var bottomLeftBefore = new Point(box.X, box.Y + box.Height);
         box.BeginDrag(BoxHandle.NorthEast, box.GetHandleCenter(BoxHandle.NorthEast));
 
         box.DragTo(box.GetHandleCenter(BoxHandle.NorthEast) + new Point(100, -200));
         box.EndDrag();
 
-        box.Width.Should().Be(1124);
-        box.Height.Should().Be(1224);
+        box.Width.Should().Be(1152, "1124 snaps up to the nearest multiple of 64");
+        box.Height.Should().Be(1216, "1224 snaps down to the nearest multiple of 64");
         box.X.Should().Be(bottomLeftBefore.X);
         (box.Y + box.Height).Should().Be(bottomLeftBefore.Y);
+    }
+
+    [Fact]
+    public void SizesSnapEvenWhilePositionSnappingIsSuspended()
+    {
+        // Alt suspends position snapping only. A latent size off the model's lattice is invalid input,
+        // not a preference: one produced here would outlive the gesture and make Generate refuse every
+        // subsequent click with nothing on screen explaining why.
+        var box = At(0, 0, 1024, 1024);
+        box.SnapPositionToGrid = false;
+        box.BeginDrag(BoxHandle.SouthEast, new Point(1024, 1024));
+
+        box.DragTo(new Point(1024 + 11, 1024 + 11));
+        box.EndDrag();
+
+        box.Width.Should().Be(1024);
+        box.Height.Should().Be(1024);
+        (box.Width % box.Alignment).Should().Be(0);
+    }
+
+    [Fact]
+    public void SetSizeSnapsEvenWhilePositionSnappingIsSuspended()
+    {
+        var box = At(0, 0, 1024, 1024);
+        box.SnapPositionToGrid = false;
+
+        box.SetSize(1000, 1000);
+
+        box.Width.Should().Be(1024);
+        box.Height.Should().Be(1024);
+    }
+
+    [Fact]
+    public void HitTest_KeepsAMovableCoreWhenTheRadiusExceedsTheBox()
+    {
+        // Zoomed far out, a constant screen-space handle radius converts to a world radius larger than
+        // the box itself. Without a cap the eight handle squares swallow the body and the box can only
+        // be resized, never moved.
+        var box = At(0, 0, 256, 256);
+
+        box.HitTest(new Point(128, 128), handleRadius: 180).Should().Be(BoxHandle.Move);
+        box.HitTest(new Point(0, 0), handleRadius: 180).Should().Be(BoxHandle.NorthWest,
+            "the corners must still be grabbable");
     }
 
     [Fact]
@@ -209,15 +251,27 @@ public class GenerationBoundingBoxTests
     [Fact]
     public void ChangingTheAlignmentReSnapsTheCurrentSize()
     {
-        var box = At(0, 0, 1024, 1024);
-        box.SnapToGrid = false;
-        box.SetSize(1000, 1000);
+        var box = At(0, 0, 1088, 1024);
+        box.Width.Should().Be(1088, "1088 is a valid multiple of 64");
 
-        box.SnapToGrid = true;
         box.Alignment = 128;
 
-        box.Width.Should().Be(1024);
+        box.Width.Should().Be(1024, "1088 is not a multiple of 128");
         box.Height.Should().Be(1024);
+    }
+
+    [Fact]
+    public void AssigningTheSameAlignmentStillReSnapsTheSize()
+    {
+        // The re-snap used to be gated behind "the alignment actually changed", which is the rarer case.
+        // Generate assigns the model's alignment on every run precisely to normalise the box, so the
+        // common path -- same alignment, box needs checking -- has to do the work.
+        var box = At(0, 0, 1024, 1024);
+        box.Alignment = 64;
+
+        box.Alignment.Should().Be(64);
+        (box.Width % 64).Should().Be(0);
+        (box.Height % 64).Should().Be(0);
     }
 
     [Fact]

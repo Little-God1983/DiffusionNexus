@@ -42,7 +42,7 @@
 | Middle-drag | Pan the canvas | Always |
 | Space (held) + left-drag | Pan the canvas | Nothing staged (see below) |
 | Mouse wheel | Zoom about the cursor | Always |
-| Alt (held) | Suspend snap-to-grid while moving or resizing the box | Dragging the generation box |
+| Alt (held) | Place the box off the grid (position only — the size always snaps to the model's lattice) | Dragging the generation box |
 | F | Fit everything on screen | Not typing in a text box |
 | 1 | Zoom to 1:1 (one generated pixel per screen pixel) | Not typing in a text box |
 | B | Centre the view on the generation box | Not typing in a text box |

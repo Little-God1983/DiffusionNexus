@@ -51,29 +51,41 @@ public sealed class GenerationBoundingBox
     public int Height { get; private set; } = 1024;
 
     /// <summary>
-    /// When true (the default) sizes snap to <see cref="Alignment"/> and moves land on the same lattice.
-    /// The surface clears this while a modifier is held so a box can be nudged off-grid deliberately.
+    /// When true (the default) moves land on the <see cref="Alignment"/> lattice. The surface clears this
+    /// while a modifier is held so a box can be placed off-grid deliberately.
     /// </summary>
-    public bool SnapToGrid { get; set; } = true;
+    /// <remarks>
+    /// This governs <b>position only</b>. The box's <b>size</b> always snaps, because a latent size off the
+    /// model's lattice is not a preference — it is invalid input that every backend rejects. Letting a
+    /// modifier produce one left the box in a state where Generate refused every subsequent click with no
+    /// way for the user to see why.
+    /// </remarks>
+    public bool SnapPositionToGrid { get; set; } = true;
 
     /// <summary>
     /// The lattice sizes snap to. Set from the selected model's <c>DimensionAlignment</c> so the box can
     /// never propose a size the backend rejects — its validation throws lazily, on the first
     /// <c>MoveNextAsync</c>, long after a candidate has been created.
     /// </summary>
+    /// <remarks>
+    /// Assigning this always re-snaps the current size, even when the value is unchanged. The early return
+    /// this used to have made the re-snap conditional on the alignment actually differing, which is the
+    /// rarer case — the common one is "same alignment, box needs checking".
+    /// </remarks>
     public int Alignment
     {
         get => _alignment;
         set
         {
-            var next = Math.Max(1, value);
-            if (next == _alignment)
+            _alignment = Math.Max(1, value);
+
+            var width = SnapSize(Width);
+            var height = SnapSize(Height);
+            if (width == Width && height == Height)
                 return;
 
-            _alignment = next;
-            // Re-snap in place so an alignment change can never leave an invalid size behind.
-            Width = SnapSize(Width);
-            Height = SnapSize(Height);
+            Width = width;
+            Height = height;
             Raise();
         }
     }
@@ -90,11 +102,11 @@ public sealed class GenerationBoundingBox
     /// <summary>Raised on any change to position or size, so the surface and the readout can refresh.</summary>
     public event EventHandler? Changed;
 
-    /// <summary>Moves the box without resizing it. Snaps to the lattice when <see cref="SnapToGrid"/> is set.</summary>
+    /// <summary>Moves the box without resizing it. Snaps when <see cref="SnapPositionToGrid"/> is set.</summary>
     public void SetPosition(double x, double y)
     {
-        var nextX = SnapToGrid ? SnapCoordinate(x) : x;
-        var nextY = SnapToGrid ? SnapCoordinate(y) : y;
+        var nextX = SnapPositionToGrid ? SnapCoordinate(x) : x;
+        var nextY = SnapPositionToGrid ? SnapCoordinate(y) : y;
         if (nextX == X && nextY == Y)
             return;
 
@@ -129,12 +141,20 @@ public sealed class GenerationBoundingBox
     /// handle size through <see cref="CanvasViewport.ScreenToWorldLength"/>, so handles stay equally
     /// grabbable at every zoom.
     /// </param>
+    /// <remarks>
+    /// The radius is capped at a quarter of each edge so a movable core always survives. Without the cap,
+    /// zooming out far enough makes the world-space radius exceed the box itself and all eight handle
+    /// squares swallow the body — the box then cannot be moved at all, only resized.
+    /// </remarks>
     public BoxHandle HitTest(Point world, double handleRadius)
     {
+        var radiusX = Math.Min(handleRadius, Width / 4.0);
+        var radiusY = Math.Min(handleRadius, Height / 4.0);
+
         foreach (var handle in ResizeHandles)
         {
             var centre = GetHandleCenter(handle);
-            if (Math.Abs(world.X - centre.X) <= handleRadius && Math.Abs(world.Y - centre.Y) <= handleRadius)
+            if (Math.Abs(world.X - centre.X) <= radiusX && Math.Abs(world.Y - centre.Y) <= radiusY)
                 return handle;
         }
 
@@ -254,7 +274,10 @@ public sealed class GenerationBoundingBox
         Raise();
     }
 
-    /// <summary>Snaps a desired edge length to the lattice and clamps it into the generatable range.</summary>
+    /// <summary>
+    /// Snaps a desired edge length to the lattice and clamps it into the generatable range. Always snaps —
+    /// see the remarks on <see cref="SnapPositionToGrid"/> for why the modifier does not reach sizes.
+    /// </summary>
     public int SnapSize(double desired)
     {
         if (double.IsNaN(desired))
@@ -264,9 +287,6 @@ public sealed class GenerationBoundingBox
         // snapped value back onto the lattice if rounding pushed it outside the bounds (possible when
         // the alignment does not divide MinSize/MaxSize).
         var clamped = Math.Clamp(desired, MinSize, MaxSize);
-        if (!SnapToGrid)
-            return (int)Math.Round(clamped);
-
         var snapped = (int)Math.Round(clamped / _alignment) * _alignment;
         if (snapped > MaxSize)
             snapped -= _alignment;

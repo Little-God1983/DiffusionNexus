@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using Avalonia.Media.Imaging;
+using SkiaSharp;
 using DiffusionNexus.Inference.Abstractions;
 using DiffusionNexus.Inference.Models;
 using DiffusionNexus.UI.ViewModels.DiffusionCanvas;
@@ -30,6 +31,11 @@ public class DiffusionCanvasBatchTests
             GC.SuppressFinalize(sentinel);
             return sentinel;
         };
+
+        // Accepting a candidate writes a real PNG next to the test assembly. Stub the writer (the same
+        // seam convention as BitmapDecoder) so the suite leaves no files behind and can still assert
+        // that the accepted raster carries the path the writer returned.
+        vm.OutputsWriter = (bytes, seed) => $"C:\\fake-outputs\\{seed}-{bytes.Length}.png";
 
         return vm;
     }
@@ -114,6 +120,80 @@ public class DiffusionCanvasBatchTests
     }
 
     [Fact]
+    public async Task Generate_OverAnAcceptedResultSendsItAsTheInitImage()
+    {
+        using var canvas = new TempCanvasFile(1024, 1024, SKColors.White);
+        var backend = new FakeDiffusionBackend();
+        var vm = Canvas(backend);
+        vm.DenoiseStrength = 0.42;
+        vm.Box.SetSize(1024, 1024);
+        vm.Box.SetPosition(0, 0);
+        vm.Frames.Add(canvas.AsFrame(0, 0, 1024, 1024));
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+
+        var init = backend.LastRequest!.InitImage;
+        init.Should().NotBeNull("the box sits on an accepted result, so this is an image-to-image run");
+        init!.Strength.Should().BeApproximately(0.42f, 0.0001f, "the denoise slider drives the strength");
+        backend.InitImageBytesAtCallTime.Should().NotBeNull("the scratch file must exist while the backend reads it");
+        using var sent = SKBitmap.Decode(backend.InitImageBytesAtCallTime);
+        sent.Should().NotBeNull();
+        sent!.Width.Should().Be(1024);
+        sent.GetPixel(512, 512).Red.Should().BeGreaterThan(200, "the accepted result's own pixels were composited");
+    }
+
+    [Fact]
+    public async Task Generate_DeletesTheRegionScratchFileAfterTheBatch()
+    {
+        using var canvas = new TempCanvasFile(512, 512, SKColors.White);
+        var backend = new FakeDiffusionBackend();
+        var vm = Canvas(backend);
+        vm.Box.SetSize(512, 512);
+        vm.Box.SetPosition(0, 0);
+        vm.Frames.Add(canvas.AsFrame(0, 0, 512, 512));
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+
+        var scratch = backend.LastRequest!.InitImage!.FilePath;
+        File.Exists(scratch).Should().BeFalse("the scratch PNG is cleaned up in the generate finally");
+    }
+
+    [Fact]
+    public async Task Generate_PartiallyCoveredRegionStillRunsAsImageToImage()
+    {
+        using var canvas = new TempCanvasFile(512, 512, SKColors.White);
+        var backend = new FakeDiffusionBackend();
+        var vm = Canvas(backend);
+        vm.Box.SetSize(1024, 512);
+        vm.Box.SetPosition(0, 0);
+        // The raster covers only the left half of the box.
+        vm.Frames.Add(canvas.AsFrame(0, 0, 512, 512));
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+
+        backend.LastRequest!.InitImage.Should().NotBeNull();
+        using var sent = SKBitmap.Decode(backend.InitImageBytesAtCallTime);
+        sent!.GetPixel(100, 256).Red.Should().BeGreaterThan(200, "the covered half carries real pixels");
+        // Without mask support the uncovered half is flattened onto neutral grey rather than left clear.
+        sent.GetPixel(900, 256).Red.Should().BeCloseTo(0x80, 4);
+        sent.GetPixel(900, 256).Alpha.Should().Be(255);
+    }
+
+    [Fact]
+    public async Task AcceptedCandidateCarriesTheSavedFilePath()
+    {
+        var backend = new FakeDiffusionBackend();
+        var vm = Canvas(backend);
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+        vm.Staging.AcceptCommand.Execute(null);
+
+        // The path is what CanvasRegionCompositor reads back when a later box overlaps this raster, so
+        // a frame accepted without one contributes nothing to a subsequent image-to-image run.
+        vm.Frames.Should().ContainSingle().Which.ImagePath.Should().NotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
     public async Task Generate_GivesEachBatchItemItsOwnSeedWhenTheSeedIsPinned()
     {
         var backend = new FakeDiffusionBackend();
@@ -146,6 +226,38 @@ public class DiffusionCanvasBatchTests
 
         vm.IsRegionOccupied.Should().BeFalse();
         vm.RegionModeText.Should().Contain("Text to image");
+    }
+
+    [Fact]
+    public async Task Cancel_DuringBackendResolutionStopsTheRunBeforeItStarts()
+    {
+        // Pre-flight is the longest part of a cold engine run -- EnsureRunningAsync spawns python and
+        // polls readiness for up to two minutes -- and Cancel is enabled for all of it. The run epoch
+        // therefore has to exist before the first await, not after the resolve.
+        var backend = new FakeDiffusionBackend();
+        var vm = Canvas(backend);
+        vm.BatchCount = 3;
+        backend.BeforeAvailabilityCheck = () => vm.CancelCommand.Execute(null);
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+
+        backend.RunCount.Should().Be(0, "nothing should have been generated");
+        vm.Staging.Candidates.Should().BeEmpty("no slots are staged for a run that never started");
+        vm.StatusText.Should().Be("Cancelled.");
+        vm.IsGenerating.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Cancel_DuringPreflightIsObservedByTheBackend()
+    {
+        var backend = new FakeDiffusionBackend();
+        var vm = Canvas(backend);
+        backend.BeforeAvailabilityCheck = () => vm.CancelCommand.Execute(null);
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+
+        backend.AvailabilityTokenWasCancellable.Should().BeTrue(
+            "the pre-flight token must be the run epoch's, so a long engine start can be aborted");
     }
 
     [Fact]
@@ -206,11 +318,19 @@ public class DiffusionCanvasBatchTests
     }
 
     [Fact]
-    public void Cancel_IsOnlyOfferedWhileABatchIsRunning()
+    public async Task Cancel_IsOfferedWhileABatchIsRunningAndNotBefore()
     {
-        var vm = Canvas(new FakeDiffusionBackend());
+        var backend = new FakeDiffusionBackend();
+        var vm = Canvas(backend);
+        bool? offeredMidBatch = null;
+        backend.BeforeRun = _ => offeredMidBatch ??= vm.CancelCommand.CanExecute(null);
 
-        vm.CancelCommand.CanExecute(null).Should().BeFalse();
+        vm.CancelCommand.CanExecute(null).Should().BeFalse("nothing is running yet");
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+
+        offeredMidBatch.Should().BeTrue("the button has to be live while there is something to cancel");
+        vm.CancelCommand.CanExecute(null).Should().BeFalse("the batch is over");
     }
 
     [Fact]
@@ -224,6 +344,42 @@ public class DiffusionCanvasBatchTests
 
         backend.RunCount.Should().Be(1, "a stray cancel must not poison the next batch");
         vm.Staging.Candidates.Should().OnlyContain(c => c.State == StagedCandidateState.Ready);
+    }
+
+    [Fact]
+    public async Task DiscardingTheStripMidBatchDoesNotResurrectDisposedCandidates()
+    {
+        var backend = new FakeDiffusionBackend();
+        var vm = Canvas(backend);
+        vm.BatchCount = 4;
+        backend.BeforeRun = run =>
+        {
+            if (run == 1)
+                vm.Staging.DiscardAllCommand.Execute(null);
+        };
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+
+        vm.Staging.Candidates.Should().BeEmpty("the user threw the whole strip away");
+        vm.Staging.Current.Should().BeNull("a disposed candidate must never come back as the preview");
+        vm.Staging.CurrentImage.Should().BeNull();
+        vm.Frames.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ResultsArrivingForADiscardedCandidateAreDropped()
+    {
+        var backend = new FakeDiffusionBackend();
+        var vm = Canvas(backend);
+        vm.BatchCount = 1;
+        backend.BeforeRun = _ => vm.Staging.DiscardAllCommand.Execute(null);
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+
+        // Writing a freshly decoded bitmap into a detached, disposed candidate leaks it: nothing holds
+        // that candidate any more, so nothing will ever dispose it again.
+        vm.Staging.Candidates.Should().BeEmpty();
+        vm.Frames.Should().BeEmpty();
     }
 
     [Fact]
@@ -268,21 +424,22 @@ public class DiffusionCanvasBatchTests
     }
 
     [Fact]
-    public async Task Generate_RefusesAnOffLatticeBoxRatherThanLettingTheBackendThrowLater()
+    public async Task Generate_NormalisesTheBoxEvenWhenTheAlignmentIsUnchanged()
     {
-        // Holding Alt while dragging clears SnapToGrid, so the box can sit off the model's lattice.
-        // The backend's own validation throws lazily, on the first MoveNextAsync inside the caller's
-        // await foreach -- long after a candidate slot exists -- so the refusal has to happen here.
-        var backend = new FakeDiffusionBackend { DimensionAlignment = 128 };
+        // Generate assigns the model's alignment on every run precisely so the box is normalised before
+        // the request is built. The backend validates lazily -- inside the caller's await foreach, long
+        // after a candidate slot exists -- so a box that slipped off the lattice must be repaired here
+        // rather than discovered there.
+        var backend = new FakeDiffusionBackend { DimensionAlignment = 64 };
         var vm = Canvas(backend);
-        vm.Box.SnapToGrid = false;
-        vm.Box.SetSize(1090, 1024);
+        vm.Box.SnapPositionToGrid = false;
+        vm.Box.SetSize(1000, 1000);
 
         await vm.GenerateCommand.ExecuteAsync(null);
 
-        backend.RunCount.Should().Be(0);
-        vm.StatusText.Should().Contain("128");
-        vm.Staging.Candidates.Should().BeEmpty();
+        backend.RunCount.Should().Be(1);
+        (backend.LastRequest!.Width % 64).Should().Be(0);
+        (backend.LastRequest.Height % 64).Should().Be(0);
     }
 
     [Fact]
@@ -331,6 +488,51 @@ public class DiffusionCanvasBatchTests
     /// A backend whose <c>GenerateAsync</c> is a real async iterator, so the view model's
     /// <c>await foreach</c>, its cancellation and its progress mapping are all exercised for real.
     /// </summary>
+    /// <summary>
+    /// A real PNG on disk plus the accepted raster that points at it. The compositor reads rasters back
+    /// from their saved file, so an image-to-image test needs genuine bytes rather than a stand-in.
+    /// </summary>
+    private sealed class TempCanvasFile : IDisposable
+    {
+        public TempCanvasFile(int width, int height, SKColor colour)
+        {
+            Path = System.IO.Path.Combine(
+                System.IO.Path.GetTempPath(), $"dn-canvas-test-{Guid.NewGuid():N}.png");
+
+            using var bitmap = new SKBitmap(width, height, SKColorType.Rgba8888, SKAlphaType.Premul);
+            using (var canvas = new SKCanvas(bitmap))
+                canvas.Clear(colour);
+
+            using var image = SKImage.FromBitmap(bitmap);
+            using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+            File.WriteAllBytes(Path, data.ToArray());
+        }
+
+        public string Path { get; }
+
+        public GenerationFrameViewModel AsFrame(double x, double y, int width, int height) => new()
+        {
+            CanvasX = x,
+            CanvasY = y,
+            Width = width,
+            Height = height,
+            ImagePath = Path,
+            State = GenerationFrameState.Completed,
+        };
+
+        public void Dispose()
+        {
+            try
+            {
+                File.Delete(Path);
+            }
+            catch (IOException)
+            {
+                // Best-effort test cleanup.
+            }
+        }
+    }
+
     private sealed class FakeDiffusionBackend : IDiffusionBackend
     {
         private int _concurrent;
@@ -366,7 +568,25 @@ public class DiffusionCanvasBatchTests
 
         public IReadOnlyList<string> Warnings => [];
 
-        public Task<bool> IsAvailableAsync(CancellationToken ct = default) => Task.FromResult(IsAvailable);
+        /// <summary>Runs at the top of the availability probe, so a test can cancel during pre-flight.</summary>
+        public Action? BeforeAvailabilityCheck { get; set; }
+
+        /// <summary>True when the pre-flight token could actually carry a cancellation.</summary>
+        public bool AvailabilityTokenWasCancellable { get; private set; }
+
+        /// <summary>
+        /// The init image's bytes read at the moment the backend was called. Captured because the view
+        /// model deletes the scratch file once the batch ends, so a later read would always fail.
+        /// </summary>
+        public byte[]? InitImageBytesAtCallTime { get; private set; }
+
+        public Task<bool> IsAvailableAsync(CancellationToken ct = default)
+        {
+            AvailabilityTokenWasCancellable = ct.CanBeCanceled;
+            BeforeAvailabilityCheck?.Invoke();
+            ct.ThrowIfCancellationRequested();
+            return Task.FromResult(IsAvailable);
+        }
 
         public async IAsyncEnumerable<DiffusionStreamItem> GenerateAsync(
             DiffusionRequest request,
@@ -375,6 +595,9 @@ public class DiffusionCanvasBatchTests
             var run = ++RunCount;
             LastRequest = request;
             RequestedSeeds.Add(request.Seed);
+
+            if (request.InitImage is { } init && File.Exists(init.FilePath))
+                InitImageBytesAtCallTime = File.ReadAllBytes(init.FilePath);
 
             MaxConcurrentRuns = Math.Max(MaxConcurrentRuns, ++_concurrent);
             try

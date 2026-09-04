@@ -70,6 +70,19 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
 
     private bool _disposed;
 
+    /// <summary>
+    /// Scratch file the composited region is written to before a backend reads it.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately stable for the life of the view model rather than a fresh GUID per run. The engine
+    /// backend uploads this file into ComfyUI's own <c>input/</c> folder, and that copy is never deleted:
+    /// a per-run name left hundreds of multi-megabyte PNGs behind over a session. A stable name means the
+    /// upload overwrites in place (<c>UploadImageAsync</c> already posts <c>overwrite=true</c>). The GUID
+    /// still distinguishes concurrent app instances.
+    /// </remarks>
+    private readonly string _regionScratchPath =
+        Path.Combine(Path.GetTempPath(), $"diffnexus_canvas_{Guid.NewGuid():N}.png");
+
     /// <summary>All accepted results on the canvas, in z-order (last = top).</summary>
     public ObservableCollection<GenerationFrameViewModel> Frames { get; } = [];
 
@@ -419,6 +432,9 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             {
                 PostToUi(() =>
                 {
+                    if (SelectedBackend?.Key != CanvasBackendKeys.Local)
+                        return;
+
                     AvailableModels.Clear();
                     SelectedModel = null;
                     BackendUnavailableMessage =
@@ -433,6 +449,14 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
 
             PostToUi(() =>
             {
+                // This scan is fire-and-forget and takes seconds on a large model tree. By the time it
+                // lands the user may have switched to the engine backend, whose catalog is already in
+                // AvailableModels — overwriting it would leave SelectedModel pointing at a local-only key
+                // the engine can never resolve, and Generate would then fail with "files were not found"
+                // against a perfectly healthy engine.
+                if (SelectedBackend?.Key != CanvasBackendKeys.Local)
+                    return;
+
                 AvailableModels.Clear();
                 foreach (var descriptor in models)
                     AvailableModels.Add(new CanvasModelOption(descriptor.Key, $"Local ({descriptor.DisplayName})"));
@@ -490,11 +514,23 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         BackendUnavailableMessage = null;
         EmitInfo($"Generate requested: batch={BatchCount}, box={Describe(Box.WorldRect)}.");
 
+        // Open the epoch BEFORE the first await. Cancel goes live the moment IsGenerating flips, and
+        // pre-flight is the longest part of a cold engine run — EnsureRunningAsync spawns python and
+        // polls readiness for up to two minutes. An epoch created after the resolve left every Cancel in
+        // that window a silent no-op, which the next line then papered over with a fresh token.
+        var cts = new CancellationTokenSource();
+        lock (_runLock)
+        {
+            _runCts?.Dispose();
+            _runCts = cts;
+        }
+
+        var token = cts.Token;
         string? regionImagePath = null;
 
         try
         {
-            var backend = await ResolveBackendAsync().ConfigureAwait(true);
+            var backend = await ResolveBackendAsync(token).ConfigureAwait(true);
             if (backend is null)
                 return;
 
@@ -521,7 +557,17 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             var width = Box.Width;
             var height = Box.Height;
 
-            regionImagePath = BuildRegionInitImage(region, width, height, out var coverage);
+            // Snapshot the rasters on the UI thread, then composite off it. The region work decodes a
+            // PNG per overlapping result, walks every output pixel to measure coverage, re-encodes at
+            // quality 100 and writes a file — seconds of frozen window at 2048x2048 over several
+            // results. Frames is an ObservableCollection, so it must not be enumerated off the UI thread.
+            var rasters = Frames.Cast<ICanvasRaster>().ToArray();
+            var (composedPath, coverage) = await Task
+                .Run(() => BuildRegionInitImage(rasters, region, width, height), token)
+                .ConfigureAwait(true);
+
+            regionImagePath = composedPath;
+            token.ThrowIfCancellationRequested();
 
             var initImage = regionImagePath is null
                 ? null
@@ -529,14 +575,6 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
 
             var candidates = Staging.BeginBatch(BatchCount, region);
             EmitInfo($"Staged {candidates.Count} candidate slot(s).");
-
-            CancellationToken token;
-            lock (_runLock)
-            {
-                // Join the epoch — never replace a live one, or an in-flight Cancel loses its target.
-                _runCts ??= new CancellationTokenSource();
-                token = _runCts.Token;
-            }
 
             await RunBatchAsync(backend, descriptor, candidates, initImage, width, height, coverage, token)
                 .ConfigureAwait(true);
@@ -556,7 +594,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         finally
         {
             DeleteScratchFile(regionImagePath);
-            EndRunEpoch();
+            EndRunEpoch(cts);
             IsGenerating = false;
             Staging.RefreshCommands();
         }
@@ -596,11 +634,14 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
 
         try
         {
+            // Cancelled but deliberately NOT disposed here: the running batch still holds this token and
+            // both backends register callbacks on it, and registering on a disposed source throws. The
+            // batch that opened the epoch disposes it in its own finally, once nothing can use it.
             cts.Cancel();
         }
         catch (ObjectDisposedException)
         {
-            // The runner disposed it as we cancelled; nothing left to stop.
+            // The owning batch finished and disposed it as we cancelled; nothing left to stop.
         }
 
         Staging.MarkPendingAsCancelled();
@@ -608,20 +649,25 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
 
     private bool CanCancel() => IsGenerating;
 
-    /// <summary>Cancels and disposes the current epoch, restoring the field to null for the next batch.</summary>
-    private void EndRunEpoch()
+    /// <summary>
+    /// Closes the epoch this batch opened: clears the field if it is still ours, then disposes.
+    /// </summary>
+    /// <remarks>
+    /// The reference check matters because <see cref="Cancel"/> nulls the field itself. Without it, a
+    /// cancelled batch's teardown could null out an epoch a later batch had already installed.
+    /// </remarks>
+    private void EndRunEpoch(CancellationTokenSource cts)
     {
-        CancellationTokenSource? cts;
         lock (_runLock)
         {
-            cts = _runCts;
-            _runCts = null;
+            if (ReferenceEquals(_runCts, cts))
+                _runCts = null;
         }
 
-        cts?.Dispose();
+        cts.Dispose();
     }
 
-    private async Task<IDiffusionBackend?> ResolveBackendAsync()
+    private async Task<IDiffusionBackend?> ResolveBackendAsync(CancellationToken token)
     {
         if (SelectedBackend?.Key == CanvasBackendKeys.Engine)
         {
@@ -633,7 +679,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
                 return null;
             }
 
-            if (!await engine.IsAvailableAsync().ConfigureAwait(true))
+            if (!await engine.IsAvailableAsync(token).ConfigureAwait(true))
             {
                 BackendUnavailableMessage = string.Join(" ", engine.MissingRequirements);
                 StatusText = "Backend unavailable";
@@ -651,7 +697,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             return null;
         }
 
-        var local = await _backendProvider.TryGetAsync().ConfigureAwait(true);
+        var local = await _backendProvider.TryGetAsync(token).ConfigureAwait(true);
         if (local is null)
         {
             BackendUnavailableMessage =
@@ -699,33 +745,36 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     /// pixels are regenerated rather than preserved. True masked outpainting needs the layer stack
     /// (issue #518 region D).
     /// </remarks>
-    private string? BuildRegionInitImage(Rect region, int width, int height, out double coverage)
+    /// <param name="rasters">
+    /// A snapshot of the accepted results, taken on the UI thread. This method runs on the thread pool,
+    /// and <see cref="Frames"/> is an <c>ObservableCollection</c> that must not be enumerated off it.
+    /// </param>
+    /// <returns>The scratch file path (or null for a text2img run) and the opaque coverage fraction.</returns>
+    private (string? Path, double Coverage) BuildRegionInitImage(
+        IReadOnlyList<ICanvasRaster> rasters, Rect region, int width, int height)
     {
-        coverage = 0;
-
         var sources = CanvasRegionCompositor.LoadIntersecting(
-            Frames, region, skipped => EmitWarning($"Skipped a raster while compositing the region: {skipped}."));
+            rasters, region, skipped => EmitWarning($"Skipped a raster while compositing the region: {skipped}."));
 
         try
         {
             if (sources.Count == 0)
             {
                 EmitInfo("Region is empty — running text to image.");
-                return null;
+                return (null, 0);
             }
 
             using var composite = CanvasRegionCompositor.Composite(sources, region, width, height);
-            coverage = composite.Coverage;
+            var coverage = composite.Coverage;
 
             if (composite.IsEmpty)
             {
                 EmitInfo("Region overlaps results but contains no opaque pixels — running text to image.");
-                return null;
+                return (null, 0);
             }
 
             var png = CanvasRegionCompositor.EncodeAsPng(composite.Bitmap, CanvasRegionCompositor.NeutralFill);
-            var path = Path.Combine(Path.GetTempPath(), $"diffnexus_canvas_{Guid.NewGuid():N}.png");
-            File.WriteAllBytes(path, png);
+            File.WriteAllBytes(_regionScratchPath, png);
 
             var percent = (int)Math.Round(coverage * 100);
             EmitInfo($"Region composited: {percent}% covered, denoise {DenoiseStrength:0.00} — running image to image.");
@@ -736,7 +785,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
                     "neutral grey input, so the known pixels are regenerated rather than preserved.");
             }
 
-            return path;
+            return (_regionScratchPath, coverage);
         }
         finally
         {
@@ -760,6 +809,16 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             token.ThrowIfCancellationRequested();
 
             var candidate = candidates[i];
+
+            // The strip stays interactive during a batch, so the user can discard a slot that has not
+            // run yet. Re-selecting a disposed candidate would republish its released bitmap as the
+            // canvas preview and strand the strip showing a candidate it no longer contains.
+            if (candidate.IsDisposed)
+            {
+                EmitInfo($"Skipping candidate {i + 1}/{candidates.Count} — it was discarded before it ran.");
+                continue;
+            }
+
             Staging.Current = candidate;
             candidate.State = StagedCandidateState.Loading;
             candidate.StatusText = "Preparing…";
@@ -816,6 +875,12 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             Dispatcher.UIThread.Post(() => ApplyProgress(candidate, item));
             return;
         }
+
+        // Checked after the marshal, because the discard can land while this hop is queued. Writing a
+        // freshly decoded bitmap into a disposed, already-detached candidate would leak it: nothing
+        // holds that candidate any more, so nothing will ever dispose it again.
+        if (candidate.IsDisposed)
+            return;
 
         switch (item.Progress.Phase)
         {
@@ -900,7 +965,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         try
         {
             if (candidate.PngBytes is { Length: > 0 })
-                path = SaveToOutputs(candidate.PngBytes, candidate.Seed);
+                path = OutputsWriter(candidate.PngBytes, candidate.Seed);
         }
         catch (Exception ex)
         {
@@ -931,6 +996,16 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         EmitInfo($"Accepted candidate {candidate.Ordinal} onto the canvas at {Describe(candidate.WorldRect)}"
                  + (path is null ? " (not saved — no PNG bytes)." : $"; saved to {path}."));
     }
+
+    /// <summary>
+    /// Writes an accepted result to disk and returns its path.
+    /// </summary>
+    /// <remarks>
+    /// Overridable as a test seam, alongside <see cref="BitmapDecoder"/>: accepting a candidate otherwise
+    /// writes real PNGs into the test project's build output on every run. Reached through
+    /// <c>InternalsVisibleTo("DiffusionNexus.Tests")</c>.
+    /// </remarks>
+    internal Func<byte[], long?, string> OutputsWriter { get; set; } = SaveToOutputs;
 
     /// <summary>
     /// Writes an accepted result to the outputs folder the Generation Gallery scans, never overwriting an
@@ -1011,7 +1086,25 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             return;
 
         _disposed = true;
-        EndRunEpoch();
+
+        // Cancel whatever is in flight, then let the owning batch's own finally dispose the source —
+        // it is still holding the token and its backends still have callbacks registered on it.
+        CancellationTokenSource? inFlight;
+        lock (_runLock)
+        {
+            inFlight = _runCts;
+            _runCts = null;
+        }
+
+        try
+        {
+            inFlight?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // Already torn down by the batch that opened it.
+        }
+
         Staging.DiscardAllCommand.Execute(null);
 
         foreach (var frame in Frames.ToList())

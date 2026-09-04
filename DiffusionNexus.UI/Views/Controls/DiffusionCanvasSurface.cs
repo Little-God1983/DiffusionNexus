@@ -407,8 +407,10 @@ public class DiffusionCanvasSurface : Control
 
         if (_isDraggingBox && Box is { } dragging)
         {
-            // Alt suspends snapping so a box can be placed off the lattice deliberately.
-            dragging.SnapToGrid = !e.KeyModifiers.HasFlag(KeyModifiers.Alt);
+            // Alt suspends POSITION snapping only. Sizes always snap: a latent size off the model's
+            // lattice is invalid input, not a preference, and one produced here would outlive the
+            // gesture and make Generate refuse every subsequent click.
+            dragging.SnapPositionToGrid = !e.KeyModifiers.HasFlag(KeyModifiers.Alt);
             dragging.DragTo(Viewport.ScreenToWorld(screen));
             e.Handled = true;
             return;
@@ -421,12 +423,11 @@ public class DiffusionCanvasSurface : Control
     {
         base.OnPointerReleased(e);
 
-        if (_isDraggingBox)
+        if (_isDraggingBox && Box is { } box)
         {
-            Box?.EndDrag();
-            // Restore snapping for the next gesture regardless of how this one ended.
-            if (Box is { } box)
-                box.SnapToGrid = true;
+            box.EndDrag();
+            // Restore position snapping for the next gesture regardless of how this one ended.
+            box.SnapPositionToGrid = true;
         }
 
         ReleaseGesture();
@@ -446,7 +447,7 @@ public class DiffusionCanvasSurface : Control
         if (_isDraggingBox && Box is { } box)
         {
             box.EndDrag();
-            box.SnapToGrid = true;
+            box.SnapPositionToGrid = true;
         }
 
         ReleaseGesture();
@@ -662,16 +663,17 @@ public class DiffusionCanvasSurface : Control
             ReadoutForeground);
 
         const double padding = 5;
-        var boxRect = new Rect(
-            screen.X,
-            screen.Y - formatted.Height - padding * 2 - 4,
-            formatted.Width + padding * 2,
-            formatted.Height + padding * 2);
+        var width = formatted.Width + padding * 2;
+        var height = formatted.Height + padding * 2;
 
-        // Keep the readout on screen when the box's top edge is scrolled above the viewport.
-        if (boxRect.Y < 0)
-            boxRect = boxRect.WithY(screen.Y + 4);
+        // Preferred position is just above the box's top-left corner, but the readout must stay legible
+        // when the box is larger than the viewport or scrolled off it — which is the zoomed-in case this
+        // exists for. Clamping into the control's bounds handles every direction; re-anchoring by a fixed
+        // offset only worked while the box's top edge was within a few pixels of the top edge.
+        var x = Math.Clamp(screen.X, 0, Math.Max(0, Bounds.Width - width));
+        var y = Math.Clamp(screen.Y - height - 4, 0, Math.Max(0, Bounds.Height - height));
 
+        var boxRect = new Rect(x, y, width, height);
         context.FillRectangle(ReadoutBackground, boxRect);
         context.DrawText(formatted, new Point(boxRect.X + padding, boxRect.Y + padding));
     }

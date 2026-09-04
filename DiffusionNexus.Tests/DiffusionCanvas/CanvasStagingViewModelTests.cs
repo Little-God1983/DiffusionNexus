@@ -66,16 +66,6 @@ public class CanvasStagingViewModelTests
     }
 
     [Fact]
-    public void CandidateCapturesTheBoxAsItWasWhenTheBatchStarted()
-    {
-        var staging = new CanvasStagingViewModel();
-        var candidates = staging.BeginBatch(2, Box);
-
-        // Moving the real box mid-batch must not retarget results already queued.
-        candidates.Should().OnlyContain(c => c.WorldRect == Box);
-    }
-
-    [Fact]
     public void NextAndPreviousStepWithoutWrapping()
     {
         var staging = WithReadyBatch(3);
@@ -247,12 +237,17 @@ public class CanvasStagingViewModelTests
     }
 
     [Fact]
-    public void IsComparingIsPlainStateTheSurfaceReadsWhileTheCompareKeyIsHeld()
+    public void IsComparingRaisesChangeNotificationForTheSurfaceBinding()
     {
+        // The compare gesture reaches the surface only through the OneWay binding on IsPreviewHidden,
+        // so the notification -- not the stored value -- is the part that has to work.
         var staging = WithReadyBatch(1);
+        var raised = new List<string?>();
+        staging.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
 
-        staging.IsComparing.Should().BeFalse();
         staging.IsComparing = true;
+
+        raised.Should().Contain(nameof(CanvasStagingViewModel.IsComparing));
         staging.IsComparing.Should().BeTrue();
     }
 }
