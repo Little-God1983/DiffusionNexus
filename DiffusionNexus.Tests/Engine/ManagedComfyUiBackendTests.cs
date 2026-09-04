@@ -96,6 +96,64 @@ public class ManagedComfyUiBackendTests
     }
 
     [Fact]
+    public async Task Generate_RefusesAModelItCannotActuallyRun()
+    {
+        // This backend submits ONE graph regardless of what is asked of it, while its catalog unions Krea 2
+        // with a real disk scan of the engine's models root. Before the guard, selecting a discovered model
+        // ran the Krea 2 GGUF and reported the result under the other model's name: a wrong image, labelled
+        // convincingly.
+        var backend = Create(null, hasTemplate: true);
+        var request = new DiffusionRequest
+        {
+            ModelKey = "flux2-klein", Prompt = "a cat", Width = 1024, Height = 1024
+        };
+
+        var items = new List<DiffusionStreamItem>();
+        await foreach (var item in backend.GenerateAsync(request))
+            items.Add(item);
+
+        var last = items.Should().ContainSingle().Subject;
+        last.Progress.Phase.Should().Be(DiffusionPhase.Completed);
+        last.Result.Should().BeNull();
+        last.Progress.Message.Should().Contain("Krea 2 Turbo");
+        last.Progress.Message.Should().Contain("flux2-klein");
+    }
+
+    [Fact]
+    public async Task Generate_RefusesTheForeignModelBeforeProbingReadiness()
+    {
+        // The guard is cheap and must come first: probing spawns python and polls for up to two minutes,
+        // and none of that work can change the answer for a model this backend cannot run.
+        var backend = Create(null, hasTemplate: false);
+        var request = new DiffusionRequest
+        {
+            ModelKey = "z-image-turbo", Prompt = "a cat", Width = 1024, Height = 1024
+        };
+
+        var items = new List<DiffusionStreamItem>();
+        await foreach (var item in backend.GenerateAsync(request))
+            items.Add(item);
+
+        // Not installed AND not configured, yet the message is about the model rather than either of those.
+        items.Should().ContainSingle().Which.Progress.Message.Should().Contain("z-image-turbo");
+    }
+
+    [Fact]
+    public void Capabilities_DeclareWhatTheWorkflowActuallyHonours()
+    {
+        var backend = Create(null, hasTemplate: true);
+
+        backend.Capabilities.Supports(BackendFeature.NegativePrompt).Should()
+            .BeTrue("the patcher writes node 35");
+        backend.Capabilities.Supports(BackendFeature.SamplerSelection).Should()
+            .BeFalse("sampler and scheduler are baked into the template's KSampler");
+        backend.Capabilities.Supports(BackendFeature.Loras).Should()
+            .BeFalse("the graph's LoRA loader node is never patched");
+        backend.Capabilities.Supports(BackendFeature.MidSampleInterrupt).Should()
+            .BeTrue("cancellation POSTs /interrupt");
+    }
+
+    [Fact]
     public async Task Generate_PropagatesCallerCancellation()
     {
         var backend = Create(null, hasTemplate: false);

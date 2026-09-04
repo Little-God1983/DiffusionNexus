@@ -1,6 +1,7 @@
 using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
@@ -85,7 +86,7 @@ public partial class DiffusionCanvasView : UserControl
 
     private void OnPreviewKeyDown(object? sender, KeyEventArgs e)
     {
-        if (IsTypingInATextBox())
+        if (ShouldLeaveTheKeyAlone(e.Key))
             return;
 
         var vm = ViewModel;
@@ -170,9 +171,58 @@ public partial class DiffusionCanvasView : UserControl
     }
 
     /// <summary>
-    /// True when the keyboard belongs to a text field. Without this, the staging strip's arrow/Space/Enter
-    /// shortcuts would fight the prompt box, which accepts returns.
+    /// True when the focused control genuinely owns <paramref name="key"/>, so the canvas must not claim it.
     /// </summary>
-    private bool IsTypingInATextBox() =>
-        TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() is TextBox;
+    /// <remarks>
+    /// <para>
+    /// These handlers run on the <b>tunnel</b> pass and claim their keys unconditionally, so any control
+    /// that needs a key has to be excluded explicitly. Testing for "is a TextBox" was enough while the only
+    /// input on this screen was the prompt; region B filled a whole column with sliders, combos and toggles.
+    /// </para>
+    /// <para>
+    /// The exclusion is per <b>key</b>, not per control. Excluding every control in the panel wholesale
+    /// looked simpler but was much worse: focus lands on a Button when it is clicked and stays there, and
+    /// the panel has buttons that never disable (Unload, the seed controls, the LoRA picker's own), so one
+    /// click on any of them killed every canvas and staging shortcut until the user clicked the canvas
+    /// again. A Button does not consume Left, Right, Delete, F, G, B or 1 — only its activation key — so
+    /// there is no reason to hand it those.
+    /// </para>
+    /// <para>
+    /// Buttons are given <see cref="Key.Space"/> but deliberately not <see cref="Key.Enter"/>. Enter while
+    /// candidates are staged means "accept", which the staging strip's own tooltip advertises, and a user
+    /// who clicks a seed button and then presses Enter means to accept rather than to press it again. The
+    /// canvas only claims Enter while the strip has candidates, so with nothing staged it still reaches the
+    /// focused button as usual.
+    /// </para>
+    /// </remarks>
+    private bool ShouldLeaveTheKeyAlone(Key key)
+    {
+        var focused = TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement();
+
+        return focused switch
+        {
+            // Typing wins outright: the prompt accepts spaces and returns.
+            TextBox => true,
+
+            // Arrows move the selection, Enter and Space open and commit, Escape closes, and letters
+            // drive type-ahead — a ComboBox has a use for essentially every key.
+            ComboBox => true,
+            AutoCompleteBox => true,
+
+            NumericUpDown => key is Key.Up or Key.Down or Key.PageUp or Key.PageDown,
+
+            Slider => key is Key.Left or Key.Right or Key.Up or Key.Down
+                or Key.Home or Key.End or Key.PageUp or Key.PageDown,
+
+            // The staging strip: its own arrow navigation does the same thing as ours, so let it.
+            ListBox => key is Key.Left or Key.Right or Key.Up or Key.Down or Key.Home or Key.End,
+
+            // CheckBox before ToggleButton before Button: the first two derive from the last.
+            CheckBox => key is Key.Space,
+            ToggleButton => key is Key.Space,
+            Button => key is Key.Space,
+
+            _ => false,
+        };
+    }
 }
