@@ -11,14 +11,26 @@
 
     <!-- ─────────────────────────── Toolbar ─────────────────────────── -->
     <Border Grid.Row="0" Background="#1E1E1E" Padding="8" BorderBrush="#333" BorderThickness="0,0,0,1">
+      <!-- The tool strip scrolls instead of overflowing. A horizontal StackPanel never shrinks or clips
+           its children, so as the last (filling) child of a DockPanel it simply painted over the
+           right-docked resource monitor once the buttons outgrew the window. Issue #518 regions A and B
+           eventually move the backend picker and the VRAM readout into a title bar and the model/LoRA
+           controls into a left panel, which is the real fix for the crowding; until then the strip has to
+           stay inside its own bounds. Status is docked right rather than left in the strip so it never
+           scrolls out of sight — it is the one thing here you need to be able to read at all times. -->
       <DockPanel LastChildFill="True">
         <ContentControl DockPanel.Dock="Right" VerticalAlignment="Center" Margin="8,0,0,0"
                         IsVisible="{Binding ResourceMonitor, Converter={x:Static ObjectConverters.IsNotNull}}">
           <controls:ResourceMonitorView DataContext="{Binding ResourceMonitor}" />
         </ContentControl>
 
-        <StackPanel Orientation="Horizontal" Spacing="4">
-          <ComboBox MinWidth="220"
+        <TextBlock DockPanel.Dock="Right" Text="{Binding StatusText}" VerticalAlignment="Center"
+                   Foreground="#CCC" Margin="10,0,0,0" MaxWidth="320"
+                   TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding StatusText}" />
+
+        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+          <StackPanel Orientation="Horizontal" Spacing="4">
+          <ComboBox MinWidth="150" MaxWidth="230"
                     ItemsSource="{Binding AvailableBackends}"
                     SelectedItem="{Binding SelectedBackend}"
                     ToolTip.Tip="Which engine generates the image">
@@ -28,7 +40,7 @@
               </DataTemplate>
             </ComboBox.ItemTemplate>
           </ComboBox>
-          <ComboBox MinWidth="220"
+          <ComboBox MinWidth="150" MaxWidth="230"
                     ItemsSource="{Binding AvailableModels}"
                     SelectedItem="{Binding SelectedModel}"
                     ToolTip.Tip="The model this backend will load and run.">
@@ -41,7 +53,7 @@
           <Button Content="Unload" Command="{Binding UnloadModelCommand}"
                   ToolTip.Tip="Free VRAM by unloading the resident model (the next Generate reloads it)." />
 
-          <Separator Margin="6,0" />
+          <Border Width="1" Margin="6,2" Background="#3A3A3A" />
 
           <Button Content="Fit" Click="OnFitClicked"
                   ToolTip.Tip="Frame everything on the canvas (F)" />
@@ -54,12 +66,12 @@
           <TextBlock Name="ZoomReadout" VerticalAlignment="Center" Foreground="#999"
                      Margin="6,0,0,0" MinWidth="52" />
 
-          <Separator Margin="6,0" />
+          <Border Width="1" Margin="6,2" Background="#3A3A3A" />
 
           <Button Content="Clear canvas" Command="{Binding ClearCanvasCommand}"
                   ToolTip.Tip="Remove every accepted result from the canvas." />
 
-          <Separator Margin="6,0" />
+          <Border Width="1" Margin="6,2" Background="#3A3A3A" />
 
           <Button Content="+ LoRA" Command="{Binding AddLoraCommand}" IsEnabled="False"
                   ToolTip.Tip="TODO(v2-loras): Add a LoRA over the base model." />
@@ -70,9 +82,8 @@
           <Button Content="Layers" Command="{Binding ToggleLayerPanelCommand}" IsEnabled="False"
                   ToolTip.Tip="TODO(v2-layers): Layer stack (issue #518 region D)." />
 
-          <Separator Margin="6,0" />
-          <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center" Foreground="#CCC" />
-        </StackPanel>
+          </StackPanel>
+        </ScrollViewer>
       </DockPanel>
     </Border>
 
