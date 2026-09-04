@@ -315,6 +315,27 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     /// <summary>True when the selected backend loads LoRAs.</summary>
     public bool IsLoraSupported => SelectedCapabilities.Supports(BackendFeature.Loras);
 
+    /// <summary>
+    /// Why the disabled control-layer button is disabled. Region D has not built the feature at all, and
+    /// the selected backend may separately be unable to run it; both are true, so both are said.
+    /// </summary>
+    /// <remarks>
+    /// This is a composed sentence rather than a raw <see cref="BackendFeature.ControlNet"/> limitation
+    /// because the limitation is null on a backend that <i>could</i> do it, and a disabled control with an
+    /// empty tooltip is the exact failure the capability surface exists to prevent.
+    /// </remarks>
+    public string ControlNetTooltip => Compose(
+        "Control layers arrive with the layer stack (issue #518 region D).",
+        SelectedCapabilities.LimitationFor(BackendFeature.ControlNet));
+
+    /// <summary>Why the disabled mask button is disabled. Same composition as <see cref="ControlNetTooltip"/>.</summary>
+    public string MaskTooltip => Compose(
+        "Inpaint mask painting arrives with the layer stack (issue #518 region D).",
+        SelectedCapabilities.LimitationFor(BackendFeature.Inpainting));
+
+    private static string Compose(string primary, string? backendLimit) =>
+        string.IsNullOrWhiteSpace(backendLimit) ? primary : $"{primary} {backendLimit}";
+
     /// <summary>Why LoRAs are unavailable on this backend, or null when they work.</summary>
     public string? LoraLimitation => SelectedCapabilities.LimitationFor(BackendFeature.Loras);
 
@@ -336,6 +357,8 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(IsLoraSupported));
         OnPropertyChanged(nameof(LoraLimitation));
         OnPropertyChanged(nameof(CancelTooltip));
+        OnPropertyChanged(nameof(ControlNetTooltip));
+        OnPropertyChanged(nameof(MaskTooltip));
     }
 
     // ────────────────────────────── Seed commands ──────────────────────────────
@@ -760,22 +783,37 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
                 if (Volatile.Read(ref _loraLoadGeneration) != generation)
                     return;
 
-                AvailableLoras.Clear();
-                foreach (var lora in loras)
-                    AvailableLoras.Add(lora);
+                RepublishAvailableLoras(loras);
                 LoraUnavailableMessage = unavailable;
             });
+        }
+
+        void Explain(string? unavailable)
+        {
+            // Says why without touching the item source, so the rows keep their picks.
+            PostToUi(() =>
+            {
+                if (Volatile.Read(ref _loraLoadGeneration) != generation)
+                    return;
+
+                LoraUnavailableMessage = unavailable;
+            });
+        }
+
+        if (!IsLoraSupported)
+        {
+            // Deliberately Explain, not Publish, and deliberately checked before the catalog: the picker is
+            // merely disabled on this backend, and emptying its item source would drive every row's
+            // ComboBox selection to null — silently throwing the user's chosen LoRAs away on a backend
+            // switch, and taking with them the "these will not be applied" warning Generate should raise.
+            // Whether a catalog happens to be available cannot change that answer.
+            Explain(LoraLimitation);
+            return;
         }
 
         if (_loraCatalog is null)
         {
             Publish([], null);
-            return;
-        }
-
-        if (!IsLoraSupported)
-        {
-            Publish([], LoraLimitation);
             return;
         }
 
@@ -816,6 +854,48 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             // something further out broke. Either way the user must not read a failure as an empty library.
             EmitError($"Failed to load the LoRA list: {ex.Message}", ex);
             Publish([], "The LoRA list could not be loaded — see the Unified Console.");
+        }
+    }
+
+    /// <summary>
+    /// Swaps the picker's item source while preserving each row's chosen LoRA.
+    /// </summary>
+    /// <remarks>
+    /// The rows' ComboBoxes are bound to this collection, and clearing an <c>ObservableCollection</c> that
+    /// is a <c>ComboBox.ItemsSource</c> drives <c>SelectedItem</c> to null. Refilling it therefore wiped
+    /// every pick with no message, and a pick lost this way took its file path with it. Rows whose LoRA
+    /// survives the new filter are re-selected by path; rows whose LoRA does not are genuinely
+    /// incompatible with the newly selected model, so they are reported rather than silently emptied.
+    /// </remarks>
+    private void RepublishAvailableLoras(IReadOnlyList<AvailableLora> loras)
+    {
+        var previouslyPicked = Loras.Select(row => row.FilePath).ToList();
+
+        AvailableLoras.Clear();
+        foreach (var lora in loras)
+            AvailableLoras.Add(lora);
+
+        var dropped = 0;
+        for (var i = 0; i < Loras.Count && i < previouslyPicked.Count; i++)
+        {
+            var path = previouslyPicked[i];
+            if (string.IsNullOrWhiteSpace(path))
+                continue;
+
+            var match = AvailableLoras.FirstOrDefault(
+                l => string.Equals(l.FilePath, path, StringComparison.OrdinalIgnoreCase));
+
+            if (match is not null)
+                Loras[i].SelectedLora = match;
+            else
+                dropped++;
+        }
+
+        if (dropped > 0)
+        {
+            EmitWarning(
+                $"{dropped} selected LoRA(s) are not published for {SelectedModel?.DisplayName ?? "this model"} " +
+                "and were cleared from the picker.");
         }
     }
 

@@ -29,6 +29,21 @@ internal sealed class FakeDiffusionBackend : IDiffusionBackend
 
     public int DimensionAlignment { get; init; } = 64;
 
+    // The descriptor's sampling defaults are parameterised because the view model is supposed to adopt
+    // them on model selection. Left at ModelDescriptor's own initialisers they were byte-identical to the
+    // view model's field initialisers, so the test asserting the adoption compared "euler" to "euler" and
+    // passed with the adoption deleted.
+    public int DefaultSteps { get; init; } = 20;
+
+    public float DefaultCfg { get; init; } = 7.0f;
+
+    public string DefaultSampler { get; init; } = "euler";
+
+    public string DefaultScheduler { get; init; } = "simple";
+
+    /// <summary>LoRAs the model applies of its own accord, before any the request carries.</summary>
+    public IReadOnlyList<LoraReference> DefaultLoras { get; init; } = [];
+
     public bool IsAvailable { get; init; } = true;
 
     public List<string> Missing { get; } = [];
@@ -59,7 +74,8 @@ internal sealed class FakeDiffusionBackend : IDiffusionBackend
 
     public List<long?> RequestedSeeds { get; } = [];
 
-    public IModelCatalog Catalog => new FakeCatalog(DimensionAlignment);
+    public IModelCatalog Catalog =>
+        new FakeCatalog(DimensionAlignment, DefaultSteps, DefaultCfg, DefaultSampler, DefaultScheduler, DefaultLoras);
 
     public IReadOnlyList<string> MissingRequirements => Missing;
 
@@ -148,7 +164,13 @@ internal sealed class FakeDiffusionBackend : IDiffusionBackend
         }
     }
 
-    private sealed class FakeCatalog(int alignment) : IModelCatalog
+    private sealed class FakeCatalog(
+        int alignment,
+        int steps,
+        float cfg,
+        string sampler,
+        string scheduler,
+        IReadOnlyList<LoraReference> defaultLoras) : IModelCatalog
     {
         private readonly ModelDescriptor _descriptor = new()
         {
@@ -158,6 +180,11 @@ internal sealed class FakeDiffusionBackend : IDiffusionBackend
             DimensionAlignment = alignment,
             DefaultWidth = 1024,
             DefaultHeight = 1024,
+            DefaultSteps = steps,
+            DefaultCfg = cfg,
+            DefaultSampler = sampler,
+            DefaultScheduler = scheduler,
+            DefaultLoras = defaultLoras,
         };
 
         public IReadOnlyList<ModelDescriptor> ListAvailable() => [_descriptor];

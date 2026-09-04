@@ -254,12 +254,12 @@
 
               <Border Width="1" Margin="6,2" Background="#3A3A3A" />
 
-              <!-- Region D. Disabled, but the tooltip carries the selected backend's own reason rather
-                   than a leaked TODO marker. -->
+              <!-- Region D. Disabled, and the tooltip says both why the feature is missing and, when the
+                   selected backend could not run it either, that too. -->
               <Button Content="+ ControlNet" Command="{Binding AddControlNetCommand}" IsEnabled="False"
-                      ToolTip.Tip="{Binding SamplerSelectionLimitation}" />
+                      ToolTip.Tip="{Binding ControlNetTooltip}" />
               <Button Content="Mask" Command="{Binding ActivateMaskToolCommand}" IsEnabled="False"
-                      ToolTip.Tip="Inpaint mask painting arrives with the layer stack (issue #518 region D)." />
+                      ToolTip.Tip="{Binding MaskTooltip}" />
               <Button Content="Layers" Command="{Binding ToggleLayerPanelCommand}" IsEnabled="False"
                       ToolTip.Tip="The layer stack arrives in issue #518 region D." />
             </StackPanel>
