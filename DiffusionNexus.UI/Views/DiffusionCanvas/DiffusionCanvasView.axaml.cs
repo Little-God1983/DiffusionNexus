@@ -1,129 +1,178 @@
+using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Controls.PanAndZoom;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
+using Avalonia.Threading;
+using Avalonia.VisualTree;
 using DiffusionNexus.UI.ViewModels.DiffusionCanvas;
+using DiffusionNexus.UI.Views.Controls;
 
 namespace DiffusionNexus.UI.Views.DiffusionCanvas;
 
 /// <summary>
-/// Code-behind for the Diffusion Canvas. Owns the per-frame drag and resize gestures,
-/// translating screen-space pointer movement into canvas-space updates on the bound
-/// <see cref="GenerationFrameViewModel"/> while the user holds the left mouse button.
+/// Code-behind for the Diffusion Canvas.
 ///
-/// Pan and zoom of the canvas itself are handled entirely by <see cref="ZoomBorder"/>
-/// (middle-click drag pans; Ctrl + wheel zooms) — we don't intercept those.
+/// Pointer gestures live in <see cref="DiffusionCanvasSurface"/>; this file owns the keyboard, because
+/// the shortcuts act on the view model (staging) as often as on the surface. Keys are taken on the
+/// <b>tunnel</b> pass deliberately: this screen hosts a dozen Buttons, and an Avalonia Button activates
+/// on Space and Enter while focused, so a bubbling handler would never see the staging shortcuts. The
+/// price of tunnelling is that the prompt TextBox has to be excluded explicitly — the same guard
+/// <c>ImageViewerDialog</c> uses.
 /// </summary>
 public partial class DiffusionCanvasView : UserControl
 {
-    // Per-pointer drag state. Keyed by IPointer so multi-touch / pen + mouse don't
-    // collide if a future revision wants to support simultaneous gestures.
-    private readonly Dictionary<IPointer, DragState> _dragStates = new();
-    private readonly Dictionary<IPointer, ResizeState> _resizeStates = new();
-
     public DiffusionCanvasView()
     {
         InitializeComponent();
+
+        AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
+        AddHandler(KeyUpEvent, OnPreviewKeyUp, RoutingStrategies.Tunnel);
     }
 
     private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
 
-    private ZoomBorder? CanvasZoomBorder => this.FindControl<ZoomBorder>("CanvasZoom");
+    private DiffusionCanvasViewModel? ViewModel => DataContext as DiffusionCanvasViewModel;
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+
+        if (Surface is not { } surface)
+            return;
+
+        surface.PropertyChanged += OnSurfacePropertyChanged;
+        UpdateZoomReadout();
+
+        // Every module view is one long-lived instance swapped through the shell's ContentControl, so the
+        // canvas is detached and re-attached on every navigation and keyboard focus is lost each time.
+        // Nothing restores it, so take focus here or the shortcuts are dead after the first visit.
+        Dispatcher.UIThread.Post(() => surface.Focus(), DispatcherPriority.Input);
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        if (Surface is { } surface)
+            surface.PropertyChanged -= OnSurfacePropertyChanged;
+
+        base.OnDetachedFromVisualTree(e);
+    }
+
+    private void OnSurfacePropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs e)
+    {
+        if (e.Property == DiffusionCanvasSurface.ZoomProperty)
+            UpdateZoomReadout();
+    }
+
+    private void UpdateZoomReadout()
+    {
+        if (ZoomReadout is null || Surface is null)
+            return;
+
+        ZoomReadout.Text = string.Format(CultureInfo.InvariantCulture, "{0:0}%", Surface.Viewport.Zoom * 100);
+    }
+
+    // ────────────────────────────── Toolbar ──────────────────────────────
+
+    private void OnFitClicked(object? sender, RoutedEventArgs e) => Surface?.FitToContent();
+
+    private void OnOneToOneClicked(object? sender, RoutedEventArgs e) => Surface?.ResetZoom();
+
+    private void OnCenterBoxClicked(object? sender, RoutedEventArgs e) => Surface?.CenterOnBox();
+
+    // ────────────────────────────── Keyboard ──────────────────────────────
+
+    private void OnPreviewKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (IsTypingInATextBox())
+            return;
+
+        var vm = ViewModel;
+        var staging = vm?.Staging;
+        var hasCandidates = staging?.HasCandidates == true;
+
+        switch (e.Key)
+        {
+            case Key.F:
+                Surface?.FitToContent();
+                e.Handled = true;
+                return;
+
+            case Key.D1 or Key.NumPad1:
+                Surface?.ResetZoom();
+                e.Handled = true;
+                return;
+
+            case Key.B:
+                Surface?.CenterOnBox();
+                e.Handled = true;
+                return;
+
+            case Key.G:
+                if (vm is not null)
+                {
+                    vm.ShowGrid = !vm.ShowGrid;
+                    e.Handled = true;
+                }
+
+                return;
+
+            case Key.Escape:
+                Surface?.CancelActiveGesture();
+                e.Handled = true;
+                return;
+
+            case Key.Space:
+                // Space means "flip the candidate against the canvas" while anything is staged, and
+                // "arm drag-to-pan" when nothing is. Both are in the spec; the strip decides which.
+                if (hasCandidates)
+                    staging!.IsComparing = true;
+                else
+                    Surface?.SetSpaceHeld(true);
+
+                e.Handled = true;
+                return;
+
+            case Key.Left when hasCandidates:
+                staging!.PreviousCommand.Execute(null);
+                e.Handled = true;
+                return;
+
+            case Key.Right when hasCandidates:
+                staging!.NextCommand.Execute(null);
+                e.Handled = true;
+                return;
+
+            case Key.Enter when hasCandidates:
+                staging!.AcceptCommand.Execute(null);
+                e.Handled = true;
+                return;
+
+            case Key.Delete when hasCandidates:
+                staging!.DiscardCommand.Execute(null);
+                e.Handled = true;
+                return;
+        }
+    }
+
+    private void OnPreviewKeyUp(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Space)
+            return;
+
+        // Released unconditionally, even while typing: a space typed into the prompt must never leave the
+        // canvas stuck in compare mode or with panning armed.
+        if (ViewModel?.Staging is { } staging)
+            staging.IsComparing = false;
+
+        Surface?.SetSpaceHeld(false);
+    }
 
     /// <summary>
-    /// Returns the inner element that hosts the absolute-positioned frames (the Canvas
-    /// inside the ItemsControl). All pointer positions are computed relative to it so
-    /// the values are in canvas-space (unaffected by ZoomBorder pan/zoom transforms).
+    /// True when the keyboard belongs to a text field. Without this, the staging strip's arrow/Space/Enter
+    /// shortcuts would fight the prompt box, which accepts returns.
     /// </summary>
-    private Visual? CanvasContentVisual => CanvasZoomBorder?.Child as Visual;
-
-    // ────────────────────────────── DRAG (move frame) ──────────────────────────────
-
-    private void OnFramePointerPressed(object? sender, PointerPressedEventArgs e)
-    {
-        if (sender is not Border border || border.DataContext is not GenerationFrameViewModel vm) return;
-        if (vm.IsBusy) return; // can't move a frame while it's generating
-
-        var props = e.GetCurrentPoint(border).Properties;
-        if (!props.IsLeftButtonPressed) return;
-
-        // Capture the pointer's CANVAS-space position so zoom/pan don't distort the delta.
-        var canvasPoint = e.GetPosition(CanvasContentVisual);
-        _dragStates[e.Pointer] = new DragState(
-            StartPointerCanvasX: canvasPoint.X,
-            StartPointerCanvasY: canvasPoint.Y,
-            StartFrameX: vm.CanvasX,
-            StartFrameY: vm.CanvasY);
-
-        e.Pointer.Capture(border);
-        e.Handled = true;
-    }
-
-    private void OnFramePointerMoved(object? sender, PointerEventArgs e)
-    {
-        if (!_dragStates.TryGetValue(e.Pointer, out var state)) return;
-        if (sender is not Border border || border.DataContext is not GenerationFrameViewModel vm) return;
-
-        var canvasPoint = e.GetPosition(CanvasContentVisual);
-        vm.CanvasX = state.StartFrameX + (canvasPoint.X - state.StartPointerCanvasX);
-        vm.CanvasY = state.StartFrameY + (canvasPoint.Y - state.StartPointerCanvasY);
-    }
-
-    private void OnFramePointerReleased(object? sender, PointerReleasedEventArgs e)
-    {
-        if (_dragStates.Remove(e.Pointer))
-            e.Pointer.Capture(null);
-    }
-
-    // ────────────────────────────── RESIZE (bottom-right handle) ────────────────
-
-    private void OnResizePointerPressed(object? sender, PointerPressedEventArgs e)
-    {
-        if (sender is not Border handle) return;
-        // The handle's DataContext is the parent template's frame VM (binding inheritance).
-        if (handle.DataContext is not GenerationFrameViewModel vm) return;
-        if (vm.IsBusy) return;
-
-        var props = e.GetCurrentPoint(handle).Properties;
-        if (!props.IsLeftButtonPressed) return;
-
-        var canvasPoint = e.GetPosition(CanvasContentVisual);
-        _resizeStates[e.Pointer] = new ResizeState(
-            StartPointerCanvasX: canvasPoint.X,
-            StartPointerCanvasY: canvasPoint.Y,
-            StartWidth: vm.Width,
-            StartHeight: vm.Height);
-
-        e.Pointer.Capture(handle);
-        e.Handled = true;
-    }
-
-    private void OnResizePointerMoved(object? sender, PointerEventArgs e)
-    {
-        if (!_resizeStates.TryGetValue(e.Pointer, out var state)) return;
-        if (sender is not Border handle || handle.DataContext is not GenerationFrameViewModel vm) return;
-
-        var canvasPoint = e.GetPosition(CanvasContentVisual);
-        var deltaX = canvasPoint.X - state.StartPointerCanvasX;
-        var deltaY = canvasPoint.Y - state.StartPointerCanvasY;
-
-        // Snap to the model's alignment grid (Z-Image-Turbo: 64) and clamp to allowed range.
-        vm.Width = GenerationFrameViewModel.SnapDimension(state.StartWidth + deltaX);
-        vm.Height = GenerationFrameViewModel.SnapDimension(state.StartHeight + deltaY);
-    }
-
-    private void OnResizePointerReleased(object? sender, PointerReleasedEventArgs e)
-    {
-        if (_resizeStates.Remove(e.Pointer))
-            e.Pointer.Capture(null);
-    }
-
-    private readonly record struct DragState(
-        double StartPointerCanvasX, double StartPointerCanvasY,
-        double StartFrameX, double StartFrameY);
-
-    private readonly record struct ResizeState(
-        double StartPointerCanvasX, double StartPointerCanvasY,
-        int StartWidth, int StartHeight);
+    private bool IsTypingInATextBox() =>
+        TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() is TextBox;
 }

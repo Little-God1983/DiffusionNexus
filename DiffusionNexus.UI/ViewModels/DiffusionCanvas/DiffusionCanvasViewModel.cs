@@ -1,14 +1,19 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Linq;
+using Avalonia;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Inference.Abstractions;
 using DiffusionNexus.Inference.Models;
 using DiffusionNexus.Inference.StableDiffusionCpp;
+using DiffusionNexus.UI.DiffusionCanvas;
 using DiffusionNexus.UI.Services.Diffusion;
 using Serilog;
+using SkiaSharp;
 
 namespace DiffusionNexus.UI.ViewModels.DiffusionCanvas;
 
@@ -29,26 +34,64 @@ public static class CanvasBackendKeys
 public sealed record CanvasBackendOption(string Key, string DisplayName);
 
 /// <summary>
-/// ViewModel for the Diffusion Canvas module. Owns the collection of generation frames
-/// the user has placed on the infinite canvas, the global prompt textbox, and the
-/// Generate command that drives the local diffusion backend.
+/// ViewModel for the Diffusion Canvas module.
+///
+/// The spatial model is one movable, resizable <see cref="GenerationBoundingBox"/> over an unbounded
+/// world of accepted results: the box's size is the latent size, its position is where the pixels land,
+/// and whatever is underneath it is what the model sees. Dragging it onto an existing result makes the
+/// generation img2img without any extra mode; dragging it onto empty canvas makes it text2img.
+///
+/// Results arrive in <see cref="Staging"/> as candidates and only become <see cref="Frames"/> entries
+/// when the user accepts them, so nothing touches the canvas unasked.
 /// </summary>
-public partial class DiffusionCanvasViewModel : ObservableObject
+public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
 {
     private static readonly ILogger Logger = Log.ForContext<DiffusionCanvasViewModel>();
+
+    /// <summary>Unified Console source string for every trace this module emits.</summary>
+    private const string LogSource = "DiffusionCanvas";
+
     private readonly LocalDiffusionBackendProvider? _backendProvider;
     private readonly IDiffusionBackend? _engineBackend;
-    private int _nextFrameOffset;
+    private readonly IUnifiedLogger? _unifiedLogger;
 
-    /// <summary>All frames currently on the canvas, in z-order (last = top).</summary>
+    /// <summary>
+    /// Guards <see cref="_runCts"/>. Generate joins the epoch and Cancel cancels-and-nulls it; without a
+    /// lock those two can interleave and leave a cancelled token installed for the next batch.
+    /// </summary>
+    private readonly object _runLock = new();
+
+    /// <summary>
+    /// The batch epoch. The invariant, copied from <c>CivitaiDownloadQueue</c>: <b>never cancel without
+    /// nulling</b>. Cancelling and leaving the field in place makes the next Generate join a dead token
+    /// and abort instantly.
+    /// </summary>
+    private CancellationTokenSource? _runCts;
+
+    private bool _disposed;
+
+    /// <summary>All accepted results on the canvas, in z-order (last = top).</summary>
     public ObservableCollection<GenerationFrameViewModel> Frames { get; } = [];
 
-    /// <summary>The canvas-level prompt, used as the default for new frames.</summary>
+    /// <summary>The generation region — the canvas's entire spatial model.</summary>
+    public GenerationBoundingBox Box { get; } = new();
+
+    /// <summary>Candidates awaiting a verdict.</summary>
+    public CanvasStagingViewModel Staging { get; } = new();
+
+    /// <summary>The canvas-level prompt.</summary>
     [ObservableProperty]
     private string _promptText = string.Empty;
 
-    /// <summary>True while a generation is running (used to disable the Generate button).</summary>
+    /// <summary>
+    /// True while a batch is running. Carries <c>NotifyCanExecuteChangedFor</c> deliberately: once
+    /// Generate stops awaiting the whole run, the toolkit's own "no concurrent execution" protection on
+    /// an async RelayCommand no longer covers a second click, and a second click would clobber the shared
+    /// run token and silently break Cancel.
+    /// </summary>
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(GenerateCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CancelCommand))]
     private bool _isGenerating;
 
     /// <summary>Toolbar status text ("Idle", "Loading Z-Image-Turbo…", "Sampling 5/9", "Done", "Error: …").</summary>
@@ -58,6 +101,32 @@ public partial class DiffusionCanvasViewModel : ObservableObject
     /// <summary>Backend availability message; non-null when the backend cannot be initialized.</summary>
     [ObservableProperty]
     private string? _backendUnavailableMessage;
+
+    /// <summary>Whether the dot grid is drawn on the surface.</summary>
+    [ObservableProperty]
+    private bool _showGrid = true;
+
+    /// <summary>How many images one Generate enqueues. Runs sequentially — see the remarks on the runner.</summary>
+    [ObservableProperty]
+    private int _batchCount = 1;
+
+    /// <summary>
+    /// Denoise strength used when the box sits over existing pixels. 0 keeps the input, 1 ignores it.
+    /// Only meaningful for an img2img run; the readout hides it when the box is over empty canvas.
+    /// </summary>
+    [ObservableProperty]
+    private double _denoiseStrength = 0.65;
+
+    /// <summary>
+    /// Describes what pressing Generate will actually do, given where the box currently sits — the
+    /// difference between text2img and img2img is a drag, so the UI has to say which one it is.
+    /// </summary>
+    [ObservableProperty]
+    private string _regionModeText = "Text to image — the box is over empty canvas";
+
+    /// <summary>True when the box overlaps at least one accepted result, so the denoise control matters.</summary>
+    [ObservableProperty]
+    private bool _isRegionOccupied;
 
     #region v2 Placeholder properties (bound to disabled UI controls)
 
@@ -87,6 +156,8 @@ public partial class DiffusionCanvasViewModel : ObservableObject
 
     // TODO(v2-loras): observable list bound to the LoRA picker (each item carries path + strength).
     public ObservableCollection<object> Loras { get; } = [];
+
+    #endregion
 
     /// <summary>Local models discovered under the configured model roots (Diffusion Nexus core).</summary>
     public ObservableCollection<CanvasModelOption> AvailableModels { get; } = [];
@@ -134,14 +205,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject
         }
     }
 
-    #endregion
-
     #region v2 Placeholder commands (wired to disabled UI controls)
-
-    // TODO(v2-cancel): plumb a cancellation token through the backend once stable-diffusion.cpp exposes a cancel hook.
-    [RelayCommand(CanExecute = nameof(CanCancel))]
-    private void Cancel() => Logger.Information("Cancel requested — TODO(v2-cancel): not implemented in v1.");
-    private bool CanCancel() => false;
 
     // TODO(v2-loras): show the LoRA picker dialog and add to Loras.
     [RelayCommand(CanExecute = nameof(AlwaysFalse))]
@@ -163,11 +227,11 @@ public partial class DiffusionCanvasViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(AlwaysFalse))]
     private void ActivateMaskTool() { /* placeholder */ }
 
-    // TODO(v2-layers): toggle the layer panel side-flyout.
+    // TODO(v2-layers): the layer stack (issue #518 region D) replaces this placeholder.
     [RelayCommand(CanExecute = nameof(AlwaysFalse))]
     private void ToggleLayerPanel() { /* placeholder */ }
 
-    // TODO(v2-undo): real undo via a Command stack.
+    // TODO(v2-undo): a shallow undo stack over layer operations (issue #518, deliberately not unbounded).
     [RelayCommand(CanExecute = nameof(AlwaysFalse))]
     private void Undo() { /* placeholder */ }
 
@@ -181,16 +245,12 @@ public partial class DiffusionCanvasViewModel : ObservableObject
 
     public DiffusionCanvasViewModel()
     {
-        // Design-time ctor: no backend, leave a friendly placeholder frame so the designer renders.
+        // Design-time ctor: no backend. MUST stay parameterless — CanvasBackendSelectionTests
+        // constructs the view model this way, so a required parameter here breaks the test project's build.
         _backendProvider = null;
         _selectedBackend = AvailableBackends[0];
-        Frames.Add(new GenerationFrameViewModel
-        {
-            CanvasX = 200,
-            CanvasY = 200,
-            Prompt = "(design-time preview)",
-            StatusText = "Press Generate to start",
-        });
+        DeleteFrameCommand = new RelayCommand<GenerationFrameViewModel?>(DeleteFrame);
+        WireCanvasEvents();
     }
 
     /// <summary>GPU/RAM monitor widget shown in the canvas toolbar (null at design time).</summary>
@@ -199,18 +259,99 @@ public partial class DiffusionCanvasViewModel : ObservableObject
     public DiffusionCanvasViewModel(
         LocalDiffusionBackendProvider backendProvider,
         ResourceMonitorViewModel? resourceMonitor = null,
-        IDiffusionBackend? engineBackend = null)
+        IDiffusionBackend? engineBackend = null,
+        IUnifiedLogger? unifiedLogger = null)
     {
         _backendProvider = backendProvider ?? throw new ArgumentNullException(nameof(backendProvider));
         ResourceMonitor = resourceMonitor;
         _engineBackend = engineBackend;
+        _unifiedLogger = unifiedLogger;
         _selectedBackend = AvailableBackends[0];
         DeleteFrameCommand = new RelayCommand<GenerationFrameViewModel?>(DeleteFrame);
+        WireCanvasEvents();
 
         // Populate the model dropdown in the background. Uses a lightweight catalog built directly
         // from the resolved model roots, so it does NOT load the native CUDA library at startup —
         // that happens only on the first Generate.
         _ = LoadModelsAsync();
+    }
+
+    private void WireCanvasEvents()
+    {
+        Box.Changed += (_, _) => RefreshRegionMode();
+        Frames.CollectionChanged += (_, _) => RefreshRegionMode();
+        Staging.CandidateAccepted += OnCandidateAccepted;
+        RefreshRegionMode();
+    }
+
+    /// <summary>
+    /// Emits to both Serilog (file) and the in-app Unified Console. The standing repo rule is that every
+    /// step of a feature's flow is traced, so a hang shows the last successful step.
+    /// </summary>
+    private void EmitInfo(string message)
+    {
+        Logger.Information("DiffusionCanvas: {Message}", message);
+        _unifiedLogger?.Info(LogCategory.General, LogSource, message);
+    }
+
+    private void EmitWarning(string message, string? detail = null)
+    {
+        Logger.Warning("DiffusionCanvas: {Message} {Detail}", message, detail);
+        _unifiedLogger?.Warn(LogCategory.General, LogSource, message, detail);
+    }
+
+    private void EmitError(string message, Exception? ex = null)
+    {
+        Logger.Error(ex, "DiffusionCanvas: {Message}", message);
+        _unifiedLogger?.Error(LogCategory.General, LogSource, message, ex);
+    }
+
+    // ────────────────────────────── Region under the box ──────────────────────────────
+
+    /// <summary>
+    /// Recomputes whether the box currently overlaps any accepted result. Cheap — it is rectangle
+    /// intersection only, no pixel work — so it can run on every box move.
+    /// </summary>
+    private void RefreshRegionMode()
+    {
+        var region = Box.WorldRect;
+        var overlapping = Frames.Count(f => new Rect(f.CanvasX, f.CanvasY, f.Width, f.Height).Intersects(region));
+
+        IsRegionOccupied = overlapping > 0;
+        RegionModeText = overlapping switch
+        {
+            0 => "Text to image — the box is over empty canvas",
+            1 => "Image to image — the box is over 1 result",
+            _ => $"Image to image — the box is over {overlapping} results",
+        };
+    }
+
+    /// <summary>Right-click → Delete frame.</summary>
+    public IRelayCommand<GenerationFrameViewModel?>? DeleteFrameCommand { get; }
+
+    private void DeleteFrame(GenerationFrameViewModel? frame)
+    {
+        if (frame is null)
+            return;
+
+        // Detach before disposing: a bitmap still bound into the visual tree faults the render.
+        Frames.Remove(frame);
+        frame.Dispose();
+        EmitInfo("Removed a result from the canvas.");
+    }
+
+    /// <summary>Removes every accepted result from the canvas, releasing their bitmaps.</summary>
+    [RelayCommand]
+    private void ClearCanvas()
+    {
+        var count = Frames.Count;
+        foreach (var frame in Frames.ToList())
+        {
+            Frames.Remove(frame);
+            frame.Dispose();
+        }
+
+        EmitInfo($"Cleared the canvas ({count} result(s) removed).");
     }
 
     /// <summary>
@@ -228,11 +369,12 @@ public partial class DiffusionCanvasViewModel : ObservableObject
             StatusText = "Unloading model…";
             await _backendProvider.UnloadAllAsync().ConfigureAwait(true);
             StatusText = "Model unloaded — VRAM freed.";
+            EmitInfo("Unloaded the resident model; VRAM freed.");
             ResourceMonitor?.RefreshCommand.Execute(null);
         }
         catch (Exception ex)
         {
-            Logger.Error(ex, "Failed to unload diffusion model.");
+            EmitError($"Failed to unload the diffusion model: {ex.Message}", ex);
             StatusText = $"Unload failed: {ex.Message}";
         }
     }
@@ -288,7 +430,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            Logger.Error(ex, "Failed to load canvas model list.");
+            EmitError($"Failed to load the canvas model list: {ex.Message}", ex);
         }
     }
 
@@ -300,19 +442,16 @@ public partial class DiffusionCanvasViewModel : ObservableObject
             Dispatcher.UIThread.Post(action);
     }
 
-    /// <summary>Right-click → Delete frame. Wired in v1 (the only enabled context-menu entry).</summary>
-    public IRelayCommand<GenerationFrameViewModel?>? DeleteFrameCommand { get; }
-
-    private void DeleteFrame(GenerationFrameViewModel? frame)
-    {
-        if (frame is null) return;
-        Frames.Remove(frame);
-    }
+    // ────────────────────────────── Generate ──────────────────────────────
 
     /// <summary>
-    /// Generate command — creates a new frame at an offset from the last one, kicks off
-    /// the backend stream, and updates the frame as progress events arrive.
+    /// Enqueues a batch for the current bounding box and runs it.
     /// </summary>
+    /// <remarks>
+    /// The batch runs <b>sequentially</b> on purpose. <c>DiffusionContextHost</c> holds a per-model
+    /// <c>SemaphoreSlim(1,1)</c> with a single-resident policy, so parallel canvas generations would
+    /// either serialise behind that lock anyway or thrash VRAM by loading a second model.
+    /// </remarks>
     [RelayCommand(CanExecute = nameof(CanGenerate))]
     private async Task GenerateAsync()
     {
@@ -331,242 +470,515 @@ public partial class DiffusionCanvasViewModel : ObservableObject
         IsGenerating = true;
         StatusText = "Resolving backend…";
         BackendUnavailableMessage = null;
+        EmitInfo($"Generate requested: batch={BatchCount}, box={Describe(Box.WorldRect)}.");
+
+        string? regionImagePath = null;
 
         try
         {
-            IDiffusionBackend? backend;
-            if (SelectedBackend?.Key == CanvasBackendKeys.Engine)
-            {
-                backend = _engineBackend;
-                if (backend is null)
-                {
-                    BackendUnavailableMessage = "The Diffusion Nexus Engine is not available in this session.";
-                    StatusText = "Backend unavailable";
-                    return;
-                }
-
-                if (!await backend.IsAvailableAsync().ConfigureAwait(true))
-                {
-                    BackendUnavailableMessage = string.Join(" ", backend.MissingRequirements);
-                    StatusText = "Backend unavailable";
-                    return;
-                }
-            }
-            else
-            {
-                backend = await _backendProvider.TryGetAsync().ConfigureAwait(true);
-                if (backend is null)
-                {
-                    BackendUnavailableMessage =
-                        "Cannot locate the models folder. The local backend generates entirely on your GPU (no ComfyUI process), " +
-                        "but it expects a ComfyUI-layout models folder (DiffusionModels/, TextEncoders/, VAE/). " +
-                        "Check the Unified Logger for details, or ensure at least one installation is registered as 'ComfyUI' type in the Installer Manager.";
-                    StatusText = "Backend unavailable";
-                    return;
-                }
-            }
-
-            var modelKey = SelectedModel?.Key;
-            if (string.IsNullOrEmpty(modelKey))
-            {
-                StatusText = "Select a model before generating.";
+            var backend = await ResolveBackendAsync().ConfigureAwait(true);
+            if (backend is null)
                 return;
-            }
 
-            var descriptor = backend.Catalog.TryGet(modelKey);
+            EmitInfo($"Backend resolved: {backend.DisplayName}.");
+
+            var descriptor = ResolveDescriptor(backend);
             if (descriptor is null)
+                return;
+
+            EmitInfo($"Model resolved: {descriptor.DisplayName} (alignment {descriptor.DimensionAlignment}).");
+
+            // Adopt the model's alignment before validating: the backend's own ValidateRequest throws
+            // lazily, on the first MoveNextAsync inside the caller's await foreach, which is long after
+            // the candidate slots already exist.
+            Box.Alignment = descriptor.DimensionAlignment;
+            if (Box.Width % descriptor.DimensionAlignment != 0 || Box.Height % descriptor.DimensionAlignment != 0)
             {
-                var roots = _backendProvider.ResolvedModelsRoots;
-                var rootsText = roots.Count == 0 ? "(unknown)" : string.Join(" | ", roots);
-                var searched = (backend.Catalog as ComfyUiModelCatalog)?.SearchedLocationCount ?? 0;
-                BackendUnavailableMessage =
-                    $"'{SelectedModel?.DisplayName}' files were not found under the configured model roots. " +
-                    $"Searched {searched} location(s) recursively across {roots.Count} root(s): {rootsText}";
-                StatusText = "Model unavailable";
+                StatusText = $"The box must be a multiple of {descriptor.DimensionAlignment} px for {descriptor.DisplayName}.";
+                EmitWarning($"Refused to generate: box {Box.Width}x{Box.Height} is not aligned to {descriptor.DimensionAlignment}.");
                 return;
             }
 
-            // Create the new frame at an offset from the previous so they don't overlap.
-            var offset = _nextFrameOffset++ * 40;
-            var frame = new GenerationFrameViewModel
-            {
-                CanvasX = 100 + offset,
-                CanvasY = 100 + offset,
-                Width = descriptor.DefaultWidth,
-                Height = descriptor.DefaultHeight,
-                Prompt = PromptText,
-                State = GenerationFrameState.Loading,
-                StatusText = "Preparing…",
-                DeleteCommand = DeleteFrameCommand,
-            };
-            Frames.Add(frame);
+            var region = Box.WorldRect;
+            var width = Box.Width;
+            var height = Box.Height;
 
-            await RunGenerationStreamAsync(backend, descriptor, frame).ConfigureAwait(true);
+            regionImagePath = BuildRegionInitImage(region, width, height, out var coverage);
+
+            var initImage = regionImagePath is null
+                ? null
+                : new DiffusionReferenceImage(regionImagePath, (float)DenoiseStrength);
+
+            var candidates = Staging.BeginBatch(BatchCount, region);
+            EmitInfo($"Staged {candidates.Count} candidate slot(s).");
+
+            CancellationToken token;
+            lock (_runLock)
+            {
+                // Join the epoch — never replace a live one, or an in-flight Cancel loses its target.
+                _runCts ??= new CancellationTokenSource();
+                token = _runCts.Token;
+            }
+
+            await RunBatchAsync(backend, descriptor, candidates, initImage, width, height, coverage, token)
+                .ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            // Caught before the generic handler so a user cancel is never reported as a failure.
+            StatusText = "Cancelled.";
+            EmitInfo("Batch cancelled by the user.");
+            Staging.MarkPendingAsCancelled();
         }
         catch (Exception ex)
         {
-            Logger.Error(ex, "Diffusion generation failed");
+            EmitError($"Generation failed: {ex.Message}", ex);
             StatusText = $"Error: {ex.Message}";
         }
         finally
         {
+            DeleteScratchFile(regionImagePath);
+            EndRunEpoch();
             IsGenerating = false;
-            GenerateCommand.NotifyCanExecuteChanged();
+            Staging.RefreshCommands();
         }
     }
 
     private bool CanGenerate() => !IsGenerating && _backendProvider is not null && SelectedModel is not null;
 
     /// <summary>
-    /// Drives the backend stream → frame UI updates. Marshals back to the UI thread because
-    /// progress events fire on the channel reader's thread, not the dispatcher.
+    /// Stops the batch. Pending candidates are dropped immediately.
     /// </summary>
-    private async Task RunGenerationStreamAsync(
-        IDiffusionBackend backend,
-        ModelDescriptor descriptor,
-        GenerationFrameViewModel frame)
+    /// <remarks>
+    /// What this can and cannot interrupt differs per backend, and the tooltip says so: the engine
+    /// (ComfyUI) is interrupted mid-sampling, while the local stable-diffusion.cpp backend observes the
+    /// token only at phase boundaries — its native <c>GenerateImage</c> call has no cancel hook, so the
+    /// image currently sampling finishes and is then discarded.
+    /// </remarks>
+    [RelayCommand(CanExecute = nameof(CanCancel))]
+    private void Cancel()
     {
-        var request = new DiffusionRequest
+        CancellationTokenSource? cts;
+        lock (_runLock)
         {
-            ModelKey = descriptor.Key,
-            Prompt = frame.Prompt,
-            Width = frame.Width,
-            Height = frame.Height,
-            // v1 leaves Steps/Cfg/Sampler/Scheduler null so the backend uses the selected model's defaults
-            // (Z-Image-Turbo: 9 / 1.0 / euler / simple; FLUX.2-klein: 20 / 1.0 / euler / simple + Flux2Flow;
-            // Qwen-Image-2512: 4 / 1.0 / euler / simple + Flow, with its mandatory 4-step Lightning LoRA
-            // applied by the backend from the descriptor's DefaultLoras).
-            // TODO(v2-advanced): pass through Steps / Cfg / SelectedSampler when advanced UI is enabled.
-            // TODO(v2-seed):     pass UseRandomSeed ? null : Seed.
-            // TODO(v2-negative-prompt): pass NegativePromptText.
-            Seed = UseRandomSeed ? null : Seed,
-        };
+            // Both halves are the invariant — never cancel without nulling. Leaving a cancelled source
+            // installed would make the next Generate join a dead epoch and abort instantly.
+            cts = _runCts;
+            _runCts = null;
+        }
 
-        await foreach (var item in backend.GenerateAsync(request).ConfigureAwait(true))
+        if (cts is null)
+            return;
+
+        EmitInfo("Cancel requested — dropping the rest of the batch.");
+        StatusText = "Cancelling…";
+
+        try
         {
-            ApplyProgress(frame, item);
+            cts.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // The runner disposed it as we cancelled; nothing left to stop.
+        }
+
+        Staging.MarkPendingAsCancelled();
+    }
+
+    private bool CanCancel() => IsGenerating;
+
+    /// <summary>Cancels and disposes the current epoch, restoring the field to null for the next batch.</summary>
+    private void EndRunEpoch()
+    {
+        CancellationTokenSource? cts;
+        lock (_runLock)
+        {
+            cts = _runCts;
+            _runCts = null;
+        }
+
+        cts?.Dispose();
+    }
+
+    private async Task<IDiffusionBackend?> ResolveBackendAsync()
+    {
+        if (SelectedBackend?.Key == CanvasBackendKeys.Engine)
+        {
+            var engine = _engineBackend;
+            if (engine is null)
+            {
+                BackendUnavailableMessage = "The Diffusion Nexus Engine is not available in this session.";
+                StatusText = "Backend unavailable";
+                return null;
+            }
+
+            if (!await engine.IsAvailableAsync().ConfigureAwait(true))
+            {
+                BackendUnavailableMessage = string.Join(" ", engine.MissingRequirements);
+                StatusText = "Backend unavailable";
+                EmitWarning("The engine backend is not ready.", BackendUnavailableMessage);
+                return null;
+            }
+
+            return engine;
+        }
+
+        var local = await _backendProvider!.TryGetAsync().ConfigureAwait(true);
+        if (local is null)
+        {
+            BackendUnavailableMessage =
+                "Cannot locate the models folder. The local backend generates entirely on your GPU (no ComfyUI process), " +
+                "but it expects a ComfyUI-layout models folder (DiffusionModels/, TextEncoders/, VAE/). " +
+                "Check the Unified Logger for details, or ensure at least one installation is registered as 'ComfyUI' type in the Installer Manager.";
+            StatusText = "Backend unavailable";
+            EmitWarning("The local backend could not resolve its models root.");
+        }
+
+        return local;
+    }
+
+    private ModelDescriptor? ResolveDescriptor(IDiffusionBackend backend)
+    {
+        var modelKey = SelectedModel?.Key;
+        if (string.IsNullOrEmpty(modelKey))
+        {
+            StatusText = "Select a model before generating.";
+            return null;
+        }
+
+        var descriptor = backend.Catalog.TryGet(modelKey);
+        if (descriptor is not null)
+            return descriptor;
+
+        var roots = _backendProvider!.ResolvedModelsRoots;
+        var rootsText = roots.Count == 0 ? "(unknown)" : string.Join(" | ", roots);
+        var searched = (backend.Catalog as ComfyUiModelCatalog)?.SearchedLocationCount ?? 0;
+        BackendUnavailableMessage =
+            $"'{SelectedModel?.DisplayName}' files were not found under the configured model roots. " +
+            $"Searched {searched} location(s) recursively across {roots.Count} root(s): {rootsText}";
+        StatusText = "Model unavailable";
+        EmitWarning($"Model '{modelKey}' is not resolvable.", BackendUnavailableMessage);
+        return null;
+    }
+
+    /// <summary>
+    /// Composites whatever lies under the box into a temp PNG for the backend to use as an init image,
+    /// or returns null when the box is over empty canvas (a plain text2img run).
+    /// </summary>
+    /// <remarks>
+    /// Partial coverage is honest about its limits: with no <c>MaskImage</c> support in either backend,
+    /// the uncovered part is flattened onto neutral grey and the whole region is denoised, so the known
+    /// pixels are regenerated rather than preserved. True masked outpainting needs the layer stack
+    /// (issue #518 region D).
+    /// </remarks>
+    private string? BuildRegionInitImage(Rect region, int width, int height, out double coverage)
+    {
+        coverage = 0;
+
+        var sources = CanvasRegionCompositor.LoadIntersecting(
+            Frames, region, skipped => EmitWarning($"Skipped a raster while compositing the region: {skipped}."));
+
+        try
+        {
+            if (sources.Count == 0)
+            {
+                EmitInfo("Region is empty — running text to image.");
+                return null;
+            }
+
+            using var composite = CanvasRegionCompositor.Composite(sources, region, width, height);
+            coverage = composite.Coverage;
+
+            if (composite.IsEmpty)
+            {
+                EmitInfo("Region overlaps results but contains no opaque pixels — running text to image.");
+                return null;
+            }
+
+            var png = CanvasRegionCompositor.EncodeAsPng(composite.Bitmap, CanvasRegionCompositor.NeutralFill);
+            var path = Path.Combine(Path.GetTempPath(), $"diffnexus_canvas_{Guid.NewGuid():N}.png");
+            File.WriteAllBytes(path, png);
+
+            var percent = (int)Math.Round(coverage * 100);
+            EmitInfo($"Region composited: {percent}% covered, denoise {DenoiseStrength:0.00} — running image to image.");
+            if (!composite.IsFullyCovered)
+            {
+                EmitWarning(
+                    $"The box is only {percent}% over existing pixels. Without mask support the uncovered area is " +
+                    "neutral grey input, so the known pixels are regenerated rather than preserved.");
+            }
+
+            return path;
+        }
+        finally
+        {
+            foreach (var source in sources)
+                source.Bitmap.Dispose();
         }
     }
 
-    private void ApplyProgress(GenerationFrameViewModel frame, DiffusionStreamItem item)
+    private async Task RunBatchAsync(
+        IDiffusionBackend backend,
+        ModelDescriptor descriptor,
+        IReadOnlyList<StagedCandidateViewModel> candidates,
+        DiffusionReferenceImage? initImage,
+        int width,
+        int height,
+        double coverage,
+        CancellationToken token)
     {
-        // Always marshal to UI thread — backend producer runs on a Task.Run thread.
+        for (var i = 0; i < candidates.Count; i++)
+        {
+            token.ThrowIfCancellationRequested();
+
+            var candidate = candidates[i];
+            Staging.Current = candidate;
+            candidate.State = StagedCandidateState.Loading;
+            candidate.StatusText = "Preparing…";
+            StatusText = $"Generating {i + 1}/{candidates.Count}…";
+            EmitInfo($"Starting candidate {i + 1}/{candidates.Count} at {Describe(candidate.WorldRect)}.");
+
+            var request = new DiffusionRequest
+            {
+                ModelKey = descriptor.Key,
+                Prompt = PromptText,
+                Width = width,
+                Height = height,
+                // v1 leaves Steps/Cfg/Sampler/Scheduler null so the backend uses the model's own defaults.
+                // TODO(v2-advanced): pass through Steps / Cfg / SelectedSampler when the panel (region B) ships.
+                // TODO(v2-negative-prompt): pass NegativePromptText.
+                // Each image in a batch needs its own seed, or every candidate comes back identical.
+                Seed = UseRandomSeed ? null : Seed + i,
+                InitImage = initImage,
+            };
+
+            try
+            {
+                await foreach (var item in backend.GenerateAsync(request, token).ConfigureAwait(true))
+                    ApplyProgress(candidate, item);
+            }
+            catch (OperationCanceledException)
+            {
+                candidate.State = StagedCandidateState.Cancelled;
+                candidate.StatusText = "Cancelled";
+                throw;
+            }
+            catch (Exception ex)
+            {
+                candidate.State = StagedCandidateState.Failed;
+                candidate.StatusText = ex.Message;
+                EmitError($"Candidate {i + 1} failed: {ex.Message}", ex);
+            }
+
+            Staging.RefreshCommands();
+        }
+
+        var ready = candidates.Count(c => c.IsReady);
+        StatusText = ready == candidates.Count
+            ? $"{ready} candidate(s) ready — Enter accepts, Del discards."
+            : $"{ready}/{candidates.Count} candidate(s) ready — see the Unified Console for the rest.";
+        EmitInfo($"Batch finished: {ready}/{candidates.Count} ready (region coverage {(int)Math.Round(coverage * 100)}%).");
+    }
+
+    private void ApplyProgress(StagedCandidateViewModel candidate, DiffusionStreamItem item)
+    {
+        // Always marshal to the UI thread — the backend producer runs on a Task.Run thread.
         if (!Dispatcher.UIThread.CheckAccess())
         {
-            Dispatcher.UIThread.Post(() => ApplyProgress(frame, item));
+            Dispatcher.UIThread.Post(() => ApplyProgress(candidate, item));
             return;
         }
 
         switch (item.Progress.Phase)
         {
             case DiffusionPhase.Loading:
-                frame.State = GenerationFrameState.Loading;
-                frame.StatusText = item.Progress.Message ?? "Loading…";
-                StatusText = frame.StatusText;
+                candidate.State = StagedCandidateState.Loading;
+                candidate.StatusText = item.Progress.Message ?? "Loading…";
+                StatusText = candidate.StatusText;
+                break;
+
+            case DiffusionPhase.Encoding:
+                candidate.State = StagedCandidateState.Loading;
+                candidate.StatusText = item.Progress.Message ?? "Encoding the prompt…";
+                StatusText = candidate.StatusText;
                 break;
 
             case DiffusionPhase.Sampling:
-                frame.State = GenerationFrameState.Sampling;
-                frame.StepCurrent = item.Progress.Step;
-                frame.StepTotal = item.Progress.TotalSteps;
-                frame.StatusText = $"Sampling {item.Progress.Step}/{item.Progress.TotalSteps}";
-                StatusText = frame.StatusText;
+                candidate.State = StagedCandidateState.Sampling;
+                candidate.StepCurrent = item.Progress.Step;
+                candidate.StepTotal = item.Progress.TotalSteps;
+                candidate.StatusText = $"Sampling {item.Progress.Step}/{item.Progress.TotalSteps}";
+                StatusText = candidate.StatusText;
+                break;
+
+            case DiffusionPhase.Decoding:
+                candidate.State = StagedCandidateState.Sampling;
+                candidate.StatusText = item.Progress.Message ?? "Decoding…";
+                StatusText = candidate.StatusText;
                 break;
 
             case DiffusionPhase.Completed:
-                if (item.Result is { } result)
-                {
-                    Logger.Information(
-                        "Generation completed: {W}x{H}, seed={Seed}, png={Bytes} bytes, duration={Duration}",
-                        result.Width, result.Height, result.Seed, result.PngBytes?.Length ?? 0, result.Duration);
-
-                    frame.Seed = result.Seed;
-                    string? path = null;
-                    try
-                    {
-                        path = SaveResultToOutputs(result);
-                        frame.ImagePath = path;
-                        Logger.Information("Saved generated image to {Path}", path);
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.Error(ex, "Failed to save generated image to outputs folder.");
-                    }
-
-                    var bitmap = TryLoadBitmap(result.PngBytes, path);
-                    if (bitmap is null)
-                    {
-                        frame.State = GenerationFrameState.Failed;
-                        frame.StatusText = "Image decode failed (see Unified Logger).";
-                        StatusText = frame.StatusText;
-                    }
-                    else
-                    {
-                        frame.FrameImage = bitmap;
-                        frame.State = GenerationFrameState.Completed;
-                        frame.StatusText = $"Done in {result.Duration.TotalSeconds:N1}s";
-                        StatusText = frame.StatusText;
-                    }
-                }
-                else if (!string.IsNullOrEmpty(item.Progress.Message))
-                {
-                    // Error path — backend reports failure as a Completed message without a result.
-                    frame.State = GenerationFrameState.Failed;
-                    frame.StatusText = item.Progress.Message!;
-                    StatusText = frame.StatusText;
-                }
+                ApplyCompleted(candidate, item);
                 break;
         }
     }
 
-    private static string SaveResultToOutputs(DiffusionResult result)
+    private void ApplyCompleted(StagedCandidateViewModel candidate, DiffusionStreamItem item)
+    {
+        if (item.Result is not { } result)
+        {
+            // Error path — the backend reports failure as a Completed message with no result.
+            if (!string.IsNullOrEmpty(item.Progress.Message))
+            {
+                candidate.State = StagedCandidateState.Failed;
+                candidate.StatusText = item.Progress.Message!;
+                StatusText = candidate.StatusText;
+                EmitWarning($"Candidate {candidate.Ordinal} returned no image.", item.Progress.Message);
+            }
+
+            return;
+        }
+
+        candidate.Seed = result.Seed;
+        candidate.PngBytes = result.PngBytes;
+
+        var bitmap = TryDecode(result.PngBytes);
+        if (bitmap is null)
+        {
+            candidate.State = StagedCandidateState.Failed;
+            candidate.StatusText = "Image decode failed (see the Unified Console).";
+            StatusText = candidate.StatusText;
+            return;
+        }
+
+        candidate.Image = bitmap;
+        candidate.State = StagedCandidateState.Ready;
+        candidate.StatusText = $"Ready in {result.Duration.TotalSeconds.ToString("N1", CultureInfo.InvariantCulture)}s";
+        StatusText = candidate.StatusText;
+        EmitInfo($"Candidate {candidate.Ordinal} ready: {result.Width}x{result.Height}, seed {result.Seed}.");
+        Staging.RefreshCommands();
+    }
+
+    // ────────────────────────────── Accept ──────────────────────────────
+
+    /// <summary>
+    /// Turns an accepted candidate into a raster on the canvas. Only accepted results are written to
+    /// disk: discarded candidates never reach the outputs folder, which is what keeps the Generation
+    /// Gallery a record of work kept rather than of every attempt.
+    /// </summary>
+    private void OnCandidateAccepted(object? sender, StagedCandidateViewModel candidate)
+    {
+        string? path = null;
+        try
+        {
+            if (candidate.PngBytes is { Length: > 0 })
+                path = SaveToOutputs(candidate.PngBytes, candidate.Seed);
+        }
+        catch (Exception ex)
+        {
+            EmitError($"Failed to save the accepted result: {ex.Message}", ex);
+        }
+
+        // Transfer bitmap ownership to the frame rather than disposing it — the candidate has already
+        // been detached from the strip by the time this runs.
+        var image = candidate.Image;
+        candidate.Image = null;
+
+        var frame = new GenerationFrameViewModel
+        {
+            CanvasX = candidate.WorldRect.X,
+            CanvasY = candidate.WorldRect.Y,
+            Width = (int)Math.Round(candidate.WorldRect.Width),
+            Height = (int)Math.Round(candidate.WorldRect.Height),
+            Prompt = PromptText,
+            Seed = candidate.Seed,
+            FrameImage = image,
+            ImagePath = path,
+            State = GenerationFrameState.Completed,
+            StatusText = candidate.StatusText,
+            DeleteCommand = DeleteFrameCommand,
+        };
+
+        Frames.Add(frame);
+        EmitInfo($"Accepted candidate {candidate.Ordinal} onto the canvas at {Describe(candidate.WorldRect)}"
+                 + (path is null ? " (not saved — no PNG bytes)." : $"; saved to {path}."));
+    }
+
+    /// <summary>
+    /// Writes an accepted result to the outputs folder the Generation Gallery scans, never overwriting an
+    /// existing file — two results in the same second with the same seed would otherwise collide.
+    /// </summary>
+    private static string SaveToOutputs(byte[] pngBytes, long? seed)
     {
         Directory.CreateDirectory(OutputsFolderRegistrar.OutputsDirectory);
-        var fileName = $"{DateTime.Now:yyyyMMdd-HHmmss}-{result.Seed}.png";
-        var path = Path.Combine(OutputsFolderRegistrar.OutputsDirectory, fileName);
-        File.WriteAllBytes(path, result.PngBytes);
+        var stem = $"{DateTime.Now:yyyyMMdd-HHmmss}-{seed?.ToString(CultureInfo.InvariantCulture) ?? "noseed"}";
+        var path = Path.Combine(OutputsFolderRegistrar.OutputsDirectory, $"{stem}.png");
+
+        for (var attempt = 2; File.Exists(path) && attempt < 1000; attempt++)
+            path = Path.Combine(OutputsFolderRegistrar.OutputsDirectory, $"{stem}-{attempt}.png");
+
+        File.WriteAllBytes(path, pngBytes);
         return path;
     }
 
-    private static Bitmap? TryLoadBitmap(byte[]? pngBytes, string? fallbackPath)
+    private Bitmap? TryDecode(byte[]? pngBytes)
     {
-        // 1. Decode from the in-memory PNG bytes.
-        if (pngBytes is { Length: > 0 })
+        if (pngBytes is not { Length: > 0 })
         {
-            try
-            {
-                using var ms = new MemoryStream(pngBytes);
-                return new Bitmap(ms);
-            }
-            catch (Exception ex)
-            {
-                Logger.Warning(ex, "Failed to decode generated image from in-memory PNG bytes ({Bytes} bytes); will try the saved file.", pngBytes.Length);
-            }
-        }
-        else
-        {
-            Logger.Warning("Generated image PNG byte array was null or empty.");
+            EmitWarning("The backend returned an empty PNG byte array.");
+            return null;
         }
 
-        // 2. Fallback: re-load from the file we just wrote (different decoder path).
-        if (!string.IsNullOrEmpty(fallbackPath) && File.Exists(fallbackPath))
+        try
         {
-            try
-            {
-                return new Bitmap(fallbackPath);
-            }
-            catch (Exception ex)
-            {
-                Logger.Error(ex, "Failed to load bitmap from saved file {Path}", fallbackPath);
-            }
+            using var stream = new MemoryStream(pngBytes);
+            return new Bitmap(stream);
         }
-
-        return null;
+        catch (Exception ex)
+        {
+            EmitError($"Failed to decode the generated image ({pngBytes.Length} bytes): {ex.Message}", ex);
+            return null;
+        }
     }
 
-    private static Bitmap LoadBitmap(byte[] pngBytes)
+    private void DeleteScratchFile(string? path)
     {
-        using var ms = new MemoryStream(pngBytes);
-        return new Bitmap(ms);
+        if (string.IsNullOrEmpty(path))
+            return;
+
+        try
+        {
+            File.Delete(path);
+        }
+        catch (IOException) { /* best-effort scratch cleanup */ }
+        catch (UnauthorizedAccessException) { /* best-effort scratch cleanup */ }
+    }
+
+    private static string Describe(Rect rect) => string.Format(
+        CultureInfo.InvariantCulture,
+        "{0}x{1} @ {2},{3}",
+        (int)Math.Round(rect.Width), (int)Math.Round(rect.Height),
+        (int)Math.Round(rect.X), (int)Math.Round(rect.Y));
+
+    /// <summary>
+    /// Releases the run token and every held bitmap. This view model is a DI singleton that lives for the
+    /// whole session, so nothing else will ever tear it down.
+    /// </summary>
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+
+        _disposed = true;
+        EndRunEpoch();
+        Staging.DiscardAllCommand.Execute(null);
+
+        foreach (var frame in Frames.ToList())
+        {
+            Frames.Remove(frame);
+            frame.Dispose();
+        }
+
+        GC.SuppressFinalize(this);
     }
 }

@@ -1,46 +1,42 @@
 using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.UI.DiffusionCanvas;
 
 namespace DiffusionNexus.UI.ViewModels.DiffusionCanvas;
 
 /// <summary>
-/// One generation frame on the infinite canvas. Owns its position, size, prompt, and
-/// the lifecycle state of the generation that produced (or is producing) the image inside it.
+/// One accepted result on the canvas: pixels at a world position and size.
 ///
-/// The frame is the unit of "history" on the canvas — once a generation completes, the user
-/// can drag the frame around freely; pressing Generate again creates a NEW frame next to it
-/// rather than overwriting the result.
+/// This used to be the canvas's whole spatial model — Generate appended a frame at a walking diagonal
+/// offset and the user dragged it around afterwards. Issue #518 replaced that with a single
+/// <see cref="GenerationBoundingBox"/> that declares where the next generation lands, so a frame is now
+/// simply a committed raster: the record of a candidate the user accepted. It no longer moves or resizes,
+/// because moving a result after the fact would desynchronise it from the pixels it was generated from.
 /// </summary>
-public partial class GenerationFrameViewModel : ObservableObject
+public partial class GenerationFrameViewModel : ObservableObject, ICanvasRaster, IDisposable
 {
-    /// <summary>Model dimension alignment. Z-Image-Turbo requires multiples of 64.</summary>
-    public const int DimensionAlignment = 64;
-
-    public const int MinDimension = 512;
-    public const int MaxDimension = 2048;
-
-    /// <summary>X position on the canvas, in canvas-space pixels.</summary>
+    /// <summary>X position on the canvas, in world units.</summary>
     [ObservableProperty]
     private double _canvasX;
 
-    /// <summary>Y position on the canvas, in canvas-space pixels.</summary>
+    /// <summary>Y position on the canvas, in world units.</summary>
     [ObservableProperty]
     private double _canvasY;
 
-    /// <summary>Frame width (matches the diffusion output width). Snapped to <see cref="DimensionAlignment"/>.</summary>
+    /// <summary>Raster width (matches the diffusion output width).</summary>
     [ObservableProperty]
     private int _width = 1024;
 
-    /// <summary>Frame height (matches the diffusion output height). Snapped to <see cref="DimensionAlignment"/>.</summary>
+    /// <summary>Raster height (matches the diffusion output height).</summary>
     [ObservableProperty]
     private int _height = 1024;
 
-    /// <summary>Per-frame prompt text (defaults from the canvas-level prompt at creation time).</summary>
+    /// <summary>The prompt that produced this result, kept for provenance.</summary>
     [ObservableProperty]
     private string _prompt = string.Empty;
 
-    /// <summary>Current lifecycle state. Drives view template selection.</summary>
+    /// <summary>Current lifecycle state. Accepted results are always <see cref="GenerationFrameState.Completed"/>.</summary>
     [ObservableProperty]
     private GenerationFrameState _state = GenerationFrameState.Idle;
 
@@ -52,42 +48,47 @@ public partial class GenerationFrameViewModel : ObservableObject
     [ObservableProperty]
     private int _stepTotal;
 
-    /// <summary>Human-readable status line shown over the frame ("Loading…", "Sampling 5/9", error message…).</summary>
+    /// <summary>Human-readable status line ("Done in 4.1s", an error message…).</summary>
     [ObservableProperty]
     private string _statusText = string.Empty;
 
-    /// <summary>The completed image bound to the frame's surface, or null while idle/in-flight.</summary>
+    /// <summary>The image the surface draws. The frame owns it once a candidate is accepted.</summary>
     [ObservableProperty]
     private Bitmap? _frameImage;
 
-    /// <summary>Absolute path of the saved PNG, populated once <see cref="State"/> becomes Completed.</summary>
+    /// <summary>
+    /// Absolute path of the saved PNG. <see cref="CanvasRegionCompositor"/> reads the region back from
+    /// here, so a frame without a path contributes nothing to an img2img generation under it.
+    /// </summary>
     [ObservableProperty]
     private string? _imagePath;
 
-    /// <summary>Seed actually used for the generation (echoed from the backend), or null while pending.</summary>
+    /// <summary>Seed actually used for the generation (echoed from the backend), or null when unknown.</summary>
     [ObservableProperty]
     private long? _seed;
 
-    /// <summary>True while generation is in flight — disables Generate / drag-to-resize.</summary>
+    /// <summary>True while generation is in flight.</summary>
     public bool IsBusy => State is GenerationFrameState.Loading or GenerationFrameState.Sampling;
 
     partial void OnStateChanged(GenerationFrameState value) => OnPropertyChanged(nameof(IsBusy));
 
-    /// <summary>
-    /// Snaps a desired pixel dimension to the model's alignment grid and clamps to the allowed range.
-    /// </summary>
-    public static int SnapDimension(double desired)
-    {
-        var snapped = (int)Math.Round(desired / DimensionAlignment) * DimensionAlignment;
-        return Math.Clamp(snapped, MinDimension, MaxDimension);
-    }
-
     // TODO(v2-context-menu): wire these commands when the right-click context menu ships:
     //   - SendToImageEditorCommand
     //   - UseAsControlNetReferenceCommand
-    //   - UseAsInpaintBaseCommand
     //   - CopySeedToClipboardCommand
     //   - CopyPromptToClipboardCommand
-    /// <summary>Right-click → Delete frame. Implemented in v1; bound from the canvas VM.</summary>
+    /// <summary>Right-click → Delete. Bound from the canvas view model.</summary>
     public IRelayCommand<GenerationFrameViewModel>? DeleteCommand { get; set; }
+
+    /// <summary>
+    /// Releases the raster's bitmap. Callers must detach the frame from the bound collection first —
+    /// disposing a bitmap still bound into the visual tree faults the render.
+    /// </summary>
+    public void Dispose()
+    {
+        var image = FrameImage;
+        FrameImage = null;
+        image?.Dispose();
+        GC.SuppressFinalize(this);
+    }
 }
