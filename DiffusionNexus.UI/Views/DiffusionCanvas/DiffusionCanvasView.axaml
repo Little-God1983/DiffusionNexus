@@ -7,30 +7,34 @@
   <Design.DataContext>
     <vm:DiffusionCanvasViewModel/>
   </Design.DataContext>
-  <Grid RowDefinitions="Auto,*,Auto,Auto">
+  <Grid RowDefinitions="Auto,Auto,*,Auto,Auto">
 
-    <!-- ─────────────────────────── Toolbar ─────────────────────────── -->
-    <Border Grid.Row="0" Background="#1E1E1E" Padding="8" BorderBrush="#333" BorderThickness="0,0,0,1">
-      <!-- The tool strip scrolls instead of overflowing. A horizontal StackPanel never shrinks or clips
-           its children, so as the last (filling) child of a DockPanel it simply painted over the
-           right-docked resource monitor once the buttons outgrew the window. Issue #518 regions A and B
-           eventually move the backend picker and the VRAM readout into a title bar and the model/LoRA
-           controls into a left panel, which is the real fix for the crowding; until then the strip has to
-           stay inside its own bounds. Status is docked right rather than left in the strip so it never
-           scrolls out of sight — it is the one thing here you need to be able to read at all times. -->
+    <!-- ─────────────────────────── Status + resource monitor ─────────────────────────── -->
+    <!-- Its own row, on purpose. The monitor is ~650 logical px wide (two 130px gauges, a 200px GPU
+         name, utilisation, refresh) and the main window's minimum width is ~940, so on one row it left
+         the tool strip ~240px — the backend combo and a sliver of the model name, everything else
+         scrolled out of reach. This row is the title bar issue #518 region A describes, brought
+         forward: what is running, on what, and how much VRAM is left. -->
+    <Border Grid.Row="0" Background="#1A1A1A" Padding="8,4" BorderBrush="#333" BorderThickness="0,0,0,1">
       <DockPanel LastChildFill="True">
         <ContentControl DockPanel.Dock="Right" VerticalAlignment="Center" Margin="8,0,0,0"
                         IsVisible="{Binding ResourceMonitor, Converter={x:Static ObjectConverters.IsNotNull}}">
           <controls:ResourceMonitorView DataContext="{Binding ResourceMonitor}" />
         </ContentControl>
-
-        <TextBlock DockPanel.Dock="Right" Text="{Binding StatusText}" VerticalAlignment="Center"
-                   Foreground="#CCC" Margin="10,0,0,0" MaxWidth="320"
+        <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center" Foreground="#CCC"
                    TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding StatusText}" />
+      </DockPanel>
+    </Border>
 
-        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+    <!-- ─────────────────────────── Tool strip ─────────────────────────── -->
+    <!-- Scrolls rather than overflows: a horizontal StackPanel never shrinks or clips its children, so
+         when it outgrows the window it paints over whatever sits beside it. With the monitor on its own
+         row the strip has the full width and only the trailing placeholder buttons can scroll off at
+         the window's minimum size. -->
+    <Border Grid.Row="1" Background="#1E1E1E" Padding="8,6" BorderBrush="#333" BorderThickness="0,0,0,1">
+      <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
           <StackPanel Orientation="Horizontal" Spacing="4">
-          <ComboBox MinWidth="150" MaxWidth="230"
+          <ComboBox MinWidth="150"
                     ItemsSource="{Binding AvailableBackends}"
                     SelectedItem="{Binding SelectedBackend}"
                     ToolTip.Tip="Which engine generates the image">
@@ -40,7 +44,7 @@
               </DataTemplate>
             </ComboBox.ItemTemplate>
           </ComboBox>
-          <ComboBox MinWidth="150" MaxWidth="230"
+          <ComboBox MinWidth="150"
                     ItemsSource="{Binding AvailableModels}"
                     SelectedItem="{Binding SelectedModel}"
                     ToolTip.Tip="The model this backend will load and run.">
@@ -83,12 +87,11 @@
                   ToolTip.Tip="TODO(v2-layers): Layer stack (issue #518 region D)." />
 
           </StackPanel>
-        </ScrollViewer>
-      </DockPanel>
+      </ScrollViewer>
     </Border>
 
     <!-- ─────────────────────────── Canvas surface ─────────────────────────── -->
-    <controls:DiffusionCanvasSurface Grid.Row="1"
+    <controls:DiffusionCanvasSurface Grid.Row="2"
                                      Name="Surface"
                                      Rasters="{Binding Frames}"
                                      Box="{Binding Box}"
@@ -99,7 +102,7 @@
                                      SpacePanEnabled="{Binding !Staging.HasCandidates}" />
 
     <!-- ─────────────────────────── Staging strip ─────────────────────────── -->
-    <Border Grid.Row="2" Background="#1B1B1B" BorderBrush="#333" BorderThickness="0,1,0,0"
+    <Border Grid.Row="3" Background="#1B1B1B" BorderBrush="#333" BorderThickness="0,1,0,0"
             Padding="8,6" IsVisible="{Binding Staging.HasCandidates}">
       <DockPanel LastChildFill="True">
         <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center"
@@ -163,7 +166,7 @@
     </Border>
 
     <!-- ─────────────────────────── Prompt + Generate ─────────────────────────── -->
-    <Border Grid.Row="3" Background="#1E1E1E" Padding="8" BorderBrush="#333" BorderThickness="0,1,0,0">
+    <Border Grid.Row="4" Background="#1E1E1E" Padding="8" BorderBrush="#333" BorderThickness="0,1,0,0">
       <StackPanel Spacing="6">
         <Border Background="#5A2020" CornerRadius="4" Padding="8"
                 IsVisible="{Binding BackendUnavailableMessage, Converter={x:Static ObjectConverters.IsNotNull}}">
