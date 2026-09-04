@@ -123,6 +123,33 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
 
     public IReadOnlyList<string> Warnings => [];
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// The engine submits one fixed workflow graph, so what it honours is decided by which nodes
+    /// <see cref="Krea2WorkflowPatcher"/> actually writes. Prompt, negative prompt, size, seed, steps
+    /// and cfg are patched; the sampler and scheduler are baked into the template's KSampler and the
+    /// graph's LoRA loader is never touched, so both are reported as unsupported rather than accepted
+    /// and dropped. Interrupting mid-sample is the one thing this backend can do that the local one
+    /// cannot.
+    /// </remarks>
+    public BackendCapabilities Capabilities => EngineCapabilities;
+
+    /// <summary>
+    /// <see cref="Capabilities"/> without needing an instance, so a UI can gate its controls the moment
+    /// the backend is selected rather than after a readiness probe.
+    /// </summary>
+    public static BackendCapabilities EngineCapabilities { get; } = new(new Dictionary<BackendFeature, string>
+    {
+        [BackendFeature.SamplerSelection] =
+            "The Diffusion Nexus Engine's workflow fixes the sampler and scheduler. Switch to Diffusion Nexus Core to choose them.",
+        [BackendFeature.Loras] =
+            "The Diffusion Nexus Engine cannot load LoRAs yet. Switch to Diffusion Nexus Core to use them.",
+        [BackendFeature.ControlNet] =
+            "Control layers are not wired into the engine's workflow yet.",
+        [BackendFeature.Inpainting] =
+            "Masked inpainting is not wired into the engine's workflow yet.",
+    });
+
     public async Task<bool> IsAvailableAsync(CancellationToken ct = default)
     {
         _missingRequirements.Clear();
@@ -184,6 +211,28 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
     {
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
+
+        // This backend submits ONE graph — the Krea 2 workflow — regardless of what is asked of it, and
+        // it never reads the descriptor. Meanwhile its catalog unions Krea 2 with a real disk scan of the
+        // engine's models root (EngineModelCatalog), so after one readiness probe the caller's model
+        // dropdown can legitimately offer Z-Image-Turbo, FLUX.2-klein or Qwen. Without this guard,
+        // picking one of those ran the Krea 2 GGUF and reported the result under the other model's name:
+        // a wrong image, labelled convincingly. Refused as data, matching this seam's error contract.
+        if (!string.Equals(request.ModelKey, Krea2Model.Key, StringComparison.Ordinal))
+        {
+            var refusal =
+                $"The Diffusion Nexus Engine can only generate with {Krea2Model.DisplayName}; " +
+                $"'{request.ModelKey}' runs on Diffusion Nexus Core. Switch the backend or the model.";
+
+            Logger.Warning("Engine generation refused: {Reason}", refusal);
+
+            yield return new DiffusionStreamItem(new DiffusionProgress
+            {
+                Phase = DiffusionPhase.Completed,
+                Message = refusal
+            });
+            yield break;
+        }
 
         // TODO(canvas-batch-readiness): this full probe runs per request, and the canvas calls
         // GenerateAsync once per candidate — so a batch of 8 pays install-root resolution, a models-path

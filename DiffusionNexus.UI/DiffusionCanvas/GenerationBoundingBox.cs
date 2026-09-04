@@ -83,12 +83,21 @@ public sealed class GenerationBoundingBox
         get => _alignment;
         set
         {
-            _alignment = Math.Clamp(value, 1, MaxSize);
+            var next = Math.Clamp(value, 1, MaxSize);
+            var latticeMoved = next != _alignment;
+            _alignment = next;
 
             var width = SnapSize(Width);
             var height = SnapSize(Height);
             if (width == Width && height == Height)
+            {
+                // The box did not move, but the lattice under it did, and the surface draws its dot grid
+                // from this value. Staying silent left the grid showing 64px dots while the box snapped to
+                // 16 — the drawn guide contradicting the actual behaviour.
+                if (latticeMoved)
+                    Raise();
                 return;
+            }
 
             Width = width;
             Height = height;

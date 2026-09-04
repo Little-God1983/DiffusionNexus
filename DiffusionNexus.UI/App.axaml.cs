@@ -722,7 +722,8 @@ public partial class App : Application
                 sp.GetRequiredService<Services.Diffusion.LocalDiffusionBackendProvider>(),
                 sp.GetService<ViewModels.ResourceMonitorViewModel>(),
                 sp.GetRequiredService<Services.Diffusion.ManagedComfyUiBackend>(),
-                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>(),
+                sp.GetService<Services.Lora.ILoraCatalog>()));
 
 
         // ?? Installer SDK services ??

@@ -44,7 +44,8 @@ All paths are relative to `DiffusionNexus.UI/`.
 | Control | Purpose |
 |---------|---------|
 | `SearchableBaseModelPicker` (+ `SearchableBaseModelPickerViewModel`) | **The** base-model ComboBox. Never bind a raw `ComboBox` to the base-model catalog. |
-| `MultiLoraPickerControl` (+ `LoraPickerItemViewModel`) | Mandatory/optional multi-LoRA selection over `ILoraCatalog`. |
+| `MultiLoraPickerControl` (+ `LoraPickerItemViewModel`) | Mandatory/optional multi-LoRA selection over `ILoraCatalog`. It does **not** filter — the owner hands it an already-filtered list. |
+| `ModelBaseModelLabels` ([Services/Lora/](Services/Lora/ModelBaseModelLabels.cs)) | Which raw Civitai base-model labels a generation model's LoRAs are published under. Authored, never derived: a descriptor's `DisplayName` is not the Civitai label. Use this to build the filter you pass to `ILoraCatalog`, and never pass null — the catalog reads null as "return every installed LoRA". |
 | `ModelTileControl` (+ `ModelTileViewModel`, `ModelTileDependencies`) | Model card tile (grid item). |
 | `ModelDetailView` (+ `ModelDetailViewModel`) | Model detail panel — shared by the Browse and Installed tabs. |
 

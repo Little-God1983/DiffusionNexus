@@ -58,5 +58,7 @@
 > variant cannot be judged against nothing — and drag-to-pan is disarmed. With the strip empty there
 > is nothing to compare, so it arms drag-to-pan instead. Both behaviours come from issue #518.
 >
-> Every shortcut here is suppressed while the caret is in a text box, so the prompt field keeps its
-> spaces, arrows and returns.
+> Every shortcut here is suppressed while the caret is in a text box, and while focus is anywhere in
+> the Generate panel, so its sliders keep their arrow keys and its dropdowns keep Enter and Space.
+> These handlers run on the tunnel pass and claim their keys unconditionally, so a control that wants
+> a key has to be excluded explicitly. Click the canvas to get the shortcuts back.

@@ -7,215 +7,344 @@
   <Design.DataContext>
     <vm:DiffusionCanvasViewModel/>
   </Design.DataContext>
-  <Grid RowDefinitions="Auto,Auto,*,Auto,Auto">
 
-    <!-- ─────────────────────────── Status + resource monitor ─────────────────────────── -->
-    <!-- Its own row, on purpose. The monitor is ~650 logical px wide (two 130px gauges, a 200px GPU
-         name, utilisation, refresh) and the main window's minimum width is ~940, so on one row it left
-         the tool strip ~240px — the backend combo and a sliver of the model name, everything else
-         scrolled out of reach. This row is the title bar issue #518 region A describes, brought
-         forward: what is running, on what, and how much VRAM is left. -->
+  <Grid RowDefinitions="Auto,*">
+
+    <!-- ─────────────────────────── Title bar (issue #518 region A) ─────────────────────────── -->
+    <!-- Backend beside the VRAM gauges, because picking a model is a VRAM decision and the backend
+         decides what the rest of the window can offer. The monitor is ~650 logical px wide and the
+         window's minimum is ~940, which is why nothing else shares this row. -->
     <Border Grid.Row="0" Background="#1A1A1A" Padding="8,4" BorderBrush="#333" BorderThickness="0,0,0,1">
       <DockPanel LastChildFill="True">
         <ContentControl DockPanel.Dock="Right" VerticalAlignment="Center" Margin="8,0,0,0"
                         IsVisible="{Binding ResourceMonitor, Converter={x:Static ObjectConverters.IsNotNull}}">
           <controls:ResourceMonitorView DataContext="{Binding ResourceMonitor}" />
         </ContentControl>
-        <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center" Foreground="#CCC"
-                   TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding StatusText}" />
-      </DockPanel>
-    </Border>
 
-    <!-- ─────────────────────────── Tool strip ─────────────────────────── -->
-    <!-- Scrolls rather than overflows: a horizontal StackPanel never shrinks or clips its children, so
-         when it outgrows the window it paints over whatever sits beside it. With the monitor on its own
-         row the strip has the full width and only the trailing placeholder buttons can scroll off at
-         the window's minimum size. -->
-    <Border Grid.Row="1" Background="#1E1E1E" Padding="8,6" BorderBrush="#333" BorderThickness="0,0,0,1">
-      <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
-          <StackPanel Orientation="Horizontal" Spacing="4">
-          <ComboBox MinWidth="150"
+        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+          <TextBlock Text="Backend" Foreground="#868B93" FontSize="11" VerticalAlignment="Center" />
+          <ComboBox MinWidth="230"
                     ItemsSource="{Binding AvailableBackends}"
                     SelectedItem="{Binding SelectedBackend}"
-                    ToolTip.Tip="Which engine generates the image">
+                    ToolTip.Tip="Which engine generates the image. The two do not have the same abilities, so this changes what the panel can offer.">
             <ComboBox.ItemTemplate>
               <DataTemplate x:DataType="vm:CanvasBackendOption">
                 <TextBlock Text="{Binding DisplayName}" />
               </DataTemplate>
             </ComboBox.ItemTemplate>
           </ComboBox>
-          <ComboBox MinWidth="150"
-                    ItemsSource="{Binding AvailableModels}"
-                    SelectedItem="{Binding SelectedModel}"
-                    ToolTip.Tip="The model this backend will load and run.">
-            <ComboBox.ItemTemplate>
-              <DataTemplate x:DataType="vm:CanvasModelOption">
-                <TextBlock Text="{Binding DisplayName}" />
-              </DataTemplate>
-            </ComboBox.ItemTemplate>
-          </ComboBox>
-          <Button Content="Unload" Command="{Binding UnloadModelCommand}"
-                  ToolTip.Tip="Free VRAM by unloading the resident model (the next Generate reloads it)." />
-
-          <Border Width="1" Margin="6,2" Background="#3A3A3A" />
-
-          <Button Content="Fit" Click="OnFitClicked"
-                  ToolTip.Tip="Frame everything on the canvas (F)" />
-          <Button Content="1:1" Click="OnOneToOneClicked"
-                  ToolTip.Tip="Zoom to one generated pixel per screen pixel (1)" />
-          <Button Content="Find box" Click="OnCenterBoxClicked"
-                  ToolTip.Tip="Centre the view on the generation box (B)" />
-          <ToggleButton Content="Grid" IsChecked="{Binding ShowGrid}"
-                        ToolTip.Tip="Show the dot grid (G)" />
-          <TextBlock Name="ZoomReadout" VerticalAlignment="Center" Foreground="#999"
-                     Margin="6,0,0,0" MinWidth="52" />
-
-          <Border Width="1" Margin="6,2" Background="#3A3A3A" />
-
-          <Button Content="Clear canvas" Command="{Binding ClearCanvasCommand}"
-                  ToolTip.Tip="Remove every accepted result from the canvas." />
-
-          <Border Width="1" Margin="6,2" Background="#3A3A3A" />
-
-          <Button Content="+ LoRA" Command="{Binding AddLoraCommand}" IsEnabled="False"
-                  ToolTip.Tip="TODO(v2-loras): Add a LoRA over the base model." />
-          <Button Content="+ ControlNet" Command="{Binding AddControlNetCommand}" IsEnabled="False"
-                  ToolTip.Tip="TODO(v2-controlnet): Add ControlNet conditioning input." />
-          <Button Content="Mask" Command="{Binding ActivateMaskToolCommand}" IsEnabled="False"
-                  ToolTip.Tip="TODO(v2-mask-tools): Inpaint mask painting (issue #518 region D)." />
-          <Button Content="Layers" Command="{Binding ToggleLayerPanelCommand}" IsEnabled="False"
-                  ToolTip.Tip="TODO(v2-layers): Layer stack (issue #518 region D)." />
-
-          </StackPanel>
-      </ScrollViewer>
-    </Border>
-
-    <!-- ─────────────────────────── Canvas surface ─────────────────────────── -->
-    <controls:DiffusionCanvasSurface Grid.Row="2"
-                                     Name="Surface"
-                                     Rasters="{Binding Frames}"
-                                     Box="{Binding Box}"
-                                     ShowGrid="{Binding ShowGrid}"
-                                     PreviewImage="{Binding Staging.CurrentImage}"
-                                     PreviewRect="{Binding Staging.CurrentRect}"
-                                     IsPreviewHidden="{Binding Staging.IsComparing}"
-                                     SpacePanEnabled="{Binding !Staging.HasCandidates}"
-                                     DeleteRasterCommand="{Binding DeleteFrameCommand}" />
-
-    <!-- ─────────────────────────── Staging strip ─────────────────────────── -->
-    <Border Grid.Row="3" Background="#1B1B1B" BorderBrush="#333" BorderThickness="0,1,0,0"
-            Padding="8,6" IsVisible="{Binding Staging.HasCandidates}">
-      <DockPanel LastChildFill="True">
-        <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center"
-                    Margin="0,0,10,0">
-          <TextBlock Text="Staging" Foreground="#DDD" FontWeight="SemiBold" VerticalAlignment="Center" />
-          <TextBlock Text="{Binding Staging.PositionText}" Foreground="#888" VerticalAlignment="Center"
-                     Margin="4,0,0,0" />
         </StackPanel>
-
-        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center"
-                    Margin="10,0,0,0">
-          <Button Content="&#x2190;" Command="{Binding Staging.PreviousCommand}"
-                  ToolTip.Tip="Previous candidate (Left arrow)" />
-          <Button Content="&#x2192;" Command="{Binding Staging.NextCommand}"
-                  ToolTip.Tip="Next candidate (Right arrow)" />
-          <Button Content="Accept" Command="{Binding Staging.AcceptCommand}"
-                  Background="#2D7D46" Foreground="White"
-                  ToolTip.Tip="Place this candidate on the canvas (Enter)" />
-          <Button Content="Discard" Command="{Binding Staging.DiscardCommand}"
-                  ToolTip.Tip="Throw this candidate away (Delete)" />
-          <Button Content="Accept all" Command="{Binding Staging.AcceptAllCommand}" />
-          <Button Content="Discard all" Command="{Binding Staging.DiscardAllCommand}" />
-        </StackPanel>
-
-        <ListBox Name="StagingList"
-                 ItemsSource="{Binding Staging.Candidates}"
-                 SelectedItem="{Binding Staging.Current}"
-                 SelectionMode="Single"
-                 Background="Transparent" BorderThickness="0"
-                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                 ScrollViewer.VerticalScrollBarVisibility="Disabled">
-          <ListBox.ItemsPanel>
-            <ItemsPanelTemplate>
-              <StackPanel Orientation="Horizontal" Spacing="6" />
-            </ItemsPanelTemplate>
-          </ListBox.ItemsPanel>
-          <ListBox.ItemTemplate>
-            <DataTemplate x:DataType="vm:StagedCandidateViewModel">
-              <Grid Width="86" Height="86">
-                <Border Background="#101010" BorderBrush="#3A3A3A" BorderThickness="1" CornerRadius="3">
-                  <Image Source="{Binding Image}" Stretch="Uniform" />
-                </Border>
-                <!-- Dimmed overlay for any slot without an image to show: rendering slots carry their
-                     progress text and a bar, failed slots carry their error. Bound to !IsReady rather
-                     than IsPending so a failed slot does not collapse to a blank tile. -->
-                <Border Background="#B0101010" CornerRadius="3" IsVisible="{Binding !IsReady}">
-                  <StackPanel VerticalAlignment="Center" Spacing="4">
-                    <TextBlock Text="{Binding StatusText}" Foreground="#BBB" FontSize="10"
-                               HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center"
-                               Margin="4,0" MaxHeight="60" TextTrimming="CharacterEllipsis"
-                               ToolTip.Tip="{Binding StatusText}" />
-                    <ProgressBar Width="60" Height="4" IsIndeterminate="True" IsVisible="{Binding IsPending}" />
-                  </StackPanel>
-                </Border>
-                <Border VerticalAlignment="Top" HorizontalAlignment="Left" Background="#CC000000"
-                        CornerRadius="3,0,3,0" Padding="4,1">
-                  <TextBlock Text="{Binding Ordinal}" Foreground="#DDD" FontSize="10" />
-                </Border>
-              </Grid>
-            </DataTemplate>
-          </ListBox.ItemTemplate>
-        </ListBox>
       </DockPanel>
     </Border>
 
-    <!-- ─────────────────────────── Prompt + Generate ─────────────────────────── -->
-    <Border Grid.Row="4" Background="#1E1E1E" Padding="8" BorderBrush="#333" BorderThickness="0,1,0,0">
-      <StackPanel Spacing="6">
-        <Border Background="#5A2020" CornerRadius="4" Padding="8"
-                IsVisible="{Binding BackendUnavailableMessage, Converter={x:Static ObjectConverters.IsNotNull}}">
-          <TextBlock Text="{Binding BackendUnavailableMessage}" Foreground="#FFD" TextWrapping="Wrap" />
+    <Grid Grid.Row="1" ColumnDefinitions="340,*">
+
+      <!-- ═══════════════════════ Generate panel (issue #518 region B) ═══════════════════════ -->
+      <!-- One scrolling column ordered by how often it is touched: model, prompt, negative, LoRAs,
+           then sampling folded away. Generate is pinned to the bottom and never scrolls out of reach. -->
+      <Border Grid.Column="0" Name="GeneratePanel"
+              Background="#1E1E1E" BorderBrush="#333" BorderThickness="0,0,1,0">
+        <Grid RowDefinitions="Auto,*,Auto">
+
+          <Border Grid.Row="0" Padding="12,10" BorderBrush="#333" BorderThickness="0,0,0,1">
+            <DockPanel LastChildFill="True">
+              <Border DockPanel.Dock="Right" Background="#2A2A2A" CornerRadius="3" Padding="6,2"
+                      VerticalAlignment="Center">
+                <TextBlock Text="{Binding RegionModeBadge}" Foreground="#9AC" FontSize="10"
+                           ToolTip.Tip="{Binding RegionModeText}" />
+              </Border>
+              <TextBlock Text="Generate" Foreground="White" FontWeight="SemiBold" FontSize="14"
+                         VerticalAlignment="Center" />
+            </DockPanel>
+          </Border>
+
+          <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="14" Margin="12">
+
+              <!-- ── Model ── -->
+              <StackPanel Spacing="4">
+                <TextBlock Text="Model" Foreground="#868B93" FontSize="11" />
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                  <ComboBox Grid.Column="0" HorizontalAlignment="Stretch"
+                            ItemsSource="{Binding AvailableModels}"
+                            SelectedItem="{Binding SelectedModel}"
+                            ToolTip.Tip="The model this backend will load and run. Its own defaults fill the sampling section below.">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate x:DataType="vm:CanvasModelOption">
+                        <TextBlock Text="{Binding DisplayName}" />
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                  <Button Grid.Column="1" Content="Unload" Command="{Binding UnloadModelCommand}"
+                          ToolTip.Tip="Free VRAM by unloading the resident model. The next Generate reloads it." />
+                </Grid>
+              </StackPanel>
+
+              <!-- ── Prompt ── -->
+              <StackPanel Spacing="4">
+                <DockPanel LastChildFill="False">
+                  <TextBlock DockPanel.Dock="Left" Text="Prompt" Foreground="#868B93" FontSize="11" />
+                  <!-- Characters, not tokens: a real token count needs the model's own tokenizer, and the
+                       familiar 77 limit belongs to CLIP, which these models do not use. -->
+                  <TextBlock DockPanel.Dock="Right" Text="{Binding PromptLengthText}"
+                             Foreground="#6f6f6f" FontSize="10" />
+                </DockPanel>
+                <TextBox Name="PromptBox" Text="{Binding PromptText}"
+                         Watermark="Describe the image to generate"
+                         AcceptsReturn="True" TextWrapping="Wrap" MinHeight="72" MaxHeight="140" />
+              </StackPanel>
+
+              <!-- ── Negative prompt ── -->
+              <StackPanel Spacing="4">
+                <TextBlock Text="Negative" Foreground="#868B93" FontSize="11" />
+                <TextBox Text="{Binding NegativePromptText}"
+                         Watermark="What to keep out of the image"
+                         AcceptsReturn="True" TextWrapping="Wrap" MinHeight="48" MaxHeight="100"
+                         IsEnabled="{Binding IsNegativePromptSupported}" />
+                <TextBlock Text="{Binding NegativePromptLimitation}" Foreground="#C89A5A" FontSize="10"
+                           TextWrapping="Wrap"
+                           IsVisible="{Binding !IsNegativePromptSupported}" />
+              </StackPanel>
+
+              <!-- ── LoRAs ── -->
+              <StackPanel Spacing="4">
+                <DockPanel LastChildFill="False">
+                  <TextBlock DockPanel.Dock="Left" Text="LoRAs" Foreground="#868B93" FontSize="11" />
+                  <TextBlock DockPanel.Dock="Right" Text="{Binding SelectedModel.DisplayName}"
+                             Foreground="#6f6f6f" FontSize="10" TextTrimming="CharacterEllipsis"
+                             MaxWidth="180"
+                             ToolTip.Tip="The list is filtered to LoRAs published for this model's base model." />
+                </DockPanel>
+                <controls:MultiLoraPickerControl Loras="{Binding Loras}"
+                                                 AvailableLoras="{Binding AvailableLoras}"
+                                                 IsEnabled="{Binding IsLoraSupported}" />
+                <TextBlock Text="{Binding LoraUnavailableMessage}" Foreground="#C89A5A" FontSize="10"
+                           TextWrapping="Wrap"
+                           IsVisible="{Binding LoraUnavailableMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+              </StackPanel>
+
+              <!-- ── Sampling, folded away: after the first hour nobody reopens it, so the header
+                      carries the values instead. ── -->
+              <Expander IsExpanded="False" HorizontalAlignment="Stretch"
+                        Header="{Binding SamplingSummary, StringFormat='Sampling   {0}'}">
+                <StackPanel Spacing="12" Margin="0,8,0,0">
+
+                  <StackPanel Spacing="4">
+                    <TextBlock Text="{Binding Steps, StringFormat='Steps: {0}'}" Foreground="#BBB" FontSize="11" />
+                    <Slider Minimum="1" Maximum="60" TickFrequency="1" IsSnapToTickEnabled="True"
+                            Value="{Binding Steps}"
+                            IsEnabled="{Binding IsStepsAndGuidanceSupported}"
+                            ToolTip.Tip="How many denoising steps to run. More is slower; past a model's sweet spot it stops helping. Reset to the model's own default whenever you change model." />
+                  </StackPanel>
+
+                  <StackPanel Spacing="4">
+                    <TextBlock Text="{Binding GuidanceText}" Foreground="#BBB" FontSize="11" />
+                    <Slider Minimum="0" Maximum="20" TickFrequency="0.1" IsSnapToTickEnabled="True"
+                            Value="{Binding Cfg}"
+                            IsEnabled="{Binding IsStepsAndGuidanceSupported}"
+                            ToolTip.Tip="How hard the model is pushed toward the prompt. Turbo and distilled models expect 1.0 and break at higher values." />
+                  </StackPanel>
+
+                  <TextBlock Text="{Binding StepsAndGuidanceLimitation}" Foreground="#C89A5A" FontSize="10"
+                             TextWrapping="Wrap"
+                             IsVisible="{Binding !IsStepsAndGuidanceSupported}" />
+
+                  <StackPanel Spacing="4">
+                    <TextBlock Text="Sampler" Foreground="#BBB" FontSize="11" />
+                    <ComboBox HorizontalAlignment="Stretch"
+                              ItemsSource="{Binding AvailableSamplers}"
+                              SelectedItem="{Binding SelectedSampler}"
+                              IsEnabled="{Binding IsSamplerSelectionSupported}" />
+                  </StackPanel>
+
+                  <StackPanel Spacing="4">
+                    <TextBlock Text="Scheduler" Foreground="#BBB" FontSize="11" />
+                    <ComboBox HorizontalAlignment="Stretch"
+                              ItemsSource="{Binding AvailableSchedulers}"
+                              SelectedItem="{Binding SelectedScheduler}"
+                              IsEnabled="{Binding IsSamplerSelectionSupported}" />
+                  </StackPanel>
+
+                  <TextBlock Text="{Binding SamplerSelectionLimitation}" Foreground="#C89A5A" FontSize="10"
+                             TextWrapping="Wrap"
+                             IsVisible="{Binding !IsSamplerSelectionSupported}" />
+                </StackPanel>
+              </Expander>
+
+              <!-- ── Seed ── -->
+              <StackPanel Spacing="4">
+                <TextBlock Text="Seed" Foreground="#868B93" FontSize="11" />
+                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
+                  <Border Grid.Column="0" Background="#141414" BorderBrush="#333" BorderThickness="1"
+                          CornerRadius="3" Padding="8,5">
+                    <TextBlock Text="{Binding SeedText}" Foreground="#DDD" FontSize="12"
+                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                  </Border>
+                  <ToggleButton Grid.Column="1" Content="Random" IsChecked="{Binding UseRandomSeed}"
+                                ToolTip.Tip="Roll a fresh seed for every image. Turn this off to keep one and vary the prompt instead." />
+                  <Button Grid.Column="2" Content="&#x21BA;" Command="{Binding ReuseLastSeedCommand}"
+                          ToolTip.Tip="Lock the seed the last finished image used." />
+                </Grid>
+                <Button Content="Roll a new fixed seed" HorizontalAlignment="Stretch"
+                        Command="{Binding RandomizeSeedCommand}"
+                        ToolTip.Tip="Pick a random seed and lock it, so this exact image can be reproduced." />
+              </StackPanel>
+            </StackPanel>
+          </ScrollViewer>
+
+          <!-- ── Pinned footer: never scrolls out of reach ── -->
+          <Border Grid.Row="2" Background="#2A2A2A" Padding="12" BorderBrush="#333" BorderThickness="0,1,0,0">
+            <StackPanel Spacing="8">
+              <Border Background="#5A2020" CornerRadius="4" Padding="8"
+                      IsVisible="{Binding BackendUnavailableMessage, Converter={x:Static ObjectConverters.IsNotNull}}">
+                <TextBlock Text="{Binding BackendUnavailableMessage}" Foreground="#FFD" TextWrapping="Wrap" />
+              </Border>
+
+              <StackPanel Spacing="4" IsVisible="{Binding IsRegionOccupied}">
+                <TextBlock Text="{Binding DenoiseText}" Foreground="#BBB" FontSize="11" />
+                <Slider Minimum="0.05" Maximum="1.0" TickFrequency="0.05" IsSnapToTickEnabled="True"
+                        Value="{Binding DenoiseStrength}"
+                        ToolTip.Tip="How far from the pixels under the box the result may travel. 0 keeps the input, 1 ignores it." />
+              </StackPanel>
+
+              <TextBlock Text="{Binding StatusText}" Foreground="#CCC" FontSize="11" TextWrapping="Wrap"
+                         MaxHeight="48" TextTrimming="CharacterEllipsis"
+                         ToolTip.Tip="{Binding StatusText}" />
+
+              <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="6">
+                <NumericUpDown Grid.Column="0" Value="{Binding BatchCount}" Minimum="1" Maximum="8"
+                               Increment="1" Width="92" FormatString="0" ShowButtonSpinner="True"
+                               ToolTip.Tip="How many candidates one Generate produces. They run one after another, because the engine keeps a single model resident." />
+                <Button Grid.Column="1" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                        Command="{Binding GenerateCommand}"
+                        Padding="12,7" FontWeight="SemiBold"
+                        Background="#0E639C" Foreground="White"
+                        Content="{Binding BatchCount, StringFormat='Generate  ×{0}'}" />
+                <Button Grid.Column="2" Content="Cancel" Command="{Binding CancelCommand}" Padding="12,7"
+                        ToolTip.Tip="{Binding CancelTooltip}" />
+              </Grid>
+            </StackPanel>
+          </Border>
+        </Grid>
+      </Border>
+
+      <!-- ═══════════════════════ Canvas column ═══════════════════════ -->
+      <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto">
+
+        <!-- ── View tools. Scrolls rather than overflows: a horizontal StackPanel never shrinks or
+                clips its children, so when it outgrows the window it paints over whatever sits beside it. ── -->
+        <Border Grid.Row="0" Background="#1E1E1E" Padding="8,6" BorderBrush="#333" BorderThickness="0,0,0,1">
+          <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+            <StackPanel Orientation="Horizontal" Spacing="4">
+              <Button Content="Fit" Click="OnFitClicked"
+                      ToolTip.Tip="Frame everything on the canvas (F)" />
+              <Button Content="1:1" Click="OnOneToOneClicked"
+                      ToolTip.Tip="Zoom to one generated pixel per screen pixel (1)" />
+              <Button Content="Find box" Click="OnCenterBoxClicked"
+                      ToolTip.Tip="Centre the view on the generation box (B)" />
+              <ToggleButton Content="Grid" IsChecked="{Binding ShowGrid}"
+                            ToolTip.Tip="Show the dot grid (G)" />
+              <TextBlock Name="ZoomReadout" VerticalAlignment="Center" Foreground="#999"
+                         Margin="6,0,0,0" MinWidth="52" />
+
+              <Border Width="1" Margin="6,2" Background="#3A3A3A" />
+
+              <Button Content="Clear canvas" Command="{Binding ClearCanvasCommand}"
+                      ToolTip.Tip="Remove every accepted result from the canvas." />
+
+              <Border Width="1" Margin="6,2" Background="#3A3A3A" />
+
+              <!-- Region D. Disabled, but the tooltip carries the selected backend's own reason rather
+                   than a leaked TODO marker. -->
+              <Button Content="+ ControlNet" Command="{Binding AddControlNetCommand}" IsEnabled="False"
+                      ToolTip.Tip="{Binding SamplerSelectionLimitation}" />
+              <Button Content="Mask" Command="{Binding ActivateMaskToolCommand}" IsEnabled="False"
+                      ToolTip.Tip="Inpaint mask painting arrives with the layer stack (issue #518 region D)." />
+              <Button Content="Layers" Command="{Binding ToggleLayerPanelCommand}" IsEnabled="False"
+                      ToolTip.Tip="The layer stack arrives in issue #518 region D." />
+            </StackPanel>
+          </ScrollViewer>
         </Border>
 
-        <TextBox Name="PromptBox" Text="{Binding PromptText}"
-                 Watermark="Prompt - describe the image to generate"
-                 AcceptsReturn="True" MaxHeight="80" />
-        <TextBox Text="{Binding NegativePromptText}"
-                 Watermark="Negative prompt - coming soon (TODO(v2-negative-prompt))"
-                 IsEnabled="False" MaxHeight="60" />
+        <!-- ── Surface ── -->
+        <controls:DiffusionCanvasSurface Grid.Row="1"
+                                         Name="Surface"
+                                         Rasters="{Binding Frames}"
+                                         Box="{Binding Box}"
+                                         ShowGrid="{Binding ShowGrid}"
+                                         PreviewImage="{Binding Staging.CurrentImage}"
+                                         PreviewRect="{Binding Staging.CurrentRect}"
+                                         IsPreviewHidden="{Binding Staging.IsComparing}"
+                                         SpacePanEnabled="{Binding !Staging.HasCandidates}"
+                                         DeleteRasterCommand="{Binding DeleteFrameCommand}" />
 
-        <Grid ColumnDefinitions="*,Auto,Auto,Auto" RowDefinitions="Auto">
-          <TextBlock Grid.Column="0" Text="{Binding RegionModeText}" Foreground="#9AC" VerticalAlignment="Center"
-                     TextWrapping="Wrap"
-                     ToolTip.Tip="Whatever is under the box is what the model sees. Drag the box onto a result to make this an image-to-image run." />
+        <!-- ── Staging strip ── -->
+        <Border Grid.Row="2" Background="#1B1B1B" BorderBrush="#333" BorderThickness="0,1,0,0"
+                Padding="8,6" IsVisible="{Binding Staging.HasCandidates}">
+          <DockPanel LastChildFill="True">
+            <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center"
+                        Margin="0,0,10,0">
+              <TextBlock Text="Staging" Foreground="#DDD" FontWeight="SemiBold" VerticalAlignment="Center" />
+              <TextBlock Text="{Binding Staging.PositionText}" Foreground="#888" VerticalAlignment="Center"
+                         Margin="4,0,0,0" />
+            </StackPanel>
 
-          <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" Margin="12,0,0,0"
-                      VerticalAlignment="Center" IsVisible="{Binding IsRegionOccupied}">
-            <TextBlock Text="Denoise:" VerticalAlignment="Center" Foreground="#BBB" />
-            <Slider Width="120" Minimum="0.05" Maximum="1.0" TickFrequency="0.05" IsSnapToTickEnabled="True"
-                    Value="{Binding DenoiseStrength}" VerticalAlignment="Center"
-                    ToolTip.Tip="How far from the pixels under the box the result may travel. 0 keeps the input, 1 ignores it." />
-            <TextBlock Text="{Binding DenoiseStrength, StringFormat={}{0:0.00}}" Foreground="#BBB"
-                       VerticalAlignment="Center" MinWidth="30" />
-          </StackPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center"
+                        Margin="10,0,0,0">
+              <Button Content="&#x2190;" Command="{Binding Staging.PreviousCommand}"
+                      ToolTip.Tip="Previous candidate (Left arrow)" />
+              <Button Content="&#x2192;" Command="{Binding Staging.NextCommand}"
+                      ToolTip.Tip="Next candidate (Right arrow)" />
+              <Button Content="Accept" Command="{Binding Staging.AcceptCommand}"
+                      Background="#2D7D46" Foreground="White"
+                      ToolTip.Tip="Place this candidate on the canvas (Enter)" />
+              <Button Content="Discard" Command="{Binding Staging.DiscardCommand}"
+                      ToolTip.Tip="Throw this candidate away (Delete)" />
+              <Button Content="Accept all" Command="{Binding Staging.AcceptAllCommand}" />
+              <Button Content="Discard all" Command="{Binding Staging.DiscardAllCommand}" />
+            </StackPanel>
 
-          <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4" Margin="12,0,8,0"
-                      VerticalAlignment="Center">
-            <TextBlock Text="Batch:" VerticalAlignment="Center" Foreground="#BBB" />
-            <NumericUpDown Value="{Binding BatchCount}" Minimum="1" Maximum="8" Increment="1" Width="90"
-                           FormatString="0"
-                           ToolTip.Tip="How many candidates one Generate produces. They run one after another — the engine keeps a single model resident." />
-          </StackPanel>
-
-          <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6">
-            <Button Content="Cancel" Command="{Binding CancelCommand}" Padding="14,6"
-                    ToolTip.Tip="Stop the batch. The engine (ComfyUI) is interrupted immediately; the local backend finishes the image it is sampling and discards it, because stable-diffusion.cpp exposes no mid-sample cancel hook." />
-            <Button Content="Generate" Command="{Binding GenerateCommand}"
-                    Padding="20,6" FontWeight="SemiBold"
-                    Background="#0E639C" Foreground="White" />
-          </StackPanel>
-        </Grid>
-      </StackPanel>
-    </Border>
+            <ListBox Name="StagingList"
+                     ItemsSource="{Binding Staging.Candidates}"
+                     SelectedItem="{Binding Staging.Current}"
+                     SelectionMode="Single"
+                     Background="Transparent" BorderThickness="0"
+                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                     ScrollViewer.VerticalScrollBarVisibility="Disabled">
+              <ListBox.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <StackPanel Orientation="Horizontal" Spacing="6" />
+                </ItemsPanelTemplate>
+              </ListBox.ItemsPanel>
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:StagedCandidateViewModel">
+                  <Grid Width="86" Height="86">
+                    <Border Background="#101010" BorderBrush="#3A3A3A" BorderThickness="1" CornerRadius="3">
+                      <Image Source="{Binding Image}" Stretch="Uniform" />
+                    </Border>
+                    <!-- Dimmed overlay for any slot without an image to show: rendering slots carry their
+                         progress text and a bar, failed slots carry their error. Bound to !IsReady rather
+                         than IsPending so a failed slot does not collapse to a blank tile. -->
+                    <Border Background="#B0101010" CornerRadius="3" IsVisible="{Binding !IsReady}">
+                      <StackPanel VerticalAlignment="Center" Spacing="4">
+                        <TextBlock Text="{Binding StatusText}" Foreground="#BBB" FontSize="10"
+                                   HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center"
+                                   Margin="4,0" MaxHeight="60" TextTrimming="CharacterEllipsis"
+                                   ToolTip.Tip="{Binding StatusText}" />
+                        <ProgressBar Width="60" Height="4" IsIndeterminate="True" IsVisible="{Binding IsPending}" />
+                      </StackPanel>
+                    </Border>
+                    <Border VerticalAlignment="Top" HorizontalAlignment="Left" Background="#CC000000"
+                            CornerRadius="3,0,3,0" Padding="4,1">
+                      <TextBlock Text="{Binding Ordinal}" Foreground="#DDD" FontSize="10" />
+                    </Border>
+                  </Grid>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </DockPanel>
+        </Border>
+      </Grid>
+    </Grid>
   </Grid>
 </UserControl>

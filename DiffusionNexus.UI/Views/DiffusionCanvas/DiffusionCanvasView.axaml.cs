@@ -85,7 +85,7 @@ public partial class DiffusionCanvasView : UserControl
 
     private void OnPreviewKeyDown(object? sender, KeyEventArgs e)
     {
-        if (IsTypingInATextBox())
+        if (ShouldLeaveTheKeyAlone())
             return;
 
         var vm = ViewModel;
@@ -170,9 +170,24 @@ public partial class DiffusionCanvasView : UserControl
     }
 
     /// <summary>
-    /// True when the keyboard belongs to a text field. Without this, the staging strip's arrow/Space/Enter
-    /// shortcuts would fight the prompt box, which accepts returns.
+    /// True when the focused control owns the keystroke, so the canvas must not claim it.
     /// </summary>
-    private bool IsTypingInATextBox() =>
-        TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() is TextBox;
+    /// <remarks>
+    /// Two cases. A focused <see cref="TextBox"/> anywhere, because the prompt accepts returns and spaces.
+    /// And <b>anything inside the generate panel</b>, because these handlers run on the tunnel pass and
+    /// claim their keys unconditionally: a focused Slider would lose Left/Right to the staging strip, a
+    /// ComboBox would lose Enter and Space, and the batch spinner would lose its arrows. Testing for
+    /// "is a TextBox" was enough while the only input on this screen was the prompt; region B filled a
+    /// whole column with sliders, combos and toggles.
+    /// </remarks>
+    private bool ShouldLeaveTheKeyAlone()
+    {
+        var focused = TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement();
+        if (focused is TextBox)
+            return true;
+
+        return focused is Visual visual
+            && GeneratePanel is { } panel
+            && (ReferenceEquals(visual, panel) || visual.GetVisualAncestors().Contains(panel));
+    }
 }

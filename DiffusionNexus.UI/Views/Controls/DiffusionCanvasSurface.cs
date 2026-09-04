@@ -90,6 +90,13 @@ public class DiffusionCanvasSurface : Control
     private readonly BoxLayer _boxLayer;
     private int _antsOffset;
 
+    /// <summary>
+    /// The lattice the dot grid was last drawn for. Tracked so a box change only repaints the whole
+    /// surface when the lattice actually moved — a box drag raises Changed on every pointer move, and
+    /// repainting the grid for each of those is exactly what the box layer exists to avoid.
+    /// </summary>
+    private int _gridAlignment = GenerationBoundingBox.DefaultAlignment;
+
     // Gesture state. A single pointer at a time — the canvas has no multi-touch gestures.
     private IPointer? _capturedPointer;
     private bool _isPanning;
@@ -343,7 +350,18 @@ public class DiffusionCanvasSurface : Control
 
     private void OnRasterPropertyChanged(object? sender, PropertyChangedEventArgs e) => InvalidateVisual();
 
-    private void OnObservedBoxChanged(object? sender, EventArgs e) => _boxLayer.InvalidateVisual();
+    private void OnObservedBoxChanged(object? sender, EventArgs e)
+    {
+        _boxLayer.InvalidateVisual();
+
+        // Selecting a model re-snaps the box onto that model's lattice, and the grid draws the same
+        // lattice, so it has to be re-recorded when that value moves.
+        if (Box is { } box && box.Alignment != _gridAlignment)
+        {
+            _gridAlignment = box.Alignment;
+            InvalidateVisual();
+        }
+    }
 
     // ────────────────────────────────── Public gestures ──────────────────────────────────
 
@@ -663,9 +681,12 @@ public class DiffusionCanvasSurface : Control
 
     private void DrawGrid(DrawingContext context, Rect bounds)
     {
-        // Step up the lattice until the dots are far enough apart to read; this also bounds the dot
-        // count, so zooming out cannot turn the grid into tens of thousands of fills per frame.
-        var step = (double)GenerationBoundingBox.DefaultAlignment;
+        // The box's own lattice, not a fixed 64: the box snaps to the selected model's DimensionAlignment
+        // (16 for FLUX.2-klein and both Qwen models), and a grid drawn at a different spacing tells the
+        // user their box is snapping somewhere it is not.
+        // Step up until the dots are far enough apart to read; this also bounds the dot count, so zooming
+        // out cannot turn the grid into tens of thousands of fills per frame.
+        var step = (double)(Box?.Alignment ?? GenerationBoundingBox.DefaultAlignment);
         while (step * Viewport.Zoom < MinDotSpacing)
             step *= 2;
 

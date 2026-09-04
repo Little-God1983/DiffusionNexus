@@ -33,6 +33,18 @@ public interface IDiffusionBackend
     IModelCatalog Catalog { get; }
 
     /// <summary>
+    /// Which parts of a <see cref="DiffusionRequest"/> this backend actually honours, and a reason
+    /// for each one it does not.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not a default interface member: a new backend must state its limits rather than
+    /// inherit a claim to support everything. A UI is expected to keep an unsupported control visible
+    /// and disabled with the reason attached (issue #518), so silence here becomes a silently broken
+    /// control rather than a compile error.
+    /// </remarks>
+    BackendCapabilities Capabilities { get; }
+
+    /// <summary>
     /// Human-readable descriptions of requirements that are not currently satisfied.
     /// Populated after <see cref="IsAvailableAsync"/> returns <c>false</c>. Backends with no
     /// additional requirements may always return an empty list.

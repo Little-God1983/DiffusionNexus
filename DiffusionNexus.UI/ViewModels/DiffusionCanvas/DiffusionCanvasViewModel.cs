@@ -12,13 +12,20 @@ using DiffusionNexus.Inference.Models;
 using DiffusionNexus.Inference.StableDiffusionCpp;
 using DiffusionNexus.UI.DiffusionCanvas;
 using DiffusionNexus.UI.Services.Diffusion;
+using DiffusionNexus.UI.Services.Lora;
+using DiffusionNexus.UI.ViewModels.Controls;
 using Serilog;
 using SkiaSharp;
 
 namespace DiffusionNexus.UI.ViewModels.DiffusionCanvas;
 
-/// <summary>A selectable local model in the canvas toolbar (e.g. "Local (FLUX.2-klein)").</summary>
-public sealed record CanvasModelOption(string Key, string DisplayName);
+/// <summary>A selectable model in the generate panel (e.g. "Local (FLUX.2-klein)").</summary>
+/// <param name="Descriptor">
+/// The descriptor this option came from, carried so the panel can seed steps, guidance, sampler and
+/// scheduler from the model's own defaults without re-querying a catalog — for the local backend that
+/// query is a recursive multi-root disk walk. Null only at design time.
+/// </param>
+public sealed record CanvasModelOption(string Key, string DisplayName, ModelDescriptor? Descriptor = null);
 
 /// <summary>Stable keys for the canvas backend dropdown.</summary>
 public static class CanvasBackendKeys
@@ -30,8 +37,12 @@ public static class CanvasBackendKeys
     public const string Engine = "engine";
 }
 
-/// <summary>A selectable generation backend in the canvas toolbar.</summary>
-public sealed record CanvasBackendOption(string Key, string DisplayName);
+/// <summary>A selectable generation backend in the canvas title bar.</summary>
+/// <param name="Capabilities">
+/// What this backend honours. Read from a static so selecting a backend can gate the panel immediately,
+/// without constructing the backend or running its readiness probe.
+/// </param>
+public sealed record CanvasBackendOption(string Key, string DisplayName, BackendCapabilities Capabilities);
 
 /// <summary>
 /// ViewModel for the Diffusion Canvas module.
@@ -54,6 +65,14 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     private readonly LocalDiffusionBackendProvider? _backendProvider;
     private readonly IDiffusionBackend? _engineBackend;
     private readonly IUnifiedLogger? _unifiedLogger;
+    private readonly ILoraCatalog? _loraCatalog;
+
+    /// <summary>
+    /// Generation counter for the LoRA load. The load is fire-and-forget and the filter depends on the
+    /// selected model, so a fast second selection can otherwise land its results after a slower first one
+    /// and leave the picker showing the wrong model's LoRAs.
+    /// </summary>
+    private int _loraLoadGeneration;
 
     /// <summary>
     /// Guards <see cref="_runCts"/>. Generate joins the epoch and Cancel cancels-and-nulls it; without a
@@ -137,7 +156,11 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     /// Only meaningful for an img2img run; the readout hides it when the box is over empty canvas.
     /// </summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DenoiseText))]
     private double _denoiseStrength = 0.65;
+
+    /// <summary>The denoise slider's label, invariant for the same reason as <see cref="GuidanceText"/>.</summary>
+    public string DenoiseText => string.Format(CultureInfo.InvariantCulture, "Denoise: {0:0.00}", DenoiseStrength);
 
     /// <summary>
     /// Describes what pressing Generate will actually do, given where the box currently sits — the
@@ -150,36 +173,195 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private bool _isRegionOccupied;
 
-    #region v2 Placeholder properties (bound to disabled UI controls)
+    /// <summary>
+    /// The two-word form of <see cref="RegionModeText"/> for the panel's header chip, which has about
+    /// 150px. The long form is the chip's tooltip, so nothing is lost.
+    /// </summary>
+    [ObservableProperty]
+    private string _regionModeBadge = "Text to image";
 
-    // TODO(v2-negative-prompt): bind the negative prompt UI control to this once enabled.
+    // ────────────────────────────── Generate panel (issue #518 region B) ──────────────────────────────
+
+    /// <summary>The negative prompt. Honoured by both backends; see <see cref="IsNegativePromptSupported"/>.</summary>
     [ObservableProperty]
     private string _negativePromptText = string.Empty;
 
-    // TODO(v2-seed): wire to the seed UI when enabled. Random when null.
+    /// <summary>
+    /// The seed to generate from when <see cref="UseRandomSeed"/> is off. Null means "none chosen yet".
+    /// </summary>
+    /// <remarks>
+    /// A batch adds the candidate index to this, so a locked seed of 1000 across three images produces
+    /// 1000, 1001 and 1002 — reusing one seed for a whole batch would return the same image three times.
+    /// </remarks>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SeedText))]
     private long? _seed;
 
-    // TODO(v2-seed): toggle for the random/fixed seed UI.
+    /// <summary>When set, each image gets a fresh random seed and <see cref="Seed"/> is ignored.</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SeedText))]
+    [NotifyCanExecuteChangedFor(nameof(ReuseLastSeedCommand))]
     private bool _useRandomSeed = true;
 
-    // TODO(v2-advanced): bind to the advanced sampling expander (Steps slider).
+    /// <summary>Sampling steps. Seeded from the selected model's default whenever the model changes.</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SamplingSummary))]
     private int _steps = 9;
 
-    // TODO(v2-advanced): bind to the CFG slider.
+    /// <summary>Classifier-free guidance. Seeded from the selected model's default.</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SamplingSummary))]
+    [NotifyPropertyChangedFor(nameof(GuidanceText))]
     private float _cfg = 1.0f;
 
-    // TODO(v2-advanced): bind to the sampler combo. Values: euler, euler_a, dpmpp2m, …
+    /// <summary>
+    /// The guidance slider's label.
+    /// </summary>
+    /// <remarks>
+    /// Formatted here rather than through a XAML <c>StringFormat</c>, which uses the current culture: this
+    /// machine is German-locale, so the binding rendered "Guidance: 1,0" beside a header reading "cfg 1.0".
+    /// A decimal comma in a numeric readout also reads as a thousands separator. Same rule the canvas
+    /// readout and the Image Editor's own value labels already follow.
+    /// </remarks>
+    public string GuidanceText => string.Format(CultureInfo.InvariantCulture, "Guidance: {0:0.0}", Cfg);
+
+    /// <summary>The sampling algorithm. Only meaningful on a backend that honours it.</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SamplingSummary))]
     private string _selectedSampler = "euler";
 
-    // TODO(v2-loras): observable list bound to the LoRA picker (each item carries path + strength).
-    public ObservableCollection<object> Loras { get; } = [];
+    /// <summary>The noise schedule. Same backend caveat as <see cref="SelectedSampler"/>.</summary>
+    [ObservableProperty]
+    private string _selectedScheduler = "simple";
 
-    #endregion
+    /// <summary>
+    /// LoRA rows, each carrying a file and a strength. Bound to the shared <c>MultiLoraPickerControl</c>,
+    /// which mutates this collection in place.
+    /// </summary>
+    public ObservableCollection<LoraPickerItemViewModel> Loras { get; } = [];
+
+    /// <summary>The LoRAs offered to the picker: installed, and filtered to the selected model's base model.</summary>
+    public ObservableCollection<AvailableLora> AvailableLoras { get; } = [];
+
+    /// <summary>
+    /// Why the LoRA picker has nothing to offer, or null when it does. An empty dropdown is otherwise
+    /// indistinguishable from a broken query, an unconfigured library and an incompatible model.
+    /// </summary>
+    [ObservableProperty]
+    private string? _loraUnavailableMessage;
+
+    /// <summary>Sampler names the local backend actually maps; anything else would silently run euler.</summary>
+    public IReadOnlyList<string> AvailableSamplers { get; } = StableDiffusionCppBackend.SupportedSamplers;
+
+    /// <summary>Scheduler names the local backend actually maps.</summary>
+    public IReadOnlyList<string> AvailableSchedulers { get; } = StableDiffusionCppBackend.SupportedSchedulers;
+
+    /// <summary>
+    /// The collapsed sampling section's header summary, e.g. <c>euler · 9 · cfg 1.0</c>, so the values
+    /// stay readable without expanding it.
+    /// </summary>
+    public string SamplingSummary => string.Format(
+        CultureInfo.InvariantCulture, "{0} · {1} · cfg {2:0.0}", SelectedSampler, Steps, Cfg);
+
+    /// <summary>
+    /// The seed the panel shows. Deliberately a string rather than the raw number: "Random" is a state,
+    /// not a value, and showing a stale number beside a random toggle invites the reader to believe it.
+    /// </summary>
+    public string SeedText => UseRandomSeed
+        ? "Random"
+        : Seed?.ToString(CultureInfo.InvariantCulture) ?? "Not set";
+
+    /// <summary>
+    /// Length of the prompt, in characters. Deliberately not a token count and deliberately uncapped:
+    /// a real token count needs the model's own tokenizer, and the familiar 77 limit is CLIP's, which does
+    /// not apply to the T5-based models this canvas runs. A made-up number is worse than none.
+    /// </summary>
+    public string PromptLengthText => $"{PromptText.Length} characters";
+
+    partial void OnPromptTextChanged(string value) => OnPropertyChanged(nameof(PromptLengthText));
+
+    /// <summary>The seed the last finished image actually used, so it can be locked and reused.</summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ReuseLastSeedCommand))]
+    private long? _lastUsedSeed;
+
+    // ────────────────────────────── Backend capability gating ──────────────────────────────
+
+    /// <summary>
+    /// What the selected backend honours. Before a backend is chosen this answers for the local one,
+    /// which is what <c>AvailableBackends[0]</c> selects in every constructor.
+    /// </summary>
+    private BackendCapabilities SelectedCapabilities =>
+        SelectedBackend?.Capabilities ?? StableDiffusionCppBackend.LocalCapabilities;
+
+    /// <summary>True when the selected backend sends the negative prompt to the model.</summary>
+    public bool IsNegativePromptSupported => SelectedCapabilities.Supports(BackendFeature.NegativePrompt);
+
+    /// <summary>Why the negative prompt is unavailable on this backend, or null when it works.</summary>
+    public string? NegativePromptLimitation => SelectedCapabilities.LimitationFor(BackendFeature.NegativePrompt);
+
+    /// <summary>True when the selected backend honours the sampler and scheduler.</summary>
+    public bool IsSamplerSelectionSupported => SelectedCapabilities.Supports(BackendFeature.SamplerSelection);
+
+    /// <summary>Why sampler choice is unavailable on this backend, or null when it works.</summary>
+    public string? SamplerSelectionLimitation => SelectedCapabilities.LimitationFor(BackendFeature.SamplerSelection);
+
+    /// <summary>True when the selected backend honours steps and guidance.</summary>
+    public bool IsStepsAndGuidanceSupported => SelectedCapabilities.Supports(BackendFeature.StepsAndGuidance);
+
+    /// <summary>Why steps and guidance are unavailable on this backend, or null when they work.</summary>
+    public string? StepsAndGuidanceLimitation => SelectedCapabilities.LimitationFor(BackendFeature.StepsAndGuidance);
+
+    /// <summary>True when the selected backend loads LoRAs.</summary>
+    public bool IsLoraSupported => SelectedCapabilities.Supports(BackendFeature.Loras);
+
+    /// <summary>Why LoRAs are unavailable on this backend, or null when they work.</summary>
+    public string? LoraLimitation => SelectedCapabilities.LimitationFor(BackendFeature.Loras);
+
+    /// <summary>
+    /// What Cancel can and cannot stop on this backend, shown on the Cancel button. The engine interrupts
+    /// mid-sample; the local backend finishes the image it is on.
+    /// </summary>
+    public string CancelTooltip => SelectedCapabilities.LimitationFor(BackendFeature.MidSampleInterrupt)
+        ?? "Stops the batch and interrupts the image being sampled.";
+
+    private void RaiseCapabilityProjections()
+    {
+        OnPropertyChanged(nameof(IsNegativePromptSupported));
+        OnPropertyChanged(nameof(NegativePromptLimitation));
+        OnPropertyChanged(nameof(IsSamplerSelectionSupported));
+        OnPropertyChanged(nameof(SamplerSelectionLimitation));
+        OnPropertyChanged(nameof(IsStepsAndGuidanceSupported));
+        OnPropertyChanged(nameof(StepsAndGuidanceLimitation));
+        OnPropertyChanged(nameof(IsLoraSupported));
+        OnPropertyChanged(nameof(LoraLimitation));
+        OnPropertyChanged(nameof(CancelTooltip));
+    }
+
+    // ────────────────────────────── Seed commands ──────────────────────────────
+
+    /// <summary>Rolls a new fixed seed and locks it, so the next run is reproducible.</summary>
+    [RelayCommand]
+    private void RandomizeSeed()
+    {
+        Seed = Random.Shared.NextInt64(0, int.MaxValue);
+        UseRandomSeed = false;
+        EmitInfo($"Seed locked to {Seed}.");
+    }
+
+    /// <summary>Locks the seed that produced the last finished image, to vary a prompt against it.</summary>
+    [RelayCommand(CanExecute = nameof(CanReuseLastSeed))]
+    private void ReuseLastSeed()
+    {
+        if (LastUsedSeed is not { } seed)
+            return;
+
+        Seed = seed;
+        UseRandomSeed = false;
+        EmitInfo($"Reusing seed {seed} from the last result.");
+    }
+
+    private bool CanReuseLastSeed() => LastUsedSeed is not null;
 
     /// <summary>Local models discovered under the configured model roots (Diffusion Nexus core).</summary>
     public ObservableCollection<CanvasModelOption> AvailableModels { get; } = [];
@@ -189,11 +371,11 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     [NotifyCanExecuteChangedFor(nameof(GenerateCommand))]
     private CanvasModelOption? _selectedModel;
 
-    /// <summary>Backends the canvas can generate with.</summary>
+    /// <summary>Backends the canvas can generate with, each carrying what it honours.</summary>
     public ObservableCollection<CanvasBackendOption> AvailableBackends { get; } =
     [
-        new(CanvasBackendKeys.Local, "Diffusion Nexus Core (local)"),
-        new(CanvasBackendKeys.Engine, "Diffusion Nexus Engine (ComfyUI)")
+        new(CanvasBackendKeys.Local, "Diffusion Nexus Core (local)", StableDiffusionCppBackend.LocalCapabilities),
+        new(CanvasBackendKeys.Engine, "Diffusion Nexus Engine (ComfyUI)", ManagedComfyUiBackend.EngineCapabilities)
     ];
 
     /// <summary>
@@ -214,24 +396,48 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     /// </summary>
     partial void OnSelectedBackendChanged(CanvasBackendOption? value)
     {
+        // Every panel control gates on the new backend, and the LoRA list may become unavailable.
+        RaiseCapabilityProjections();
+
         if (value?.Key == CanvasBackendKeys.Engine && _engineBackend is not null)
         {
             AvailableModels.Clear();
             foreach (var descriptor in _engineBackend.Catalog.ListAvailable())
-                AvailableModels.Add(new CanvasModelOption(descriptor.Key, descriptor.DisplayName));
+                AvailableModels.Add(new CanvasModelOption(descriptor.Key, descriptor.DisplayName, descriptor));
             SelectedModel = AvailableModels.FirstOrDefault();
         }
         else if (value?.Key == CanvasBackendKeys.Local)
         {
             _ = LoadModelsAsync();
         }
+
+        _ = LoadLorasForSelectedModelAsync();
+    }
+
+    /// <summary>
+    /// Adopts the newly selected model's own sampling defaults and reloads the LoRA list for its base model.
+    /// </summary>
+    /// <remarks>
+    /// Seeding the values matters for correctness, not just convenience. The panel sends whatever it shows,
+    /// so leaving the previous model's numbers in place would silently override the new model's defaults —
+    /// FLUX.2-klein wants 20 steps and Qwen wants 4, and running one on the other's count produces a bad
+    /// image with no indication why. Before region B the request left these null and the backend applied
+    /// its own defaults; the panel now has to reproduce that faithfully.
+    /// </remarks>
+    partial void OnSelectedModelChanged(CanvasModelOption? value)
+    {
+        if (value?.Descriptor is { } descriptor)
+        {
+            Steps = descriptor.DefaultSteps;
+            Cfg = descriptor.DefaultCfg;
+            SelectedSampler = descriptor.DefaultSampler;
+            SelectedScheduler = descriptor.DefaultScheduler;
+        }
+
+        _ = LoadLorasForSelectedModelAsync();
     }
 
     #region v2 Placeholder commands (wired to disabled UI controls)
-
-    // TODO(v2-loras): show the LoRA picker dialog and add to Loras.
-    [RelayCommand(CanExecute = nameof(AlwaysFalse))]
-    private void AddLora() { /* placeholder */ }
 
     // TODO(v2-controlnet): open the ControlNet add dialog (image picker + preprocessor + strength).
     [RelayCommand(CanExecute = nameof(AlwaysFalse))]
@@ -282,12 +488,15 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         LocalDiffusionBackendProvider backendProvider,
         ResourceMonitorViewModel? resourceMonitor = null,
         IDiffusionBackend? engineBackend = null,
-        IUnifiedLogger? unifiedLogger = null)
+        IUnifiedLogger? unifiedLogger = null,
+        ILoraCatalog? loraCatalog = null)
     {
         _backendProvider = backendProvider ?? throw new ArgumentNullException(nameof(backendProvider));
         ResourceMonitor = resourceMonitor;
         _engineBackend = engineBackend;
         _unifiedLogger = unifiedLogger;
+        _loraCatalog = loraCatalog;
+        AdoptEngineCapabilities();
         _selectedBackend = AvailableBackends[0];
         DeleteFrameCommand = new RelayCommand<GenerationFrameViewModel?>(DeleteFrame);
         WireCanvasEvents();
@@ -314,12 +523,36 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         _backendProvider = null;
         _engineBackend = engineBackend;
         _unifiedLogger = unifiedLogger;
+        AdoptEngineCapabilities();
         DeleteFrameCommand = new RelayCommand<GenerationFrameViewModel?>(DeleteFrame);
         WireCanvasEvents();
 
         // Assigning through the property runs OnSelectedBackendChanged, which fills AvailableModels
         // from the engine's own catalog — the same path the toolbar takes.
         SelectedBackend = AvailableBackends.First(b => b.Key == CanvasBackendKeys.Engine);
+    }
+
+    /// <summary>
+    /// Replaces the engine option's capability set with the injected backend's own.
+    /// </summary>
+    /// <remarks>
+    /// The options are built from statics so the panel can gate the moment a backend is picked, without
+    /// constructing anything. Where a real engine instance exists, its own answer is the authoritative one
+    /// — and taking it from the instance is what lets a test drive the gating with a fake.
+    /// </remarks>
+    private void AdoptEngineCapabilities()
+    {
+        if (_engineBackend is null)
+            return;
+
+        for (var i = 0; i < AvailableBackends.Count; i++)
+        {
+            if (AvailableBackends[i].Key != CanvasBackendKeys.Engine)
+                continue;
+
+            AvailableBackends[i] = AvailableBackends[i] with { Capabilities = _engineBackend.Capabilities };
+            return;
+        }
     }
 
     private void WireCanvasEvents()
@@ -372,6 +605,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         var overlapping = Frames.Count(f => CanContribute(f) && f.WorldRect.Intersects(region));
 
         IsRegionOccupied = overlapping > 0;
+        RegionModeBadge = overlapping > 0 ? "Image to image" : "Text to image";
         RegionModeText = overlapping switch
         {
             0 => "Text to image — the box is over empty canvas",
@@ -482,7 +716,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
 
                 AvailableModels.Clear();
                 foreach (var descriptor in models)
-                    AvailableModels.Add(new CanvasModelOption(descriptor.Key, $"Local ({descriptor.DisplayName})"));
+                    AvailableModels.Add(new CanvasModelOption(descriptor.Key, $"Local ({descriptor.DisplayName})", descriptor));
 
                 SelectedModel = AvailableModels.FirstOrDefault(m => m.Key == ModelKeys.Flux2Klein)
                     ?? AvailableModels.FirstOrDefault();
@@ -503,6 +737,124 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         {
             EmitError($"Failed to load the canvas model list: {ex.Message}", ex);
         }
+    }
+
+    /// <summary>
+    /// Refills <see cref="AvailableLoras"/> for the selected model, or explains why it cannot.
+    /// </summary>
+    /// <remarks>
+    /// Never calls the catalog with a null or empty filter. <c>ILoraCatalog</c> reads null as "return
+    /// everything", which on a real library means thousands of rows each decoding a thumbnail out of a
+    /// database BLOB — the hazard the pipeline view models already document. When no compatible labels are
+    /// known the honest answer is an empty list plus a sentence, not the whole library.
+    /// </remarks>
+    private async Task LoadLorasForSelectedModelAsync()
+    {
+        var generation = Interlocked.Increment(ref _loraLoadGeneration);
+
+        void Publish(IReadOnlyList<AvailableLora> loras, string? unavailable)
+        {
+            PostToUi(() =>
+            {
+                // A newer selection already started loading; its answer wins.
+                if (Volatile.Read(ref _loraLoadGeneration) != generation)
+                    return;
+
+                AvailableLoras.Clear();
+                foreach (var lora in loras)
+                    AvailableLoras.Add(lora);
+                LoraUnavailableMessage = unavailable;
+            });
+        }
+
+        if (_loraCatalog is null)
+        {
+            Publish([], null);
+            return;
+        }
+
+        if (!IsLoraSupported)
+        {
+            Publish([], LoraLimitation);
+            return;
+        }
+
+        var modelKey = SelectedModel?.Key;
+        if (string.IsNullOrWhiteSpace(modelKey))
+        {
+            Publish([], "Select a model to see its compatible LoRAs.");
+            return;
+        }
+
+        var labels = ModelBaseModelLabels.ForModelKey(modelKey);
+        if (labels is null)
+        {
+            Publish([], $"No LoRA compatibility is recorded for '{SelectedModel?.DisplayName ?? modelKey}' yet.");
+            EmitWarning($"No base-model labels are mapped for model '{modelKey}', so its LoRA list stays empty.");
+            return;
+        }
+
+        if (labels.Count == 0)
+        {
+            Publish([], $"{SelectedModel?.DisplayName ?? modelKey} has no published LoRA base model, so none can be matched.");
+            return;
+        }
+
+        try
+        {
+            var loras = await _loraCatalog.GetInstalledLorasAsync(labels).ConfigureAwait(false);
+            EmitInfo($"Found {loras.Count} LoRA(s) for {SelectedModel?.DisplayName ?? modelKey}.");
+            Publish(
+                loras,
+                loras.Count == 0
+                    ? $"No installed LoRA matches {string.Join(", ", labels)}."
+                    : null);
+        }
+        catch (Exception ex)
+        {
+            // The catalog swallows its own failures and returns an empty list, so reaching here means
+            // something further out broke. Either way the user must not read a failure as an empty library.
+            EmitError($"Failed to load the LoRA list: {ex.Message}", ex);
+            Publish([], "The LoRA list could not be loaded — see the Unified Console.");
+        }
+    }
+
+    /// <summary>
+    /// Turns the picker's rows into backend references: enabled rows with a resolved file, deduplicated by
+    /// path, and never re-adding a LoRA the model already applies by default.
+    /// </summary>
+    /// <remarks>
+    /// The descriptor's own <c>DefaultLoras</c> are stacked by the backend before per-request ones (Qwen's
+    /// mandatory 4-step Lightning LoRA arrives that way), so a user who picks the same file by hand would
+    /// otherwise apply it twice at double strength.
+    /// </remarks>
+    private IReadOnlyList<LoraReference> ResolveLoraReferences(ModelDescriptor descriptor)
+    {
+        if (Loras.Count == 0)
+            return [];
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var already in descriptor.DefaultLoras)
+        {
+            if (!string.IsNullOrWhiteSpace(already.FilePath))
+                seen.Add(already.FilePath);
+        }
+
+        var resolved = new List<LoraReference>();
+        foreach (var row in Loras)
+        {
+            if (!row.IsEnabled || string.IsNullOrWhiteSpace(row.FilePath))
+                continue;
+            if (!seen.Add(row.FilePath))
+            {
+                EmitInfo($"Skipping '{row.DisplayName}' — the model already applies it.");
+                continue;
+            }
+
+            resolved.Add(new LoraReference(row.FilePath, (float)row.Strength));
+        }
+
+        return resolved;
     }
 
     private static void PostToUi(Action action)
@@ -583,9 +935,19 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             var width = Box.Width;
             var height = Box.Height;
 
-            // Snapshot the prompt once for the whole batch. The user is free to type the next idea while a
-            // batch runs, and reading the box per candidate (or on accept) would pick that up.
-            var prompt = PromptText;
+            // Snapshot the whole panel once for the whole batch. The user is free to keep editing while a
+            // batch runs, and reading the controls per candidate would let a half-typed change land on
+            // image three of four — a batch that is not one batch.
+            var settings = CaptureBatchSettings(descriptor);
+
+            if (settings.Loras.Count > 0 && !IsLoraSupported)
+            {
+                // The picker is disabled on this backend and says why, but rows picked before switching
+                // survive in the list. Dropping them silently would be exactly the failure the capability
+                // gating exists to prevent.
+                EmitWarning(
+                    $"{settings.Loras.Count} selected LoRA(s) will not be applied: {LoraLimitation}");
+            }
 
             // Snapshot the rasters on the UI thread, then composite off it. The region work decodes a
             // PNG per overlapping result, walks every output pixel to measure coverage, re-encodes at
@@ -617,7 +979,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             var candidates = Staging.BeginBatch(BatchCount, region);
             EmitInfo($"Staged {candidates.Count} candidate slot(s).");
 
-            await RunBatchAsync(backend, descriptor, candidates, prompt, initImage, width, height, composed.Coverage, token)
+            await RunBatchAsync(backend, descriptor, candidates, settings, initImage, width, height, composed.Coverage, token)
                 .ConfigureAwait(true);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
@@ -857,11 +1219,46 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>
+    /// The generate panel's values, frozen for the duration of one batch.
+    /// </summary>
+    /// <param name="Seed">
+    /// The base seed, or null for "roll one per image". A batch adds the candidate index to a fixed seed.
+    /// </param>
+    private sealed record BatchSettings(
+        string Prompt,
+        string? NegativePrompt,
+        int Steps,
+        float Cfg,
+        string Sampler,
+        string Scheduler,
+        long? Seed,
+        IReadOnlyList<LoraReference> Loras);
+
+    /// <summary>
+    /// Freezes the panel for a batch.
+    /// </summary>
+    /// <remarks>
+    /// Steps, guidance, sampler and scheduler are sent explicitly rather than left null. Before region B
+    /// they were null so each backend applied the model's own defaults; the panel now shows those defaults
+    /// (seeded in <see cref="OnSelectedModelChanged"/>) and therefore has to send them, or what the user
+    /// reads and what runs would differ.
+    /// </remarks>
+    private BatchSettings CaptureBatchSettings(ModelDescriptor descriptor) => new(
+        Prompt: PromptText,
+        NegativePrompt: string.IsNullOrWhiteSpace(NegativePromptText) ? null : NegativePromptText,
+        Steps: Steps,
+        Cfg: Cfg,
+        Sampler: SelectedSampler,
+        Scheduler: SelectedScheduler,
+        Seed: UseRandomSeed ? null : Seed,
+        Loras: ResolveLoraReferences(descriptor));
+
     private async Task RunBatchAsync(
         IDiffusionBackend backend,
         ModelDescriptor descriptor,
         IReadOnlyList<StagedCandidateViewModel> candidates,
-        string prompt,
+        BatchSettings settings,
         DiffusionReferenceImage? initImage,
         int width,
         int height,
@@ -884,7 +1281,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             }
 
             Staging.Current = candidate;
-            candidate.Prompt = prompt;
+            candidate.Prompt = settings.Prompt;
             candidate.State = StagedCandidateState.Loading;
             candidate.StatusText = "Preparing…";
             StatusText = $"Generating {i + 1}/{candidates.Count}…";
@@ -893,14 +1290,17 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             var request = new DiffusionRequest
             {
                 ModelKey = descriptor.Key,
-                Prompt = prompt,
+                Prompt = settings.Prompt,
                 Width = width,
                 Height = height,
-                // v1 leaves Steps/Cfg/Sampler/Scheduler null so the backend uses the model's own defaults.
-                // TODO(v2-advanced): pass through Steps / Cfg / SelectedSampler when the panel (region B) ships.
-                // TODO(v2-negative-prompt): pass NegativePromptText.
+                NegativePrompt = settings.NegativePrompt,
+                Steps = settings.Steps,
+                Cfg = settings.Cfg,
+                Sampler = settings.Sampler,
+                Scheduler = settings.Scheduler,
+                Loras = settings.Loras,
                 // Each image in a batch needs its own seed, or every candidate comes back identical.
-                Seed = UseRandomSeed ? null : Seed + i,
+                Seed = settings.Seed + i,
                 InitImage = initImage,
             };
 
@@ -1002,6 +1402,10 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
 
         candidate.Seed = result.Seed;
         candidate.PngBytes = result.PngBytes;
+
+        // The backend reports the seed it actually used, including the one it rolled itself. Keeping it is
+        // what makes "I liked that one, vary the prompt" possible after a random run.
+        LastUsedSeed = result.Seed;
 
         var bitmap = TryDecode(result.PngBytes);
         if (bitmap is null)

@@ -54,6 +54,30 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
     /// <summary>The catalog of models discovered under the configured ComfyUI root.</summary>
     public IModelCatalog Catalog => _catalog;
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// Steps, guidance, sampler, scheduler, seed, LoRAs and the negative prompt all reach the native
+    /// generator. The three gaps are real native limits rather than unwired plumbing: this build has no
+    /// ControlNet path for DiT models, no mask parameter on the generation call, and no cancel hook
+    /// inside <c>GenerateImage</c> — the token can only be observed between phases.
+    /// </remarks>
+    public BackendCapabilities Capabilities => LocalCapabilities;
+
+    /// <summary>
+    /// <see cref="Capabilities"/> without needing an instance. A UI has to gate its controls the moment
+    /// the user picks this backend in a dropdown, and constructing the real backend means resolving model
+    /// roots and walking them from disk — far too much for a selection change.
+    /// </summary>
+    public static BackendCapabilities LocalCapabilities { get; } = new(new Dictionary<BackendFeature, string>
+    {
+        [BackendFeature.ControlNet] =
+            "Diffusion Nexus Core has no ControlNet path for these models. Switch to the Diffusion Nexus Engine to use control layers.",
+        [BackendFeature.Inpainting] =
+            "Diffusion Nexus Core cannot restrict a generation to a mask. Switch to the Diffusion Nexus Engine for inpainting.",
+        [BackendFeature.MidSampleInterrupt] =
+            "Cancelling stops the batch, but the image already sampling finishes on the GPU before it is discarded.",
+    });
+
     /// <summary>Keys of the models currently resident in VRAM (empty when nothing is loaded).</summary>
     public IReadOnlyList<string> LoadedModelKeys => _host.LoadedModelKeys;
 
@@ -274,9 +298,16 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
             genParams.Loras.Add(new SDNet.Lora(lora.FilePath) { Multiplier = lora.Strength });
         }
 
-        // TODO(v2-negative-prompt): apply req.NegativePrompt via .WithNegativePrompt(...) once enabled.
-        // TODO(v2-controlnet):      apply req.ControlNets via .WithControlNet(image, strength).
-        // TODO(v2-inpaint):         apply req.MaskImage via .WithMaskImage(...) for inpaint flows.
+        // A blank negative prompt is left off entirely rather than sent as "": the native default and an
+        // empty string are not guaranteed to be the same conditioning, and "the user typed nothing"
+        // should mean "unchanged", not "an empty negative".
+        if (!string.IsNullOrWhiteSpace(req.NegativePrompt))
+            genParams = genParams.WithNegativePrompt(req.NegativePrompt);
+
+        // TODO(v2-controlnet): apply req.ControlNets via .WithControlNet(image, strength).
+        // TODO(v2-inpaint):    apply req.MaskImage via .WithMaskImage(...) for inpaint flows.
+        // Both are reported as unsupported through Capabilities, so the UI disables their controls
+        // with a reason instead of offering something this backend drops.
 
         var image = model.GenerateImage(genParams)
             ?? throw new InvalidOperationException("Native generator returned a null image.");
@@ -284,6 +315,25 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
         var png = image.ToPng();
         return new GenerationOutcome(png, image.Width, image.Height, seed, req.Steps ?? d.DefaultSteps);
     }
+
+    /// <summary>
+    /// Sampler names <see cref="MapSampler"/> actually recognises, in the order a UI should offer them.
+    /// </summary>
+    /// <remarks>
+    /// The mapper falls through to Euler for anything it does not know, silently and without logging, so a
+    /// dropdown built from any other list would let a user pick a sampler that never runs. This list is
+    /// the mapper's own vocabulary; extend both together.
+    /// </remarks>
+    public static IReadOnlyList<string> SupportedSamplers { get; } =
+    [
+        "euler", "euler_a", "heun", "dpm2", "dpmpp2m", "dpmpp2mv2", "lcm", "ddim",
+    ];
+
+    /// <summary>Scheduler names <see cref="MapScheduler"/> recognises. Same fall-through caveat.</summary>
+    public static IReadOnlyList<string> SupportedSchedulers { get; } =
+    [
+        "simple", "karras", "exponential", "ays", "discrete",
+    ];
 
     private static SDNet.Sampler MapSampler(string name) => name.ToLowerInvariant() switch
     {

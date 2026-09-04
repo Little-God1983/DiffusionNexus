@@ -52,20 +52,12 @@ public sealed partial class ImageToImagePipelineRunViewModel : PipelineRunViewMo
 
     [ObservableProperty] private string? _referenceImage2Path;
 
-    // FLUX.2-klein base-model labels (raw Civitai strings) the optional-LoRA dropdown is filtered to.
-    // Without a filter the picker eagerly loads EVERY installed LoRA (thousands), and only FLUX.2-klein
-    // LoRAs are compatible with this model anyway (same filter Anime-To-Real uses).
-    private static readonly string[] FluxKleinBaseModels =
-    [
-        "Flux.2 Klein 9B",
-        "Flux.2 Klein 9B-base",
-        "Flux.2 Klein 4B",
-        "Flux.2 Klein 4B-base",
-    ];
-
     public override string Title => "Image to Image";
 
-    protected override IReadOnlyList<string> LoraBaseModels => FluxKleinBaseModels;
+    // Without a filter the picker eagerly loads EVERY installed LoRA (thousands), each decoding a
+    // thumbnail. The labels are shared with Anime-To-Real and the canvas via ModelBaseModelLabels.
+    protected override IReadOnlyList<string> LoraBaseModels =>
+        ModelBaseModelLabels.ForModelKey(ModelKeys.Flux2Klein) ?? [];
 
     /// <summary>Reusable output-resolution picker (aspect ratio + orientation + megapixels). Bound by the
     /// run view's <c>OutputResolutionControl</c>; <see cref="ComputeOutputDimensions"/> delegates to it.</summary>
