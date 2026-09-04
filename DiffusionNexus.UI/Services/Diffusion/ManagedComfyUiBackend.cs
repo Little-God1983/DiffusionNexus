@@ -207,6 +207,22 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
 
         using var wrapper = new ComfyUIWrapperService(_engine.BaseUrl!);
 
+        // A cancelled canvas batch must stop work on the engine, not merely stop waiting for it: without
+        // this the sampler runs to completion server-side and burns the GPU on a result nobody reads.
+        // The registration is declared after the wrapper so it is disposed first, and it swallows
+        // everything because it fires on a cancellation path where the engine may already be gone.
+        using var interrupt = cancellationToken.Register(() =>
+        {
+            try
+            {
+                _ = wrapper.InterruptAsync(CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning(ex, "Could not ask the engine to interrupt the running prompt.");
+            }
+        });
+
         // NOTE(progress): IComfyUIWrapperService.WaitForCompletionAsync reports raw WebSocket event
         // text ("Executing node 62...", "Progress: 3/8") via IProgress<string>, not a typed
         // step/total pair. Parsing that string to synthesize DiffusionPhase.Sampling items would be
@@ -221,7 +237,14 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
             var gguf = await ResolveInstalledKreaGgufAsync(wrapper, cancellationToken).ConfigureAwait(false);
             var templateJson = _templateSource!.LoadTemplateJson()
                 ?? throw new InvalidOperationException("The Krea 2 workflow template could not be loaded.");
-            var workflowJson = Krea2WorkflowPatcher.Patch(templateJson, request, seed, gguf);
+
+            // The canvas hands us the pixels under its bounding box as a file. ComfyUI can only read
+            // images from its own input folder, so upload first and patch the graph with the name the
+            // server chose — it may differ from ours when a file of that name already exists.
+            var initImageFileName = await UploadInitImageAsync(wrapper, request, cancellationToken)
+                .ConfigureAwait(false);
+
+            var workflowJson = Krea2WorkflowPatcher.Patch(templateJson, request, seed, gguf, initImageFileName);
 
             // QueueWorkflowAsync loads its workflow from a file path and applies per-node modifiers
             // itself (it's shared with the inpaint/outpaint/caption flows, which patch node-by-node).
@@ -270,6 +293,35 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
         yield return new DiffusionStreamItem(
             new DiffusionProgress { Phase = DiffusionPhase.Completed, Message = failure },
             result);
+    }
+
+    /// <summary>
+    /// Uploads the request's init image to the engine's input folder, or returns null for a plain
+    /// text2image run.
+    /// </summary>
+    /// <remarks>
+    /// A missing or unreadable file is not fatal: the run degrades to text2image with a warning rather
+    /// than failing outright, because the file is a temp scratch file the canvas owns and losing it
+    /// should not cost the user their generation.
+    /// </remarks>
+    private static async Task<string?> UploadInitImageAsync(
+        ComfyUIWrapperService wrapper, DiffusionRequest request, CancellationToken ct)
+    {
+        if (request.InitImage is not { } init || string.IsNullOrWhiteSpace(init.FilePath))
+            return null;
+
+        if (!File.Exists(init.FilePath))
+        {
+            Logger.Warning(
+                "The init image {Path} no longer exists; generating text-to-image instead.", init.FilePath);
+            return null;
+        }
+
+        var stored = await wrapper.UploadImageAsync(init.FilePath, ct).ConfigureAwait(false);
+        Logger.Information(
+            "Uploaded the canvas region as {StoredName}; generating image-to-image at denoise {Strength}.",
+            stored, init.Strength);
+        return stored;
     }
 
     /// <summary>

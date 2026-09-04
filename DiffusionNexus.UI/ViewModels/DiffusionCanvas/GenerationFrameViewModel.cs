@@ -88,7 +88,17 @@ public partial class GenerationFrameViewModel : ObservableObject, ICanvasRaster,
     {
         var image = FrameImage;
         FrameImage = null;
-        image?.Dispose();
+
+        try
+        {
+            image?.Dispose();
+        }
+        catch (Exception)
+        {
+            // Same rule as the staged candidate: releasing a bitmap must never be able to take down a
+            // teardown path. A bitmap we cannot release is a leak, not a crash.
+        }
+
         GC.SuppressFinalize(this);
     }
 }

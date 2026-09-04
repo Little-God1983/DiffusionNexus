@@ -32,6 +32,18 @@ public static class Krea2WorkflowPatcher
     /// <summary>SaveImage — ships with a hardcoded dated prefix.</summary>
     private const string SaveImageNodeId = "21";
 
+    /// <summary>VAEDecode. Read only for its <c>vae</c> link, which the injected encoder reuses.</summary>
+    private const string VaeDecodeNodeId = "9";
+
+    /// <summary>
+    /// Injected <c>LoadImage</c> holding the canvas region. Ids are in a high range the shipped template
+    /// does not use, so the patch cannot collide with a template node.
+    /// </summary>
+    private const string InjectedLoadImageNodeId = "9001";
+
+    /// <summary>Injected <c>VAEEncode</c> turning that region into the sampler's starting latent.</summary>
+    private const string InjectedVaeEncodeNodeId = "9002";
+
     /// <summary>Output prefix used for canvas generations inside the engine's output folder.</summary>
     private const string CanvasFilenamePrefix = "DiffusionNexus/Canvas";
 
@@ -60,8 +72,27 @@ public static class Krea2WorkflowPatcher
     /// The Krea 2 GGUF actually present on this machine, or null to keep whatever the template
     /// names. The template ships the Q8_0 quant, which only exists on a 32 GB-tier install.
     /// </param>
+    /// <param name="initImageFileName">
+    /// The name ComfyUI stored the uploaded canvas region under, or null for a plain text2image run.
+    /// When supplied the graph is rewired into an image-to-image pipeline — see <see cref="Patch"/>'s
+    /// remarks.
+    /// </param>
+    /// <remarks>
+    /// <b>Image to image.</b> Passing <paramref name="initImageFileName"/> injects a <c>LoadImage</c> and
+    /// a <c>VAEEncode</c> and repoints the sampler's <c>latent_image</c> at the encoded region, with
+    /// <c>denoise</c> taken from the request's init-image strength. Both injected nodes are core ComfyUI
+    /// types, so this adds nothing to <see cref="RequiredCustomNodeTypes"/> and needs no second template
+    /// asset. The encoder reuses whatever VAE the template's <c>VAEDecode</c> already points at rather
+    /// than naming a loader node, so re-wiring the template's VAE does not silently break this path.
+    /// <c>EmptySD3LatentImage</c> then becomes unreachable and ComfyUI never executes it — the same trick
+    /// the size patch above uses to strand the resolution selector.
+    /// </remarks>
     public static string Patch(
-        string templateJson, DiffusionRequest request, long seed, string? ggufFileName)
+        string templateJson,
+        DiffusionRequest request,
+        long seed,
+        string? ggufFileName,
+        string? initImageFileName = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(templateJson);
         ArgumentNullException.ThrowIfNull(request);
@@ -89,7 +120,51 @@ public static class Krea2WorkflowPatcher
 
         Inputs(graph, SaveImageNodeId)["filename_prefix"] = CanvasFilenamePrefix;
 
+        if (!string.IsNullOrWhiteSpace(initImageFileName))
+            ApplyImageToImage(graph, sampler, initImageFileName, request.InitImage?.Strength ?? 1.0f);
+
         return graph.ToJsonString(new JsonSerializerOptions { WriteIndented = false });
+    }
+
+    /// <summary>
+    /// Rewires the graph from "sample an empty latent" to "sample the encoded canvas region".
+    /// </summary>
+    private static void ApplyImageToImage(
+        JsonObject graph, JsonObject sampler, string initImageFileName, float strength)
+    {
+        if (graph[InjectedLoadImageNodeId] is not null || graph[InjectedVaeEncodeNodeId] is not null)
+            throw new InvalidOperationException(
+                $"The workflow template already defines node '{InjectedLoadImageNodeId}' or " +
+                $"'{InjectedVaeEncodeNodeId}'. The asset and the patcher are out of sync.");
+
+        // Follow the template's own VAE wiring instead of naming a loader node, so a template that
+        // swaps its VAE source keeps working.
+        var vaeLink = Inputs(graph, VaeDecodeNodeId)["vae"]?.DeepClone()
+            ?? throw new InvalidOperationException(
+                $"Workflow node '{VaeDecodeNodeId}' has no 'vae' input to borrow for image-to-image.");
+
+        graph[InjectedLoadImageNodeId] = new JsonObject
+        {
+            ["class_type"] = "LoadImage",
+            ["inputs"] = new JsonObject
+            {
+                ["image"] = initImageFileName,
+                ["upload"] = "image",
+            },
+        };
+
+        graph[InjectedVaeEncodeNodeId] = new JsonObject
+        {
+            ["class_type"] = "VAEEncode",
+            ["inputs"] = new JsonObject
+            {
+                ["pixels"] = new JsonArray(InjectedLoadImageNodeId, 0),
+                ["vae"] = vaeLink,
+            },
+        };
+
+        sampler["latent_image"] = new JsonArray(InjectedVaeEncodeNodeId, 0);
+        sampler["denoise"] = Math.Clamp(strength, 0f, 1f);
     }
 
     private static JsonObject Inputs(JsonObject graph, string nodeId)

@@ -601,6 +601,33 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
     }
 
     /// <inheritdoc />
+    public async Task InterruptAsync(CancellationToken ct = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        Logger.Debug("Interrupting the running ComfyUI prompt");
+
+        try
+        {
+            using var response = await _httpClient.PostAsync("/interrupt", content: null, ct);
+            if (response.IsSuccessStatusCode)
+            {
+                Logger.Information("ComfyUI acknowledged the interrupt request");
+                return;
+            }
+
+            Logger.Warning("ComfyUI /interrupt returned {StatusCode}", response.StatusCode);
+        }
+        catch (Exception ex)
+        {
+            // Deliberately swallowed: this runs on a cancellation path, where the engine may already be
+            // stopping, unreachable, or between prompts. Throwing here would turn a clean user cancel
+            // into an unrelated error report.
+            Logger.Warning(ex, "Failed to interrupt the running ComfyUI prompt");
+        }
+    }
+
+    /// <inheritdoc />
     public void Dispose()
     {
         if (_disposed)

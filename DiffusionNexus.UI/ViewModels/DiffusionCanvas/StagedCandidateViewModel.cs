@@ -109,8 +109,18 @@ public partial class StagedCandidateViewModel : ObservableObject, IDisposable
         // records the same lesson).
         var image = Image;
         Image = null;
-        image?.Dispose();
         PngBytes = null;
+
+        try
+        {
+            image?.Dispose();
+        }
+        catch (Exception)
+        {
+            // Releasing a bitmap must never be able to take down a teardown path: this runs from
+            // DiscardAll and from the canvas view model's own Dispose, both of which are called during
+            // shutdown. A bitmap we cannot release is a leak, not a crash.
+        }
 
         Disposed?.Invoke(this, EventArgs.Empty);
         GC.SuppressFinalize(this);

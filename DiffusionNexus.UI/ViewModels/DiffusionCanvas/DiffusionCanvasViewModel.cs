@@ -276,6 +276,30 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         _ = LoadModelsAsync();
     }
 
+    /// <summary>
+    /// Test seam: an engine-only view model with no local backend provider.
+    /// </summary>
+    /// <remarks>
+    /// The production constructor takes <c>LocalDiffusionBackendProvider</c>, which is <c>public sealed</c>
+    /// with non-virtual methods over an <c>IServiceProvider</c> — it cannot be mocked, and constructing a
+    /// real one starts a background model scan that would race the test. Reached through
+    /// <c>InternalsVisibleTo("DiffusionNexus.Tests")</c>.
+    /// </remarks>
+    internal DiffusionCanvasViewModel(IDiffusionBackend engineBackend, IUnifiedLogger? unifiedLogger = null)
+    {
+        ArgumentNullException.ThrowIfNull(engineBackend);
+
+        _backendProvider = null;
+        _engineBackend = engineBackend;
+        _unifiedLogger = unifiedLogger;
+        DeleteFrameCommand = new RelayCommand<GenerationFrameViewModel?>(DeleteFrame);
+        WireCanvasEvents();
+
+        // Assigning through the property runs OnSelectedBackendChanged, which fills AvailableModels
+        // from the engine's own catalog — the same path the toolbar takes.
+        SelectedBackend = AvailableBackends.First(b => b.Key == CanvasBackendKeys.Engine);
+    }
+
     private void WireCanvasEvents()
     {
         Box.Changed += (_, _) => RefreshRegionMode();
@@ -455,12 +479,6 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     [RelayCommand(CanExecute = nameof(CanGenerate))]
     private async Task GenerateAsync()
     {
-        if (_backendProvider is null)
-        {
-            BackendUnavailableMessage = "Diffusion backend is not available in design mode.";
-            return;
-        }
-
         if (string.IsNullOrWhiteSpace(PromptText))
         {
             StatusText = "Please enter a prompt before generating.";
@@ -544,7 +562,10 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         }
     }
 
-    private bool CanGenerate() => !IsGenerating && _backendProvider is not null && SelectedModel is not null;
+    // The engine backend does not need the local provider, so requiring both would disable Generate on
+    // an engine-only view model.
+    private bool CanGenerate() =>
+        !IsGenerating && SelectedModel is not null && (_backendProvider is not null || _engineBackend is not null);
 
     /// <summary>
     /// Stops the batch. Pending candidates are dropped immediately.
@@ -623,7 +644,14 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             return engine;
         }
 
-        var local = await _backendProvider!.TryGetAsync().ConfigureAwait(true);
+        if (_backendProvider is null)
+        {
+            BackendUnavailableMessage = "The local diffusion backend is not available in this session.";
+            StatusText = "Backend unavailable";
+            return null;
+        }
+
+        var local = await _backendProvider.TryGetAsync().ConfigureAwait(true);
         if (local is null)
         {
             BackendUnavailableMessage =
@@ -650,7 +678,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         if (descriptor is not null)
             return descriptor;
 
-        var roots = _backendProvider!.ResolvedModelsRoots;
+        var roots = _backendProvider?.ResolvedModelsRoots ?? [];
         var rootsText = roots.Count == 0 ? "(unknown)" : string.Join(" | ", roots);
         var searched = (backend.Catalog as ComfyUiModelCatalog)?.SearchedLocationCount ?? 0;
         BackendUnavailableMessage =
@@ -921,6 +949,20 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         return path;
     }
 
+    /// <summary>
+    /// Turns the backend's PNG bytes into a bitmap for the strip and the canvas.
+    /// </summary>
+    /// <remarks>
+    /// Overridable as a test seam: <c>DiffusionNexus.Tests</c> initialises no Avalonia platform, so a real
+    /// <see cref="Bitmap"/> cannot be constructed there and every candidate would otherwise land in the
+    /// Failed state. Reached through <c>InternalsVisibleTo("DiffusionNexus.Tests")</c>.
+    /// </remarks>
+    internal Func<byte[], Bitmap?> BitmapDecoder { get; set; } = static bytes =>
+    {
+        using var stream = new MemoryStream(bytes);
+        return new Bitmap(stream);
+    };
+
     private Bitmap? TryDecode(byte[]? pngBytes)
     {
         if (pngBytes is not { Length: > 0 })
@@ -931,8 +973,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
 
         try
         {
-            using var stream = new MemoryStream(pngBytes);
-            return new Bitmap(stream);
+            return BitmapDecoder(pngBytes);
         }
         catch (Exception ex)
         {

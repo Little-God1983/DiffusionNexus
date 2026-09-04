@@ -156,4 +156,119 @@ public class Krea2WorkflowPatcherTests
 
         actual.Should().BeEquivalentTo(Krea2WorkflowPatcher.RequiredCustomNodeTypes);
     }
+
+    // ────────────────────── Image to image (issue #518: the box over existing pixels) ──────────────────────
+
+    private static DiffusionRequest ImageToImageRequest(float strength = 0.65f)
+        => new()
+        {
+            ModelKey = "krea2",
+            Prompt = "a lighthouse at dusk",
+            Width = 1024,
+            Height = 1024,
+            InitImage = new DiffusionReferenceImage(@"C:\scratch\region.png", strength),
+        };
+
+    [Fact]
+    public void Patch_WithoutAnInitImageLeavesTheGraphAsAPlainTextToImageRun()
+    {
+        var patched = Krea2WorkflowPatcher.Patch(Template, Request(), seed: 7, ggufFileName: null);
+
+        var graph = JsonDocument.Parse(patched).RootElement;
+        graph.TryGetProperty("9001", out _).Should().BeFalse();
+        graph.TryGetProperty("9002", out _).Should().BeFalse();
+        Inputs(patched, "37").GetProperty("latent_image")[0].GetString().Should().Be("36");
+        Inputs(patched, "37").GetProperty("denoise").GetDouble().Should().Be(1);
+    }
+
+    [Fact]
+    public void Patch_WithAnInitImageInjectsALoadImageNode()
+    {
+        var patched = Krea2WorkflowPatcher.Patch(
+            Template, ImageToImageRequest(), seed: 7, ggufFileName: null, initImageFileName: "region_00001.png");
+
+        var loadImage = JsonDocument.Parse(patched).RootElement.GetProperty("9001");
+        loadImage.GetProperty("class_type").GetString().Should().Be("LoadImage");
+        loadImage.GetProperty("inputs").GetProperty("image").GetString().Should().Be("region_00001.png");
+    }
+
+    [Fact]
+    public void Patch_WithAnInitImageEncodesItThroughTheTemplatesOwnVae()
+    {
+        var patched = Krea2WorkflowPatcher.Patch(
+            Template, ImageToImageRequest(), seed: 7, ggufFileName: null, initImageFileName: "region.png");
+
+        var encode = JsonDocument.Parse(patched).RootElement.GetProperty("9002");
+        encode.GetProperty("class_type").GetString().Should().Be("VAEEncode");
+        encode.GetProperty("inputs").GetProperty("pixels")[0].GetString().Should().Be("9001");
+
+        // Borrowed from the template's VAEDecode wiring rather than naming a loader node, so swapping
+        // the template's VAE source cannot silently break image-to-image.
+        var vaeLink = encode.GetProperty("inputs").GetProperty("vae");
+        vaeLink[0].GetString().Should().Be("57");
+        vaeLink[1].GetInt32().Should().Be(0);
+    }
+
+    [Fact]
+    public void Patch_WithAnInitImageRepointsTheSamplerAtTheEncodedRegion()
+    {
+        var patched = Krea2WorkflowPatcher.Patch(
+            Template, ImageToImageRequest(), seed: 7, ggufFileName: null, initImageFileName: "region.png");
+
+        var sampler = Inputs(patched, "37");
+        sampler.GetProperty("latent_image")[0].GetString().Should().Be("9002",
+            "the empty latent becomes unreachable and ComfyUI never executes it");
+        sampler.GetProperty("latent_image")[1].GetInt32().Should().Be(0);
+    }
+
+    [Fact]
+    public void Patch_WithAnInitImageSetsDenoiseFromTheInitImageStrength()
+    {
+        var patched = Krea2WorkflowPatcher.Patch(
+            Template, ImageToImageRequest(strength: 0.4f), seed: 7, ggufFileName: null, initImageFileName: "r.png");
+
+        Inputs(patched, "37").GetProperty("denoise").GetDouble().Should().BeApproximately(0.4, 0.0001);
+    }
+
+    [Theory]
+    [InlineData(-1f, 0)]
+    [InlineData(3f, 1)]
+    public void Patch_ClampsTheDenoiseStrengthIntoRange(float strength, double expected)
+    {
+        var patched = Krea2WorkflowPatcher.Patch(
+            Template, ImageToImageRequest(strength), seed: 7, ggufFileName: null, initImageFileName: "r.png");
+
+        Inputs(patched, "37").GetProperty("denoise").GetDouble().Should().BeApproximately(expected, 0.0001);
+    }
+
+    [Fact]
+    public void Patch_ImageToImageStillHonoursPromptSizeAndSeed()
+    {
+        var patched = Krea2WorkflowPatcher.Patch(
+            Template, ImageToImageRequest(), seed: 999, ggufFileName: null, initImageFileName: "r.png");
+
+        Inputs(patched, "17").GetProperty("text").GetString().Should().Be("a lighthouse at dusk");
+        Inputs(patched, "36").GetProperty("width").GetInt32().Should().Be(1024);
+        Inputs(patched, "37").GetProperty("seed").GetInt64().Should().Be(999);
+    }
+
+    [Fact]
+    public void Patch_ThrowsWhenTheTemplateAlreadyUsesTheInjectedNodeIds()
+    {
+        var colliding = Template.Replace("\"65\":", "\"9001\":");
+
+        var act = () => Krea2WorkflowPatcher.Patch(
+            colliding, ImageToImageRequest(), seed: 7, ggufFileName: null, initImageFileName: "r.png");
+
+        act.Should().Throw<InvalidOperationException>().WithMessage("*out of sync*");
+    }
+
+    [Fact]
+    public void ImageToImageNeedsNoAdditionalCustomNodes()
+    {
+        // LoadImage and VAEEncode are core ComfyUI types, so the engine's readiness check -- and the
+        // Krea 2 Turbo workload it tells users to install -- stay exactly as they were.
+        Krea2WorkflowPatcher.RequiredCustomNodeTypes.Should()
+            .BeEquivalentTo(["LoaderGGUF", "Power Lora Loader (rgthree)", "AI2GoResolutionSelector"]);
+    }
 }
