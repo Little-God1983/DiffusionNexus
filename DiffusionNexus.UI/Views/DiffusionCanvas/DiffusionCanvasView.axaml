@@ -145,13 +145,16 @@
                 <Border Background="#101010" BorderBrush="#3A3A3A" BorderThickness="1" CornerRadius="3">
                   <Image Source="{Binding Image}" Stretch="Uniform" />
                 </Border>
-                <!-- Slots for results still rendering, dimmed. -->
-                <Border Background="#B0101010" CornerRadius="3" IsVisible="{Binding IsPending}">
+                <!-- Dimmed overlay for any slot without an image to show: rendering slots carry their
+                     progress text and a bar, failed slots carry their error. Bound to !IsReady rather
+                     than IsPending so a failed slot does not collapse to a blank tile. -->
+                <Border Background="#B0101010" CornerRadius="3" IsVisible="{Binding !IsReady}">
                   <StackPanel VerticalAlignment="Center" Spacing="4">
                     <TextBlock Text="{Binding StatusText}" Foreground="#BBB" FontSize="10"
                                HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center"
-                               Margin="4,0" />
-                    <ProgressBar Width="60" Height="4" IsIndeterminate="True" />
+                               Margin="4,0" MaxHeight="60" TextTrimming="CharacterEllipsis"
+                               ToolTip.Tip="{Binding StatusText}" />
+                    <ProgressBar Width="60" Height="4" IsIndeterminate="True" IsVisible="{Binding IsPending}" />
                   </StackPanel>
                 </Border>
                 <Border VerticalAlignment="Top" HorizontalAlignment="Left" Background="#CC000000"

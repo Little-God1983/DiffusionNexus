@@ -15,13 +15,13 @@ the batch.
 
 ## Definition of done (verbatim from the issue)
 
-- [ ] Pan, zoom, and fit work with a mouse and with the keyboard.
-- [ ] The bounding box can be moved and resized; its size and world position are visible and correct.
-- [ ] Generating with the box over empty canvas produces an image **inside the box**, at the box's size.
-- [ ] Generating with the box overlapping an accepted result uses those pixels as input.
-- [ ] Results appear in staging and only reach the canvas on accept.
-- [ ] Cancel stops an in-flight batch.
-- [ ] Every step of the flow is traced to the Unified Console, so a hang shows the last successful step.
+- [x] Pan, zoom, and fit work with a mouse and with the keyboard.
+- [x] The bounding box can be moved and resized; its size and world position are visible and correct.
+- [x] Generating with the box over empty canvas produces an image **inside the box**, at the box's size.
+- [x] Generating with the box overlapping an accepted result uses those pixels as input.
+- [x] Results appear in staging and only reach the canvas on accept.
+- [x] Cancel stops an in-flight batch.
+- [x] Every step of the flow is traced to the Unified Console, so a hang shows the last successful step.
 
 Scope decision recorded on the branch: "the box over existing pixels" must work on **both** backends — the local
 stable-diffusion.cpp core *and* the ComfyUI engine.
@@ -170,14 +170,14 @@ already uses to strand the `AI2GoResolutionSelector`.
 
 ## Tasks
 
-- [ ] **1 — `CanvasViewport`** + tests: screen↔world round-trip, `ZoomAt` keeps the anchor point fixed, `Fit` centres a content rect, zoom clamped 0.05–8, `OneToOne`.
-- [ ] **2 — `GenerationBoundingBox`** + tests: move; each of the 8 handles resizes the right edges; snap to 64 with min 512 / max 2048; opposite edge stays pinned; `HitTest` prefers handles over the body.
-- [ ] **3 — `CanvasRegionCompositor`** + tests: empty region → coverage 0 and a fully transparent bitmap; a raster fully under the box → coverage 1 and pixels copied; partial overlap → fractional coverage; world→pixel scaling when the box size ≠ the raster's; PNG encode is not blank (the Unpremul trap).
-- [ ] **4 — `DiffusionCanvasSurface`**: render grid + rasters + box; handles drawn at constant screen size (`handlePx / zoom`); marching ants via an animated dash offset; wheel-zoom at the cursor, space-drag and middle-drag pan, `F` fit, `1` one-to-one; `PointerCaptureLost` clears gesture state (no repo precedent — authored here); focus on press.
-- [ ] **5 — Staging** (`StagedCandidateViewModel`, `CanvasStagingViewModel`, strip view) + tests: pending slots render dimmed; `←/→` step; `Space` held flips to the canvas underneath; `Enter` accepts into `Frames`; `Del` discards; nothing reaches `Frames` without accept; discard follows detach-then-dispose.
-- [ ] **6 — Batch runner + real Cancel** in `DiffusionCanvasViewModel` + tests with a hand-rolled `FakeDiffusionBackend` (async iterator, `[EnumeratorCancellation]`): `BatchCount` runs sequentially; `IsGenerating` carries `[NotifyCanExecuteChangedFor]` for both commands so a second click cannot clobber `_cts`; cancel-then-generate runs on a fresh epoch; `OperationCanceledException` is caught **before** the generic handler and reported as cancelled, not failed.
-- [ ] **7 — Region → backend**: compose under the box, choose text2img vs img2img, write/delete the temp PNG, pass `Width`/`Height` from the box; validate the box against the descriptor's `DimensionAlignment` **before** submitting (the backend's `ValidateRequest` throws lazily on the first `MoveNextAsync`, i.e. after the candidate already exists).
-- [ ] **8 — Engine img2img + interrupt**: `InterruptAsync` on the wrapper + interface; patcher img2img injection + tests; backend uploads and interrupts.
-- [ ] **9 — Unified Console tracing** at every step boundary: resolve backend → resolve model → compose region (with coverage %) → submit → each progress phase → save → stage → accept/discard → cancel.
-- [ ] **10 — Docs + cleanup**: Shortcuts.md "Diffusion Canvas" section, REUSABLES.md row, delete the `canvas OK` diagnostic, fix the two contradictory selector comments' fate (both leave with the `ItemsControl`), correct the stale `InitImage` doc.
-- [ ] **11 — Verify**: full solution build, full test run, then a manual GUI smoke (owed by the user: pan/zoom/fit, box move+resize, generate on empty canvas, generate over a result, accept/discard, cancel mid-batch).
+- [x] **1 — `CanvasViewport`** + tests: screen↔world round-trip, `ZoomAt` keeps the anchor point fixed, `Fit` centres a content rect, zoom clamped 0.05–8, `OneToOne`.
+- [x] **2 — `GenerationBoundingBox`** + tests: move; each of the 8 handles resizes the right edges; snap to 64 with min 512 / max 2048; opposite edge stays pinned; `HitTest` prefers handles over the body.
+- [x] **3 — `CanvasRegionCompositor`** + tests: empty region → coverage 0 and a fully transparent bitmap; a raster fully under the box → coverage 1 and pixels copied; partial overlap → fractional coverage; world→pixel scaling when the box size ≠ the raster's; PNG encode is not blank (the Unpremul trap).
+- [x] **4 — `DiffusionCanvasSurface`**: render grid + rasters + box; handles drawn at constant screen size (`handlePx / zoom`); marching ants via an animated dash offset; wheel-zoom at the cursor, space-drag and middle-drag pan, `F` fit, `1` one-to-one; `PointerCaptureLost` clears gesture state (no repo precedent — authored here); focus on press.
+- [x] **5 — Staging** (`StagedCandidateViewModel`, `CanvasStagingViewModel`, strip view) + tests: pending slots render dimmed; `←/→` step; `Space` held flips to the canvas underneath; `Enter` accepts into `Frames`; `Del` discards; nothing reaches `Frames` without accept; discard follows detach-then-dispose.
+- [x] **6 — Batch runner + real Cancel** in `DiffusionCanvasViewModel` + tests with a hand-rolled `FakeDiffusionBackend` (async iterator, `[EnumeratorCancellation]`): `BatchCount` runs sequentially; `IsGenerating` carries `[NotifyCanExecuteChangedFor]` for both commands so a second click cannot clobber `_cts`; cancel-then-generate runs on a fresh epoch; `OperationCanceledException` is caught **before** the generic handler and reported as cancelled, not failed.
+- [x] **7 — Region → backend**: compose under the box, choose text2img vs img2img, write/delete the temp PNG, pass `Width`/`Height` from the box; validate the box against the descriptor's `DimensionAlignment` **before** submitting (the backend's `ValidateRequest` throws lazily on the first `MoveNextAsync`, i.e. after the candidate already exists).
+- [x] **8 — Engine img2img + interrupt**: `InterruptAsync` on the wrapper + interface; patcher img2img injection + tests; backend uploads and interrupts.
+- [x] **9 — Unified Console tracing** at every step boundary: resolve backend → resolve model → compose region (with coverage %) → submit → each progress phase → save → stage → accept/discard → cancel.
+- [x] **10 — Docs + cleanup**: Shortcuts.md "Diffusion Canvas" section, REUSABLES.md row, delete the `canvas OK` diagnostic, fix the two contradictory selector comments' fate (both leave with the `ItemsControl`), correct the stale `InitImage` doc.
+- [x] **11 — Verify**: full solution build, full test run, then a manual GUI smoke (owed by the user: pan/zoom/fit, box move+resize, generate on empty canvas, generate over a result, accept/discard, cancel mid-batch).

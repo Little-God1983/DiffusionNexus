@@ -278,8 +278,11 @@ public class DiffusionCanvasBatchTests
 
         backend.RunCount.Should().BeLessThan(5, "the queued remainder is dropped");
         vm.StatusText.Should().Be("Cancelled.");
+        // Reported from the GUI smoke: cancelled slots used to linger as blank tiles in the strip.
         vm.Staging.Candidates.Should().NotContain(c => c.IsPending, "no slot is left spinning");
-        vm.Staging.Candidates.Should().Contain(c => c.State == StagedCandidateState.Cancelled);
+        vm.Staging.Candidates.Should().NotContain(c => c.State == StagedCandidateState.Cancelled,
+            "a slot that can never hold an image has no business in the strip");
+        vm.Staging.Candidates.Should().OnlyContain(c => c.IsReady, "the one finished result survives");
     }
 
     [Fact]

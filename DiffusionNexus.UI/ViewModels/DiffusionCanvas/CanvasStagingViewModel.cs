@@ -216,16 +216,26 @@ public partial class CanvasStagingViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Marks every still-pending slot as cancelled. Called when the batch is cancelled, so the strip
-    /// reports what actually happened instead of leaving slots spinning forever.
+    /// Removes every slot the cancel made pointless: the ones that never started and the one that was
+    /// in flight. Ready results stay, so a batch cancelled after two good images keeps both.
     /// </summary>
-    public void MarkPendingAsCancelled()
+    /// <remarks>
+    /// These used to be kept and merely marked Cancelled. That left an empty dark tile in the strip —
+    /// nothing to preview, nothing to accept, and the dimmed overlay that carries the status text is
+    /// only shown while a slot is pending, so the tile did not even say why it was blank. A slot that
+    /// can never hold an image has no business in a strip whose whole point is judging images.
+    /// </remarks>
+    /// <returns>How many slots were removed, for the log line.</returns>
+    public int PruneAfterCancel()
     {
-        foreach (var candidate in Candidates.Where(c => c.IsPending))
-        {
-            candidate.State = StagedCandidateState.Cancelled;
-            candidate.StatusText = "Cancelled";
-        }
+        var doomed = Candidates
+            .Where(c => c.IsPending || c.State == StagedCandidateState.Cancelled)
+            .ToList();
+
+        foreach (var candidate in doomed)
+            Remove(candidate);
+
+        return doomed.Count;
     }
 
     /// <summary>Notifies the accept/discard commands after a candidate's state changes.</summary>

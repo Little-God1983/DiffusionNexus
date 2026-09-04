@@ -584,7 +584,9 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             // Caught before the generic handler so a user cancel is never reported as a failure.
             StatusText = "Cancelled.";
             EmitInfo("Batch cancelled by the user.");
-            Staging.MarkPendingAsCancelled();
+            var pruned = Staging.PruneAfterCancel();
+        if (pruned > 0)
+            EmitInfo($"Removed {pruned} cancelled slot(s) from staging.");
         }
         catch (Exception ex)
         {
@@ -644,7 +646,9 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             // The owning batch finished and disposed it as we cancelled; nothing left to stop.
         }
 
-        Staging.MarkPendingAsCancelled();
+        var pruned = Staging.PruneAfterCancel();
+        if (pruned > 0)
+            EmitInfo($"Removed {pruned} cancelled slot(s) from staging.");
     }
 
     private bool CanCancel() => IsGenerating;

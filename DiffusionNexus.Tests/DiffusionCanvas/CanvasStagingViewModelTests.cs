@@ -190,18 +190,36 @@ public class CanvasStagingViewModelTests
     }
 
     [Fact]
-    public void MarkPendingAsCancelled_LeavesNoSlotSpinningForever()
+    public void PruneAfterCancel_RemovesEverySlotThatCanNeverHoldAnImage()
     {
         var staging = new CanvasStagingViewModel();
-        var candidates = staging.BeginBatch(3, Box);
+        var candidates = staging.BeginBatch(4, Box);
         candidates[0].State = StagedCandidateState.Ready;
+        candidates[1].State = StagedCandidateState.Cancelled;   // the one that was in flight
+        // [2] and [3] never started.
 
-        staging.MarkPendingAsCancelled();
+        var removed = staging.PruneAfterCancel();
 
-        candidates[0].State.Should().Be(StagedCandidateState.Ready, "a finished result survives the cancel");
-        candidates[1].State.Should().Be(StagedCandidateState.Cancelled);
-        candidates[2].State.Should().Be(StagedCandidateState.Cancelled);
-        staging.Candidates.Should().OnlyContain(c => !c.IsPending);
+        removed.Should().Be(3);
+        staging.Candidates.Should().ContainSingle().Which.Should().BeSameAs(candidates[0],
+            "a finished result survives the cancel");
+        candidates[1].IsDisposed.Should().BeTrue();
+        candidates[2].IsDisposed.Should().BeTrue();
+        candidates[3].IsDisposed.Should().BeTrue();
+        staging.Current.Should().BeSameAs(candidates[0]);
+    }
+
+    [Fact]
+    public void PruneAfterCancel_KeepsFailedSlotsBecauseTheirErrorIsWorthReading()
+    {
+        var staging = new CanvasStagingViewModel();
+        var candidates = staging.BeginBatch(2, Box);
+        candidates[0].State = StagedCandidateState.Failed;
+        candidates[0].StatusText = "the engine said no";
+
+        staging.PruneAfterCancel();
+
+        staging.Candidates.Should().ContainSingle().Which.State.Should().Be(StagedCandidateState.Failed);
     }
 
     [Fact]
