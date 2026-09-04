@@ -721,7 +721,8 @@ public partial class App : Application
             new DiffusionNexus.UI.ViewModels.DiffusionCanvas.DiffusionCanvasViewModel(
                 sp.GetRequiredService<Services.Diffusion.LocalDiffusionBackendProvider>(),
                 sp.GetService<ViewModels.ResourceMonitorViewModel>(),
-                sp.GetRequiredService<Services.Diffusion.ManagedComfyUiBackend>()));
+                sp.GetRequiredService<Services.Diffusion.ManagedComfyUiBackend>(),
+                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
 
 
         // ?? Installer SDK services ??

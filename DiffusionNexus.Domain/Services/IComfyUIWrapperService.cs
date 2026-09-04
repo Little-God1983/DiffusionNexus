@@ -153,4 +153,20 @@ public interface IComfyUIWrapperService : IDisposable
         string nodeType,
         string inputName,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Asks ComfyUI to abandon the prompt it is currently executing (<c>POST /interrupt</c>).
+    /// </summary>
+    /// <remarks>
+    /// This is what makes cancelling a Diffusion Canvas batch stop work on the engine backend rather
+    /// than merely stop waiting for it: the sampler is torn down server-side instead of running to
+    /// completion into a result nobody reads. It affects only the running prompt — anything already
+    /// queued behind it stays queued.
+    ///
+    /// Failures are swallowed by design. This is called from a cancellation path, where the engine may
+    /// already be stopping, unreachable, or between prompts; throwing there would replace a clean
+    /// cancellation with an unrelated error.
+    /// </remarks>
+    /// <param name="ct">Cancellation token for the interrupt request itself.</param>
+    Task InterruptAsync(CancellationToken ct = default);
 }

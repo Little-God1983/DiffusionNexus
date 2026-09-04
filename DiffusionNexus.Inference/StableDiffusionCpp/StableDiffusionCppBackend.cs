@@ -175,11 +175,33 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
             }
         }, cancellationToken);
 
-        await foreach (var item in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
-            yield return item;
-
-        // Surface producer-side exceptions that escaped the catch above (very rare path).
-        await producer.ConfigureAwait(false);
+        try
+        {
+            await foreach (var item in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+                yield return item;
+        }
+        finally
+        {
+            // Observe the producer on EVERY exit path, not just the happy one.
+            //
+            // On cancellation, ReadAllAsync throws before the old trailing await was ever reached, which
+            // orphaned the producer task — still inside the blocking native GenerateImage call, still
+            // holding this model's ContextLease (a SemaphoreSlim(1,1) with a single-resident policy).
+            // The caller was told the run was over while the model lock was held for another half-minute,
+            // so the next Generate silently blocked with the UI reporting Idle. Awaiting here means "the
+            // run is over" is only reported once the native call has actually released the model.
+            //
+            // This also surfaces producer-side exceptions that escaped the catch inside the producer
+            // (a very rare path), which is what the trailing await used to do.
+            try
+            {
+                await producer.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected when the caller cancelled; the cancellation itself propagates from ReadAllAsync.
+            }
+        }
     }
 
     /// <summary>
