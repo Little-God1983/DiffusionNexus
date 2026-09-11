@@ -24,4 +24,11 @@ public interface IImageFavoritesService
     /// Sets the favorite state for a file explicitly.
     /// </summary>
     Task SetFavoriteAsync(string filePath, bool isFavorite, CancellationToken ct = default);
+
+    /// <summary>
+    /// Drops favorites whose file no longer exists in <paramref name="folderPath"/> and persists
+    /// the result. Returns how many entries were removed. Removes nothing when the folder itself
+    /// is missing, so an unplugged drive does not wipe its favorites.
+    /// </summary>
+    Task<int> RemoveMissingAsync(string folderPath, CancellationToken ct = default);
 }

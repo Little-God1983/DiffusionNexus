@@ -147,6 +147,62 @@ public class ImageFavoritesServiceTests : IDisposable
         File.Exists(Path.Combine(folder2, ".favorites.json")).Should().BeFalse();
     }
 
+
+    [Fact]
+    public async Task RemoveMissingAsync_DropsNamesWhoseFileIsGone_AndKeepsTheRest()
+    {
+        // Nothing ever pruned a favorite whose file left the folder, so a
+        // later file saved under the same name was silently born a favorite.
+        var folder = CreateTempDirectory();
+        var kept = Path.Combine(folder, "kept.png");
+        var gone = Path.Combine(folder, "gone.png");
+        File.WriteAllText(kept, "test");
+        File.WriteAllText(gone, "test");
+        var service = new ImageFavoritesService();
+        await service.SetFavoriteAsync(kept, true);
+        await service.SetFavoriteAsync(gone, true);
+        File.Delete(gone);
+
+        var removed = await service.RemoveMissingAsync(folder);
+
+        removed.Should().Be(1);
+        (await service.IsFavoriteAsync(gone)).Should().BeFalse();
+        (await service.IsFavoriteAsync(kept)).Should().BeTrue();
+        var reloaded = new ImageFavoritesService();
+        (await reloaded.GetFavoritesAsync(folder)).Should().BeEquivalentTo(new[] { "kept.png" },
+            "the prune must reach the .favorites.json on disk, not just the cache");
+    }
+
+    [Fact]
+    public async Task RemoveMissingAsync_WhenTheLastFavoriteIsGone_DeletesTheJsonFile()
+    {
+        var folder = CreateTempDirectory();
+        var gone = Path.Combine(folder, "gone.png");
+        File.WriteAllText(gone, "test");
+        var service = new ImageFavoritesService();
+        await service.SetFavoriteAsync(gone, true);
+        File.Delete(gone);
+
+        (await service.RemoveMissingAsync(folder)).Should().Be(1);
+
+        File.Exists(Path.Combine(folder, ".favorites.json")).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task RemoveMissingAsync_WhenTheFolderItselfIsGone_RemovesNothing()
+    {
+        // A folder that vanished (unplugged drive, network blip) must not have
+        // its favorites wiped just because File.Exists says no for everything.
+        var folder = CreateTempDirectory();
+        var file = Path.Combine(folder, "image.png");
+        File.WriteAllText(file, "test");
+        var service = new ImageFavoritesService();
+        await service.SetFavoriteAsync(file, true);
+        Directory.Delete(folder, recursive: true);
+
+        (await service.RemoveMissingAsync(folder)).Should().Be(0);
+        (await service.IsFavoriteAsync(file)).Should().BeTrue();
+    }
     public void Dispose()
     {
         foreach (var path in _tempPaths)

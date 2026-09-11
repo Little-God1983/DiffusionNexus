@@ -1026,6 +1026,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             DeleteFileIfExists(item.FilePath);
         }
 
+        await ClearFavoritesAsync(selectedItems);
+
         RemoveMediaItems(selectedItems);
         UpdateSelectionState();
     }
@@ -1042,6 +1044,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         if (!confirm) return;
 
         DeleteFileIfExists(item.FilePath);
+        await ClearFavoritesAsync([item]);
         RemoveMediaItem(item);
         UpdateSelectionState();
     }
@@ -1173,6 +1176,17 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
                     var folder = Path.GetDirectoryName(file)!;
                     if (!favoriteSets.TryGetValue(folder, out var favSet))
                     {
+                        // Files deleted outside the app never hit the delete
+                        // command, so reconcile each folder once per scan.
+                        try
+                        {
+                            await _favoritesService.RemoveMissingAsync(folder).ConfigureAwait(false);
+                        }
+                        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                        {
+                            Logger.Warning(ex, "Could not prune stale favorites in {Folder}", folder);
+                        }
+
                         favSet = await _favoritesService.GetFavoritesAsync(folder).ConfigureAwait(false);
                         favoriteSets[folder] = favSet;
                     }
@@ -2007,6 +2021,32 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         }
         catch
         {
+        }
+    }
+
+    /// <summary>
+    /// Drops the favorite entries of files that just left the gallery so the
+    /// name does not linger in <c>.favorites.json</c> and resurrect as a
+    /// favorite on the next file saved under it. Only files that actually
+    /// left the disk qualify: <see cref="DeleteFileIfExists"/> swallows a
+    /// locked or in-use file, and that file must keep its star. Best effort:
+    /// a failed write must not fail the delete.
+    /// </summary>
+    private async Task ClearFavoritesAsync(IReadOnlyList<GenerationGalleryMediaItemViewModel> items)
+    {
+        if (_favoritesService is null) return;
+
+        foreach (var item in items.Where(i => i.IsFavorite && !File.Exists(i.FilePath)))
+        {
+            try
+            {
+                await _favoritesService.SetFavoriteAsync(item.FilePath, false);
+                item.IsFavorite = false;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Logger.Warning(ex, "Could not clear favorite entry for {Path}", item.FilePath);
+            }
         }
     }
 
