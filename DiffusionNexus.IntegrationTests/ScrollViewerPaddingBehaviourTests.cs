@@ -17,14 +17,12 @@ namespace DiffusionNexus.IntegrationTests;
 /// measured and the padding is missing from the extent, so its bottom can never be scrolled into
 /// view. The same inset applied as <c>Margin</c> on the content is fully scrollable. If the
 /// "Padding" test starts failing, Avalonia fixed it upstream and the lint can be retired.
+/// Deliberately no <c>TestAppHost</c> fixture: the canary builds its own window and template and must not
+/// fail for an unrelated reason (DI container, temp database migration) that would misdirect the reader.
 /// </summary>
-public class ScrollViewerPaddingBehaviourTests : IClassFixture<TestAppHost>
+public class ScrollViewerPaddingBehaviourTests
 {
     private const double Inset = 16;
-
-    public ScrollViewerPaddingBehaviourTests(TestAppHost _)
-    {
-    }
 
     [AvaloniaFact]
     public void Margin_on_content_keeps_the_content_bottom_reachable()
