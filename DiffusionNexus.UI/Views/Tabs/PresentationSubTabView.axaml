@@ -274,8 +274,8 @@
         </Border>
 
         <!-- Content with Files - only shown when has files -->
-        <ScrollViewer IsVisible="{Binding HasFiles}" Padding="16">
-          <StackPanel Spacing="24">
+        <ScrollViewer IsVisible="{Binding HasFiles}">
+          <StackPanel Margin="16" Spacing="24">
 
             <!-- Media Gallery Section -->
             <StackPanel IsVisible="{Binding HasMediaFiles}" Spacing="8">

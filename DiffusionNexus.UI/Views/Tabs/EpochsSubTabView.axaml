@@ -90,8 +90,8 @@
       </Border>
       
       <!-- Epoch Files List -->
-      <ScrollViewer IsVisible="{Binding HasEpochs}" Padding="16">
-        <ItemsControl ItemsSource="{Binding EpochFiles}">
+      <ScrollViewer IsVisible="{Binding HasEpochs}">
+        <ItemsControl Margin="16" ItemsSource="{Binding EpochFiles}">
           <ItemsControl.ItemsPanel>
             <ItemsPanelTemplate>
               <StackPanel Orientation="Vertical" Spacing="4"/>

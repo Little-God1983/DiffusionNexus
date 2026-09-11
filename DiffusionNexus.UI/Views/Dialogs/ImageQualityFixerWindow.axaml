@@ -165,8 +165,8 @@
               <Image Source="{Binding SelectedItem.FilePath, Converter={x:Static converters:PathToBitmapConverter.Instance}}" Stretch="Uniform"/>
             </Border>
 
-            <ScrollViewer Grid.Row="1" Padding="14,12" VerticalScrollBarVisibility="Auto">
-              <StackPanel Spacing="14">
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+              <StackPanel Margin="14,12" Spacing="14">
                 <StackPanel Spacing="3">
                   <TextBlock Text="{Binding SelectedItem.FileName}" FontSize="14" FontWeight="SemiBold"/>
                   <TextBlock Text="{Binding SelectedItem.Advice.Headline}"

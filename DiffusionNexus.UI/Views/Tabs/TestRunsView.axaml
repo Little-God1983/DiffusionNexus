@@ -204,9 +204,8 @@
 
       <!-- Live analysis overlay (visible during Analyze All) -->
       <ScrollViewer Grid.Column="1"
-                    IsVisible="{Binding IsLiveAnalyzing}"
-                    Padding="20">
-        <StackPanel Spacing="16"
+                    IsVisible="{Binding IsLiveAnalyzing}">
+        <StackPanel Margin="20" Spacing="16"
                     x:CompileBindings="True"
                     x:DataType="vmTabs:TestRunsTabViewModel">
 
@@ -256,9 +255,8 @@
 
       <!-- Detail scroll view (overlays empty state when visible) -->
       <ScrollViewer Grid.Column="1"
-                    IsVisible="{Binding HasSelectedRun}"
-                    Padding="20">
-        <StackPanel Spacing="16"
+                    IsVisible="{Binding HasSelectedRun}">
+        <StackPanel Margin="20" Spacing="16"
                     DataContext="{Binding SelectedRun}"
                     x:CompileBindings="True"
                     x:DataType="vmTabs:TestRunViewModel">

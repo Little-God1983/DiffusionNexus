@@ -148,8 +148,8 @@
           </StackPanel>
 
           <!-- No issue selected but have results - show all images -->
-          <ScrollViewer IsVisible="{Binding ShowAllImages}" Padding="20">
-            <StackPanel Spacing="12">
+          <ScrollViewer IsVisible="{Binding ShowAllImages}">
+            <StackPanel Margin="20" Spacing="12">
               <TextBlock Text="All Images (sorted by worst score)"
                          FontSize="15" FontWeight="SemiBold" Opacity="0.8"/>
               <TextBlock Text="Select an issue on the left to filter, or browse all images below."
@@ -225,8 +225,8 @@
           </ScrollViewer>
 
           <!-- Issue selected - show detail + affected images -->
-          <ScrollViewer IsVisible="{Binding HasSelectedIssue}" Padding="20">
-            <StackPanel Spacing="16"
+          <ScrollViewer IsVisible="{Binding HasSelectedIssue}">
+            <StackPanel Margin="20" Spacing="16"
                         DataContext="{Binding}"
                         x:CompileBindings="True"
                         x:DataType="vmTabs:ColorDistributionTabViewModel">

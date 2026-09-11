@@ -41,9 +41,8 @@
     <!-- Group list -->
     <ScrollViewer Grid.Row="1"
                   HorizontalScrollBarVisibility="Disabled"
-                  VerticalScrollBarVisibility="Auto"
-                  Padding="12">
-      <ItemsControl ItemsSource="{Binding Groups}">
+                  VerticalScrollBarVisibility="Auto">
+      <ItemsControl Margin="12" ItemsSource="{Binding Groups}">
         <ItemsControl.ItemTemplate>
           <DataTemplate x:DataType="vm:LoraDuplicateGroupItem">
             <Border Margin="4,6"

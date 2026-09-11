@@ -238,12 +238,10 @@
                  thumbnail; scrolling a tile in calls Activate() to load it on demand.
                  Item footprint = 250 wide + 6 margin all round; MinItemHeight leaves a
                  small row gap above the tile's natural height so nothing clips. -->
-            <ScrollViewer Padding="16"
-                          HorizontalScrollBarVisibility="Disabled"
+            <ScrollViewer HorizontalScrollBarVisibility="Disabled"
                           VerticalScrollBarVisibility="Auto">
 
-              <air:ItemsRepeater ItemsSource="{Binding FilteredTiles}"
-                                 Margin="0,0,0,40">
+              <air:ItemsRepeater Margin="16" ItemsSource="{Binding FilteredTiles}">
                 <air:ItemsRepeater.Layout>
                   <al:UniformGridLayout Orientation="Horizontal"
                                         MinItemWidth="262"

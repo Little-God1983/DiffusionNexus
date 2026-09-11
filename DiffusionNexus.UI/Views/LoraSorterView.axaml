@@ -323,8 +323,8 @@
                          TextTrimming="CharacterEllipsis"/>
               <ContentControl Grid.Column="2" Content="{Binding SourceFilter}"/>
             </Grid>
-            <ScrollViewer Grid.Row="1" Padding="16,0,6,0" HorizontalScrollBarVisibility="Auto">
-              <ItemsControl x:Name="SourceTree" ItemsSource="{Binding SourceRoots}"/>
+            <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Auto">
+              <ItemsControl Margin="16,0,6,0" x:Name="SourceTree" ItemsSource="{Binding SourceRoots}"/>
             </ScrollViewer>
             <TextBlock Grid.Row="1" Text="No files match" Margin="16,4,0,0"
                        FontSize="11.5" Opacity="0.45" VerticalAlignment="Top"
@@ -345,8 +345,8 @@
                          TextTrimming="CharacterEllipsis"/>
               <ContentControl Grid.Column="2" Content="{Binding TargetFilter}"/>
             </Grid>
-            <ScrollViewer Grid.Row="1" Padding="6,0,16,0" HorizontalScrollBarVisibility="Auto">
-              <ItemsControl x:Name="TargetTree" ItemsSource="{Binding PreviewRoots}"/>
+            <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Auto">
+              <ItemsControl Margin="6,0,16,0" x:Name="TargetTree" ItemsSource="{Binding PreviewRoots}"/>
             </ScrollViewer>
             <TextBlock Grid.Row="1" Text="No files match" Margin="6,4,0,0"
                        FontSize="11.5" Opacity="0.45" VerticalAlignment="Top"

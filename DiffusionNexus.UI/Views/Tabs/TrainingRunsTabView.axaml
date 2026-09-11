@@ -10,8 +10,8 @@
              x:Class="DiffusionNexus.UI.Views.Tabs.TrainingRunsTabView"
              x:DataType="vmTabs:DatasetManagementViewModel">
   <Grid>
-    <ScrollViewer IsVisible="{Binding !IsViewingTrainingRunDetail}" Padding="16">
-      <StackPanel Spacing="16">
+    <ScrollViewer IsVisible="{Binding !IsViewingTrainingRunDetail}">
+      <StackPanel Margin="16" Spacing="16">
         <Grid ColumnDefinitions="*,Auto">
           <TextBlock Grid.Column="0" Text="Training Runs" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
           <Button Grid.Column="1" Content="+ Add Training Run" Command="{Binding AddTrainingRunCommand}" Padding="14,8" Background="#FF6A00" Foreground="White" FontWeight="SemiBold" CornerRadius="4"/>
