@@ -55,6 +55,9 @@
             <MenuItem Header="Image Edit" IsVisible="{Binding ShowSendToImageEdit}"
                       Command="{Binding SendToWorkflowCommand}" CommandParameter="image-to-image"
                       ToolTip.Tip="Edit/transform the selected images from a text prompt"/>
+            <MenuItem Header="Batch Metadata Distiller" IsVisible="{Binding ShowSendToMetadataDistiller}"
+                      Command="{Binding SendToWorkflowCommand}" CommandParameter="batch-metadata-distiller"
+                      ToolTip.Tip="Clean and curate the embedded generation metadata of the selected images"/>
           </MenuItem>
         </MenuFlyout>
       </Button.Flyout>
