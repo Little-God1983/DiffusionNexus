@@ -30,7 +30,7 @@ All paths are relative to `DiffusionNexus.UI/`.
 | `SingleImageSlotControl` | One drop/browse image slot. Use for any "pick an input image" spot. |
 | `ImageListInputControl` | Multi-image input list with add/remove. |
 | `SelectableImageResultsView` (+ `SelectableImageResultsViewModel`) | Grid of result images with selection. Standard output surface for generation flows. |
-| `ImageActionsBar` (+ `ImageActionsViewModel`) | Per-image action row (send to editor, save as, delete, ...). |
+| `ImageActionsBar` (+ `ImageActionsViewModel`) | "Add Selected To… / Send Selected To…" toolbar (Dataset, Training Run / Image Editor, Comparer, Batch Upscale, Batch Crop, Captioning, Workflows → Anime-To-Real, Image Edit, Batch Metadata Distiller). Each destination has a `Show*` flag. |
 | `ImageStatusStrip` (+ `ImageStatusItemViewModel`) | Per-image processing status strip. |
 | `ImageCompareControl` | Side-by-side / slider before-after compare. `CompareFitMode` lives in [Controls/](Controls/). |
 | `ImageMetadataPanelView` (+ `ImageMetadataPanelViewModel`) | Generation-metadata panel for a selected image. |

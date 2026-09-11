@@ -120,6 +120,12 @@ public partial class ImageActionsViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(ShowSendMenu))]
     private bool _showSendToImageEdit = true;
 
+    /// <summary>Whether the "Batch Metadata Distiller" entry is shown in the Workflows submenu.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowWorkflowsMenu))]
+    [NotifyPropertyChangedFor(nameof(ShowSendMenu))]
+    private bool _showSendToMetadataDistiller = true;
+
     /// <summary>True when at least one "Add" destination is enabled (drives the Add button visibility).</summary>
     public bool ShowAddMenu => ShowAddToDataset || ShowAddToTrainingRun;
 
@@ -127,7 +133,8 @@ public partial class ImageActionsViewModel : ObservableObject
     /// True when the Workflows submenu should appear — its master toggle is on and at least one
     /// individual workflow is visible (so a host that hides every workflow gets no empty submenu).
     /// </summary>
-    public bool ShowWorkflowsMenu => ShowSendToWorkflows && (ShowSendToAnimeToReal || ShowSendToImageEdit);
+    public bool ShowWorkflowsMenu =>
+        ShowSendToWorkflows && (ShowSendToAnimeToReal || ShowSendToImageEdit || ShowSendToMetadataDistiller);
 
     /// <summary>True when at least one "Send" destination is enabled (drives the Send button visibility).</summary>
     public bool ShowSendMenu =>
@@ -396,7 +403,7 @@ public partial class ImageActionsViewModel : ObservableObject
     /// <summary>
     /// Hands the current selection off to a guided Workflow (pipeline). The host switches to the
     /// Workflows module and opens the run screen for <paramref name="workflowId"/> (e.g. "anime-to-real",
-    /// "image-to-image") with these images as its loose-image input batch.
+    /// "image-to-image", "batch-metadata-distiller") with these images as its loose-image input batch.
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanAct))]
     private async Task SendToWorkflowAsync(string? workflowId)

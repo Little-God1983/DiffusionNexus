@@ -534,10 +534,29 @@ public partial class BatchMetadataDistillerViewModel : ViewModelBase, IPipelineR
     partial void OnIsRunningChanged(bool value) => DistillCommand.NotifyCanExecuteChanged();
     partial void OnOutputFolderChanged(string? value) => DistillCommand.NotifyCanExecuteChanged();
 
+    /// <summary>
+    /// "Send to → Workflows" entry point. The distiller writes PNG only (see
+    /// <see cref="MetadataDistillerService"/>), so non-PNG hand-offs are dropped here and reported in
+    /// <see cref="StatusText"/> rather than loading fine and then failing one by one under Distill.
+    /// </summary>
     public void LoadInputImages(IReadOnlyList<string> paths)
     {
+        var skipped = 0;
         foreach (var p in paths.Where(File.Exists))
+        {
+            if (!string.Equals(Path.GetExtension(p), ".png", StringComparison.OrdinalIgnoreCase))
+            {
+                skipped++;
+                continue;
+            }
             if (!ImagePaths.Contains(p)) ImagePaths.Add(p);
+        }
+
+        if (skipped > 0)
+        {
+            StatusText = $"Skipped {skipped} non-PNG image(s) — the distiller writes PNG only.";
+            _log?.Warn(LogCategory.General, "Distiller", StatusText);
+        }
     }
 
     public void Dispose()

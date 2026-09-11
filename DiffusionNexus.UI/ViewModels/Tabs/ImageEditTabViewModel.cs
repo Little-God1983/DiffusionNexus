@@ -308,13 +308,16 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         ImageEditor = new ImageEditorViewModel(_eventAggregator, _backgroundRemovalService, _comfyUiService, readinessService: _readinessService, unifiedLogger: unifiedLogger, downloadCoordinator: downloadCoordinator);
 
         // Reusable Add/Send actions over the current edited image. "Image Editor" + "Comparer" are
-        // hidden; enablement tracks whether an image is loaded.
+        // hidden; enablement tracks whether an image is loaded. The Batch Metadata Distiller is hidden
+        // too: AcquireCurrentImagePathsAsync hands destinations a Skia re-encoded temp copy of the
+        // canvas, which carries none of the original PNG text chunks the distiller exists to read.
         ImageActions = new ImageActionsViewModel(_state, _eventAggregator, _videoThumbnailService, _settingsService)
         {
             AddButtonText = "Add To...",
             SendButtonText = "Send To...",
             ShowSendToImageEditor = false,
             ShowSendToComparer = false,
+            ShowSendToMetadataDistiller = false,
             PathProvider = AcquireCurrentImagePathsAsync,
         };
         ImageEditor.PropertyChanged += OnImageEditorPropertyChanged;
