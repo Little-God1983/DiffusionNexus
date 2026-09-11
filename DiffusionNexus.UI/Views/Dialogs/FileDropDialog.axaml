@@ -47,8 +47,8 @@
         
         <!-- File List (when files are added) -->
         <Grid IsVisible="{Binding HasFiles}" RowDefinitions="*,Auto">
-          <ScrollViewer Grid.Row="0" Padding="8">
-            <ItemsControl ItemsSource="{Binding SelectedFiles}">
+          <ScrollViewer Grid.Row="0">
+            <ItemsControl Margin="8" ItemsSource="{Binding SelectedFiles}">
               <ItemsControl.ItemTemplate>
                 <DataTemplate x:DataType="local:SelectedFileItem">
                   <Border Background="#2A2A2A" 

@@ -30,8 +30,8 @@
     </StackPanel>
 
     <!-- Scrollable Content Area -->
-    <ScrollViewer Grid.Row="1" Padding="20">
-      <StackPanel Spacing="16" Width="700" HorizontalAlignment="Left">
+    <ScrollViewer Grid.Row="1">
+      <StackPanel Margin="20" Spacing="16" Width="700" HorizontalAlignment="Left">
         
         <!-- General Settings -->
         <Expander Header="General" IsExpanded="False" HorizontalAlignment="Stretch">

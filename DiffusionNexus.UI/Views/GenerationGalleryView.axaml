@@ -347,8 +347,8 @@
         </StackPanel>
       </Border>
 
-      <ScrollViewer Grid.Column="0" x:Name="GalleryScrollViewer" IsVisible="{Binding HasMedia}" Padding="16">
-        <Grid>
+      <ScrollViewer Grid.Column="0" x:Name="GalleryScrollViewer" IsVisible="{Binding HasMedia}">
+        <Grid Margin="16">
           <ItemsControl ItemsSource="{Binding GroupedMediaItems}" IsVisible="{Binding IsGroupingEnabled}">
             <ItemsControl.ItemsPanel>
               <ItemsPanelTemplate>
@@ -403,8 +403,8 @@
             </Grid>
           </Border>
 
-          <ScrollViewer Grid.Row="1" Padding="16">
-            <StackPanel Spacing="18">
+          <ScrollViewer Grid.Row="1">
+            <StackPanel Margin="16" Spacing="18">
               <StackPanel Spacing="8">
                 <TextBlock Text="INDEXING" FontSize="11" Foreground="#6f6f6f" FontWeight="SemiBold"/>
                 <StackPanel Orientation="Horizontal" Spacing="8">
