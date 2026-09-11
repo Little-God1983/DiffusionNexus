@@ -2027,14 +2027,16 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     /// <summary>
     /// Drops the favorite entries of files that just left the gallery so the
     /// name does not linger in <c>.favorites.json</c> and resurrect as a
-    /// favorite on the next file saved under it. Best effort: a failed write
-    /// must not fail the delete.
+    /// favorite on the next file saved under it. Only files that actually
+    /// left the disk qualify: <see cref="DeleteFileIfExists"/> swallows a
+    /// locked or in-use file, and that file must keep its star. Best effort:
+    /// a failed write must not fail the delete.
     /// </summary>
     private async Task ClearFavoritesAsync(IReadOnlyList<GenerationGalleryMediaItemViewModel> items)
     {
         if (_favoritesService is null) return;
 
-        foreach (var item in items.Where(i => i.IsFavorite))
+        foreach (var item in items.Where(i => i.IsFavorite && !File.Exists(i.FilePath)))
         {
             try
             {

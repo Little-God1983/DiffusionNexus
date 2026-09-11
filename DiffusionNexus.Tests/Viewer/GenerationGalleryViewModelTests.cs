@@ -1894,14 +1894,46 @@ public class GenerationGalleryViewModelTests : IDisposable
         viewModel.DialogService = mockDialog.Object;
         await viewModel.LoadMediaCommand.ExecuteAsync(null);
         foreach (var item in viewModel.MediaItems) item.IsSelected = true;
+        viewModel.SelectAllFavoritesCommand.CanExecute(null).Should().BeTrue("precondition: favorites exist");
+        var hasFavoritesRaised = false;
+        viewModel.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(viewModel.HasFavorites)) hasFavoritesRaised = true; };
 
         await viewModel.DeleteSelectedCommand.ExecuteAsync(null);
 
         viewModel.MediaItems.Should().BeEmpty();
         File.Exists(Path.Combine(galleryPath, ".favorites.json")).Should().BeFalse();
         viewModel.HasFavorites.Should().BeFalse();
+        hasFavoritesRaised.Should().BeTrue("bindings on HasFavorites must be told the last favorite is gone");
+        viewModel.SelectAllFavoritesCommand.CanExecute(null).Should().BeFalse();
     }
 
+
+    [Fact]
+    public async Task DeleteImageCommand_WhenTheFileDeleteFails_KeepsTheFavoriteEntry()
+    {
+        // DeleteFileIfExists swallows a locked file (viewer, generator still
+        // writing, antivirus). The file survives, so its star must survive too.
+        var galleryPath = CreateTempDirectory();
+        var locked = Path.Combine(galleryPath, "locked.png");
+        File.WriteAllText(locked, "test");
+        var favorites = new ImageFavoritesService();
+        await favorites.SetFavoriteAsync(locked, true);
+
+        var mockDialog = new Mock<IDialogService>();
+        mockDialog.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(true);
+        var viewModel = CreateGalleryViewModel(galleryPath, new Mock<ITagIndexService>().Object, favoritesService: favorites);
+        viewModel.DialogService = mockDialog.Object;
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+
+        await using (File.Open(locked, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            await viewModel.DeleteImageCommand.ExecuteAsync(viewModel.MediaItems.Single());
+        }
+
+        File.Exists(locked).Should().BeTrue("the precondition is a delete that failed");
+        (await favorites.IsFavoriteAsync(locked)).Should().BeTrue();
+        (await new ImageFavoritesService().GetFavoritesAsync(galleryPath)).Should().BeEquivalentTo(new[] { "locked.png" });
+    }
     [Fact]
     public async Task LoadMedia_PrunesFavoritesWhoseFilesWereDeletedOutsideTheApp()
     {
