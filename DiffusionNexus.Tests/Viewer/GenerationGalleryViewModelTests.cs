@@ -1846,6 +1846,84 @@ public class GenerationGalleryViewModelTests : IDisposable
         viewModel.MediaItems.Should().BeEmpty();
     }
 
+
+    [Fact]
+    public async Task DeleteImageCommand_ClearsTheDeletedFilesFavoriteEntry()
+    {
+        // Delete removed the file and its tag rows but left the name in
+        // .favorites.json, so a later file with the same name came back as a
+        // favorite and the json never went away.
+        var galleryPath = CreateTempDirectory();
+        var deleted = Path.Combine(galleryPath, "gone.png");
+        var kept = Path.Combine(galleryPath, "stays.png");
+        File.WriteAllText(deleted, "test");
+        File.WriteAllText(kept, "test");
+        var favorites = new ImageFavoritesService();
+        await favorites.SetFavoriteAsync(deleted, true);
+        await favorites.SetFavoriteAsync(kept, true);
+
+        var mockDialog = new Mock<IDialogService>();
+        mockDialog.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(true);
+        var viewModel = CreateGalleryViewModel(galleryPath, new Mock<ITagIndexService>().Object, favoritesService: favorites);
+        viewModel.DialogService = mockDialog.Object;
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+
+        var doomed = viewModel.MediaItems.Single(i => string.Equals(i.FilePath, deleted, StringComparison.OrdinalIgnoreCase));
+        await viewModel.DeleteImageCommand.ExecuteAsync(doomed);
+
+        (await favorites.IsFavoriteAsync(deleted)).Should().BeFalse();
+        (await favorites.IsFavoriteAsync(kept)).Should().BeTrue();
+        (await new ImageFavoritesService().GetFavoritesAsync(galleryPath)).Should().BeEquivalentTo(new[] { "stays.png" });
+    }
+
+    [Fact]
+    public async Task DeleteSelectedCommand_ClearsFavoriteEntries_AndDropsTheJsonWhenNoneRemain()
+    {
+        var galleryPath = CreateTempDirectory();
+        var a = Path.Combine(galleryPath, "a.png");
+        var b = Path.Combine(galleryPath, "b.png");
+        File.WriteAllText(a, "test");
+        File.WriteAllText(b, "test");
+        var favorites = new ImageFavoritesService();
+        await favorites.SetFavoriteAsync(a, true);
+        await favorites.SetFavoriteAsync(b, true);
+
+        var mockDialog = new Mock<IDialogService>();
+        mockDialog.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(true);
+        var viewModel = CreateGalleryViewModel(galleryPath, new Mock<ITagIndexService>().Object, favoritesService: favorites);
+        viewModel.DialogService = mockDialog.Object;
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+        foreach (var item in viewModel.MediaItems) item.IsSelected = true;
+
+        await viewModel.DeleteSelectedCommand.ExecuteAsync(null);
+
+        viewModel.MediaItems.Should().BeEmpty();
+        File.Exists(Path.Combine(galleryPath, ".favorites.json")).Should().BeFalse();
+        viewModel.HasFavorites.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task LoadMedia_PrunesFavoritesWhoseFilesWereDeletedOutsideTheApp()
+    {
+        // Files deleted in Explorer never went through the delete command, so
+        // the scan reconciles each folder's favorites against what is on disk.
+        var galleryPath = CreateTempDirectory();
+        var kept = Path.Combine(galleryPath, "kept.png");
+        var gone = Path.Combine(galleryPath, "gone.png");
+        File.WriteAllText(kept, "test");
+        File.WriteAllText(gone, "test");
+        var seeding = new ImageFavoritesService();
+        await seeding.SetFavoriteAsync(kept, true);
+        await seeding.SetFavoriteAsync(gone, true);
+        File.Delete(gone);
+
+        var favorites = new ImageFavoritesService();
+        var viewModel = CreateGalleryViewModel(galleryPath, new Mock<ITagIndexService>().Object, favoritesService: favorites);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+
+        viewModel.MediaItems.Single().IsFavorite.Should().BeTrue();
+        (await new ImageFavoritesService().GetFavoritesAsync(galleryPath)).Should().BeEquivalentTo(new[] { "kept.png" });
+    }
     public void Dispose()
     {
         foreach (var path in _tempPaths)
@@ -1878,7 +1956,8 @@ public class GenerationGalleryViewModelTests : IDisposable
     /// index service.
     /// </summary>
     private static GenerationGalleryViewModel CreateGalleryViewModel(
-        string galleryPath, ITagIndexService tagIndexService, ITaskTracker? taskTracker = null)
+        string galleryPath, ITagIndexService tagIndexService, ITaskTracker? taskTracker = null,
+        IImageFavoritesService? favoritesService = null)
     {
         var settings = new AppSettings
         {
@@ -1894,7 +1973,8 @@ public class GenerationGalleryViewModelTests : IDisposable
             new Mock<IDatasetState>().Object,
             null,
             tagIndexService: tagIndexService,
-            taskTracker: taskTracker);
+            taskTracker: taskTracker,
+            favoritesService: favoritesService);
     }
 
     /// <summary>

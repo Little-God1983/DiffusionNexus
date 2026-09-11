@@ -102,6 +102,35 @@ public sealed class ImageFavoritesService : IImageFavoritesService
         }
     }
 
+    /// <inheritdoc />
+    public async Task<int> RemoveMissingAsync(string folderPath, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(folderPath);
+        var folder = NormalizeFolderPath(folderPath);
+        if (!Directory.Exists(folder))
+        {
+            return 0;
+        }
+
+        var semaphore = GetLock(folder);
+        await semaphore.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var set = await GetOrLoadAsync(folder, ct).ConfigureAwait(false);
+            var removed = set.RemoveWhere(name => !File.Exists(Path.Combine(folder, name)));
+            if (removed > 0)
+            {
+                await PersistAsync(folder, set, ct).ConfigureAwait(false);
+            }
+
+            return removed;
+        }
+        finally
+        {
+            semaphore.Release();
+        }
+    }
+
     private async Task<HashSet<string>> GetOrLoadAsync(string normalizedFolder, CancellationToken ct)
     {
         if (_cache.TryGetValue(normalizedFolder, out var cached))
