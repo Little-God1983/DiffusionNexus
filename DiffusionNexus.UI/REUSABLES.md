@@ -143,6 +143,7 @@ Others worth knowing:
 | `AvaloniaClipboardService` | [Services/AvaloniaClipboardService.cs](Services/AvaloniaClipboardService.cs) | Clipboard access. |
 | `FileConflictDetector`, `IFileOperations` / `FileOperations`, `MediaFileExtensions` | [Utilities/](Utilities/) | File-level helpers backing the dialogs above. |
 | `DatasetEventAggregator` (`IDatasetEventAggregator`) | [Services/DatasetEventAggregator.cs](Services/DatasetEventAggregator.cs) | Cross-view dataset state sync — use instead of ad-hoc events between tabs. |
+| `ScrollKeyNavigation` | [Behaviors/ScrollKeyNavigation.cs](Behaviors/ScrollKeyNavigation.cs) | `behaviors:ScrollKeyNavigation.IsEnabled="True"` on a `ScrollViewer`: Home / End / Page Up / Page Down scroll it, and a click inside focuses it. Text boxes keep their own keys. A view that holds focus itself calls `ScrollKeyNavigation.HandleKey(scrollViewer, e)` from its `OnKeyDown`. Use this on any new scrolling grid instead of hand-rolling key handlers. |
 
 ---
 

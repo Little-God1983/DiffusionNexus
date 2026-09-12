@@ -9,6 +9,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using DiffusionNexus.UI.Behaviors;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels;
 
@@ -270,11 +271,16 @@ public partial class GenerationGalleryView : UserControl
     }
 
     /// <summary>
-    /// Handles keyboard shortcuts: Ctrl+C (copy files), Ctrl+A (select all), Escape (clear selection).
+    /// Handles keyboard shortcuts: Ctrl+C (copy files), Ctrl+A (select all), Escape (clear selection),
+    /// Home / End / Page Up / Page Down (scroll the grid).
     /// </summary>
     private async void OnKeyDown(object? sender, KeyEventArgs e)
     {
         if (DataContext is not GenerationGalleryViewModel vm) return;
+
+        // Clicking a tile focuses the view (see OnMediaCardPointerPressed), not the ScrollViewer,
+        // so the scroll keys have to be answered here as well as by the behavior on the grid.
+        if (ScrollKeyNavigation.HandleKey(_galleryScrollViewer, e)) return;
 
         if (e.Key == Key.C && e.KeyModifiers.HasFlag(KeyModifiers.Control))
         {
