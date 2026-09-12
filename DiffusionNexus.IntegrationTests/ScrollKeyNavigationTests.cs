@@ -166,6 +166,146 @@ public class ScrollKeyNavigationTests
         }
     }
 
+    // ---- ForwardKeys: the host view forwards the keys when focus sits on a control that would
+    // otherwise claim them (a TabItem header switches tabs on Home/End — issue #564 follow-up). ----
+
+    [AvaloniaFact]
+    public void ForwardKeys_scrolls_the_grid_while_a_tab_header_holds_focus()
+    {
+        var f = BuildHosted();
+        try
+        {
+            f.Header.Focus().Should().BeTrue();
+
+            f.Window.KeyPressQwerty(PhysicalKey.End, RawInputModifiers.None);
+            Layout(f.Window);
+
+            f.Scroll.Offset.Y.Should().Be(f.Scroll.Extent.Height - f.Scroll.Viewport.Height);
+            f.HeaderSaw.Should().BeEmpty("the header must not get to switch tabs");
+        }
+        finally
+        {
+            f.Window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void ForwardKeys_leaves_the_key_to_the_header_while_the_grid_is_hidden()
+    {
+        var f = BuildHosted();
+        try
+        {
+            f.Scroll.IsVisible = false;
+            Layout(f.Window);
+            f.Header.Focus().Should().BeTrue();
+
+            f.Window.KeyPressQwerty(PhysicalKey.End, RawInputModifiers.None);
+            Layout(f.Window);
+
+            f.HeaderSaw.Should().Equal(new[] { Key.End }, "another tab is showing, so End means 'last tab' again");
+            f.Scroll.Offset.Y.Should().Be(0);
+        }
+        finally
+        {
+            f.Window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void ForwardKeys_leaves_the_key_to_the_header_while_the_grid_is_detached()
+    {
+        var f = BuildHosted();
+        try
+        {
+            // What a TabControl actually does with a non-selected tab's content: it is not in the tree.
+            f.Host.Children.Remove(f.Scroll);
+            Layout(f.Window);
+            f.Header.Focus().Should().BeTrue();
+
+            f.Window.KeyPressQwerty(PhysicalKey.End, RawInputModifiers.None);
+            Layout(f.Window);
+
+            f.HeaderSaw.Should().Equal(Key.End);
+        }
+        finally
+        {
+            f.Window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void ForwardKeys_leaves_the_key_to_a_TextBox_in_the_host()
+    {
+        var f = BuildHosted();
+        try
+        {
+            f.SearchBox.Focus().Should().BeTrue();
+
+            f.Window.KeyPressQwerty(PhysicalKey.End, RawInputModifiers.None);
+            Layout(f.Window);
+
+            f.Scroll.Offset.Y.Should().Be(0, "End in the search box moves the caret");
+        }
+        finally
+        {
+            f.Window.Close();
+        }
+    }
+
+    private sealed record HostedFixture(Window Window, Panel Host, Border Header, TextBox SearchBox, ScrollViewer Scroll, List<Key> HeaderSaw);
+
+    /// <summary>
+    /// A host panel standing in for a view with a TabControl: a focusable "tab header" that answers
+    /// Home/End on the bubble pass (as <c>TabControl</c> does), a search box, and the tile grid.
+    /// Themeless session, so no real TabControl — it would never get a template.
+    /// </summary>
+    private static HostedFixture BuildHosted()
+    {
+        var headerSaw = new List<Key>();
+        var header = new Border { Width = 120, Height = 32, Background = Brushes.DarkGray, Focusable = true };
+        header.AddHandler(InputElement.KeyDownEvent, (_, e) =>
+        {
+            if (e.Key is Key.Home or Key.End)
+            {
+                headerSaw.Add(e.Key);
+                e.Handled = true;
+            }
+        }, Avalonia.Interactivity.RoutingStrategies.Bubble);
+        var searchBox = new TextBox { Width = 200, Height = 32 };
+
+        var items = new WrapPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(16) };
+        for (var i = 0; i < 24; i++)
+        {
+            items.Children.Add(new Border { Width = 340, Height = 440, Margin = new Thickness(8), Background = Brushes.Gray });
+        }
+        var scroll = new ScrollViewer
+        {
+            Content = items,
+            Template = new FuncControlTemplate<ScrollViewer>((sv, ns) => new ScrollContentPresenter
+            {
+                Name = "PART_ContentPresenter",
+                [!ContentPresenter.ContentProperty] = sv[!ContentControl.ContentProperty],
+                [!ContentPresenter.PaddingProperty] = sv[!TemplatedControl.PaddingProperty],
+            }.RegisterInNameScope(ns)),
+        };
+        ScrollKeyNavigation.SetIsEnabled(scroll, true);
+
+        var host = new DockPanel();
+        var top = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Height = 40 };
+        top.Children.Add(header);
+        top.Children.Add(searchBox);
+        DockPanel.SetDock(top, Dock.Top);
+        host.Children.Add(top);
+        host.Children.Add(scroll);
+        ScrollKeyNavigation.ForwardKeys(host, scroll);
+
+        var window = new Window { Width = 1400, Height = 900, Content = host };
+        window.Show();
+        Layout(window);
+        scroll.Extent.Height.Should().BeGreaterThan(3 * scroll.Viewport.Height, "the fixture must scroll more than two pages");
+        return new HostedFixture(window, host, header, searchBox, scroll, headerSaw);
+    }
+
     /// <summary>
     /// Raises the real <c>PointerPressed</c> routed event on <paramref name="target"/>, so it bubbles
     /// through the actual visual tree to the behavior's handler. Not <c>window.MouseDown(...)</c>:

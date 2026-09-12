@@ -71,6 +71,31 @@ public static class ScrollKeyNavigation
         return true;
     }
 
+    /// <summary>
+    /// For a host view where focus can sit on a control that answers the scroll keys itself — a
+    /// <c>TabItem</c> header switches tabs on Home/End — installs a tunnel <c>KeyDown</c> handler on
+    /// <paramref name="host"/> that forwards the four keys to <paramref name="scroll"/> while it is on
+    /// screen. The bubble handler on the ScrollViewer cannot cover that case: the header handles the
+    /// key on the bubble pass and it never reaches the ScrollViewer, which is not its ancestor.
+    /// Text inputs still keep their keys (see <see cref="HandleKey"/>). Call once per grid; when the
+    /// host has several, the one that is on screen answers.
+    /// </summary>
+    public static void ForwardKeys(Control host, ScrollViewer scroll)
+    {
+        host.AddHandler(InputElement.KeyDownEvent, (_, e) =>
+        {
+            if (IsOnScreen(scroll))
+                HandleKey(scroll, e);
+        }, RoutingStrategies.Tunnel);
+    }
+
+    /// <summary>
+    /// A TabControl keeps a non-selected tab's content out of the visual tree entirely, and a hidden
+    /// list (<c>IsVisible</c> bound to "has items") is attached but not effectively visible.
+    /// </summary>
+    private static bool IsOnScreen(ScrollViewer scroll) =>
+        scroll.IsEffectivelyVisible && scroll.GetVisualRoot() is not null;
+
     private static void OnIsEnabledChanged(ScrollViewer scroll, AvaloniaPropertyChangedEventArgs e)
     {
         if (e.GetNewValue<bool>())

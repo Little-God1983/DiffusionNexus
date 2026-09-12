@@ -33,8 +33,6 @@ public partial class DatasetManagementView : UserControl
     private Border? _emptyDatasetDropZone;
     private Grid? _imageGridArea;
     private TextBox? _descriptionTextBox;
-    private ScrollViewer? _datasetListScrollViewer;
-    private ScrollViewer? _datasetImageScrollViewer;
     private bool _isInitialized;
 
     public DatasetManagementView()
@@ -50,8 +48,13 @@ public partial class DatasetManagementView : UserControl
         _emptyDatasetDropZone = this.FindControl<Border>("EmptyDatasetDropZone");
         _imageGridArea = this.FindControl<Grid>("ImageGridArea");
         _descriptionTextBox = this.FindControl<TextBox>("DescriptionTextBox");
-        _datasetListScrollViewer = this.FindControl<ScrollViewer>("DatasetListScrollViewer");
-        _datasetImageScrollViewer = this.FindControl<ScrollViewer>("DatasetImageScrollViewer");
+
+        // Home / End / Page Up / Page Down for whichever grid is on screen, answered on the tunnel
+        // pass so the image tab's header (a TabItem: Home/End = switch tab) cannot claim them first.
+        if (this.FindControl<ScrollViewer>("DatasetListScrollViewer") is { } datasetList)
+            ScrollKeyNavigation.ForwardKeys(this, datasetList);
+        if (this.FindControl<ScrollViewer>("DatasetImageScrollViewer") is { } imageGrid)
+            ScrollKeyNavigation.ForwardKeys(this, imageGrid);
 
         // Set up drag-drop handlers for empty dataset drop zone
         if (_emptyDatasetDropZone is not null)
@@ -895,17 +898,12 @@ public partial class DatasetManagementView : UserControl
     }
 
     /// <summary>
-    /// Handles keyboard shortcuts for selection and for scrolling the visible grid
-    /// (Home / End / Page Up / Page Down).
+    /// Handles keyboard shortcuts for selection. (Home / End / Page Up / Page Down are forwarded to
+    /// the visible grid from InitializeComponent, see <see cref="ScrollKeyNavigation.ForwardKeys"/>.)
     /// </summary>
     private void OnKeyDown(object? sender, KeyEventArgs e)
     {
         if (DataContext is not DatasetManagementViewModel vm) return;
-
-        // Whichever grid is on screen answers the scroll keys when the view itself holds focus.
-        var visibleGrid = vm.IsViewingDataset ? _datasetImageScrollViewer : _datasetListScrollViewer;
-        if (ScrollKeyNavigation.HandleKey(visibleGrid, e)) return;
-
         if (!vm.IsViewingDataset) return;
 
         if (e.Key == Key.A && e.KeyModifiers.HasFlag(KeyModifiers.Control))
