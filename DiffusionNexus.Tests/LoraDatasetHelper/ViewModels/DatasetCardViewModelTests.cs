@@ -1038,5 +1038,37 @@ public class DatasetCardViewModelTests : IDisposable
         changed.Should().Contain(nameof(DatasetCardViewModel.HiddenVersionsText));
     }
 
+    [Theory]
+    [InlineData(3, 0, "3 Versions")]
+    [InlineData(3, 1, "2 Versions")]
+    [InlineData(3, 2, "1 Version")]
+    public void VersionBadgeText_CollapsedCard_ShowsOnlyVisibleVersions(int total, int hidden, string expected)
+    {
+        var vm = new DatasetCardViewModel { TotalVersions = total, HiddenVersionCount = hidden };
+
+        vm.VersionBadgeText.Should().Be(expected);
+        vm.ShowVersionBadge.Should().BeTrue();
+    }
+
+    [Fact]
+    public void VersionBadgeText_VersionCard_IgnoresHiddenVersions()
+    {
+        var vm = new DatasetCardViewModel { TotalVersions = 3, DisplayVersion = 2, HiddenVersionCount = 1 };
+
+        vm.VersionBadgeText.Should().Be("V2");
+    }
+
+    [Fact]
+    public void HiddenVersionCount_RaisesChangeNotificationForVersionBadge()
+    {
+        var vm = new DatasetCardViewModel { TotalVersions = 3 };
+        var changed = new List<string?>();
+        vm.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+
+        vm.HiddenVersionCount = 1;
+
+        changed.Should().Contain(nameof(DatasetCardViewModel.VersionBadgeText));
+    }
+
     #endregion
 }

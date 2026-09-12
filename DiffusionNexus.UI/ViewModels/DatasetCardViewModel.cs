@@ -211,6 +211,7 @@ public class DatasetCardViewModel : ObservableObject
             {
                 OnPropertyChanged(nameof(HasHiddenVersions));
                 OnPropertyChanged(nameof(HiddenVersionsText));
+                OnPropertyChanged(nameof(VersionBadgeText));
             }
         }
     }
@@ -733,11 +734,23 @@ public class DatasetCardViewModel : ObservableObject
     /// <summary>
     /// Badge text for card display.
     /// In flattened view: shows "V1", "V2", etc.
-    /// In collapsed view: shows "3 Versions" for multi-version datasets.
+    /// In collapsed view: shows the number of versions the user can actually reach, e.g. "3 Versions",
+    /// or "2 Versions" when the NSFW filter hides one (the footer label explains the rest).
     /// </summary>
-    public string VersionBadgeText => _displayVersion.HasValue 
-        ? $"V{_displayVersion}" 
-        : (_totalVersions > 1 ? $"{_totalVersions} Versions" : string.Empty);
+    public string VersionBadgeText
+    {
+        get
+        {
+            if (_displayVersion.HasValue)
+                return $"V{_displayVersion}";
+
+            if (_totalVersions <= 1)
+                return string.Empty;
+
+            var visible = Math.Max(1, _totalVersions - _hiddenVersionCount);
+            return visible == 1 ? "1 Version" : $"{visible} Versions";
+        }
+    }
 
     /// <summary>
     /// Whether to show the version badge on the card.
