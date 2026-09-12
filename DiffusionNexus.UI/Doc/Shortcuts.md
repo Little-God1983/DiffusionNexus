@@ -1,6 +1,6 @@
 # Keyboard Shortcuts
 
-## Scrolling grids (Generation Gallery, LoRA Viewer Installed tab, Dataset Management)
+## Scrolling grids (Generation Gallery, LoRA Viewer Installed tab and detail pane, Dataset Management)
 
 | Key | Action | Context |
 |-----|--------|---------|
@@ -10,7 +10,9 @@
 | Page Down | Scroll one screen down | Grid or view focused, not typing in a text box |
 
 > In the LoRA Viewer and Dataset Management the keys work as soon as the tab is on screen, even with
-> focus on the tab header. In the Gallery, click anywhere in the grid first — the click hands focus to
+> focus on the tab header. With the LoRA detail pane open, click inside the pane and the keys scroll
+> the pane instead of the grid behind it. A grid that fits on screen leaves the keys alone (so Home/End
+> on a tab header still jump to the first/last tab). In the Gallery, click anywhere in the grid first — the click hands focus to
 > the grid — and End reaches the bottom of the items loaded so far and triggers the next page load, so
 > a long gallery walks down in pages. Provided by `ScrollKeyNavigation` (see `REUSABLES.md`); the four scroll areas are the Gallery
 > grid, the LoRA Installed tile grid, the Dataset Management dataset list and its image-card grid.

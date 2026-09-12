@@ -4,6 +4,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
              xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
+             xmlns:behaviors="using:DiffusionNexus.UI.Behaviors"
              mc:Ignorable="d" d:DesignWidth="500" d:DesignHeight="800"
              x:Class="DiffusionNexus.UI.Views.Controls.ModelDetailView"
              x:DataType="vm:ModelDetailViewModel">
@@ -137,7 +138,8 @@
       <ScrollViewer x:Name="DetailScrollViewer"
                     Grid.Row="1"
                     VerticalScrollBarVisibility="Auto"
-                    HorizontalScrollBarVisibility="Disabled">
+                    HorizontalScrollBarVisibility="Disabled"
+                    behaviors:ScrollKeyNavigation.IsEnabled="True">
         <StackPanel Spacing="0">
 
           <!-- Version Tabs -->

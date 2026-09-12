@@ -39,14 +39,19 @@ public static class ScrollKeyNavigation
 
     /// <summary>
     /// Applies the key → scroll mapping. Returns <c>true</c> (and marks <paramref name="e"/> handled) when
-    /// the key was one of the four scroll keys with no modifier and the event did not originate inside
-    /// a text input; otherwise leaves the event untouched so the caller can handle its own keys.
+    /// the key was one of the four scroll keys with no modifier, the event did not originate inside a
+    /// text input, and the content actually overflows; otherwise leaves the event untouched so the
+    /// caller (or whatever is next on the route) can handle its own keys.
     /// </summary>
     public static bool HandleKey(ScrollViewer? scroll, KeyEventArgs e)
     {
         if (scroll is null || e.Handled || e.KeyModifiers != KeyModifiers.None)
             return false;
         if (IsInsideTextInput(e.Source))
+            return false;
+        // A grid that fits has no use for the key. Claiming it anyway would take Home/End away from
+        // the tab header (= first/last tab) for exactly the users with the least content.
+        if (scroll.Extent.Height <= scroll.Viewport.Height)
             return false;
 
         switch (e.Key)
@@ -77,14 +82,15 @@ public static class ScrollKeyNavigation
     /// <paramref name="host"/> that forwards the four keys to <paramref name="scroll"/> while it is on
     /// screen. The bubble handler on the ScrollViewer cannot cover that case: the header handles the
     /// key on the bubble pass and it never reaches the ScrollViewer, which is not its ancestor.
-    /// Text inputs still keep their keys (see <see cref="HandleKey"/>). Call once per grid; when the
+    /// Text inputs still keep their keys (see <see cref="HandleKey"/>), and so does any other scroll
+    /// area that holds focus — a detail pane laid over the grid, say. Call once per grid; when the
     /// host has several, the one that is on screen answers.
     /// </summary>
     public static void ForwardKeys(Control host, ScrollViewer scroll)
     {
         host.AddHandler(InputElement.KeyDownEvent, (_, e) =>
         {
-            if (IsOnScreen(scroll))
+            if (IsOnScreen(scroll) && !IsInsideAnotherScrollArea(e.Source, scroll))
                 HandleKey(scroll, e);
         }, RoutingStrategies.Tunnel);
     }
@@ -95,6 +101,16 @@ public static class ScrollKeyNavigation
     /// </summary>
     private static bool IsOnScreen(ScrollViewer scroll) =>
         scroll.IsEffectivelyVisible && scroll.GetVisualRoot() is not null;
+
+    /// <summary>
+    /// The focused control's nearest scroll area owns its keys. A pane laid <em>over</em> the grid
+    /// (LoraViewerView's detail overlay) leaves the grid effectively visible underneath, so visibility
+    /// alone cannot tell the two apart — focus can.
+    /// </summary>
+    private static bool IsInsideAnotherScrollArea(object? source, ScrollViewer scroll) =>
+        source is Visual visual
+        && visual.FindAncestorOfType<ScrollViewer>(includeSelf: true) is { } nearest
+        && nearest != scroll;
 
     private static void OnIsEnabledChanged(ScrollViewer scroll, AvaloniaPropertyChangedEventArgs e)
     {
@@ -108,6 +124,7 @@ public static class ScrollKeyNavigation
         {
             scroll.RemoveHandler(InputElement.PointerPressedEvent, OnPointerPressed);
             scroll.RemoveHandler(InputElement.KeyDownEvent, OnKeyDown);
+            scroll.ClearValue(InputElement.FocusableProperty);
         }
     }
 

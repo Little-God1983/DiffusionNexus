@@ -245,6 +245,7 @@ public class ScrollKeyNavigationTests
             Layout(f.Window);
 
             f.Scroll.Offset.Y.Should().Be(0, "End in the search box moves the caret");
+            f.SearchBoxSaw.Should().Contain(Key.End, "the search box, not the forwarder, got the key");
         }
         finally
         {
@@ -252,14 +253,110 @@ public class ScrollKeyNavigationTests
         }
     }
 
-    private sealed record HostedFixture(Window Window, Panel Host, Border Header, TextBox SearchBox, ScrollViewer Scroll, List<Key> HeaderSaw);
+    [AvaloniaFact]
+    public void ForwardKeys_leaves_the_key_to_the_header_when_the_grid_has_nothing_to_scroll()
+    {
+        var f = BuildHosted(tileCount: 2);
+        try
+        {
+            f.Scroll.Extent.Height.Should().BeLessThanOrEqualTo(f.Scroll.Viewport.Height, "the fixture must fit its viewport");
+            f.Header.Focus().Should().BeTrue();
+
+            f.Window.KeyPressQwerty(PhysicalKey.End, RawInputModifiers.None);
+            Layout(f.Window);
+
+            f.HeaderSaw.Should().Equal(new[] { Key.End }, "a grid that fits has no use for the key, so End still means 'last tab'");
+        }
+        finally
+        {
+            f.Window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void ForwardKeys_leaves_the_key_to_another_scroll_area_that_holds_focus()
+    {
+        var f = BuildHosted();
+        try
+        {
+            // A detail pane laid over the grid, like LoraViewerView's ModelDetailView overlay: the grid
+            // stays effectively visible underneath, so only focus tells the two apart.
+            var pane = MakeGrid(24);
+            pane.Width = 600;
+            pane.HorizontalAlignment = HorizontalAlignment.Right;
+            var paneButton = new Border { Width = 80, Height = 30, Background = Brushes.DarkGray, Focusable = true };
+            ((Panel)pane.Content!).Children.Insert(0, paneButton);
+            Grid.SetRow(pane, 1);
+            f.Host.Children.Add(pane);
+            Layout(f.Window);
+            pane.Extent.Height.Should().BeGreaterThan(pane.Viewport.Height, "the pane must have something to scroll");
+            paneButton.Focus().Should().BeTrue();
+
+            f.Window.KeyPressQwerty(PhysicalKey.End, RawInputModifiers.None);
+            Layout(f.Window);
+
+            f.Scroll.Offset.Y.Should().Be(0, "the grid under the pane must not move");
+            pane.Offset.Y.Should().Be(pane.Extent.Height - pane.Viewport.Height, "the pane's own behavior answers the key");
+        }
+        finally
+        {
+            f.Window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void ForwardKeys_with_two_grids_lets_the_one_on_screen_answer()
+    {
+        var f = BuildHosted();
+        try
+        {
+            // Dataset Management: the dataset list is hidden while a dataset's image grid shows.
+            var imageGrid = MakeGrid(24);
+            Grid.SetRow(imageGrid, 1);
+            f.Host.Children.Add(imageGrid);
+            ScrollKeyNavigation.ForwardKeys(f.Host, imageGrid);
+            f.Scroll.IsVisible = false;
+            Layout(f.Window);
+            f.Header.Focus().Should().BeTrue();
+
+            f.Window.KeyPressQwerty(PhysicalKey.End, RawInputModifiers.None);
+            Layout(f.Window);
+
+            imageGrid.Offset.Y.Should().Be(imageGrid.Extent.Height - imageGrid.Viewport.Height);
+            f.Scroll.Offset.Y.Should().Be(0);
+            f.HeaderSaw.Should().BeEmpty();
+        }
+        finally
+        {
+            f.Window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void Disabling_the_behavior_makes_the_ScrollViewer_non_focusable_again()
+    {
+        var (window, scroll, _) = Build();
+        try
+        {
+            ScrollKeyNavigation.SetIsEnabled(scroll, false);
+
+            scroll.Focusable.Should().BeFalse("the off switch must undo what the on switch did");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    private sealed record HostedFixture(
+        Window Window, Grid Host, Border Header, TextBox SearchBox, ScrollViewer Scroll, List<Key> HeaderSaw, List<Key> SearchBoxSaw);
 
     /// <summary>
     /// A host panel standing in for a view with a TabControl: a focusable "tab header" that answers
     /// Home/End on the bubble pass (as <c>TabControl</c> does), a search box, and the tile grid.
     /// Themeless session, so no real TabControl — it would never get a template.
     /// </summary>
-    private static HostedFixture BuildHosted()
+    private static HostedFixture BuildHosted(int tileCount = 24)
     {
         var headerSaw = new List<Key>();
         var header = new Border { Width = 120, Height = 32, Background = Brushes.DarkGray, Focusable = true };
@@ -271,10 +368,38 @@ public class ScrollKeyNavigationTests
                 e.Handled = true;
             }
         }, Avalonia.Interactivity.RoutingStrategies.Bubble);
+        var searchBoxSaw = new List<Key>();
         var searchBox = new TextBox { Width = 200, Height = 32 };
+        // handledEventsToo: the TextBox may claim the key itself; what matters is that it reached it.
+        searchBox.AddHandler(InputElement.KeyDownEvent, (_, e) => searchBoxSaw.Add(e.Key),
+            Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
 
+        var scroll = MakeGrid(tileCount);
+        var host = new Grid { RowDefinitions = new RowDefinitions("Auto,*") };
+        var top = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Height = 40 };
+        top.Children.Add(header);
+        top.Children.Add(searchBox);
+        host.Children.Add(top);
+        Grid.SetRow(scroll, 1);
+        host.Children.Add(scroll);
+        ScrollKeyNavigation.ForwardKeys(host, scroll);
+
+        var window = new Window { Width = 1400, Height = 900, Content = host };
+        window.Show();
+        Layout(window);
+        if (tileCount > 2)
+            scroll.Extent.Height.Should().BeGreaterThan(3 * scroll.Viewport.Height, "the fixture must scroll more than two pages");
+        return new HostedFixture(window, host, header, searchBox, scroll, headerSaw, searchBoxSaw);
+    }
+
+    /// <summary>
+    /// A tile grid with the behavior switched on. 24 tiles scroll more than two pages in the 1400×900
+    /// window; 2 fit without scrolling.
+    /// </summary>
+    private static ScrollViewer MakeGrid(int tileCount)
+    {
         var items = new WrapPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(16) };
-        for (var i = 0; i < 24; i++)
+        for (var i = 0; i < tileCount; i++)
         {
             items.Children.Add(new Border { Width = 340, Height = 440, Margin = new Thickness(8), Background = Brushes.Gray });
         }
@@ -289,21 +414,7 @@ public class ScrollKeyNavigationTests
             }.RegisterInNameScope(ns)),
         };
         ScrollKeyNavigation.SetIsEnabled(scroll, true);
-
-        var host = new DockPanel();
-        var top = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Height = 40 };
-        top.Children.Add(header);
-        top.Children.Add(searchBox);
-        DockPanel.SetDock(top, Dock.Top);
-        host.Children.Add(top);
-        host.Children.Add(scroll);
-        ScrollKeyNavigation.ForwardKeys(host, scroll);
-
-        var window = new Window { Width = 1400, Height = 900, Content = host };
-        window.Show();
-        Layout(window);
-        scroll.Extent.Height.Should().BeGreaterThan(3 * scroll.Viewport.Height, "the fixture must scroll more than two pages");
-        return new HostedFixture(window, host, header, searchBox, scroll, headerSaw);
+        return scroll;
     }
 
     /// <summary>
