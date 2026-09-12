@@ -71,6 +71,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     private DatasetType? _filterType;
     private bool _showNsfw;
     private bool _selectedNsfw;
+    private DatasetOverviewFilterResult _filterResult = new([], 0, 0);
 
     // Sub-tab fields
     private VersionSubTab _selectedSubTab = VersionSubTab.TrainingData;
@@ -473,21 +474,25 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     public bool HasActiveFilter => !string.IsNullOrWhiteSpace(_filterText) || _filterType.HasValue || !_showNsfw;
 
     /// <summary>
-    /// Number of datasets hidden by filters (search, type, NSFW combined).
+    /// Number of datasets hidden entirely by the filters (search, type, NSFW combined).
     /// </summary>
-    public int HiddenCount { get; private set; }
+    public int HiddenDatasetCount => _filterResult.HiddenDatasetCount;
 
     /// <summary>
-    /// Whether any datasets are hidden by filters.
+    /// Number of versions hidden by the filters while their dataset stays visible
+    /// (NSFW-flagged versions in both views, plus version cards dropped by search/type in flattened view).
     /// </summary>
-    public bool HasHidden => HiddenCount > 0;
+    public int HiddenVersionCount => _filterResult.HiddenVersionCount;
 
     /// <summary>
-    /// Text describing how many datasets are hidden by filters.
+    /// Whether any datasets or versions are hidden by filters.
     /// </summary>
-    public string HiddenText => HiddenCount == 1 
-        ? "1 dataset hidden" 
-        : $"{HiddenCount} datasets hidden";
+    public bool HasHidden => _filterResult.HasHidden;
+
+    /// <summary>
+    /// Text describing what the filters hide, e.g. "1 dataset, 2 versions hidden".
+    /// </summary>
+    public string HiddenText => _filterResult.HiddenText;
 
     /// <summary>
     /// Filtered collection of datasets grouped by category.
@@ -2401,108 +2406,25 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
     /// <summary>
     /// Applies the current filter to the grouped datasets.
+    /// The rules live in <see cref="DatasetOverviewFilter"/> so they can be unit tested.
     /// </summary>
     private void ApplyFilter()
     {
+        _filterResult = DatasetOverviewFilter.Apply(GroupedDatasets, _filterText, _filterType, _showNsfw);
+
         FilteredGroupedDatasets.Clear();
-
-        var filterText = _filterText?.Trim() ?? string.Empty;
-        var hasTextFilter = !string.IsNullOrWhiteSpace(filterText);
-        var hasTypeFilter = _filterType.HasValue;
-
-        // Count all hidden datasets
-        var hiddenCount = 0;
-
-        foreach (var group in GroupedDatasets)
+        foreach (var group in _filterResult.Groups)
         {
-            var filteredDatasets = new List<DatasetCardViewModel>();
-
-            foreach (var dataset in group.Datasets)
-            {
-                // Step 1: Resolve the Safe Representation if in Safe Mode
-                DatasetCardViewModel? cardToShow = dataset;
-
-                if (!_showNsfw)
-                {
-                    // Get a safe snapshot. This returns:
-                    // - 'dataset' (this) if it's already safe
-                    // - A transient copy pointing to a safe version if it's Mixed but currently NSFW
-                    // - null if it's Pure NSFW
-                    cardToShow = dataset.GetSafeSnapshot();
-                }
-
-                // If card is null (Hidden by Safe Mode), count as hidden and skip
-                if (cardToShow is null)
-                {
-                    hiddenCount++;
-                    continue;
-                }
-
-                // Step 2: Apply Text and Type filters to the *resolved* card
-                // (We filter the snapshot to ensure Text/Description matches the displayed version if needed, 
-                // though typically Name is constant).
-                if (MatchesBasicFilters(cardToShow, filterText, hasTextFilter, hasTypeFilter))
-                {
-                    filteredDatasets.Add(cardToShow);
-                }
-                else
-                {
-                    hiddenCount++;
-                }
-            }
-
-            if (filteredDatasets.Count > 0)
-            {
-                var filteredGroup = new DatasetGroupViewModel
-                {
-                    CategoryId = group.CategoryId,
-                    Name = group.Name,
-                    Description = group.Description,
-                    SortOrder = group.SortOrder
-                };
-
-                foreach (var dataset in filteredDatasets)
-                {
-                    filteredGroup.Datasets.Add(dataset);
-                }
-
-                FilteredGroupedDatasets.Add(filteredGroup);
-            }
+            FilteredGroupedDatasets.Add(group);
         }
 
-        HiddenCount = hiddenCount;
         OnPropertyChanged(nameof(HasActiveFilter));
-        OnPropertyChanged(nameof(HiddenCount));
+        OnPropertyChanged(nameof(HiddenDatasetCount));
+        OnPropertyChanged(nameof(HiddenVersionCount));
         OnPropertyChanged(nameof(HasHidden));
         OnPropertyChanged(nameof(HiddenText));
         OnPropertyChanged(nameof(IsStorageConfiguredButEmpty));
         OnPropertyChanged(nameof(HasDatasetsToShow));
-    }
-
-    /// <summary>
-    /// Checks basic Text and Type filters (NSFW handled by GetSafeSnapshot in ApplyFilter).
-    /// </summary>
-    private bool MatchesBasicFilters(DatasetCardViewModel dataset, string filterText, bool hasTextFilter, bool hasTypeFilter)
-    {
-        // Check type filter
-        if (hasTypeFilter && dataset.Type != _filterType)
-        {
-            return false;
-        }
-
-        // Check text filter (matches name or description)
-        if (hasTextFilter)
-        {
-            var matchesName = dataset.Name?.Contains(filterText, StringComparison.OrdinalIgnoreCase) == true;
-            var matchesDescription = dataset.Description?.Contains(filterText, StringComparison.OrdinalIgnoreCase) == true;
-
-            if (!matchesName && !matchesDescription)
-            {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     /// <summary>

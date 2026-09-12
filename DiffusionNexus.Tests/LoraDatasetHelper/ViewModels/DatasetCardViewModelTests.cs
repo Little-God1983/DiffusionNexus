@@ -974,4 +974,99 @@ public class DatasetCardViewModelTests : IDisposable
     }
 
     #endregion
+
+    #region Hidden NSFW version label Tests
+
+    [Fact]
+    public void NsfwVersionCount_CountsFlaggedVersionsWithoutTouchingDisk()
+    {
+        // The overview filter evaluates this per dataset on every keystroke, so it must read only the
+        // flags dictionary (kept in sync by the delete-version path), never enumerate the folder.
+        var vm = new DatasetCardViewModel
+        {
+            FolderPath = Path.Combine(_testTempPath, "does-not-exist"),
+            IsVersionedStructure = true,
+            TotalVersions = 3,
+            VersionNsfwFlags = new() { [1] = false, [2] = true, [3] = true }
+        };
+
+        vm.NsfwVersionCount.Should().Be(2);
+    }
+
+    [Fact]
+    public void NsfwVersionCount_NoFlags_IsZero()
+    {
+        var vm = new DatasetCardViewModel { FolderPath = _testTempPath };
+
+        vm.NsfwVersionCount.Should().Be(0);
+    }
+
+    [Fact]
+    public void HiddenVersionCount_Zero_HidesLabel()
+    {
+        var vm = new DatasetCardViewModel();
+
+        vm.HiddenVersionCount.Should().Be(0);
+        vm.HasHiddenVersions.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(1, "1 NSFW version hidden")]
+    [InlineData(2, "2 NSFW versions hidden")]
+    public void HiddenVersionsText_DescribesHiddenNsfwVersions(int count, string expected)
+    {
+        var vm = new DatasetCardViewModel { HiddenVersionCount = count };
+
+        vm.HasHiddenVersions.Should().BeTrue();
+        vm.HiddenVersionsText.Should().Be(expected);
+    }
+
+    [Fact]
+    public void HiddenVersionCount_RaisesChangeNotificationsForLabelProperties()
+    {
+        var vm = new DatasetCardViewModel();
+        var changed = new List<string?>();
+        vm.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+
+        vm.HiddenVersionCount = 1;
+
+        changed.Should().Contain(nameof(DatasetCardViewModel.HiddenVersionCount));
+        changed.Should().Contain(nameof(DatasetCardViewModel.HasHiddenVersions));
+        changed.Should().Contain(nameof(DatasetCardViewModel.HiddenVersionsText));
+    }
+
+    [Theory]
+    [InlineData(3, 0, "3 Versions")]
+    [InlineData(3, 1, "2 of 3 Versions")]
+    [InlineData(3, 2, "1 of 3 Versions")]
+    [InlineData(2, 1, "1 of 2 Versions")]
+    public void VersionBadgeText_CollapsedCard_ShowsVisibleOfTotalWhenSomeAreHidden(int total, int hidden, string expected)
+    {
+        var vm = new DatasetCardViewModel { TotalVersions = total, HiddenVersionCount = hidden };
+
+        vm.VersionBadgeText.Should().Be(expected);
+        vm.ShowVersionBadge.Should().BeTrue();
+    }
+
+    [Fact]
+    public void VersionBadgeText_VersionCard_IgnoresHiddenVersions()
+    {
+        var vm = new DatasetCardViewModel { TotalVersions = 3, DisplayVersion = 2, HiddenVersionCount = 1 };
+
+        vm.VersionBadgeText.Should().Be("V2");
+    }
+
+    [Fact]
+    public void HiddenVersionCount_RaisesChangeNotificationForVersionBadge()
+    {
+        var vm = new DatasetCardViewModel { TotalVersions = 3 };
+        var changed = new List<string?>();
+        vm.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+
+        vm.HiddenVersionCount = 1;
+
+        changed.Should().Contain(nameof(DatasetCardViewModel.VersionBadgeText));
+    }
+
+    #endregion
 }

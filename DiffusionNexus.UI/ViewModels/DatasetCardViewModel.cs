@@ -44,6 +44,7 @@ public class DatasetCardViewModel : ObservableObject
     private Dictionary<int, string?> _versionDescriptions = new();
     private Dictionary<int, bool> _versionNsfwFlags = new();
     private bool _isNsfw;
+    private int _hiddenVersionCount;
     private Dictionary<int, List<TrainingRunInfo>> _trainingRuns = new();
     private Bitmap? _thumbnail;
     private bool _isThumbnailLoading;
@@ -180,6 +181,46 @@ public class DatasetCardViewModel : ObservableObject
             return true;
         }
     }
+
+    /// <summary>
+    /// Number of versions of this dataset that are marked as NSFW.
+    /// Reads only the flags dictionary and never touches the disk: the overview filter evaluates this
+    /// for every dataset on each search keystroke, on the UI thread. The dictionary is the same source
+    /// <see cref="HasAnyNsfwVersion"/> and <see cref="GetSafeSnapshot"/> trust, and the delete-version
+    /// flow removes the flag of a deleted version.
+    /// </summary>
+    public int NsfwVersionCount => _versionNsfwFlags.Count == 0 ? 0 : _versionNsfwFlags.Values.Count(v => v);
+
+    /// <summary>
+    /// Number of versions of this dataset the overview is currently hiding because "Show NSFW" is off.
+    /// Set by the overview filter on every card it shows (both flattened and collapsed view); zero when
+    /// nothing is hidden. Drives the "N NSFW versions hidden" label on the card.
+    /// </summary>
+    public int HiddenVersionCount
+    {
+        get => _hiddenVersionCount;
+        set
+        {
+            if (SetProperty(ref _hiddenVersionCount, value))
+            {
+                OnPropertyChanged(nameof(HasHiddenVersions));
+                OnPropertyChanged(nameof(HiddenVersionsText));
+                OnPropertyChanged(nameof(VersionBadgeText));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether the card should show the hidden-versions label.
+    /// </summary>
+    public bool HasHiddenVersions => _hiddenVersionCount > 0;
+
+    /// <summary>
+    /// Label text for versions hidden by the NSFW filter, e.g. "1 NSFW version hidden".
+    /// </summary>
+    public string HiddenVersionsText => _hiddenVersionCount == 1
+        ? "1 NSFW version hidden"
+        : $"{_hiddenVersionCount} NSFW versions hidden";
 
     /// <summary>
     /// Number of images in the current version.
@@ -687,11 +728,27 @@ public class DatasetCardViewModel : ObservableObject
     /// <summary>
     /// Badge text for card display.
     /// In flattened view: shows "V1", "V2", etc.
-    /// In collapsed view: shows "3 Versions" for multi-version datasets.
+    /// In collapsed view: shows "3 Versions", or "2 of 3 Versions" when the NSFW filter hides one.
+    /// The total stays visible because the image/caption totals below it and the detail view still
+    /// cover every version; the footer label explains what is hidden.
     /// </summary>
-    public string VersionBadgeText => _displayVersion.HasValue 
-        ? $"V{_displayVersion}" 
-        : (_totalVersions > 1 ? $"{_totalVersions} Versions" : string.Empty);
+    public string VersionBadgeText
+    {
+        get
+        {
+            if (_displayVersion.HasValue)
+                return $"V{_displayVersion}";
+
+            if (_totalVersions <= 1)
+                return string.Empty;
+
+            if (_hiddenVersionCount <= 0)
+                return $"{_totalVersions} Versions";
+
+            var visible = Math.Max(1, _totalVersions - _hiddenVersionCount);
+            return $"{visible} of {_totalVersions} Versions";
+        }
+    }
 
     /// <summary>
     /// Whether to show the version badge on the card.
