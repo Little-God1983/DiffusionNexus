@@ -42,10 +42,9 @@ public static class ScrollKeyNavigation
     /// the key was one of the four scroll keys with no modifier, the event did not originate inside a
     /// control that owns these keys itself (text box, slider, NumericUpDown), and the content actually
     /// overflows; otherwise leaves the event untouched so the caller (or whatever is next on the route)
-    /// can handle its own keys. <paramref name="loadEverythingBeforeEnd"/> lets a paged grid fetch the
-    /// rest before End, so End means the real end.
+    /// can handle its own keys.
     /// </summary>
-    public static bool HandleKey(ScrollViewer? scroll, KeyEventArgs e, Action? loadEverythingBeforeEnd = null)
+    public static bool HandleKey(ScrollViewer? scroll, KeyEventArgs e)
     {
         if (scroll is null || e.Handled || e.KeyModifiers != KeyModifiers.None)
             return false;
@@ -62,12 +61,6 @@ public static class ScrollKeyNavigation
                 scroll.ScrollToHome();
                 break;
             case Key.End:
-                if (loadEverythingBeforeEnd is not null)
-                {
-                    // The extent only grows after a layout pass, so lay out before scrolling.
-                    loadEverythingBeforeEnd();
-                    scroll.UpdateLayout();
-                }
                 scroll.ScrollToEnd();
                 break;
             case Key.PageUp:
@@ -91,17 +84,17 @@ public static class ScrollKeyNavigation
     /// bubble handler on the ScrollViewer nor one on the view is enough: right after a page opens,
     /// focus sits on the navigation control that opened it, outside the view, and a focused
     /// <c>TabItem</c> header answers Home/End itself (switching tabs) before the grid could.
-    /// Controls that own these keys keep them (text box, slider, NumericUpDown — see
-    /// <see cref="HandleKey"/>), and so does any other scroll area that holds focus, such as a detail
-    /// pane laid over the grid. Call once per grid; when the host has several, the one on screen
-    /// answers. <paramref name="loadEverythingBeforeEnd"/>: see <see cref="HandleKey"/>.
+    /// Controls that own these keys keep them (text box, slider, list — see <see cref="HandleKey"/>),
+    /// and so does another scroll area that has this behavior switched on and holds focus, such as a
+    /// detail pane laid over the grid. Call once per grid; when the host has several, the one on
+    /// screen answers.
     /// </summary>
-    public static void ForwardKeys(Control host, ScrollViewer scroll, Action? loadEverythingBeforeEnd = null)
+    public static void ForwardKeys(Control host, ScrollViewer scroll)
     {
         EventHandler<KeyEventArgs> onWindowKeyDown = (_, e) =>
         {
-            if (IsOnScreen(scroll) && !IsInsideAnotherScrollArea(e.Source, scroll))
-                HandleKey(scroll, e, loadEverythingBeforeEnd);
+            if (IsOnScreen(scroll) && !IsInsideAnotherKeyScrollingArea(e.Source, scroll))
+                HandleKey(scroll, e);
         };
 
         TopLevel? hooked = null;
@@ -130,14 +123,17 @@ public static class ScrollKeyNavigation
         scroll.IsEffectivelyVisible && scroll.GetVisualRoot() is not null;
 
     /// <summary>
-    /// The focused control's nearest scroll area owns its keys. A pane laid <em>over</em> the grid
-    /// (LoraViewerView's detail overlay) leaves the grid effectively visible underneath, so visibility
-    /// alone cannot tell the two apart — focus can.
+    /// A scroll area that answers these keys itself (this behavior switched on) and holds focus keeps
+    /// them: a pane laid <em>over</em> the grid (LoraViewerView's detail overlay) leaves the grid
+    /// effectively visible underneath, so visibility alone cannot tell the two apart — focus can.
+    /// A plain ScrollViewer does nothing with the keys and must not block them: the main window's
+    /// module navigation is buttons inside one, and that is where focus sits right after a page opens.
     /// </summary>
-    private static bool IsInsideAnotherScrollArea(object? source, ScrollViewer scroll) =>
+    private static bool IsInsideAnotherKeyScrollingArea(object? source, ScrollViewer scroll) =>
         source is Visual visual
         && visual.FindAncestorOfType<ScrollViewer>(includeSelf: true) is { } nearest
-        && nearest != scroll;
+        && nearest != scroll
+        && GetIsEnabled(nearest);
 
     private static void OnIsEnabledChanged(ScrollViewer scroll, AvaloniaPropertyChangedEventArgs e)
     {
@@ -170,12 +166,17 @@ public static class ScrollKeyNavigation
 
     /// <summary>
     /// A <c>TextBox</c> (Home/End move the caret), a <c>Slider</c> (Home/End = min/max, Page keys =
-    /// large step) or a <c>NumericUpDown</c> (Page keys) — or anything built on one, such as an
-    /// <c>AutoCompleteBox</c> whose events originate from its inner <c>TextBox</c> — owns these keys.
+    /// large step), a <c>NumericUpDown</c> (Page keys), a <c>ListBox</c> or <c>TreeView</c> (Home/End/Page
+    /// keys walk the items) — or anything built on one, such as an <c>AutoCompleteBox</c> whose events
+    /// originate from its inner <c>TextBox</c> — owns these keys. A <c>TabControl</c> is deliberately
+    /// not on this list: a focused tab header answering Home/End by switching tabs is the very thing
+    /// <see cref="ForwardKeys"/> exists to override.
     /// </summary>
     private static bool ClaimsTheKeysItself(object? source) =>
         source is Visual visual
         && (visual.FindAncestorOfType<TextBox>(includeSelf: true) is not null
             || visual.FindAncestorOfType<Slider>(includeSelf: true) is not null
-            || visual.FindAncestorOfType<NumericUpDown>(includeSelf: true) is not null);
+            || visual.FindAncestorOfType<NumericUpDown>(includeSelf: true) is not null
+            || visual.FindAncestorOfType<ListBox>(includeSelf: true) is not null
+            || visual.FindAncestorOfType<TreeView>(includeSelf: true) is not null);
 }

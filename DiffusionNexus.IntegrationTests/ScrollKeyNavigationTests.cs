@@ -354,29 +354,24 @@ public class ScrollKeyNavigationTests
     }
 
     [AvaloniaFact]
-    public void ForwardKeys_loads_everything_before_scrolling_to_the_End()
+    public void ForwardKeys_scrolls_the_grid_with_focus_in_a_plain_scroll_area_outside_the_host()
     {
-        ScrollViewer? grid = null;
-        var loads = 0;
-        var f = BuildHosted(loadEverythingBeforeEnd: () =>
-        {
-            loads++;
-            var panel = (Panel)grid!.Content!;
-            for (var i = 0; i < 24; i++)
-                panel.Children.Add(new Border { Width = 340, Height = 440, Margin = new Thickness(8), Background = Brushes.Gray });
-        });
+        var f = BuildHosted();
         try
         {
-            grid = f.Scroll;
-            var extentBefore = f.Scroll.Extent.Height;
-            f.Header.Focus().Should().BeTrue();
+            // The main window's module navigation is an ItemsControl of buttons inside a ScrollViewer.
+            // That scroll area does nothing with Home/End itself, so it must not block the grid — only
+            // a scroll area that answers the keys itself (the behavior switched on) keeps them.
+            var navButton = new Border { Width = 160, Height = 32, Background = Brushes.DimGray, Focusable = true };
+            var navPane = new ScrollViewer { Width = 200, Content = navButton, Template = ScrollViewerTemplate(), HorizontalAlignment = HorizontalAlignment.Right };
+            ((Panel)f.Nav.Parent!).Children.Add(navPane);
+            Layout(f.Window);
+            navButton.Focus().Should().BeTrue();
 
             f.Window.KeyPressQwerty(PhysicalKey.End, RawInputModifiers.None);
             Layout(f.Window);
 
-            loads.Should().Be(1);
-            f.Scroll.Extent.Height.Should().BeGreaterThan(extentBefore, "the rest was loaded first");
-            f.Scroll.Offset.Y.Should().Be(f.Scroll.Extent.Height - f.Scroll.Viewport.Height, "End means the real end");
+            f.Scroll.Offset.Y.Should().Be(f.Scroll.Extent.Height - f.Scroll.Viewport.Height);
         }
         finally
         {
@@ -439,7 +434,7 @@ public class ScrollKeyNavigationTests
     /// opens) and the host itself: a "tab header" that answers Home/End on the bubble pass as a
     /// <c>TabControl</c> does, a search box, and the tile grid.
     /// </summary>
-    private static HostedFixture BuildHosted(int tileCount = 24, Action? loadEverythingBeforeEnd = null)
+    private static HostedFixture BuildHosted(int tileCount = 24)
     {
         var headerSaw = new List<Key>();
         var header = new Border { Width = 120, Height = 32, Background = Brushes.DarkGray, Focusable = true };
@@ -465,7 +460,7 @@ public class ScrollKeyNavigationTests
         host.Children.Add(top);
         Grid.SetRow(scroll, 1);
         host.Children.Add(scroll);
-        ScrollKeyNavigation.ForwardKeys(host, scroll, loadEverythingBeforeEnd);
+        ScrollKeyNavigation.ForwardKeys(host, scroll);
 
         var nav = new Border { Width = 160, Height = 32, Background = Brushes.DimGray, Focusable = true };
         var page = new Grid { RowDefinitions = new RowDefinitions("Auto,*") };
@@ -492,19 +487,22 @@ public class ScrollKeyNavigationTests
         {
             items.Children.Add(new Border { Width = 340, Height = 440, Margin = new Thickness(8), Background = Brushes.Gray });
         }
-        var scroll = new ScrollViewer
-        {
-            Content = items,
-            Template = new FuncControlTemplate<ScrollViewer>((sv, ns) => new ScrollContentPresenter
-            {
-                Name = "PART_ContentPresenter",
-                [!ContentPresenter.ContentProperty] = sv[!ContentControl.ContentProperty],
-                [!ContentPresenter.PaddingProperty] = sv[!TemplatedControl.PaddingProperty],
-            }.RegisterInNameScope(ns)),
-        };
+        var scroll = new ScrollViewer { Content = items, Template = ScrollViewerTemplate() };
         ScrollKeyNavigation.SetIsEnabled(scroll, true);
         return scroll;
     }
+
+    /// <summary>
+    /// The themeless session gives a ScrollViewer no template at all; this is the Fluent template's
+    /// core, enough for a real extent and for its content to be in the visual tree.
+    /// </summary>
+    private static FuncControlTemplate<ScrollViewer> ScrollViewerTemplate() =>
+        new((sv, ns) => new ScrollContentPresenter
+        {
+            Name = "PART_ContentPresenter",
+            [!ContentPresenter.ContentProperty] = sv[!ContentControl.ContentProperty],
+            [!ContentPresenter.PaddingProperty] = sv[!TemplatedControl.PaddingProperty],
+        }.RegisterInNameScope(ns));
 
     /// <summary>
     /// Raises the real <c>PointerPressed</c> routed event on <paramref name="target"/>, so it bubbles

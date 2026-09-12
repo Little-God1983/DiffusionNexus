@@ -73,13 +73,12 @@ public partial class GenerationGalleryView : UserControl
         KeyDown += OnKeyDown;
 
         // Home / End / Page Up / Page Down for the grid, answered on the window while the view is on
-        // screen, so no click into the view is needed first. End materialises the whole gallery
-        // before scrolling: it means the real end, not the end of the pages loaded so far.
+        // screen, so no click into the view is needed first. End reaches the end of the pages loaded
+        // so far and the near-bottom loader (below) tops up from there: the grid is a plain WrapPanel,
+        // not virtualised, so materialising a large gallery in one go would freeze the app for as
+        // long as it takes to build every tile. A true End needs a virtualised grid.
         if (this.FindControl<ScrollViewer>("GalleryScrollViewer") is { } gallery)
-        {
-            ScrollKeyNavigation.ForwardKeys(this, gallery,
-                loadEverythingBeforeEnd: () => (DataContext as GenerationGalleryViewModel)?.LoadAllItems());
-        }
+            ScrollKeyNavigation.ForwardKeys(this, gallery);
     }
 
     private void OnAttachedToVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
