@@ -974,4 +974,69 @@ public class DatasetCardViewModelTests : IDisposable
     }
 
     #endregion
+
+    #region Hidden NSFW version label Tests
+
+    [Fact]
+    public void NsfwVersionCount_CountsOnlyExistingVersionsFlaggedNsfw()
+    {
+        var folder = Path.Combine(_testTempPath, "Alpha");
+        Directory.CreateDirectory(Path.Combine(folder, "V1"));
+        Directory.CreateDirectory(Path.Combine(folder, "V2"));
+        Directory.CreateDirectory(Path.Combine(folder, "V3"));
+        var vm = new DatasetCardViewModel
+        {
+            FolderPath = folder,
+            IsVersionedStructure = true,
+            TotalVersions = 3,
+            // V9 was deleted on disk but its flag lingers in config.json; it must not count.
+            VersionNsfwFlags = new() { [2] = true, [3] = true, [9] = true }
+        };
+
+        vm.NsfwVersionCount.Should().Be(2);
+    }
+
+    [Fact]
+    public void NsfwVersionCount_NoFlags_IsZero()
+    {
+        var vm = new DatasetCardViewModel { FolderPath = _testTempPath };
+
+        vm.NsfwVersionCount.Should().Be(0);
+    }
+
+    [Fact]
+    public void HiddenVersionCount_Zero_HidesLabel()
+    {
+        var vm = new DatasetCardViewModel();
+
+        vm.HiddenVersionCount.Should().Be(0);
+        vm.HasHiddenVersions.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(1, "1 NSFW version hidden")]
+    [InlineData(2, "2 NSFW versions hidden")]
+    public void HiddenVersionsText_DescribesHiddenNsfwVersions(int count, string expected)
+    {
+        var vm = new DatasetCardViewModel { HiddenVersionCount = count };
+
+        vm.HasHiddenVersions.Should().BeTrue();
+        vm.HiddenVersionsText.Should().Be(expected);
+    }
+
+    [Fact]
+    public void HiddenVersionCount_RaisesChangeNotificationsForLabelProperties()
+    {
+        var vm = new DatasetCardViewModel();
+        var changed = new List<string?>();
+        vm.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+
+        vm.HiddenVersionCount = 1;
+
+        changed.Should().Contain(nameof(DatasetCardViewModel.HiddenVersionCount));
+        changed.Should().Contain(nameof(DatasetCardViewModel.HasHiddenVersions));
+        changed.Should().Contain(nameof(DatasetCardViewModel.HiddenVersionsText));
+    }
+
+    #endregion
 }

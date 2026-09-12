@@ -44,6 +44,7 @@ public class DatasetCardViewModel : ObservableObject
     private Dictionary<int, string?> _versionDescriptions = new();
     private Dictionary<int, bool> _versionNsfwFlags = new();
     private bool _isNsfw;
+    private int _hiddenVersionCount;
     private Dictionary<int, List<TrainingRunInfo>> _trainingRuns = new();
     private Bitmap? _thumbnail;
     private bool _isThumbnailLoading;
@@ -180,6 +181,51 @@ public class DatasetCardViewModel : ObservableObject
             return true;
         }
     }
+
+    /// <summary>
+    /// Number of existing versions of this dataset that are marked as NSFW.
+    /// Flags for versions that no longer exist on disk are ignored.
+    /// </summary>
+    public int NsfwVersionCount
+    {
+        get
+        {
+            if (_versionNsfwFlags.Count == 0)
+                return 0;
+
+            return GetAllVersionNumbers().Count(v => _versionNsfwFlags.TryGetValue(v, out var isNsfw) && isNsfw);
+        }
+    }
+
+    /// <summary>
+    /// Number of versions of this dataset the overview is currently hiding because "Show NSFW" is off.
+    /// Set by the overview filter on every card it shows (both flattened and collapsed view); zero when
+    /// nothing is hidden. Drives the "N NSFW versions hidden" label on the card.
+    /// </summary>
+    public int HiddenVersionCount
+    {
+        get => _hiddenVersionCount;
+        set
+        {
+            if (SetProperty(ref _hiddenVersionCount, value))
+            {
+                OnPropertyChanged(nameof(HasHiddenVersions));
+                OnPropertyChanged(nameof(HiddenVersionsText));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether the card should show the hidden-versions label.
+    /// </summary>
+    public bool HasHiddenVersions => _hiddenVersionCount > 0;
+
+    /// <summary>
+    /// Label text for versions hidden by the NSFW filter, e.g. "1 NSFW version hidden".
+    /// </summary>
+    public string HiddenVersionsText => _hiddenVersionCount == 1
+        ? "1 NSFW version hidden"
+        : $"{_hiddenVersionCount} NSFW versions hidden";
 
     /// <summary>
     /// Number of images in the current version.

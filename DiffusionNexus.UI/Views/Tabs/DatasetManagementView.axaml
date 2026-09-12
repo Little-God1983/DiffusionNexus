@@ -170,7 +170,7 @@
           <StackPanel Orientation="Vertical" VerticalAlignment="Center" Spacing="0">
             <CheckBox IsChecked="{Binding ShowNsfw, Mode=TwoWay}"
                       Content="Show NSFW"
-                      ToolTip.Tip="Show datasets marked as NSFW"/>
+                      ToolTip.Tip="Show datasets and versions marked as NSFW"/>
             <TextBlock Text="{Binding HiddenText}"
                        FontSize="10"
                        Foreground="#888"
@@ -335,6 +335,10 @@
                                            MaxLines="1" IsVisible="{Binding HasDescription}" Margin="0,2,0,0"/>
                                 <TextBlock Text="{Binding DetailedCountText}" FontSize="12" Opacity="0.6" IsVisible="{Binding IsVersionCard}"/>
                                 <TextBlock Text="{Binding AllVersionsDetailedCountText}" FontSize="12" Opacity="0.6" IsVisible="{Binding !IsVersionCard}"/>
+                                <!-- Versions the "Show NSFW" filter is hiding (both flattened and collapsed view) -->
+                                <TextBlock Text="{Binding HiddenVersionsText}" FontSize="11" Foreground="#E0A040" Opacity="0.9"
+                                           IsVisible="{Binding HasHiddenVersions}" Margin="0,2,0,0"
+                                           ToolTip.Tip="Turn on 'Show NSFW' to see every version of this dataset"/>
                               </StackPanel>
                             </Border>
                           </Grid>
