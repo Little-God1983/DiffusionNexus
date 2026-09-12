@@ -18,8 +18,9 @@ namespace DiffusionNexus.UI.Utilities;
 /// <list type="bullet">
 /// <item>No card of the dataset survives the filters: one hidden dataset.</item>
 /// <item>At least one card survives: every dropped card counts as a hidden version. A collapsed
-/// card has no sibling cards to drop, so its NSFW-flagged versions count instead (the card silently
-/// swaps to an older safe version when the current one is NSFW).</item>
+/// card has no sibling cards to drop, so its NSFW-flagged versions count instead. This is by design
+/// independent of which version is current: with "Show NSFW" off, an NSFW-flagged version is
+/// reported as hidden whether the card swapped to a safe version or was already showing one.</item>
 /// </list>
 /// </remarks>
 public static class DatasetOverviewFilter
@@ -72,7 +73,8 @@ public static class DatasetOverviewFilter
                 }
 
                 // Flattened: the dropped sibling cards are the hidden versions (NSFW or text/type).
-                // Collapsed: nothing is dropped, but the NSFW-flagged versions are still unreachable.
+                // Collapsed: nothing is dropped; every NSFW-flagged version counts as hidden while
+                // "Show NSFW" is off, no matter which version the card currently shows.
                 var collapsed = shownForDataset.Count == 1 && !shownForDataset[0].IsVersionCard;
                 hiddenVersions += collapsed ? hiddenNsfwVersions : dropped;
 
