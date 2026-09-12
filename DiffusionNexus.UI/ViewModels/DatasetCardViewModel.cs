@@ -183,19 +183,13 @@ public class DatasetCardViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Number of existing versions of this dataset that are marked as NSFW.
-    /// Flags for versions that no longer exist on disk are ignored.
+    /// Number of versions of this dataset that are marked as NSFW.
+    /// Reads only the flags dictionary and never touches the disk: the overview filter evaluates this
+    /// for every dataset on each search keystroke, on the UI thread. The dictionary is the same source
+    /// <see cref="HasAnyNsfwVersion"/> and <see cref="GetSafeSnapshot"/> trust, and the delete-version
+    /// flow removes the flag of a deleted version.
     /// </summary>
-    public int NsfwVersionCount
-    {
-        get
-        {
-            if (_versionNsfwFlags.Count == 0)
-                return 0;
-
-            return GetAllVersionNumbers().Count(v => _versionNsfwFlags.TryGetValue(v, out var isNsfw) && isNsfw);
-        }
-    }
+    public int NsfwVersionCount => _versionNsfwFlags.Count == 0 ? 0 : _versionNsfwFlags.Values.Count(v => v);
 
     /// <summary>
     /// Number of versions of this dataset the overview is currently hiding because "Show NSFW" is off.
@@ -734,8 +728,9 @@ public class DatasetCardViewModel : ObservableObject
     /// <summary>
     /// Badge text for card display.
     /// In flattened view: shows "V1", "V2", etc.
-    /// In collapsed view: shows the number of versions the user can actually reach, e.g. "3 Versions",
-    /// or "2 Versions" when the NSFW filter hides one (the footer label explains the rest).
+    /// In collapsed view: shows "3 Versions", or "2 of 3 Versions" when the NSFW filter hides one.
+    /// The total stays visible because the image/caption totals below it and the detail view still
+    /// cover every version; the footer label explains what is hidden.
     /// </summary>
     public string VersionBadgeText
     {
@@ -747,8 +742,11 @@ public class DatasetCardViewModel : ObservableObject
             if (_totalVersions <= 1)
                 return string.Empty;
 
+            if (_hiddenVersionCount <= 0)
+                return $"{_totalVersions} Versions";
+
             var visible = Math.Max(1, _totalVersions - _hiddenVersionCount);
-            return visible == 1 ? "1 Version" : $"{visible} Versions";
+            return $"{visible} of {_totalVersions} Versions";
         }
     }
 

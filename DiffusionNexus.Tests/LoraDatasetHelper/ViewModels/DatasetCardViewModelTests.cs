@@ -978,19 +978,16 @@ public class DatasetCardViewModelTests : IDisposable
     #region Hidden NSFW version label Tests
 
     [Fact]
-    public void NsfwVersionCount_CountsOnlyExistingVersionsFlaggedNsfw()
+    public void NsfwVersionCount_CountsFlaggedVersionsWithoutTouchingDisk()
     {
-        var folder = Path.Combine(_testTempPath, "Alpha");
-        Directory.CreateDirectory(Path.Combine(folder, "V1"));
-        Directory.CreateDirectory(Path.Combine(folder, "V2"));
-        Directory.CreateDirectory(Path.Combine(folder, "V3"));
+        // The overview filter evaluates this per dataset on every keystroke, so it must read only the
+        // flags dictionary (kept in sync by the delete-version path), never enumerate the folder.
         var vm = new DatasetCardViewModel
         {
-            FolderPath = folder,
+            FolderPath = Path.Combine(_testTempPath, "does-not-exist"),
             IsVersionedStructure = true,
             TotalVersions = 3,
-            // V9 was deleted on disk but its flag lingers in config.json; it must not count.
-            VersionNsfwFlags = new() { [2] = true, [3] = true, [9] = true }
+            VersionNsfwFlags = new() { [1] = false, [2] = true, [3] = true }
         };
 
         vm.NsfwVersionCount.Should().Be(2);
@@ -1040,9 +1037,10 @@ public class DatasetCardViewModelTests : IDisposable
 
     [Theory]
     [InlineData(3, 0, "3 Versions")]
-    [InlineData(3, 1, "2 Versions")]
-    [InlineData(3, 2, "1 Version")]
-    public void VersionBadgeText_CollapsedCard_ShowsOnlyVisibleVersions(int total, int hidden, string expected)
+    [InlineData(3, 1, "2 of 3 Versions")]
+    [InlineData(3, 2, "1 of 3 Versions")]
+    [InlineData(2, 1, "1 of 2 Versions")]
+    public void VersionBadgeText_CollapsedCard_ShowsVisibleOfTotalWhenSomeAreHidden(int total, int hidden, string expected)
     {
         var vm = new DatasetCardViewModel { TotalVersions = total, HiddenVersionCount = hidden };
 
