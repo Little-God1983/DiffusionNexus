@@ -49,6 +49,34 @@ public class GenerationGalleryViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task LoadAllItems_MaterialisesEveryRemainingItemAtOnce()
+    {
+        // 60 files: one full first page (50) plus a remainder, so End has something left to load.
+        var path = CreateTempDirectory();
+        for (var i = 0; i < 60; i++)
+            File.WriteAllText(Path.Combine(path, $"img{i:D3}.png"), "test");
+
+        var settings = new AppSettings
+        {
+            ImageGalleries = new List<ImageGallery> { new() { FolderPath = path, IsEnabled = true, Order = 0 } }
+        };
+        var mockSettings = new Mock<IAppSettingsService>();
+        mockSettings.Setup(service => service.GetSettingsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(settings);
+        var viewModel = new GenerationGalleryViewModel(
+            mockSettings.Object, new Mock<IDatasetEventAggregator>().Object, new Mock<IDatasetState>().Object, null);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+        viewModel.MediaItems.Should().HaveCount(60);
+        viewModel.HasMoreItems.Should().BeTrue("only the first page is materialised after a load");
+
+        viewModel.LoadAllItems();
+
+        viewModel.VisibleMediaItems.Should().HaveCount(60);
+        viewModel.VisibleMediaItems.Should().Equal(viewModel.MediaItems, "same items, same order");
+        viewModel.HasMoreItems.Should().BeFalse();
+    }
+
+    [Fact]
     public async Task LoadMediaAsync_LoadsMediaFromEnabledSourcesOnly()
     {
         var enabledPath = CreateTempDirectory();

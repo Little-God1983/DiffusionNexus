@@ -1857,6 +1857,19 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         _isLoadingMore = false;
     }
 
+    /// <summary>
+    /// Materialises every remaining item at once — the End key means the real end, not the end of
+    /// the pages loaded so far. One bulk replace, so the <c>ItemsControl</c> sees a single reset
+    /// instead of one add per item. A very large gallery pauses while it builds all its tiles; that
+    /// is the price of End.
+    /// </summary>
+    public void LoadAllItems()
+    {
+        if (!HasMoreItems) return;
+        VisibleMediaItems.ReplaceAll(MediaItems.ToList());
+        OnPropertyChanged(nameof(HasMoreItems));
+    }
+
     private void LoadDesignData()
     {
         _allMediaItems.Clear();

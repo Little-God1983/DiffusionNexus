@@ -4,17 +4,16 @@
 
 | Key | Action | Context |
 |-----|--------|---------|
-| Home | Scroll to the top | Grid or view focused, not typing in a text box |
-| End | Scroll to the bottom | Grid or view focused, not typing in a text box |
-| Page Up | Scroll one screen up | Grid or view focused, not typing in a text box |
-| Page Down | Scroll one screen down | Grid or view focused, not typing in a text box |
+| Home | Scroll to the top | Grid on screen, not typing in a text box or on a slider |
+| End | Scroll to the bottom (the Gallery loads the rest of its items first) | Grid on screen, not typing in a text box or on a slider |
+| Page Up | Scroll one screen up | Grid on screen, not typing in a text box or on a slider |
+| Page Down | Scroll one screen down | Grid on screen, not typing in a text box or on a slider |
 
-> In the LoRA Viewer and Dataset Management the keys work as soon as the tab is on screen, even with
-> focus on the tab header. With the LoRA detail pane open, click inside the pane and the keys scroll
+> The keys work as soon as the page is on screen — no click into the grid needed, focus can be on the
+> navigation or a tab header. With the LoRA detail pane open, click inside the pane and the keys scroll
 > the pane instead of the grid behind it. A grid that fits on screen leaves the keys alone (so Home/End
-> on a tab header still jump to the first/last tab). In the Gallery, click anywhere in the grid first — the click hands focus to
-> the grid — and End reaches the bottom of the items loaded so far and triggers the next page load, so
-> a long gallery walks down in pages. Provided by `ScrollKeyNavigation` (see `REUSABLES.md`); the four scroll areas are the Gallery
+> on a tab header still jump to the first/last tab). In the Gallery, End first materialises every item
+> — a very large gallery pauses briefly while it builds all its tiles. Provided by `ScrollKeyNavigation` (see `REUSABLES.md`); the four scroll areas are the Gallery
 > grid, the LoRA Installed tile grid, the Dataset Management dataset list and its image-card grid.
 
 ## Image Viewer Dialog

@@ -71,6 +71,15 @@ public partial class GenerationGalleryView : UserControl
         Focusable = true;
         AttachedToVisualTree += OnAttachedToVisualTree;
         KeyDown += OnKeyDown;
+
+        // Home / End / Page Up / Page Down for the grid, answered on the window while the view is on
+        // screen, so no click into the view is needed first. End materialises the whole gallery
+        // before scrolling: it means the real end, not the end of the pages loaded so far.
+        if (this.FindControl<ScrollViewer>("GalleryScrollViewer") is { } gallery)
+        {
+            ScrollKeyNavigation.ForwardKeys(this, gallery,
+                loadEverythingBeforeEnd: () => (DataContext as GenerationGalleryViewModel)?.LoadAllItems());
+        }
     }
 
     private void OnAttachedToVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
@@ -271,16 +280,13 @@ public partial class GenerationGalleryView : UserControl
     }
 
     /// <summary>
-    /// Handles keyboard shortcuts: Ctrl+C (copy files), Ctrl+A (select all), Escape (clear selection),
-    /// Home / End / Page Up / Page Down (scroll the grid).
+    /// Handles keyboard shortcuts: Ctrl+C (copy files), Ctrl+A (select all), Escape (clear selection).
+    /// (Home / End / Page Up / Page Down are forwarded to the grid from the constructor, see
+    /// <see cref="ScrollKeyNavigation.ForwardKeys"/>.)
     /// </summary>
     private async void OnKeyDown(object? sender, KeyEventArgs e)
     {
         if (DataContext is not GenerationGalleryViewModel vm) return;
-
-        // Clicking a tile focuses the view (see OnMediaCardPointerPressed), not the ScrollViewer,
-        // so the scroll keys have to be answered here as well as by the behavior on the grid.
-        if (ScrollKeyNavigation.HandleKey(_galleryScrollViewer, e)) return;
 
         if (e.Key == Key.C && e.KeyModifiers.HasFlag(KeyModifiers.Control))
         {

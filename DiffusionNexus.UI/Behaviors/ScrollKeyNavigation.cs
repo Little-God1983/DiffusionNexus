@@ -40,14 +40,16 @@ public static class ScrollKeyNavigation
     /// <summary>
     /// Applies the key → scroll mapping. Returns <c>true</c> (and marks <paramref name="e"/> handled) when
     /// the key was one of the four scroll keys with no modifier, the event did not originate inside a
-    /// text input, and the content actually overflows; otherwise leaves the event untouched so the
-    /// caller (or whatever is next on the route) can handle its own keys.
+    /// control that owns these keys itself (text box, slider, NumericUpDown), and the content actually
+    /// overflows; otherwise leaves the event untouched so the caller (or whatever is next on the route)
+    /// can handle its own keys. <paramref name="loadEverythingBeforeEnd"/> lets a paged grid fetch the
+    /// rest before End, so End means the real end.
     /// </summary>
-    public static bool HandleKey(ScrollViewer? scroll, KeyEventArgs e)
+    public static bool HandleKey(ScrollViewer? scroll, KeyEventArgs e, Action? loadEverythingBeforeEnd = null)
     {
         if (scroll is null || e.Handled || e.KeyModifiers != KeyModifiers.None)
             return false;
-        if (IsInsideTextInput(e.Source))
+        if (ClaimsTheKeysItself(e.Source))
             return false;
         // A grid that fits has no use for the key. Claiming it anyway would take Home/End away from
         // the tab header (= first/last tab) for exactly the users with the least content.
@@ -60,6 +62,12 @@ public static class ScrollKeyNavigation
                 scroll.ScrollToHome();
                 break;
             case Key.End:
+                if (loadEverythingBeforeEnd is not null)
+                {
+                    // The extent only grows after a layout pass, so lay out before scrolling.
+                    loadEverythingBeforeEnd();
+                    scroll.UpdateLayout();
+                }
                 scroll.ScrollToEnd();
                 break;
             case Key.PageUp:
@@ -77,22 +85,41 @@ public static class ScrollKeyNavigation
     }
 
     /// <summary>
-    /// For a host view where focus can sit on a control that answers the scroll keys itself — a
-    /// <c>TabItem</c> header switches tabs on Home/End — installs a tunnel <c>KeyDown</c> handler on
-    /// <paramref name="host"/> that forwards the four keys to <paramref name="scroll"/> while it is on
-    /// screen. The bubble handler on the ScrollViewer cannot cover that case: the header handles the
-    /// key on the bubble pass and it never reaches the ScrollViewer, which is not its ancestor.
-    /// Text inputs still keep their keys (see <see cref="HandleKey"/>), and so does any other scroll
-    /// area that holds focus — a detail pane laid over the grid, say. Call once per grid; when the
-    /// host has several, the one that is on screen answers.
+    /// Makes the four keys reach <paramref name="scroll"/> from anywhere in the window while it is on
+    /// screen — no click into the view first. A tunnel <c>KeyDown</c> handler goes on the window
+    /// (<see cref="TopLevel"/>) for as long as <paramref name="host"/> is attached to it. Neither a
+    /// bubble handler on the ScrollViewer nor one on the view is enough: right after a page opens,
+    /// focus sits on the navigation control that opened it, outside the view, and a focused
+    /// <c>TabItem</c> header answers Home/End itself (switching tabs) before the grid could.
+    /// Controls that own these keys keep them (text box, slider, NumericUpDown — see
+    /// <see cref="HandleKey"/>), and so does any other scroll area that holds focus, such as a detail
+    /// pane laid over the grid. Call once per grid; when the host has several, the one on screen
+    /// answers. <paramref name="loadEverythingBeforeEnd"/>: see <see cref="HandleKey"/>.
     /// </summary>
-    public static void ForwardKeys(Control host, ScrollViewer scroll)
+    public static void ForwardKeys(Control host, ScrollViewer scroll, Action? loadEverythingBeforeEnd = null)
     {
-        host.AddHandler(InputElement.KeyDownEvent, (_, e) =>
+        EventHandler<KeyEventArgs> onWindowKeyDown = (_, e) =>
         {
             if (IsOnScreen(scroll) && !IsInsideAnotherScrollArea(e.Source, scroll))
-                HandleKey(scroll, e);
-        }, RoutingStrategies.Tunnel);
+                HandleKey(scroll, e, loadEverythingBeforeEnd);
+        };
+
+        TopLevel? hooked = null;
+        void Hook()
+        {
+            if (hooked is not null) return;
+            hooked = TopLevel.GetTopLevel(host);
+            hooked?.AddHandler(InputElement.KeyDownEvent, onWindowKeyDown, RoutingStrategies.Tunnel);
+        }
+        void Unhook()
+        {
+            hooked?.RemoveHandler(InputElement.KeyDownEvent, onWindowKeyDown);
+            hooked = null;
+        }
+
+        host.AttachedToVisualTree += (_, _) => Hook();
+        host.DetachedFromVisualTree += (_, _) => Unhook();
+        Hook(); // no-op until the host is attached (GetTopLevel is null before that)
     }
 
     /// <summary>
@@ -130,7 +157,7 @@ public static class ScrollKeyNavigation
 
     private static void OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (sender is not ScrollViewer scroll || IsInsideTextInput(e.Source))
+        if (sender is not ScrollViewer scroll || ClaimsTheKeysItself(e.Source))
             return;
         scroll.Focus();
     }
@@ -142,9 +169,13 @@ public static class ScrollKeyNavigation
     }
 
     /// <summary>
-    /// A <c>TextBox</c> — or anything built on one, such as <c>AutoCompleteBox</c> or <c>NumericUpDown</c>,
-    /// whose events originate from the inner <c>TextBox</c> — owns these keys.
+    /// A <c>TextBox</c> (Home/End move the caret), a <c>Slider</c> (Home/End = min/max, Page keys =
+    /// large step) or a <c>NumericUpDown</c> (Page keys) — or anything built on one, such as an
+    /// <c>AutoCompleteBox</c> whose events originate from its inner <c>TextBox</c> — owns these keys.
     /// </summary>
-    private static bool IsInsideTextInput(object? source) =>
-        source is Visual visual && visual.FindAncestorOfType<TextBox>(includeSelf: true) is not null;
+    private static bool ClaimsTheKeysItself(object? source) =>
+        source is Visual visual
+        && (visual.FindAncestorOfType<TextBox>(includeSelf: true) is not null
+            || visual.FindAncestorOfType<Slider>(includeSelf: true) is not null
+            || visual.FindAncestorOfType<NumericUpDown>(includeSelf: true) is not null);
 }

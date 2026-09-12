@@ -333,6 +333,84 @@ public class ScrollKeyNavigationTests
     }
 
     [AvaloniaFact]
+    public void ForwardKeys_scrolls_the_grid_with_focus_outside_the_host()
+    {
+        var f = BuildHosted();
+        try
+        {
+            // Straight after opening a page, focus is on the navigation control that opened it — outside
+            // the view. The key must still reach the grid without a click into the view first.
+            f.Nav.Focus().Should().BeTrue();
+
+            f.Window.KeyPressQwerty(PhysicalKey.End, RawInputModifiers.None);
+            Layout(f.Window);
+
+            f.Scroll.Offset.Y.Should().Be(f.Scroll.Extent.Height - f.Scroll.Viewport.Height);
+        }
+        finally
+        {
+            f.Window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void ForwardKeys_loads_everything_before_scrolling_to_the_End()
+    {
+        ScrollViewer? grid = null;
+        var loads = 0;
+        var f = BuildHosted(loadEverythingBeforeEnd: () =>
+        {
+            loads++;
+            var panel = (Panel)grid!.Content!;
+            for (var i = 0; i < 24; i++)
+                panel.Children.Add(new Border { Width = 340, Height = 440, Margin = new Thickness(8), Background = Brushes.Gray });
+        });
+        try
+        {
+            grid = f.Scroll;
+            var extentBefore = f.Scroll.Extent.Height;
+            f.Header.Focus().Should().BeTrue();
+
+            f.Window.KeyPressQwerty(PhysicalKey.End, RawInputModifiers.None);
+            Layout(f.Window);
+
+            loads.Should().Be(1);
+            f.Scroll.Extent.Height.Should().BeGreaterThan(extentBefore, "the rest was loaded first");
+            f.Scroll.Offset.Y.Should().Be(f.Scroll.Extent.Height - f.Scroll.Viewport.Height, "End means the real end");
+        }
+        finally
+        {
+            f.Window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void ForwardKeys_leaves_the_key_to_a_Slider()
+    {
+        var f = BuildHosted();
+        try
+        {
+            var slider = new Slider { Width = 200, Minimum = 0, Maximum = 10, Focusable = true };
+            var sliderSaw = new List<Key>();
+            slider.AddHandler(InputElement.KeyDownEvent, (_, e) => sliderSaw.Add(e.Key),
+                Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
+            ((Panel)f.Header.Parent!).Children.Add(slider);
+            Layout(f.Window);
+            slider.Focus().Should().BeTrue();
+
+            f.Window.KeyPressQwerty(PhysicalKey.End, RawInputModifiers.None);
+            Layout(f.Window);
+
+            f.Scroll.Offset.Y.Should().Be(0, "End on a slider means 'maximum'");
+            sliderSaw.Should().Contain(Key.End);
+        }
+        finally
+        {
+            f.Window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void Disabling_the_behavior_makes_the_ScrollViewer_non_focusable_again()
     {
         var (window, scroll, _) = Build();
@@ -349,14 +427,19 @@ public class ScrollKeyNavigationTests
     }
 
     private sealed record HostedFixture(
-        Window Window, Grid Host, Border Header, TextBox SearchBox, ScrollViewer Scroll, List<Key> HeaderSaw, List<Key> SearchBoxSaw);
+        Window Window, Border Nav, Grid Host, Border Header, TextBox SearchBox, ScrollViewer Scroll, List<Key> HeaderSaw, List<Key> SearchBoxSaw);
 
     /// <summary>
     /// A host panel standing in for a view with a TabControl: a focusable "tab header" that answers
     /// Home/End on the bubble pass (as <c>TabControl</c> does), a search box, and the tile grid.
     /// Themeless session, so no real TabControl — it would never get a template.
     /// </summary>
-    private static HostedFixture BuildHosted(int tileCount = 24)
+    /// <summary>
+    /// A window with a navigation control <em>outside</em> the host (what has focus right after a page
+    /// opens) and the host itself: a "tab header" that answers Home/End on the bubble pass as a
+    /// <c>TabControl</c> does, a search box, and the tile grid.
+    /// </summary>
+    private static HostedFixture BuildHosted(int tileCount = 24, Action? loadEverythingBeforeEnd = null)
     {
         var headerSaw = new List<Key>();
         var header = new Border { Width = 120, Height = 32, Background = Brushes.DarkGray, Focusable = true };
@@ -382,14 +465,20 @@ public class ScrollKeyNavigationTests
         host.Children.Add(top);
         Grid.SetRow(scroll, 1);
         host.Children.Add(scroll);
-        ScrollKeyNavigation.ForwardKeys(host, scroll);
+        ScrollKeyNavigation.ForwardKeys(host, scroll, loadEverythingBeforeEnd);
 
-        var window = new Window { Width = 1400, Height = 900, Content = host };
+        var nav = new Border { Width = 160, Height = 32, Background = Brushes.DimGray, Focusable = true };
+        var page = new Grid { RowDefinitions = new RowDefinitions("Auto,*") };
+        page.Children.Add(nav);
+        Grid.SetRow(host, 1);
+        page.Children.Add(host);
+
+        var window = new Window { Width = 1400, Height = 900, Content = page };
         window.Show();
         Layout(window);
         if (tileCount > 2)
             scroll.Extent.Height.Should().BeGreaterThan(3 * scroll.Viewport.Height, "the fixture must scroll more than two pages");
-        return new HostedFixture(window, host, header, searchBox, scroll, headerSaw, searchBoxSaw);
+        return new HostedFixture(window, nav, host, header, searchBox, scroll, headerSaw, searchBoxSaw);
     }
 
     /// <summary>
