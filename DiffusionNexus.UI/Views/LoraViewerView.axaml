@@ -8,6 +8,7 @@
              xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
              xmlns:air="using:Avalonia.Controls"
              xmlns:al="using:Avalonia.Layout"
+             xmlns:behaviors="using:DiffusionNexus.UI.Behaviors"
              mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
              x:Class="DiffusionNexus.UI.Views.LoraViewerView"
              x:DataType="vm:LoraViewerViewModel">
@@ -238,8 +239,10 @@
                  thumbnail; scrolling a tile in calls Activate() to load it on demand.
                  Item footprint = 250 wide + 6 margin all round; MinItemHeight leaves a
                  small row gap above the tile's natural height so nothing clips. -->
-            <ScrollViewer HorizontalScrollBarVisibility="Disabled"
-                          VerticalScrollBarVisibility="Auto">
+            <ScrollViewer x:Name="InstalledTileScrollViewer"
+                          HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto"
+                          behaviors:ScrollKeyNavigation.IsEnabled="True">
 
               <air:ItemsRepeater Margin="16" ItemsSource="{Binding FilteredTiles}">
                 <air:ItemsRepeater.Layout>

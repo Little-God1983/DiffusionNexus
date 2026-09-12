@@ -5,6 +5,7 @@ using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
+using DiffusionNexus.UI.Behaviors;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.UI.ViewModels;
@@ -47,6 +48,13 @@ public partial class DatasetManagementView : UserControl
         _emptyDatasetDropZone = this.FindControl<Border>("EmptyDatasetDropZone");
         _imageGridArea = this.FindControl<Grid>("ImageGridArea");
         _descriptionTextBox = this.FindControl<TextBox>("DescriptionTextBox");
+
+        // Home / End / Page Up / Page Down for whichever grid is on screen, answered on the tunnel
+        // pass so the image tab's header (a TabItem: Home/End = switch tab) cannot claim them first.
+        if (this.FindControl<ScrollViewer>("DatasetListScrollViewer") is { } datasetList)
+            ScrollKeyNavigation.ForwardKeys(this, datasetList);
+        if (this.FindControl<ScrollViewer>("DatasetImageScrollViewer") is { } imageGrid)
+            ScrollKeyNavigation.ForwardKeys(this, imageGrid);
 
         // Set up drag-drop handlers for empty dataset drop zone
         if (_emptyDatasetDropZone is not null)
@@ -890,7 +898,8 @@ public partial class DatasetManagementView : UserControl
     }
 
     /// <summary>
-    /// Handles keyboard shortcuts for selection.
+    /// Handles keyboard shortcuts for selection. (Home / End / Page Up / Page Down are forwarded to
+    /// the visible grid from InitializeComponent, see <see cref="ScrollKeyNavigation.ForwardKeys"/>.)
     /// </summary>
     private void OnKeyDown(object? sender, KeyEventArgs e)
     {

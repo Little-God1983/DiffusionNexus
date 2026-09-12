@@ -48,6 +48,7 @@ public class GenerationGalleryViewModelTests : IDisposable
         viewModel.NoMediaMessage.Should().Contain("Settings");
     }
 
+
     [Fact]
     public async Task LoadMediaAsync_LoadsMediaFromEnabledSourcesOnly()
     {

@@ -7,6 +7,7 @@
              xmlns:views="using:DiffusionNexus.UI.Views.Tabs"
              xmlns:converters="using:DiffusionNexus.UI.Converters"
              xmlns:viewControls="using:DiffusionNexus.UI.Views.Controls"
+             xmlns:behaviors="using:DiffusionNexus.UI.Behaviors"
              mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
              x:Class="DiffusionNexus.UI.Views.Tabs.DatasetManagementView"
              x:DataType="vmTabs:DatasetManagementViewModel">
@@ -269,7 +270,8 @@
       </Border>
 
       <!-- Dataset Overview (only when NOT viewing dataset and has datasets) -->
-      <ScrollViewer IsVisible="{Binding HasDatasetsToShow}">
+      <ScrollViewer x:Name="DatasetListScrollViewer" IsVisible="{Binding HasDatasetsToShow}"
+                    behaviors:ScrollKeyNavigation.IsEnabled="True">
         <ItemsControl Margin="16" ItemsSource="{Binding FilteredGroupedDatasets}">
           <ItemsControl.ItemsPanel>
             <ItemsPanelTemplate>
@@ -421,7 +423,8 @@
               </Border>
               
               <!-- Image Grid -->
-              <ScrollViewer Grid.Row="1">
+              <ScrollViewer Grid.Row="1" x:Name="DatasetImageScrollViewer"
+                            behaviors:ScrollKeyNavigation.IsEnabled="True">
                 <ItemsControl Margin="16" ItemsSource="{Binding DatasetImages}">
                   <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>

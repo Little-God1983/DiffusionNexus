@@ -3,6 +3,7 @@
            xmlns:vm="using:DiffusionNexus.UI.ViewModels"
            xmlns:converters="using:DiffusionNexus.UI.Converters"
            xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
+           xmlns:behaviors="using:DiffusionNexus.UI.Behaviors"
            x:Class="DiffusionNexus.UI.Views.GenerationGalleryView"
            x:DataType="vm:GenerationGalleryViewModel">
 <Design.DataContext>
@@ -347,7 +348,8 @@
         </StackPanel>
       </Border>
 
-      <ScrollViewer Grid.Column="0" x:Name="GalleryScrollViewer" IsVisible="{Binding HasMedia}">
+      <ScrollViewer Grid.Column="0" x:Name="GalleryScrollViewer" IsVisible="{Binding HasMedia}"
+                    behaviors:ScrollKeyNavigation.IsEnabled="True">
         <Grid Margin="16">
           <ItemsControl ItemsSource="{Binding GroupedMediaItems}" IsVisible="{Binding IsGroupingEnabled}">
             <ItemsControl.ItemsPanel>
