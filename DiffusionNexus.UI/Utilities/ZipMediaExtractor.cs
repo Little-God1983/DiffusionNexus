@@ -80,10 +80,82 @@ public static class ZipMediaExtractor
 
     /// <summary>
     /// Extraction folders older than this are orphans (a dialog does not live for days) and are
-    /// swept on the next extraction. Deterministic cleanup happens on cancel and after the
-    /// Dataset Manager import; this is the safety net for callers that only receive a path list.
+    /// swept on the next extraction. Every caller deletes its folders deterministically once the
+    /// import is done; this is the safety net for a crash mid-import.
     /// </summary>
     internal static readonly TimeSpan StaleRetention = TimeSpan.FromDays(2);
+
+    /// <summary>
+    /// Deletes extraction folders handed back by the file-drop dialog once their files have been
+    /// copied to the destination. Only folders that <see cref="IsExtractionDirectory"/> recognises
+    /// are touched, so a caller that accidentally passes an unrelated path (the destination folder,
+    /// a user folder that happens to carry our name) loses nothing. Missing folders and failures
+    /// are swallowed; a folder that resists deletion is picked up by the stale sweep later.
+    /// </summary>
+    /// <param name="directories">Folders reported via a dialog result's <c>TemporaryDirectories</c>.</param>
+    /// <param name="deleteDirectory">
+    /// Performs the recursive delete of one folder. Defaults to <see cref="Directory.Delete(string, bool)"/>;
+    /// callers that route file IO through a service seam for testability pass their own.
+    /// </param>
+    /// <param name="onError">Invoked when a delete throws; the exception is not rethrown.</param>
+    public static void DeleteExtractionDirectories(
+        IEnumerable<string> directories,
+        Action<string>? deleteDirectory = null,
+        Action<string, Exception>? onError = null)
+    {
+        deleteDirectory ??= dir =>
+        {
+            if (Directory.Exists(dir))
+                Directory.Delete(dir, recursive: true);
+        };
+
+        foreach (var dir in directories)
+        {
+            if (!IsExtractionDirectory(dir))
+                continue;
+
+            try
+            {
+                deleteDirectory(dir);
+            }
+            catch (Exception ex)
+            {
+                onError?.Invoke(dir, ex);
+            }
+        }
+    }
+
+    /// <summary>
+    /// True when <paramref name="directory"/> is a folder this extractor could have created: its
+    /// name carries our prefix and it lives under the machine's temp root. Both checks are needed —
+    /// the prefix alone would match a folder a user copied out of <c>%TEMP%</c> or named by hand.
+    /// </summary>
+    public static bool IsExtractionDirectory(string directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory))
+            return false;
+
+        string full;
+        try
+        {
+            full = Path.GetFullPath(directory);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+
+        var leaf = Path.GetFileName(Path.TrimEndingDirectorySeparator(full));
+        if (!leaf.StartsWith(TempDirectoryPrefix, StringComparison.Ordinal))
+            return false;
+
+        var tempRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()))
+            + Path.DirectorySeparatorChar;
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        return full.StartsWith(tempRoot, comparison);
+    }
 
     /// <summary>
     /// Extracts every entry whose extension is in <paramref name="allowedExtensions"/> (archives are

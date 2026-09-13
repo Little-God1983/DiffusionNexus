@@ -208,6 +208,69 @@ public sealed class ZipMediaExtractorTests : IDisposable
         Directory.Exists(unrelated).Should().BeTrue("only our own prefix is ever swept");
     }
 
+    [Fact]
+    public void DeleteExtractionDirectories_RemovesOwnFolders_SkipsForeignAndMissingOnes()
+    {
+        var ours = Path.Combine(_root, "DiffusionNexus_ZipExtract_deleteme");
+        var foreign = Path.Combine(_root, "SomeoneElsesFolder");
+        var missing = Path.Combine(_root, "DiffusionNexus_ZipExtract_gone");
+        foreach (var d in new[] { ours, foreign })
+        {
+            Directory.CreateDirectory(d);
+            File.WriteAllText(Path.Combine(d, "x.png"), "x");
+        }
+
+        var act = () => ZipMediaExtractor.DeleteExtractionDirectories([ours, foreign, missing]);
+
+        act.Should().NotThrow("a folder that is already gone is not an error");
+        Directory.Exists(ours).Should().BeFalse("callers hand back the folders the dialog created for them");
+        Directory.Exists(foreign).Should().BeTrue("only folders carrying our prefix are ever deleted");
+    }
+
+    [Fact]
+    public void DeleteExtractionDirectories_UsesCallerDeleter_AndReportsItsFailures()
+    {
+        var ours = Path.Combine(_root, "DiffusionNexus_ZipExtract_seam");
+        var deleted = new List<string>();
+        var errors = new List<(string Dir, Exception Ex)>();
+
+        ZipMediaExtractor.DeleteExtractionDirectories(
+            [ours],
+            deleteDirectory: dir => { deleted.Add(dir); throw new IOException("locked"); },
+            onError: (dir, ex) => errors.Add((dir, ex)));
+
+        deleted.Should().ContainSingle("the caller's deleter performs the IO").Which.Should().Be(ours);
+        errors.Should().ContainSingle().Which.Dir.Should().Be(ours);
+        errors[0].Ex.Should().BeOfType<IOException>();
+    }
+
+    [Theory]
+    [InlineData(true, "DiffusionNexus_ZipExtract_abc", true)]
+    [InlineData(true, "DiffusionNexus_ZipExtract_abc" + "/", true)]
+    [InlineData(true, "NotOurs_abc", false)]
+    [InlineData(false, "DiffusionNexus_ZipExtract_abc", false)]
+    public void IsExtractionDirectory_RequiresPrefixAndTempRoot(bool underTemp, string leaf, bool expected)
+    {
+        var parent = underTemp
+            ? Path.Combine(Path.GetTempPath(), "dn-zipextract-tests")
+            : Path.Combine(Path.GetPathRoot(Path.GetTempPath())!, "Users", "someone", "Documents");
+        var candidate = Path.Combine(parent, leaf);
+
+        ZipMediaExtractor.IsExtractionDirectory(candidate).Should().Be(expected);
+    }
+
+    [Fact]
+    public void DeleteExtractionDirectories_NeverCallsDeleterForFolderOutsideTempRoot()
+    {
+        var lookalike = Path.Combine(
+            Path.GetPathRoot(Path.GetTempPath())!, "Users", "someone", "Documents", "DiffusionNexus_ZipExtract_keep");
+        var deleted = new List<string>();
+
+        ZipMediaExtractor.DeleteExtractionDirectories([lookalike], deleteDirectory: deleted.Add);
+
+        deleted.Should().BeEmpty("a folder outside %TEMP% cannot be one of ours, whatever its name");
+    }
+
     private string MakeZip(params (string Name, string Content)[] entries)
     {
         var zipPath = Path.Combine(_root, Guid.NewGuid().ToString("N") + ".zip");

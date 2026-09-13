@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Utilities;
 
 namespace DiffusionNexus.UI.ViewModels.Tabs;
 
@@ -302,13 +303,22 @@ public partial class PresentationTabViewModel : ObservableObject, IDialogService
             .Concat(PresentationFileItem.VideoExtensions)
             .ToArray();
 
-        var files = await DialogService.ShowFileDropDialogAsync(
+        var result = await DialogService.ShowFileDropDialogAsync(
             "Add Presentation Media",
             allMediaExtensions);
 
-        if (files is null || files.Count == 0) return;
+        if (result is null) return;
 
-        await AddFilesAsync(files, isMedia: true);
+        try
+        {
+            if (result.Files.Count > 0)
+                await AddFilesAsync(result.Files, isMedia: true);
+        }
+        finally
+        {
+            // Files that came out of a dropped ZIP were extracted to a temp folder; it is ours to remove.
+            await Task.Run(() => ZipMediaExtractor.DeleteExtractionDirectories(result.TemporaryDirectories));
+        }
     }
 
     /// <summary>
@@ -322,13 +332,22 @@ public partial class PresentationTabViewModel : ObservableObject, IDialogService
             .Concat(PresentationFileItem.RawDesignExtensions)
             .ToArray();
 
-        var files = await DialogService.ShowFileDropDialogAsync(
+        var result = await DialogService.ShowFileDropDialogAsync(
             "Add Presentation Documents",
             allDocExtensions);
 
-        if (files is null || files.Count == 0) return;
+        if (result is null) return;
 
-        await AddFilesAsync(files, isMedia: false);
+        try
+        {
+            if (result.Files.Count > 0)
+                await AddFilesAsync(result.Files, isMedia: false);
+        }
+        finally
+        {
+            // Files that came out of a dropped ZIP were extracted to a temp folder; it is ours to remove.
+            await Task.Run(() => ZipMediaExtractor.DeleteExtractionDirectories(result.TemporaryDirectories));
+        }
     }
 
     /// <summary>
