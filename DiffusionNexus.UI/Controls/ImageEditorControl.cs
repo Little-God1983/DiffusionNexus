@@ -43,6 +43,9 @@ public class ImageEditorControl : Control
     // Canvas extend tool state
     private bool _isCanvasExtendToolActive;
 
+    // Layer transform tool state
+    private bool _isLayerTransformToolActive;
+
     // Eyedropper state
     private bool _isEyedropperActive;
 
@@ -249,6 +252,19 @@ public class ImageEditorControl : Control
         {
             _isCanvasExtendToolActive = value;
             _editorCore.CanvasExtendTool.IsActive = value;
+            InvalidateVisual();
+        }
+    }
+
+    /// <summary>Gets or sets whether the layer Move / Transform tool is active.</summary>
+    public bool IsLayerTransformToolActive
+    {
+        get => _isLayerTransformToolActive;
+        set
+        {
+            _isLayerTransformToolActive = value;
+            _editorCore.LayerTransformTool.IsActive = value;   // false commits a pending transform
+            if (value) _editorCore.ArmLayerTransform();
             InvalidateVisual();
         }
     }
@@ -626,6 +642,21 @@ public class ImageEditorControl : Control
             }
         }
 
+        // Layer transform tool takes priority when active
+        if (_isLayerTransformToolActive && props.IsLeftButtonPressed)
+        {
+            var tool = _editorCore.LayerTransformTool;
+            tool.ConstrainProportionsOverride = e.KeyModifiers.HasFlag(KeyModifiers.Control);
+            tool.SnapRotation = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+            if (tool.OnPointerPressed(skPoint))
+            {
+                e.Handled = true;
+                InvalidateVisual();
+                Focus();
+                return;
+            }
+        }
+
         if (_editorCore.CropTool.OnPointerPressed(skPoint))
         {
             e.Handled = true;
@@ -745,6 +776,19 @@ public class ImageEditorControl : Control
             }
         }
 
+        if (_isLayerTransformToolActive)
+        {
+            var tool = _editorCore.LayerTransformTool;
+            tool.ConstrainProportionsOverride = e.KeyModifiers.HasFlag(KeyModifiers.Control);
+            tool.SnapRotation = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+            if (tool.OnPointerMoved(skPoint))
+            {
+                e.Handled = true;
+                InvalidateVisual();
+                return;
+            }
+        }
+
         if (_editorCore.CropTool.OnPointerMoved(skPoint))
         {
             e.Handled = true;
@@ -842,6 +886,16 @@ public class ImageEditorControl : Control
         if (_isCanvasExtendToolActive)
         {
             if (_editorCore.CanvasExtendTool.OnPointerReleased())
+            {
+                e.Handled = true;
+                InvalidateVisual();
+                return;
+            }
+        }
+
+        if (_isLayerTransformToolActive)
+        {
+            if (_editorCore.LayerTransformTool.OnPointerReleased())
             {
                 e.Handled = true;
                 InvalidateVisual();
@@ -961,6 +1015,21 @@ public class ImageEditorControl : Control
                 InvalidateVisual();
                 e.Handled = true;
                 return;
+            }
+        }
+
+        // Layer transform: Enter applies, Escape resets (tool stays open), arrows nudge (Shift = 10 px)
+        if (_isLayerTransformToolActive && _editorCore.LayerTransformTool.IsArmed)
+        {
+            var step = e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? 10 : 1;
+            switch (e.Key)
+            {
+                case Key.Enter: ApplyLayerTransform(); e.Handled = true; return;
+                case Key.Escape: _editorCore.LayerTransformTool.Reset(); InvalidateVisual(); e.Handled = true; return;
+                case Key.Left: _editorCore.LayerTransformTool.Nudge(-step, 0); InvalidateVisual(); e.Handled = true; return;
+                case Key.Right: _editorCore.LayerTransformTool.Nudge(step, 0); InvalidateVisual(); e.Handled = true; return;
+                case Key.Up: _editorCore.LayerTransformTool.Nudge(0, -step); InvalidateVisual(); e.Handled = true; return;
+                case Key.Down: _editorCore.LayerTransformTool.Nudge(0, step); InvalidateVisual(); e.Handled = true; return;
             }
         }
 
@@ -1096,6 +1165,19 @@ public class ImageEditorControl : Control
             Cursor = tool.IsMovePoint(point)
                 ? new Cursor(StandardCursorType.SizeAll)
                 : CursorForExtensionHandle(tool.GetCursorForPoint(point));
+            return;
+        }
+
+        if (_isLayerTransformToolActive)
+        {
+            Cursor = _editorCore.LayerTransformTool.GetCursorForPoint(point) switch
+            {
+                ImageEditor.TransformHandle.None => Cursor.Default,
+                ImageEditor.TransformHandle.Rotate => new Cursor(StandardCursorType.Hand),
+                ImageEditor.TransformHandle.Top or ImageEditor.TransformHandle.Bottom => new Cursor(StandardCursorType.SizeNorthSouth),
+                ImageEditor.TransformHandle.Left or ImageEditor.TransformHandle.Right => new Cursor(StandardCursorType.SizeWestEast),
+                _ => new Cursor(StandardCursorType.SizeAll)
+            };
             return;
         }
 
@@ -1348,6 +1430,33 @@ public class ImageEditorControl : Control
         return result;
     }
 
+    /// <summary>Raised whenever the layer transform tool's state changes (fields sync).</summary>
+    public event EventHandler? LayerTransformChanged;
+    /// <summary>Raised after a layer transform was rasterized.</summary>
+    public event EventHandler? LayerTransformApplied;
+    /// <summary>Raised when a layer transform was refused; the layer is untouched.</summary>
+    public event EventHandler<ImageEditor.LayerTransformFailure>? LayerTransformFailed;
+    /// <summary>Raised when the tool (re)armed, with the active layer's eligibility.</summary>
+    public event EventHandler<ImageEditor.LayerTransformEligibility>? LayerTransformEligibilityChanged;
+
+    /// <summary>Applies the pending layer transform. False with no event when there is nothing to apply.</summary>
+    public bool ApplyLayerTransform()
+    {
+        var result = _editorCore.ApplyLayerTransform();
+        InvalidateVisual();
+        return result;
+    }
+
+    private void OnLayerTransformChanged(object? sender, EventArgs e)
+    {
+        InvalidateVisual();
+        LayerTransformChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void OnLayerTransformApplied(object? sender, EventArgs e) => LayerTransformApplied?.Invoke(this, EventArgs.Empty);
+    private void OnLayerTransformFailed(object? sender, ImageEditor.LayerTransformFailure f) => LayerTransformFailed?.Invoke(this, f);
+    private void OnLayerTransformEligibilityChanged(object? sender, ImageEditor.LayerTransformEligibility r) => LayerTransformEligibilityChanged?.Invoke(this, r);
+
     /// <summary>
     /// Activates the crop tool.
     /// </summary>
@@ -1564,6 +1673,11 @@ public class ImageEditorControl : Control
         _editorCore.OutpaintTool.RegionChanged += OnOutpaintRegionChanged;
         _editorCore.CanvasExtendTool.RegionChanged += OnCanvasExtendRegionChanged;
         _editorCore.CanvasExtendTool.ShrinkAttempted += OnCanvasExtendShrinkAttempted;
+        _editorCore.LayerTransformTool.TransformChanged += OnLayerTransformChanged;
+        _editorCore.LayerTransformTool.ArmedLayerChanged += OnLayerTransformChanged;
+        _editorCore.LayerTransformApplied += OnLayerTransformApplied;
+        _editorCore.LayerTransformFailed += OnLayerTransformFailed;
+        _editorCore.LayerTransformEligibilityChanged += OnLayerTransformEligibilityChanged;
         InvalidateVisual();
     }
 
@@ -1586,6 +1700,11 @@ public class ImageEditorControl : Control
         _editorCore.OutpaintTool.RegionChanged -= OnOutpaintRegionChanged;
         _editorCore.CanvasExtendTool.RegionChanged -= OnCanvasExtendRegionChanged;
         _editorCore.CanvasExtendTool.ShrinkAttempted -= OnCanvasExtendShrinkAttempted;
+        _editorCore.LayerTransformTool.TransformChanged -= OnLayerTransformChanged;
+        _editorCore.LayerTransformTool.ArmedLayerChanged -= OnLayerTransformChanged;
+        _editorCore.LayerTransformApplied -= OnLayerTransformApplied;
+        _editorCore.LayerTransformFailed -= OnLayerTransformFailed;
+        _editorCore.LayerTransformEligibilityChanged -= OnLayerTransformEligibilityChanged;
     }
 
     /// <summary>
