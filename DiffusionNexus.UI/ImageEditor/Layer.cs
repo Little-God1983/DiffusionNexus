@@ -327,38 +327,39 @@ public class Layer : IDisposable
     }
 
     /// <summary>
-    /// Resizes the layer canvas and draws the existing content at the specified offset.
+    /// Builds the bitmap <see cref="ResizeCanvas"/> would swap in, without touching the layer.
+    /// The layer is shifted by (<paramref name="offsetX"/>, <paramref name="offsetY"/>) and grown
+    /// to the union of its shifted bounds and the new canvas, so a canvas-aligned layer stays
+    /// canvas-aligned (drawing on the new area keeps working) and a moved layer keeps every pixel.
+    /// Throws when SkiaSharp cannot allocate, so the caller can report the failure.
     /// </summary>
-    public void ResizeCanvas(int newWidth, int newHeight, int offsetX, int offsetY)
-    {
-        if (_bitmap == null) return;
-
-        AdoptBitmap(CreateResizedBitmap(newWidth, newHeight, offsetX, offsetY));
-    }
-
-    /// <summary>
-    /// Builds the bitmap <see cref="ResizeCanvas"/> would swap in, without touching the
-    /// layer: a transparent canvas of the new size with the current content drawn at the
-    /// offset. Lets <see cref="LayerStack.ResizeCanvas"/> allocate for every layer before
-    /// changing any of them. Throws when SkiaSharp cannot allocate (it hands back an empty
-    /// bitmap instead of throwing), so the caller can report the failure.
-    /// </summary>
-    internal SKBitmap CreateResizedBitmap(int newWidth, int newHeight, int offsetX, int offsetY)
+    internal SKBitmap CreateResizedBitmap(int newWidth, int newHeight, int offsetX, int offsetY, out SKPointI newOffset)
     {
         if (_bitmap == null)
             throw new InvalidOperationException("The layer has no bitmap to resize.");
 
-        var newBitmap = new SKBitmap(newWidth, newHeight, SKColorType.Rgba8888, SKAlphaType.Premul);
-        if (newBitmap.IsEmpty || newBitmap.Width != newWidth || newBitmap.Height != newHeight)
+        var shifted = new SKRectI(_offsetX + offsetX, _offsetY + offsetY, _offsetX + offsetX + Width, _offsetY + offsetY + Height);
+        var union = SKRectI.Union(shifted, new SKRectI(0, 0, newWidth, newHeight));
+
+        var newBitmap = new SKBitmap(union.Width, union.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
+        if (newBitmap.IsEmpty || newBitmap.Width != union.Width || newBitmap.Height != union.Height)
         {
             newBitmap.Dispose();
-            throw new InvalidOperationException($"Could not allocate a {newWidth}x{newHeight} canvas.");
+            throw new InvalidOperationException($"Could not allocate a {union.Width}x{union.Height} canvas.");
         }
         newBitmap.Erase(SKColors.Transparent);
 
         using var canvas = new SKCanvas(newBitmap);
-        canvas.DrawBitmap(_bitmap, offsetX, offsetY);
+        canvas.DrawBitmap(_bitmap, shifted.Left - union.Left, shifted.Top - union.Top);
+        newOffset = new SKPointI(union.Left, union.Top);
         return newBitmap;
+    }
+
+    /// <summary>Resizes the layer canvas and draws the existing content at the specified offset.</summary>
+    public void ResizeCanvas(int newWidth, int newHeight, int offsetX, int offsetY)
+    {
+        if (_bitmap == null) return;
+        AdoptBitmap(CreateResizedBitmap(newWidth, newHeight, offsetX, offsetY, out var newOffset), newOffset);
     }
 
     /// <summary>Replaces the layer's bitmap with one prepared by <see cref="CreateResizedBitmap"/>.</summary>
@@ -379,25 +380,32 @@ public class Layer : IDisposable
     }
 
     /// <summary>
-    /// Crops the layer to the specified rectangle.
+    /// Crops the layer to <paramref name="cropRect"/> (canvas pixels): keeps the intersection of
+    /// the layer's bounds with the rect and re-offsets relative to the rect's top-left. A layer
+    /// wholly outside becomes a 1x1 transparent bitmap at (0, 0) so it stays valid.
     /// </summary>
-    /// <param name="cropRect">The crop rectangle in pixel coordinates.</param>
     public void Crop(SKRectI cropRect)
     {
         if (_bitmap == null || cropRect.Width <= 0 || cropRect.Height <= 0) return;
 
-        var newBitmap = new SKBitmap(cropRect.Width, cropRect.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
+        var inter = SKRectI.Intersect(Bounds, cropRect);
+        if (inter.IsEmpty || inter.Width <= 0 || inter.Height <= 0)
+        {
+            var empty = new SKBitmap(1, 1, SKColorType.Rgba8888, SKAlphaType.Premul);
+            empty.Erase(SKColors.Transparent);
+            AdoptBitmap(empty, new SKPointI(0, 0));
+            return;
+        }
+
+        var newBitmap = new SKBitmap(inter.Width, inter.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
         newBitmap.Erase(SKColors.Transparent);
-
-        using var canvas = new SKCanvas(newBitmap);
-        var srcRect = new SKRect(cropRect.Left, cropRect.Top, cropRect.Right, cropRect.Bottom);
-        var destRect = new SKRect(0, 0, cropRect.Width, cropRect.Height);
-        canvas.DrawBitmap(_bitmap, srcRect, destRect);
-
-        _bitmap.Dispose();
-        _bitmap = newBitmap;
-        UpdateThumbnail();
-        ContentChanged?.Invoke(this, EventArgs.Empty);
+        using (var canvas = new SKCanvas(newBitmap))
+        {
+            // Source rect in layer-local pixels.
+            var src = new SKRect(inter.Left - _offsetX, inter.Top - _offsetY, inter.Right - _offsetX, inter.Bottom - _offsetY);
+            canvas.DrawBitmap(_bitmap, src, new SKRect(0, 0, inter.Width, inter.Height));
+        }
+        AdoptBitmap(newBitmap, new SKPointI(inter.Left - cropRect.Left, inter.Top - cropRect.Top));
     }
 
     private void UpdateThumbnail()

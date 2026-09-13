@@ -45,6 +45,9 @@ public interface ILayerManager
     /// <param name="layerName">Name for the initial layer.</param>
     void EnableLayerMode(SKBitmap workingBitmap, string layerName);
 
+    /// <summary>Starts layer mode with an EMPTY stack of the given canvas size (TIFF import adds layers next).</summary>
+    void EnableLayerMode(int canvasWidth, int canvasHeight);
+
     /// <summary>
     /// Disables layer mode, flattening all layers into a single bitmap.
     /// </summary>
@@ -59,12 +62,13 @@ public interface ILayerManager
     Layer? AddLayer(string? name = null);
 
     /// <summary>
-    /// Adds a layer from a bitmap.
+    /// Adds a layer from a bitmap placed at <paramref name="offset"/> (canvas pixels).
     /// </summary>
     /// <param name="bitmap">Source bitmap.</param>
     /// <param name="name">Optional layer name.</param>
+    /// <param name="offset">Canvas offset for the layer.</param>
     /// <returns>The created layer, or null if not in layer mode.</returns>
-    Layer? AddLayerFromBitmap(SKBitmap bitmap, string? name = null);
+    Layer? AddLayerFromBitmap(SKBitmap bitmap, string? name = null, SKPointI offset = default);
 
     /// <summary>
     /// Removes a layer.
