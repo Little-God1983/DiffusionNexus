@@ -118,11 +118,12 @@ public class LayerStack : IDisposable
     /// </summary>
     /// <param name="bitmap">Source bitmap.</param>
     /// <param name="name">Optional layer name.</param>
+    /// <param name="offset">Canvas offset for the layer.</param>
     /// <returns>The newly created layer.</returns>
-    public Layer AddLayerFromBitmap(SKBitmap bitmap, string? name = null)
+    public Layer AddLayerFromBitmap(SKBitmap bitmap, string? name = null, SKPointI offset = default)
     {
         var layerName = name ?? $"Layer {_layers.Count + 1}";
-        var layer = new Layer(bitmap, layerName);
+        var layer = new Layer(bitmap, layerName, offset);
         layer.ContentChanged += OnLayerContentChanged;
 
         // Keep inpaint mask as the topmost layer
