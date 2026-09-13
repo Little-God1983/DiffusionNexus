@@ -3,16 +3,29 @@ using System.IO.Compression;
 namespace DiffusionNexus.UI.Utilities;
 
 /// <summary>
+/// Where a file that is about to be imported originally came from when it was pulled out of an
+/// archive: the archive on disk and the entry's full name inside it (folders included, forward
+/// slashes as stored in the ZIP).
+/// </summary>
+public sealed record ArchiveOrigin(string ArchivePath, string EntryName);
+
+/// <summary>
 /// Outcome of extracting the media entries of a ZIP archive into a temporary directory.
 /// </summary>
 public sealed class ZipExtractionResult
 {
-    public static readonly ZipExtractionResult Empty = new(null, []);
+    public static readonly ZipExtractionResult Empty = new(null, null, [], new Dictionary<string, string>());
 
-    public ZipExtractionResult(string? tempDirectory, IReadOnlyList<string> extractedFiles)
+    public ZipExtractionResult(
+        string? tempDirectory,
+        string? archivePath,
+        IReadOnlyList<string> extractedFiles,
+        IReadOnlyDictionary<string, string> entryNames)
     {
         TempDirectory = tempDirectory;
+        ArchivePath = archivePath;
         ExtractedFiles = extractedFiles;
+        EntryNames = entryNames;
     }
 
     /// <summary>
@@ -23,9 +36,28 @@ public sealed class ZipExtractionResult
     public string? TempDirectory { get; }
 
     /// <summary>
+    /// The archive the files were extracted from, or <see langword="null"/> when nothing was extracted.
+    /// </summary>
+    public string? ArchivePath { get; }
+
+    /// <summary>
     /// Full paths of the extracted files, in archive order.
     /// </summary>
     public IReadOnlyList<string> ExtractedFiles { get; }
+
+    /// <summary>
+    /// Extracted file path → the entry's full name inside the archive (e.g. <c>day2/grok.jpg</c>).
+    /// The extraction is flat, so this is the only place the folder inside the ZIP survives.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> EntryNames { get; }
+
+    /// <summary>
+    /// The <see cref="ArchiveOrigin"/> of one extracted file, for conflict rows to display.
+    /// </summary>
+    public IEnumerable<KeyValuePair<string, ArchiveOrigin>> Origins =>
+        ArchivePath is null
+            ? []
+            : EntryNames.Select(kv => new KeyValuePair<string, ArchiveOrigin>(kv.Key, new ArchiveOrigin(ArchivePath, kv.Value)));
 }
 
 /// <summary>
@@ -64,6 +96,7 @@ public static class ZipMediaExtractor
             TempDirectoryPrefix + Guid.NewGuid().ToString("N")[..8]);
 
         var extracted = new List<string>();
+        var entryNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         try
         {
@@ -85,6 +118,7 @@ public static class ZipMediaExtractor
                 var destPath = UniquePath(tempDir, entry.Name);
                 entry.ExtractToFile(destPath);
                 extracted.Add(destPath);
+                entryNames[destPath] = entry.FullName;
             }
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
@@ -92,6 +126,7 @@ public static class ZipMediaExtractor
             // A corrupt or unreadable archive is treated as "contains nothing usable". The dialog's
             // drop-zone analysis already flags such archives as invalid.
             extracted.Clear();
+            entryNames.Clear();
         }
 
         if (extracted.Count == 0)
@@ -100,7 +135,7 @@ public static class ZipMediaExtractor
             return ZipExtractionResult.Empty;
         }
 
-        return new ZipExtractionResult(tempDir, extracted);
+        return new ZipExtractionResult(tempDir, zipPath, extracted, entryNames);
     }
 
     private static string UniquePath(string directory, string fileName)

@@ -40,6 +40,21 @@ public sealed class ZipMediaExtractorTests : IDisposable
     }
 
     [Fact]
+    public void Extract_RecordsArchivePathAndEntryNameForEveryExtractedFile()
+    {
+        var zip = MakeZip(("a.png", "1"), ("sub/dir/b.jpg", "2"));
+
+        var result = ZipMediaExtractor.Extract(zip, MediaAndText, _root);
+
+        result.ArchivePath.Should().Be(zip);
+        result.EntryNames.Should().HaveCount(2);
+        var b = result.ExtractedFiles.Single(f => Path.GetFileName(f) == "b.jpg");
+        result.EntryNames[b].Should().Be("sub/dir/b.jpg", "the flattened temp path loses the folder, the entry name keeps it");
+        var a = result.ExtractedFiles.Single(f => Path.GetFileName(f) == "a.png");
+        result.EntryNames[a].Should().Be("a.png");
+    }
+
+    [Fact]
     public void Extract_SkipsDirectoryEntries()
     {
         var zip = MakeZip(("folder/", ""), ("folder/a.png", "1"));

@@ -162,6 +162,27 @@
                                  Opacity="0.6"
                                  HorizontalAlignment="Center"
                                  IsVisible="{Binding HasPairedCaption}"/>
+                      <!-- Source of the new file. Two rows can share a name (loose file vs. a
+                           same-named ZIP entry, or two ZIPs); this is what tells them apart. -->
+                      <StackPanel Orientation="Horizontal"
+                                  Spacing="6"
+                                  HorizontalAlignment="Center"
+                                  Margin="0,2,0,0"
+                                  ToolTip.Tip="{Binding SourceToolTip}">
+                        <Border IsVisible="{Binding IsFromArchive}"
+                                Background="#AA2563EB"
+                                CornerRadius="4"
+                                Padding="6,1"
+                                VerticalAlignment="Center">
+                          <TextBlock Text="ZIP" FontSize="10" Foreground="White"/>
+                        </Border>
+                        <TextBlock Text="{Binding SourceDisplayText}"
+                                   FontSize="10"
+                                   Opacity="0.6"
+                                   MaxWidth="360"
+                                   TextTrimming="CharacterEllipsis"
+                                   VerticalAlignment="Center"/>
+                      </StackPanel>
                     </StackPanel>
 
                     <!-- New File Preview -->
@@ -194,21 +215,18 @@
                     <!-- Override Radio -->
                     <RadioButton Grid.Column="7"
                                  IsChecked="{Binding IsOverride}"
-                                 GroupName="{Binding ConflictingName}"
                                  HorizontalAlignment="Center"
                                  VerticalAlignment="Center"/>
 
                     <!-- Rename Radio -->
                     <RadioButton Grid.Column="8"
                                  IsChecked="{Binding IsRename}"
-                                 GroupName="{Binding ConflictingName}"
                                  HorizontalAlignment="Center"
                                  VerticalAlignment="Center"/>
 
                     <!-- Ignore Radio -->
                     <RadioButton Grid.Column="9"
                                  IsChecked="{Binding IsIgnore}"
-                                 GroupName="{Binding ConflictingName}"
                                  HorizontalAlignment="Center"
                                  VerticalAlignment="Center"/>
                   </Grid>

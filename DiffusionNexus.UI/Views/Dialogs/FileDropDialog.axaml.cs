@@ -30,6 +30,7 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
     private Func<IEnumerable<FileConflictItem>, IEnumerable<string>, Task<FileConflictResolutionResult?>>? _onConflictsDetected;
     private string? _destinationFolder;
     private readonly List<string> _tempDirectories = [];
+    private readonly Dictionary<string, ArchiveOrigin> _archiveOrigins = new(StringComparer.OrdinalIgnoreCase);
 
     public FileDropDialog()
     {
@@ -276,6 +277,8 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
             var extraction = ZipMediaExtractor.Extract(filePath, _allowedExtensions);
             if (extraction.TempDirectory is not null)
                 _tempDirectories.Add(extraction.TempDirectory);
+            foreach (var (extractedPath, origin) in extraction.Origins)
+                _archiveOrigins[extractedPath] = origin;
             incoming.AddRange(extraction.ExtractedFiles);
         }
         else
@@ -332,7 +335,8 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
         if (_existingFileNames is null || _onConflictsDetected is null || _destinationFolder is null)
             return ConflictCheckOutcome.NoConflicts;
 
-        var detection = FileConflictDetector.DetectConflicts(candidates, _existingFileNames, _destinationFolder);
+        var detection = FileConflictDetector.DetectConflicts(
+            candidates, _existingFileNames, _destinationFolder, _archiveOrigins);
         if (detection.Conflicts.Count == 0)
             return ConflictCheckOutcome.NoConflicts;
 
