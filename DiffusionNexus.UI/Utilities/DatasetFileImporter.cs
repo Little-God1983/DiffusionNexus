@@ -133,13 +133,18 @@ public sealed class DatasetFileImporter
 
         if (conflictResolutions?.Confirmed == true)
         {
+            // A "pair" is image + caption with the same base name from the same source folder.
+            // Two conflict rows can share a file name (a loose file and a same-named ZIP entry,
+            // or two ZIPs), so the key must include the source folder or the second row would
+            // reuse the first row's new name and collide.
             var renamedPairs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var overriddenTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var conflict in conflictResolutions.Conflicts)
             {
                 switch (conflict.Resolution)
                 {
-                    case FileConflictResolution.Override:
+                    case FileConflictResolution.Override when overriddenTargets.Add(conflict.ExistingFilePath):
                         CopyOrMove(conflict.NewFilePath, conflict.ExistingFilePath, moveFiles, overwrite: true);
                         processedSources.Add(conflict.NewFilePath);
                         overridden++;
@@ -147,15 +152,20 @@ public sealed class DatasetFileImporter
                         await GenerateVideoThumbnailAsync(conflict.ExistingFilePath, videoThumbnailService);
                         break;
 
+                    // Second Override onto a slot this batch already overwrote: honouring it would
+                    // silently discard the first file the user also chose to keep, so keep both by
+                    // giving this one a new name instead.
+                    case FileConflictResolution.Override:
                     case FileConflictResolution.Rename:
                     {
                         var baseName = Path.GetFileNameWithoutExtension(conflict.ConflictingName);
-                        if (!renamedPairs.TryGetValue(baseName, out var newBaseName))
+                        var pairKey = Path.GetDirectoryName(conflict.NewFilePath) + "|" + baseName;
+                        if (!renamedPairs.TryGetValue(pairKey, out var newBaseName))
                         {
                             var uniquePath = GenerateUniqueFileName(
                                 destinationFolder, conflict.ConflictingName, usedFileNames);
                             newBaseName = Path.GetFileNameWithoutExtension(uniquePath);
-                            renamedPairs[baseName] = newBaseName;
+                            renamedPairs[pairKey] = newBaseName;
                         }
 
                         var extension = Path.GetExtension(conflict.ConflictingName);

@@ -35,8 +35,10 @@ public static class FileConflictDetector
         var result = new FileConflictDetectionResult();
 
         // 1. Filter and group dropped files by base name (without extension)
+        // Group and key with the same comparer: an ordinal GroupBy would yield separate "Cat"
+        // and "cat" groups that the case-insensitive dictionary then rejects as duplicate keys.
         var filesByBaseName = droppedFiles
-            .GroupBy(f => Path.GetFileNameWithoutExtension(f))
+            .GroupBy(f => Path.GetFileNameWithoutExtension(f), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
 
         foreach (var group in filesByBaseName)

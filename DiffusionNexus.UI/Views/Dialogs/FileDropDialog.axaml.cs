@@ -31,6 +31,7 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
     private string? _destinationFolder;
     private readonly List<string> _tempDirectories = [];
     private readonly Dictionary<string, ArchiveOrigin> _archiveOrigins = new(StringComparer.OrdinalIgnoreCase);
+    private bool _resolvingConflicts;
 
     public FileDropDialog()
     {
@@ -335,12 +336,27 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
         if (_existingFileNames is null || _onConflictsDetected is null || _destinationFolder is null)
             return ConflictCheckOutcome.NoConflicts;
 
+        // The comparer is modal to the main window, not to this dialog, so a second Done click or
+        // drop while it is open would start a second resolution over the same selection.
+        if (_resolvingConflicts)
+            return ConflictCheckOutcome.Cancelled;
+
         var detection = FileConflictDetector.DetectConflicts(
             candidates, _existingFileNames, _destinationFolder, _archiveOrigins);
         if (detection.Conflicts.Count == 0)
             return ConflictCheckOutcome.NoConflicts;
 
-        var resolution = await _onConflictsDetected(detection.Conflicts, detection.NonConflictingFiles);
+        _resolvingConflicts = true;
+        FileConflictResolutionResult? resolution;
+        try
+        {
+            resolution = await _onConflictsDetected(detection.Conflicts, detection.NonConflictingFiles);
+        }
+        finally
+        {
+            _resolvingConflicts = false;
+        }
+
         if (resolution is null || !resolution.Confirmed)
             return ConflictCheckOutcome.Cancelled;
 
@@ -354,15 +370,17 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
     /// <summary>
     /// Collects all files from a folder.
     /// </summary>
-    private static void CollectFilesFromFolder(string folderPath, List<string> files)
+    private void CollectFilesFromFolder(string folderPath, List<string> files)
     {
         if (!Directory.Exists(folderPath)) return;
 
         try
         {
+            // Same route as a directly dropped file, so an archive inside the folder is expanded
+            // instead of being copied into the dataset as if it were media.
             foreach (var file in Directory.EnumerateFiles(folderPath))
             {
-                files.Add(file);
+                CollectIncomingFile(file, files);
             }
         }
         catch (IOException) { /* Directory access error */ }
@@ -592,16 +610,29 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
         base.OnClosed(e);
 
         // On cancel (Cancel button or window close) nothing will consume the extracted files,
-        // so the temporary directories are ours to remove. On success the caller owns them.
+        // so every temporary directory is ours to remove. On success the caller owns the ones
+        // holding returned files; the rest (archive removed from the selection, or expanded but
+        // rejected by the filter) would otherwise leak.
         if (ResultFiles is null)
         {
-            DeleteTemporaryDirectories();
+            DeleteTemporaryDirectories(_ => true);
+        }
+        else
+        {
+            var returned = ResultFiles;
+            DeleteTemporaryDirectories(dir => !returned.Any(f => IsInside(f, dir)));
         }
     }
 
-    private void DeleteTemporaryDirectories()
+    private static bool IsInside(string filePath, string directory)
     {
-        foreach (var dir in _tempDirectories)
+        var dirFull = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        return Path.GetFullPath(filePath).StartsWith(dirFull, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void DeleteTemporaryDirectories(Func<string, bool> shouldDelete)
+    {
+        foreach (var dir in _tempDirectories.Where(shouldDelete).ToList())
         {
             try
             {
@@ -612,9 +643,9 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
             {
                 // Best effort cleanup of our own temp folders.
             }
-        }
 
-        _tempDirectories.Clear();
+            _tempDirectories.Remove(dir);
+        }
     }
 
     #endregion

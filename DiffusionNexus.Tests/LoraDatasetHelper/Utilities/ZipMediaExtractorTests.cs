@@ -131,6 +131,83 @@ public sealed class ZipMediaExtractorTests : IDisposable
             .Should().BeEquivalentTo(["fresh.png"]);
     }
 
+    // -------------------------------------------------------------------
+    //  PR #570 review findings
+    // -------------------------------------------------------------------
+
+    [Theory]
+    [InlineData(@"..\..\evil.png", "evil.png")]
+    [InlineData("../../evil.png", "evil.png")]
+    [InlineData("day2/cat.jpg", "cat.jpg")]
+    [InlineData(@"C:\abs\cat.jpg", "cat.jpg")]
+    [InlineData("cat.jpg", "cat.jpg")]
+    public void SafeLeafName_StripsEveryDirectoryComponent_RegardlessOfSeparator(string entryName, string expected)
+    {
+        ZipMediaExtractor.SafeLeafName(entryName).Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("..")]
+    [InlineData(".")]
+    [InlineData("")]
+    [InlineData("folder/")]
+    [InlineData(@"..\..\")]
+    public void SafeLeafName_ReturnsNull_WhenNothingUsableRemains(string entryName)
+    {
+        ZipMediaExtractor.SafeLeafName(entryName).Should().BeNull();
+    }
+
+    [Fact]
+    public void Extract_NeverWritesOutsideTheTempDirectory()
+    {
+        // .NET stamps archives made on Windows as Windows-made, and then strips backslashes from
+        // entry.Name itself; a Unix-made archive keeps them. Both spellings must land inside tempDir.
+        var zip = MakeZip((@"..\..\evil.png", "1"), ("../../evil2.png", "2"), ("ok.png", "3"));
+
+        var result = ZipMediaExtractor.Extract(zip, MediaAndText, _root);
+
+        result.ExtractedFiles.Should().OnlyContain(f =>
+            Path.GetFullPath(f).StartsWith(Path.GetFullPath(result.TempDirectory!) + Path.DirectorySeparatorChar));
+        result.ExtractedFiles.Select(Path.GetFileName).Should().BeEquivalentTo(["evil.png", "evil2.png", "ok.png"]);
+        File.Exists(Path.Combine(_root, "evil.png")).Should().BeFalse();
+        File.Exists(Path.Combine(Path.GetDirectoryName(_root)!, "evil.png")).Should().BeFalse();
+    }
+
+    [Fact]
+    public void Extract_SkipsAnEntryThatCannotBeWritten_AndKeepsTheRest()
+    {
+        // '<' and '>' are illegal in Windows file names, so this entry's ExtractToFile throws.
+        var zip = MakeZip(("ok1.png", "1"), ("bad<name>.png", "2"), ("ok2.png", "3"));
+
+        var result = ZipMediaExtractor.Extract(zip, MediaAndText, _root);
+
+        result.ExtractedFiles.Select(Path.GetFileName).Should().BeEquivalentTo(["ok1.png", "ok2.png"]);
+        result.SkippedEntryCount.Should().Be(1);
+        result.TempDirectory.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void Extract_SweepsStaleExtractionDirectories_ButKeepsRecentOnes()
+    {
+        var stale = Path.Combine(_root, "DiffusionNexus_ZipExtract_stale001");
+        var recent = Path.Combine(_root, "DiffusionNexus_ZipExtract_recent01");
+        var unrelated = Path.Combine(_root, "SomethingElse");
+        foreach (var d in new[] { stale, recent, unrelated })
+        {
+            Directory.CreateDirectory(d);
+            File.WriteAllText(Path.Combine(d, "x.png"), "x");
+        }
+        Directory.SetLastWriteTimeUtc(stale, DateTime.UtcNow - TimeSpan.FromDays(10));
+        File.SetLastWriteTimeUtc(Path.Combine(stale, "x.png"), DateTime.UtcNow - TimeSpan.FromDays(10));
+        Directory.SetLastWriteTimeUtc(unrelated, DateTime.UtcNow - TimeSpan.FromDays(10));
+
+        ZipMediaExtractor.Extract(MakeZip(("a.png", "1")), MediaAndText, _root);
+
+        Directory.Exists(stale).Should().BeFalse("an extraction folder older than the retention window is orphaned");
+        Directory.Exists(recent).Should().BeTrue("a recent folder may belong to a dialog that is still open");
+        Directory.Exists(unrelated).Should().BeTrue("only our own prefix is ever swept");
+    }
+
     private string MakeZip(params (string Name, string Content)[] entries)
     {
         var zipPath = Path.Combine(_root, Guid.NewGuid().ToString("N") + ".zip");
