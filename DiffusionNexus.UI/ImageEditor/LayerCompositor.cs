@@ -3,6 +3,12 @@ using SkiaSharp;
 namespace DiffusionNexus.UI.ImageEditor;
 
 /// <summary>
+/// Draws one layer through <paramref name="Matrix"/> (canvas coordinates) instead of at its
+/// stored offset. The transform tool's live preview: nothing about the layer changes.
+/// </summary>
+public readonly record struct LayerRenderOverride(Layer Layer, SKMatrix Matrix);
+
+/// <summary>
 /// Handles compositing layers together for rendering and export.
 /// </summary>
 public static class LayerCompositor
@@ -19,7 +25,8 @@ public static class LayerCompositor
     /// <param name="canvas">Target canvas to draw on.</param>
     /// <param name="layers">Layer stack to composite.</param>
     /// <param name="destRect">Destination rectangle for drawing.</param>
-    public static void CompositeToCanvas(SKCanvas canvas, LayerStack layers, SKRect destRect)
+    /// <param name="previewOverride">Optional layer render override for preview.</param>
+    public static void CompositeToCanvas(SKCanvas canvas, LayerStack layers, SKRect destRect, LayerRenderOverride? previewOverride = null)
     {
         if (layers.Count == 0) return;
 
@@ -29,8 +36,9 @@ public static class LayerCompositor
         canvas.Save();
         canvas.Translate(destRect.Left, destRect.Top);
         canvas.Scale(scaleX, scaleY);
+        // Layers may extend past the canvas; only the canvas is shown.
+        canvas.ClipRect(new SKRect(0, 0, layers.Width, layers.Height));
 
-        // Draw layers from bottom to top
         foreach (var layer in layers.Layers)
         {
             if (!layer.IsVisible || layer.Bitmap == null) continue;
@@ -38,17 +46,26 @@ public static class LayerCompositor
             if (layer.IsInpaintMask)
             {
                 RenderInpaintMaskLayer(canvas, layer, layers.Width, layers.Height);
+                continue;
+            }
+
+            using var paint = new SKPaint
+            {
+                Color = SKColors.White.WithAlpha((byte)(layer.Opacity * 255)),
+                BlendMode = layer.BlendMode.ToSKBlendMode(),
+                IsAntialias = true
+            };
+
+            if (previewOverride is { } over && ReferenceEquals(over.Layer, layer))
+            {
+                canvas.Save();
+                canvas.Concat(over.Matrix);
+                canvas.DrawBitmap(layer.Bitmap, layer.OffsetX, layer.OffsetY, paint);
+                canvas.Restore();
             }
             else
             {
-                using var paint = new SKPaint
-                    {
-                        Color = SKColors.White.WithAlpha((byte)(layer.Opacity * 255)),
-                        BlendMode = layer.BlendMode.ToSKBlendMode(),
-                        IsAntialias = true
-                    };
-
-                    canvas.DrawBitmap(layer.Bitmap, 0, 0, paint);
+                canvas.DrawBitmap(layer.Bitmap, layer.OffsetX, layer.OffsetY, paint);
             }
         }
 
@@ -145,17 +162,16 @@ public static class LayerCompositor
     /// Exports layers to individual bitmaps (for layered file formats).
     /// </summary>
     /// <param name="layers">Layer stack to export.</param>
-    /// <returns>List of tuples containing layer name and bitmap.</returns>
-    public static List<(string Name, SKBitmap Bitmap, float Opacity, BlendMode BlendMode)> ExportLayersAsBitmaps(LayerStack layers)
+    /// <returns>List of tuples containing layer name, bitmap, opacity, blend mode, and offset.</returns>
+    public static List<(string Name, SKBitmap Bitmap, float Opacity, BlendMode BlendMode, SKPointI Offset)> ExportLayersAsBitmaps(LayerStack layers)
     {
-        var result = new List<(string, SKBitmap, float, BlendMode)>();
+        var result = new List<(string, SKBitmap, float, BlendMode, SKPointI)>();
 
         foreach (var layer in layers.Layers)
         {
             if (layer.Bitmap == null) continue;
 
-            var copy = layer.Bitmap.Copy();
-            result.Add((layer.Name, copy, layer.Opacity, layer.BlendMode));
+            result.Add((layer.Name, layer.Bitmap.Copy(), layer.Opacity, layer.BlendMode, new SKPointI(layer.OffsetX, layer.OffsetY)));
         }
 
         return result;

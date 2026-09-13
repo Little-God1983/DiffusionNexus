@@ -50,7 +50,7 @@ public static class TiffExporter
                 if (layer.Bitmap == null)
                     continue;
 
-                WritePage(tiff, layer.Bitmap, CreateLayerMetadata(layer, pageIndex), pageIndex, layers.Count);
+                WritePage(tiff, layer.Bitmap, CreateLayerMetadata(layer, pageIndex, layers.Width, layers.Height), pageIndex, layers.Count);
                 pagesWritten++;
             }
 
@@ -171,7 +171,11 @@ public static class TiffExporter
 
             var firstWidth = tiff.GetField(TiffTag.IMAGEWIDTH)[0].ToInt();
             var firstHeight = tiff.GetField(TiffTag.IMAGELENGTH)[0].ToInt();
-            var layerStack = new LayerStack(firstWidth, firstHeight);
+            var firstDescription = tiff.GetField(TiffTag.IMAGEDESCRIPTION);
+            int? canvasW = null, canvasH = null;
+            if (firstDescription != null && firstDescription.Length > 0)
+                ParseLayerMetadata(firstDescription[0].ToString(), out _, out _, out _, out _, out _, out _, out canvasW, out canvasH);
+            var layerStack = new LayerStack(canvasW ?? firstWidth, canvasH ?? firstHeight);
 
             var pageIndex = 0;
             do
@@ -182,8 +186,10 @@ public static class TiffExporter
                 var opacity = 1.0f;
                 var blendMode = BlendMode.Normal;
                 var isVisible = true;
+                var offsetX = 0;
+                var offsetY = 0;
                 if (description != null && description.Length > 0)
-                    ParseLayerMetadata(description[0].ToString(), out layerName, out opacity, out blendMode, out isVisible);
+                    ParseLayerMetadata(description[0].ToString(), out layerName, out opacity, out blendMode, out isVisible, out offsetX, out offsetY, out _, out _);
 
                 var bitmap = ReadCurrentPageRgba(tiff);
                 if (bitmap is null)
@@ -194,7 +200,7 @@ public static class TiffExporter
                     continue;
                 }
 
-                var layer = new Layer(bitmap, layerName)
+                var layer = new Layer(bitmap, layerName, new SKPointI(offsetX, offsetY))
                 {
                     Opacity = opacity,
                     BlendMode = blendMode,
@@ -216,7 +222,7 @@ public static class TiffExporter
 
             layerStack.ActiveLayer = layerStack[layerStack.Count - 1];
             logger?.Info(LogCategory.General, LogSource,
-                $"Loaded TIFF with {layerStack.Count} layer(s) ({firstWidth}x{firstHeight}).", filePath);
+                $"Loaded TIFF with {layerStack.Count} layer(s) ({canvasW ?? firstWidth}x{canvasH ?? firstHeight}).", filePath);
             return layerStack;
         }
         catch (Exception ex)
@@ -288,20 +294,25 @@ public static class TiffExporter
     /// <summary>
     /// Creates metadata string for a layer.
     /// </summary>
-    private static string CreateLayerMetadata(Layer layer, int index)
+    private static string CreateLayerMetadata(Layer layer, int index, int canvasWidth, int canvasHeight)
     {
-        return $"LayerName={layer.Name}|Opacity={layer.Opacity:F2}|BlendMode={layer.BlendMode}|Visible={layer.IsVisible}|Index={index}";
+        return $"LayerName={layer.Name}|Opacity={layer.Opacity:F2}|BlendMode={layer.BlendMode}|Visible={layer.IsVisible}|Index={index}"
+             + $"|OffsetX={layer.OffsetX}|OffsetY={layer.OffsetY}|CanvasWidth={canvasWidth}|CanvasHeight={canvasHeight}";
     }
 
     /// <summary>
     /// Parses layer metadata from TIFF description.
     /// </summary>
-    private static void ParseLayerMetadata(string? metadata, out string name, out float opacity, out BlendMode blendMode, out bool isVisible)
+    private static void ParseLayerMetadata(string? metadata, out string name, out float opacity, out BlendMode blendMode, out bool isVisible, out int offsetX, out int offsetY, out int? canvasWidth, out int? canvasHeight)
     {
         name = "Layer";
         opacity = 1.0f;
         blendMode = BlendMode.Normal;
         isVisible = true;
+        offsetX = 0;
+        offsetY = 0;
+        canvasWidth = null;
+        canvasHeight = null;
 
         if (string.IsNullOrEmpty(metadata))
             return;
@@ -333,7 +344,30 @@ public static class TiffExporter
                     if (bool.TryParse(value, out var vis))
                         isVisible = vis;
                     break;
+                case "OffsetX":
+                    if (int.TryParse(value, out var ox))
+                        offsetX = ox;
+                    break;
+                case "OffsetY":
+                    if (int.TryParse(value, out var oy))
+                        offsetY = oy;
+                    break;
+                case "CanvasWidth":
+                    if (int.TryParse(value, out var cw) && cw > 0)
+                        canvasWidth = cw;
+                    break;
+                case "CanvasHeight":
+                    if (int.TryParse(value, out var ch) && ch > 0)
+                        canvasHeight = ch;
+                    break;
             }
         }
+    }
+
+    /// <summary>Test seam: name, offset and canvas size parsed from a page description.</summary>
+    internal static (string Name, int OffsetX, int OffsetY, int? CanvasWidth, int? CanvasHeight) ParseLayerMetadataForTest(string metadata)
+    {
+        ParseLayerMetadata(metadata, out var name, out _, out _, out _, out var ox, out var oy, out var cw, out var ch);
+        return (name, ox, oy, cw, ch);
     }
 }

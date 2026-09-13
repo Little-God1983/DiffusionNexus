@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- **New Feature**: Image Editor Move / Transform tool (#568) — move, scale, rotate and flip the active layer; layers keep content outside the canvas.
 - **Major**: Upgraded to .NET 10.
 - **Database**: Integrated SQLite Database with Entity Framework Core for metadata persistence and performance.
 - **New Feature**: Dataset Management tab with version control, branching, and image captioning.

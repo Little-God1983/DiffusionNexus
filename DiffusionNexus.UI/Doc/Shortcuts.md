@@ -51,6 +51,11 @@
 | Escape | Reset canvas extension (tool stays open) | Extend tool active |
 | C / Enter | Apply the crop | Crop tool active with a region |
 | Escape | Clear the crop region | Crop tool active with a region |
+| Enter | Apply the layer transform | Move tool active |
+| Escape | Reset the layer transform (tool stays open) | Move tool active |
+| Arrow keys | Nudge the layer 1 px (Shift: 10 px) | Move tool active |
+| Ctrl (held) | Invert "Keep aspect" for this corner drag | Move tool, dragging a corner |
+| Shift (held) | Snap rotation to 15° | Move tool, dragging the rotate handle |
 
 ## Diffusion Canvas
 

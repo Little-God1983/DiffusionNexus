@@ -10,31 +10,31 @@ public partial class ImageEditorCore
     /// Rotates the image 90 degrees clockwise.
     /// When in layer mode, rotates all layers.
     /// </summary>
-    public bool RotateRight() => ApplyTransform(RotateBitmapRight);
+    public bool RotateRight() => ApplyTransform(RotateBitmapRight, LayerOffsetRemap.RotateRight, swapsAxes: true);
 
     /// <summary>
     /// Rotates the image 90 degrees counter-clockwise.
     /// When in layer mode, rotates all layers.
     /// </summary>
-    public bool RotateLeft() => ApplyTransform(RotateBitmapLeft);
+    public bool RotateLeft() => ApplyTransform(RotateBitmapLeft, LayerOffsetRemap.RotateLeft, swapsAxes: true);
 
     /// <summary>
     /// Rotates the image 180 degrees.
     /// When in layer mode, rotates all layers.
     /// </summary>
-    public bool Rotate180() => ApplyTransform(RotateBitmap180);
+    public bool Rotate180() => ApplyTransform(RotateBitmap180, LayerOffsetRemap.Rotate180, swapsAxes: false);
 
     /// <summary>
     /// Flips the image horizontally (mirror).
     /// When in layer mode, flips all layers.
     /// </summary>
-    public bool FlipHorizontal() => ApplyTransform(FlipBitmapHorizontal);
+    public bool FlipHorizontal() => ApplyTransform(FlipBitmapHorizontal, LayerOffsetRemap.FlipHorizontal, swapsAxes: false);
 
     /// <summary>
     /// Flips the image vertically.
     /// When in layer mode, flips all layers.
     /// </summary>
-    public bool FlipVertical() => ApplyTransform(FlipBitmapVertical);
+    public bool FlipVertical() => ApplyTransform(FlipBitmapVertical, LayerOffsetRemap.FlipVertical, swapsAxes: false);
 
     /// <summary>
     /// Applies a whole-image transform: every layer is transformed when in layer mode, otherwise
@@ -46,20 +46,32 @@ public partial class ImageEditorCore
     /// </para>
     /// </summary>
     /// <param name="transform">Produces the transformed copy of a source bitmap.</param>
+    /// <param name="remap">Maps a layer's bounds before the transform to its new offset.</param>
+    /// <param name="swapsAxes">Whether the transform swaps width and height (90-degree rotations).</param>
     /// <returns>True if the transform was applied.</returns>
-    private bool ApplyTransform(Func<SKBitmap?, SKBitmap?> transform)
+    private bool ApplyTransform(Func<SKBitmap?, SKBitmap?> transform, Func<SKRectI, int, int, SKPointI> remap, bool swapsAxes)
     {
         if (GetOperationTargetBitmap() is null) return false;
 
         try
         {
+            // A whole-image rotate/flip changes every layer's bounds out from under the tool,
+            // so a pending transform must land first and the tool must re-arm against the
+            // post-transform bounds, or it keeps stale _sourceBounds.
+            CommitLayerTransformBefore();
+
             SKBitmap? replaced = null;
 
             lock (_bitmapLock)
             {
                 if (_isLayerMode && _layers != null)
                 {
-                    _layers.TransformAll(layer => transform(layer.Bitmap));
+                    var w = _layers.Width; var h = _layers.Height;
+                    _layers.TransformAll(layer =>
+                    {
+                        var bmp = transform(layer.Bitmap);
+                        return bmp is null ? null : (bmp, remap(layer.Bounds, w, h));
+                    }, swapsAxes ? h : w, swapsAxes ? w : h);
                 }
                 else
                 {
@@ -73,6 +85,7 @@ public partial class ImageEditorCore
 
             replaced?.Dispose();
             OnImageChanged();
+            RearmLayerTransformAfter();
             return true;
         }
         catch { return false; }

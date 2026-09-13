@@ -128,6 +128,15 @@ public partial class ImageEditorCore : IDisposable
     /// </summary>
     public CanvasExtendTool CanvasExtendTool { get; } = new();
 
+    /// <summary>Gets the layer Move / Transform tool.</summary>
+    public LayerTransformTool LayerTransformTool { get; }
+
+    public ImageEditorCore()
+    {
+        LayerTransformTool = new LayerTransformTool();
+        LayerTransformTool.CommitRequested += (_, _) => ApplyLayerTransform();
+    }
+
     /// <summary>
     /// Commits any in-progress tool operations (placed text, placed shape, active drawing stroke).
     /// Call before saving or exporting to ensure all pending work is captured.
@@ -360,12 +369,15 @@ public partial class ImageEditorCore : IDisposable
     {
         if (_services is null) return;
 
+        CommitLayerTransformBefore();
+
         lock (_bitmapLock)
         {
             _services.Layers.FlattenAllLayers();
         }
 
         OnImageChanged();
+        RearmLayerTransformAfter();
     }
 
     /// <summary>
@@ -375,10 +387,16 @@ public partial class ImageEditorCore : IDisposable
     /// <returns>The newly created layer, or null if not in layer mode.</returns>
     public Layer? AddLayer(string? name = null)
     {
+        CommitLayerTransformBefore();
+
+        Layer? layer;
         lock (_bitmapLock)
         {
-            return _services?.Layers.AddLayer(name);
+            layer = _services?.Layers.AddLayer(name);
         }
+
+        RearmLayerTransformAfter();
+        return layer;
     }
 
     /// <summary>
@@ -389,10 +407,16 @@ public partial class ImageEditorCore : IDisposable
     /// <returns>The newly created layer, or null if not in layer mode.</returns>
     public Layer? AddLayerFromBitmap(SKBitmap bitmap, string? name = null)
     {
+        CommitLayerTransformBefore();
+
+        Layer? layer;
         lock (_bitmapLock)
         {
-            return _services?.Layers.AddLayerFromBitmap(bitmap, name);
+            layer = _services?.Layers.AddLayerFromBitmap(bitmap, name);
         }
+
+        RearmLayerTransformAfter();
+        return layer;
     }
 
     /// <summary>
@@ -415,10 +439,16 @@ public partial class ImageEditorCore : IDisposable
     /// <returns>True if removed successfully.</returns>
     public bool RemoveLayer(Layer layer)
     {
+        CommitLayerTransformBefore();
+
+        bool removed;
         lock (_bitmapLock)
         {
-            return _services?.Layers.RemoveLayer(layer) ?? false;
+            removed = _services?.Layers.RemoveLayer(layer) ?? false;
         }
+
+        RearmLayerTransformAfter();
+        return removed;
     }
 
     /// <summary>
@@ -428,10 +458,16 @@ public partial class ImageEditorCore : IDisposable
     /// <returns>The duplicated layer, or null if failed.</returns>
     public Layer? DuplicateLayer(Layer layer)
     {
+        CommitLayerTransformBefore();
+
+        Layer? duplicate;
         lock (_bitmapLock)
         {
-            return _services?.Layers.DuplicateLayer(layer);
+            duplicate = _services?.Layers.DuplicateLayer(layer);
         }
+
+        RearmLayerTransformAfter();
+        return duplicate;
     }
 
     /// <summary>
@@ -467,10 +503,16 @@ public partial class ImageEditorCore : IDisposable
     /// <returns>True if merged successfully.</returns>
     public bool MergeLayerDown(Layer layer)
     {
+        CommitLayerTransformBefore();
+
+        bool merged;
         lock (_bitmapLock)
         {
-            return _services?.Layers.MergeLayerDown(layer) ?? false;
+            merged = _services?.Layers.MergeLayerDown(layer) ?? false;
         }
+
+        RearmLayerTransformAfter();
+        return merged;
     }
 
     /// <summary>
@@ -492,10 +534,18 @@ public partial class ImageEditorCore : IDisposable
         get => _services?.Layers.ActiveLayer;
         set
         {
-            if (_services is not null)
-            {
-                _services.Layers.ActiveLayer = value;
-            }
+            if (_services is null) return;
+            if (ReferenceEquals(_services.Layers.ActiveLayer, value)) return;
+            // Assign first so SyncLayers (raised off the stack's ActiveLayerChanged / events
+            // triggered by the commit below) sees the stack already pointing at the new layer;
+            // otherwise the Layers panel highlight stays on the old layer. ApplyLayerTransform
+            // targets tool.Layer, so the commit below still lands on the previously armed layer
+            // regardless of this reordering (Shape/Text precedent: a pending move is never lost).
+            _services.Layers.ActiveLayer = value;
+            if (LayerTransformTool.IsActive && LayerTransformTool.IsArmed)
+                LayerTransformTool.Commit();
+            if (LayerTransformTool.IsActive)
+                ArmLayerTransform();
         }
     }
 
@@ -537,6 +587,10 @@ public partial class ImageEditorCore : IDisposable
             _originalBitmap = original;
             _workingBitmap = working;
         }
+
+        // The stack (and any layer the tool was armed on) is gone: the document is being
+        // discarded, so disarm without committing rather than rasterizing into a dead layer.
+        LayerTransformTool.Disarm();
 
         replacedOriginal?.Dispose();
         replacedWorking?.Dispose();
@@ -789,6 +843,8 @@ public partial class ImageEditorCore : IDisposable
         {
             SKBitmap? replacedWorking = null;
 
+            CommitLayerTransformBefore();
+
             lock (_bitmapLock)
             {
                 if (_isLayerMode && _layers != null)
@@ -818,6 +874,7 @@ public partial class ImageEditorCore : IDisposable
             CropTool.ClearCropRegion();
 
             OnImageChanged();
+            RearmLayerTransformAfter();
             return true;
         }
         catch
@@ -1080,7 +1137,11 @@ public partial class ImageEditorCore : IDisposable
             }
             else if (_isLayerMode && _layers != null)
             {
-                LayerCompositor.CompositeToCanvas(canvas, _layers, imageRect);
+                var preview = LayerTransformTool.IsActive && LayerTransformTool.IsArmed && LayerTransformTool.HasTransform
+                    && LayerTransformTool.Layer is { } previewLayer
+                    ? new LayerRenderOverride(previewLayer, LayerTransformTool.Matrix)
+                    : (LayerRenderOverride?)null;
+                LayerCompositor.CompositeToCanvas(canvas, _layers, imageRect, preview);
             }
             else
             {
@@ -1124,6 +1185,12 @@ public partial class ImageEditorCore : IDisposable
             CanvasExtendTool.ImagePixelWidth = imageWidth;
             CanvasExtendTool.ImagePixelHeight = imageHeight;
             CanvasExtendTool.Render(canvas, new SKRect(0, 0, canvasWidth, canvasHeight));
+
+            // Update the layer transform tool with current image bounds and render overlay
+            LayerTransformTool.SetImageBounds(imageRect);
+            LayerTransformTool.ImagePixelWidth = imageWidth;
+            LayerTransformTool.ImagePixelHeight = imageHeight;
+            LayerTransformTool.Render(canvas, new SKRect(0, 0, canvasWidth, canvasHeight));
 
             _lastImageRect = imageRect;
             return imageRect;
@@ -1414,8 +1481,9 @@ public partial class ImageEditorCore : IDisposable
 
             try
             {
-                var width = targetBitmap.Width;
-                var height = targetBitmap.Height;
+                // Canvas size, not the layer's: strokes arrive in canvas-normalised coordinates.
+                var width = targetLayer is not null && _layers is not null ? _layers.Width : targetBitmap.Width;
+                var height = targetLayer is not null && _layers is not null ? _layers.Height : targetBitmap.Height;
 
                 // Convert normalized points to image pixel coordinates
                 var imagePoints = normalizedPoints
@@ -1426,6 +1494,8 @@ public partial class ImageEditorCore : IDisposable
                 var scaledBrushSize = brushSize * width;
 
                 using var canvas = new SKCanvas(targetBitmap);
+                if (targetLayer is not null)
+                    canvas.Translate(-targetLayer.OffsetX, -targetLayer.OffsetY);
                 using var paint = new SKPaint
                 {
                     Color = color,
@@ -1526,8 +1596,9 @@ public partial class ImageEditorCore : IDisposable
 
             try
             {
-                var width = targetBitmap.Width;
-                var height = targetBitmap.Height;
+                // Canvas size, not the layer's: shapes arrive in canvas-normalised coordinates.
+                var width = targetLayer is not null && _layers is not null ? _layers.Width : targetBitmap.Width;
+                var height = targetLayer is not null && _layers is not null ? _layers.Height : targetBitmap.Height;
 
                 // Convert normalized coordinates to image coordinates
                 var start = new SKPoint(
@@ -1542,6 +1613,8 @@ public partial class ImageEditorCore : IDisposable
                 var scaledArrowHeadSize = shapeData.ArrowHeadSize;
 
                 using var canvas = new SKCanvas(targetBitmap);
+                if (targetLayer is not null)
+                    canvas.Translate(-targetLayer.OffsetX, -targetLayer.OffsetY);
 
                 // Apply rotation around the shape center if needed
                 if (Math.Abs(shapeData.RotationDegrees) > 0.01f)
@@ -1723,21 +1796,30 @@ public partial class ImageEditorCore : IDisposable
             _originalBitmap = flattened;
             _workingBitmap = flattened?.Copy();
 
-            // Initialize layer mode from the loaded stack via LayerManager
-            // We enable with the first layer, then add the rest
-            _services.Layers.EnableLayerMode(firstLayer.Bitmap.Copy(), firstLayer.Name);
-
-            for (var i = 1; i < loadedLayers.Count; i++)
+            // Rebuild the stack at the file's canvas size; every page keeps its own offset and size.
+            _services.Layers.EnableLayerMode(loadedLayers.Width, loadedLayers.Height);
+            for (var i = 0; i < loadedLayers.Count; i++)
             {
                 var layer = loadedLayers[i];
                 if (layer.Bitmap is null) continue;
-                _services.Layers.AddLayerFromBitmap(layer.Bitmap.Copy(), layer.Name);
+                var added = _services.Layers.AddLayerFromBitmap(layer.Bitmap.Copy(), layer.Name, new SKPointI(layer.OffsetX, layer.OffsetY));
+                if (added is not null)
+                {
+                    added.Opacity = layer.Opacity;
+                    added.BlendMode = layer.BlendMode;
+                    added.IsVisible = layer.IsVisible;
+                }
             }
         }
 
         previousFlattened?.Dispose();
         replacedOriginal?.Dispose();
         replacedWorking?.Dispose();
+
+        // The old stack (and any layer the tool was armed on) is gone: disarm without
+        // committing into a dead layer, then re-arm on the freshly rebuilt active layer.
+        LayerTransformTool.Disarm();
+        RearmLayerTransformAfter();
 
         // Get file size
         var fileInfo = new FileInfo(filePath);

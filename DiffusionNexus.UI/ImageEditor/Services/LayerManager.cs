@@ -63,6 +63,17 @@ internal sealed class LayerManager : ILayerManager, IDisposable
     }
 
     /// <inheritdoc />
+    public void EnableLayerMode(int canvasWidth, int canvasHeight)
+    {
+        if (_stack != null) return;
+        _stack = new LayerStack(canvasWidth, canvasHeight);
+        _stack.ContentChanged += OnStackContentChanged;
+        _stack.LayersChanged += OnStackLayersChanged;
+        _isLayerMode = true;
+        LayerModeChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <inheritdoc />
     public SKBitmap? DisableLayerMode()
     {
         if (_stack is null) return null;
@@ -83,10 +94,10 @@ internal sealed class LayerManager : ILayerManager, IDisposable
     }
 
     /// <inheritdoc />
-    public Layer? AddLayerFromBitmap(SKBitmap bitmap, string? name = null)
+    public Layer? AddLayerFromBitmap(SKBitmap bitmap, string? name = null, SKPointI offset = default)
     {
         if (!_isLayerMode || _stack is null) return null;
-        var layer = _stack.AddLayerFromBitmap(bitmap, name);
+        var layer = _stack.AddLayerFromBitmap(bitmap, name, offset);
         return layer;
     }
 

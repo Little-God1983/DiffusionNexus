@@ -108,6 +108,10 @@ public partial class ImageEditorCore
                 var backgroundBitmap = new SKBitmap(width, height, SKColorType.Rgba8888, SKAlphaType.Premul);
                 backgroundBitmap.Pixels = backgroundPixels;
 
+                // Capture the active layer's offset before any new layers are added
+                // (adding a layer changes the active layer).
+                var offset = _layers?.ActiveLayer is { } al ? new SKPointI(al.OffsetX, al.OffsetY) : default;
+
                 if (_layers != null)
                 {
                     // Already in layer mode - the active layer IS the original, just rename it
@@ -117,19 +121,19 @@ public partial class ImageEditorCore
                     {
                         activeLayer.Name = "Original";
                     }
-                    
+
                     // Add Background and Subject layers on top
-                    _services?.Layers.AddLayerFromBitmap(backgroundBitmap, "Background");
-                    _services?.Layers.AddLayerFromBitmap(subjectBitmap, "Subject");
+                    _services?.Layers.AddLayerFromBitmap(backgroundBitmap, "Background", offset);
+                    _services?.Layers.AddLayerFromBitmap(subjectBitmap, "Subject", offset);
                 }
                 else if (_services is not null)
                 {
                     // Not in layer mode - enable it with the 3-layer structure
                     var originalBitmap = targetBitmap.Copy();
-                    
+
                     _services.Layers.EnableLayerMode(originalBitmap, "Original");
-                    _services.Layers.AddLayerFromBitmap(backgroundBitmap, "Background");
-                    _services.Layers.AddLayerFromBitmap(subjectBitmap, "Subject");
+                    _services.Layers.AddLayerFromBitmap(backgroundBitmap, "Background", offset);
+                    _services.Layers.AddLayerFromBitmap(subjectBitmap, "Subject", offset);
                 }
             }
 

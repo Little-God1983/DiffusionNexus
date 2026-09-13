@@ -61,10 +61,12 @@ public partial class ImageEditorCore
             if (maskLayer?.Bitmap is null || !maskLayer.CanEdit)
                 return false;
 
+            if (_layers is null) return false;
+
             try
             {
-                var width = maskLayer.Bitmap.Width;
-                var height = maskLayer.Bitmap.Height;
+                var width = _layers.Width;
+                var height = _layers.Height;
 
                 var imagePoints = normalizedPoints
                     .Select(p => new SKPoint(p.X * width, p.Y * height))
