@@ -151,6 +151,10 @@ public partial class ImageEditorCore : IDisposable
 
         if (DrawingTool.IsDrawing)
             DrawingTool.OnPointerReleased();
+
+        // A Move/Transform still open at save time is only a preview matrix on the compositor;
+        // rasterize it so the file matches the canvas. Re-arms at identity, the tool stays open.
+        CommitLayerTransformBefore();
     }
 
     /// <summary>
