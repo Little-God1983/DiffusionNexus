@@ -243,6 +243,81 @@ public class ImageEditorCoreLayerTransformTests : IDisposable
     }
 
     [Fact]
+    public void Crop_CommitsAPendingNudge_ThenRearmsAtIdentityOnTheNewBounds()
+    {
+        // F: Crop replaces layer bitmaps behind the tool's back (like RotateRight). A pending
+        // nudge must land first, and the tool must re-arm against the cropped bounds.
+        _sut.LayerTransformTool.IsActive = true;
+        _sut.ArmLayerTransform();
+        _sut.LayerTransformTool.Nudge(10, 0);
+        var layer = _sut.ActiveLayer!;
+
+        _sut.CropTool.IsActive = true;
+        _sut.CropTool.SetImageBounds(new SKRect(0, 0, 100, 100));
+        _sut.CropTool.OnPointerPressed(new SKPoint(20, 20));
+        _sut.CropTool.OnPointerMoved(new SKPoint(80, 80));
+        _sut.CropTool.OnPointerReleased();
+        _sut.ApplyCrop().Should().BeTrue();
+
+        // Nudge(10,0) shifts bounds to (10,0)-(110,100) before the crop clips to (20,20)-(80,80).
+        layer.Bounds.Should().Be(new SKRectI(0, 0, 60, 60));
+        layer.Bitmap!.GetPixel(0, 0).Should().Be(SKColors.Red);
+        _sut.LayerTransformTool.SourceBounds.Should().Be(_sut.LayerTransformTool.Layer!.Bounds);
+        _sut.LayerTransformTool.HasTransform.Should().BeFalse();
+    }
+
+    [Fact]
+    public void LoadLayeredTiff_DisarmsThenRearms_OnTheNewActiveLayer()
+    {
+        // F: loading a layered TIFF discards the current stack and rebuilds it (like
+        // SwapLoadedBitmaps); the tool must disarm the dead layer, not commit into it, and
+        // re-arm on the freshly loaded active layer so the panel isn't left stale.
+        _sut.LayerTransformTool.IsActive = true;
+        _sut.ArmLayerTransform();
+
+        var path = Path.Combine(Path.GetTempPath(), $"diffnexus_test_{Guid.NewGuid():N}.tiff");
+        try
+        {
+            TiffExporter.SaveLayeredTiff(_sut.Layers!, path).Should().BeTrue();
+
+            _sut.LoadLayeredTiff(path).Should().BeTrue();
+
+            _sut.LayerTransformTool.IsArmed.Should().BeTrue();
+            _sut.LayerTransformTool.Layer!.Bitmap.Should().NotBeNull();
+            _sut.LayerTransformTool.Layer.Should().BeSameAs(_sut.ActiveLayer);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void FlipHorizontal_OnOddSizedLayerAtOrigin_AppliesExactlyOntoItself()
+    {
+        // Pivot truncation (int MidX/MidY) would rasterize the flip half a pixel off, growing
+        // the applied bounds beyond the original 5x5 box.
+        using var editor = new ImageEditorCore();
+        editor.SetServices(EditorServiceFactory.Create());
+        using var bitmap = new SKBitmap(5, 5, SKColorType.Rgba8888, SKAlphaType.Premul);
+        bitmap.Erase(SKColors.Red);
+        using var image = SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+        editor.LoadImage(data.ToArray());
+        editor.LayerTransformTool.ImagePixelWidth = 5;
+        editor.LayerTransformTool.ImagePixelHeight = 5;
+        editor.LayerTransformTool.SetImageBounds(new SKRect(0, 0, 5, 5));
+        editor.LayerTransformTool.IsActive = true;
+        editor.ArmLayerTransform();
+        var layer = editor.ActiveLayer!;
+
+        editor.LayerTransformTool.FlipHorizontal();
+        editor.ApplyLayerTransform().Should().BeTrue();
+
+        layer.Bounds.Should().Be(new SKRectI(0, 0, 5, 5));
+    }
+
+    [Fact]
     public void RenderWithZoom_PreviewsTheMatrix_WithoutChangingTheLayer()
     {
         _sut.LayerTransformTool.IsActive = true;

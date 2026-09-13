@@ -843,6 +843,8 @@ public partial class ImageEditorCore : IDisposable
         {
             SKBitmap? replacedWorking = null;
 
+            CommitLayerTransformBefore();
+
             lock (_bitmapLock)
             {
                 if (_isLayerMode && _layers != null)
@@ -872,6 +874,7 @@ public partial class ImageEditorCore : IDisposable
             CropTool.ClearCropRegion();
 
             OnImageChanged();
+            RearmLayerTransformAfter();
             return true;
         }
         catch
@@ -1812,6 +1815,11 @@ public partial class ImageEditorCore : IDisposable
         previousFlattened?.Dispose();
         replacedOriginal?.Dispose();
         replacedWorking?.Dispose();
+
+        // The old stack (and any layer the tool was armed on) is gone: disarm without
+        // committing into a dead layer, then re-arm on the freshly rebuilt active layer.
+        LayerTransformTool.Disarm();
+        RearmLayerTransformAfter();
 
         // Get file size
         var fileInfo = new FileInfo(filePath);
