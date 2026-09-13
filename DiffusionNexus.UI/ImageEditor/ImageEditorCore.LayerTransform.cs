@@ -92,12 +92,21 @@ public partial class ImageEditorCore
                     result.Dispose();
                     throw new InvalidOperationException($"Could not allocate a {bounds.Width}x{bounds.Height} layer.");
                 }
-                result.Erase(SKColors.Transparent);
-                using var canvas = new SKCanvas(result);
-                canvas.Translate(-bounds.Left, -bounds.Top);
-                canvas.Concat(matrix);
-                using var paint = new SKPaint { IsAntialias = true };
-                canvas.DrawBitmap(layer.Bitmap, layer.OffsetX, layer.OffsetY, paint);
+                try
+                {
+                    result.Erase(SKColors.Transparent);
+                    using var canvas = new SKCanvas(result);
+                    canvas.Translate(-bounds.Left, -bounds.Top);
+                    canvas.Concat(matrix);
+                    using var paint = new SKPaint { IsAntialias = true };
+                    using var source = SKImage.FromBitmap(layer.Bitmap);
+                    canvas.DrawImage(source, layer.OffsetX, layer.OffsetY, new SKSamplingOptions(SKCubicResampler.Mitchell), paint);
+                }
+                catch
+                {
+                    result.Dispose();
+                    throw;
+                }
                 offset = new SKPointI(bounds.Left, bounds.Top);
             }
 
