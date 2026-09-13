@@ -145,12 +145,100 @@ public class ImageEditorCoreLayerTransformTests : IDisposable
         var first = _sut.ActiveLayer!;
         var second = _services.Layers.AddLayer("second")!; // AddLayer makes it active via the stack, not via the core setter
 
-        _sut.ActiveLayer = first;   // no pending change on first anymore? we set it again to exercise the setter
+        _sut.ActiveLayer = first;   // re-select the already-active layer: a no-op through the setter
         _sut.LayerTransformTool.Nudge(10, 0);
         _sut.ActiveLayer = second;
 
         first.OffsetX.Should().Be(10);
         _sut.LayerTransformTool.Layer.Should().BeSameAs(second);
+        _sut.LayerTransformTool.HasTransform.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ChangingActiveLayer_UpdatesTheStackFirst_SoTheCommitSeesTheNewActiveLayer()
+    {
+        // F1: assigning the stack's ActiveLayer before committing the pending transform means a
+        // SyncLayers triggered (re-entrantly) by the commit sees the stack already pointing at
+        // the new layer, not the one being nudged away from. Captured via LayerTransformApplied,
+        // which ApplyLayerTransform raises synchronously from inside the Commit() call.
+        _sut.LayerTransformTool.IsActive = true;
+        _sut.ArmLayerTransform();
+        var first = _sut.ActiveLayer!;
+        var second = _services.Layers.AddLayer("second")!;
+        _sut.ActiveLayer = first;
+        _sut.LayerTransformTool.Nudge(10, 0);
+
+        Layer? activeLayerDuringCommit = null;
+        EventHandler onApplied = (_, _) => activeLayerDuringCommit = _services.Layers.ActiveLayer;
+        _sut.LayerTransformApplied += onApplied;
+        try
+        {
+            _sut.ActiveLayer = second;
+        }
+        finally
+        {
+            _sut.LayerTransformApplied -= onApplied;
+        }
+
+        activeLayerDuringCommit.Should().BeSameAs(second);
+        _services.Layers.ActiveLayer.Should().BeSameAs(second);
+        first.OffsetX.Should().Be(10);
+    }
+
+    [Fact]
+    public void RemoveLayer_CommitsPending_AndStaysArmedOnTheActiveLayer()
+    {
+        // F2: RemoveLayer mutates the stack directly (bypassing the ActiveLayer setter), so it
+        // must commit a pending transform itself or the nudge is silently lost.
+        _sut.LayerTransformTool.IsActive = true;
+        _sut.ArmLayerTransform();
+        var armed = _sut.ActiveLayer!;
+        var other = _services.Layers.AddLayer("other")!;
+        _sut.ActiveLayer = armed;
+        _sut.LayerTransformTool.Nudge(15, 0);
+
+        _sut.RemoveLayer(other).Should().BeTrue();
+
+        armed.OffsetX.Should().Be(15);
+        _sut.LayerTransformTool.IsArmed.Should().BeTrue();
+        _sut.LayerTransformTool.Layer.Should().BeSameAs(_sut.ActiveLayer);
+    }
+
+    [Fact]
+    public void MergeLayerDown_CommitsThePendingNudge_ThenArmsTheMergedResult()
+    {
+        // F2: merging the armed layer disposes it; the pending nudge must be rasterized into it
+        // before the merge, and the tool must re-arm on the surviving (merged) layer, never the
+        // disposed one.
+        _sut.LayerTransformTool.IsActive = true;
+        _sut.ArmLayerTransform();
+        var below = _sut.ActiveLayer!;
+        var top = _services.Layers.AddLayer("top")!;
+        _sut.ActiveLayer = top;
+        _sut.LayerTransformTool.Nudge(20, 0);
+
+        _sut.MergeLayerDown(top).Should().BeTrue();
+
+        _sut.LayerTransformTool.IsArmed.Should().BeTrue();
+        _sut.LayerTransformTool.Layer.Should().BeSameAs(below);
+        _sut.LayerTransformTool.Layer!.Bitmap.Should().NotBeNull();
+        below.Bounds.Should().Be(new SKRectI(0, 0, 120, 100)); // union of (0,0,100,100) and the nudged top (20,0,120,100)
+    }
+
+    [Fact]
+    public void RotateRight_CommitsAPendingTransform_ThenRearmsAtIdentityOnTheNewBounds()
+    {
+        // F3: a whole-image rotate/flip changes every layer's bounds out from under the tool. A
+        // pending transform must land first (never silently lost), and the tool must re-arm
+        // against the post-rotation bounds instead of keeping stale _sourceBounds.
+        _sut.LayerTransformTool.IsActive = true;
+        _sut.ArmLayerTransform();
+        _sut.LayerTransformTool.SetRotation(45f);
+
+        _sut.RotateRight().Should().BeTrue();
+
+        _sut.LayerTransformTool.IsArmed.Should().BeTrue();
+        _sut.LayerTransformTool.SourceBounds.Should().Be(_sut.LayerTransformTool.Layer!.Bounds);
         _sut.LayerTransformTool.HasTransform.Should().BeFalse();
     }
 

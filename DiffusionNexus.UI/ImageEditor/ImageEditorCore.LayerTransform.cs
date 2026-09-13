@@ -60,6 +60,7 @@ public partial class ImageEditorCore
         var tool = LayerTransformTool;
         var layer = tool.Layer;
         if (layer?.Bitmap is null || !tool.HasTransform) return false;
+        if (layer.IsInpaintMask || layer.IsLocked) return false;
 
         var matrix = tool.Matrix;
         var boundsF = matrix.MapRect(SKRect.Create(layer.Bounds.Left, layer.Bounds.Top, layer.Bounds.Width, layer.Bounds.Height));
@@ -128,6 +129,19 @@ public partial class ImageEditorCore
         OnImageChanged();
         LayerTransformApplied?.Invoke(this, EventArgs.Empty);
         return true;
+    }
+
+    /// <summary>Commits a pending layer transform (a deliberate move is never lost) and re-arms on the current active layer. Call around operations that replace or dispose layers behind the tool's back.</summary>
+    private void CommitLayerTransformBefore()
+    {
+        if (LayerTransformTool.IsActive && LayerTransformTool.IsArmed)
+            LayerTransformTool.Commit();
+    }
+
+    private void RearmLayerTransformAfter()
+    {
+        if (LayerTransformTool.IsActive)
+            ArmLayerTransform();
     }
 
     private static bool IsIntegerTranslation(LayerTransformTool tool, out int dx, out int dy)

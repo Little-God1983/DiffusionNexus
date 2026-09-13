@@ -369,12 +369,15 @@ public partial class ImageEditorCore : IDisposable
     {
         if (_services is null) return;
 
+        CommitLayerTransformBefore();
+
         lock (_bitmapLock)
         {
             _services.Layers.FlattenAllLayers();
         }
 
         OnImageChanged();
+        RearmLayerTransformAfter();
     }
 
     /// <summary>
@@ -384,10 +387,16 @@ public partial class ImageEditorCore : IDisposable
     /// <returns>The newly created layer, or null if not in layer mode.</returns>
     public Layer? AddLayer(string? name = null)
     {
+        CommitLayerTransformBefore();
+
+        Layer? layer;
         lock (_bitmapLock)
         {
-            return _services?.Layers.AddLayer(name);
+            layer = _services?.Layers.AddLayer(name);
         }
+
+        RearmLayerTransformAfter();
+        return layer;
     }
 
     /// <summary>
@@ -398,10 +407,16 @@ public partial class ImageEditorCore : IDisposable
     /// <returns>The newly created layer, or null if not in layer mode.</returns>
     public Layer? AddLayerFromBitmap(SKBitmap bitmap, string? name = null)
     {
+        CommitLayerTransformBefore();
+
+        Layer? layer;
         lock (_bitmapLock)
         {
-            return _services?.Layers.AddLayerFromBitmap(bitmap, name);
+            layer = _services?.Layers.AddLayerFromBitmap(bitmap, name);
         }
+
+        RearmLayerTransformAfter();
+        return layer;
     }
 
     /// <summary>
@@ -424,10 +439,16 @@ public partial class ImageEditorCore : IDisposable
     /// <returns>True if removed successfully.</returns>
     public bool RemoveLayer(Layer layer)
     {
+        CommitLayerTransformBefore();
+
+        bool removed;
         lock (_bitmapLock)
         {
-            return _services?.Layers.RemoveLayer(layer) ?? false;
+            removed = _services?.Layers.RemoveLayer(layer) ?? false;
         }
+
+        RearmLayerTransformAfter();
+        return removed;
     }
 
     /// <summary>
@@ -437,10 +458,16 @@ public partial class ImageEditorCore : IDisposable
     /// <returns>The duplicated layer, or null if failed.</returns>
     public Layer? DuplicateLayer(Layer layer)
     {
+        CommitLayerTransformBefore();
+
+        Layer? duplicate;
         lock (_bitmapLock)
         {
-            return _services?.Layers.DuplicateLayer(layer);
+            duplicate = _services?.Layers.DuplicateLayer(layer);
         }
+
+        RearmLayerTransformAfter();
+        return duplicate;
     }
 
     /// <summary>
@@ -476,10 +503,16 @@ public partial class ImageEditorCore : IDisposable
     /// <returns>True if merged successfully.</returns>
     public bool MergeLayerDown(Layer layer)
     {
+        CommitLayerTransformBefore();
+
+        bool merged;
         lock (_bitmapLock)
         {
-            return _services?.Layers.MergeLayerDown(layer) ?? false;
+            merged = _services?.Layers.MergeLayerDown(layer) ?? false;
         }
+
+        RearmLayerTransformAfter();
+        return merged;
     }
 
     /// <summary>
@@ -503,10 +536,14 @@ public partial class ImageEditorCore : IDisposable
         {
             if (_services is null) return;
             if (ReferenceEquals(_services.Layers.ActiveLayer, value)) return;
-            // Switching layers with a pending transform commits it first (Shape/Text precedent).
+            // Assign first so SyncLayers (raised off the stack's ActiveLayerChanged / events
+            // triggered by the commit below) sees the stack already pointing at the new layer;
+            // otherwise the Layers panel highlight stays on the old layer. ApplyLayerTransform
+            // targets tool.Layer, so the commit below still lands on the previously armed layer
+            // regardless of this reordering (Shape/Text precedent: a pending move is never lost).
+            _services.Layers.ActiveLayer = value;
             if (LayerTransformTool.IsActive && LayerTransformTool.IsArmed)
                 LayerTransformTool.Commit();
-            _services.Layers.ActiveLayer = value;
             if (LayerTransformTool.IsActive)
                 ArmLayerTransform();
         }
@@ -550,6 +587,10 @@ public partial class ImageEditorCore : IDisposable
             _originalBitmap = original;
             _workingBitmap = working;
         }
+
+        // The stack (and any layer the tool was armed on) is gone: the document is being
+        // discarded, so disarm without committing rather than rasterizing into a dead layer.
+        LayerTransformTool.Disarm();
 
         replacedOriginal?.Dispose();
         replacedWorking?.Dispose();

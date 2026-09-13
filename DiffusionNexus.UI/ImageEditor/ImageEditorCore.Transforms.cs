@@ -55,6 +55,11 @@ public partial class ImageEditorCore
 
         try
         {
+            // A whole-image rotate/flip changes every layer's bounds out from under the tool,
+            // so a pending transform must land first and the tool must re-arm against the
+            // post-transform bounds, or it keeps stale _sourceBounds.
+            CommitLayerTransformBefore();
+
             SKBitmap? replaced = null;
 
             lock (_bitmapLock)
@@ -80,6 +85,7 @@ public partial class ImageEditorCore
 
             replaced?.Dispose();
             OnImageChanged();
+            RearmLayerTransformAfter();
             return true;
         }
         catch { return false; }
