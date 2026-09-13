@@ -174,7 +174,7 @@ public partial class EpochsTabViewModel : ObservableObject, IDialogServiceAware
         finally
         {
             // Files that came out of a dropped ZIP were extracted to a temp folder; it is ours to remove.
-            ZipMediaExtractor.DeleteExtractionDirectories(result.TemporaryDirectories);
+            await Task.Run(() => ZipMediaExtractor.DeleteExtractionDirectories(result.TemporaryDirectories));
         }
     }
 

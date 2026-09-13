@@ -317,7 +317,7 @@ public partial class PresentationTabViewModel : ObservableObject, IDialogService
         finally
         {
             // Files that came out of a dropped ZIP were extracted to a temp folder; it is ours to remove.
-            ZipMediaExtractor.DeleteExtractionDirectories(result.TemporaryDirectories);
+            await Task.Run(() => ZipMediaExtractor.DeleteExtractionDirectories(result.TemporaryDirectories));
         }
     }
 
@@ -346,7 +346,7 @@ public partial class PresentationTabViewModel : ObservableObject, IDialogService
         finally
         {
             // Files that came out of a dropped ZIP were extracted to a temp folder; it is ours to remove.
-            ZipMediaExtractor.DeleteExtractionDirectories(result.TemporaryDirectories);
+            await Task.Run(() => ZipMediaExtractor.DeleteExtractionDirectories(result.TemporaryDirectories));
         }
     }
 

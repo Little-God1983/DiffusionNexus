@@ -1397,29 +1397,29 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         finally
         {
             IsFileDialogOpen = false;
-            DeleteZipExtractionDirectories(zipTempDirectories);
+            await Task.Run(() => DeleteZipExtractionDirectories(zipTempDirectories));
         }
     }
 
     /// <summary>
     /// Removes the temporary directories the file-drop dialog created while expanding dropped ZIP
     /// archives. The extracted files have been copied into the dataset by now (or the import was
-    /// abandoned), so nothing references them any more.
+    /// abandoned), so nothing references them any more. Goes through the shared
+    /// <see cref="ZipMediaExtractor.DeleteExtractionDirectories"/> guard so only real extraction
+    /// folders are ever deleted, but performs the IO via <see cref="IDatasetStorageService"/> so the
+    /// flow stays testable without touching the disk.
     /// </summary>
     private void DeleteZipExtractionDirectories(IReadOnlyList<string> directories)
     {
-        foreach (var dir in directories)
-        {
-            try
+        ZipMediaExtractor.DeleteExtractionDirectories(
+            directories,
+            deleteDirectory: dir =>
             {
                 if (_datasetStorageService.DirectoryExists(dir))
                     _datasetStorageService.DeleteDirectory(dir, recursive: true);
-            }
-            catch (Exception ex)
-            {
-                _activityLog?.LogWarning("Import", $"Could not remove temporary ZIP folder '{dir}': {ex.Message}");
-            }
-        }
+            },
+            onError: (dir, ex) =>
+                _activityLog?.LogWarning("Import", $"Could not remove temporary ZIP folder '{dir}': {ex.Message}"));
     }
 
     private void SaveAllCaptions()
