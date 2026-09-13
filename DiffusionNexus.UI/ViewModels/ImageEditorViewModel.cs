@@ -20,6 +20,7 @@ public partial class ImageEditorViewModel : ObservableObject
     private string? _currentImagePath;
     private string? _imageFileName;
     private bool _hasImage;
+    private bool _hasUnsavedChanges;
     private string? _statusMessage;
     private int _imageWidth;
     private int _imageHeight;
@@ -150,6 +151,16 @@ public partial class ImageEditorViewModel : ObservableObject
             if (SetProperty(ref _hasImage, value))
                 NotifyCommandsCanExecuteChanged();
         }
+    }
+
+    /// <summary>
+    /// Mirror of <see cref="ImageEditor.ImageEditorCore.IsDirty"/>, pushed by the view wiring.
+    /// Consulted by the Image Edit tab before anything replaces the canvas.
+    /// </summary>
+    public bool HasUnsavedChanges
+    {
+        get => _hasUnsavedChanges;
+        set => SetProperty(ref _hasUnsavedChanges, value);
     }
 
     /// <summary>Status message to display.</summary>
@@ -346,6 +357,12 @@ public partial class ImageEditorViewModel : ObservableObject
     public event EventHandler? FlipHorizontalRequested;
     public event EventHandler? FlipVerticalRequested;
     public event EventHandler<string>? ImageSaved;
+
+    /// <summary>
+    /// Asks the view to decode each file and add it to the canvas as its own layer, in order.
+    /// Raised by the drop "Add as Layer" choice and the thumbnail context menu.
+    /// </summary>
+    public event EventHandler<IReadOnlyList<string>>? AddLayersFromFilesRequested;
 
     #endregion
 
@@ -643,6 +660,13 @@ public partial class ImageEditorViewModel : ObservableObject
 
             CurrentImagePath = imagePath;
         }
+    }
+
+    /// <summary>Requests one new layer per file on top of the current canvas.</summary>
+    public void RequestAddLayersFromFiles(IReadOnlyList<string> imagePaths)
+    {
+        if (imagePaths is null || imagePaths.Count == 0 || !HasImage) return;
+        AddLayersFromFilesRequested?.Invoke(this, imagePaths);
     }
 
     /// <summary>Updates the image dimensions displayed in the ViewModel.</summary>
