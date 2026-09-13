@@ -82,7 +82,7 @@ public sealed class LayerTransformTool
     public event EventHandler? CommitRequested;
     public event EventHandler? ArmedLayerChanged;
 
-    private SKPoint Pivot => new(_sourceBounds.MidX, _sourceBounds.MidY);
+    private SKPoint Pivot => new((_sourceBounds.Left + _sourceBounds.Right) / 2f, (_sourceBounds.Top + _sourceBounds.Bottom) / 2f);
 
     /// <summary>Canvas-space transform of the source bounds.</summary>
     public SKMatrix Matrix
@@ -100,8 +100,12 @@ public sealed class LayerTransformTool
 
     public SKRect TransformedBounds => Matrix.MapRect(SKRect.Create(_sourceBounds.Left, _sourceBounds.Top, _sourceBounds.Width, _sourceBounds.Height));
 
-    /// <summary>Axis-aligned box before rotation (what the handles sit on), canvas px.</summary>
-    private SKRect UnrotatedBox
+    /// <summary>
+    /// Axis-aligned box before rotation, canvas px: what the scale handles sit on, and what the
+    /// panel's W/H fields show and <see cref="SetSize"/> operates on (rotation is reported
+    /// separately, so these never need to reflect the larger rotated <see cref="TransformedBounds"/>).
+    /// </summary>
+    public SKRect UnrotatedBox
     {
         get
         {

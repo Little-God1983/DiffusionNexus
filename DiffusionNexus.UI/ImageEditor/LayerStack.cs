@@ -10,6 +10,11 @@ namespace DiffusionNexus.UI.ImageEditor;
 /// </summary>
 public class LayerStack : IDisposable
 {
+    /// <summary>Longest side a merged layer may produce.</summary>
+    public const int MaxLayerSide = 16384;
+    /// <summary>Largest pixel count a merged layer may produce (256 M).</summary>
+    public const long MaxLayerArea = 268_435_456L;
+
     private readonly ObservableCollection<Layer> _layers;
     private Layer? _activeLayer;
     private int _width;
@@ -264,7 +269,15 @@ public class LayerStack : IDisposable
         if (belowLayer.Bitmap == null || layer.Bitmap == null) return false;
 
         var union = SKRectI.Union(belowLayer.Bounds, layer.Bounds);
+        if (union.Width > MaxLayerSide || union.Height > MaxLayerSide || (long)union.Width * union.Height > MaxLayerArea)
+            return false;
+
         var merged = new SKBitmap(union.Width, union.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
+        if (merged.IsEmpty || merged.Width != union.Width || merged.Height != union.Height)
+        {
+            merged.Dispose();
+            return false;
+        }
         merged.Erase(SKColors.Transparent);
         using (var canvas = new SKCanvas(merged))
         {

@@ -599,8 +599,11 @@ public partial class ImageEditView : UserControl
                 imageEditor.LayerTransform.UpdateFromTool(string.Empty, 0, 0, 0, 0, 0, false);
                 return;
             }
+            // X/Y come from TransformedBounds (matches SetPosition); W/H show the unrotated box
+            // (what the handles sit on and what SetSize operates on), never the rotated bounds.
             var b = tool.TransformedBounds;
-            imageEditor.LayerTransform.UpdateFromTool(tool.Layer?.Name ?? string.Empty, b.Left, b.Top, b.Width, b.Height, tool.RotationDegrees, tool.HasTransform);
+            var box = tool.UnrotatedBox;
+            imageEditor.LayerTransform.UpdateFromTool(tool.Layer?.Name ?? string.Empty, b.Left, b.Top, box.Width, box.Height, tool.RotationDegrees, tool.HasTransform);
         }
 
         EventHandler onActivated = (_, _) =>

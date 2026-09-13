@@ -54,6 +54,19 @@ public class LayerStackOffsetTests : IDisposable
     }
 
     [Fact]
+    public void MergeDown_RefusesWhenTheUnionWouldBeTooLarge_AndLeavesBothLayersUntouched()
+    {
+        var below = Add(4, 4, SKColors.Red, 0, 0, "below");
+        var top = Add(4, 4, SKColors.Blue, 30000, 30000, "top"); // union would blow past the size guard
+
+        _stack.MergeDown(top).Should().BeFalse();
+
+        _stack.Count.Should().Be(2);
+        below.Bounds.Should().Be(new SKRectI(0, 0, 4, 4));
+        below.Bitmap!.GetPixel(0, 0).Should().Be(SKColors.Red);
+    }
+
+    [Fact]
     public void CropAll_ClipsEachLayer_AndReoffsets()
     {
         var layer = Add(10, 10, SKColors.Red, -5, -5); // covers canvas 0..5

@@ -55,7 +55,7 @@ has its own position and size and only the canvas clips what is shown.
 | Keep aspect | A **Keep aspect** toggle in the panel, default **on**. Holding Ctrl during a corner drag inverts it for that drag (Shape's Ctrl convention). Edge handles always scale one axis. |
 | Rotation snapping | Shift while rotating snaps to 15°. |
 | Keyboard nudge | Arrow keys move 1 canvas px, Shift + arrows 10 px, while the tool is active and the canvas has focus. |
-| Enter / Escape | **Enter applies. Escape resets the transform and keeps the tool open** (Extend and Crop precedent). |
+| Enter / Escape | **Enter applies. Escape resets the transform and keeps the tool open** (Extend and Crop precedent). Cancel discards the pending transform and closes (Extend precedent); switching tool or layer still commits. |
 | Switching tool or layer with a pending transform | **Commit first** (Shape and Text precedent: a deliberate move is never lost silently). Selecting another layer in the Layers panel commits the pending transform, then arms the new layer. |
 | Ineligible layer | The inpaint mask layer and locked layers cannot be transformed. The panel shows an amber hint ("This layer can't be moved. Select another layer.") and the canvas ignores drags. |
 | Not in layer mode | Opening the tool enables layer mode (Inpaint precedent). |
@@ -232,8 +232,9 @@ pixels):
   `RotationDegrees` (float, one decimal), `KeepAspect`, `HasTransform`, `HintText`,
   `IsHintVisible`. A `_syncing` guard stops field edits echoing back while the tool updates
   the fields.
-- Commands: `ToggleCommand`, `CancelCommand` (closes the panel; the tool commits on
-  deactivate), `ResetCommand`, `ApplyCommand` (`HasTransform`), `FlipHorizontalCommand`,
+- Commands: `ToggleCommand`, `CancelCommand` (raises `ResetRequested` to discard the pending
+  transform, then closes the panel — Reset first so the deactivate-on-close commit is a no-op),
+  `ResetCommand`, `ApplyCommand` (`HasTransform`), `FlipHorizontalCommand`,
   `FlipVerticalCommand`.
 - Request events the view forwards to the tool: `ToolActivated`, `ToolDeactivated`,
   `PositionRequested(x, y)`, `SizeRequested(w, h)`, `RotationRequested(deg)`,
@@ -263,7 +264,7 @@ Move / Transform                                (title, SemiBold 14)
 │ Layer: Background                             │  12 SemiBold, #4CAF50
 │ ─────────────                                 │
 │ Position   X [   120]  Y [    64]             │  spinner-less NumericUpDown
-│ Size       W [  1024]  H [   768]  [Keep aspect ☑] │
+│ Size       W [  1024]  H [   768]  [Keep aspect ☑] │  W/H show the unrotated box, not TransformedBounds
 │ Rotation   [  12.0]°                          │
 │ [Flip H] [Flip V]                             │  small buttons, centred
 │ ─────────────                                 │

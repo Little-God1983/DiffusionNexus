@@ -150,6 +150,31 @@ public class LayerTransformToolTests : IDisposable
     }
 
     [Fact]
+    public void Flips_OnOddSizedLayer_KeepFractionalCentre_NotTruncated()
+    {
+        // Pivot must average Left/Right as floats: an int MidX/MidY on an odd-width/height box
+        // truncates the centre, so a flip drifts the bounds by up to a pixel instead of mapping
+        // exactly onto themselves.
+        using var odd = new Layer(5, 5, "odd");
+        var sut = new LayerTransformTool { IsActive = true, ImagePixelWidth = 5, ImagePixelHeight = 5 };
+        sut.SetImageBounds(new SKRect(0, 0, 5, 5));
+        sut.Arm(odd);
+
+        sut.FlipHorizontal();
+        sut.TransformedBounds.Left.Should().BeApproximately(0, 0.01f);
+        sut.TransformedBounds.Top.Should().BeApproximately(0, 0.01f);
+        sut.TransformedBounds.Right.Should().BeApproximately(5, 0.01f);
+        sut.TransformedBounds.Bottom.Should().BeApproximately(5, 0.01f);
+
+        sut.Reset();
+        sut.FlipVertical();
+        sut.TransformedBounds.Left.Should().BeApproximately(0, 0.01f);
+        sut.TransformedBounds.Top.Should().BeApproximately(0, 0.01f);
+        sut.TransformedBounds.Right.Should().BeApproximately(5, 0.01f);
+        sut.TransformedBounds.Bottom.Should().BeApproximately(5, 0.01f);
+    }
+
+    [Fact]
     public void SetPositionSizeRotation_RoundTrip()
     {
         _sut.SetPosition(10, 20);
@@ -168,6 +193,27 @@ public class LayerTransformToolTests : IDisposable
 
         _sut.SetRotation(45f);
         _sut.RotationDegrees.Should().Be(45f);
+    }
+
+    [Fact]
+    public void UnrotatedBox_IsTheAxisAlignedBoxBeforeRotation_AndSurvivesASubsequentSetSize()
+    {
+        // The panel's W/H fields must reflect the unrotated box (what the handles sit on), not
+        // TransformedBounds (which grows once rotated). SetSize keeps operating on the unrotated
+        // box, so re-issuing the same W/H after a rotation is a no-op for the box itself.
+        _sut.SetRotation(45f);
+        _sut.UnrotatedBox.Width.Should().BeApproximately(40, 0.01f);
+        _sut.UnrotatedBox.Height.Should().BeApproximately(20, 0.01f);
+
+        var boxBefore = _sut.UnrotatedBox;
+        _sut.KeepAspect = false;
+        _sut.SetSize(40, 20);
+
+        _sut.UnrotatedBox.Width.Should().BeApproximately(boxBefore.Width, 0.01f);
+        _sut.UnrotatedBox.Height.Should().BeApproximately(boxBefore.Height, 0.01f);
+        _sut.HasTransform.Should().BeTrue(); // still true only because of the rotation
+        _sut.ScaleX.Should().BeApproximately(1f, 1e-3f);
+        _sut.ScaleY.Should().BeApproximately(1f, 1e-3f);
     }
 
     [Fact]
