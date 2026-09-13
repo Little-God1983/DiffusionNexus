@@ -32,6 +32,7 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
     private readonly List<string> _tempDirectories = [];
     private readonly Dictionary<string, ArchiveOrigin> _archiveOrigins = new(StringComparer.OrdinalIgnoreCase);
     private bool _resolvingConflicts;
+    private readonly List<(string ArchiveName, int Count)> _skippedByArchive = [];
 
     public FileDropDialog()
     {
@@ -94,6 +95,17 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
     /// after it has imported the files. They are removed automatically when the dialog is cancelled.
     /// </summary>
     public IReadOnlyList<string> TemporaryDirectories => _tempDirectories;
+
+    /// <summary>
+    /// Notice about ZIP entries that could not be extracted (unusable name, disk error), or null.
+    /// Shown so a user who dropped a 200-image archive and got 199 files knows why.
+    /// </summary>
+    public string? SkippedEntriesNotice => FileDropSelectionHelper.BuildSkippedEntriesNotice(_skippedByArchive);
+
+    /// <summary>
+    /// Whether <see cref="SkippedEntriesNotice"/> has anything to say.
+    /// </summary>
+    public bool HasSkippedEntries => SkippedEntriesNotice is not null;
 
     #endregion
 
@@ -280,6 +292,8 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
                 _tempDirectories.Add(extraction.TempDirectory);
             foreach (var (extractedPath, origin) in extraction.Origins)
                 _archiveOrigins[extractedPath] = origin;
+            if (extraction.SkippedEntryCount > 0)
+                _skippedByArchive.Add((Path.GetFileName(filePath), extraction.SkippedEntryCount));
             incoming.AddRange(extraction.ExtractedFiles);
         }
         else
@@ -683,6 +697,8 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
     {
         OnPropertyChanged(nameof(HasFiles));
         OnPropertyChanged(nameof(FileCountText));
+        OnPropertyChanged(nameof(SkippedEntriesNotice));
+        OnPropertyChanged(nameof(HasSkippedEntries));
     }
 
     #endregion

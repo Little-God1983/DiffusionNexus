@@ -46,6 +46,29 @@ public class FileDropSelectionHelperTests
         files.Should().Equal(@"C:\Src\safe.png", @"C:\Src\over.png", @"C:\Src\ren.png");
     }
 
+    [Fact]
+    public void BuildSkippedEntriesNotice_ReturnsNull_WhenNothingWasSkipped()
+    {
+        FileDropSelectionHelper.BuildSkippedEntriesNotice([]).Should().BeNull();
+        FileDropSelectionHelper.BuildSkippedEntriesNotice([("a.zip", 0)]).Should().BeNull();
+    }
+
+    [Fact]
+    public void BuildSkippedEntriesNotice_SingleArchive_SingularAndPlural()
+    {
+        FileDropSelectionHelper.BuildSkippedEntriesNotice([("shoot.zip", 1)])
+            .Should().Be("1 entry in shoot.zip could not be extracted and was skipped.");
+        FileDropSelectionHelper.BuildSkippedEntriesNotice([("shoot.zip", 3)])
+            .Should().Be("3 entries in shoot.zip could not be extracted and were skipped.");
+    }
+
+    [Fact]
+    public void BuildSkippedEntriesNotice_MultipleArchives_ListsEachAndSumsTheTotal()
+    {
+        FileDropSelectionHelper.BuildSkippedEntriesNotice([("shoot.zip", 2), ("more.zip", 0), ("last.zip", 1)])
+            .Should().Be("3 entries could not be extracted and were skipped (shoot.zip: 2, last.zip: 1).");
+    }
+
     private static FileConflictItem Conflict(string newPath, FileConflictResolution resolution) => new()
     {
         ConflictingName = Path.GetFileName(newPath),

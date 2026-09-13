@@ -30,6 +30,30 @@ public static class FileDropSelectionHelper
     }
 
     /// <summary>
+    /// Wording for the drop dialog's notice about ZIP entries that could not be extracted.
+    /// Returns <see langword="null"/> when nothing was skipped.
+    /// </summary>
+    public static string? BuildSkippedEntriesNotice(IReadOnlyList<(string ArchiveName, int Count)> skippedByArchive)
+    {
+        ArgumentNullException.ThrowIfNull(skippedByArchive);
+
+        var affected = skippedByArchive.Where(s => s.Count > 0).ToList();
+        var total = affected.Sum(s => s.Count);
+        if (total == 0) return null;
+
+        if (affected.Count == 1)
+        {
+            var (name, count) = affected[0];
+            return count == 1
+                ? $"1 entry in {name} could not be extracted and was skipped."
+                : $"{count} entries in {name} could not be extracted and were skipped.";
+        }
+
+        var breakdown = string.Join(", ", affected.Select(s => $"{s.ArchiveName}: {s.Count}"));
+        return $"{total} entries could not be extracted and were skipped ({breakdown}).";
+    }
+
+    /// <summary>
     /// Builds the final list of files to import from a confirmed conflict resolution: every
     /// non-conflicting file plus the conflicting files the user chose to override or rename.
     /// </summary>
