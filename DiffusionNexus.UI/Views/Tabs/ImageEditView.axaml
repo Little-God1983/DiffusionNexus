@@ -111,6 +111,9 @@
                       IsVisible="{Binding ImageEditor.IsImageMode, FallbackValue=True}">
             <ToggleButton Content="Crop" IsChecked="{Binding ImageEditor.IsCropToolActive, Mode=TwoWay}" Padding="12,6"
                           IsEnabled="{Binding ImageEditor.HasImage}"/>
+            <ToggleButton Content="Move" IsChecked="{Binding ImageEditor.LayerTransform.IsPanelOpen, Mode=TwoWay}" Padding="12,6"
+                          ToolTip.Tip="Move / Transform - Move, scale, rotate or flip the selected layer"
+                          IsEnabled="{Binding ImageEditor.HasImage}"/>
             <ToggleButton Content="Color" IsChecked="{Binding ImageEditor.ColorTools.IsColorBalancePanelOpen, Mode=TwoWay}" Padding="12,6" 
                           ToolTip.Tip="Color Balance"
                           IsEnabled="{Binding ImageEditor.HasImage}"/>
@@ -389,6 +392,88 @@
                 <Grid ColumnDefinitions="*,*" Margin="0,4,0,0">
                   <Button Grid.Column="0" Content="Cancel" Command="{Binding ImageEditor.CancelCropCommand}" HorizontalAlignment="Stretch" Margin="0,0,2,0"/>
                   <Button Grid.Column="1" Content="Apply" Command="{Binding ImageEditor.ApplyCropCommand}" Background="#2D7D46" HorizontalAlignment="Stretch" Margin="2,0,0,0"/>
+                </Grid>
+              </StackPanel>
+            </Border>
+          </StackPanel>
+
+          <!-- Move / Transform Panel -->
+          <StackPanel Spacing="8" IsVisible="{Binding ImageEditor.LayerTransform.IsPanelOpen, FallbackValue=False}">
+            <TextBlock Text="Move / Transform" FontWeight="SemiBold" FontSize="14"/>
+            <Border Background="#2A2A2A" CornerRadius="4" Padding="8">
+              <StackPanel Spacing="8">
+                <TextBlock Text="Drag the layer to move it. Handles scale, the top handle rotates."
+                           FontSize="11" Opacity="0.7" TextWrapping="Wrap"/>
+                <TextBlock Text="{Binding ImageEditor.LayerTransform.LayerName, StringFormat='Layer: {0}'}" FontSize="12" FontWeight="SemiBold"
+                           Foreground="#4CAF50" HorizontalAlignment="Center"
+                           IsVisible="{Binding ImageEditor.LayerTransform.LayerName, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+
+                <Border Height="1" Background="#444" Margin="0,4"/>
+
+                <!-- Position -->
+                <TextBlock Text="Position" FontSize="11" Opacity="0.7"/>
+                <Grid ColumnDefinitions="Auto,*,8,Auto,*">
+                  <TextBlock Grid.Column="0" Text="X" FontSize="11" Opacity="0.7" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                  <NumericUpDown Grid.Column="1" Value="{Binding ImageEditor.LayerTransform.X, Mode=TwoWay}"
+                                 Minimum="-32768" Maximum="32768" Increment="1"
+                                 FormatString="0" FontSize="12" MinWidth="0" ShowButtonSpinner="False"
+                                 ToolTip.Tip="Left edge of the layer in canvas pixels"/>
+                  <TextBlock Grid.Column="3" Text="Y" FontSize="11" Opacity="0.7" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                  <NumericUpDown Grid.Column="4" Value="{Binding ImageEditor.LayerTransform.Y, Mode=TwoWay}"
+                                 Minimum="-32768" Maximum="32768" Increment="1"
+                                 FormatString="0" FontSize="12" MinWidth="0" ShowButtonSpinner="False"
+                                 ToolTip.Tip="Top edge of the layer in canvas pixels"/>
+                </Grid>
+
+                <!-- Size -->
+                <TextBlock Text="Size" FontSize="11" Opacity="0.7"/>
+                <Grid ColumnDefinitions="Auto,*,8,Auto,*">
+                  <TextBlock Grid.Column="0" Text="W" FontSize="11" Opacity="0.7" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                  <NumericUpDown Grid.Column="1" Value="{Binding ImageEditor.LayerTransform.Width, Mode=TwoWay}"
+                                 Minimum="1" Maximum="16384" Increment="1"
+                                 FormatString="0" FontSize="12" MinWidth="0" ShowButtonSpinner="False"
+                                 ToolTip.Tip="Layer width in pixels"/>
+                  <TextBlock Grid.Column="3" Text="H" FontSize="11" Opacity="0.7" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                  <NumericUpDown Grid.Column="4" Value="{Binding ImageEditor.LayerTransform.Height, Mode=TwoWay}"
+                                 Minimum="1" Maximum="16384" Increment="1"
+                                 FormatString="0" FontSize="12" MinWidth="0" ShowButtonSpinner="False"
+                                 ToolTip.Tip="Layer height in pixels"/>
+                </Grid>
+                <CheckBox Content="Keep aspect" IsChecked="{Binding ImageEditor.LayerTransform.KeepAspect, Mode=TwoWay}" FontSize="11"
+                          ToolTip.Tip="Corner handles and the width field keep the layer's proportions. Hold Ctrl while dragging a corner to invert."/>
+
+                <!-- Rotation -->
+                <Grid ColumnDefinitions="Auto,*,Auto">
+                  <TextBlock Grid.Column="0" Text="Rotation" FontSize="11" Opacity="0.7" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                  <NumericUpDown Grid.Column="1" Value="{Binding ImageEditor.LayerTransform.RotationDegrees, Mode=TwoWay}"
+                                 Minimum="-180" Maximum="180" Increment="1"
+                                 FormatString="0.0" FontSize="12" MinWidth="0" ShowButtonSpinner="False"
+                                 ToolTip.Tip="Rotation in degrees. Hold Shift while dragging the top handle to snap to 15°"/>
+                  <TextBlock Grid.Column="2" Text="°" FontSize="11" Opacity="0.7" VerticalAlignment="Center" Margin="4,0,0,0"/>
+                </Grid>
+
+                <StackPanel Orientation="Horizontal" Spacing="4" HorizontalAlignment="Center">
+                  <Button Content="Flip H" Command="{Binding ImageEditor.LayerTransform.FlipHorizontalCommand}" Padding="8,4" FontSize="10" ToolTip.Tip="Mirror the layer left-right"/>
+                  <Button Content="Flip V" Command="{Binding ImageEditor.LayerTransform.FlipVerticalCommand}" Padding="8,4" FontSize="10" ToolTip.Tip="Mirror the layer top-bottom"/>
+                </StackPanel>
+
+                <Border Height="1" Background="#444" Margin="0,4"/>
+
+                <!-- Ineligible layer / refused commit -->
+                <Border Background="#2A2210" CornerRadius="6" Padding="10,8"
+                        IsVisible="{Binding ImageEditor.LayerTransform.IsHintVisible}">
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Ellipse Width="10" Height="10" Fill="#FFC107" VerticalAlignment="Top" Margin="0,3,0,0"/>
+                    <TextBlock Text="{Binding ImageEditor.LayerTransform.HintText}"
+                               FontSize="11" Foreground="#FFD54F" TextWrapping="Wrap" MaxWidth="220"/>
+                  </StackPanel>
+                </Border>
+
+                <!-- Action Buttons -->
+                <Grid ColumnDefinitions="*,*,*" Margin="0,4,0,0">
+                  <Button Grid.Column="0" Content="Cancel" Command="{Binding ImageEditor.LayerTransform.CancelCommand}" HorizontalAlignment="Stretch" Margin="0,0,2,0"/>
+                  <Button Grid.Column="1" Content="Reset" Command="{Binding ImageEditor.LayerTransform.ResetCommand}" HorizontalAlignment="Stretch" Margin="2,0,2,0"/>
+                  <Button Grid.Column="2" Content="Apply" Command="{Binding ImageEditor.LayerTransform.ApplyCommand}" Background="#2D7D46" HorizontalAlignment="Stretch" Margin="2,0,0,0"/>
                 </Grid>
               </StackPanel>
             </Border>

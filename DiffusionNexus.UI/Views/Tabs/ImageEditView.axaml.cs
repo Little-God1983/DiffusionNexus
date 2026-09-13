@@ -234,6 +234,7 @@ public partial class ImageEditView : UserControl
         WireInpaintingEvents(imageEditor);
         WireOutpaintingEvents(imageEditor);
         WireCanvasExtendEvents(imageEditor);
+        WireLayerTransformEvents(imageEditor);
         WireSaveAndExportEvents(vm, imageEditor);
         WireLayerEvents(vm, imageEditor);
         WireZoomSlider();
@@ -584,6 +585,88 @@ public partial class ImageEditView : UserControl
         };
         _imageEditorCanvas.CanvasExtendFailed += onApplyFailed;
         _eventCleanup.Add(() => _imageEditorCanvas!.CanvasExtendFailed -= onApplyFailed);
+    }
+
+    private void WireLayerTransformEvents(ImageEditorViewModel imageEditor)
+    {
+        void PushToolState()
+        {
+            var tool = _imageEditorCanvas!.EditorCore.LayerTransformTool;
+            if (!tool.IsArmed) return;
+            var b = tool.TransformedBounds;
+            imageEditor.LayerTransform.UpdateFromTool(tool.Layer?.Name ?? string.Empty, b.Left, b.Top, b.Width, b.Height, tool.RotationDegrees, tool.HasTransform);
+        }
+
+        EventHandler onActivated = (_, _) =>
+        {
+            _imageEditorCanvas!.IsLayerTransformToolActive = true;   // arms and raises EligibilityChanged
+            _imageEditorCanvas.EditorCore.LayerTransformTool.KeepAspect = imageEditor.LayerTransform.KeepAspect;
+            PushToolState();
+        };
+        imageEditor.LayerTransform.ToolActivated += onActivated;
+        _eventCleanup.Add(() => imageEditor.LayerTransform.ToolActivated -= onActivated);
+
+        EventHandler onDeactivated = (_, _) =>
+        {
+            // Clearing IsLayerTransformToolActive commits a pending transform through IsActive.
+            _imageEditorCanvas!.IsLayerTransformToolActive = false;
+            _imageEditorCanvas.InvalidateVisual();
+        };
+        imageEditor.LayerTransform.ToolDeactivated += onDeactivated;
+        _eventCleanup.Add(() => imageEditor.LayerTransform.ToolDeactivated -= onDeactivated);
+
+        EventHandler<(float X, float Y)> onPosition = (_, p) => _imageEditorCanvas!.EditorCore.LayerTransformTool.SetPosition(p.X, p.Y);
+        imageEditor.LayerTransform.PositionRequested += onPosition;
+        _eventCleanup.Add(() => imageEditor.LayerTransform.PositionRequested -= onPosition);
+
+        EventHandler<(float W, float H)> onSize = (_, s) => _imageEditorCanvas!.EditorCore.LayerTransformTool.SetSize(s.W, s.H);
+        imageEditor.LayerTransform.SizeRequested += onSize;
+        _eventCleanup.Add(() => imageEditor.LayerTransform.SizeRequested -= onSize);
+
+        EventHandler<float> onRotation = (_, r) => _imageEditorCanvas!.EditorCore.LayerTransformTool.SetRotation(r);
+        imageEditor.LayerTransform.RotationRequested += onRotation;
+        _eventCleanup.Add(() => imageEditor.LayerTransform.RotationRequested -= onRotation);
+
+        EventHandler<bool> onKeepAspect = (_, k) => _imageEditorCanvas!.EditorCore.LayerTransformTool.KeepAspect = k;
+        imageEditor.LayerTransform.KeepAspectChanged += onKeepAspect;
+        _eventCleanup.Add(() => imageEditor.LayerTransform.KeepAspectChanged -= onKeepAspect);
+
+        EventHandler<bool> onFlip = (_, horizontal) =>
+        {
+            var tool = _imageEditorCanvas!.EditorCore.LayerTransformTool;
+            if (horizontal) tool.FlipHorizontal(); else tool.FlipVertical();
+        };
+        imageEditor.LayerTransform.FlipRequested += onFlip;
+        _eventCleanup.Add(() => imageEditor.LayerTransform.FlipRequested -= onFlip);
+
+        EventHandler onReset = (_, _) => _imageEditorCanvas!.EditorCore.LayerTransformTool.Reset();
+        imageEditor.LayerTransform.ResetRequested += onReset;
+        _eventCleanup.Add(() => imageEditor.LayerTransform.ResetRequested -= onReset);
+
+        EventHandler onApply = (_, _) => _imageEditorCanvas!.ApplyLayerTransform();
+        imageEditor.LayerTransform.ApplyRequested += onApply;
+        _eventCleanup.Add(() => imageEditor.LayerTransform.ApplyRequested -= onApply);
+
+        EventHandler onChanged = (_, _) => PushToolState();
+        _imageEditorCanvas!.LayerTransformChanged += onChanged;
+        _eventCleanup.Add(() => _imageEditorCanvas!.LayerTransformChanged -= onChanged);
+
+        EventHandler<LayerTransformEligibility> onEligibility = (_, r) => imageEditor.LayerTransform.OnIneligible(r);
+        _imageEditorCanvas.LayerTransformEligibilityChanged += onEligibility;
+        _eventCleanup.Add(() => _imageEditorCanvas!.LayerTransformEligibilityChanged -= onEligibility);
+
+        EventHandler onApplied = (_, _) =>
+        {
+            imageEditor.LayerTransform.OnApplied();
+            imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas!.EditorCore.Layers);
+            PushToolState();
+        };
+        _imageEditorCanvas.LayerTransformApplied += onApplied;
+        _eventCleanup.Add(() => _imageEditorCanvas!.LayerTransformApplied -= onApplied);
+
+        EventHandler<LayerTransformFailure> onFailed = (_, f) => imageEditor.LayerTransform.OnApplyFailed(f);
+        _imageEditorCanvas.LayerTransformFailed += onFailed;
+        _eventCleanup.Add(() => _imageEditorCanvas!.LayerTransformFailed -= onFailed);
     }
 
     private void WireZoomAndTransformEvents(ImageEditorViewModel imageEditor)
