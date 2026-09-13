@@ -160,27 +160,27 @@ public class DialogService : IDialogService
         return dialog.ResultText;
     }
 
-    public async Task<List<string>?> ShowFileDropDialogAsync(string title)
+    public async Task<FileDropResult?> ShowFileDropDialogAsync(string title)
     {
         var dialog = new FileDropDialog()
             .WithTitle(title)
             .ForMediaAndText();
 
         await dialog.ShowDialog(_window);
-        return dialog.ResultFiles;
+        return ToFileDropResult(dialog);
     }
 
-    public async Task<List<string>?> ShowFileDropDialogAsync(string title, params string[] allowedExtensions)
+    public async Task<FileDropResult?> ShowFileDropDialogAsync(string title, params string[] allowedExtensions)
     {
         var dialog = new FileDropDialog()
             .WithTitle(title)
             .WithExtensions(allowedExtensions);
 
         await dialog.ShowDialog(_window);
-        return dialog.ResultFiles;
+        return ToFileDropResult(dialog);
     }
 
-    public async Task<List<string>?> ShowFileDropDialogAsync(string title, IEnumerable<string> initialFiles)
+    public async Task<FileDropResult?> ShowFileDropDialogAsync(string title, IEnumerable<string> initialFiles)
     {
         var dialog = new FileDropDialog()
             .WithTitle(title)
@@ -188,7 +188,19 @@ public class DialogService : IDialogService
             .WithInitialFiles(initialFiles);
 
         await dialog.ShowDialog(_window);
-        return dialog.ResultFiles;
+        return ToFileDropResult(dialog);
+    }
+
+    private static FileDropResult? ToFileDropResult(FileDropDialog dialog)
+    {
+        if (dialog.ResultFiles is null)
+            return null;
+
+        return new FileDropResult
+        {
+            Files = dialog.ResultFiles,
+            TemporaryDirectories = dialog.TemporaryDirectories.ToList()
+        };
     }
 
     public async Task<int> ShowOptionsAsync(string title, string message, params string[] options)

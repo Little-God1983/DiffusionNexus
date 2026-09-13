@@ -88,24 +88,24 @@ public interface IDialogService
     /// Shows a drag-and-drop file picker dialog for images and text files.
     /// </summary>
     /// <param name="title">Dialog title (e.g., "Add Images to: MyDataset").</param>
-    /// <returns>List of selected file paths, or null if cancelled.</returns>
-    Task<List<string>?> ShowFileDropDialogAsync(string title);
+    /// <returns>The selected files plus any ZIP extraction folders to delete afterwards, or null if cancelled.</returns>
+    Task<FileDropResult?> ShowFileDropDialogAsync(string title);
 
     /// <summary>
     /// Shows a drag-and-drop file picker dialog with custom extensions.
     /// </summary>
     /// <param name="title">Dialog title.</param>
     /// <param name="allowedExtensions">Allowed file extensions (e.g., ".png", ".jpg").</param>
-    /// <returns>List of selected file paths, or null if cancelled.</returns>
-    Task<List<string>?> ShowFileDropDialogAsync(string title, params string[] allowedExtensions);
+    /// <returns>The selected files plus any ZIP extraction folders to delete afterwards, or null if cancelled.</returns>
+    Task<FileDropResult?> ShowFileDropDialogAsync(string title, params string[] allowedExtensions);
 
     /// <summary>
     /// Shows a drag-and-drop file picker dialog pre-populated with initial files.
     /// </summary>
     /// <param name="title">Dialog title.</param>
     /// <param name="initialFiles">Files to pre-populate the dialog with.</param>
-    /// <returns>List of selected file paths, or null if cancelled.</returns>
-    Task<List<string>?> ShowFileDropDialogAsync(string title, IEnumerable<string> initialFiles);
+    /// <returns>The selected files plus any ZIP extraction folders to delete afterwards, or null if cancelled.</returns>
+    Task<FileDropResult?> ShowFileDropDialogAsync(string title, IEnumerable<string> initialFiles);
 
     /// <summary>
     /// Shows an option selection dialog with multiple choices.
@@ -521,6 +521,25 @@ public interface IBusyViewModel
     /// Gets or sets an optional message describing the current operation.
     /// </summary>
     string? BusyMessage { get; set; }
+}
+
+/// <summary>
+/// Result from the plain file drop dialog overloads.
+/// </summary>
+public class FileDropResult
+{
+    /// <summary>
+    /// Selected file paths. Files that came out of a dropped ZIP archive live inside one of
+    /// <see cref="TemporaryDirectories"/>.
+    /// </summary>
+    public List<string> Files { get; init; } = [];
+
+    /// <summary>
+    /// Temporary directories the dialog created while expanding dropped ZIP archives. The caller
+    /// must delete these once it has copied <see cref="Files"/> to their destination, e.g. via
+    /// <see cref="Utilities.ZipMediaExtractor.DeleteExtractionDirectories"/>.
+    /// </summary>
+    public IReadOnlyList<string> TemporaryDirectories { get; init; } = [];
 }
 
 /// <summary>

@@ -208,6 +208,25 @@ public sealed class ZipMediaExtractorTests : IDisposable
         Directory.Exists(unrelated).Should().BeTrue("only our own prefix is ever swept");
     }
 
+    [Fact]
+    public void DeleteExtractionDirectories_RemovesOwnFolders_SkipsForeignAndMissingOnes()
+    {
+        var ours = Path.Combine(_root, "DiffusionNexus_ZipExtract_deleteme");
+        var foreign = Path.Combine(_root, "SomeoneElsesFolder");
+        var missing = Path.Combine(_root, "DiffusionNexus_ZipExtract_gone");
+        foreach (var d in new[] { ours, foreign })
+        {
+            Directory.CreateDirectory(d);
+            File.WriteAllText(Path.Combine(d, "x.png"), "x");
+        }
+
+        var act = () => ZipMediaExtractor.DeleteExtractionDirectories([ours, foreign, missing]);
+
+        act.Should().NotThrow("a folder that is already gone is not an error");
+        Directory.Exists(ours).Should().BeFalse("callers hand back the folders the dialog created for them");
+        Directory.Exists(foreign).Should().BeTrue("only folders carrying our prefix are ever deleted");
+    }
+
     private string MakeZip(params (string Name, string Content)[] entries)
     {
         var zipPath = Path.Combine(_root, Guid.NewGuid().ToString("N") + ".zip");

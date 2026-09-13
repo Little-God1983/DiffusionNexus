@@ -80,10 +80,29 @@ public static class ZipMediaExtractor
 
     /// <summary>
     /// Extraction folders older than this are orphans (a dialog does not live for days) and are
-    /// swept on the next extraction. Deterministic cleanup happens on cancel and after the
-    /// Dataset Manager import; this is the safety net for callers that only receive a path list.
+    /// swept on the next extraction. Every caller deletes its folders deterministically once the
+    /// import is done; this is the safety net for a crash mid-import.
     /// </summary>
     internal static readonly TimeSpan StaleRetention = TimeSpan.FromDays(2);
+
+    /// <summary>
+    /// Deletes extraction folders handed back by the file-drop dialog once their files have been
+    /// copied to the destination. Only folders carrying our prefix are touched, so a caller that
+    /// accidentally passes an unrelated path loses nothing. Missing folders and failures are
+    /// ignored; a folder that resists deletion is picked up by the stale sweep later.
+    /// </summary>
+    /// <param name="directories">Folders reported via a dialog result's <c>TemporaryDirectories</c>.</param>
+    public static void DeleteExtractionDirectories(IEnumerable<string> directories)
+    {
+        foreach (var dir in directories)
+        {
+            var leaf = Path.GetFileName(Path.TrimEndingDirectorySeparator(dir));
+            if (!leaf.StartsWith(TempDirectoryPrefix, StringComparison.Ordinal))
+                continue;
+
+            TryDelete(dir);
+        }
+    }
 
     /// <summary>
     /// Extracts every entry whose extension is in <paramref name="allowedExtensions"/> (archives are

@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Utilities;
 
 namespace DiffusionNexus.UI.ViewModels.Tabs;
 
@@ -159,13 +160,22 @@ public partial class EpochsTabViewModel : ObservableObject, IDialogServiceAware
     {
         if (DialogService is null) return;
 
-        var files = await DialogService.ShowFileDropDialogAsync(
+        var result = await DialogService.ShowFileDropDialogAsync(
             "Add Epoch Files",
             EpochFileItem.SupportedExtensions);
 
-        if (files is null || files.Count == 0) return;
+        if (result is null) return;
 
-        await AddFilesAsync(files);
+        try
+        {
+            if (result.Files.Count > 0)
+                await AddFilesAsync(result.Files);
+        }
+        finally
+        {
+            // Files that came out of a dropped ZIP were extracted to a temp folder; it is ours to remove.
+            ZipMediaExtractor.DeleteExtractionDirectories(result.TemporaryDirectories);
+        }
     }
 
     /// <summary>

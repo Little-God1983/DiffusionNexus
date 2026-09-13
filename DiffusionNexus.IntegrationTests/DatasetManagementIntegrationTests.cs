@@ -95,14 +95,14 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
         public Task<string?> ShowInputAsync(string title, string message, string? defaultValue = null) =>
             Task.FromResult<string?>(null);
 
-        public Task<List<string>?> ShowFileDropDialogAsync(string title) =>
-            Task.FromResult<List<string>?>(null);
+        public Task<FileDropResult?> ShowFileDropDialogAsync(string title) =>
+            Task.FromResult<FileDropResult?>(null);
 
-        public Task<List<string>?> ShowFileDropDialogAsync(string title, params string[] allowedExtensions) =>
-            Task.FromResult<List<string>?>(null);
+        public Task<FileDropResult?> ShowFileDropDialogAsync(string title, params string[] allowedExtensions) =>
+            Task.FromResult<FileDropResult?>(null);
 
-        public Task<List<string>?> ShowFileDropDialogAsync(string title, IEnumerable<string> initialFiles) =>
-            Task.FromResult<List<string>?>(null);
+        public Task<FileDropResult?> ShowFileDropDialogAsync(string title, IEnumerable<string> initialFiles) =>
+            Task.FromResult<FileDropResult?>(null);
 
         public Task<int> ShowOptionsAsync(string title, string message, params string[] options) =>
             Task.FromResult(-1);
