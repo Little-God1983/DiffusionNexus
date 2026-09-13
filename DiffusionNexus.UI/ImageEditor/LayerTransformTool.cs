@@ -468,10 +468,11 @@ public sealed class LayerTransformTool
         canvas.Save();
         canvas.RotateDegrees(_rotation, centre.X, centre.Y);
 
+        using var dashEffect = SKPathEffect.CreateDash([6f, 4f], 0);
         using var linePaint = new SKPaint
         {
             Color = new SKColor(255, 255, 255, 180), Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f,
-            IsAntialias = true, PathEffect = SKPathEffect.CreateDash([6f, 4f], 0)
+            IsAntialias = true, PathEffect = dashEffect
         };
         canvas.DrawRect(screenBox, linePaint);
 
