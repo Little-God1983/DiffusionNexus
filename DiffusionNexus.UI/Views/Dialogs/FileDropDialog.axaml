@@ -9,7 +9,7 @@
         CanResize="False"
         Background="#252526">
   
-  <Grid RowDefinitions="Auto,*,Auto">
+  <Grid RowDefinitions="Auto,*,Auto,Auto">
     
     <!-- Title -->
     <TextBlock Grid.Row="0" 
@@ -92,8 +92,24 @@
       </Grid>
     </Border>
     
+    <!-- ZIP entries that could not be extracted. Without this a 200-image archive that yields
+         199 files looks like the app silently ate one. -->
+    <Border Grid.Row="2"
+            IsVisible="{Binding HasSkippedEntries}"
+            Background="#33E0A000"
+            BorderBrush="#E0A000"
+            BorderThickness="1"
+            CornerRadius="4"
+            Padding="10,6"
+            Margin="0,12,0,0">
+      <TextBlock Text="{Binding SkippedEntriesNotice}"
+                 FontSize="12"
+                 TextWrapping="Wrap"
+                 ToolTip.Tip="Entries with names Windows cannot write, or that failed to write, are left out. The rest of the archive was added."/>
+    </Border>
+
     <!-- Buttons -->
-    <Border Grid.Row="2" 
+    <Border Grid.Row="3"
             Background="#1E1E1E"
             Padding="20,12"
             Margin="0,16,0,0">
