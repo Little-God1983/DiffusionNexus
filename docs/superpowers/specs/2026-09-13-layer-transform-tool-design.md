@@ -51,7 +51,7 @@ has its own position and size and only the canvas clips what is shown.
 | Which transforms? | **Move + Scale + Rotate + Flip.** Body drag moves, corner and edge handles scale, a handle above rotates, Flip H / Flip V buttons in the panel. Shear and perspective are out of scope. |
 | Content outside the canvas? | **Kept.** A layer gains `OffsetX`/`OffsetY` (canvas pixels) and its bitmap may be any size. The canvas clips what is drawn; the layer's pixels survive until Crop or a merge into a canvas-sized result discards them. |
 | Persistent matrix or rasterize on commit? | **Rasterize on commit.** The tool holds a translation, scale, rotation and flip flags and never touches pixels while dragging. Enter resamples the untouched source **once** into a new bitmap sized to the transformed bounds. Re-opening the tool on the same layer resamples again from the committed pixels, as GIMP does. Rejected: a persistent per-layer matrix (every pixel tool would have to bake or invert it). |
-| Handle set | Four **corner** handles (scale about the opposite corner), four **edge** handles (scale one axis about the opposite edge), one **rotate** handle above the top edge, body drag to move. Round handles: radius 6, hit radius 12, rotate handle 30 px above the box — the Shape tool's numbers, copied by value. |
+| Handle set | Four **corner** handles (scale about the opposite corner), four **edge** handles (scale one axis about the opposite edge), one **rotate** handle above the top edge, body drag to move. Round handles: radius 6, hit radius 12, rotate handle 30 px above the box — the Shape tool's numbers, copied by value. Edge handles have a 6 px hit radius (implementation decision, see §3). |
 | Keep aspect | A **Keep aspect** toggle in the panel, default **on**. Holding Ctrl during a corner drag inverts it for that drag (Shape's Ctrl convention). Edge handles always scale one axis. |
 | Rotation snapping | Shift while rotating snaps to 15°. |
 | Keyboard nudge | Arrow keys move 1 canvas px, Shift + arrows 10 px, while the tool is active and the canvas has focus. |
@@ -151,8 +151,10 @@ Matrix = Translate(cx + tx, cy + ty) · Rotate(RotationDegrees) · Scale(ScaleX,
 **Handles.** `enum TransformHandle { None, Body, TopLeft, Top, TopRight, Right, BottomRight,
 Bottom, BottomLeft, Left, Rotate }`. `HitTest(SKPoint screenPoint)` maps the point into the
 box's local (unrotated) space around the transformed centre and tests corners, then edges,
-then the rotate handle, then the body — the Shape tool's order. Constants: `HandleRadius 6`,
-`HandleHitRadius 12`, `RotateHandleOffset 30`.
+then the rotate handle, then the body — the Shape tool's order. Hit testing is
+nearest-handle-wins; the four straight-edge handles use a 6 px hit radius (corners 12 px,
+rotate 18 px) so a small layer's body stays draggable — decided during implementation
+(Task 6). Constants: `HandleRadius 6`, `HandleHitRadius 12`, `RotateHandleOffset 30`.
 
 **Gestures.** `OnPointerPressed/Moved/Released(SKPoint)` return whether they consumed the
 event. Body drag adds `screenDelta / Scale` to `Translation`. Corner drag scales about the

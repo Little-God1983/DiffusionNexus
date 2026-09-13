@@ -6,6 +6,12 @@ The Image Editor is a layer-based bitmap editor embedded as a tab in the Diffusi
 It combines manual editing tools (crop, draw, shapes) with AI-powered operations
 (background removal, inpainting, upscaling).
 
+Layers have their own bounds: `Layer.OffsetX/OffsetY` place a layer in canvas pixels and its
+bitmap may be any size. The compositor draws at the offset and clips to the canvas; Crop clips
+layers, Canvas Extend grows them to the union with the canvas, Merge Down unions both layers,
+rotate/flip remap offsets (`LayerOffsetRemap`). Content dragged past the canvas edge by the
+Move / Transform tool therefore survives. The inpaint mask layer is always canvas-sized at (0, 0).
+
 ## Architecture
 
 `ImageEditorCore` is the pixel-operation engine. It delegates coordination to
@@ -135,6 +141,19 @@ User → Extend toggle → CanvasExtendViewModel.IsPanelOpen = true
      → LayerManager.ResizeCanvas + working bitmap grown, transparent new pixels → ImageChanged
 ```
 
+### Move / Transform
+```
+User → Move toggle → LayerTransformViewModel.IsPanelOpen = true
+     → View sets ImageEditorControl.IsLayerTransformToolActive → LayerTransformTool.IsActive, core ArmLayerTransform()
+     → drag body / corner / edge / rotate handle, arrows, panel fields → tool state (translation, scale, rotation, flips)
+       → TransformChanged → View → ViewModel.UpdateFromTool (X/Y/W/H/rotation)
+     → RenderWithZoom passes LayerRenderOverride(layer, tool.Matrix) to the compositor (live preview);
+       the tool draws the off-canvas part at 50 % plus handles
+     → Apply (button / Enter) → ImageEditorCore.ApplyLayerTransform()
+     → one resample into a bitmap sized to the transformed bounds → Layer.AdoptBitmap(bitmap, offset) → ImageChanged
+     → Escape resets (tool stays open); switching tool or layer commits first
+```
+
 ---
 
 ## File Inventory
@@ -148,9 +167,11 @@ User → Extend toggle → CanvasExtendViewModel.IsPanelOpen = true
 | `ImageEditorCore.ColorAdjustments.cs` | Color balance + brightness/contrast (partial) |
 | `ImageEditorCore.BackgroundOps.cs` | Background removal + fill (partial) |
 | `ImageEditorCore.Inpainting.cs` | Inpaint mask, stroke, base capture, feathering (partial) |
+| `ImageEditorCore.LayerTransform.cs` | Arm / eligibility / `ApplyLayerTransform` rasterization with size guard (partial) |
 | `Layer.cs` | Single layer: bitmap, opacity, visibility, blend mode |
 | `LayerStack.cs` | Ordered collection of layers |
 | `LayerCompositor.cs` | Composites layers to canvas |
+| `LayerOffsetRemap.cs` | Where a layer's offset lands after a whole-image rotate/flip |
 | `TransparencyCheckerboard.cs` | See-through checkerboard painted under the image in `RenderWithZoom` so transparent pixels stay visible |
 | `CropTool.cs` | Crop region management and rendering |
 | `CanvasExtensionTool.cs` | Abstract base for tools that grow the canvas outward: extension state, outward-only drag math, aspect/target-size presets, `ShrinkAttempted` |
@@ -158,6 +179,7 @@ User → Extend toggle → CanvasExtendViewModel.IsPanelOpen = true
 | `CanvasExtendTool.cs` | Canvas Extend frame (round handles on the frame, checkerboard preview of the transparent new area) |
 | `DrawingTool.cs` | Freehand drawing tool |
 | `ShapeTool.cs` | Shape tool (rectangle, ellipse, arrow, etc.) |
+| `LayerTransformTool.cs` | Move / Transform tool: Shape-style handles on the active layer, canvas-space matrix, commit-on-deactivate |
 | `TiffExporter.cs` | Multi-page TIFF save/load |
 
 ### `ImageEditor/Services/` � Service Layer
@@ -181,3 +203,11 @@ User → Extend toggle → CanvasExtendViewModel.IsPanelOpen = true
 | `LayerManagerTests.cs` | Layer CRUD, flatten, merge, mode toggle |
 | `ToolManagerTests.cs` | Activation, deactivation, mutual exclusion, callbacks |
 | `ViewportManagerTests.cs` | Zoom, pan, fit mode, clamping |
+| `LayerBoundsTests.cs` | Layer offset/size bounds math |
+| `LayerCompositorOffsetTests.cs` | Compositing with offset, out-of-canvas, and clipped layers |
+| `LayerStackOffsetTests.cs` | Layer stack offset propagation through flatten/merge |
+| `TiffExporterOffsetTests.cs` | Multi-page TIFF save/load round-trips layer offsets |
+| `LayerTransformToolTests.cs` | Handle hit testing, drag math, matrix composition, commit-on-deactivate |
+| `ImageEditorCoreLayerTransformTests.cs` | Arm/eligibility guards and `ApplyLayerTransform` rasterization |
+| `ImageEditorCoreOffsetLayerTests.cs` | Core operations (crop, extend, merge, rotate/flip) with offset layers |
+| `LayerTransformViewModelTests.cs` | Panel state, UpdateFromTool, command wiring |
