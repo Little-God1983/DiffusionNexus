@@ -108,6 +108,9 @@ public partial class ImageEditorViewModel : ObservableObject
     /// <summary>Sub-ViewModel for the Canvas Extend tool.</summary>
     public CanvasExtendViewModel CanvasExtend { get; }
 
+    /// <summary>Sub-ViewModel for the Move / Transform tool.</summary>
+    public LayerTransformViewModel LayerTransform { get; }
+
     /// <summary>Sub-ViewModel for image rating.</summary>
     public RatingViewModel Rating { get; }
 
@@ -379,6 +382,7 @@ public partial class ImageEditorViewModel : ObservableObject
         Inpainting = new InpaintingViewModel(() => HasImage, DeactivateOtherTools, comfyUiService, eventAggregator, readinessService);
         Outpainting = new OutpaintingViewModel(() => HasImage, () => ImageWidth, () => ImageHeight, DeactivateOtherTools, comfyUiService, readinessService, unifiedLogger);
         CanvasExtend = new CanvasExtendViewModel(() => HasImage, () => ImageWidth, () => ImageHeight, DeactivateOtherTools, unifiedLogger);
+        LayerTransform = new LayerTransformViewModel(() => HasImage, DeactivateOtherTools, unifiedLogger);
         Rating = new RatingViewModel(() => HasImage, eventAggregator);
 
         WireSubViewModelEvents();
@@ -494,6 +498,14 @@ public partial class ImageEditorViewModel : ObservableObject
             if (!IsCropToolActive) ExecuteToggleCropTool();
         };
 
+        LayerTransform.ToolStateChanged += (_, _) => NotifyToolCommandsCanExecuteChanged();
+        LayerTransform.StatusMessageChanged += (_, msg) => StatusMessage = msg;
+        LayerTransform.ToolToggled += (_, args) =>
+        {
+            if (args.IsActive) _services.Tools.Activate(args.ToolId);
+            else _services.Tools.Deactivate(args.ToolId);
+        };
+
         Rating.StatusMessageChanged += (_, msg) => StatusMessage = msg;
     }
 
@@ -532,6 +544,8 @@ public partial class ImageEditorViewModel : ObservableObject
 
         if (exceptToolId != ToolIds.CanvasExtend)
             CanvasExtend.ClosePanel();
+
+        if (exceptToolId != ToolIds.LayerTransform) LayerTransform.ClosePanel();
     }
 
     /// <summary>Closes all active tools and resets their state.</summary>
@@ -552,6 +566,7 @@ public partial class ImageEditorViewModel : ObservableObject
         Inpainting.ClosePanel();
         Outpainting.ClosePanel();
         CanvasExtend.ClosePanel();
+        LayerTransform.ClosePanel();
     }
 
     private void NotifyToolCommandsCanExecuteChanged()
@@ -574,6 +589,7 @@ public partial class ImageEditorViewModel : ObservableObject
         Inpainting.RefreshCommandStates();
         Outpainting.RefreshCommandStates();
         CanvasExtend.RefreshCommandStates();
+        LayerTransform.RefreshCommandStates();
     }
 
     private void NotifyCommandsCanExecuteChanged()
