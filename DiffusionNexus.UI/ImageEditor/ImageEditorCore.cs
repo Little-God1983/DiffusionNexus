@@ -1414,8 +1414,9 @@ public partial class ImageEditorCore : IDisposable
 
             try
             {
-                var width = targetBitmap.Width;
-                var height = targetBitmap.Height;
+                // Canvas size, not the layer's: strokes arrive in canvas-normalised coordinates.
+                var width = targetLayer is not null && _layers is not null ? _layers.Width : targetBitmap.Width;
+                var height = targetLayer is not null && _layers is not null ? _layers.Height : targetBitmap.Height;
 
                 // Convert normalized points to image pixel coordinates
                 var imagePoints = normalizedPoints
@@ -1426,6 +1427,8 @@ public partial class ImageEditorCore : IDisposable
                 var scaledBrushSize = brushSize * width;
 
                 using var canvas = new SKCanvas(targetBitmap);
+                if (targetLayer is not null)
+                    canvas.Translate(-targetLayer.OffsetX, -targetLayer.OffsetY);
                 using var paint = new SKPaint
                 {
                     Color = color,
@@ -1526,8 +1529,9 @@ public partial class ImageEditorCore : IDisposable
 
             try
             {
-                var width = targetBitmap.Width;
-                var height = targetBitmap.Height;
+                // Canvas size, not the layer's: shapes arrive in canvas-normalised coordinates.
+                var width = targetLayer is not null && _layers is not null ? _layers.Width : targetBitmap.Width;
+                var height = targetLayer is not null && _layers is not null ? _layers.Height : targetBitmap.Height;
 
                 // Convert normalized coordinates to image coordinates
                 var start = new SKPoint(
@@ -1542,6 +1546,8 @@ public partial class ImageEditorCore : IDisposable
                 var scaledArrowHeadSize = shapeData.ArrowHeadSize;
 
                 using var canvas = new SKCanvas(targetBitmap);
+                if (targetLayer is not null)
+                    canvas.Translate(-targetLayer.OffsetX, -targetLayer.OffsetY);
 
                 // Apply rotation around the shape center if needed
                 if (Math.Abs(shapeData.RotationDegrees) > 0.01f)
@@ -1723,15 +1729,19 @@ public partial class ImageEditorCore : IDisposable
             _originalBitmap = flattened;
             _workingBitmap = flattened?.Copy();
 
-            // Initialize layer mode from the loaded stack via LayerManager
-            // We enable with the first layer, then add the rest
-            _services.Layers.EnableLayerMode(firstLayer.Bitmap.Copy(), firstLayer.Name);
-
-            for (var i = 1; i < loadedLayers.Count; i++)
+            // Rebuild the stack at the file's canvas size; every page keeps its own offset and size.
+            _services.Layers.EnableLayerMode(loadedLayers.Width, loadedLayers.Height);
+            for (var i = 0; i < loadedLayers.Count; i++)
             {
                 var layer = loadedLayers[i];
                 if (layer.Bitmap is null) continue;
-                _services.Layers.AddLayerFromBitmap(layer.Bitmap.Copy(), layer.Name);
+                var added = _services.Layers.AddLayerFromBitmap(layer.Bitmap.Copy(), layer.Name, new SKPointI(layer.OffsetX, layer.OffsetY));
+                if (added is not null)
+                {
+                    added.Opacity = layer.Opacity;
+                    added.BlendMode = layer.BlendMode;
+                    added.IsVisible = layer.IsVisible;
+                }
             }
         }
 
