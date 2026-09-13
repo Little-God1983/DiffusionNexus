@@ -17,6 +17,8 @@ public class Layer : IDisposable
     private BlendMode _blendMode;
     private bool _isInpaintMask;
     private bool _isDisposed;
+    private int _offsetX;
+    private int _offsetY;
 
     private const int ThumbnailSize = 48;
 
@@ -55,6 +57,15 @@ public class Layer : IDisposable
 
         _bitmap = sourceBitmap.Copy();
         UpdateThumbnail();
+    }
+
+    /// <summary>
+    /// Creates a layer from an existing bitmap placed at <paramref name="offset"/> (canvas pixels).
+    /// </summary>
+    public Layer(SKBitmap sourceBitmap, string name, SKPointI offset) : this(sourceBitmap, name)
+    {
+        _offsetX = offset.X;
+        _offsetY = offset.Y;
     }
 
     /// <summary>
@@ -180,6 +191,15 @@ public class Layer : IDisposable
     /// </summary>
     public int Height => _bitmap?.Height ?? 0;
 
+    /// <summary>Left edge of this layer in canvas pixels. Zero for a canvas-aligned layer.</summary>
+    public int OffsetX => _offsetX;
+
+    /// <summary>Top edge of this layer in canvas pixels. Zero for a canvas-aligned layer.</summary>
+    public int OffsetY => _offsetY;
+
+    /// <summary>The layer's rectangle in canvas pixels: offset plus its own bitmap size.</summary>
+    public SKRectI Bounds => new(_offsetX, _offsetY, _offsetX + Width, _offsetY + Height);
+
     /// <summary>
     /// Gets whether this layer can be edited.
     /// </summary>
@@ -194,6 +214,19 @@ public class Layer : IDisposable
     /// Event raised when the layer content changes.
     /// </summary>
     public event EventHandler? ContentChanged;
+
+    /// <summary>
+    /// Moves the layer without touching its pixels. Raises <see cref="PropertyChanged"/> with
+    /// "Offset" and <see cref="ContentChanged"/> so the compositor redraws.
+    /// </summary>
+    internal void SetOffset(int x, int y)
+    {
+        if (_offsetX == x && _offsetY == y) return;
+        _offsetX = x;
+        _offsetY = y;
+        PropertyChanged?.Invoke(this, "Offset");
+        ContentChanged?.Invoke(this, EventArgs.Empty);
+    }
 
     /// <summary>
     /// Creates a canvas for drawing on this layer.
@@ -261,7 +294,7 @@ public class Layer : IDisposable
         if (_bitmap == null)
             throw new InvalidOperationException("Cannot clone disposed layer");
 
-        var clone = new Layer(_bitmap, $"{_name} Copy")
+        var clone = new Layer(_bitmap, $"{_name} Copy", new SKPointI(_offsetX, _offsetY))
         {
             IsVisible = _isVisible,
             Opacity = _opacity,
@@ -335,6 +368,14 @@ public class Layer : IDisposable
         _bitmap = newBitmap;
         UpdateThumbnail();
         ContentChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>Replaces the bitmap and the offset together (one ContentChanged).</summary>
+    internal void AdoptBitmap(SKBitmap newBitmap, SKPointI offset)
+    {
+        _offsetX = offset.X;
+        _offsetY = offset.Y;
+        AdoptBitmap(newBitmap);
     }
 
     /// <summary>
