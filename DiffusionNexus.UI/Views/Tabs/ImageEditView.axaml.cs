@@ -267,6 +267,13 @@ public partial class ImageEditView : UserControl
         _imageEditorCanvas!.ImageChanged += onImageChanged;
         _eventCleanup.Add(() => _imageEditorCanvas!.ImageChanged -= onImageChanged);
 
+        // Mirror the core's unsaved-changes flag into the view model so the tab can ask before
+        // anything replaces the canvas (#567).
+        EventHandler onDirtyChanged = (_, _) => imageEditor.HasUnsavedChanges = _imageEditorCanvas!.EditorCore.IsDirty;
+        _imageEditorCanvas.EditorCore.IsDirtyChanged += onDirtyChanged;
+        _eventCleanup.Add(() => _imageEditorCanvas!.EditorCore.IsDirtyChanged -= onDirtyChanged);
+        imageEditor.HasUnsavedChanges = _imageEditorCanvas.EditorCore.IsDirty;
+
         EventHandler onZoomChanged = (_, _) =>
         {
             imageEditor.UpdateZoomInfo(
@@ -1221,6 +1228,27 @@ public partial class ImageEditView : UserControl
         imageEditor.LayerPanel.AddLayerRequested += onAddLayer;
         _eventCleanup.Add(() => imageEditor.LayerPanel.AddLayerRequested -= onAddLayer);
 
+        // Drop "Add as Layer" / thumbnail "Add as Layer to Canvas": one layer per file (#567).
+        EventHandler<IReadOnlyList<string>> onAddLayersFromFiles = (_, paths) =>
+        {
+            if (_imageEditorCanvas is null) return;
+            var result = _imageEditorCanvas.EditorCore.AddLayersFromFiles(paths);
+            imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            _imageEditorCanvas.InvalidateVisual();
+
+            var failed = result.Failed.Count == 0
+                ? string.Empty
+                : $" Could not decode: {string.Join(", ", result.Failed.Select(Path.GetFileName))}.";
+            imageEditor.StatusMessage = result.Added switch
+            {
+                0 => $"No layers added.{failed}",
+                1 => $"Added 1 layer.{failed}",
+                _ => $"Added {result.Added} layers.{failed}",
+            };
+        };
+        imageEditor.AddLayersFromFilesRequested += onAddLayersFromFiles;
+        _eventCleanup.Add(() => imageEditor.AddLayersFromFilesRequested -= onAddLayersFromFiles);
+
         EventHandler<Layer> onDeleteLayer = (_, layer) =>
         {
             if (_imageEditorCanvas is null) return;
@@ -1434,7 +1462,7 @@ public partial class ImageEditView : UserControl
         }
     }
 
-    private void OnImageDrop(object? sender, DragEventArgs e)
+    private async void OnImageDrop(object? sender, DragEventArgs e)
     {
         // Reset border
         if (_imageDropZone is not null)
@@ -1456,14 +1484,16 @@ public partial class ImageEditView : UserControl
             .Where(IsImageFile)
             .ToList();
 
+        // OnImageDrop is attached to both the drop zone Border and its parent editor Grid, and
+        // DropEvent bubbles. Mark handled (before the first await, while the event is still
+        // live) so one drop dispatches the selection exactly once.
+        e.Handled = true;
+
         if (imagePaths.Count > 0 && DataContext is ImageEditTabViewModel vm)
         {
-            vm.LoadDirectDropSelection(imagePaths);
+            // With an image already open this asks Replace / Add to Selection / Add as Layer.
+            await vm.HandleDroppedImagesAsync(imagePaths);
         }
-
-        // OnImageDrop is attached to both the drop zone Border and its parent editor Grid, and
-        // DropEvent bubbles. Mark handled so one drop dispatches the selection exactly once.
-        e.Handled = true;
     }
 
     private bool AnalyzeImageFilesInDrag(DragEventArgs e)
@@ -1526,7 +1556,7 @@ public partial class ImageEditView : UserControl
 
         if (imagePaths.Count > 0)
         {
-            vm.LoadDirectDropSelection(imagePaths);
+            await vm.HandleDroppedImagesAsync(imagePaths);
         }
     }
 

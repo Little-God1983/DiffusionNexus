@@ -432,6 +432,57 @@ public partial class ImageEditorCore : IDisposable
     }
 
     /// <summary>
+    /// Decodes each file and adds it as its own layer on top of the current canvas, in order,
+    /// named after the file. Files that cannot be decoded are skipped and reported. Does nothing
+    /// without a loaded image: layers need a canvas to sit on.
+    /// </summary>
+    public LayerImportResult AddLayersFromFiles(IReadOnlyList<string> imagePaths)
+    {
+        var failed = new List<string>();
+        if (imagePaths is null || imagePaths.Count == 0)
+            return new LayerImportResult(0, failed);
+
+        if (!HasImage)
+        {
+            failed.AddRange(imagePaths);
+            return new LayerImportResult(0, failed);
+        }
+
+        var added = 0;
+        foreach (var path in imagePaths)
+        {
+            SKBitmap? bitmap = null;
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                {
+                    using var stream = File.OpenRead(path);
+                    bitmap = SKBitmap.Decode(stream);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger?.Warn(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditorCore",
+                    $"Could not read {path} for a new layer: {ex.Message}");
+            }
+
+            if (bitmap is null || AddLayerFromBitmap(bitmap, Path.GetFileNameWithoutExtension(path)) is null)
+            {
+                bitmap?.Dispose();
+                failed.Add(path);
+                continue;
+            }
+
+            added++;
+        }
+
+        if (added > 0)
+            OnImageChanged();
+
+        return new LayerImportResult(added, failed);
+    }
+
+    /// <summary>
     /// Expands the layer canvas and offsets all existing layer content.
     /// </summary>
     public void ResizeLayerCanvas(int newWidth, int newHeight, int offsetX, int offsetY)
