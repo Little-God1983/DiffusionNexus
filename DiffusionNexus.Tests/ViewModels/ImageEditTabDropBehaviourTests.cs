@@ -22,6 +22,8 @@ public sealed class ImageEditTabDropBehaviourTests : IDisposable
 
     private readonly DirectoryInfo _tempDir = Directory.CreateTempSubdirectory();
     private readonly Mock<IDialogService> _dialogs = new(MockBehavior.Strict);
+    private readonly Mock<IDatasetEventAggregator> _aggregator = new();
+    private readonly Mock<IDatasetState> _state = new();
     private readonly ImageEditTabViewModel _vm;
     private readonly string _first;
     private readonly string _second;
@@ -33,9 +35,9 @@ public sealed class ImageEditTabDropBehaviourTests : IDisposable
         _second = WritePng("second.png");
         _third = WritePng("third.png");
 
-        var state = new Mock<IDatasetState>();
-        state.Setup(s => s.Datasets).Returns(new ObservableCollection<DatasetCardViewModel>());
-        _vm = new ImageEditTabViewModel(Mock.Of<IDatasetEventAggregator>(), state.Object)
+        _state.Setup(s => s.Datasets).Returns(new ObservableCollection<DatasetCardViewModel>());
+        _state.SetupProperty(s => s.StatusMessage);
+        _vm = new ImageEditTabViewModel(_aggregator.Object, _state.Object)
         {
             DialogService = _dialogs.Object,
         };
@@ -157,6 +159,44 @@ public sealed class ImageEditTabDropBehaviourTests : IDisposable
         _vm.SelectedEditorDataset.ImageCount.Should().Be(3);
     }
 
+    [Fact]
+    public async Task Drop_AddToSelection_WithNothingUsable_SaysSo()
+    {
+        await _vm.HandleDroppedImagesAsync([_first]);
+        ExpectOptions(o => Array.IndexOf(o, AddToSelection));
+
+        await _vm.HandleDroppedImagesAsync([Path.Combine(_tempDir.FullName, "missing.png")]);
+
+        _vm.StatusMessage.Should().Be("No images available for editing.");
+        _vm.FilteredEditorImages.Select(i => i.ImagePath).Should().Equal(_first);
+    }
+
+    // ---- send to editor from another tab -------------------------------------------------------
+
+    [Fact]
+    public async Task SendToEditor_OnEditedCanvas_KeepsCanvasWhenDiscardDeclined()
+    {
+        await _vm.HandleDroppedImagesAsync([_first]);
+        _vm.ImageEditor.HasUnsavedChanges = true;
+        _dialogs.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(false);
+
+        _aggregator.Raise(a => a.NavigateToImageEditorRequested += null, SendToEditor(_second));
+
+        _vm.ImageEditor.CurrentImagePath.Should().Be(_first);
+    }
+
+    [Fact]
+    public async Task SendToEditor_OnEditedCanvas_LoadsWhenDiscardConfirmed()
+    {
+        await _vm.HandleDroppedImagesAsync([_first]);
+        _vm.ImageEditor.HasUnsavedChanges = true;
+        _dialogs.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(true);
+
+        _aggregator.Raise(a => a.NavigateToImageEditorRequested += null, SendToEditor(_second));
+
+        _vm.ImageEditor.CurrentImagePath.Should().Be(_second);
+    }
+
     // ---- thumbnail click ----------------------------------------------------------------------
 
     [Fact]
@@ -211,6 +251,22 @@ public sealed class ImageEditTabDropBehaviourTests : IDisposable
     }
 
     // ---- helpers ------------------------------------------------------------------------------
+
+    private static NavigateToImageEditorEventArgs SendToEditor(string path)
+    {
+        var image = DatasetImageViewModel.FromFile(path);
+        return new NavigateToImageEditorEventArgs
+        {
+            Image = image,
+            Images = [image],
+            Dataset = new DatasetCardViewModel
+            {
+                Name = "Gallery Selection",
+                FolderPath = "TEMP://Gallery",
+                IsTemporary = true,
+            },
+        };
+    }
 
     private void ExpectOptions(Func<string[], int> choose)
     {

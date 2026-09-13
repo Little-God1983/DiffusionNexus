@@ -45,6 +45,19 @@ public class ImageEditorCoreAddLayersFromFilesTests : IDisposable
     }
 
     [Fact]
+    public void CentresEachLayerOnTheCanvas()
+    {
+        _sut.LoadImage(Png("base", 40, 30));
+        var badge = WritePng("badge.png", 6, 6);
+        var poster = WritePng("poster.png", 60, 10);
+
+        _sut.AddLayersFromFiles([badge, poster]);
+
+        (_sut.Layers![1].OffsetX, _sut.Layers[1].OffsetY).Should().Be((17, 12));
+        (_sut.Layers[2].OffsetX, _sut.Layers[2].OffsetY).Should().Be((-10, 10), "an oversized layer is centred too, spilling both sides");
+    }
+
+    [Fact]
     public void MarksTheCanvasDirty_AndRaisesImageChanged()
     {
         _sut.LoadImage(Png("base", 40, 30));
@@ -82,7 +95,7 @@ public class ImageEditorCoreAddLayersFromFilesTests : IDisposable
         var result = _sut.AddLayersFromFiles([overlay]);
 
         result.Added.Should().Be(0);
-        result.Failed.Should().Equal(overlay);
+        result.Failed.Should().BeEmpty("the file was fine; there was simply no canvas to add it to");
         _sut.HasImage.Should().BeFalse();
     }
 

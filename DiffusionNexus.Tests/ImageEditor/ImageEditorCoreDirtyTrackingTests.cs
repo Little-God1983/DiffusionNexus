@@ -118,4 +118,40 @@ public class ImageEditorCoreDirtyTrackingTests : IDisposable
 
         _sut.IsDirty.Should().BeFalse("closing a tool panel without applying must not trigger a discard prompt");
     }
+
+    [Fact]
+    public void PreviewingThenCancelling_IsNotAnEdit()
+    {
+        _sut.LoadImage(_png);
+
+        _sut.SetColorBalancePreview(new ColorBalanceSettings { MidtonesCyanRed = 40 }).Should().BeTrue();
+        _sut.SetBrightnessContrastPreview(new BrightnessContrastSettings { Brightness = 20 }).Should().BeTrue();
+        _sut.SetBackgroundFillPreview(new BackgroundFillSettings()).Should().BeTrue();
+        _sut.ClearPreview();
+
+        _sut.IsDirty.Should().BeFalse("nudging a slider and pressing Cancel changes no pixels");
+    }
+
+    [Fact]
+    public void ApplyingAPreview_IsAnEdit()
+    {
+        _sut.LoadImage(_png);
+
+        _sut.ApplyColorBalance(new ColorBalanceSettings { MidtonesCyanRed = 40 }).Should().BeTrue();
+
+        _sut.IsDirty.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ReloadingACleanCanvas_RaisesNoDirtyTransition()
+    {
+        _sut.LoadImage(_png);
+        var raised = 0;
+        _sut.IsDirtyChanged += (_, _) => raised++;
+
+        _sut.LoadImage(_png);
+        _sut.Clear();
+
+        raised.Should().Be(0, "loads and Clear must not flicker the flag true then false");
+    }
 }

@@ -1491,8 +1491,17 @@ public partial class ImageEditView : UserControl
 
         if (imagePaths.Count > 0 && DataContext is ImageEditTabViewModel vm)
         {
-            // With an image already open this asks Replace / Add to Selection / Add as Layer.
-            await vm.HandleDroppedImagesAsync(imagePaths);
+            try
+            {
+                // With an image already open this asks Replace / Add to Selection / Add as Layer.
+                await vm.HandleDroppedImagesAsync(imagePaths);
+            }
+            catch (Exception ex)
+            {
+                // async void: an escaped exception would take down the dispatcher.
+                FileLogger.LogError("Handling dropped images failed", ex);
+                vm.StatusMessage = $"Could not open the dropped images: {ex.Message}";
+            }
         }
     }
 
@@ -1556,7 +1565,15 @@ public partial class ImageEditView : UserControl
 
         if (imagePaths.Count > 0)
         {
-            await vm.HandleDroppedImagesAsync(imagePaths);
+            try
+            {
+                await vm.HandleDroppedImagesAsync(imagePaths);
+            }
+            catch (Exception ex)
+            {
+                FileLogger.LogError("Opening images failed", ex);
+                vm.StatusMessage = $"Could not open the images: {ex.Message}";
+            }
         }
     }
 

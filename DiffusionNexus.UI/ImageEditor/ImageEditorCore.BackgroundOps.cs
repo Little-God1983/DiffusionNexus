@@ -253,7 +253,7 @@ public partial class ImageEditorCore
             }
         }
 
-        OnImageChanged();
+        OnImageChanged(marksDirty: false);
         return _isPreviewActive;
     }
 

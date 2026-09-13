@@ -212,7 +212,10 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     public DatasetImageViewModel? SelectedEditorImage
     {
         get => _selectedEditorImage;
-        set
+        // Private: every public path that replaces the canvas must go through
+        // ConfirmDiscardChangesAsync (thumbnail command, drop, send-to-editor). A two-way
+        // binding to this setter would silently bypass that prompt.
+        private set
         {
             if (SetProperty(ref _selectedEditorImage, value))
             {
@@ -371,6 +374,9 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
 
     private async void OnNavigateToImageEditorRequested(object? sender, NavigateToImageEditorEventArgs e)
     {
+        // "Send to Image Editor" from another tab replaces the canvas just like a thumbnail click.
+        if (!await ConfirmDiscardChangesAsync()) return;
+
         if (e.Dataset.IsTemporary || e.Images is not null)
         {
             var tempImages = e.Images?.Where(img => !img.IsVideo).ToList()
@@ -1059,10 +1065,12 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
             return;
         }
 
-        var what = imagePaths.Count == 1 ? "the dropped image" : $"the {imagePaths.Count} dropped images";
+        var single = imagePaths.Count == 1;
+        var what = single ? "the dropped image" : $"the {imagePaths.Count} dropped images";
+        var layers = single ? "a new layer" : "new layers";
         var warning = ImageEditor.HasUnsavedChanges ? " Replacing discards its unsaved changes." : string.Empty;
         var message = $"\"{ImageEditor.ImageFileName}\" is already open.{warning}\n\n" +
-                      $"Replace it with {what}, add {what} to the thumbnail list, or add {what} to the canvas as new layers?";
+                      $"Replace it with {what}, add {what} to the thumbnail list, or add {what} to the canvas as {layers}?";
         string[] options = [DropOptionCancel, DropOptionReplace, DropOptionAddToSelection, DropOptionAddAsLayer];
 
         var choice = await DialogService.ShowOptionsAsync("Image already open", message, options);
@@ -1111,8 +1119,15 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
             existing = [];
         }
 
+        var dropped = BuildDroppedImages(imagePaths);
+        if (dropped.Count == 0)
+        {
+            StatusMessage = "No images available for editing.";
+            return;
+        }
+
         var known = new HashSet<string>(existing.Select(i => i.ImagePath), StringComparer.OrdinalIgnoreCase);
-        var added = BuildDroppedImages(imagePaths).Where(img => known.Add(img.ImagePath)).ToList();
+        var added = dropped.Where(img => known.Add(img.ImagePath)).ToList();
         if (added.Count == 0)
         {
             StatusMessage = "Those images are already in the selection.";
