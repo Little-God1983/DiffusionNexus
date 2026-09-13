@@ -194,6 +194,18 @@ public partial class ImageEditorCore : IDisposable
     public bool HasImage => _isLayerMode ? (_layers?.Count > 0) : (_workingBitmap is not null);
 
     /// <summary>
+    /// True when the canvas has been edited since it was last loaded, cleared or saved. Every
+    /// mutation that raises <see cref="ImageChanged"/> sets it; loads, <see cref="Clear"/> and a
+    /// successful save reset it. Clearing a tool preview is not an edit.
+    /// </summary>
+    public bool IsDirty { get; private set; }
+
+    /// <summary>
+    /// Raised when <see cref="IsDirty"/> flips (once per transition, not per edit).
+    /// </summary>
+    public event EventHandler? IsDirtyChanged;
+
+    /// <summary>
     /// Optional unified logger for diagnostics (image / TIFF load and save). Set by the view
     /// wiring so failures surface in the unified log console instead of failing silently.
     /// </summary>
@@ -640,6 +652,7 @@ public partial class ImageEditorCore : IDisposable
             ClearInpaintBase();
             
             OnImageChanged();
+            SetDirty(false);
             return true;
         }
         catch
@@ -681,6 +694,7 @@ public partial class ImageEditorCore : IDisposable
             ClearInpaintBase();
             
             OnImageChanged();
+            SetDirty(false);
             return true;
         }
         catch
@@ -798,6 +812,7 @@ public partial class ImageEditorCore : IDisposable
 
         CurrentImagePath = null;
         OnImageChanged();
+        SetDirty(false);
     }
 
     /// <summary>
@@ -1040,6 +1055,7 @@ public partial class ImageEditorCore : IDisposable
             var result = _services!.Document.Save(bitmapToSave, filePath, resolvedFormat, quality);
 
             if (needsDispose) bitmapToSave.Dispose();
+            if (result) SetDirty(false);
             FileLogger.Log(result ? "Save completed successfully" : "Save failed");
             FileLogger.LogExit(result.ToString());
             return result;
@@ -1437,7 +1453,7 @@ public partial class ImageEditorCore : IDisposable
         
         if (shouldRaiseEvent)
         {
-            OnImageChanged();
+            OnImageChanged(marksDirty: false);
         }
     }
 
@@ -1750,7 +1766,9 @@ public partial class ImageEditorCore : IDisposable
         if (!_isLayerMode || _layers == null)
             return false;
 
-        return TiffExporter.SaveLayeredTiff(_layers, filePath, Logger);
+        var saved = TiffExporter.SaveLayeredTiff(_layers, filePath, Logger);
+        if (saved) SetDirty(false);
+        return saved;
     }
 
     /// <summary>
@@ -1833,6 +1851,7 @@ public partial class ImageEditorCore : IDisposable
         ResetZoom();
         OnImageChanged();
         LayersChanged?.Invoke(this, EventArgs.Empty);
+        SetDirty(false);
 
         return true;
     }
@@ -1840,7 +1859,18 @@ public partial class ImageEditorCore : IDisposable
     #endregion Save with Layers
 
     private void OnZoomChanged() => ZoomChanged?.Invoke(this, EventArgs.Empty);
-    private void OnImageChanged() => ImageChanged?.Invoke(this, EventArgs.Empty);
+    private void OnImageChanged(bool marksDirty = true)
+    {
+        if (marksDirty) SetDirty(true);
+        ImageChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void SetDirty(bool value)
+    {
+        if (IsDirty == value) return;
+        IsDirty = value;
+        IsDirtyChanged?.Invoke(this, EventArgs.Empty);
+    }
 
     public void Dispose()
     {
