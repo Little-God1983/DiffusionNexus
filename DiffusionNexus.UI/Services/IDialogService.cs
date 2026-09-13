@@ -544,6 +544,13 @@ public class FileDropWithConflictResult
     public bool Cancelled { get; init; }
 
     /// <summary>
+    /// Temporary directories the dialog created while expanding dropped ZIP archives. Some of the
+    /// files returned by <see cref="GetFilesToAdd"/> live here, so the caller must delete these
+    /// directories once the import has finished.
+    /// </summary>
+    public IReadOnlyList<string> TemporaryDirectories { get; init; } = [];
+
+    /// <summary>
     /// Gets all files that should be added (non-conflicting + resolved conflicts).
     /// </summary>
     public IEnumerable<string> GetFilesToAdd()

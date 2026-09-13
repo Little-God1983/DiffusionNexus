@@ -1300,6 +1300,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         if (DialogService is null || ActiveDataset is null) return;
 
         IsFileDialogOpen = true;
+        IReadOnlyList<string> zipTempDirectories = [];
 
         try
         {
@@ -1319,6 +1320,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 destFolderPath);
 
             if (result is null || result.Cancelled) return;
+            zipTempDirectories = result.TemporaryDirectories;
 
             var filesToAdd = result.GetFilesToAdd().ToList();
             if (filesToAdd.Count == 0) return;
@@ -1395,6 +1397,28 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         finally
         {
             IsFileDialogOpen = false;
+            DeleteZipExtractionDirectories(zipTempDirectories);
+        }
+    }
+
+    /// <summary>
+    /// Removes the temporary directories the file-drop dialog created while expanding dropped ZIP
+    /// archives. The extracted files have been copied into the dataset by now (or the import was
+    /// abandoned), so nothing references them any more.
+    /// </summary>
+    private void DeleteZipExtractionDirectories(IReadOnlyList<string> directories)
+    {
+        foreach (var dir in directories)
+        {
+            try
+            {
+                if (_datasetStorageService.DirectoryExists(dir))
+                    _datasetStorageService.DeleteDirectory(dir, recursive: true);
+            }
+            catch (Exception ex)
+            {
+                _activityLog?.LogWarning("Import", $"Could not remove temporary ZIP folder '{dir}': {ex.Message}");
+            }
         }
     }
 

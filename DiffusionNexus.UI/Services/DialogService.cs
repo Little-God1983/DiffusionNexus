@@ -463,6 +463,7 @@ public class DialogService : IDialogService
         {
             NonConflictingFiles = dialog.NonConflictingResultFiles ?? dialog.ResultFiles,
             ConflictResolutions = dialog.ConflictResolutionData,
+            TemporaryDirectories = dialog.TemporaryDirectories.ToList(),
             Cancelled = false
         };
     }
