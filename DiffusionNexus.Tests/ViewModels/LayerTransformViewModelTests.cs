@@ -148,4 +148,22 @@ public class LayerTransformViewModelTests
         _sut.IsPanelOpen.Should().BeFalse();
         deactivated.Should().Be(1);
     }
+
+    [Fact]
+    public void Cancel_RaisesResetRequested_BeforeToolDeactivated_SoTheDeactivateCommitIsANoOp()
+    {
+        // Cancel must discard the pending transform: Reset (via ResetRequested) has to happen
+        // before ToolDeactivated, because closing the panel deactivates the tool, and
+        // deactivating a tool with a pending transform commits it (Shape/Text precedent).
+        _sut.IsPanelOpen = true;
+        var order = new List<string>();
+        var resets = 0;
+        _sut.ResetRequested += (_, _) => { resets++; order.Add("reset"); };
+        _sut.ToolDeactivated += (_, _) => order.Add("deactivated");
+
+        _sut.CancelCommand.Execute(null);
+
+        resets.Should().Be(1);
+        order.Should().Equal("reset", "deactivated");
+    }
 }

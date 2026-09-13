@@ -47,7 +47,15 @@ public partial class LayerTransformViewModel : ObservableObject
         _unifiedLogger = unifiedLogger;
 
         ToggleCommand = new RelayCommand(() => IsPanelOpen = !IsPanelOpen, () => _hasImage());
-        CancelCommand = new RelayCommand(() => IsPanelOpen = false, () => IsPanelOpen);
+        CancelCommand = new RelayCommand(() =>
+        {
+            // Discard before closing: closing deactivates the tool, and deactivating with a
+            // pending transform commits it (Shape/Text precedent). Reset first makes that
+            // deactivate-commit a no-op.
+            EmitInfo("cancelled (transform discarded)");
+            ResetRequested?.Invoke(this, EventArgs.Empty);
+            IsPanelOpen = false;
+        }, () => IsPanelOpen);
         ResetCommand = new RelayCommand(() => { EmitInfo("reset requested"); ResetRequested?.Invoke(this, EventArgs.Empty); }, () => IsPanelOpen);
         ApplyCommand = new RelayCommand(() => { EmitInfo("apply requested"); ApplyRequested?.Invoke(this, EventArgs.Empty); }, () => _hasImage() && IsPanelOpen && HasTransform);
         FlipHorizontalCommand = new RelayCommand(() => { EmitInfo("flip horizontal"); FlipRequested?.Invoke(this, true); }, () => IsPanelOpen);
