@@ -20,6 +20,7 @@ public partial class ImageEditorViewModel : ObservableObject
     private string? _currentImagePath;
     private string? _imageFileName;
     private bool _hasImage;
+    private bool _hasUnsavedChanges;
     private string? _statusMessage;
     private int _imageWidth;
     private int _imageHeight;
@@ -150,6 +151,16 @@ public partial class ImageEditorViewModel : ObservableObject
             if (SetProperty(ref _hasImage, value))
                 NotifyCommandsCanExecuteChanged();
         }
+    }
+
+    /// <summary>
+    /// Mirror of <see cref="ImageEditor.ImageEditorCore.IsDirty"/>, pushed by the view wiring.
+    /// Consulted by the Image Edit tab before anything replaces the canvas.
+    /// </summary>
+    public bool HasUnsavedChanges
+    {
+        get => _hasUnsavedChanges;
+        set => SetProperty(ref _hasUnsavedChanges, value);
     }
 
     /// <summary>Status message to display.</summary>
@@ -286,7 +297,7 @@ public partial class ImageEditorViewModel : ObservableObject
 
     #region Commands
 
-    public IRelayCommand ClearImageCommand { get; }
+    public IAsyncRelayCommand ClearImageCommand { get; }
     public IRelayCommand ResetImageCommand { get; }
     public IRelayCommand ToggleCropToolCommand { get; }
     public IRelayCommand ApplyCropCommand { get; }
@@ -347,6 +358,25 @@ public partial class ImageEditorViewModel : ObservableObject
     public event EventHandler? FlipVerticalRequested;
     public event EventHandler<string>? ImageSaved;
 
+    /// <summary>
+    /// Raised after a user-initiated Save / Save As / Export succeeded. The view answers it with
+    /// <see cref="ImageEditor.ImageEditorCore.MarkClean"/>. Temp exports (Send To…, outpaint input)
+    /// go through <see cref="SaveImageFunc"/> too and must not raise this.
+    /// </summary>
+    public event EventHandler? CanvasSaved;
+
+    /// <summary>
+    /// Asked before <see cref="ClearImageCommand"/> discards the canvas; return false to keep it.
+    /// The Image Edit tab wires this to its unsaved-changes prompt.
+    /// </summary>
+    public event Func<Task<bool>>? ClearConfirmRequested;
+
+    /// <summary>
+    /// Asks the view to decode each file and add it to the canvas as its own layer, in order.
+    /// Raised by the drop "Add as Layer" choice and the thumbnail context menu.
+    /// </summary>
+    public event EventHandler<IReadOnlyList<string>>? AddLayersFromFilesRequested;
+
     #endregion
 
     private readonly Domain.Services.UnifiedLogging.IUnifiedLogger? _unifiedLogger;
@@ -396,7 +426,7 @@ public partial class ImageEditorViewModel : ObservableObject
         _services.Tools.ActiveToolChanged += (_, _) => NotifyToolCommandsCanExecuteChanged();
 
         // Core commands
-        ClearImageCommand = new RelayCommand(ExecuteClearImage, () => HasImage);
+        ClearImageCommand = new AsyncRelayCommand(ExecuteClearImageAsync, () => HasImage);
         ResetImageCommand = new RelayCommand(ExecuteResetImage, () => HasImage);
         ToggleCropToolCommand = new RelayCommand(ExecuteToggleCropTool, () => HasImage && !ColorTools.IsColorBalancePanelOpen);
         ApplyCropCommand = new RelayCommand(ExecuteApplyCrop, () => HasImage && IsCropToolActive);
@@ -645,6 +675,39 @@ public partial class ImageEditorViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Mirrors <see cref="ImageEditorCore.IsDirty"/> into <see cref="HasUnsavedChanges"/> until the
+    /// returned handle is disposed. Pushes the current state immediately, so re-wiring after a tab
+    /// switch cannot lose an edited canvas. This link is what every discard prompt depends on.
+    /// </summary>
+    public IDisposable TrackUnsavedChanges(ImageEditorCore core)
+    {
+        ArgumentNullException.ThrowIfNull(core);
+        EventHandler onDirtyChanged = (_, _) => HasUnsavedChanges = core.IsDirty;
+        core.IsDirtyChanged += onDirtyChanged;
+        HasUnsavedChanges = core.IsDirty;
+        return new Unsubscriber(() => core.IsDirtyChanged -= onDirtyChanged);
+    }
+
+    private void OnCanvasSaved()
+    {
+        HasUnsavedChanges = false;
+        CanvasSaved?.Invoke(this, EventArgs.Empty);
+    }
+
+    private sealed class Unsubscriber(Action unsubscribe) : IDisposable
+    {
+        private Action? _unsubscribe = unsubscribe;
+        public void Dispose() => Interlocked.Exchange(ref _unsubscribe, null)?.Invoke();
+    }
+
+    /// <summary>Requests one new layer per file on top of the current canvas.</summary>
+    public void RequestAddLayersFromFiles(IReadOnlyList<string> imagePaths)
+    {
+        if (imagePaths is null || imagePaths.Count == 0 || !HasImage) return;
+        AddLayersFromFilesRequested?.Invoke(this, imagePaths);
+    }
+
     /// <summary>Updates the image dimensions displayed in the ViewModel.</summary>
     public void UpdateDimensions(int width, int height)
     {
@@ -691,6 +754,7 @@ public partial class ImageEditorViewModel : ObservableObject
     /// <summary>Called when Save As New completes successfully.</summary>
     public void OnSaveAsNewCompleted(string newPath, ImageRatingStatus rating)
     {
+        OnCanvasSaved();
         FileLogger.LogEntry($"newPath={newPath}, rating={rating}");
 
         try
@@ -721,6 +785,7 @@ public partial class ImageEditorViewModel : ObservableObject
     /// <summary>Called when Save Overwrite completes successfully.</summary>
     public void OnSaveOverwriteCompleted()
     {
+        OnCanvasSaved();
         FileLogger.LogEntry($"CurrentImagePath={CurrentImagePath ?? "(null)"}");
 
         try
@@ -753,6 +818,7 @@ public partial class ImageEditorViewModel : ObservableObject
     /// <summary>Called when export completes successfully.</summary>
     public void OnExportCompleted(string exportPath)
     {
+        OnCanvasSaved();
         FileLogger.LogEntry($"exportPath={exportPath}");
         StatusMessage = $"Exported to: {Path.GetFileName(exportPath)}";
         FileLogger.LogExit();
@@ -780,6 +846,20 @@ public partial class ImageEditorViewModel : ObservableObject
     #endregion
 
     #region Command Implementations
+
+    private async Task ExecuteClearImageAsync()
+    {
+        if (ClearConfirmRequested is not null && !await ClearConfirmRequested.Invoke())
+            return;
+
+        ExecuteClearImage();
+    }
+
+    /// <summary>
+    /// Clears the canvas with no discard prompt. For callers that have no choice, e.g. the open
+    /// file was deleted from disk; the toolbar Clear button goes through <see cref="ClearImageCommand"/>.
+    /// </summary>
+    public void ClearImageWithoutPrompt() => ExecuteClearImage();
 
     private void ExecuteClearImage()
     {

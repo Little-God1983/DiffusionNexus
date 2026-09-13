@@ -30,6 +30,52 @@ public class ImageEditorCoreLayerTransformTests : IDisposable
 
     public void Dispose() => _sut.Dispose();
 
+    /// <summary>
+    /// Regression: saving with the Move tool still open wrote the layer at its original place
+    /// with no rotation, because the save path's CommitPendingOperations committed text, shapes
+    /// and strokes but not the pending layer transform — what the user saw was a preview matrix.
+    /// </summary>
+    [Fact]
+    public void CommitPendingOperations_RasterizesAPendingTransform_AndKeepsTheToolOpen()
+    {
+        _sut.LayerTransformTool.IsActive = true;
+        _sut.ArmLayerTransform();
+        var layer = _sut.ActiveLayer!;
+        _sut.LayerTransformTool.Nudge(30, 10);
+        _sut.LayerTransformTool.SetRotation(45);
+
+        _sut.CommitPendingOperations();
+
+        _sut.LayerTransformTool.HasTransform.Should().BeFalse("the transform was applied, not dropped");
+        layer.Bitmap.Width.Should().BeGreaterThan(100, "a 45° rotation widens the layer's bounds");
+        _sut.LayerTransformTool.IsActive.Should().BeTrue("a save must not close the tool");
+        _sut.LayerTransformTool.Layer.Should().BeSameAs(layer, "re-armed on the same layer at identity");
+    }
+
+    [Fact]
+    public void SaveImage_WithAPendingMove_WritesTheMovedPixels()
+    {
+        _sut.LayerTransformTool.IsActive = true;
+        _sut.ArmLayerTransform();
+        _sut.LayerTransformTool.Nudge(60, 0);
+        var tempDir = Directory.CreateTempSubdirectory();
+        try
+        {
+            var path = Path.Combine(tempDir.FullName, "moved.png");
+
+            _sut.CommitPendingOperations();
+            _sut.SaveImage(path).Should().BeTrue();
+
+            using var saved = SKBitmap.Decode(path);
+            saved.GetPixel(10, 50).Alpha.Should().Be(0, "the layer moved 60 px right, so the left edge is now empty");
+            saved.GetPixel(80, 50).Should().Be(SKColors.Red);
+        }
+        finally
+        {
+            tempDir.Delete(recursive: true);
+        }
+    }
+
     [Fact]
     public void Arm_EnablesLayerMode_AndArmsTheActiveLayer()
     {

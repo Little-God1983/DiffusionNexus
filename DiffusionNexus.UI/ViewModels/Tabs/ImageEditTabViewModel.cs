@@ -209,20 +209,17 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     /// <summary>
     /// Currently selected image in the Image Edit tab thumbnail list.
     /// </summary>
-    public DatasetImageViewModel? SelectedEditorImage
+    public DatasetImageViewModel? SelectedEditorImage => _selectedEditorImage;
+
+    /// <summary>
+    /// The only writer of <see cref="SelectedEditorImage"/>. Selection never loads the canvas by
+    /// itself: every path that replaces the canvas goes through <see cref="ConfirmDiscardChangesAsync"/>.
+    /// </summary>
+    private void SetSelectedEditorImage(DatasetImageViewModel? image)
     {
-        get => _selectedEditorImage;
-        set
-        {
-            if (SetProperty(ref _selectedEditorImage, value))
-            {
-                _state.SelectedEditorImage = value;
-                if (value is not null)
-                {
-                    LoadEditorImage(value);
-                }
-            }
-        }
+        _selectedEditorImage = image;
+        OnPropertyChanged(nameof(SelectedEditorImage));
+        _state.SelectedEditorImage = image;
     }
 
     /// <summary>
@@ -262,7 +259,11 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
 
     #region Commands
 
-    public IRelayCommand<DatasetImageViewModel?> LoadEditorImageCommand { get; }
+    /// <summary>Opens a thumbnail in the editor, asking first when the canvas has unsaved changes.</summary>
+    public IAsyncRelayCommand<DatasetImageViewModel?> LoadEditorImageCommand { get; }
+
+    /// <summary>Thumbnail context menu: adds the clicked image as a new layer on the current canvas.</summary>
+    public IRelayCommand<DatasetImageViewModel?> AddAsLayerCommand { get; }
 
     #endregion
 
@@ -321,6 +322,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
             PathProvider = AcquireCurrentImagePathsAsync,
         };
         ImageEditor.PropertyChanged += OnImageEditorPropertyChanged;
+        ImageEditor.ClearConfirmRequested += ConfirmDiscardChangesAsync;
         ImageActions.PropertyChanged += OnImageActionsPropertyChanged;
         UpdateImageActionsCanAct();
 
@@ -340,7 +342,8 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         InitializeEditorDatasets();
 
         // Initialize commands
-        LoadEditorImageCommand = new RelayCommand<DatasetImageViewModel?>(LoadEditorImage);
+        LoadEditorImageCommand = new AsyncRelayCommand<DatasetImageViewModel?>(LoadEditorImageWithConfirmAsync);
+        AddAsLayerCommand = new RelayCommand<DatasetImageViewModel?>(AddAsLayer, CanAddAsLayer);
     }
 
     /// <summary>
@@ -366,6 +369,9 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
 
     private async void OnNavigateToImageEditorRequested(object? sender, NavigateToImageEditorEventArgs e)
     {
+        // "Send to Image Editor" from another tab replaces the canvas just like a thumbnail click.
+        if (!await ConfirmDiscardChangesAsync()) return;
+
         if (e.Dataset.IsTemporary || e.Images is not null)
         {
             var tempImages = e.Images?.Where(img => !img.IsVideo).ToList()
@@ -422,9 +428,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
 
                 // Mark this image as selected
                 editorImage.IsEditorSelected = true;
-                _selectedEditorImage = editorImage;
-                OnPropertyChanged(nameof(SelectedEditorImage));
-                _state.SelectedEditorImage = editorImage;
+                SetSelectedEditorImage(editorImage);
 
                 // Set the selected dataset image on the ImageEditor for rating support
                 ImageEditor.SelectedDatasetImage = editorImage;
@@ -504,9 +508,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
                 }
 
                 savedImageVm.IsEditorSelected = true;
-                _selectedEditorImage = savedImageVm;
-                OnPropertyChanged(nameof(SelectedEditorImage));
-                _state.SelectedEditorImage = savedImageVm;
+                SetSelectedEditorImage(savedImageVm);
             }
             else
             {
@@ -551,10 +553,9 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
                 // If we were editing the deleted image, clear the editor
                 if (_selectedEditorImage == deletedImage)
                 {
-                    _selectedEditorImage = null;
-                    OnPropertyChanged(nameof(SelectedEditorImage));
-                    _state.SelectedEditorImage = null;
-                    ImageEditor.ClearImageCommand.Execute(null);
+                    SetSelectedEditorImage(null);
+                    // The file is gone; there is nothing to save, so no prompt.
+                    ImageEditor.ClearImageWithoutPrompt();
                 }
             }
         }
@@ -679,6 +680,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
             or nameof(ImageEditorViewModel.CurrentImagePath))
         {
             UpdateImageActionsCanAct();
+            AddAsLayerCommand.NotifyCanExecuteChanged();
         }
 
         // The editor's own status line ("Canvas extended to …", tool hints, apply failures)
@@ -738,6 +740,42 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     }
 
     /// <summary>
+    /// Thumbnail click: replaces the canvas, so an edited canvas asks to discard first.
+    /// </summary>
+    private async Task LoadEditorImageWithConfirmAsync(DatasetImageViewModel? image)
+    {
+        if (image is null) return;
+        if (!await ConfirmDiscardChangesAsync()) return;
+        LoadEditorImage(image);
+    }
+
+    /// <summary>
+    /// True when the canvas may be replaced: nothing was edited, no dialog service is wired, or
+    /// the user agreed to discard.
+    /// </summary>
+    public async Task<bool> ConfirmDiscardChangesAsync()
+    {
+        if (!ImageEditor.HasUnsavedChanges || DialogService is null) return true;
+
+        return await DialogService.ShowConfirmAsync(
+            "Discard unsaved changes?",
+            $"{CurrentImageLabel} has unsaved changes. Loading another image discards them.\n\nContinue?");
+    }
+
+    /// <summary>"\"name.png\"" for the open image, or a neutral label when it has no file name.</summary>
+    private string CurrentImageLabel
+        => ImageEditor.ImageFileName is { Length: > 0 } name ? $"\"{name}\"" : "The current image";
+
+    private bool CanAddAsLayer(DatasetImageViewModel? image)
+        => image is not null && !image.IsVideo && ImageEditor.HasImage;
+
+    private void AddAsLayer(DatasetImageViewModel? image)
+    {
+        if (!CanAddAsLayer(image)) return;
+        ImageEditor.RequestAddLayersFromFiles([image!.ImagePath]);
+    }
+
+    /// <summary>
     /// Loads the specified image into the Image Editor.
     /// </summary>
     private void LoadEditorImage(DatasetImageViewModel? image)
@@ -758,9 +796,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
 
         // Mark this image as selected in the editor
         image.IsEditorSelected = true;
-        _selectedEditorImage = image;
-        OnPropertyChanged(nameof(SelectedEditorImage));
-        _state.SelectedEditorImage = image;
+        SetSelectedEditorImage(image);
 
         // Set the selected dataset image on the ImageEditor for rating support
         ImageEditor.SelectedDatasetImage = image;
@@ -869,6 +905,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         {
             foreach (var image in _temporaryEditorImages)
             {
+                image.AddAsLayerCommand = AddAsLayerCommand;
                 EditorDatasetImages.Add(image);
             }
 
@@ -895,6 +932,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
             foreach (var imagePath in imageFiles)
             {
                 var imageVm = DatasetImageViewModel.FromFile(imagePath, _eventAggregator);
+                imageVm.AddAsLayerCommand = AddAsLayerCommand;
                 EditorDatasetImages.Add(imageVm);
             }
 
@@ -943,6 +981,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
             _state.StateChanged -= OnStateChanged;
             _state.Datasets.CollectionChanged -= OnDatasetsCollectionChanged;
             ImageEditor.PropertyChanged -= OnImageEditorPropertyChanged;
+            ImageEditor.ClearConfirmRequested -= ConfirmDiscardChangesAsync;
             ImageActions.PropertyChanged -= OnImageActionsPropertyChanged;
         }
 
@@ -989,46 +1028,177 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     {
         if (imagePaths is null) return;
 
-        // The View already restricts the drop/open payload to image files, and its filter
-        // accepts TIFF. Here we only drop non-existent files, videos and video thumbnails — we
-        // must NOT re-apply the narrower SupportedMediaTypes image set (no .tif/.tiff), which
-        // would silently discard dropped TIFFs. De-dupe so the same file dropped twice shows a
-        // single thumbnail.
-        var images = imagePaths
-            .Where(p => !string.IsNullOrWhiteSpace(p)
-                        && File.Exists(p)
-                        && !MediaFileExtensions.IsVideoFile(p)
-                        && !MediaFileExtensions.IsVideoThumbnailFile(p))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select(p => DatasetImageViewModel.FromFile(p, _eventAggregator))
-            .Where(img => !img.IsVideo)
-            .ToList();
-
+        var images = BuildDroppedImages(imagePaths);
         if (images.Count == 0)
         {
             StatusMessage = "No images available for editing.";
             return;
         }
 
-        var tempDataset = new DatasetCardViewModel
-        {
-            Name = "Drag and Drop Selection",
-            FolderPath = "TEMP://ImageEditDrop",
-            IsVersionedStructure = true,
-            CurrentVersion = 1,
-            TotalVersions = 1,
-            ImageCount = images.Count,
-            TotalImageCountAllVersions = images.Count,
-            IsTemporary = true
-        };
-
-        LoadTemporaryEditorDataset(tempDataset, images, images[0]);
+        LoadTemporaryEditorDataset(CreateDropDataset(images.Count), images, images[0]);
     }
+
+    private const string DropOptionCancel = "Cancel";
+    private const string DropOptionReplace = "Replace";
+    private const string DropOptionAddToSelection = "Add to Selection";
+    private const string DropOptionAddAsLayer = "Add as Layer";
+
+    /// <summary>
+    /// Entry point for files dropped on the editor or picked via Open Image (#567). An empty
+    /// editor simply loads them; otherwise the user chooses between replacing the canvas (after
+    /// the unsaved-changes check), appending the files to the thumbnail list, or stacking them
+    /// on the canvas as new layers. Cancelling changes nothing.
+    /// </summary>
+    public async Task HandleDroppedImagesAsync(IReadOnlyList<string> imagePaths)
+    {
+        if (imagePaths is null || imagePaths.Count == 0) return;
+
+        if (!ImageEditor.HasImage || DialogService is null)
+        {
+            LoadDirectDropSelection(imagePaths);
+            return;
+        }
+
+        var single = imagePaths.Count == 1;
+        var what = single ? "the dropped image" : $"the {imagePaths.Count} dropped images";
+        var layers = single ? "a new layer" : "new layers";
+        var warning = ImageEditor.HasUnsavedChanges ? " Replacing discards its unsaved changes." : string.Empty;
+        var message = $"{CurrentImageLabel} is already open.{warning}\n\n" +
+                      $"Replace it with {what}, add {what} to the thumbnail list, or add {what} to the canvas as {layers}?";
+        string[] options = [DropOptionCancel, DropOptionReplace, DropOptionAddToSelection, DropOptionAddAsLayer];
+
+        var choice = await DialogService.ShowOptionsAsync("Image already open", message, options);
+        if (choice < 0 || choice >= options.Length) return;
+
+        switch (options[choice])
+        {
+            case DropOptionReplace:
+                if (await ConfirmDiscardChangesAsync())
+                    LoadDirectDropSelection(imagePaths);
+                break;
+            case DropOptionAddToSelection:
+                AppendToEditorSelection(imagePaths);
+                break;
+            case DropOptionAddAsLayer:
+                ImageEditor.RequestAddLayersFromFiles(imagePaths);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Appends dropped files to the thumbnail list without touching the canvas. A temporary
+    /// selection simply grows. A real dataset is carried over whole into a temporary selection
+    /// (the dataset combo switches, and the status line says so) with the edited image still
+    /// highlighted, so the canvas and the selection keep agreeing.
+    /// </summary>
+    private void AppendToEditorSelection(IReadOnlyList<string> imagePaths)
+    {
+        var isTemporary = _temporaryEditorDataset is not null
+                          && ReferenceEquals(_selectedEditorDataset, _temporaryEditorDataset);
+        var existing = isTemporary ? _temporaryEditorImages.ToList() : EditorDatasetImages.ToList();
+
+        // The highlighted thumbnail must be the image on the canvas. Find it, or bring it in.
+        DatasetImageViewModel? current = null;
+        if (!isTemporary)
+        {
+            current = _selectedEditorImage
+                      ?? existing.FirstOrDefault(i => string.Equals(i.ImagePath, ImageEditor.CurrentImagePath, StringComparison.OrdinalIgnoreCase));
+            if (current is null && ImageEditor.CurrentImagePath is { } currentPath && File.Exists(currentPath))
+            {
+                current = DatasetImageViewModel.FromFile(currentPath, _eventAggregator);
+                existing.Insert(0, current);
+            }
+
+            if (current is null)
+            {
+                // Nothing on screen can be marked as the edited image (the file is gone from
+                // disk). A highlight that disagrees with the canvas would send ratings and
+                // actions to the wrong file, so do nothing.
+                StatusMessage = "The open image is no longer on disk; save it before adding to the selection.";
+                return;
+            }
+        }
+
+        var candidates = FilterDroppedPaths(imagePaths);
+        if (candidates.Count == 0)
+        {
+            StatusMessage = "No images available for editing.";
+            return;
+        }
+
+        // Dedupe on paths BEFORE building view models: FromFile reads caption/rating sidecars.
+        var known = new HashSet<string>(existing.Select(i => i.ImagePath), StringComparer.OrdinalIgnoreCase);
+        var added = candidates
+            .Where(known.Add)
+            .Select(p => DatasetImageViewModel.FromFile(p, _eventAggregator))
+            .Where(img => !img.IsVideo)
+            .ToList();
+        if (added.Count == 0)
+        {
+            StatusMessage = "Those images are already in the selection.";
+            return;
+        }
+
+        var summary = added.Count == 1
+            ? $"Added {added[0].FullFileName} to the selection."
+            : $"Added {added.Count} images to the selection.";
+
+        if (isTemporary)
+        {
+            _temporaryEditorImages.AddRange(added);
+            _temporaryEditorDataset!.ImageCount = _temporaryEditorImages.Count;
+            _temporaryEditorDataset.TotalImageCountAllVersions = _temporaryEditorImages.Count;
+            PopulateTemporaryVersionItems();
+            StatusMessage = summary;
+            return;
+        }
+
+        var previousName = _selectedEditorDataset?.Name;
+        var images = existing.Concat(added).ToList();
+        LoadTemporaryEditorDataset(CreateDropDataset(images.Count), images, current!, loadIntoEditor: false);
+        StatusMessage = string.IsNullOrEmpty(previousName)
+            ? $"{summary} Switched to the Drag and Drop Selection."
+            : $"{summary} Switched from \"{previousName}\" to the Drag and Drop Selection.";
+    }
+
+    /// <summary>
+    /// The View already restricts the drop/open payload to image files, and its filter accepts
+    /// TIFF. Here we only drop non-existent files, videos and video thumbnails — we must NOT
+    /// re-apply the narrower SupportedMediaTypes image set (no .tif/.tiff), which would silently
+    /// discard dropped TIFFs. De-duped so the same file dropped twice shows a single thumbnail.
+    /// </summary>
+    private static List<string> FilterDroppedPaths(IReadOnlyList<string> imagePaths)
+        => imagePaths
+            .Where(p => !string.IsNullOrWhiteSpace(p)
+                        && File.Exists(p)
+                        && !MediaFileExtensions.IsVideoFile(p)
+                        && !MediaFileExtensions.IsVideoThumbnailFile(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    private List<DatasetImageViewModel> BuildDroppedImages(IReadOnlyList<string> imagePaths)
+        => FilterDroppedPaths(imagePaths)
+            .Select(p => DatasetImageViewModel.FromFile(p, _eventAggregator))
+            .Where(img => !img.IsVideo)
+            .ToList();
+
+    private static DatasetCardViewModel CreateDropDataset(int imageCount) => new()
+    {
+        Name = "Drag and Drop Selection",
+        FolderPath = "TEMP://ImageEditDrop",
+        IsVersionedStructure = true,
+        CurrentVersion = 1,
+        TotalVersions = 1,
+        ImageCount = imageCount,
+        TotalImageCountAllVersions = imageCount,
+        IsTemporary = true
+    };
 
     private void LoadTemporaryEditorDataset(
         DatasetCardViewModel dataset,
         IReadOnlyList<DatasetImageViewModel> images,
-        DatasetImageViewModel selectedImage)
+        DatasetImageViewModel selectedImage,
+        bool loadIntoEditor = true)
     {
         // Drop any previous temporary selection from the combo so successive Gallery /
         // Drag-and-Drop selections replace each other instead of stacking up.
@@ -1068,14 +1238,15 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         }
 
         selected.IsEditorSelected = true;
-        _selectedEditorImage = selected;
-        OnPropertyChanged(nameof(SelectedEditorImage));
-        _state.SelectedEditorImage = selected;
+        SetSelectedEditorImage(selected);
         ImageEditor.SelectedDatasetImage = selected;
-        ImageEditor.LoadImage(selected.ImagePath);
+        if (loadIntoEditor)
+        {
+            ImageEditor.LoadImage(selected.ImagePath);
+            StatusMessage = $"Editing: {selected.FullFileName}";
+        }
 
         _state.SelectedTabIndex = 1;
-        StatusMessage = $"Editing: {selected.FullFileName}";
     }
 
     #endregion

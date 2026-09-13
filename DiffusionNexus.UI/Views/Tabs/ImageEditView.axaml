@@ -66,6 +66,11 @@
                       <MenuItem Header="Rate: Trash (-)" Command="{Binding MarkRejectedCommand}"/>
                       <Separator/>
                       <MenuItem Header="Clear Rating" Command="{Binding ClearRatingCommand}"/>
+                      <Separator/>
+                      <MenuItem Header="Add as Layer to Canvas"
+                                Command="{Binding AddAsLayerCommand}"
+                                CommandParameter="{Binding}"
+                                ToolTip.Tip="Stack this image on the current canvas as a new layer"/>
                     </ContextMenu>
                   </Button.ContextMenu>
                   <Grid Width="104" Height="78">

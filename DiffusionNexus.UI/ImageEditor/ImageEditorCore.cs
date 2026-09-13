@@ -151,6 +151,10 @@ public partial class ImageEditorCore : IDisposable
 
         if (DrawingTool.IsDrawing)
             DrawingTool.OnPointerReleased();
+
+        // A Move/Transform still open at save time is only a preview matrix on the compositor;
+        // rasterize it so the file matches the canvas. Re-arms at identity, the tool stays open.
+        CommitLayerTransformBefore();
     }
 
     /// <summary>
@@ -192,6 +196,24 @@ public partial class ImageEditorCore : IDisposable
     /// Gets whether an image is currently loaded.
     /// </summary>
     public bool HasImage => _isLayerMode ? (_layers?.Count > 0) : (_workingBitmap is not null);
+
+    /// <summary>
+    /// True when the canvas has been edited since it was last loaded, cleared, reset or marked
+    /// clean. Every mutation that raises <see cref="ImageChanged"/> sets it; loads,
+    /// <see cref="Clear"/>, <see cref="ResetToOriginal"/> and <see cref="MarkClean"/> reset it.
+    /// Tool previews are not edits. <see cref="SaveImage"/> deliberately does NOT reset it: the
+    /// same method writes the throwaway temp exports behind "Send To…" and outpainting, so only
+    /// the view model's real Save / Export commands call <see cref="MarkClean"/>.
+    /// </summary>
+    public bool IsDirty { get; private set; }
+
+    /// <summary>Declares the current canvas saved. Called after a user-initiated save or export.</summary>
+    public void MarkClean() => SetDirty(false);
+
+    /// <summary>
+    /// Raised when <see cref="IsDirty"/> flips (once per transition, not per edit).
+    /// </summary>
+    public event EventHandler? IsDirtyChanged;
 
     /// <summary>
     /// Optional unified logger for diagnostics (image / TIFF load and save). Set by the view
@@ -336,7 +358,7 @@ public partial class ImageEditorCore : IDisposable
             _services.Layers.EnableLayerMode(_workingBitmap, layerName);
         }
 
-        OnImageChanged();
+        OnImageChanged(marksDirty: false);
     }
 
     /// <summary>
@@ -402,21 +424,120 @@ public partial class ImageEditorCore : IDisposable
     /// <summary>
     /// Adds a layer from a bitmap.
     /// </summary>
-    /// <param name="bitmap">Source bitmap.</param>
+    /// <param name="bitmap">Source bitmap; copied, the caller keeps ownership.</param>
     /// <param name="name">Optional layer name.</param>
+    /// <param name="offset">Canvas position of the layer's top-left corner.</param>
     /// <returns>The newly created layer, or null if not in layer mode.</returns>
-    public Layer? AddLayerFromBitmap(SKBitmap bitmap, string? name = null)
+    public Layer? AddLayerFromBitmap(SKBitmap bitmap, string? name = null, SKPointI offset = default)
     {
         CommitLayerTransformBefore();
 
         Layer? layer;
         lock (_bitmapLock)
         {
-            layer = _services?.Layers.AddLayerFromBitmap(bitmap, name);
+            layer = _services?.Layers.AddLayerFromBitmap(bitmap, name, offset);
         }
 
         RearmLayerTransformAfter();
         return layer;
+    }
+
+    /// <summary>
+    /// Decodes each file and adds it as its own layer centred on the current canvas, in order,
+    /// named after the file. Convenience over <see cref="DecodeLayerFiles"/> +
+    /// <see cref="AddDecodedLayers"/> for callers already off the UI thread or with few files.
+    /// </summary>
+    public LayerImportResult AddLayersFromFiles(IReadOnlyList<string> imagePaths)
+        => AddDecodedLayers(DecodeLayerFiles(imagePaths, Logger));
+
+    /// <summary>
+    /// Decodes files for <see cref="AddDecodedLayers"/>. Touches no editor state, so it can (and
+    /// for anything but tiny files should) run on a worker thread: decoding is the slow part and
+    /// must not stall the render thread. Undecodable files come back with a null bitmap.
+    /// </summary>
+    public static IReadOnlyList<LayerImportItem> DecodeLayerFiles(
+        IReadOnlyList<string> imagePaths,
+        Domain.Services.UnifiedLogging.IUnifiedLogger? logger)
+    {
+        var items = new List<LayerImportItem>(imagePaths?.Count ?? 0);
+        if (imagePaths is null) return items;
+
+        foreach (var path in imagePaths)
+            items.Add(new LayerImportItem(path, DecodeForLayer(path, logger)));
+
+        return items;
+    }
+
+    /// <summary>
+    /// Adds each decoded item as its own layer centred on the canvas, in order, named after the
+    /// file, and disposes the items (layers keep their own copy). Items with a null bitmap are
+    /// reported in <see cref="LayerImportResult.Failed"/>. Flat mode is switched to layer mode
+    /// first: the layer service refuses adds otherwise, and that is not the file's fault. Without
+    /// a loaded image nothing is added and nothing is reported as failed.
+    /// </summary>
+    public LayerImportResult AddDecodedLayers(IReadOnlyList<LayerImportItem> items)
+    {
+        var failed = new List<string>();
+        if (items is null || items.Count == 0)
+            return new LayerImportResult(0, failed);
+
+        try
+        {
+            if (!HasImage)
+                return new LayerImportResult(0, failed);
+
+            if (!IsLayerMode)
+                EnableLayerMode();
+
+            var added = 0;
+            foreach (var item in items)
+            {
+                if (item.Bitmap is null)
+                {
+                    failed.Add(item.Path);
+                    continue;
+                }
+
+                var offset = new SKPointI((Width - item.Bitmap.Width) / 2, (Height - item.Bitmap.Height) / 2);
+                var layer = AddLayerFromBitmap(item.Bitmap, Path.GetFileNameWithoutExtension(item.Path), offset);
+                if (layer is null)
+                {
+                    // Not a decode problem — the layer service declined (no services wired).
+                    Logger?.Warn(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditorCore",
+                        $"Layer service declined {item.Path}; is layer mode available?");
+                    continue;
+                }
+
+                added++;
+            }
+
+            // Each add already raised ImageChanged through the layer stack's collection events
+            // (which also marks the canvas dirty); no extra notification here.
+            return new LayerImportResult(added, failed);
+        }
+        finally
+        {
+            foreach (var item in items)
+                item.Dispose();
+        }
+    }
+
+    private static SKBitmap? DecodeForLayer(string path, Domain.Services.UnifiedLogging.IUnifiedLogger? logger)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                return null;
+
+            using var stream = File.OpenRead(path);
+            return SKBitmap.Decode(stream);
+        }
+        catch (Exception ex)
+        {
+            logger?.Warn(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditorCore",
+                $"Could not read {path} for a new layer: {ex.Message}");
+            return null;
+        }
     }
 
     /// <summary>
@@ -604,6 +725,7 @@ public partial class ImageEditorCore : IDisposable
     /// <returns>True if the image was loaded successfully.</returns>
     public bool LoadImage(string filePath)
     {
+        using var suppressDirty = SuppressDirtyTracking();
         if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
             return false;
 
@@ -639,7 +761,8 @@ public partial class ImageEditorCore : IDisposable
             // Clear stale inpaint base; capture is deferred to first use
             ClearInpaintBase();
             
-            OnImageChanged();
+            OnImageChanged(marksDirty: false);
+            SetDirty(false);
             return true;
         }
         catch
@@ -656,6 +779,7 @@ public partial class ImageEditorCore : IDisposable
     /// <returns>True if the image was loaded successfully.</returns>
     public bool LoadImage(byte[] imageData)
     {
+        using var suppressDirty = SuppressDirtyTracking();
         if (imageData is null || imageData.Length == 0)
             return false;
 
@@ -680,7 +804,8 @@ public partial class ImageEditorCore : IDisposable
             // Clear stale inpaint base; capture is deferred to first use
             ClearInpaintBase();
             
-            OnImageChanged();
+            OnImageChanged(marksDirty: false);
+            SetDirty(false);
             return true;
         }
         catch
@@ -725,6 +850,8 @@ public partial class ImageEditorCore : IDisposable
         if (_originalBitmap is null)
             return;
 
+        using var suppressDirty = SuppressDirtyTracking();
+
         ClearPreview();
         ClearInpaintBase();
 
@@ -763,7 +890,8 @@ public partial class ImageEditorCore : IDisposable
             }
         }
 
-        OnImageChanged();
+        OnImageChanged(marksDirty: false);
+        SetDirty(false);
     }
 
     /// <summary>
@@ -771,6 +899,7 @@ public partial class ImageEditorCore : IDisposable
     /// </summary>
     public void Clear()
     {
+        using var suppressDirty = SuppressDirtyTracking();
         ClearPreview();
         ClearInpaintBase();
 
@@ -797,7 +926,8 @@ public partial class ImageEditorCore : IDisposable
         working?.Dispose();
 
         CurrentImagePath = null;
-        OnImageChanged();
+        OnImageChanged(marksDirty: false);
+        SetDirty(false);
     }
 
     /// <summary>
@@ -1437,7 +1567,7 @@ public partial class ImageEditorCore : IDisposable
         
         if (shouldRaiseEvent)
         {
-            OnImageChanged();
+            OnImageChanged(marksDirty: false);
         }
     }
 
@@ -1760,6 +1890,7 @@ public partial class ImageEditorCore : IDisposable
     /// <returns>True if loaded successfully.</returns>
     public bool LoadLayeredTiff(string filePath)
     {
+        using var suppressDirty = SuppressDirtyTracking();
         if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath) || _services is null)
             return false;
 
@@ -1831,8 +1962,9 @@ public partial class ImageEditorCore : IDisposable
         CurrentImagePath = filePath;
 
         ResetZoom();
-        OnImageChanged();
+        OnImageChanged(marksDirty: false);
         LayersChanged?.Invoke(this, EventArgs.Empty);
+        SetDirty(false);
 
         return true;
     }
@@ -1840,7 +1972,34 @@ public partial class ImageEditorCore : IDisposable
     #endregion Save with Layers
 
     private void OnZoomChanged() => ZoomChanged?.Invoke(this, EventArgs.Empty);
-    private void OnImageChanged() => ImageChanged?.Invoke(this, EventArgs.Empty);
+    private void OnImageChanged(bool marksDirty = true)
+    {
+        if (marksDirty && _dirtySuppression == 0) SetDirty(true);
+        ImageChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private int _dirtySuppression;
+
+    /// <summary>
+    /// While the returned scope is alive, mutations do not mark the canvas dirty. Loads and
+    /// <see cref="Clear"/> rebuild the layer stack, which raises the same layer events as a user
+    /// edit; without this the flag would flicker true→false on every load.
+    /// </summary>
+    private DirtySuppressionScope SuppressDirtyTracking() => new(this);
+
+    private readonly struct DirtySuppressionScope : IDisposable
+    {
+        private readonly ImageEditorCore _core;
+        public DirtySuppressionScope(ImageEditorCore core) { _core = core; _core._dirtySuppression++; }
+        public void Dispose() => _core._dirtySuppression--;
+    }
+
+    private void SetDirty(bool value)
+    {
+        if (IsDirty == value) return;
+        IsDirty = value;
+        IsDirtyChanged?.Invoke(this, EventArgs.Empty);
+    }
 
     public void Dispose()
     {

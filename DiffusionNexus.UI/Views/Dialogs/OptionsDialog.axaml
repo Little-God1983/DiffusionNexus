@@ -3,18 +3,21 @@
         xmlns:local="using:DiffusionNexus.UI.Views.Dialogs"
         x:Class="DiffusionNexus.UI.Views.Dialogs.OptionsDialog"
         x:DataType="local:OptionsDialog"
-        Width="480"
-        SizeToContent="Height"
+        MinWidth="480"
+        SizeToContent="WidthAndHeight"
         WindowStartupLocation="CenterOwner"
         CanResize="False"
         Background="#1E1E1E">
   
   <Grid Margin="24" RowDefinitions="Auto,Auto">
     
-    <!-- Message -->
+    <!-- Message. MaxWidth makes it wrap during measure (the window sizes to content), so the
+         window grows for the buttons but never past a readable line length. -->
     <TextBlock Grid.Row="0" 
                Text="{Binding Message}"
                TextWrapping="Wrap"
+               MaxWidth="600"
+               HorizontalAlignment="Left"
                FontSize="14"
                Margin="0,0,0,24"/>
     
