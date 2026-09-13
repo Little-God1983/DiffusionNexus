@@ -269,10 +269,7 @@ public partial class ImageEditView : UserControl
 
         // Mirror the core's unsaved-changes flag into the view model so the tab can ask before
         // anything replaces the canvas (#567).
-        EventHandler onDirtyChanged = (_, _) => imageEditor.HasUnsavedChanges = _imageEditorCanvas!.EditorCore.IsDirty;
-        _imageEditorCanvas.EditorCore.IsDirtyChanged += onDirtyChanged;
-        _eventCleanup.Add(() => _imageEditorCanvas!.EditorCore.IsDirtyChanged -= onDirtyChanged);
-        imageEditor.HasUnsavedChanges = _imageEditorCanvas.EditorCore.IsDirty;
+        _eventCleanup.Add(imageEditor.TrackUnsavedChanges(_imageEditorCanvas.EditorCore).Dispose);
 
         EventHandler onZoomChanged = (_, _) =>
         {
@@ -1168,6 +1165,12 @@ public partial class ImageEditView : UserControl
             return _imageEditorCanvas?.EditorCore.SaveLayeredTiff(path) ?? false;
         };
 
+        // A user-initiated save/export declares the canvas clean; the temp exports that share
+        // SaveImageFunc do not raise this.
+        EventHandler onCanvasSaved = (_, _) => _imageEditorCanvas?.EditorCore.MarkClean();
+        imageEditor.CanvasSaved += onCanvasSaved;
+        _eventCleanup.Add(() => imageEditor.CanvasSaved -= onCanvasSaved);
+
         imageEditor.ShowSaveFileDialogFunc = async (title, suggestedFileName, filter) =>
         {
             if (vm.DialogService is null) return null;
@@ -1229,11 +1232,34 @@ public partial class ImageEditView : UserControl
         _eventCleanup.Add(() => imageEditor.LayerPanel.AddLayerRequested -= onAddLayer);
 
         // Drop "Add as Layer" / thumbnail "Add as Layer to Canvas": one layer per file (#567).
-        EventHandler<IReadOnlyList<string>> onAddLayersFromFiles = (_, paths) =>
+        EventHandler<IReadOnlyList<string>> onAddLayersFromFiles = async (_, paths) =>
         {
             if (_imageEditorCanvas is null) return;
-            var result = _imageEditorCanvas.EditorCore.AddLayersFromFiles(paths);
-            imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
+            var core = _imageEditorCanvas.EditorCore;
+            imageEditor.StatusMessage = paths.Count == 1 ? "Adding layer…" : $"Adding {paths.Count} layers…";
+
+            IReadOnlyList<LayerImportItem> decoded;
+            try
+            {
+                // Decoding is the slow part; keep it off the render thread. Only the adds below
+                // touch editor state.
+                decoded = await Task.Run(() => ImageEditorCore.DecodeLayerFiles(paths, core.Logger));
+            }
+            catch (Exception ex)
+            {
+                FileLogger.LogError("Decoding files for new layers failed", ex);
+                imageEditor.StatusMessage = $"Could not add layers: {ex.Message}";
+                return;
+            }
+
+            if (_imageEditorCanvas is null || !ReferenceEquals(_imageEditorCanvas.EditorCore, core))
+            {
+                foreach (var item in decoded) item.Dispose();
+                return;
+            }
+
+            var result = core.AddDecodedLayers(decoded);
+            imageEditor.LayerPanel.SyncLayers(core.Layers);
             _imageEditorCanvas.InvalidateVisual();
 
             var failed = result.Failed.Count == 0

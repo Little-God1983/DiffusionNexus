@@ -194,11 +194,17 @@ public partial class ImageEditorCore : IDisposable
     public bool HasImage => _isLayerMode ? (_layers?.Count > 0) : (_workingBitmap is not null);
 
     /// <summary>
-    /// True when the canvas has been edited since it was last loaded, cleared or saved. Every
-    /// mutation that raises <see cref="ImageChanged"/> sets it; loads, <see cref="Clear"/> and a
-    /// successful save reset it. Clearing a tool preview is not an edit.
+    /// True when the canvas has been edited since it was last loaded, cleared, reset or marked
+    /// clean. Every mutation that raises <see cref="ImageChanged"/> sets it; loads,
+    /// <see cref="Clear"/>, <see cref="ResetToOriginal"/> and <see cref="MarkClean"/> reset it.
+    /// Tool previews are not edits. <see cref="SaveImage"/> deliberately does NOT reset it: the
+    /// same method writes the throwaway temp exports behind "Send To…" and outpainting, so only
+    /// the view model's real Save / Export commands call <see cref="MarkClean"/>.
     /// </summary>
     public bool IsDirty { get; private set; }
+
+    /// <summary>Declares the current canvas saved. Called after a user-initiated save or export.</summary>
+    public void MarkClean() => SetDirty(false);
 
     /// <summary>
     /// Raised when <see cref="IsDirty"/> flips (once per transition, not per edit).
@@ -434,44 +440,85 @@ public partial class ImageEditorCore : IDisposable
 
     /// <summary>
     /// Decodes each file and adds it as its own layer centred on the current canvas, in order,
-    /// named after the file. Files that cannot be decoded are skipped and reported in
-    /// <see cref="LayerImportResult.Failed"/>. Without a loaded image nothing is added and nothing
-    /// is reported as failed: the files were fine, there was just no canvas to put them on.
+    /// named after the file. Convenience over <see cref="DecodeLayerFiles"/> +
+    /// <see cref="AddDecodedLayers"/> for callers already off the UI thread or with few files.
     /// </summary>
     public LayerImportResult AddLayersFromFiles(IReadOnlyList<string> imagePaths)
+        => AddDecodedLayers(DecodeLayerFiles(imagePaths, Logger));
+
+    /// <summary>
+    /// Decodes files for <see cref="AddDecodedLayers"/>. Touches no editor state, so it can (and
+    /// for anything but tiny files should) run on a worker thread: decoding is the slow part and
+    /// must not stall the render thread. Undecodable files come back with a null bitmap.
+    /// </summary>
+    public static IReadOnlyList<LayerImportItem> DecodeLayerFiles(
+        IReadOnlyList<string> imagePaths,
+        Domain.Services.UnifiedLogging.IUnifiedLogger? logger)
     {
-        var failed = new List<string>();
-        if (imagePaths is null || imagePaths.Count == 0 || !HasImage)
-            return new LayerImportResult(0, failed);
+        var items = new List<LayerImportItem>(imagePaths?.Count ?? 0);
+        if (imagePaths is null) return items;
 
-        var added = 0;
         foreach (var path in imagePaths)
-        {
-            using var bitmap = DecodeForLayer(path);
-            if (bitmap is null)
-            {
-                failed.Add(path);
-                continue;
-            }
+            items.Add(new LayerImportItem(path, DecodeForLayer(path, logger)));
 
-            // Layer keeps its own copy, so the decoded bitmap is disposed by the using above.
-            var offset = new SKPointI((Width - bitmap.Width) / 2, (Height - bitmap.Height) / 2);
-            if (AddLayerFromBitmap(bitmap, Path.GetFileNameWithoutExtension(path), offset) is null)
-            {
-                failed.Add(path);
-                continue;
-            }
-
-            added++;
-        }
-
-        if (added > 0)
-            OnImageChanged();
-
-        return new LayerImportResult(added, failed);
+        return items;
     }
 
-    private SKBitmap? DecodeForLayer(string path)
+    /// <summary>
+    /// Adds each decoded item as its own layer centred on the canvas, in order, named after the
+    /// file, and disposes the items (layers keep their own copy). Items with a null bitmap are
+    /// reported in <see cref="LayerImportResult.Failed"/>. Flat mode is switched to layer mode
+    /// first: the layer service refuses adds otherwise, and that is not the file's fault. Without
+    /// a loaded image nothing is added and nothing is reported as failed.
+    /// </summary>
+    public LayerImportResult AddDecodedLayers(IReadOnlyList<LayerImportItem> items)
+    {
+        var failed = new List<string>();
+        if (items is null || items.Count == 0)
+            return new LayerImportResult(0, failed);
+
+        try
+        {
+            if (!HasImage)
+                return new LayerImportResult(0, failed);
+
+            if (!IsLayerMode)
+                EnableLayerMode();
+
+            var added = 0;
+            foreach (var item in items)
+            {
+                if (item.Bitmap is null)
+                {
+                    failed.Add(item.Path);
+                    continue;
+                }
+
+                var offset = new SKPointI((Width - item.Bitmap.Width) / 2, (Height - item.Bitmap.Height) / 2);
+                var layer = AddLayerFromBitmap(item.Bitmap, Path.GetFileNameWithoutExtension(item.Path), offset);
+                if (layer is null)
+                {
+                    // Not a decode problem — the layer service declined (no services wired).
+                    Logger?.Warn(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditorCore",
+                        $"Layer service declined {item.Path}; is layer mode available?");
+                    continue;
+                }
+
+                added++;
+            }
+
+            // Each add already raised ImageChanged through the layer stack's collection events
+            // (which also marks the canvas dirty); no extra notification here.
+            return new LayerImportResult(added, failed);
+        }
+        finally
+        {
+            foreach (var item in items)
+                item.Dispose();
+        }
+    }
+
+    private static SKBitmap? DecodeForLayer(string path, Domain.Services.UnifiedLogging.IUnifiedLogger? logger)
     {
         try
         {
@@ -483,7 +530,7 @@ public partial class ImageEditorCore : IDisposable
         }
         catch (Exception ex)
         {
-            Logger?.Warn(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditorCore",
+            logger?.Warn(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditorCore",
                 $"Could not read {path} for a new layer: {ex.Message}");
             return null;
         }
@@ -799,6 +846,8 @@ public partial class ImageEditorCore : IDisposable
         if (_originalBitmap is null)
             return;
 
+        using var suppressDirty = SuppressDirtyTracking();
+
         ClearPreview();
         ClearInpaintBase();
 
@@ -837,7 +886,8 @@ public partial class ImageEditorCore : IDisposable
             }
         }
 
-        OnImageChanged();
+        OnImageChanged(marksDirty: false);
+        SetDirty(false);
     }
 
     /// <summary>
@@ -1116,7 +1166,6 @@ public partial class ImageEditorCore : IDisposable
             var result = _services!.Document.Save(bitmapToSave, filePath, resolvedFormat, quality);
 
             if (needsDispose) bitmapToSave.Dispose();
-            if (result) SetDirty(false);
             FileLogger.Log(result ? "Save completed successfully" : "Save failed");
             FileLogger.LogExit(result.ToString());
             return result;
@@ -1827,9 +1876,7 @@ public partial class ImageEditorCore : IDisposable
         if (!_isLayerMode || _layers == null)
             return false;
 
-        var saved = TiffExporter.SaveLayeredTiff(_layers, filePath, Logger);
-        if (saved) SetDirty(false);
-        return saved;
+        return TiffExporter.SaveLayeredTiff(_layers, filePath, Logger);
     }
 
     /// <summary>

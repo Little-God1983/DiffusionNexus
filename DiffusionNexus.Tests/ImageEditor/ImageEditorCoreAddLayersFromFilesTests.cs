@@ -88,6 +88,41 @@ public class ImageEditorCoreAddLayersFromFilesTests : IDisposable
     }
 
     [Fact]
+    public void EnablesLayerMode_WhenItWasOff()
+    {
+        _sut.LoadImage(Png("base", 40, 30));
+        _sut.DisableLayerMode();
+        var overlay = WritePng("overlay.png", 12, 12);
+
+        var result = _sut.AddLayersFromFiles([overlay]);
+
+        result.Added.Should().Be(1);
+        result.Failed.Should().BeEmpty("the file decoded fine; flat mode is not the file's fault");
+        _sut.IsLayerMode.Should().BeTrue();
+        _sut.Layers!.Count.Should().Be(2);
+    }
+
+    [Fact]
+    public void DecodeLayerFiles_IsSeparable_AndAddDecodedLayersDisposesTheBitmaps()
+    {
+        _sut.LoadImage(Png("base", 40, 30));
+        var overlay = WritePng("overlay.png", 12, 12);
+        var garbage = Path.Combine(_tempDir.FullName, "garbage.png");
+        File.WriteAllText(garbage, "not an image");
+
+        var decoded = ImageEditorCore.DecodeLayerFiles([overlay, garbage], logger: null);
+        decoded.Select(d => d.Path).Should().Equal(overlay, garbage);
+        decoded[0].Bitmap.Should().NotBeNull();
+        decoded[1].Bitmap.Should().BeNull();
+
+        var result = _sut.AddDecodedLayers(decoded);
+
+        result.Added.Should().Be(1);
+        result.Failed.Should().Equal(garbage);
+        decoded[0].Bitmap!.Handle.Should().Be(IntPtr.Zero, "the layer keeps its own copy; the decoded bitmap must not leak");
+    }
+
+    [Fact]
     public void WithoutACanvas_AddsNothing()
     {
         var overlay = WritePng("overlay.png", 12, 12);

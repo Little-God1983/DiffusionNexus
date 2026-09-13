@@ -24,6 +24,7 @@ public sealed class ImageEditTabDropBehaviourTests : IDisposable
     private readonly Mock<IDialogService> _dialogs = new(MockBehavior.Strict);
     private readonly Mock<IDatasetEventAggregator> _aggregator = new();
     private readonly Mock<IDatasetState> _state = new();
+    private readonly ObservableCollection<DatasetCardViewModel> _datasets = [];
     private readonly ImageEditTabViewModel _vm;
     private readonly string _first;
     private readonly string _second;
@@ -35,7 +36,7 @@ public sealed class ImageEditTabDropBehaviourTests : IDisposable
         _second = WritePng("second.png");
         _third = WritePng("third.png");
 
-        _state.Setup(s => s.Datasets).Returns(new ObservableCollection<DatasetCardViewModel>());
+        _state.Setup(s => s.Datasets).Returns(_datasets);
         _state.SetupProperty(s => s.StatusMessage);
         _vm = new ImageEditTabViewModel(_aggregator.Object, _state.Object)
         {
@@ -171,6 +172,56 @@ public sealed class ImageEditTabDropBehaviourTests : IDisposable
         _vm.FilteredEditorImages.Select(i => i.ImagePath).Should().Equal(_first);
     }
 
+    [Fact]
+    public async Task Drop_AddToSelection_OnRealDataset_KeepsEveryThumbnail_AndSaysItSwitched()
+    {
+        var dataset = OpenRealDataset("first.png", "second.png");
+        _vm.FilteredEditorImages.Select(i => Path.GetFileName(i.ImagePath)).Should().Equal("first.png", "second.png");
+        _vm.ImageEditor.HasUnsavedChanges = true;
+        ExpectOptions(o => Array.IndexOf(o, AddToSelection));
+        var current = _vm.ImageEditor.CurrentImagePath;
+
+        await _vm.HandleDroppedImagesAsync([_third]);
+
+        _vm.FilteredEditorImages.Select(i => Path.GetFileName(i.ImagePath)).Should().Equal("first.png", "second.png", "third.png");
+        _vm.ImageEditor.CurrentImagePath.Should().Be(current);
+        _vm.SelectedEditorImage!.ImagePath.Should().Be(current);
+        _vm.ImageEditor.SelectedDatasetImage.Should().BeSameAs(_vm.SelectedEditorImage);
+        _vm.SelectedEditorDataset!.IsTemporary.Should().BeTrue();
+        _vm.SelectedEditorDataset.Should().NotBeSameAs(dataset);
+        _vm.StatusMessage.Should().Contain("Drag and Drop Selection", "the dataset combo silently switched, so the status line must say so");
+    }
+
+    [Fact]
+    public async Task Thumbnails_CarryTheAddAsLayerCommand()
+    {
+        await _vm.HandleDroppedImagesAsync([_first, _second]);
+        ExpectOptions(o => Array.IndexOf(o, AddToSelection));
+        await _vm.HandleDroppedImagesAsync([_third]);
+
+        _vm.FilteredEditorImages.Should().HaveCount(3)
+            .And.OnlyContain(i => ReferenceEquals(i.AddAsLayerCommand, _vm.AddAsLayerCommand),
+                "the context menu binds the item's own command, never a popup ancestor");
+
+        OpenRealDataset("first.png");
+        _vm.FilteredEditorImages.Should().ContainSingle()
+            .Which.AddAsLayerCommand.Should().BeSameAs(_vm.AddAsLayerCommand);
+    }
+
+    // ---- Clear button --------------------------------------------------------------------------
+
+    [Fact]
+    public async Task ClearButton_OnEditedCanvas_KeepsCanvasWhenDiscardDeclined()
+    {
+        await _vm.HandleDroppedImagesAsync([_first]);
+        _vm.ImageEditor.HasUnsavedChanges = true;
+        _dialogs.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(false);
+
+        await _vm.ImageEditor.ClearImageCommand.ExecuteAsync(null);
+
+        _vm.ImageEditor.CurrentImagePath.Should().Be(_first);
+    }
+
     // ---- send to editor from another tab -------------------------------------------------------
 
     [Fact]
@@ -251,6 +302,41 @@ public sealed class ImageEditTabDropBehaviourTests : IDisposable
     }
 
     // ---- helpers ------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Builds a real versioned dataset folder (V1/…) holding the named files, registers it with
+    /// the dataset state and opens its first image through the same "send to editor" event the
+    /// Dataset Management tab raises.
+    /// </summary>
+    private DatasetCardViewModel OpenRealDataset(params string[] fileNames)
+    {
+        var root = Path.Combine(_tempDir.FullName, "dataset-" + Guid.NewGuid().ToString("N"));
+        var v1 = Path.Combine(root, "V1");
+        Directory.CreateDirectory(v1);
+        foreach (var name in fileNames)
+            File.Copy(_first, Path.Combine(v1, name));
+
+        var dataset = new DatasetCardViewModel
+        {
+            Name = "Real dataset",
+            FolderPath = root,
+            IsVersionedStructure = true,
+            CurrentVersion = 1,
+            TotalVersions = 1,
+            ImageCount = fileNames.Length,
+        };
+        _datasets.Add(dataset);
+
+        var firstPath = Path.Combine(v1, fileNames[0]);
+        _aggregator.Raise(a => a.NavigateToImageEditorRequested += null, new NavigateToImageEditorEventArgs
+        {
+            Image = DatasetImageViewModel.FromFile(firstPath),
+            Dataset = dataset,
+        });
+
+        _vm.ImageEditor.CurrentImagePath.Should().Be(firstPath, "precondition: the real dataset opened");
+        return dataset;
+    }
 
     private static NavigateToImageEditorEventArgs SendToEditor(string path)
     {

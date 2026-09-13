@@ -60,31 +60,39 @@ public class ImageEditorCoreDirtyTrackingTests : IDisposable
     }
 
     [Fact]
-    public void Save_ClearsDirty()
+    public void SaveImage_DoesNotClearDirtyByItself()
     {
+        // SaveImage also backs the throwaway temp exports (Send To…, outpaint input); only the
+        // view model's real Save/Export commands may declare the canvas clean.
         _sut.LoadImage(_png);
         _sut.AddLayer("scratch");
         var path = Path.Combine(_tempDir.FullName, "out.png");
 
         _sut.SaveImage(path).Should().BeTrue();
 
+        _sut.IsDirty.Should().BeTrue();
+    }
+
+    [Fact]
+    public void MarkClean_ClearsDirty()
+    {
+        _sut.LoadImage(_png);
+        _sut.AddLayer("scratch");
+
+        _sut.MarkClean();
+
         _sut.IsDirty.Should().BeFalse();
     }
 
     [Fact]
-    public void FailedSave_KeepsDirty()
+    public void ResetToOriginal_ClearsDirty()
     {
         _sut.LoadImage(_png);
         _sut.AddLayer("scratch");
-        // The document service creates missing directories, so block it with a file where the
-        // parent directory would have to go.
-        var blocker = Path.Combine(_tempDir.FullName, "blocker");
-        File.WriteAllText(blocker, string.Empty);
-        var path = Path.Combine(blocker, "out.png");
 
-        _sut.SaveImage(path).Should().BeFalse();
+        _sut.ResetToOriginal();
 
-        _sut.IsDirty.Should().BeTrue();
+        _sut.IsDirty.Should().BeFalse("the canvas is byte-identical to what was loaded");
     }
 
     [Fact]

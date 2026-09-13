@@ -68,7 +68,7 @@
                       <MenuItem Header="Clear Rating" Command="{Binding ClearRatingCommand}"/>
                       <Separator/>
                       <MenuItem Header="Add as Layer to Canvas"
-                                Command="{Binding $parent[UserControl].((vmTabs:ImageEditTabViewModel)DataContext).AddAsLayerCommand}"
+                                Command="{Binding AddAsLayerCommand}"
                                 CommandParameter="{Binding}"
                                 ToolTip.Tip="Stack this image on the current canvas as a new layer"/>
                     </ContextMenu>

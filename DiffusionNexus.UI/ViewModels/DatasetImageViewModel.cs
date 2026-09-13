@@ -307,6 +307,20 @@ public class DatasetImageViewModel : ObservableObject
 
     #region Commands
 
+    private IRelayCommand<DatasetImageViewModel?>? _addAsLayerCommand;
+
+    /// <summary>
+    /// "Add as Layer to Canvas" in the Image Edit tab's thumbnail context menu. The tab assigns
+    /// its own command to every thumbnail it lists; the menu binds the item's property because a
+    /// ContextMenu lives in its own Popup, where ancestor lookups toward the tab view model are
+    /// not reliable. Null outside the Image Edit tab.
+    /// </summary>
+    public IRelayCommand<DatasetImageViewModel?>? AddAsLayerCommand
+    {
+        get => _addAsLayerCommand;
+        set => SetProperty(ref _addAsLayerCommand, value);
+    }
+
     public IRelayCommand SaveCaptionCommand { get; }
     public IRelayCommand RevertCaptionCommand { get; }
     public IRelayCommand UndoCaptionCommand { get; }
