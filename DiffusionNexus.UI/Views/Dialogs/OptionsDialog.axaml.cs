@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
@@ -23,9 +24,21 @@ public partial class OptionsDialog : Window
     }
 
     /// <summary>
+    /// Defines the <see cref="Message"/> property. A styled property, not a plain CLR one: the
+    /// message is assigned after construction (object initializer), and the TextBlock binding
+    /// only follows a property that notifies.
+    /// </summary>
+    public static readonly StyledProperty<string> MessageProperty =
+        AvaloniaProperty.Register<OptionsDialog, string>(nameof(Message), string.Empty);
+
+    /// <summary>
     /// Gets or sets the message to display.
     /// </summary>
-    public string Message { get; set; } = string.Empty;
+    public string Message
+    {
+        get => GetValue(MessageProperty);
+        set => SetValue(MessageProperty, value);
+    }
 
     /// <summary>
     /// Gets the option items for binding.
