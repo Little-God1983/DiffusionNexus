@@ -380,6 +380,21 @@ public class Layer : IDisposable
     }
 
     /// <summary>
+    /// Like <see cref="AdoptBitmap(SKBitmap, SKPointI)"/> but hands the previous bitmap back
+    /// instead of disposing it, for callers that must dispose outside the render lock.
+    /// </summary>
+    internal SKBitmap? AdoptBitmapKeepingOld(SKBitmap newBitmap, SKPointI offset)
+    {
+        var old = _bitmap;
+        _bitmap = newBitmap;
+        _offsetX = offset.X;
+        _offsetY = offset.Y;
+        UpdateThumbnail();
+        ContentChanged?.Invoke(this, EventArgs.Empty);
+        return old;
+    }
+
+    /// <summary>
     /// Crops the layer to <paramref name="cropRect"/> (canvas pixels): keeps the intersection of
     /// the layer's bounds with the rect and re-offsets relative to the rect's top-left. A layer
     /// wholly outside becomes a 1x1 transparent bitmap at (0, 0) so it stays valid.

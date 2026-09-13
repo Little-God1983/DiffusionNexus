@@ -128,6 +128,15 @@ public partial class ImageEditorCore : IDisposable
     /// </summary>
     public CanvasExtendTool CanvasExtendTool { get; } = new();
 
+    /// <summary>Gets the layer Move / Transform tool.</summary>
+    public LayerTransformTool LayerTransformTool { get; }
+
+    public ImageEditorCore()
+    {
+        LayerTransformTool = new LayerTransformTool();
+        LayerTransformTool.CommitRequested += (_, _) => ApplyLayerTransform();
+    }
+
     /// <summary>
     /// Commits any in-progress tool operations (placed text, placed shape, active drawing stroke).
     /// Call before saving or exporting to ensure all pending work is captured.
@@ -492,10 +501,14 @@ public partial class ImageEditorCore : IDisposable
         get => _services?.Layers.ActiveLayer;
         set
         {
-            if (_services is not null)
-            {
-                _services.Layers.ActiveLayer = value;
-            }
+            if (_services is null) return;
+            if (ReferenceEquals(_services.Layers.ActiveLayer, value)) return;
+            // Switching layers with a pending transform commits it first (Shape/Text precedent).
+            if (LayerTransformTool.IsActive && LayerTransformTool.IsArmed)
+                LayerTransformTool.Commit();
+            _services.Layers.ActiveLayer = value;
+            if (LayerTransformTool.IsActive)
+                ArmLayerTransform();
         }
     }
 
@@ -1080,7 +1093,11 @@ public partial class ImageEditorCore : IDisposable
             }
             else if (_isLayerMode && _layers != null)
             {
-                LayerCompositor.CompositeToCanvas(canvas, _layers, imageRect);
+                var preview = LayerTransformTool.IsActive && LayerTransformTool.IsArmed && LayerTransformTool.HasTransform
+                    && LayerTransformTool.Layer is { } previewLayer
+                    ? new LayerRenderOverride(previewLayer, LayerTransformTool.Matrix)
+                    : (LayerRenderOverride?)null;
+                LayerCompositor.CompositeToCanvas(canvas, _layers, imageRect, preview);
             }
             else
             {
@@ -1124,6 +1141,12 @@ public partial class ImageEditorCore : IDisposable
             CanvasExtendTool.ImagePixelWidth = imageWidth;
             CanvasExtendTool.ImagePixelHeight = imageHeight;
             CanvasExtendTool.Render(canvas, new SKRect(0, 0, canvasWidth, canvasHeight));
+
+            // Update the layer transform tool with current image bounds and render overlay
+            LayerTransformTool.SetImageBounds(imageRect);
+            LayerTransformTool.ImagePixelWidth = imageWidth;
+            LayerTransformTool.ImagePixelHeight = imageHeight;
+            LayerTransformTool.Render(canvas, new SKRect(0, 0, canvasWidth, canvasHeight));
 
             _lastImageRect = imageRect;
             return imageRect;
