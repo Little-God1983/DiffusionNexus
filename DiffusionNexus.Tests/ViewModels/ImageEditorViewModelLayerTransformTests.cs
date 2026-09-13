@@ -21,7 +21,7 @@ public class ImageEditorViewModelLayerTransformTests
     [Fact]
     public void OpeningMove_ClosesCrop_AndActivatesTheToolId()
     {
-        var vm = CreateViewModel(); // copied helper; must load or fake HasImage = true the way the sibling tests do
+        var vm = CreateViewModel();
         vm.IsCropToolActive = true;
 
         vm.LayerTransform.IsPanelOpen = true;

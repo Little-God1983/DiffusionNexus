@@ -286,7 +286,8 @@ and reports ineligibility; the request events call the tool's setters; the contr
   `ConstrainProportionsOverride` from Ctrl and `SnapRotation` from Shift on press and move.
 - `OnKeyDown`: Enter → `ApplyLayerTransform()`; Escape → `tool.Reset()`; arrow keys →
   `tool.Nudge(±1 or ±10 with Shift)`; all `Handled`.
-- Cursor map: `Body` and every scale handle → `SizeAll`; `Rotate` → `Hand`; else `Default`.
+- Cursor map: `Body` and corners → `SizeAll`; `Top`/`Bottom` → `SizeNorthSouth`; `Left`/`Right` →
+  `SizeWestEast`; `Rotate` → `Hand`; else `Default`.
 - Events `LayerTransformChanged`, `LayerTransformApplied`, `LayerTransformFailed`
   forwarding the core's; `ApplyLayerTransform()` wrapper.
 

@@ -306,32 +306,13 @@ public class Layer : IDisposable
     }
 
     /// <summary>
-    /// Resizes the layer to new dimensions.
-    /// </summary>
-    /// <param name="newWidth">New width in pixels.</param>
-    /// <param name="newHeight">New height in pixels.</param>
-    public void Resize(int newWidth, int newHeight)
-    {
-        if (_bitmap == null) return;
-
-        var newBitmap = new SKBitmap(newWidth, newHeight, SKColorType.Rgba8888, SKAlphaType.Premul);
-        newBitmap.Erase(SKColors.Transparent);
-
-        using var canvas = new SKCanvas(newBitmap);
-        canvas.DrawBitmap(_bitmap, 0, 0);
-
-        _bitmap.Dispose();
-        _bitmap = newBitmap;
-        UpdateThumbnail();
-        ContentChanged?.Invoke(this, EventArgs.Empty);
-    }
-
-    /// <summary>
     /// Builds the bitmap <see cref="ResizeCanvas"/> would swap in, without touching the layer.
     /// The layer is shifted by (<paramref name="offsetX"/>, <paramref name="offsetY"/>) and grown
     /// to the union of its shifted bounds and the new canvas, so a canvas-aligned layer stays
     /// canvas-aligned (drawing on the new area keeps working) and a moved layer keeps every pixel.
     /// Throws when SkiaSharp cannot allocate, so the caller can report the failure.
+    /// Callers pass non-negative offsets (the canvas only grows); a negative offset would move
+    /// a canvas-aligned layer, including the inpaint mask, off (0, 0).
     /// </summary>
     internal SKBitmap CreateResizedBitmap(int newWidth, int newHeight, int offsetX, int offsetY, out SKPointI newOffset)
     {

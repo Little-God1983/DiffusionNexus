@@ -381,24 +381,6 @@ public class LayerStack : IDisposable
     }
 
     /// <summary>
-    /// Resizes all layers to new dimensions.
-    /// </summary>
-    /// <param name="newWidth">New width in pixels.</param>
-    /// <param name="newHeight">New height in pixels.</param>
-    public void Resize(int newWidth, int newHeight)
-    {
-        _width = newWidth;
-        _height = newHeight;
-
-        foreach (var layer in _layers)
-        {
-            layer.Resize(newWidth, newHeight);
-        }
-
-        ContentChanged?.Invoke(this, EventArgs.Empty);
-    }
-
-    /// <summary>
     /// Resizes the layer stack canvas and offsets all existing layer content.
     /// </summary>
     public void ResizeCanvas(int newWidth, int newHeight, int offsetX, int offsetY)

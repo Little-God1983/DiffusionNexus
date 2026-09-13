@@ -209,5 +209,5 @@ User → Move toggle → LayerTransformViewModel.IsPanelOpen = true
 | `TiffExporterOffsetTests.cs` | Multi-page TIFF save/load round-trips layer offsets |
 | `LayerTransformToolTests.cs` | Handle hit testing, drag math, matrix composition, commit-on-deactivate |
 | `ImageEditorCoreLayerTransformTests.cs` | Arm/eligibility guards and `ApplyLayerTransform` rasterization |
-| `ImageEditorCoreOffsetLayerTests.cs` | Core operations (crop, extend, merge, rotate/flip) with offset layers |
+| `ImageEditorCoreOffsetLayerTests.cs` | ApplyStroke / ApplyShape land in layer-local pixels on an offset layer; painting outside the layer draws nothing |
 | `LayerTransformViewModelTests.cs` | Panel state, UpdateFromTool, command wiring |

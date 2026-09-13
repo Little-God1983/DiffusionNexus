@@ -592,7 +592,13 @@ public partial class ImageEditView : UserControl
         void PushToolState()
         {
             var tool = _imageEditorCanvas!.EditorCore.LayerTransformTool;
-            if (!tool.IsArmed) return;
+            if (!tool.IsArmed)
+            {
+                // Ineligible layer (mask/locked/none): clear stale fields rather than leaving the
+                // panel showing the previous layer's numbers next to the amber hint.
+                imageEditor.LayerTransform.UpdateFromTool(string.Empty, 0, 0, 0, 0, 0, false);
+                return;
+            }
             var b = tool.TransformedBounds;
             imageEditor.LayerTransform.UpdateFromTool(tool.Layer?.Name ?? string.Empty, b.Left, b.Top, b.Width, b.Height, tool.RotationDegrees, tool.HasTransform);
         }
