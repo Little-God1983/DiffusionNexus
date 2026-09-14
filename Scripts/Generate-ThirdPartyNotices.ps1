@@ -219,6 +219,25 @@ function Get-NoticeFiles {
         Sort-Object FullName)
 }
 
+# Reads a notice file for REPRODUCTION into the emitted documents.
+#
+# Byte-faithful apart from one narrow deviation: a trailing run of NUL and other C0 control
+# characters is trimmed off the END. Microsoft's Riched20-authored ThirdPartyNotices.rtf ends
+# '}\r\n\0', and that single NUL - a container terminator, not notice content - makes git class
+# THIRD-PARTY-NOTICES.txt as binary ('i/-text w/-text'), so a pull request renders it as
+# "Binary file ... differs". The whole point of committing this document is that drift is
+# reviewable in a diff, so a byte that blinds the human half of the freshness gate costs more
+# than it preserves. It also travels into the JSON index as a \u0000 escape and from there into the About
+# screen's detail pane.
+#
+# Deliberately END-anchored: NULs or control characters INSIDE a document are left alone, and
+# nothing else about the bytes is altered. The duplicate-attestation comparison above still reads
+# the raw file, so equality is still judged on the real bytes.
+function Get-ReproducedNoticeText {
+    param([string]$Path)
+    return ((Get-Content $Path -Raw) -replace '[\0\x01-\x08\x0B\x0C\x0E-\x1F\s]+$', '')
+}
+
 function Get-NoticeRelativePath {
     param([string]$Dir, [string]$FullName)
     return (($FullName.Substring($Dir.Length + 1)) -replace '\\', '/')
@@ -439,7 +458,7 @@ foreach ($rp in $runtimePacks) {
     Add-Line ("### {0} {1} (runtime pack)" -f $rp.Name, $rp.Version)
     Add-Line ("Source: {0}" -f (Split-Path -Leaf $rp.File))
     Add-Line ''
-    Add-Line (Get-Content $rp.File -Raw).TrimEnd()
+    Add-Line (Get-ReproducedNoticeText $rp.File)
     Add-Line ''
     Add-Line $thin
     Add-Line ''
@@ -462,7 +481,7 @@ foreach ($b in $supplements.bundledNotices) {
         Add-Line ("NOTE: {0}" -f $b.note)
         Add-Line ''
     }
-    Add-Line (Get-Content $file -Raw).TrimEnd()
+    Add-Line (Get-ReproducedNoticeText $file)
     Add-Line ''
     Add-Line $thin
     Add-Line ''
@@ -505,7 +524,7 @@ foreach ($c in $components) {
         $file = Join-Path $c.PackageDir $b.file
         if (-not (Test-Path $file)) { throw "Notice file '$($b.file)' not found in package '$($c.Id)'." }
         if ($b.note) { $parts += ("NOTE: " + $b.note) }
-        $parts += (Get-Content $file -Raw).TrimEnd()
+        $parts += (Get-ReproducedNoticeText $file)
     }
 
     $jsonComponents += [pscustomobject][ordered]@{
@@ -532,7 +551,7 @@ foreach ($rp in $runtimePacks) {
         copyright   = 'Copyright (c) .NET Foundation and Contributors'
         authors     = 'Microsoft'
         projectUrl  = 'https://github.com/dotnet/runtime'
-        licenseText = Normalize-Text ((Get-Content $rp.File -Raw).TrimEnd())
+        licenseText = Normalize-Text (Get-ReproducedNoticeText $rp.File)
     }
 }
 foreach ($s in $supplements.supplements) {

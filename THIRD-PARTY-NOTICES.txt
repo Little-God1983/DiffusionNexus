@@ -18539,7 +18539,7 @@ END OF Sergio0694/ComputeSharp NOTICES AND INFORMATION
 ### Microsoft.CodeAnalysis (Roslyn) - bundled third-party notices
 Source: Microsoft.CodeAnalysis.Common 5.0.0 :: ThirdPartyNotices.rtf
 
-NOTE: Reproduced verbatim, INCLUDING its RTF container: Microsoft ships this notice as ThirdPartyNotices.rtf and the obligation attaches to the document as published, so it is copied byte for byte rather than converted, which would be an edit to a legal document. The readable content is the .NET Compiler Platform notice (MIT, (c) .NET Foundation and Contributors). The four other Microsoft.CodeAnalysis.* packages in the closure ship an identical copy and are attested in noticesAlreadyCovered. Surfaced by the 2026-09-14 widening of the notice probe.
+NOTE: Reproduced verbatim, INCLUDING its RTF container: Microsoft ships this notice as ThirdPartyNotices.rtf and the obligation attaches to the document as published, so it is copied byte for byte rather than converted, which would be an edit to a legal document. ONE deviation, and it is the only one: the file ends '}\r\n\0', and that trailing NUL - a Riched20 container terminator, not notice content - is stripped, because a single NUL makes git class the whole of THIRD-PARTY-NOTICES.txt as binary, so a pull request renders it as 'Binary file ... differs' and the human half of the freshness gate stops working on the one document where a silent change matters most. Nothing inside the document is touched. The readable content is the .NET Compiler Platform notice (MIT, (c) .NET Foundation and Contributors). The four other Microsoft.CodeAnalysis.* packages in the closure ship an identical copy and are attested in noticesAlreadyCovered. Surfaced by the 2026-09-14 widening of the notice probe.
 
 {\rtf1\ansi\ansicpg1252\deff0\nouicompat\deflang1033\deflangfe1033{\fonttbl{\f0\fswiss\fprq2\fcharset0 Tahoma;}}
 {\colortbl ;\red0\green0\blue255;}
@@ -18566,7 +18566,6 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 =========================================\par
 END OF \caps .NET Compiler Platform\caps0  NOTICES AND INFORMATION\par
 }
- 
 
 --------------------------------------------------------------------------------
 
