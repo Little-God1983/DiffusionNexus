@@ -166,7 +166,13 @@ public sealed class VideoThumbnailService : IVideoThumbnailService
             if (videoStream is null)
                 return VideoThumbnailResult.Failed("No video stream found in file");
 
-            var duration = videoStream.Duration;
+            // analysis.Duration, NOT videoStream.Duration: FFMpegCore parses a stream's duration
+            // from ffprobe's per-stream "duration" field only, and Matroska-family containers
+            // (.mkv, .webm - both in SupportedExtensions) report that as N/A, yielding
+            // TimeSpan.Zero. A zero duration clamps capturePosition to 0 even when the caller
+            // supplied one, so every WebM/MKV thumbnail was frame 0 and every result reported a
+            // zero-length video. analysis.Duration is the max of the format and stream durations.
+            var duration = analysis.Duration;
             var capturePosition = options.CapturePosition ?? TimeSpan.FromTicks(duration.Ticks / 2);
 
             // Ensure capture position is within bounds
@@ -195,7 +201,10 @@ public sealed class VideoThumbnailService : IVideoThumbnailService
                         output.WithCustomArgument(qualityArgument);
                 })
                 .CancellableThrough(cancellationToken)
-                .ProcessAsynchronously();
+                // throwOnError defaults to true, which would turn a non-zero ffmpeg exit into an
+                // exception swallowed by the generic catch below - making the specific message
+                // here unreachable and handing the user the generic one instead.
+                .ProcessAsynchronously(throwOnError: false);
 
             if (!succeeded)
                 return VideoThumbnailResult.Failed("Thumbnail generation failed - ffmpeg reported failure");

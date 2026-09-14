@@ -25,17 +25,11 @@ public static class FFmpegBinaryLocator
         if (string.IsNullOrWhiteSpace(directory))
             return false;
 
-        try
-        {
-            return File.Exists(Path.Combine(directory, FFmpegFileName))
-                && File.Exists(Path.Combine(directory, FFprobeFileName));
-        }
-        catch (ArgumentException)
-        {
-            // Invalid path characters — treat as "not here" rather than throwing at a caller
-            // that is only asking a question.
-            return false;
-        }
+        // No try/catch: since .NET Core 2.1 Path.Combine does not validate path characters and
+        // File.Exists returns false for a malformed path rather than throwing, so a handler here
+        // would be dead code documenting behaviour the runtime no longer has.
+        return File.Exists(Path.Combine(directory, FFmpegFileName))
+            && File.Exists(Path.Combine(directory, FFprobeFileName));
     }
 
     /// <summary>
