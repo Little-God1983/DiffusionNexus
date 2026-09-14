@@ -392,7 +392,7 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     [RelayCommand]
     private void OpenSettings()
     {
-        CurrentModuleView = new SettingsView();
+        ShowAppLevelView(new SettingsView());
     }
 
     [RelayCommand]
@@ -407,7 +407,33 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     [RelayCommand]
     private void OpenAbout()
     {
-        CurrentModuleView = new AboutView();
+        ShowAppLevelView(new AboutView());
+    }
+
+    /// <summary>
+    /// Shows a view that is not a registered module (Settings, About).
+    /// </summary>
+    /// <remarks>
+    /// Performs the same teardown as <see cref="NavigateToModule"/>: without it the outgoing
+    /// module keeps its selection highlight while an unrelated screen is displayed, and an
+    /// <see cref="IThumbnailAware"/> module keeps its thumbnail pipeline running behind a view
+    /// that is no longer on screen.
+    /// </remarks>
+    private void ShowAppLevelView(object view)
+    {
+        if (SelectedModule?.ViewModel is IThumbnailAware previousAware)
+        {
+            previousAware.OnThumbnailDeactivated();
+        }
+
+        foreach (var module in Modules)
+        {
+            module.IsSelected = false;
+        }
+
+        SelectedModule = null;
+        CurrentModuleView = view;
+        IsMenuOpen = false;
     }
 
     private static void OpenUrl(string url) => Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
