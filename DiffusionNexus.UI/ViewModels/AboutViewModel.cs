@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -7,6 +6,7 @@ using System.Reflection;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.Services.Licensing;
+using DiffusionNexus.UI.Utilities;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -32,7 +32,7 @@ public partial class AboutViewModel : ViewModelBase
     public AboutViewModel(IReadOnlyList<ThirdPartyComponent> components)
     {
         _allComponents = components;
-        Components = new ObservableCollection<ThirdPartyComponent>(_allComponents);
+        Components.ReplaceAll(_allComponents);
         SelectedComponent = Components.FirstOrDefault();
         NoticesFilePath = Path.Combine(AppContext.BaseDirectory, "THIRD-PARTY-NOTICES.txt");
     }
@@ -42,7 +42,15 @@ public partial class AboutViewModel : ViewModelBase
         .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
 
     /// <summary>The components matching <see cref="SearchText"/>.</summary>
-    public ObservableCollection<ThirdPartyComponent> Components { get; }
+    /// <remarks>
+    /// A <see cref="BatchObservableCollection{T}"/> (REUSABLES.md §5) rather than a plain
+    /// <c>ObservableCollection</c>: this rebuilds on every keystroke, and Clear()-then-Add()
+    /// fires a Reset plus one event per surviving row. Worse, the Clear() pushes
+    /// <see cref="SelectedComponent"/> to null through the two-way-bound ListBox before the
+    /// selection is restored, so the detail pane - holding a licence text that can run to
+    /// hundreds of KB - is torn down and rebound once per character typed.
+    /// </remarks>
+    public BatchObservableCollection<ThirdPartyComponent> Components { get; } = [];
 
     /// <summary>How many components ship in total, regardless of the current filter.</summary>
     public int TotalComponentCount => _allComponents.Count;
@@ -64,9 +72,7 @@ public partial class AboutViewModel : ViewModelBase
         var query = value?.Trim() ?? string.Empty;
         var previous = SelectedComponent;
 
-        Components.Clear();
-        foreach (var component in Filter(query))
-            Components.Add(component);
+        Components.ReplaceAll(Filter(query).ToList());
 
         // Keep the selection when it survives the filter; otherwise fall to the first match,
         // so the detail pane never shows a component the list no longer offers.

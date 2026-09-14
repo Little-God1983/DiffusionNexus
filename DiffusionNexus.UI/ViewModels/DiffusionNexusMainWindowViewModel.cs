@@ -344,19 +344,9 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     private void NavigateToModule(ModuleItem? module)
     {
         if (module is null) return;
-        
-        // Deactivate thumbnails for the previous module
-        if (SelectedModule?.ViewModel is IThumbnailAware previousAware)
-        {
-            previousAware.OnThumbnailDeactivated();
-        }
 
-        // Clear previous selection
-        foreach (var m in Modules)
-        {
-            m.IsSelected = false;
-        }
-        
+        DeactivateCurrentModule();
+
         module.IsSelected = true;
         SelectedModule = module;
         CurrentModuleView = module.View;
@@ -421,6 +411,25 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     /// </remarks>
     private void ShowAppLevelView(object view)
     {
+        DeactivateCurrentModule();
+
+        SelectedModule = null;
+        CurrentModuleView = view;
+        IsMenuOpen = false;
+    }
+
+    /// <summary>
+    /// Tears the outgoing module down: stops its thumbnail pipeline and clears every selection
+    /// highlight.
+    /// </summary>
+    /// <remarks>
+    /// Shared by <see cref="NavigateToModule"/> and <see cref="ShowAppLevelView"/>, which had
+    /// two copies of it. One place to add the next teardown step means it cannot be added to
+    /// one path and forgotten on the other - the failure mode being a module left running
+    /// behind a screen that replaced it.
+    /// </remarks>
+    private void DeactivateCurrentModule()
+    {
         if (SelectedModule?.ViewModel is IThumbnailAware previousAware)
         {
             previousAware.OnThumbnailDeactivated();
@@ -430,10 +439,6 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
         {
             module.IsSelected = false;
         }
-
-        SelectedModule = null;
-        CurrentModuleView = view;
-        IsMenuOpen = false;
     }
 
     private static void OpenUrl(string url) => Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
