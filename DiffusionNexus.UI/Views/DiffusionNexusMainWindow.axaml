@@ -52,15 +52,7 @@ x:Name="MainWin">
                                           Margin="14,0,0,0"
                                           Opacity="0.15"
                                           ToolTip.Tip="Toggle Diffusion Canvas (hidden feature)"/>
-                                <Button Width="196" Height="48" Margin="2,2"
-                                        Command="{Binding OpenYoutubeCommand}"
-                                        HorizontalContentAlignment="Left">
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <Image Source="{m:SafeAsset avares://DiffusionNexus.UI/Assets/yt.png}" Width="32" Height="32"/>
-                                        <TextBlock Text="Youtube" VerticalAlignment="Center"
-                                                   IsVisible="{Binding IsMenuOpen}"/>
-                                    </StackPanel>
-                                </Button>
+
                                 <Button Width="196" Height="48" Margin="2,2"
                                         Command="{Binding OpenFeedbackCommand}"
                                         HorizontalContentAlignment="Left">
@@ -73,21 +65,54 @@ x:Name="MainWin">
                                                    IsVisible="{Binding IsMenuOpen}"/>
                                     </StackPanel>
                                 </Button>
+
+                                <!-- Community links. Kept in their own container because
+                                     DiffusionNexus.Installer issue #6 makes this list remote
+                                     (gist/catalog JSON) and variable in length. When that lands,
+                                     ONLY this panel's contents become an ItemsControl; anything
+                                     app-owned must stay outside it so remote data can never
+                                     reorder or displace it. -->
+                                <StackPanel x:Name="CommunityLinks" Spacing="5">
+                                    <Button Width="196" Height="48" Margin="2,2"
+                                            Command="{Binding OpenYoutubeCommand}"
+                                            HorizontalContentAlignment="Left">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <Image Source="{m:SafeAsset avares://DiffusionNexus.UI/Assets/yt.png}" Width="32" Height="32"/>
+                                            <TextBlock Text="Youtube" VerticalAlignment="Center"
+                                                       IsVisible="{Binding IsMenuOpen}"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Width="196" Height="48" Margin="2,2"
+                                            Command="{Binding OpenPatreonCommand}"
+                                            HorizontalContentAlignment="Left">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <Image Source="{m:SafeAsset avares://DiffusionNexus.UI/Assets/patreon.png}" Width="32" Height="32"/>
+                                            <TextBlock Text="Patreon" VerticalAlignment="Center"
+                                                       IsVisible="{Binding IsMenuOpen}"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Width="196" Height="48" Margin="2,2"
+                                            Command="{Binding OpenCivitaiCommand}"
+                                            HorizontalContentAlignment="Left">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <Image Source="{m:SafeAsset avares://DiffusionNexus.UI/Assets/civitai.png}" Width="32" Height="32"/>
+                                            <TextBlock Text="Civitai" VerticalAlignment="Center"
+                                                       IsVisible="{Binding IsMenuOpen}"/>
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
+
+                                <!-- App-owned, deliberately OUTSIDE CommunityLinks. -->
                                 <Button Width="196" Height="48" Margin="2,2"
-                                        Command="{Binding OpenPatreonCommand}"
+                                        Command="{Binding OpenAboutCommand}"
+                                        ToolTip.Tip="Version, warranty and third-party licences"
                                         HorizontalContentAlignment="Left">
                                     <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <Image Source="{m:SafeAsset avares://DiffusionNexus.UI/Assets/patreon.png}" Width="32" Height="32"/>
-                                        <TextBlock Text="Patreon" VerticalAlignment="Center"
-                                                   IsVisible="{Binding IsMenuOpen}"/>
-                                    </StackPanel>
-                                </Button>
-                                <Button Width="196" Height="48" Margin="2,2"
-                                        Command="{Binding OpenCivitaiCommand}"
-                                        HorizontalContentAlignment="Left">
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <Image Source="{m:SafeAsset avares://DiffusionNexus.UI/Assets/civitai.png}" Width="32" Height="32"/>
-                                        <TextBlock Text="Civitai" VerticalAlignment="Center"
+                                        <Border Width="32" Height="32" Background="#3C3C3C" CornerRadius="4">
+                                            <TextBlock Text="ℹ" FontSize="18"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <TextBlock Text="About" VerticalAlignment="Center"
                                                    IsVisible="{Binding IsMenuOpen}"/>
                                     </StackPanel>
                                 </Button>

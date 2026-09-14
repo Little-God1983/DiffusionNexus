@@ -1,7 +1,8 @@
 using DiffusionNexus.Domain.Services;
 using Serilog;
-using Xabe.FFmpeg;
-using Xabe.FFmpeg.Downloader;
+using FFMpegCore;
+using FFMpegCore.Extensions.Downloader;
+using FFMpegCore.Extensions.Downloader.Enums;
 
 namespace DiffusionNexus.Service.Services;
 
@@ -68,45 +69,48 @@ public sealed class VideoThumbnailService : IVideoThumbnailService
             if (_ffmpegInitialized)
                 return;
 
-            var ffmpegBinary = OperatingSystem.IsWindows() ? "ffmpeg.exe" : "ffmpeg";
+            // Each candidate must hold BOTH ffmpeg and ffprobe — FFMpegCore analyses with
+            // ffprobe, so a directory with only ffmpeg passes discovery and then fails at
+            // the first GenerateThumbnailAsync call.
 
-            // 1. Check app-local ffmpeg/ subdirectory (bundled deployment)
+            // 1. App-local ffmpeg/ subdirectory (bundled deployment)
             var ffmpegDir = Path.Combine(AppContext.BaseDirectory, "ffmpeg");
-            var ffmpegExe = Path.Combine(ffmpegDir, ffmpegBinary);
-            if (File.Exists(ffmpegExe))
+            if (FFmpegBinaryLocator.HasBothBinaries(ffmpegDir))
             {
-                FFmpeg.SetExecutablesPath(ffmpegDir);
-                _logger.Information("FFmpeg found in app-local directory: {Path}", ffmpegDir);
-                _ffmpegInitialized = true;
+                UseBinaryFolder(ffmpegDir, "app-local directory");
                 return;
             }
 
-            // 2. Check app base directory root (NuGet-packaged binary)
-            var baseExe = Path.Combine(AppContext.BaseDirectory, ffmpegBinary);
-            if (File.Exists(baseExe))
+            // 2. App base directory root (NuGet-packaged binary)
+            if (FFmpegBinaryLocator.HasBothBinaries(AppContext.BaseDirectory))
             {
-                FFmpeg.SetExecutablesPath(AppContext.BaseDirectory);
-                _logger.Information("FFmpeg found in app base directory: {Path}", AppContext.BaseDirectory);
-                _ffmpegInitialized = true;
+                UseBinaryFolder(AppContext.BaseDirectory, "app base directory");
                 return;
             }
 
-            // 3. Check system PATH — many developers have FFmpeg installed globally
-            // TODO: Linux Implementation for finding FFmpeg on PATH
-            var pathDir = FindFFmpegOnPath(ffmpegBinary);
+            // 3. System PATH — many developers have FFmpeg installed globally
+            var pathDir = FFmpegBinaryLocator.FindOnPath();
             if (pathDir is not null)
             {
-                FFmpeg.SetExecutablesPath(pathDir);
-                _logger.Information("FFmpeg found on system PATH: {Path}", pathDir);
-                _ffmpegInitialized = true;
+                UseBinaryFolder(pathDir, "system PATH");
                 return;
             }
 
-            // 4. Last resort: download to the app-local directory
+            // 4. Last resort: download both binaries into the app-local directory
             _logger.Information("FFmpeg not found locally or on PATH — downloading to {Path}...", ffmpegDir);
             Directory.CreateDirectory(ffmpegDir);
-            FFmpeg.SetExecutablesPath(ffmpegDir);
-            await FFmpegDownloader.GetLatestVersion(FFmpegVersion.Official, ffmpegDir);
+            GlobalFFOptions.Configure(new FFOptions { BinaryFolder = ffmpegDir });
+
+            await FFMpegDownloader.DownloadBinaries(
+                FFMpegVersions.LatestAvailable,
+                FFMpegBinaries.FFMpeg | FFMpegBinaries.FFProbe,
+                new FFOptions { BinaryFolder = ffmpegDir });
+
+            if (!FFmpegBinaryLocator.HasBothBinaries(ffmpegDir))
+                throw new InvalidOperationException(
+                    $"FFmpeg download completed but '{FFmpegBinaryLocator.FFmpegFileName}' and " +
+                    $"'{FFmpegBinaryLocator.FFprobeFileName}' are not both present in '{ffmpegDir}'.");
+
             _ffmpegInitialized = true;
             _logger.Information("FFmpeg downloaded and ready at {Path}", ffmpegDir);
         }
@@ -116,32 +120,11 @@ public sealed class VideoThumbnailService : IVideoThumbnailService
         }
     }
 
-    /// <summary>
-    /// Searches the system PATH environment variable for an FFmpeg executable.
-    /// </summary>
-    /// <returns>The directory containing FFmpeg, or null if not found.</returns>
-    private static string? FindFFmpegOnPath(string ffmpegBinary)
+    private void UseBinaryFolder(string directory, string source)
     {
-        var pathEnv = Environment.GetEnvironmentVariable("PATH");
-        if (string.IsNullOrEmpty(pathEnv))
-            return null;
-
-        var separator = OperatingSystem.IsWindows() ? ';' : ':';
-        foreach (var dir in pathEnv.Split(separator, StringSplitOptions.RemoveEmptyEntries))
-        {
-            try
-            {
-                var candidate = Path.Combine(dir.Trim(), ffmpegBinary);
-                if (File.Exists(candidate))
-                    return dir.Trim();
-            }
-            catch
-            {
-                // Skip invalid PATH entries
-            }
-        }
-
-        return null;
+        GlobalFFOptions.Configure(new FFOptions { BinaryFolder = directory });
+        _logger.Information("FFmpeg found in {Source}: {Path}", source, directory);
+        _ffmpegInitialized = true;
     }
 
     /// <inheritdoc />
@@ -177,13 +160,19 @@ public sealed class VideoThumbnailService : IVideoThumbnailService
             await EnsureFFmpegAvailableAsync(cancellationToken);
 
             // Get video info
-            var mediaInfo = await FFmpeg.GetMediaInfo(videoPath, cancellationToken);
-            var videoStream = mediaInfo.VideoStreams.FirstOrDefault();
+            var analysis = await FFProbe.AnalyseAsync(videoPath, cancellationToken: cancellationToken);
+            var videoStream = analysis.PrimaryVideoStream;
 
             if (videoStream is null)
                 return VideoThumbnailResult.Failed("No video stream found in file");
 
-            var duration = videoStream.Duration;
+            // analysis.Duration, NOT videoStream.Duration: FFMpegCore parses a stream's duration
+            // from ffprobe's per-stream "duration" field only, and Matroska-family containers
+            // (.mkv, .webm - both in SupportedExtensions) report that as N/A, yielding
+            // TimeSpan.Zero. A zero duration clamps capturePosition to 0 even when the caller
+            // supplied one, so every WebM/MKV thumbnail was frame 0 and every result reported a
+            // zero-length video. analysis.Duration is the max of the format and stream durations.
+            var duration = analysis.Duration;
             var capturePosition = options.CapturePosition ?? TimeSpan.FromTicks(duration.Ticks / 2);
 
             // Ensure capture position is within bounds
@@ -194,26 +183,31 @@ public sealed class VideoThumbnailService : IVideoThumbnailService
 
             _logger.Debug("Generating thumbnail for {Path} at {Position}", videoPath, capturePosition);
 
-            // Create snapshot
-            var conversion = await FFmpeg.Conversions
-                .FromSnippet
-                .Snapshot(videoPath, outputPath, capturePosition);
-
-            // Add scaling filter
-            conversion.AddParameter($"-vf scale={options.MaxWidth}:-1", ParameterPosition.PostInput);
-
-            // Set quality based on format
-            var formatExt = GetFormatExtension(options.OutputFormat);
-            if (options.OutputFormat == ThumbnailFormat.Jpeg)
+            // Quality flag differs per encoder: -q:v is an inverted scale, -quality is not.
+            var qualityArgument = options.OutputFormat switch
             {
-                conversion.AddParameter($"-q:v {Math.Max(1, (100 - options.Quality) / 3)}", ParameterPosition.PostInput);
-            }
-            else if (options.OutputFormat == ThumbnailFormat.WebP)
-            {
-                conversion.AddParameter($"-quality {options.Quality}", ParameterPosition.PostInput);
-            }
+                ThumbnailFormat.Jpeg => $"-q:v {Math.Max(1, (100 - options.Quality) / 3)}",
+                ThumbnailFormat.WebP => $"-quality {options.Quality}",
+                _ => string.Empty
+            };
 
-            await conversion.Start(cancellationToken);
+            var succeeded = await FFMpegArguments
+                .FromFileInput(videoPath, verifyExists: true, input => input.Seek(capturePosition))
+                .OutputToFile(outputPath, overwrite: true, output =>
+                {
+                    output.WithFrameOutputCount(1);
+                    output.WithCustomArgument($"-vf scale={options.MaxWidth}:-1");
+                    if (!string.IsNullOrEmpty(qualityArgument))
+                        output.WithCustomArgument(qualityArgument);
+                })
+                .CancellableThrough(cancellationToken)
+                // throwOnError defaults to true, which would turn a non-zero ffmpeg exit into an
+                // exception swallowed by the generic catch below - making the specific message
+                // here unreachable and handing the user the generic one instead.
+                .ProcessAsynchronously(throwOnError: false);
+
+            if (!succeeded)
+                return VideoThumbnailResult.Failed("Thumbnail generation failed - ffmpeg reported failure");
 
             if (!File.Exists(outputPath))
                 return VideoThumbnailResult.Failed("Thumbnail generation failed - output file not created");

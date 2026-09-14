@@ -9,10 +9,10 @@
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
 
     <!-- Assembly metadata (helps with AV reputation / removes "Unknown publisher") -->
-    <Company>AIKnowledge2Go</Company>
+    <Company>Into The Latent</Company>
     <Authors>Christian Wenzl</Authors>
     <Product>DiffusionNexus</Product>
     <Description>Local AI model and dataset manager.</Description>
-    <Copyright>Copyright © AIKnowledge2Go $([System.DateTime]::Now.Year)</Copyright>
+    <Copyright>Copyright © Into The Latent $([System.DateTime]::Now.Year)</Copyright>
   </PropertyGroup>
 </Project>

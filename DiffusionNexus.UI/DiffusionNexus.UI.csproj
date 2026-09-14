@@ -28,6 +28,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The generated third-party index, read by Services/Licensing/ThirdPartyNotices.cs.
+         An EmbeddedResource (not Content) so it survives single-file publish and always
+         matches the binaries inside that exe. LogicalName is load-bearing: the loader asks
+         for it by this exact name. Regenerate with Scripts/Generate-ThirdPartyNotices.ps1. -->
+    <EmbeddedResource Include="..\third-party-notices.json" LogicalName="THIRD-PARTY-NOTICES.json" />
+  </ItemGroup>
+
+  <ItemGroup>
     <AvaloniaResource Remove="Assets\Workflows\**" />
     <AvaloniaXaml Remove="Assets\Workflows\**" />
     <Compile Remove="Assets\Workflows\**" />

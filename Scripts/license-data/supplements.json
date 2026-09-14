@@ -1,0 +1,367 @@
+{
+  "_comment": "Attribution obligations the NuGet restore graph cannot express. Each entry is appended verbatim by Scripts/Generate-ThirdPartyNotices.ps1.",
+  "excludePrefixes": [
+    "DiffusionNexus."
+  ],
+  "licenseOverrides": [
+    {
+      "packageId": "BitMiracle.LibTiff.NET",
+      "license": "BSD-3-Clause",
+      "reason": "Nuspec declares its licence only via the deprecated <licenseUrl> element (https://bitmiracle.github.io/libtiff.net/help/articles/license.html), not a machine-readable <license type=\"expression\"|\"file\">, so the generator cannot resolve an SPDX id automatically. Verified BSD-3-Clause from the project's own license page, 2026-09-14."
+    }
+  ],
+  "bundledNotices": [
+    {
+      "packageId": "Avalonia.Angle.Windows.Natives",
+      "file": "LICENSE",
+      "title": "Avalonia.Angle.Windows.Natives (ANGLE)",
+      "note": "Nuspec declares its licence as a file, not an SPDX expression, so there is no shared licence text to route it to; the package's own LICENSE file is reproduced verbatim instead."
+    },
+    {
+      "packageId": "Microsoft.AI.DirectML",
+      "file": "LICENSE.txt",
+      "title": "Microsoft.AI.DirectML",
+      "note": "Nuspec declares its licence as a file, not an SPDX expression, so there is no shared licence text to route it to; the package's own LICENSE.txt is reproduced verbatim instead."
+    },
+    {
+      "packageId": "Microsoft.ML.OnnxRuntime.DirectML",
+      "file": "LICENSE",
+      "title": "Microsoft.ML.OnnxRuntime.DirectML",
+      "note": "Nuspec declares its licence as a file, not an SPDX expression, so there is no shared licence text to route it to; the package's own LICENSE file is reproduced verbatim instead."
+    },
+    {
+      "packageId": "Microsoft.ML.OnnxRuntime.Managed",
+      "file": "LICENSE.txt",
+      "title": "Microsoft.ML.OnnxRuntime.Managed",
+      "note": "Nuspec declares its licence as a file, not an SPDX expression, so there is no shared licence text to route it to; the package's own LICENSE.txt is reproduced verbatim instead."
+    },
+    {
+      "packageId": "SixLabors.ImageSharp",
+      "file": "LICENSE",
+      "title": "SixLabors.ImageSharp",
+      "note": "Nuspec declares its licence as a file, not an SPDX expression, so there is no shared licence text to route it to; the package's own LICENSE file is reproduced verbatim instead."
+    },
+    {
+      "packageId": "WeCantSpell.Hunspell",
+      "file": "license.txt",
+      "title": "WeCantSpell.Hunspell",
+      "note": "Nuspec declares its licence as a file, not an SPDX expression, so there is no shared licence text to route it to; the package's own license.txt is reproduced verbatim instead."
+    },
+    {
+      "packageId": "SkiaSharp.NativeAssets.Win32",
+      "file": "THIRD-PARTY-NOTICES.txt",
+      "title": "SkiaSharp native assets (libSkiaSharp) - bundled third-party notices",
+      "note": "The nuspec declares MIT, which covers the SkiaSharp binding only. The native libSkiaSharp.dll this package ships is Skia compiled together with ANGLE, FreeType, libpng, libwebp, libjpeg-turbo, expat, ICU, zlib, HarfBuzz and others, each under its own licence; the package carries their combined notice file and it is reproduced here in full. -p:IncludeNativeLibrariesForSelfExtract=true embeds that DLL into the shipped single-file executable, so every one of these obligations travels with the product. The identical file shipped by the Linux, macOS and WebAssembly variants of this package is attested as a byte-for-byte duplicate in noticesAlreadyCovered rather than reproduced four times."
+    },
+    {
+      "packageId": "HarfBuzzSharp.NativeAssets.Win32",
+      "file": "THIRD-PARTY-NOTICES.txt",
+      "title": "HarfBuzzSharp native assets (libHarfBuzzSharp) - bundled third-party notices",
+      "note": "The nuspec declares MIT, which covers the HarfBuzzSharp binding only. The native libHarfBuzzSharp.dll this package ships is HarfBuzz built from the same Skia source tree as libSkiaSharp, and it carries the same combined notice file covering HarfBuzz, FreeType, ICU, Unicode data, zlib and the rest; it is reproduced here in full because the obligation attaches to this package's binary independently of SkiaSharp's. -p:IncludeNativeLibrariesForSelfExtract=true embeds that DLL into the shipped single-file executable. The identical file shipped by the Linux, macOS and WebAssembly variants of this package is attested as a byte-for-byte duplicate in noticesAlreadyCovered."
+    },
+    {
+      "packageId": "System.Composition",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "title": "System.Composition (MEF 2) - bundled third-party notices",
+      "note": "The System.Composition packages are pinned at 9.0.0 and ship the .NET 9 vintage of the runtime third-party notice, which is NOT the same document as the .NET 10 runtime-pack notice reproduced above: it carries the older 1991-2022 Unicode licence wording, 80 lines different. Reproduced separately for that reason. The five System.Composition.* satellites ship a byte-for-byte identical copy and are attested in noticesAlreadyCovered."
+    },
+    {
+      "packageId": "Microsoft.VisualStudio.SolutionPersistence",
+      "file": "NOTICE",
+      "title": "Microsoft.VisualStudio.SolutionPersistence - bundled third-party notices",
+      "note": "The nuspec declares MIT for the library itself. The package additionally carries a NOTICE file recording the third-party material Microsoft incorporated into it, under licences of their own; it is reproduced verbatim because nothing in the restore graph expresses it."
+    },
+    {
+      "packageId": "Microsoft.ML.OnnxRuntime.DirectML",
+      "file": "ThirdPartyNotices.txt",
+      "title": "ONNX Runtime (onnxruntime.dll) - bundled third-party notices",
+      "note": "6,121 lines covering the third-party code compiled INTO onnxruntime.dll: Intel Math Kernel Library, Eigen, protocolbuffers/protobuf, onnx, google/flatbuffers, google/re2, abseil-cpp, SafeInt, pytorch/cpuinfo and many more, each under its own licence. -p:IncludeNativeLibrariesForSelfExtract=true embeds that DLL into the shipped single-file executable, so every one of those obligations travels with the product. This file was invisible to the generator's notice probe until 2026-09-14: the probe matched only the hyphenated spelling THIRD-PARTY-NOTICES*, and Microsoft spells it ThirdPartyNotices.txt. The identical file shipped by Microsoft.ML.OnnxRuntime.Managed is attested as a byte-for-byte duplicate in noticesAlreadyCovered."
+    },
+    {
+      "packageId": "Microsoft.AI.DirectML",
+      "file": "ThirdPartyNotices.txt",
+      "title": "Microsoft.AI.DirectML (DirectML.dll) - bundled third-party notices",
+      "note": "Separate from this package's LICENSE.txt reproduced above: 103 lines of attribution for third-party material compiled into DirectML.dll (Microsoft/GSL, Christian Rau's half float library, and Zstandard under the BSD licence). Self-contained single-file publishing embeds that DLL into the shipped executable. Surfaced by the 2026-09-14 widening of the notice probe to the unhyphenated ThirdPartyNotices.txt spelling."
+    },
+    {
+      "packageId": "CommunityToolkit.Mvvm",
+      "file": "ThirdPartyNotices.txt",
+      "title": "CommunityToolkit.Mvvm - bundled third-party notices",
+      "note": "The nuspec declares MIT for the toolkit itself. The package additionally carries a 142-line notice for third-party material the .NET Community Toolkit incorporates under licences of their own; the source is compiled into the assembly this application ships. CommunityToolkit.HighPerformance carries a byte-for-byte identical copy and is attested in noticesAlreadyCovered. Surfaced by the 2026-09-14 widening of the notice probe."
+    },
+    {
+      "packageId": "Microsoft.CodeAnalysis.Common",
+      "file": "ThirdPartyNotices.rtf",
+      "title": "Microsoft.CodeAnalysis (Roslyn) - bundled third-party notices",
+      "note": "Reproduced verbatim, INCLUDING its RTF container: Microsoft ships this notice as ThirdPartyNotices.rtf and the obligation attaches to the document as published, so it is copied byte for byte rather than converted, which would be an edit to a legal document. ONE deviation, and it is the only one: the file ends '}\\r\\n\\0', and that trailing NUL - a Riched20 container terminator, not notice content - is stripped, because a single NUL makes git class the whole of THIRD-PARTY-NOTICES.txt as binary, so a pull request renders it as 'Binary file ... differs' and the human half of the freshness gate stops working on the one document where a silent change matters most. Nothing inside the document is touched. The readable content is the .NET Compiler Platform notice (MIT, (c) .NET Foundation and Contributors). The four other Microsoft.CodeAnalysis.* packages in the closure ship an identical copy and are attested in noticesAlreadyCovered. Surfaced by the 2026-09-14 widening of the notice probe."
+    },
+    {
+      "packageId": "Microsoft.CodeAnalysis.Analyzers",
+      "file": "ThirdPartyNotices.txt",
+      "title": "Microsoft.CodeAnalysis.Analyzers - bundled third-party notices",
+      "note": "260 lines, a different and longer document than the Roslyn ThirdPartyNotices.rtf above: it repeats the .NET Compiler Platform notice and additionally carries the Humanizer notice, so it is reproduced separately rather than attested as a duplicate. Surfaced by the 2026-09-14 widening of the notice probe."
+    },
+    {
+      "packageId": "Microsoft.Build.Framework",
+      "file": "notices/THIRDPARTYNOTICES.txt",
+      "title": "MSBuild (Microsoft.Build.Framework) - bundled third-party notices",
+      "note": "MSBuild's notice for third-party material it incorporates (LockCheck and others), shipped in a notices/ subdirectory under a spelling with no separators at all. Surfaced by the 2026-09-14 widening of the notice probe; the recursive search already looked in subdirectories, only the filename match was too narrow."
+    }
+  ],
+  "noticesAlreadyCovered": [
+    {
+      "packageId": "Microsoft.Bcl.AsyncInterfaces",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "Microsoft.NETCore.App.Runtime.win-x64",
+      "reason": "Byte-for-byte identical to the .NET runtime-pack notice already reproduced in section 3. The generator re-verifies that equality on every run and throws if it ever stops holding, so this entry cannot go stale silently."
+    },
+    {
+      "packageId": "Microsoft.Bcl.Memory",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "Microsoft.NETCore.App.Runtime.win-x64",
+      "reason": "Byte-for-byte identical to the .NET runtime-pack notice already reproduced in section 3. The generator re-verifies that equality on every run and throws if it ever stops holding, so this entry cannot go stale silently."
+    },
+    {
+      "packageId": "Microsoft.Extensions.Caching.Abstractions",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "Microsoft.NETCore.App.Runtime.win-x64",
+      "reason": "Byte-for-byte identical to the .NET runtime-pack notice already reproduced in section 3. The generator re-verifies that equality on every run and throws if it ever stops holding, so this entry cannot go stale silently."
+    },
+    {
+      "packageId": "Microsoft.Extensions.Caching.Memory",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "Microsoft.NETCore.App.Runtime.win-x64",
+      "reason": "Byte-for-byte identical to the .NET runtime-pack notice already reproduced in section 3. The generator re-verifies that equality on every run and throws if it ever stops holding, so this entry cannot go stale silently."
+    },
+    {
+      "packageId": "Microsoft.Extensions.Configuration",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "Microsoft.NETCore.App.Runtime.win-x64",
+      "reason": "Byte-for-byte identical to the .NET runtime-pack notice already reproduced in section 3. The generator re-verifies that equality on every run and throws if it ever stops holding, so this entry cannot go stale silently."
+    },
+    {
+      "packageId": "Microsoft.Extensions.Configuration.Abstractions",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "Microsoft.NETCore.App.Runtime.win-x64",
+      "reason": "Byte-for-byte identical to the .NET runtime-pack notice already reproduced in section 3. The generator re-verifies that equality on every run and throws if it ever stops holding, so this entry cannot go stale silently."
+    },
+    {
+      "packageId": "Microsoft.Extensions.Configuration.Binder",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "Microsoft.NETCore.App.Runtime.win-x64",
+      "reason": "Byte-for-byte identical to the .NET runtime-pack notice already reproduced in section 3. The generator re-verifies that equality on every run and throws if it ever stops holding, so this entry cannot go stale silently."
+    },
+    {
+      "packageId": "Microsoft.Extensions.DependencyInjection",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "Microsoft.NETCore.App.Runtime.win-x64",
+      "reason": "Byte-for-byte identical to the .NET runtime-pack notice already reproduced in section 3. The generator re-verifies that equality on every run and throws if it ever stops holding, so this entry cannot go stale silently."
+    },
+    {
+      "packageId": "Microsoft.Extensions.DependencyInjection.Abstractions",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "Microsoft.NETCore.App.Runtime.win-x64",
+      "reason": "Byte-for-byte identical to the .NET runtime-pack notice already reproduced in section 3. The generator re-verifies that equality on every run and throws if it ever stops holding, so this entry cannot go stale silently."
+    },
+    {
+      "packageId": "Microsoft.Extensions.DependencyModel",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "Microsoft.NETCore.App.Runtime.win-x64",
+      "reason": "Byte-for-byte identical to the .NET runtime-pack notice already reproduced in section 3. The generator re-verifies that equality on every run and throws if it ever stops holding, so this entry cannot go stale silently."
+    },
+    {
+      "packageId": "Microsoft.Extensions.Diagnostics",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "Microsoft.NETCore.App.Runtime.win-x64",
+      "reason": "Byte-for-byte identical to the .NET runtime-pack notice already reproduced in section 3. The generator re-verifies that equality on every run and throws if it ever stops holding, so this entry cannot go stale silently."
+    },
+    {
+      "packageId": "Microsoft.Extensions.Diagnostics.Abstractions",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "Microsoft.NETCore.App.Runtime.win-x64",
+      "reason": "Byte-for-byte identical to the .NET runtime-pack notice already reproduced in section 3. The generator re-verifies that equality on every run and throws if it ever stops holding, so this entry cannot go stale silently."
+    },
+    {
+      "packageId": "Microsoft.Extensions.Http",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "Microsoft.NETCore.App.Runtime.win-x64",
+      "reason": "Byte-for-byte identical to the .NET runtime-pack notice already reproduced in section 3. The generator re-verifies that equality on every run and throws if it ever stops holding, so this entry cannot go stale silently."
+    },
+    {
+      "packageId": "Microsoft.Extensions.Logging",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "Microsoft.NETCore.App.Runtime.win-x64",
+      "reason": "Byte-for-byte identical to the .NET runtime-pack notice already reproduced in section 3. The generator re-verifies that equality on every run and throws if it ever stops holding, so this entry cannot go stale silently."
+    },
+    {
+      "packageId": "Microsoft.Extensions.Logging.Abstractions",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "Microsoft.NETCore.App.Runtime.win-x64",
+      "reason": "Byte-for-byte identical to the .NET runtime-pack notice already reproduced in section 3. The generator re-verifies that equality on every run and throws if it ever stops holding, so this entry cannot go stale silently."
+    },
+    {
+      "packageId": "Microsoft.Extensions.Options",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "Microsoft.NETCore.App.Runtime.win-x64",
+      "reason": "Byte-for-byte identical to the .NET runtime-pack notice already reproduced in section 3. The generator re-verifies that equality on every run and throws if it ever stops holding, so this entry cannot go stale silently."
+    },
+    {
+      "packageId": "Microsoft.Extensions.Options.ConfigurationExtensions",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "Microsoft.NETCore.App.Runtime.win-x64",
+      "reason": "Byte-for-byte identical to the .NET runtime-pack notice already reproduced in section 3. The generator re-verifies that equality on every run and throws if it ever stops holding, so this entry cannot go stale silently."
+    },
+    {
+      "packageId": "Microsoft.Extensions.Primitives",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "Microsoft.NETCore.App.Runtime.win-x64",
+      "reason": "Byte-for-byte identical to the .NET runtime-pack notice already reproduced in section 3. The generator re-verifies that equality on every run and throws if it ever stops holding, so this entry cannot go stale silently."
+    },
+    {
+      "packageId": "System.CodeDom",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "Microsoft.NETCore.App.Runtime.win-x64",
+      "reason": "Byte-for-byte identical to the .NET runtime-pack notice already reproduced in section 3. The generator re-verifies that equality on every run and throws if it ever stops holding, so this entry cannot go stale silently."
+    },
+    {
+      "packageId": "System.Management",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "Microsoft.NETCore.App.Runtime.win-x64",
+      "reason": "Byte-for-byte identical to the .NET runtime-pack notice already reproduced in section 3. The generator re-verifies that equality on every run and throws if it ever stops holding, so this entry cannot go stale silently."
+    },
+    {
+      "packageId": "System.Numerics.Tensors",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "Microsoft.NETCore.App.Runtime.win-x64",
+      "reason": "Byte-for-byte identical to the .NET runtime-pack notice already reproduced in section 3. The generator re-verifies that equality on every run and throws if it ever stops holding, so this entry cannot go stale silently."
+    },
+    {
+      "packageId": "System.Security.Cryptography.ProtectedData",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "Microsoft.NETCore.App.Runtime.win-x64",
+      "reason": "Byte-for-byte identical to the .NET runtime-pack notice already reproduced in section 3. The generator re-verifies that equality on every run and throws if it ever stops holding, so this entry cannot go stale silently."
+    },
+    {
+      "packageId": "SkiaSharp.NativeAssets.Linux",
+      "file": "THIRD-PARTY-NOTICES.txt",
+      "duplicateOf": "SkiaSharp.NativeAssets.Win32",
+      "reason": "Byte-for-byte identical to the notice reproduced for SkiaSharp.NativeAssets.Win32. This package is in the restore closure but ships no binary into a win-x64 build; its notice is reproduced once, under the Win32 package that does ship. Equality is re-verified on every run."
+    },
+    {
+      "packageId": "SkiaSharp.NativeAssets.macOS",
+      "file": "THIRD-PARTY-NOTICES.txt",
+      "duplicateOf": "SkiaSharp.NativeAssets.Win32",
+      "reason": "Byte-for-byte identical to the notice reproduced for SkiaSharp.NativeAssets.Win32. This package is in the restore closure but ships no binary into a win-x64 build; its notice is reproduced once, under the Win32 package that does ship. Equality is re-verified on every run."
+    },
+    {
+      "packageId": "SkiaSharp.NativeAssets.WebAssembly",
+      "file": "THIRD-PARTY-NOTICES.txt",
+      "duplicateOf": "SkiaSharp.NativeAssets.Win32",
+      "reason": "Byte-for-byte identical to the notice reproduced for SkiaSharp.NativeAssets.Win32. This package is in the restore closure but ships no binary into a win-x64 build; its notice is reproduced once, under the Win32 package that does ship. Equality is re-verified on every run."
+    },
+    {
+      "packageId": "HarfBuzzSharp.NativeAssets.Linux",
+      "file": "THIRD-PARTY-NOTICES.txt",
+      "duplicateOf": "HarfBuzzSharp.NativeAssets.Win32",
+      "reason": "Byte-for-byte identical to the notice reproduced for HarfBuzzSharp.NativeAssets.Win32. This package is in the restore closure but ships no binary into a win-x64 build; its notice is reproduced once, under the Win32 package that does ship. Equality is re-verified on every run."
+    },
+    {
+      "packageId": "HarfBuzzSharp.NativeAssets.macOS",
+      "file": "THIRD-PARTY-NOTICES.txt",
+      "duplicateOf": "HarfBuzzSharp.NativeAssets.Win32",
+      "reason": "Byte-for-byte identical to the notice reproduced for HarfBuzzSharp.NativeAssets.Win32. This package is in the restore closure but ships no binary into a win-x64 build; its notice is reproduced once, under the Win32 package that does ship. Equality is re-verified on every run."
+    },
+    {
+      "packageId": "HarfBuzzSharp.NativeAssets.WebAssembly",
+      "file": "THIRD-PARTY-NOTICES.txt",
+      "duplicateOf": "HarfBuzzSharp.NativeAssets.Win32",
+      "reason": "Byte-for-byte identical to the notice reproduced for HarfBuzzSharp.NativeAssets.Win32. This package is in the restore closure but ships no binary into a win-x64 build; its notice is reproduced once, under the Win32 package that does ship. Equality is re-verified on every run."
+    },
+    {
+      "packageId": "System.Composition.AttributedModel",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "System.Composition",
+      "reason": "Byte-for-byte identical to the notice reproduced for System.Composition, its metapackage. Equality is re-verified on every run."
+    },
+    {
+      "packageId": "System.Composition.Convention",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "System.Composition",
+      "reason": "Byte-for-byte identical to the notice reproduced for System.Composition, its metapackage. Equality is re-verified on every run."
+    },
+    {
+      "packageId": "System.Composition.Hosting",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "System.Composition",
+      "reason": "Byte-for-byte identical to the notice reproduced for System.Composition, its metapackage. Equality is re-verified on every run."
+    },
+    {
+      "packageId": "System.Composition.Runtime",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "System.Composition",
+      "reason": "Byte-for-byte identical to the notice reproduced for System.Composition, its metapackage. Equality is re-verified on every run."
+    },
+    {
+      "packageId": "System.Composition.TypedParts",
+      "file": "THIRD-PARTY-NOTICES.TXT",
+      "duplicateOf": "System.Composition",
+      "reason": "Byte-for-byte identical to the notice reproduced for System.Composition, its metapackage. Equality is re-verified on every run."
+    },
+    {
+      "packageId": "Microsoft.ML.OnnxRuntime.Managed",
+      "file": "ThirdPartyNotices.txt",
+      "duplicateOf": "Microsoft.ML.OnnxRuntime.DirectML",
+      "reason": "Byte-for-byte identical (sha256 fb0af774b4d7cffc..., 331,175 bytes, 6,121 lines) to the ONNX Runtime notice reproduced for Microsoft.ML.OnnxRuntime.DirectML, the package that actually ships onnxruntime.dll. Reproduced once, under the package that carries the binary. Equality is re-verified on every run."
+    },
+    {
+      "packageId": "CommunityToolkit.HighPerformance",
+      "file": "ThirdPartyNotices.txt",
+      "duplicateOf": "CommunityToolkit.Mvvm",
+      "reason": "Byte-for-byte identical (sha256 7774f8b0ab66bfb4..., 8,600 bytes, 142 lines) to the notice reproduced for CommunityToolkit.Mvvm - the .NET Community Toolkit ships one combined notice across its packages. Equality is re-verified on every run."
+    },
+    {
+      "packageId": "Microsoft.CodeAnalysis.CSharp",
+      "file": "ThirdPartyNotices.rtf",
+      "duplicateOf": "Microsoft.CodeAnalysis.Common",
+      "reason": "Byte-for-byte identical (sha256 ef4678850e7e3aaf..., 2,183 bytes) to the Roslyn notice reproduced for Microsoft.CodeAnalysis.Common. Equality is re-verified on every run."
+    },
+    {
+      "packageId": "Microsoft.CodeAnalysis.CSharp.Workspaces",
+      "file": "ThirdPartyNotices.rtf",
+      "duplicateOf": "Microsoft.CodeAnalysis.Common",
+      "reason": "Byte-for-byte identical (sha256 ef4678850e7e3aaf..., 2,183 bytes) to the Roslyn notice reproduced for Microsoft.CodeAnalysis.Common. Equality is re-verified on every run."
+    },
+    {
+      "packageId": "Microsoft.CodeAnalysis.Workspaces.Common",
+      "file": "ThirdPartyNotices.rtf",
+      "duplicateOf": "Microsoft.CodeAnalysis.Common",
+      "reason": "Byte-for-byte identical (sha256 ef4678850e7e3aaf..., 2,183 bytes) to the Roslyn notice reproduced for Microsoft.CodeAnalysis.Common. Equality is re-verified on every run."
+    },
+    {
+      "packageId": "Microsoft.CodeAnalysis.Workspaces.MSBuild",
+      "file": "ThirdPartyNotices.rtf",
+      "duplicateOf": "Microsoft.CodeAnalysis.Common",
+      "reason": "Byte-for-byte identical (sha256 ef4678850e7e3aaf..., 2,183 bytes) to the Roslyn notice reproduced for Microsoft.CodeAnalysis.Common. Equality is re-verified on every run."
+    }
+  ],
+  "supplements": [
+    {
+      "title": ".NET 10 runtime and base class libraries",
+      "license": "MIT",
+      "textFile": "MIT-dotnet-runtime.txt",
+      "note": "Embedded into the application by self-contained single-file publishing. They are part of the shipped artifact but never appear as package entries in the restore graph. The notice files shipped inside the runtime packs themselves are reproduced in section 3."
+    },
+    {
+      "title": "FFmpeg",
+      "license": "SEE-NOTE",
+      "textFile": "FFmpeg-note.txt",
+      "note": "DiffusionNexus does not bundle FFmpeg. When no ffmpeg/ffprobe pair is found on the machine, FFMpegCore.Extensions.Downloader fetches a prebuilt binary from ffbinaries.com - a third-party mirror, not the FFmpeg project's own distribution - and the application runs it as a separate process. Those binaries are covered by their own licence, which travels with them; the Windows builds served by ffbinaries.com are GPL-configured (libx264 and friends), so GPL rather than LGPL-2.1-or-later is what the downloaded build is expected to carry."
+    },
+    {
+      "title": "Inter typeface (bundled by Avalonia.Fonts.Inter)",
+      "license": "OFL-1.1",
+      "textFile": "OFL-1.1.txt",
+      "note": "Copyright 2020 The Inter Project Authors (https://github.com/rsms/inter). This Font Software is licensed under the SIL Open Font License, Version 1.1. Section 1 lists Avalonia.Fonts.Inter as MIT (c) The AvaloniaUI Project, and that is correct for the Avalonia wrapper - but MIT is NOT the licence of the font data the wrapper carries. Avalonia.Fonts.Inter 11.3.13 embeds six Inter TTFs (Inter-Thin, Inter-Light, Inter-Regular, Inter-Medium, Inter-SemiBold, Inter-Bold, version 3.019) as Avalonia resources, and Program.cs calls .WithInterFont(), so those fonts ship inside the application and render its UI. The OFL requires this copyright notice, this licence statement and the full licence text below to accompany every copy of the Font Software. The copyright line, the licence statement and the version were read out of the fonts' own OpenType name table inside the shipped assembly (name IDs 0, 13 and 5); the licence text below is the canonical SIL text from https://openfontlicense.org/documents/OFL.txt, minus the per-font copyright template at its head, which this NOTE supplies for real."
+    }
+  ]
+}

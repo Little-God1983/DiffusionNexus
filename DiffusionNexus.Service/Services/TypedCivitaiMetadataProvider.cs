@@ -1,8 +1,3 @@
-/*
- * Licensed under the terms found in the LICENSE file in the root directory.
- * For non-commercial use only. See LICENSE for details.
- */
-
 using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Service.Classes;

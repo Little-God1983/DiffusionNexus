@@ -344,19 +344,9 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     private void NavigateToModule(ModuleItem? module)
     {
         if (module is null) return;
-        
-        // Deactivate thumbnails for the previous module
-        if (SelectedModule?.ViewModel is IThumbnailAware previousAware)
-        {
-            previousAware.OnThumbnailDeactivated();
-        }
 
-        // Clear previous selection
-        foreach (var m in Modules)
-        {
-            m.IsSelected = false;
-        }
-        
+        DeactivateCurrentModule();
+
         module.IsSelected = true;
         SelectedModule = module;
         CurrentModuleView = module.View;
@@ -392,7 +382,7 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     [RelayCommand]
     private void OpenSettings()
     {
-        CurrentModuleView = new SettingsView();
+        ShowAppLevelView(new SettingsView());
     }
 
     [RelayCommand]
@@ -407,7 +397,48 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     [RelayCommand]
     private void OpenAbout()
     {
-        CurrentModuleView = new AboutView();
+        ShowAppLevelView(new AboutView());
+    }
+
+    /// <summary>
+    /// Shows a view that is not a registered module (Settings, About).
+    /// </summary>
+    /// <remarks>
+    /// Performs the same teardown as <see cref="NavigateToModule"/>: without it the outgoing
+    /// module keeps its selection highlight while an unrelated screen is displayed, and an
+    /// <see cref="IThumbnailAware"/> module keeps its thumbnail pipeline running behind a view
+    /// that is no longer on screen.
+    /// </remarks>
+    private void ShowAppLevelView(object view)
+    {
+        DeactivateCurrentModule();
+
+        SelectedModule = null;
+        CurrentModuleView = view;
+        IsMenuOpen = false;
+    }
+
+    /// <summary>
+    /// Tears the outgoing module down: stops its thumbnail pipeline and clears every selection
+    /// highlight.
+    /// </summary>
+    /// <remarks>
+    /// Shared by <see cref="NavigateToModule"/> and <see cref="ShowAppLevelView"/>, which had
+    /// two copies of it. One place to add the next teardown step means it cannot be added to
+    /// one path and forgotten on the other - the failure mode being a module left running
+    /// behind a screen that replaced it.
+    /// </remarks>
+    private void DeactivateCurrentModule()
+    {
+        if (SelectedModule?.ViewModel is IThumbnailAware previousAware)
+        {
+            previousAware.OnThumbnailDeactivated();
+        }
+
+        foreach (var module in Modules)
+        {
+            module.IsSelected = false;
+        }
     }
 
     private static void OpenUrl(string url) => Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });

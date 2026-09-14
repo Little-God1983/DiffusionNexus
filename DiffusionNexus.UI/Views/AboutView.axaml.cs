@@ -1,11 +1,11 @@
-using Avalonia.Controls;
+using DiffusionNexus.UI.ViewModels;
 
 namespace DiffusionNexus.UI.Views;
 
 /// <summary>
-/// About view displaying application information.
+/// About view: application identity and third-party attribution.
 /// </summary>
-public partial class AboutView : UserControl
+public partial class AboutView : ViewBase<AboutViewModel>
 {
     public AboutView()
     {

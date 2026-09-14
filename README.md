@@ -48,7 +48,7 @@ dotnet test
 
 ### Key Dependencies
 - **Avalonia** – Cross-platform UI framework
-- **Xabe.FFmpeg** – Downloads platform specific FFmpeg binaries on first run to capture frames from videos.
+- **FFMpegCore** – Downloads platform specific FFmpeg binaries on first run to capture frames from videos.
 - **SkiaSharp** – Image processing, decodes GIFs and encodes WebP images.
 - **Entity Framework Core** – SQLite database for metadata caching.
 - **ONNX Runtime** – Local AI model inference for background removal and upscaling.
@@ -64,7 +64,13 @@ dotnet test
 | `DiffusionNexus.Civitai` | Civitai API client |
 | `DiffusionNexus.Tests` | Unit and integration tests |
 
-## License
+## Licence
 
-This repository is provided for non‑commercial use only. See the [LICENSE](LICENSE) file for details.
+DiffusionNexus is released under the [MIT License](LICENSE).
+
+Third-party components are listed with their licences in
+[THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt), which also ships next to the
+application and is viewable in-app under **About**. The file is generated from the
+restore graph by `Scripts/Generate-ThirdPartyNotices.ps1` and verified on every pull
+request — do not edit it by hand.
 
