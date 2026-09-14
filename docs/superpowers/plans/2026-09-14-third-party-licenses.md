@@ -633,6 +633,15 @@ function Normalize-Text { param([string]$Text) ; return ($Text -replace "`r`n", 
 
 # Blank out version numbers in the shapes THIS script emits, and nowhere else. Targeting our
 # own line formats keeps version strings inside reproduced licence texts untouched.
+#
+# KNOWN LIMIT: the section-1 pattern can consume at most 14 characters of the licence-label
+# field, so a licence id LONGER than 14 characters (LGPL-2.1-or-later, CC-BY-NC-SA-3.0) leaves
+# its line un-normalised, and that component's version does take part in the -Check comparison.
+# Deliberate: a width-independent pattern would also match lines inside reproduced licence texts
+# that end in a version-like token, normalising away genuine drift in a legal document.
+# Over-reporting drift is the safe direction of error — the failure mode is one CI run whose
+# message already says to regenerate and commit. Inert today: every floating-version package in
+# this graph (EF Core, Microsoft.Extensions.*) is MIT.
 function Normalize-Versions {
     param([string]$Text)
     $v = '\d+\.\d+(?:\.\d+)*(?:-[0-9A-Za-z.\-]+)?'
