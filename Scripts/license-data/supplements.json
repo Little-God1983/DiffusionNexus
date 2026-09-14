@@ -1,0 +1,59 @@
+{
+  "_comment": "Attribution obligations the NuGet restore graph cannot express. Each entry is appended verbatim by Scripts/Generate-ThirdPartyNotices.ps1.",
+  "excludePrefixes": [
+    "DiffusionNexus.",
+    "BitMiracle.LibTiff.NET"
+  ],
+  "bundledNotices": [
+    {
+      "packageId": "Avalonia.Angle.Windows.Natives",
+      "file": "LICENSE",
+      "title": "Avalonia.Angle.Windows.Natives (ANGLE)"
+    },
+    {
+      "packageId": "Microsoft.AI.DirectML",
+      "file": "LICENSE.txt",
+      "title": "Microsoft.AI.DirectML"
+    },
+    {
+      "packageId": "Microsoft.ML.OnnxRuntime.DirectML",
+      "file": "LICENSE",
+      "title": "Microsoft.ML.OnnxRuntime.DirectML"
+    },
+    {
+      "packageId": "Microsoft.ML.OnnxRuntime.Managed",
+      "file": "LICENSE.txt",
+      "title": "Microsoft.ML.OnnxRuntime.Managed"
+    },
+    {
+      "packageId": "SixLabors.ImageSharp",
+      "file": "LICENSE",
+      "title": "SixLabors.ImageSharp"
+    },
+    {
+      "packageId": "WeCantSpell.Hunspell",
+      "file": "license.txt",
+      "title": "WeCantSpell.Hunspell"
+    }
+  ],
+  "supplements": [
+    {
+      "title": "BitMiracle.LibTiff.NET",
+      "license": "BSD-3-Clause",
+      "textFile": "BitMiracle-LibTiff-NET-license.txt",
+      "note": "Restore-graph dependency whose nuspec declares its license only via the deprecated <licenseUrl> element (no machine-readable <license type=\"expression\"|\"file\">), so the generator cannot resolve it automatically. Text sourced verbatim from https://bitmiracle.github.io/libtiff.net/help/articles/license.html (BSD-3-Clause; SPDX id per the project's own license page), 2026-09-14."
+    },
+    {
+      "title": ".NET 10 runtime and base class libraries",
+      "license": "MIT",
+      "textFile": "MIT-dotnet-runtime.txt",
+      "note": "Embedded into the application by self-contained single-file publishing. They are part of the shipped artifact but never appear as package entries in the restore graph. The notice files shipped inside the runtime packs themselves are reproduced in section 3."
+    },
+    {
+      "title": "FFmpeg",
+      "license": "SEE-NOTE",
+      "textFile": "FFmpeg-note.txt",
+      "note": "DiffusionNexus does not bundle FFmpeg. When no ffmpeg/ffprobe pair is found on the machine, the application downloads official builds at runtime and runs them as a separate process. Those binaries are covered by their own licence (LGPL-2.1-or-later, or GPL for some builds), which travels with them."
+    }
+  ]
+}

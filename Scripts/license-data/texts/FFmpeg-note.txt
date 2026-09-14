@@ -1,0 +1,9 @@
+DiffusionNexus does not distribute FFmpeg.
+
+When no ffmpeg/ffprobe pair is present on the machine, the application downloads
+official FFmpeg builds at runtime and executes them as a separate process. Those
+binaries are covered by their own license, which is distributed with them.
+
+FFmpeg is free software licensed under the GNU Lesser General Public License
+version 2.1 or later. Some builds, configured with certain options, are licensed
+under the GNU General Public License. See https://ffmpeg.org/legal.html
