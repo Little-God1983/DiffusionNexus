@@ -147,7 +147,10 @@ Write-Host "Cleaning project artifacts..."
 Write-SubHeader "Generating Third-Party Notices"
 & dotnet restore $Project -r $Runtime -p:SelfContained=true
 if ($LASTEXITCODE -ne 0) { Write-Host "RESTORE FAILED!" -ForegroundColor Red; exit $LASTEXITCODE }
-& pwsh (Join-Path $ScriptDir "Scripts/Generate-ThirdPartyNotices.ps1")
+# The RID is passed explicitly: the generator defaults to win-x64, and the restore above uses
+# $Runtime. They agreed only by coincidence, and a generator run against a RID the project was
+# never restored for finds zero runtime-pack notices.
+& pwsh (Join-Path $ScriptDir "Scripts/Generate-ThirdPartyNotices.ps1") -RuntimeIdentifier $Runtime
 if ($LASTEXITCODE -ne 0) { Write-Host "NOTICES GENERATION FAILED!" -ForegroundColor Red; exit $LASTEXITCODE }
 
 & dotnet publish $Project `
@@ -349,6 +352,17 @@ if (-not (Test-Path $NoticesSource)) {
 }
 Copy-Item -Path $NoticesSource -Destination (Join-Path $OutputDir "THIRD-PARTY-NOTICES.txt") -Force
 Write-Host "Third-party notices copied to publish folder." -ForegroundColor Green
+
+# Ship the product's OWN licence too. MIT requires the licence text and copyright notice to
+# accompany every copy of the software, so a zip carrying only third-party notices satisfies
+# everyone else's terms and not our own.
+$LicenseSource = Join-Path $ScriptDir "LICENSE"
+if (-not (Test-Path $LicenseSource)) {
+    Write-Host "LICENSE is missing from the repository root!" -ForegroundColor Red
+    exit 1
+}
+Copy-Item -Path $LicenseSource -Destination (Join-Path $OutputDir "LICENSE") -Force
+Write-Host "Product LICENSE copied to publish folder." -ForegroundColor Green
 
 # Show output files
 Write-SubHeader "Output Files (Unzipped - For Quick Testing)"

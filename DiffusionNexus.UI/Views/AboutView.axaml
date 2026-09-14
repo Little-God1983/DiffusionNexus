@@ -21,6 +21,10 @@
         <TextBlock Text="Build:" FontWeight="SemiBold"/>
         <TextBlock Text="{Binding AppVersion}" FontStyle="Italic" FontSize="14"/>
       </StackPanel>
+      <!-- The product's own licence. The screen below lists everyone else's terms; without this
+           line it never states the terms this application itself is offered under. -->
+      <TextBlock Text="Licensed under the MIT License. See LICENSE beside the executable."
+                 FontSize="13" Opacity="0.85"/>
       <TextBlock TextWrapping="Wrap" FontWeight="Bold" Foreground="#FF6B6B">
         No Warranty: This software is provided 'as is', without any warranty of any kind, express or implied.
       </TextBlock>
