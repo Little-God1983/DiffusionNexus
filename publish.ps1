@@ -140,6 +140,16 @@ Write-SubHeader "Building and Publishing"
 Write-Host "Cleaning project artifacts..."
 & dotnet clean $Project --configuration $Configuration
 
+# Regenerate the notices BEFORE publishing. The JSON index is an EmbeddedResource, so it is
+# baked into the exe at build time — regenerating afterwards would ship a screen showing
+# patch-stale versions next to a text file showing exact ones. A release that cannot produce
+# its notices is not a release, so a failure here stops the publish.
+Write-SubHeader "Generating Third-Party Notices"
+& dotnet restore $Project -r $Runtime -p:SelfContained=true
+if ($LASTEXITCODE -ne 0) { Write-Host "RESTORE FAILED!" -ForegroundColor Red; exit $LASTEXITCODE }
+& pwsh (Join-Path $ScriptDir "Scripts/Generate-ThirdPartyNotices.ps1")
+if ($LASTEXITCODE -ne 0) { Write-Host "NOTICES GENERATION FAILED!" -ForegroundColor Red; exit $LASTEXITCODE }
+
 & dotnet publish $Project `
     --configuration $Configuration `
     --runtime $Runtime `
@@ -330,6 +340,15 @@ Console.WriteLine(`$"Clean database created. Only DatasetCategories seeded (Rows
     Write-Host "  1. Run the Configurator to create configurations"
     Write-Host "  2. Run this script again"
 }
+
+# Ship the flat notices document beside the exe so it lands in the zip.
+$NoticesSource = Join-Path $ScriptDir "THIRD-PARTY-NOTICES.txt"
+if (-not (Test-Path $NoticesSource)) {
+    Write-Host "THIRD-PARTY-NOTICES.txt is missing after generation!" -ForegroundColor Red
+    exit 1
+}
+Copy-Item -Path $NoticesSource -Destination (Join-Path $OutputDir "THIRD-PARTY-NOTICES.txt") -Force
+Write-Host "Third-party notices copied to publish folder." -ForegroundColor Green
 
 # Show output files
 Write-SubHeader "Output Files (Unzipped - For Quick Testing)"
