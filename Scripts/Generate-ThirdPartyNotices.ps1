@@ -226,6 +226,19 @@ if ($runtimePacks.Count -eq 0 -and -not $AllowNoRuntimePacks) {
 }
 
 # ------------------------------------------------------- resolve licence texts
+#
+# Every file under Scripts/license-data/texts/ is reproduced VERBATIM into the shipped legal
+# document (Get-Content -Raw, no stripping) — so none of them may carry anything we authored.
+# They must be byte-faithful to their canonical licence source.
+#
+# In particular: MIT.txt is the canonical SPDX MIT body (https://spdx.org/licenses/MIT.html)
+# with the "Copyright (c) <year> <holder>" placeholder line removed. That is safe ONLY because
+# the per-package copyright line is emitted separately, from nuspec metadata, immediately above
+# this text in section 2 (see the "Applies to the following components" loop below) — so every
+# MIT component still gets a copyright line, just not from this shared file. This holds only
+# while every MIT component in the graph declares a real copyright or authors field; if one ever
+# doesn't, that component prints "(no copyright notice declared)" instead, and at that point
+# MIT.txt should get the placeholder line back rather than silently attributing to no one.
 function Get-LicenseTextFor {
     param([pscustomobject]$Component)
     if ($Component.License -eq 'FILE') {
