@@ -48,12 +48,53 @@ public class ThirdPartyNoticesTests
     [InlineData("HPPH.SkiaSharp")]
     [InlineData("SixLabors.ImageSharp")]
     [InlineData("Avalonia.Fonts.Inter")]
+    [InlineData("SkiaSharp.NativeAssets.Win32")]
+    [InlineData("HarfBuzzSharp.NativeAssets.Win32")]
     public void WhenLoadedThenComponentsCarryingObligationsArePresent(string packageId)
     {
         // A copyleft/OFL canary. If a generator change ever drops the components that carry
         // real obligations, this fails instead of a lawyer noticing.
         ThirdPartyNotices.Load()
             .Should().Contain(c => c.Id == packageId);
+    }
+
+    [Theory]
+    [InlineData("LibVLCSharp", "LGPL")]
+    [InlineData("LibVLCSharp.Avalonia", "LGPL")]
+    [InlineData("VideoLAN.LibVLC.Windows", "LGPL")]
+    [InlineData("HPPH.SkiaSharp", "LGPL")]
+    [InlineData("Inter typeface (bundled by Avalonia.Fonts.Inter)", "OFL")]
+    public void WhenLoadedThenObligationBearingComponentsReportTheExpectedLicense(
+        string id, string expectedLicenseFragment)
+    {
+        // Presence alone is not the property that matters: a component can be listed under the
+        // WRONG licence, which reads as attribution while asserting something false. That is
+        // exactly what happened to the Inter typeface - Avalonia.Fonts.Inter is MIT, but the six
+        // Inter TTFs it embeds and .WithInterFont() renders with are SIL OFL 1.1, so the MIT line
+        // was the wrapper's licence standing in for the font data's. Nothing failed; a human had
+        // to notice. This asserts the licence, so the next one fails here instead.
+        var component = ThirdPartyNotices.Load().SingleOrDefault(c => c.Id == id);
+
+        component.Should().NotBeNull($"'{id}' carries a real licence obligation and must be listed");
+        component!.License.Should().Contain(
+            expectedLicenseFragment,
+            $"'{id}' is licensed under {expectedLicenseFragment}, and a different id here would be a false claim");
+    }
+
+    [Fact]
+    public void WhenNativeSkiaIsLoadedThenItsBundledNoticeTravelsWithIt()
+    {
+        // SkiaSharp's nuspec says MIT, which covers the binding only: libSkiaSharp.dll is Skia
+        // compiled together with ANGLE, FreeType, libpng and others, and the package ships their
+        // combined ~2,700-line notice, which self-contained publishing embeds into our exe. The
+        // generator reproduced runtime-pack notices but not package-carried ones, so this was
+        // silently absent - and the -Check freshness gate could never see it, because a gap in
+        // the generator is missing from both sides of its comparison.
+        var component = ThirdPartyNotices.Load()
+            .Single(c => c.Id == "SkiaSharp.NativeAssets.Win32");
+
+        component.LicenseText.Should().Contain("FreeType", "the bundled native notice must be reproduced, not just the binding's MIT");
+        component.LicenseText.Should().Contain("libpng");
     }
 
     [Fact]

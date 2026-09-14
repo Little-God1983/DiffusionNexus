@@ -1,9 +1,4 @@
-﻿/*
- * Licensed under the terms found in the LICENSE file in the root directory.
- * For non-commercial use only. See LICENSE for details.
- */
-
-namespace DiffusionNexus.Service.Classes
+﻿namespace DiffusionNexus.Service.Classes
 {
     public class CustomTagMap
     {

@@ -23,6 +23,15 @@
     rather than silently shipping a notices document missing ~1000+ lines of required
     attribution (zlib, Brotli, ICU, Unicode data).
 
+    Packages other than the runtime packs carry notice files too - SkiaSharp and HarfBuzzSharp
+    ship ~2,700 lines covering the native code compiled into libSkiaSharp.dll and
+    libHarfBuzzSharp.dll, which self-contained publishing embeds into the exe. Every package in
+    the closure is therefore probed for a notice file, and the script refuses to emit unless
+    each one found is either reproduced (a bundledNotices entry) or attested as a byte-for-byte
+    duplicate of one that is (a noticesAlreadyCovered entry, re-verified on every run). This has
+    to be structural: -Check compares generated output against committed output, so a notice the
+    generator never looks for is missing from both sides and compares equal.
+
     Hand-authored entries the graph cannot express live in Scripts/license-data/supplements.json.
 
 .PARAMETER ProjectDir
@@ -192,6 +201,24 @@ foreach ($c in ($components | Where-Object { $_.License -eq 'FILE' })) {
     }
 }
 
+# ------------------------------------------------------------- notice files
+# A "notice file" is a package's own THIRD-PARTY-NOTICES / NOTICE document: attribution for
+# third-party code compiled INTO that package's binaries, which no licence expression can
+# express. The search is recursive, and returns EVERY match rather than the first, because a
+# package that splits its notice or moves it into a subdirectory must not lose the remainder
+# silently - that is the whole failure mode this script exists to prevent.
+function Get-NoticeFiles {
+    param([string]$Dir)
+    return @(Get-ChildItem -Path $Dir -File -Recurse -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like 'THIRD-PARTY-NOTICES*' -or $_.Name -like 'NOTICE*' } |
+        Sort-Object FullName)
+}
+
+function Get-NoticeRelativePath {
+    param([string]$Dir, [string]$FullName)
+    return (($FullName.Substring($Dir.Length + 1)) -replace '\\', '/')
+}
+
 # ---------------------------------------------- runtime packs (self-contained)
 # downloadDependencies is only populated per-RID: a plain 'dotnet restore' leaves it empty
 # (or a lone null entry) and this loop would silently do nothing. The -RuntimeIdentifier
@@ -204,13 +231,12 @@ foreach ($fw in $graph.project.frameworks.PSObject.Properties) {
         $v = (($d.version -replace '[\[\]\(\)]', '') -split ',')[0].Trim()
         $dir = Join-Path $nugetRoot $d.name.ToLowerInvariant() $v.ToLowerInvariant()
         if (-not (Test-Path $dir)) { continue }
-        $file = Get-ChildItem -Path $dir -Filter 'THIRD-PARTY-NOTICES*' -File -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($file) {
-            $runtimePacks += [pscustomobject]@{ Name = $d.name; Version = $v; File = $file.FullName }
+        foreach ($file in (Get-NoticeFiles $dir)) {
+            $runtimePacks += [pscustomobject]@{ Name = $d.name; Version = $v; FileName = $file.Name; File = $file.FullName }
         }
     }
 }
-$runtimePacks = @($runtimePacks | Sort-Object Name, Version | Group-Object Name | ForEach-Object { $_.Group[0] })
+$runtimePacks = @($runtimePacks | Sort-Object Name, Version, FileName | Group-Object Name, FileName | ForEach-Object { $_.Group[0] })
 Write-Host ("Runtime pack notices  : {0}" -f $runtimePacks.Count)
 
 # Self-contained single-file publishing embeds these packs into the shipped exe, carrying
@@ -224,6 +250,68 @@ if ($runtimePacks.Count -eq 0 -and -not $AllowNoRuntimePacks) {
           "-- then re-run this script. Pass -AllowNoRuntimePacks only for a deliberate " +
           "framework-dependent build that will never embed the runtime packs."
 }
+
+# ------------------------------------------------------ fail-closed notice probe
+# -Check can never catch a gap in THIS generator: it compares generated output against
+# committed output, so a notice file the generator never looks for is absent from both sides
+# and compares equal. The defence has to be structural. Probe every package in the closure and
+# refuse to emit unless each notice file found is either
+#   reproduced - a bundledNotices entry naming that exact file, or
+#   attested   - a noticesAlreadyCovered entry naming a reproduction it duplicates byte for
+#                byte, RE-VERIFIED here on every run so the attestation cannot rot silently.
+# Anything else throws, naming the package and the file.
+$coveredEntries = @($supplements.noticesAlreadyCovered)
+
+foreach ($cov in $coveredEntries) {
+    $pkg = $components | Where-Object { $_.Id -eq $cov.packageId } | Select-Object -First 1
+    if (-not $pkg) {
+        throw "noticesAlreadyCovered entry for '$($cov.packageId)' is no longer in the restore graph. Update supplements.json."
+    }
+    $own = Join-Path $pkg.PackageDir $cov.file
+    if (-not (Test-Path $own)) {
+        throw "noticesAlreadyCovered entry for '$($cov.packageId)' names '$($cov.file)', which that package does not contain. Update supplements.json."
+    }
+
+    # duplicateOf points at something this document actually reproduces: a runtime pack
+    # (section 3's first half) or a bundledNotices package (its second half).
+    $sourceFile = $null
+    $rp = $runtimePacks | Where-Object { $_.Name -eq $cov.duplicateOf } | Select-Object -First 1
+    if ($rp) {
+        $sourceFile = $rp.File
+    }
+    else {
+        $src = $supplements.bundledNotices | Where-Object { $_.packageId -eq $cov.duplicateOf } | Select-Object -First 1
+        if ($src) {
+            $srcPkg = $components | Where-Object { $_.Id -eq $src.packageId } | Select-Object -First 1
+            if ($srcPkg) { $sourceFile = Join-Path $srcPkg.PackageDir $src.file }
+        }
+    }
+    if (-not $sourceFile -or -not (Test-Path $sourceFile)) {
+        throw "noticesAlreadyCovered entry for '$($cov.packageId)' claims to duplicate '$($cov.duplicateOf)', which this document does not reproduce (no such runtime pack and no such bundledNotices package in this graph)."
+    }
+
+    if ((Normalize-Text (Get-Content $own -Raw)) -cne (Normalize-Text (Get-Content $sourceFile -Raw))) {
+        throw "Package '$($cov.packageId)' no longer ships the same '$($cov.file)' as '$($cov.duplicateOf)'. The notice has diverged, so it must be reproduced through its own bundledNotices entry instead of being attested as a duplicate."
+    }
+}
+
+$uncovered = @()
+foreach ($c in $components) {
+    foreach ($file in (Get-NoticeFiles $c.PackageDir)) {
+        $rel = Get-NoticeRelativePath $c.PackageDir $file.FullName
+        if ($supplements.bundledNotices     | Where-Object { $_.packageId -eq $c.Id -and $_.file -eq $rel }) { continue }
+        if ($coveredEntries                 | Where-Object { $_.packageId -eq $c.Id -and $_.file -eq $rel }) { continue }
+        $uncovered += ("{0} {1} :: {2}" -f $c.Id, $c.Version, $rel)
+    }
+}
+if ($uncovered.Count -gt 0) {
+    throw ("These packages carry a notice file that this document neither reproduces nor attests as already covered:`n  " +
+           ($uncovered -join "`n  ") +
+           "`nIn Scripts/license-data/supplements.json, add a bundledNotices entry naming the file (to reproduce it verbatim), " +
+           "or - only if the file is byte-for-byte identical to a notice already reproduced - a noticesAlreadyCovered entry with " +
+           "duplicateOf and reason. A notice file that is neither is ~unbounded missing attribution in a legal document.")
+}
+Write-Host ("Package notice files  : {0} attested as duplicates of a reproduced notice" -f $coveredEntries.Count)
 
 # ------------------------------------------------------- resolve licence texts
 #
@@ -241,11 +329,12 @@ if ($runtimePacks.Count -eq 0 -and -not $AllowNoRuntimePacks) {
 # MIT.txt should get the placeholder line back rather than silently attributing to no one.
 function Get-LicenseTextFor {
     param([pscustomobject]$Component)
+    # A FILE-licensed component has no SPDX text to route to: its licence IS one of its bundled
+    # files, emitted by the bundled-notice loops (section 3 of the document, and the per-package
+    # loop of the JSON index). Routing it here as well would print it twice, and picking "the
+    # first bundled entry" would pick the wrong file for a package that has more than one.
     if ($Component.License -eq 'FILE') {
-        $b = $supplements.bundledNotices | Where-Object { $_.packageId -eq $Component.Id } | Select-Object -First 1
-        $file = Join-Path $Component.PackageDir $b.file
-        if (-not (Test-Path $file)) { throw "Notice file '$($b.file)' not found in package '$($Component.Id)'." }
-        return (Get-Content $file -Raw).TrimEnd()
+        throw "Get-LicenseTextFor called for FILE-licensed component '$($Component.Id)'; its text comes from its bundledNotices entries."
     }
     $textFile = Join-Path $textsDir ($Component.License + '.txt')
     if (-not (Test-Path $textFile)) {
@@ -390,6 +479,20 @@ $text = $sb.ToString() -replace "`r`n", "`n" -replace "`n", "`r`n"
 # ----------------------------------------------------------------- JSON index
 $jsonComponents = @()
 foreach ($c in $components) {
+    # Carry everything the text document carries for this component, in the same order, so the
+    # two can never disagree: the licence text, then every notice file bundled for it, each
+    # behind the NOTE that explains why it is there. Both were previously dropped here - the
+    # About screen showed a bare MIT for SkiaSharp while the text file reproduced 2,716 lines
+    # of native attribution, and showed FILE-licensed packages' texts with no explanation.
+    $parts = @()
+    if ($c.License -ne 'FILE') { $parts += (Get-LicenseTextFor $c) }
+    foreach ($b in ($supplements.bundledNotices | Where-Object { $_.packageId -eq $c.Id })) {
+        $file = Join-Path $c.PackageDir $b.file
+        if (-not (Test-Path $file)) { throw "Notice file '$($b.file)' not found in package '$($c.Id)'." }
+        if ($b.note) { $parts += ("NOTE: " + $b.note) }
+        $parts += (Get-Content $file -Raw).TrimEnd()
+    }
+
     $jsonComponents += [pscustomobject][ordered]@{
         id          = $c.Id
         version     = $c.Version
@@ -397,12 +500,18 @@ foreach ($c in $components) {
         copyright   = $c.Copyright
         authors     = $c.Authors
         projectUrl  = $c.ProjectUrl
-        licenseText = Normalize-Text (Get-LicenseTextFor $c)
+        licenseText = Normalize-Text ($parts -join "`n`n")
     }
+}
+# A pack contributing more than one notice file would otherwise produce two rows with the same
+# id, which reads as a duplicate rather than as two documents.
+$rpFileCounts = @{}
+foreach ($rp in $runtimePacks) {
+    if ($rpFileCounts.ContainsKey($rp.Name)) { $rpFileCounts[$rp.Name]++ } else { $rpFileCounts[$rp.Name] = 1 }
 }
 foreach ($rp in $runtimePacks) {
     $jsonComponents += [pscustomobject][ordered]@{
-        id          = $rp.Name
+        id          = if ($rpFileCounts[$rp.Name] -gt 1) { "{0} ({1})" -f $rp.Name, $rp.FileName } else { $rp.Name }
         version     = $rp.Version
         license     = 'MIT'
         copyright   = 'Copyright (c) .NET Foundation and Contributors'

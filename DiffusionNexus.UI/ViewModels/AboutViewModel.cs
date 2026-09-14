@@ -94,9 +94,19 @@ public partial class AboutViewModel : ViewModelBase
         if (string.IsNullOrWhiteSpace(url))
             return;
 
+        // This string comes from third-party nuspec metadata, and UseShellExecute hands
+        // whatever it is to the shell — a file:, ms-settings: or executable path would be
+        // launched just as happily as a web page. Only http(s) may through.
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            Serilog.Log.Warning("Refusing to open non-http(s) project URL {Url}", url);
+            return;
+        }
+
         try
         {
-            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
         }
         catch (Exception ex)
         {

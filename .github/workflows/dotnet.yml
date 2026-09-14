@@ -28,6 +28,8 @@ jobs:
 
     - name: Restore for third-party notices check (RID-specific, self-contained)
       run: dotnet restore DiffusionNexus.UI -r win-x64 -p:SelfContained=true
+      env:
+        GITHUB_PACKAGES_TOKEN: ${{ secrets.PACKAGES_PAT }}
 
     - name: Check third-party notices are current
       shell: pwsh
