@@ -27,8 +27,13 @@
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.*" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.*" />
     <PackageReference Include="SkiaSharp" Version="3.119.4" />
-    <PackageReference Include="Xabe.FFmpeg" Version="6.0.2" />
-    <PackageReference Include="Xabe.FFmpeg.Downloader" Version="6.0.2" />
+    <!-- FFMpegCore (MIT) replaced Xabe.FFmpeg (CC BY-NC-SA 3.0). Xabe's licence permits
+         non-commercial use only and has no open-source carve-out, which conflicts with
+         this project's MIT grant: publish.ps1 embeds the library into the shipped
+         single-file exe, so we would be passing on rights we do not hold. Do not
+         reintroduce Xabe. -->
+    <PackageReference Include="FFMpegCore" Version="5.4.0" />
+    <PackageReference Include="FFMpegCore.Extensions.Downloader" Version="5.0.0" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.24.4" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
   </ItemGroup>
