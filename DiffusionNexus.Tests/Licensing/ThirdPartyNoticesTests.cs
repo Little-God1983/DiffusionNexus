@@ -98,6 +98,23 @@ public class ThirdPartyNoticesTests
     }
 
     [Fact]
+    public void WhenOnnxRuntimeIsLoadedThenItsBundledNoticeTravelsWithIt()
+    {
+        // Same class of gap as SkiaSharp, reopened by a filename spelling: the generator's notice
+        // probe matched only 'THIRD-PARTY-NOTICES*', and Microsoft ships ONNX Runtime's notice as
+        // 'ThirdPartyNotices.txt'. 6,121 lines covering Intel MKL, Eigen, protobuf and onnx were
+        // therefore invisible to the probe AND to the -Check freshness gate, while
+        // IncludeNativeLibrariesForSelfExtract embedded onnxruntime.dll into the shipped exe.
+        var component = ThirdPartyNotices.Load()
+            .Single(c => c.Id == "Microsoft.ML.OnnxRuntime.DirectML");
+
+        component.LicenseText.Should().Contain(
+            "Eigen", "the notice compiled into onnxruntime.dll must be reproduced, not just the package LICENSE");
+        component.LicenseText.Should().Contain("Intel Math Kernel Library");
+        component.LicenseText.Should().Contain("protobuf");
+    }
+
+    [Fact]
     public void WhenXabeIsSearchedForThenItIsAbsent()
     {
         // Xabe.FFmpeg was removed for being CC BY-NC-SA. If it returns, the notices will

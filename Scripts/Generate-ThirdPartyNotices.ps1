@@ -207,10 +207,15 @@ foreach ($c in ($components | Where-Object { $_.License -eq 'FILE' })) {
 # express. The search is recursive, and returns EVERY match rather than the first, because a
 # package that splits its notice or moves it into a subdirectory must not lose the remainder
 # silently - that is the whole failure mode this script exists to prevent.
+# Publishers spell the same document differently - THIRD-PARTY-NOTICES.TXT, ThirdPartyNotices.txt
+# (Microsoft.ML.OnnxRuntime.*, Microsoft.AI.DirectML, CommunityToolkit.Mvvm), NOTICE, NOTICES.md -
+# so the match is on the LETTERS of the base name only, with separators and case removed. A literal
+# wildcard list is how this gap opened: 'THIRD-PARTY-NOTICES*' does not match 'ThirdPartyNotices.txt',
+# and a 6,121-line notice covering Intel MKL, Eigen, protobuf and onnx was invisible to the probe.
 function Get-NoticeFiles {
     param([string]$Dir)
     return @(Get-ChildItem -Path $Dir -File -Recurse -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -like 'THIRD-PARTY-NOTICES*' -or $_.Name -like 'NOTICE*' } |
+        Where-Object { ($_.BaseName -replace '[^A-Za-z]', '') -match '^(thirdpartynotices|notice)' } |
         Sort-Object FullName)
 }
 
@@ -280,7 +285,17 @@ foreach ($cov in $coveredEntries) {
         $sourceFile = $rp.File
     }
     else {
-        $src = $supplements.bundledNotices | Where-Object { $_.packageId -eq $cov.duplicateOf } | Select-Object -First 1
+        # A package can reproduce more than one file - its own LICENSE and, separately, its
+        # bundled notice document. Pick the candidate whose file name matches the attestation,
+        # so an attestation is never compared against the wrong document (which would either
+        # pass by luck or fail for the wrong reason). Fall back to the sole entry when there is
+        # only one, and refuse to guess when there are several and none matches.
+        $candidates = @($supplements.bundledNotices | Where-Object { $_.packageId -eq $cov.duplicateOf })
+        $src = $candidates | Where-Object { (Split-Path -Leaf $_.file) -ieq (Split-Path -Leaf $cov.file) } | Select-Object -First 1
+        if (-not $src -and $candidates.Count -eq 1) { $src = $candidates[0] }
+        if (-not $src -and $candidates.Count -gt 1) {
+            throw "noticesAlreadyCovered entry for '$($cov.packageId)' names '$($cov.file)', but '$($cov.duplicateOf)' reproduces several files and none of them has that name. Name the duplicated file identically, or reproduce this one through its own bundledNotices entry."
+        }
         if ($src) {
             $srcPkg = $components | Where-Object { $_.Id -eq $src.packageId } | Select-Object -First 1
             if ($srcPkg) { $sourceFile = Join-Path $srcPkg.PackageDir $src.file }
@@ -393,10 +408,10 @@ Add-Line ''
 
 $byLicense = $components | Where-Object { $_.License -ne 'FILE' } | Group-Object License | Sort-Object Name
 foreach ($group in $byLicense) {
-    $textFile = Join-Path $textsDir ($group.Name + '.txt')
-    if (-not (Test-Path $textFile)) {
-        throw "No license text for '$($group.Name)'. Add Scripts/license-data/texts/$($group.Name).txt."
-    }
+    # One resolver for both outputs. The group is non-FILE and homogeneous by licence, so any
+    # member resolves the same text the JSON index resolves for it; re-implementing the lookup
+    # here is exactly how the text document and the JSON index would come to disagree.
+    $licenseText = Get-LicenseTextFor $group.Group[0]
     Add-Line ("### {0}" -f $group.Name)
     Add-Line ''
     Add-Line 'Applies to the following components:'
@@ -408,7 +423,7 @@ foreach ($group in $byLicense) {
         Add-Line ("      {0}" -f $attribution)
     }
     Add-Line ''
-    Add-Line (Get-Content $textFile -Raw).TrimEnd()
+    Add-Line $licenseText
     Add-Line ''
     Add-Line $thin
     Add-Line ''

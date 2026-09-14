@@ -70,6 +70,42 @@
       "file": "NOTICE",
       "title": "Microsoft.VisualStudio.SolutionPersistence - bundled third-party notices",
       "note": "The nuspec declares MIT for the library itself. The package additionally carries a NOTICE file recording the third-party material Microsoft incorporated into it, under licences of their own; it is reproduced verbatim because nothing in the restore graph expresses it."
+    },
+    {
+      "packageId": "Microsoft.ML.OnnxRuntime.DirectML",
+      "file": "ThirdPartyNotices.txt",
+      "title": "ONNX Runtime (onnxruntime.dll) - bundled third-party notices",
+      "note": "6,121 lines covering the third-party code compiled INTO onnxruntime.dll: Intel Math Kernel Library, Eigen, protocolbuffers/protobuf, onnx, google/flatbuffers, google/re2, abseil-cpp, SafeInt, pytorch/cpuinfo and many more, each under its own licence. -p:IncludeNativeLibrariesForSelfExtract=true embeds that DLL into the shipped single-file executable, so every one of those obligations travels with the product. This file was invisible to the generator's notice probe until 2026-09-14: the probe matched only the hyphenated spelling THIRD-PARTY-NOTICES*, and Microsoft spells it ThirdPartyNotices.txt. The identical file shipped by Microsoft.ML.OnnxRuntime.Managed is attested as a byte-for-byte duplicate in noticesAlreadyCovered."
+    },
+    {
+      "packageId": "Microsoft.AI.DirectML",
+      "file": "ThirdPartyNotices.txt",
+      "title": "Microsoft.AI.DirectML (DirectML.dll) - bundled third-party notices",
+      "note": "Separate from this package's LICENSE.txt reproduced above: 103 lines of attribution for third-party material compiled into DirectML.dll (Microsoft/GSL, Christian Rau's half float library, and Zstandard under the BSD licence). Self-contained single-file publishing embeds that DLL into the shipped executable. Surfaced by the 2026-09-14 widening of the notice probe to the unhyphenated ThirdPartyNotices.txt spelling."
+    },
+    {
+      "packageId": "CommunityToolkit.Mvvm",
+      "file": "ThirdPartyNotices.txt",
+      "title": "CommunityToolkit.Mvvm - bundled third-party notices",
+      "note": "The nuspec declares MIT for the toolkit itself. The package additionally carries a 142-line notice for third-party material the .NET Community Toolkit incorporates under licences of their own; the source is compiled into the assembly this application ships. CommunityToolkit.HighPerformance carries a byte-for-byte identical copy and is attested in noticesAlreadyCovered. Surfaced by the 2026-09-14 widening of the notice probe."
+    },
+    {
+      "packageId": "Microsoft.CodeAnalysis.Common",
+      "file": "ThirdPartyNotices.rtf",
+      "title": "Microsoft.CodeAnalysis (Roslyn) - bundled third-party notices",
+      "note": "Reproduced verbatim, INCLUDING its RTF container: Microsoft ships this notice as ThirdPartyNotices.rtf and the obligation attaches to the document as published, so it is copied byte for byte rather than converted, which would be an edit to a legal document. The readable content is the .NET Compiler Platform notice (MIT, (c) .NET Foundation and Contributors). The four other Microsoft.CodeAnalysis.* packages in the closure ship an identical copy and are attested in noticesAlreadyCovered. Surfaced by the 2026-09-14 widening of the notice probe."
+    },
+    {
+      "packageId": "Microsoft.CodeAnalysis.Analyzers",
+      "file": "ThirdPartyNotices.txt",
+      "title": "Microsoft.CodeAnalysis.Analyzers - bundled third-party notices",
+      "note": "260 lines, a different and longer document than the Roslyn ThirdPartyNotices.rtf above: it repeats the .NET Compiler Platform notice and additionally carries the Humanizer notice, so it is reproduced separately rather than attested as a duplicate. Surfaced by the 2026-09-14 widening of the notice probe."
+    },
+    {
+      "packageId": "Microsoft.Build.Framework",
+      "file": "notices/THIRDPARTYNOTICES.txt",
+      "title": "MSBuild (Microsoft.Build.Framework) - bundled third-party notices",
+      "note": "MSBuild's notice for third-party material it incorporates (LockCheck and others), shipped in a notices/ subdirectory under a spelling with no separators at all. Surfaced by the 2026-09-14 widening of the notice probe; the recursive search already looked in subdirectories, only the filename match was too narrow."
     }
   ],
   "noticesAlreadyCovered": [
@@ -270,6 +306,42 @@
       "file": "THIRD-PARTY-NOTICES.TXT",
       "duplicateOf": "System.Composition",
       "reason": "Byte-for-byte identical to the notice reproduced for System.Composition, its metapackage. Equality is re-verified on every run."
+    },
+    {
+      "packageId": "Microsoft.ML.OnnxRuntime.Managed",
+      "file": "ThirdPartyNotices.txt",
+      "duplicateOf": "Microsoft.ML.OnnxRuntime.DirectML",
+      "reason": "Byte-for-byte identical (sha256 fb0af774b4d7cffc..., 331,175 bytes, 6,121 lines) to the ONNX Runtime notice reproduced for Microsoft.ML.OnnxRuntime.DirectML, the package that actually ships onnxruntime.dll. Reproduced once, under the package that carries the binary. Equality is re-verified on every run."
+    },
+    {
+      "packageId": "CommunityToolkit.HighPerformance",
+      "file": "ThirdPartyNotices.txt",
+      "duplicateOf": "CommunityToolkit.Mvvm",
+      "reason": "Byte-for-byte identical (sha256 7774f8b0ab66bfb4..., 8,600 bytes, 142 lines) to the notice reproduced for CommunityToolkit.Mvvm - the .NET Community Toolkit ships one combined notice across its packages. Equality is re-verified on every run."
+    },
+    {
+      "packageId": "Microsoft.CodeAnalysis.CSharp",
+      "file": "ThirdPartyNotices.rtf",
+      "duplicateOf": "Microsoft.CodeAnalysis.Common",
+      "reason": "Byte-for-byte identical (sha256 ef4678850e7e3aaf..., 2,183 bytes) to the Roslyn notice reproduced for Microsoft.CodeAnalysis.Common. Equality is re-verified on every run."
+    },
+    {
+      "packageId": "Microsoft.CodeAnalysis.CSharp.Workspaces",
+      "file": "ThirdPartyNotices.rtf",
+      "duplicateOf": "Microsoft.CodeAnalysis.Common",
+      "reason": "Byte-for-byte identical (sha256 ef4678850e7e3aaf..., 2,183 bytes) to the Roslyn notice reproduced for Microsoft.CodeAnalysis.Common. Equality is re-verified on every run."
+    },
+    {
+      "packageId": "Microsoft.CodeAnalysis.Workspaces.Common",
+      "file": "ThirdPartyNotices.rtf",
+      "duplicateOf": "Microsoft.CodeAnalysis.Common",
+      "reason": "Byte-for-byte identical (sha256 ef4678850e7e3aaf..., 2,183 bytes) to the Roslyn notice reproduced for Microsoft.CodeAnalysis.Common. Equality is re-verified on every run."
+    },
+    {
+      "packageId": "Microsoft.CodeAnalysis.Workspaces.MSBuild",
+      "file": "ThirdPartyNotices.rtf",
+      "duplicateOf": "Microsoft.CodeAnalysis.Common",
+      "reason": "Byte-for-byte identical (sha256 ef4678850e7e3aaf..., 2,183 bytes) to the Roslyn notice reproduced for Microsoft.CodeAnalysis.Common. Equality is re-verified on every run."
     }
   ],
   "supplements": [
@@ -283,7 +355,7 @@
       "title": "FFmpeg",
       "license": "SEE-NOTE",
       "textFile": "FFmpeg-note.txt",
-      "note": "DiffusionNexus does not bundle FFmpeg. When no ffmpeg/ffprobe pair is found on the machine, the application downloads official builds at runtime and runs them as a separate process. Those binaries are covered by their own licence (LGPL-2.1-or-later, or GPL for some builds), which travels with them."
+      "note": "DiffusionNexus does not bundle FFmpeg. When no ffmpeg/ffprobe pair is found on the machine, FFMpegCore.Extensions.Downloader fetches a prebuilt binary from ffbinaries.com - a third-party mirror, not the FFmpeg project's own distribution - and the application runs it as a separate process. Those binaries are covered by their own licence, which travels with them; the Windows builds served by ffbinaries.com are GPL-configured (libx264 and friends), so GPL rather than LGPL-2.1-or-later is what the downloaded build is expected to carry."
     },
     {
       "title": "Inter typeface (bundled by Avalonia.Fonts.Inter)",
