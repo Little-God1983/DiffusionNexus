@@ -1,3 +1,11 @@
+[Generator note: this shared MIT template omits the standard "Copyright (c) <year> <holder>"
+placeholder line because, as of this writing, every MIT-licensed component in this repo's
+restore graph declares a real copyright in its NuGet metadata — the generator prints that
+per-component copyright separately in section 2, immediately above this text. If a future MIT
+dependency ships with no nuspec-declared copyright and no authors field, Get-LicenseTextFor's
+caller will fall back to "(no copyright notice declared)"; at that point restore the placeholder
+line below or otherwise ensure a copyright holder is always named.]
+
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.

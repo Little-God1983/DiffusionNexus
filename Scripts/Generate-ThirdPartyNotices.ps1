@@ -12,10 +12,31 @@
     Self-contained single-file publishing embeds the .NET runtime packs, each of which ships
     its own THIRD-PARTY-NOTICES.TXT (zlib, Brotli, ICU, Unicode data). Those are reproduced.
 
+    IMPORTANT: a plain 'dotnet restore' does NOT populate the runtime-pack download
+    dependencies this script reads for section 3 — that graph only appears when the project
+    is restored for a concrete RuntimeIdentifier. You MUST restore with a RID first:
+
+      dotnet restore DiffusionNexus.UI -r win-x64 -p:SelfContained=true
+      pwsh Scripts/Generate-ThirdPartyNotices.ps1
+
+    The script fails closed on this: if no runtime-pack notice files are found, it throws
+    rather than silently shipping a notices document missing ~1000+ lines of required
+    attribution (zlib, Brotli, ICU, Unicode data).
+
     Hand-authored entries the graph cannot express live in Scripts/license-data/supplements.json.
 
 .PARAMETER ProjectDir
     Project whose restore graph is read. Defaults to DiffusionNexus.UI.
+
+.PARAMETER RuntimeIdentifier
+    RID whose runtime packs are reproduced in section 3. Defaults to win-x64, the only RID
+    DiffusionNexus ships. Must match a RID the project was actually restored for (see
+    .DESCRIPTION) — restoring for a different or no RID yields zero runtime-pack notices.
+
+.PARAMETER AllowNoRuntimePacks
+    Escape hatch: don't throw when zero runtime-pack notice files are found. Only pass this
+    for a deliberate framework-dependent build that will never embed the runtime packs; for
+    every self-contained build this is exactly the failure mode that must NOT be silenced.
 
 .PARAMETER Check
     Do not write. Compare the committed files against what would be generated and exit
@@ -26,7 +47,7 @@
     Everything else is compared exactly, INCLUDING CASE.
 
 .EXAMPLE
-    dotnet restore
+    dotnet restore DiffusionNexus.UI -r win-x64 -p:SelfContained=true
     pwsh Scripts/Generate-ThirdPartyNotices.ps1
 
 .EXAMPLE
@@ -35,9 +56,11 @@
 [CmdletBinding()]
 param(
     [string]$ProjectDir = 'DiffusionNexus.UI',
+    [string]$RuntimeIdentifier = 'win-x64',
     [string]$OutputPath,
     [string]$JsonOutputPath,
-    [switch]$Check
+    [switch]$Check,
+    [switch]$AllowNoRuntimePacks
 )
 
 $ErrorActionPreference = 'Stop'
@@ -132,6 +155,15 @@ foreach ($entry in $graph.libraries.PSObject.Properties) {
     if ($mExpr.Success) { $license = $mExpr.Groups['v'].Value }
     elseif ($mFile.Success) { $license = 'FILE'; $licenseFile = $mFile.Groups['v'].Value }
 
+    # A package can declare no machine-readable licence at all (e.g. only the deprecated
+    # <licenseUrl> element) and still need shipping. Only an EXACT id match here can promote
+    # it out of UNDECLARED — this is a manually-verified attestation per package, not a
+    # loophole: an unlisted package still fails closed below.
+    if (-not $license) {
+        $override = $supplements.licenseOverrides | Where-Object { $_.packageId -eq $id } | Select-Object -First 1
+        if ($override) { $license = $override.license }
+    }
+
     $components += [pscustomobject]@{
         Id          = $id
         Version     = $version
@@ -161,10 +193,14 @@ foreach ($c in ($components | Where-Object { $_.License -eq 'FILE' })) {
 }
 
 # ---------------------------------------------- runtime packs (self-contained)
+# downloadDependencies is only populated per-RID: a plain 'dotnet restore' leaves it empty
+# (or a lone null entry) and this loop would silently do nothing. The -RuntimeIdentifier
+# filter also guards a multi-RID graph from mixing in another platform's packs.
 $runtimePacks = @()
 foreach ($fw in $graph.project.frameworks.PSObject.Properties) {
     foreach ($d in @($fw.Value.downloadDependencies)) {
         if (-not $d) { continue }
+        if ($d.name -notlike "*.$RuntimeIdentifier") { continue }
         $v = (($d.version -replace '[\[\]\(\)]', '') -split ',')[0].Trim()
         $dir = Join-Path $nugetRoot $d.name.ToLowerInvariant() $v.ToLowerInvariant()
         if (-not (Test-Path $dir)) { continue }
@@ -176,6 +212,18 @@ foreach ($fw in $graph.project.frameworks.PSObject.Properties) {
 }
 $runtimePacks = @($runtimePacks | Sort-Object Name, Version | Group-Object Name | ForEach-Object { $_.Group[0] })
 Write-Host ("Runtime pack notices  : {0}" -f $runtimePacks.Count)
+
+# Self-contained single-file publishing embeds these packs into the shipped exe, carrying
+# ~1000+ lines of required attribution (zlib, Brotli, ICU, Unicode data). Finding none is
+# almost always a restore that never targeted a RID, not an application with nothing to
+# report — fail closed rather than silently ship a notices document missing that attribution.
+if ($runtimePacks.Count -eq 0 -and -not $AllowNoRuntimePacks) {
+    throw "No runtime-pack notice files found for RuntimeIdentifier '$RuntimeIdentifier'. " +
+          "A plain 'dotnet restore' does not pull runtime packs into the graph. Restore with a RID first: " +
+          "dotnet restore $ProjectDir -r $RuntimeIdentifier -p:SelfContained=true " +
+          "-- then re-run this script. Pass -AllowNoRuntimePacks only for a deliberate " +
+          "framework-dependent build that will never embed the runtime packs."
+}
 
 # ------------------------------------------------------- resolve licence texts
 function Get-LicenseTextFor {
@@ -219,8 +267,9 @@ Add-Line 'not part of this product. They are fetched from their own repositories
 Add-Line 'time under their own licenses, which they carry themselves.'
 Add-Line ''
 Add-Line 'GENERATED FILE - DO NOT EDIT BY HAND.'
-Add-Line 'Regenerate with:  pwsh Scripts/Generate-ThirdPartyNotices.ps1'
-Add-Line 'Inputs:           DiffusionNexus.UI/obj/project.assets.json  (restore graph)'
+Add-Line 'Regenerate with:  dotnet restore DiffusionNexus.UI -r win-x64 -p:SelfContained=true'
+Add-Line '                  pwsh Scripts/Generate-ThirdPartyNotices.ps1'
+Add-Line 'Inputs:           DiffusionNexus.UI/obj/project.assets.json  (restore graph, RID-restored)'
 Add-Line '                  <nuget cache>/<runtime pack>/THIRD-PARTY-NOTICES.TXT'
 Add-Line '                  Scripts/license-data/supplements.json      (hand-authored entries)'
 Add-Line ''
@@ -292,8 +341,10 @@ foreach ($b in $supplements.bundledNotices) {
     Add-Line ("### {0}" -f $b.title)
     Add-Line ("Source: {0} {1} :: {2}" -f $pkg.Id, $pkg.Version, $b.file)
     Add-Line ''
-    Add-Line ("NOTE: {0}" -f $b.note)
-    Add-Line ''
+    if ($b.note) {
+        Add-Line ("NOTE: {0}" -f $b.note)
+        Add-Line ''
+    }
     Add-Line (Get-Content $file -Raw).TrimEnd()
     Add-Line ''
     Add-Line $thin
@@ -358,7 +409,7 @@ foreach ($s in $supplements.supplements) {
         licenseText = (Normalize-Text ("NOTE: " + $s.note + "`n`n" + (Get-Content (Join-Path $textsDir $s.textFile) -Raw).TrimEnd()))
     }
 }
-$json = ($jsonComponents | ConvertTo-Json -Depth 5)
+$json = ($jsonComponents | ConvertTo-Json -Depth 5 -AsArray)
 $jsonText = (Normalize-Text $json) -replace "`n", "`r`n"
 
 # --------------------------------------------------------------------- write

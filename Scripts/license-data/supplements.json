@@ -1,48 +1,54 @@
 {
   "_comment": "Attribution obligations the NuGet restore graph cannot express. Each entry is appended verbatim by Scripts/Generate-ThirdPartyNotices.ps1.",
   "excludePrefixes": [
-    "DiffusionNexus.",
-    "BitMiracle.LibTiff.NET"
+    "DiffusionNexus."
+  ],
+  "licenseOverrides": [
+    {
+      "packageId": "BitMiracle.LibTiff.NET",
+      "license": "BSD-3-Clause",
+      "reason": "Nuspec declares its licence only via the deprecated <licenseUrl> element (https://bitmiracle.github.io/libtiff.net/help/articles/license.html), not a machine-readable <license type=\"expression\"|\"file\">, so the generator cannot resolve an SPDX id automatically. Verified BSD-3-Clause from the project's own license page, 2026-09-14."
+    }
   ],
   "bundledNotices": [
     {
       "packageId": "Avalonia.Angle.Windows.Natives",
       "file": "LICENSE",
-      "title": "Avalonia.Angle.Windows.Natives (ANGLE)"
+      "title": "Avalonia.Angle.Windows.Natives (ANGLE)",
+      "note": "Nuspec declares its licence as a file, not an SPDX expression, so there is no shared licence text to route it to; the package's own LICENSE file is reproduced verbatim instead."
     },
     {
       "packageId": "Microsoft.AI.DirectML",
       "file": "LICENSE.txt",
-      "title": "Microsoft.AI.DirectML"
+      "title": "Microsoft.AI.DirectML",
+      "note": "Nuspec declares its licence as a file, not an SPDX expression, so there is no shared licence text to route it to; the package's own LICENSE.txt is reproduced verbatim instead."
     },
     {
       "packageId": "Microsoft.ML.OnnxRuntime.DirectML",
       "file": "LICENSE",
-      "title": "Microsoft.ML.OnnxRuntime.DirectML"
+      "title": "Microsoft.ML.OnnxRuntime.DirectML",
+      "note": "Nuspec declares its licence as a file, not an SPDX expression, so there is no shared licence text to route it to; the package's own LICENSE file is reproduced verbatim instead."
     },
     {
       "packageId": "Microsoft.ML.OnnxRuntime.Managed",
       "file": "LICENSE.txt",
-      "title": "Microsoft.ML.OnnxRuntime.Managed"
+      "title": "Microsoft.ML.OnnxRuntime.Managed",
+      "note": "Nuspec declares its licence as a file, not an SPDX expression, so there is no shared licence text to route it to; the package's own LICENSE.txt is reproduced verbatim instead."
     },
     {
       "packageId": "SixLabors.ImageSharp",
       "file": "LICENSE",
-      "title": "SixLabors.ImageSharp"
+      "title": "SixLabors.ImageSharp",
+      "note": "Nuspec declares its licence as a file, not an SPDX expression, so there is no shared licence text to route it to; the package's own LICENSE file is reproduced verbatim instead."
     },
     {
       "packageId": "WeCantSpell.Hunspell",
       "file": "license.txt",
-      "title": "WeCantSpell.Hunspell"
+      "title": "WeCantSpell.Hunspell",
+      "note": "Nuspec declares its licence as a file, not an SPDX expression, so there is no shared licence text to route it to; the package's own license.txt is reproduced verbatim instead."
     }
   ],
   "supplements": [
-    {
-      "title": "BitMiracle.LibTiff.NET",
-      "license": "BSD-3-Clause",
-      "textFile": "BitMiracle-LibTiff-NET-license.txt",
-      "note": "Restore-graph dependency whose nuspec declares its license only via the deprecated <licenseUrl> element (no machine-readable <license type=\"expression\"|\"file\">), so the generator cannot resolve it automatically. Text sourced verbatim from https://bitmiracle.github.io/libtiff.net/help/articles/license.html (BSD-3-Clause; SPDX id per the project's own license page), 2026-09-14."
-    },
     {
       "title": ".NET 10 runtime and base class libraries",
       "license": "MIT",
