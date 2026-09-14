@@ -29,8 +29,9 @@ than filed for later, because both are cheap and both are live today:
 
 - The remainder of issue #511 (full remediation) — this delivers the attribution
   half only.
-- Choosing a repo `LICENSE` — see Open Decisions.
 - LGPL user-replaceability of the bundled native libraries.
+- Remediating the LGPL/OFL components themselves — attribution discharges what
+  this design is responsible for.
 
 ---
 
@@ -322,16 +323,34 @@ they hit the Avalonia font-manager quirk this repo has already been bitten by.
 
 ---
 
+### 4.3 Repo `LICENSE`: MIT
+
+`DiffusionNexus` is public with no licence, which in law means all rights
+reserved — "public on GitHub" is not a licence grant. A `LICENSE` file is added:
+
+```
+MIT License
+
+Copyright (c) 2025 Christian Wenzl
+```
+
+...followed by the standard MIT text, byte-identical in form to the file already
+in `DiffusionNexus.Installers`, keeping the two repos consistent.
+
+This is not housekeeping. The Six Labors Split Licence grants
+`SixLabors.ImageSharp 3.1.12` under Apache-2.0 if "You are consuming the Work in
+for use in software licensed under an Open Source or Source Available license" —
+a clause that cannot be satisfied while no licence exists. Adding MIT closes the
+ImageSharp question outright, with the `<$1M annual gross revenue` clause as a
+second, independent escape. `README.md` gains a licence line pointing at the
+file.
+
+**Commit ordering is load-bearing.** The `LICENSE` commit must come *after* the
+Xabe swap in §4.2. MIT promises downstream users the right to use the work
+commercially; while `Xabe.FFmpeg` is embedded in the shipped exe under
+CC BY-NC-SA, that is a promise the project does not hold the rights to make.
+Swap first, licence second.
+
 ## Open decisions
 
-**The repo `LICENSE` file.** `DiffusionNexus` is public with no licence, which
-in law means all rights reserved. This matters beyond housekeeping: the Six
-Labors Split Licence grants `SixLabors.ImageSharp 3.1.12` under Apache-2.0 if
-"You are consuming the Work in for use in software licensed under an Open Source
-or Source Available license" — a clause that is not satisfied while no licence
-exists. Adding a `LICENSE` file closes the ImageSharp question outright. (The
-`<$1M annual gross revenue` clause is a second, independent escape.)
-
-The choice of licence is the owner's and is not made here. It is a two-minute
-change once decided, and it is the one input the attribution screen cannot
-supply for itself.
+None. The `LICENSE` choice — the last one — was settled as MIT above.
