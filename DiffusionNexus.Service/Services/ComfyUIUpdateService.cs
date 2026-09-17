@@ -40,10 +40,12 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
         };
 
     /// <summary>
-    /// <c>--tags</c> because the stable channel targets release tags; <c>--force</c> so a
-    /// tag that was moved upstream updates instead of failing the whole fetch.
+    /// <c>origin</c> only, like the generated update scripts: with <c>--all</c> a fork remote
+    /// the user added could supply the "newest" release tag. <c>--tags</c> because the stable
+    /// channel targets release tags; <c>--force</c> so a tag that was moved upstream updates
+    /// instead of failing the whole fetch.
     /// </summary>
-    internal const string FetchArguments = "fetch --all --tags --force";
+    internal const string FetchArguments = "fetch origin --tags --force";
 
     private readonly IProcessRunner _processRunner;
 
@@ -252,24 +254,50 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
         var isUpdateAvailable = !string.Equals(current, target, StringComparison.OrdinalIgnoreCase);
 
         string summary;
+        string? confirmation = null;
         if (!isUpdateAvailable)
         {
             summary = $"Up to date (release {tag})";
         }
         else
         {
-            // ComfyUI-Manager switches to the release tag even when the installed build is
-            // newer, so report the same thing it would do rather than "up to date".
-            var headIsOlder = await RunGitAsync(backendDir, $"merge-base --is-ancestor HEAD {tag}", progress: null, ct);
-            summary = headIsOlder.Success
-                ? $"Release {tag} available"
-                : $"Installed build is newer than release {tag}; updating switches to {tag} to match ComfyUI-Manager";
+            // Only "HEAD is an ancestor of the tag" is a plain move forward. Anything else —
+            // a newer build, a diverged one, or a check that errored — is reported the way
+            // ComfyUI-Manager would act on it (it switches to the tag), but must be confirmed.
+            var movesForward = await RunGitAsync(backendDir, $"merge-base --is-ancestor HEAD {tag}", progress: null, ct);
+            if (movesForward.Success)
+            {
+                summary = $"Release {tag} available";
+            }
+            else
+            {
+                summary = $"Installed build is newer than release {tag}; updating switches to {tag} to match ComfyUI-Manager";
+                confirmation = await BuildSwitchBackConfirmationAsync(backendDir, tag, ct);
+            }
         }
 
         Logger.Information("Update check for {Dir} (stable channel): {Summary}", backendDir, summary);
         progress?.Report(summary);
 
-        return new UpdateCheckResult(isUpdateAvailable, current, target, summary);
+        return new UpdateCheckResult(isUpdateAvailable, current, target, summary, confirmation);
+    }
+
+    private async Task<string> BuildSwitchBackConfirmationAsync(string backendDir, string tag, CancellationToken ct)
+    {
+        var message =
+            $"ComfyUI-Manager is set to stable releases, and the installed ComfyUI build is newer than the newest release {tag}.\n\n" +
+            $"Updating switches ComfyUI BACK to {tag}, the same thing ComfyUI-Manager's \"Update All\" would do.";
+
+        var risk = await GetDatabaseRiskAsync(backendDir, tag, ct);
+        if (risk != DatabaseRisk.None)
+        {
+            message +=
+                "\n\nThe installed build uses a newer database format. Your ComfyUI database (user/comfyui.db: " +
+                "asset tags and metadata) will be set aside as a .bak file next to it and ComfyUI starts with a fresh one. " +
+                "Nothing restores it automatically.";
+        }
+
+        return message + "\n\nTo stay on the newer build instead, set ComfyUI-Manager's update policy to nightly.";
     }
 
     private async Task<string?> ResolveLatestReleaseTagAsync(string backendDir, CancellationToken ct)
@@ -331,6 +359,7 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
         if (databaseError is not null)
             return new CommandResult(false, databaseError);
 
+        var stashed = false;
         var clean = await RunGitAsync(backendDir, "diff --quiet HEAD", progress: null, ct);
         if (!clean.Success)
         {
@@ -346,20 +375,29 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
                 RestoreDatabase(backendDir, databaseBackup);
                 return stash;
             }
+
+            stashed = true;
         }
 
         var checkout = await RunGitAsync(backendDir, $"-c advice.detachedHead=false checkout {tag}", progress, ct);
-        if (!checkout.Success)
-        {
-            Logger.Error("Backend checkout of {Tag} failed in {Dir}: {Output}", tag, backendDir, checkout.Output);
-            RestoreDatabase(backendDir, databaseBackup);
-        }
-        else
+        if (checkout.Success)
         {
             Logger.Information("Backend {Dir} switched to release {Tag}", backendDir, tag);
+            return checkout;
         }
 
-        return checkout;
+        Logger.Error("Backend checkout of {Tag} failed in {Dir}: {Output}", tag, backendDir, checkout.Output);
+        RestoreDatabase(backendDir, databaseBackup);
+
+        if (!stashed)
+            return checkout;
+
+        // The working tree is clean now and "git status" shows nothing: without this note the
+        // user's edits look deleted.
+        Logger.Warning("Checkout failed after stashing local changes in {Dir}; they remain in the stash", backendDir);
+        return new CommandResult(false,
+            $"{checkout.Output}\n\nYour hand-edited files were NOT lost: they are in a git stash. " +
+            $"Open a terminal in {backendDir} and run 'git stash pop' to get them back.");
     }
 
     /// <summary>
@@ -373,31 +411,69 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
         string backendDir, string tag, IProgress<string>? progress, CancellationToken ct)
     {
         var databasePath = Path.Combine(backendDir, "user", "comfyui.db");
-        if (!File.Exists(databasePath))
-            return (null, null);
-
-        var newerMigrations = await RunGitAsync(backendDir,
-            $"diff --name-only --diff-filter=A {tag} HEAD -- alembic_db/versions", progress: null, ct);
-        if (!newerMigrations.Success || string.IsNullOrWhiteSpace(newerMigrations.Output))
+        switch (await GetDatabaseRiskAsync(backendDir, tag, ct))
         {
-            Logger.Debug("No database migrations newer than {Tag} in {Dir}; keeping comfyui.db", tag, backendDir);
-            return (null, null);
+            case DatabaseRisk.None:
+                Logger.Debug("No database migrations newer than {Tag} in {Dir}; keeping comfyui.db", tag, backendDir);
+                return (null, null);
+
+            case DatabaseRisk.Unknown:
+                // The unsafe direction: going ahead could land older code on a database it
+                // cannot open, which is the very crash this guard exists to prevent.
+                Logger.Warning("Could not compare database migrations with {Tag} in {Dir}; aborting the switch", tag, backendDir);
+                return (null, $"Could not compare the database format with release {tag}, so the switch was not attempted.");
         }
 
-        var backupPath = $"{databasePath}.{DateTime.Now:yyyyMMdd_HHmmss}.bak";
+        // Second granularity is not unique (a retry, two updates in one second), and an
+        // existing backup must never be overwritten or mistaken for a locked database.
+        var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+        var backupPath = $"{databasePath}.{stamp}.bak";
+        for (var n = 2; File.Exists(backupPath); n++)
+            backupPath = $"{databasePath}.{stamp}-{n}.bak";
+
         try
         {
             File.Move(databasePath, backupPath);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (IOException ex)
         {
-            Logger.Warning(ex, "comfyui.db in {Dir} is in use; aborting the switch to {Tag}", backendDir, tag);
-            return (null, "user/comfyui.db is in use. Close ComfyUI and update again.");
+            Logger.Warning(ex, "comfyui.db in {Dir} could not be moved; aborting the switch to {Tag}", backendDir, tag);
+            return (null, $"user/comfyui.db could not be moved, most likely because ComfyUI is still running. Close ComfyUI and update again. ({ex.Message})");
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            Logger.Warning(ex, "No permission to move comfyui.db in {Dir}; aborting the switch to {Tag}", backendDir, tag);
+            return (null, $"No permission to move user/comfyui.db. ({ex.Message})");
         }
 
         Logger.Information("Installed code has a newer database format than {Tag}; moved comfyui.db to {Backup}", tag, backupPath);
         progress?.Report($"Backend: database format is newer than {tag}; kept the old database as {Path.GetFileName(backupPath)}.");
         return (backupPath, null);
+    }
+
+    private enum DatabaseRisk
+    {
+        /// <summary>No database, or the release has every migration HEAD has.</summary>
+        None,
+
+        /// <summary>HEAD carries migrations the release lacks: the release cannot open the database.</summary>
+        TooNew,
+
+        /// <summary>The comparison itself failed. Never treated as safe.</summary>
+        Unknown,
+    }
+
+    private async Task<DatabaseRisk> GetDatabaseRiskAsync(string backendDir, string tag, CancellationToken ct)
+    {
+        if (!File.Exists(Path.Combine(backendDir, "user", "comfyui.db")))
+            return DatabaseRisk.None;
+
+        var newerMigrations = await RunGitAsync(backendDir,
+            $"diff --name-only --diff-filter=A {tag} HEAD -- alembic_db/versions", progress: null, ct);
+        if (!newerMigrations.Success)
+            return DatabaseRisk.Unknown;
+
+        return string.IsNullOrWhiteSpace(newerMigrations.Output) ? DatabaseRisk.None : DatabaseRisk.TooNew;
     }
 
     private static void RestoreDatabase(string backendDir, string? backupPath)

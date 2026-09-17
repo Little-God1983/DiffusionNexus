@@ -291,7 +291,7 @@ public class ComfyUIUpdateServiceTests : IDisposable
         }
 
         result.Success.Should().BeFalse();
-        result.Message.Should().Contain("in use");
+        result.Message.Should().Contain("ComfyUI is still running");
         runner.Invocations.Should().NotContain(i => i.Arguments.Contains("checkout"));
     }
 
@@ -320,5 +320,122 @@ public class ComfyUIUpdateServiceTests : IDisposable
         var database = Path.Combine(userDir, "comfyui.db");
         File.WriteAllText(database, "db");
         return database;
+    }
+
+    // ── Review wave on #578 ──
+
+    /// <summary>Wraps <see cref="StableRepoRunner"/> and overrides the answer for some commands.</summary>
+    private static RecordingProcessRunner StableRepoRunnerWith(
+        Func<string, ProcessResult?> overrides,
+        string newerMigrations = "", bool headIsOlderThanTag = true, bool checkoutSucceeds = true)
+    {
+        var inner = StableRepoRunner(newerMigrations, headIsOlderThanTag, checkoutSucceeds);
+        return new RecordingProcessRunner((file, args, dir) =>
+            overrides(args) ?? inner.RunAsync(file, args, dir).GetAwaiter().GetResult());
+    }
+
+    [Fact]
+    public async Task WhenUpdateMovesForwardThenNoConfirmationIsRequired()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, ".git"));
+        InstallManager();
+
+        var result = await new ComfyUIUpdateService(StableRepoRunner()).CheckForUpdatesAsync(_root);
+
+        result.IsUpdateAvailable.Should().BeTrue();
+        result.ConfirmationMessage.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task WhenUpdateSwitchesBackToAnOlderReleaseThenConfirmationSpellsOutTheDatabaseConsequence()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, ".git"));
+        InstallManager();
+        CreateDatabase();
+        var runner = StableRepoRunner(newerMigrations: "alembic_db/versions/0008_future.py", headIsOlderThanTag: false);
+
+        var result = await new ComfyUIUpdateService(runner).CheckForUpdatesAsync(_root);
+
+        result.ConfirmationMessage.Should().Contain("BACK to v0.36.0");
+        result.ConfirmationMessage.Should().Contain("user/comfyui.db");
+    }
+
+    [Fact]
+    public async Task WhenSwitchingBackButMigrationsAreIdenticalThenConfirmationDoesNotThreatenTheDatabase()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, ".git"));
+        InstallManager();
+        CreateDatabase();
+        var runner = StableRepoRunner(newerMigrations: "", headIsOlderThanTag: false);
+
+        var result = await new ComfyUIUpdateService(runner).CheckForUpdatesAsync(_root);
+
+        result.ConfirmationMessage.Should().Contain("BACK to v0.36.0");
+        result.ConfirmationMessage.Should().NotContain("comfyui.db");
+    }
+
+    [Fact]
+    public async Task WhenMigrationComparisonFailsThenTheSwitchIsNotAttempted()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, ".git"));
+        InstallManager();
+        var database = CreateDatabase();
+        var runner = StableRepoRunnerWith(args => args.StartsWith("diff --name-only", StringComparison.Ordinal)
+            ? new ProcessResult(128, string.Empty, "fatal: bad revision")
+            : null);
+
+        var result = await new ComfyUIUpdateService(runner).UpdateAsync(_root);
+
+        result.Success.Should().BeFalse("a failed comparison must never read as 'no newer migrations'");
+        File.Exists(database).Should().BeTrue();
+        runner.Invocations.Should().NotContain(i => i.Arguments.Contains("checkout"));
+    }
+
+    [Fact]
+    public async Task WhenCheckoutFailsAfterStashingThenTheFailureMessageSaysWhereTheEditsAre()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, ".git"));
+        InstallManager();
+        var runner = StableRepoRunnerWith(
+            args => args == "diff --quiet HEAD" ? new ProcessResult(1, string.Empty, string.Empty) : null,
+            checkoutSucceeds: false);
+
+        var result = await new ComfyUIUpdateService(runner).UpdateAsync(_root);
+
+        result.Success.Should().BeFalse();
+        result.Message.Should().Contain("git stash pop");
+        result.Message.Should().Contain("checkout failed", "the original git error must stay visible");
+    }
+
+    [Fact]
+    public async Task WhenABackupWithTheSameTimestampExistsThenItIsNeverOverwrittenOrReportedAsInUse()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, ".git"));
+        InstallManager();
+        var database = CreateDatabase();
+        var userDir = Path.GetDirectoryName(database)!;
+        // Occupy every name this second and the next could produce.
+        var now = DateTime.Now;
+        foreach (var stamp in new[] { now, now.AddSeconds(1), now.AddSeconds(2) })
+            File.WriteAllText($"{database}.{stamp:yyyyMMdd_HHmmss}.bak", "earlier backup");
+        var runner = StableRepoRunner(newerMigrations: "alembic_db/versions/0008_future.py");
+
+        var result = await new ComfyUIUpdateService(runner).UpdateAsync(_root);
+
+        result.Success.Should().BeTrue(result.Message);
+        Directory.GetFiles(userDir, "*.bak").Select(File.ReadAllText)
+            .Should().Contain("db").And.Contain("earlier backup");
+    }
+
+    [Fact]
+    public async Task WhenFetchingThenOnlyOriginIsAsked()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, ".git"));
+        var runner = StableRepoRunner();
+
+        await new ComfyUIUpdateService(runner).CheckForUpdatesAsync(_root);
+
+        runner.Invocations.Should().Contain(i => i.Arguments == "fetch origin --tags --force");
+        runner.Invocations.Should().NotContain(i => i.Arguments.Contains("--all"));
     }
 }
