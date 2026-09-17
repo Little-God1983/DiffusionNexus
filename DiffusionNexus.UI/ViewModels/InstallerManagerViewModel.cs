@@ -1185,6 +1185,12 @@ public partial class InstallerManagerViewModel : ViewModelBase
             return;
         }
 
+        // Some updates are not a plain move forward (ComfyUI on the Manager's stable channel
+        // switches BACK to the newest release and may set the database aside). The badge may
+        // also be stale, so ask the service now and get the user's agreement to its exact text.
+        if (!await ConfirmUpdateIfNeededAsync(service, card))
+            return;
+
         // Auto-stop the running instance before updating
         if (card.IsRunning)
         {
@@ -1306,6 +1312,34 @@ public partial class InstallerManagerViewModel : ViewModelBase
     {
         var tasks = InstallerCards.Select(card => CheckCardForUpdatesAsync(card));
         await Task.WhenAll(tasks);
+    }
+
+    /// <summary>
+    /// Returns false when the update needs confirmation and the user declined. A failed or
+    /// timed-out pre-check does not block the update: the service applies its own guards.
+    /// </summary>
+    private async Task<bool> ConfirmUpdateIfNeededAsync(IInstallerUpdateService service, InstallerPackageCardViewModel card)
+    {
+        UpdateCheckResult check;
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            check = await service.CheckForUpdatesAsync(card.InstallationPath, ct: cts.Token);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Pre-update check failed for {Name}; continuing without confirmation", card.Name);
+            return true;
+        }
+
+        if (check.ConfirmationMessage is null)
+            return true;
+
+        _unifiedLogger.Info(LogCategory.Installation, card.Name, "Update needs confirmation: " + check.Summary);
+        var confirmed = await _dialogService.ShowConfirmAsync("Confirm update", check.ConfirmationMessage);
+        _unifiedLogger.Info(LogCategory.Installation, card.Name,
+            confirmed ? "User confirmed the switch." : "User declined the switch; nothing was changed.");
+        return confirmed;
     }
 
     private async Task CheckCardForUpdatesAsync(InstallerPackageCardViewModel card)
