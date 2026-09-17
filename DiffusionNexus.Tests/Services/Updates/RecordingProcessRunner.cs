@@ -63,7 +63,7 @@ internal sealed class RecordingProcessRunner : IProcessRunner
     {
         _invocations.Enqueue(new ProcessInvocation(fileName, arguments, workingDirectory, environment));
 
-        if (_fetchGate is not null && arguments == "fetch --all")
+        if (_fetchGate is not null && arguments.StartsWith("fetch --all", StringComparison.Ordinal))
             await _fetchGate.Task.ConfigureAwait(false);
 
         return _responder(fileName, arguments, workingDirectory);

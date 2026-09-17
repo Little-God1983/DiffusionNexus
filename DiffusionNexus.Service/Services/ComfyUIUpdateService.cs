@@ -8,8 +8,13 @@ namespace DiffusionNexus.Service.Services;
 /// <summary>
 /// Update service for ComfyUI installations.
 /// ComfyUI has a backend (main repo) and may have a pip-based frontend package or
-/// a separate frontend git repo (web/). Update order: backend git pull → pip requirements
+/// a separate frontend git repo (web/). Update order: backend git update → pip requirements
 /// (updates the frontend package) → git-based frontend pull (legacy fallback).
+/// <para>
+/// The backend follows ComfyUI-Manager's own update policy (see
+/// <see cref="ComfyUIManagerUpdatePolicy"/>): newest release tag on the stable channel,
+/// default branch on nightly or when no Manager is installed.
+/// </para>
 /// </summary>
 public sealed class ComfyUIUpdateService : IInstallerUpdateService
 {
@@ -33,6 +38,12 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
             ["PYTHONIOENCODING"] = "utf-8",
             ["GIT_PROGRESS_DELAY"] = "0",
         };
+
+    /// <summary>
+    /// <c>--tags</c> because the stable channel targets release tags; <c>--force</c> so a
+    /// tag that was moved upstream updates instead of failing the whole fetch.
+    /// </summary>
+    internal const string FetchArguments = "fetch --all --tags --force";
 
     private readonly IProcessRunner _processRunner;
 
@@ -103,11 +114,21 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
         progress?.Report("Fetching latest changes...");
 
         // Fetch from remote without modifying the working tree
-        var fetchResult = await RunGitAsync(backendDir, "fetch --all", progress, ct);
+        var fetchResult = await RunGitAsync(backendDir, FetchArguments, progress, ct);
         if (!fetchResult.Success)
         {
             Logger.Warning("git fetch failed in {Dir}: {Output}", backendDir, fetchResult.Output);
             return new UpdateCheckResult(false, null, null, $"Fetch failed: {fetchResult.Output}");
+        }
+
+        // Stable channel: the target is the newest release tag, not the branch tip.
+        if (ComfyUIManagerUpdatePolicy.ResolveChannel(backendDir) == ComfyUIUpdateChannel.Stable)
+        {
+            var releaseCheck = await CheckAgainstLatestReleaseAsync(backendDir, progress, ct);
+            if (releaseCheck is not null)
+                return releaseCheck;
+
+            Logger.Information("No release tag in {Dir}; checking against the default branch instead", backendDir);
         }
 
         // Get current local HEAD
@@ -163,7 +184,7 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
         progress?.Report("Updating ComfyUI backend...");
         Logger.Information("Updating ComfyUI backend at {Path}", backendDir);
 
-        var backendPullResult = await PullDirectoryAsync(backendDir, progress, "Backend", ct);
+        var backendPullResult = await UpdateBackendAsync(backendDir, progress, ct);
         if (!backendPullResult.Success)
             return new UpdateResult(false, null, $"Backend update failed: {backendPullResult.Output}");
 
@@ -202,6 +223,197 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
             Success: true,
             NewHash: hash,
             Message: "Update completed successfully");
+    }
+
+    /// <summary>
+    /// Compares HEAD with the newest release tag. Returns <c>null</c> when the repository
+    /// has no release tag, so the caller can fall back to the branch comparison.
+    /// </summary>
+    private async Task<UpdateCheckResult?> CheckAgainstLatestReleaseAsync(
+        string backendDir, IProgress<string>? progress, CancellationToken ct)
+    {
+        var tag = await ResolveLatestReleaseTagAsync(backendDir, ct);
+        if (tag is null)
+            return null;
+
+        var localHash = await RunGitAsync(backendDir, "rev-parse --short HEAD", progress: null, ct);
+        var tagHash = await RunGitAsync(backendDir, $"rev-parse --short {tag}^{{commit}}", progress: null, ct);
+        if (!localHash.Success || !tagHash.Success)
+        {
+            Logger.Warning("Could not resolve HEAD or {Tag} in {Dir}", tag, backendDir);
+            return new UpdateCheckResult(false,
+                localHash.Success ? localHash.Output.Trim() : null,
+                null,
+                $"Could not resolve release {tag}");
+        }
+
+        var current = localHash.Output.Trim();
+        var target = tagHash.Output.Trim();
+        var isUpdateAvailable = !string.Equals(current, target, StringComparison.OrdinalIgnoreCase);
+
+        string summary;
+        if (!isUpdateAvailable)
+        {
+            summary = $"Up to date (release {tag})";
+        }
+        else
+        {
+            // ComfyUI-Manager switches to the release tag even when the installed build is
+            // newer, so report the same thing it would do rather than "up to date".
+            var headIsOlder = await RunGitAsync(backendDir, $"merge-base --is-ancestor HEAD {tag}", progress: null, ct);
+            summary = headIsOlder.Success
+                ? $"Release {tag} available"
+                : $"Installed build is newer than release {tag}; updating switches to {tag} to match ComfyUI-Manager";
+        }
+
+        Logger.Information("Update check for {Dir} (stable channel): {Summary}", backendDir, summary);
+        progress?.Report(summary);
+
+        return new UpdateCheckResult(isUpdateAvailable, current, target, summary);
+    }
+
+    private async Task<string?> ResolveLatestReleaseTagAsync(string backendDir, CancellationToken ct)
+    {
+        var tags = await RunGitAsync(backendDir, "tag -l v*", progress: null, ct);
+        return tags.Success ? ComfyUIManagerUpdatePolicy.PickLatestReleaseTag(tags.Output) : null;
+    }
+
+    /// <summary>
+    /// Updates the backend on the channel ComfyUI-Manager uses for this installation.
+    /// </summary>
+    private async Task<CommandResult> UpdateBackendAsync(
+        string backendDir, IProgress<string>? progress, CancellationToken ct)
+    {
+        var channel = ComfyUIManagerUpdatePolicy.ResolveChannel(backendDir);
+        Logger.Information("Backend update channel for {Dir}: {Channel}", backendDir, channel);
+
+        if (channel == ComfyUIUpdateChannel.Nightly)
+            return await PullDirectoryAsync(backendDir, progress, "Backend", ct);
+
+        var fetchResult = await RunGitAsync(backendDir, FetchArguments, progress, ct);
+        if (!fetchResult.Success)
+        {
+            Logger.Warning("Backend git fetch failed in {Dir}: {Output}", backendDir, fetchResult.Output);
+            return fetchResult;
+        }
+
+        var tag = await ResolveLatestReleaseTagAsync(backendDir, ct);
+        if (tag is null)
+        {
+            Logger.Information("No release tag in {Dir}; following the default branch instead", backendDir);
+            progress?.Report("Backend: no release tag found, following the default branch.");
+            return await PullDirectoryAsync(backendDir, progress, "Backend", ct);
+        }
+
+        return await SwitchToReleaseAsync(backendDir, tag, progress, ct);
+    }
+
+    /// <summary>
+    /// Checks out the release <paramref name="tag"/>. Moves <c>user/comfyui.db</c> aside
+    /// first when — and only when — the installed code carries database migrations the
+    /// release lacks; hand-edited files are parked in a git stash, as the Manager does.
+    /// </summary>
+    private async Task<CommandResult> SwitchToReleaseAsync(
+        string backendDir, string tag, IProgress<string>? progress, CancellationToken ct)
+    {
+        var head = await RunGitAsync(backendDir, "rev-parse HEAD", progress: null, ct);
+        var target = await RunGitAsync(backendDir, $"rev-parse {tag}^{{commit}}", progress: null, ct);
+        if (head.Success && target.Success && head.Output.Trim() == target.Output.Trim())
+        {
+            Logger.Information("Backend {Dir} is already at release {Tag}", backendDir, tag);
+            progress?.Report($"Backend: already at release {tag}.");
+            return new CommandResult(true, $"Already at {tag}");
+        }
+
+        progress?.Report($"Backend: stable channel, switching to release {tag}...");
+
+        var (databaseBackup, databaseError) = await MoveDatabaseAsideIfTooNewAsync(backendDir, tag, progress, ct);
+        if (databaseError is not null)
+            return new CommandResult(false, databaseError);
+
+        var clean = await RunGitAsync(backendDir, "diff --quiet HEAD", progress: null, ct);
+        if (!clean.Success)
+        {
+            Logger.Information("Backend {Dir} has local changes; stashing them before the switch", backendDir);
+            progress?.Report("Backend: local file changes found, saving them to a git stash (restore with 'git stash pop').");
+
+            var stash = await RunGitAsync(backendDir,
+                "-c user.name=DiffusionNexus -c user.email=update@localhost stash push -m \"DiffusionNexus update backup\"",
+                progress, ct);
+            if (!stash.Success)
+            {
+                Logger.Error("Backend stash failed in {Dir}: {Output}", backendDir, stash.Output);
+                RestoreDatabase(backendDir, databaseBackup);
+                return stash;
+            }
+        }
+
+        var checkout = await RunGitAsync(backendDir, $"-c advice.detachedHead=false checkout {tag}", progress, ct);
+        if (!checkout.Success)
+        {
+            Logger.Error("Backend checkout of {Tag} failed in {Dir}: {Output}", tag, backendDir, checkout.Output);
+            RestoreDatabase(backendDir, databaseBackup);
+        }
+        else
+        {
+            Logger.Information("Backend {Dir} switched to release {Tag}", backendDir, tag);
+        }
+
+        return checkout;
+    }
+
+    /// <summary>
+    /// ComfyUI migrates <c>user/comfyui.db</c> forwards only. If HEAD has migration files
+    /// the release lacks, the release could not open the database, so it is moved aside
+    /// (ComfyUI builds a new one). Merely being some commits ahead of the tag is harmless
+    /// and leaves the database alone.
+    /// </summary>
+    /// <returns>The backup path when the file was moved, or an error when it is in use.</returns>
+    private async Task<(string? BackupPath, string? Error)> MoveDatabaseAsideIfTooNewAsync(
+        string backendDir, string tag, IProgress<string>? progress, CancellationToken ct)
+    {
+        var databasePath = Path.Combine(backendDir, "user", "comfyui.db");
+        if (!File.Exists(databasePath))
+            return (null, null);
+
+        var newerMigrations = await RunGitAsync(backendDir,
+            $"diff --name-only --diff-filter=A {tag} HEAD -- alembic_db/versions", progress: null, ct);
+        if (!newerMigrations.Success || string.IsNullOrWhiteSpace(newerMigrations.Output))
+        {
+            Logger.Debug("No database migrations newer than {Tag} in {Dir}; keeping comfyui.db", tag, backendDir);
+            return (null, null);
+        }
+
+        var backupPath = $"{databasePath}.{DateTime.Now:yyyyMMdd_HHmmss}.bak";
+        try
+        {
+            File.Move(databasePath, backupPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Logger.Warning(ex, "comfyui.db in {Dir} is in use; aborting the switch to {Tag}", backendDir, tag);
+            return (null, "user/comfyui.db is in use. Close ComfyUI and update again.");
+        }
+
+        Logger.Information("Installed code has a newer database format than {Tag}; moved comfyui.db to {Backup}", tag, backupPath);
+        progress?.Report($"Backend: database format is newer than {tag}; kept the old database as {Path.GetFileName(backupPath)}.");
+        return (backupPath, null);
+    }
+
+    private static void RestoreDatabase(string backendDir, string? backupPath)
+    {
+        if (backupPath is null)
+            return;
+
+        try
+        {
+            File.Move(backupPath, Path.Combine(backendDir, "user", "comfyui.db"));
+            Logger.Information("Restored comfyui.db from {Backup} after the failed switch", backupPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Logger.Warning(ex, "Could not restore comfyui.db from {Backup}", backupPath);
+        }
     }
 
     /// <summary>
@@ -246,7 +458,7 @@ public sealed class ComfyUIUpdateService : IInstallerUpdateService
         string dir, IProgress<string>? progress, string label, CancellationToken ct)
     {
         // Fetch latest refs first so we have up-to-date remote tracking
-        var fetchResult = await RunGitAsync(dir, "fetch --all", progress, ct);
+        var fetchResult = await RunGitAsync(dir, FetchArguments, progress, ct);
         if (!fetchResult.Success)
         {
             Logger.Warning("{Label} git fetch failed in {Dir}: {Output}", label, dir, fetchResult.Output);
