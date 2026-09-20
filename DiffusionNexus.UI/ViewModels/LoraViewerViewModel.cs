@@ -11,6 +11,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Domain.Utilities;
 using DiffusionNexus.Infrastructure;
 using DiffusionNexus.Infrastructure.Services;
 using DiffusionNexus.Service.Services;
@@ -512,7 +513,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 new SorterMetadataResolver(_civitaiClient, GetApiKeyForSorterAsync,
                     SorterMetadataResolver.DefaultCacheDirectory, FileHasher.Sha256Upper, _logger),
                 new FileOperations(),
-                DiskUtility.GetAvailableSpace,
+                path => DiskSpace.TryGetAvailableSpace(path),
                 FileHasher.Sha256Upper,
                 File.Exists,
                 SortHistoryWriter.DefaultHistoryDirectory,
