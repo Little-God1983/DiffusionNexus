@@ -32,14 +32,8 @@ public sealed class CivitaiDownloadQueueSpaceRecheckTests : IDisposable
         try { Directory.Delete(_tempDir, recursive: true); } catch { /* best-effort */ }
     }
 
-    /// <summary>A real reading of <paramref name="freeBytes"/> free.</summary>
-    private static FreeSpaceResult Free(long freeBytes) => new(FreeSpaceKind.Known, freeBytes);
 
-    /// <summary>A destination that will not say how much room it has — fail open.</summary>
-    private static FreeSpaceResult Unknown => new(FreeSpaceKind.Unknown, 0);
 
-    /// <summary>A destination with no volume behind it — block.</summary>
-    private static FreeSpaceResult Unreachable => new(FreeSpaceKind.Unreachable, 0);
 
     /// <summary>Completes instantly; counts calls so a refused Start is provable.</summary>
     private sealed class InstantDownloader : ICivitaiModelDownloader
@@ -79,13 +73,13 @@ public sealed class CivitaiDownloadQueueSpaceRecheckTests : IDisposable
     public async Task RecheckSpace_ClearsTheWarning_WhenTheDriveGainedRoomOutsideTheApp()
     {
         var queue = Queue();
-        queue.FreeSpaceProbe = (_, _) => Free(1 * Gb);
+        queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Known(1 * Gb);
         queue.Jobs.Add(Job(5 * Gb));
 
         queue.HasSpaceWarning.Should().BeTrue("5 GB of downloads do not fit in 1 GB of free space");
 
         // The user goes and deletes files. Nothing in the app observes that.
-        queue.FreeSpaceProbe = (_, _) => Free(100 * Gb);
+        queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Known(100 * Gb);
         queue.HasSpaceWarning.Should().BeTrue("nothing recomputes until the user asks");
 
         await queue.RecheckSpaceAsync();
@@ -98,13 +92,13 @@ public sealed class CivitaiDownloadQueueSpaceRecheckTests : IDisposable
     public async Task RecheckSpace_RaisesTheWarning_WhenTheDriveFilledUpOutsideTheApp()
     {
         var queue = Queue();
-        queue.FreeSpaceProbe = (_, _) => Free(100 * Gb);
+        queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Known(100 * Gb);
         queue.Jobs.Add(Job(5 * Gb));
 
         queue.HasSpaceWarning.Should().BeFalse("5 GB fits in 100 GB");
 
         // Something else on the machine ate the drive.
-        queue.FreeSpaceProbe = (_, _) => Free(1 * Gb);
+        queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Known(1 * Gb);
 
         await queue.RecheckSpaceAsync();
 
@@ -116,14 +110,14 @@ public sealed class CivitaiDownloadQueueSpaceRecheckTests : IDisposable
     public async Task RecheckSpaceCommand_RefreshesTheQueueWarning()
     {
         var queue = Queue();
-        queue.FreeSpaceProbe = (_, _) => Free(1 * Gb);
+        queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Known(1 * Gb);
         queue.Jobs.Add(Job(5 * Gb));
         var vm = new CivitaiBrowserViewModel(null, null, null, queue,
             new CivitaiWaitlist(null, null, persistPathOverride: Path.Combine(_tempDir, "waitlist.json")), null);
 
         queue.HasSpaceWarning.Should().BeTrue("5 GB of downloads do not fit in 1 GB of free space");
 
-        queue.FreeSpaceProbe = (_, _) => Free(100 * Gb);
+        queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Known(100 * Gb);
         await vm.RecheckSpaceCommand.ExecuteAsync(null);
 
         queue.HasSpaceWarning.Should().BeFalse("the queue panel's recheck button must re-run the check");
@@ -136,7 +130,7 @@ public sealed class CivitaiDownloadQueueSpaceRecheckTests : IDisposable
         // A check that only counts Queued clears the warning after an Abort and re-arms
         // Start for bytes it never measured.
         var queue = Queue();
-        queue.FreeSpaceProbe = (_, _) => Free(10 * Gb);
+        queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Known(10 * Gb);
         queue.Jobs.Add(Job(40 * Gb, status: JobStatus.Cancelled));
 
         await queue.RecheckSpaceAsync();
@@ -151,7 +145,7 @@ public sealed class CivitaiDownloadQueueSpaceRecheckTests : IDisposable
         // need room the exact file size does not account for. Siblings keep 256 MB
         // (CaptioningModelManager) and 1 GB (LoraSorterViewModel).
         var queue = Queue();
-        queue.FreeSpaceProbe = (_, _) => Free(5 * Gb);
+        queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Known(5 * Gb);
         queue.Jobs.Add(Job(5 * Gb));
 
         await queue.RecheckSpaceAsync();
@@ -167,7 +161,7 @@ public sealed class CivitaiDownloadQueueSpaceRecheckTests : IDisposable
         // one leftover job bound for an unplugged stick would leave Start permanently dead with
         // no way back.
         var queue = Queue();
-        queue.FreeSpaceProbe = (_, _) => Unreachable;
+        queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Unreachable;
         queue.Jobs.Add(Job(5 * Gb, targetDir: "Z:/models"));
 
         await queue.RecheckSpaceAsync();
@@ -182,7 +176,7 @@ public sealed class CivitaiDownloadQueueSpaceRecheckTests : IDisposable
         var downloader = new InstantDownloader();
         var queue = Queue(downloader);
         queue.FreeSpaceProbe = (root, _) =>
-            root.StartsWith("Z", StringComparison.OrdinalIgnoreCase) ? Unreachable : Free(100 * Gb);
+            root.StartsWith("Z", StringComparison.OrdinalIgnoreCase) ? FreeSpaceResult.Unreachable : FreeSpaceResult.Known(100 * Gb);
         var dead = Job(5 * Gb, targetDir: "Z:/models");
         queue.Jobs.Add(dead);
         queue.Jobs.Add(Job(5 * Gb));
@@ -202,7 +196,7 @@ public sealed class CivitaiDownloadQueueSpaceRecheckTests : IDisposable
         // red banner is up.
         var downloader = new InstantDownloader();
         var queue = Queue(downloader);
-        queue.FreeSpaceProbe = (_, _) => Free(1 * Gb);
+        queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Known(1 * Gb);
         var job = Job(5 * Gb, status: JobStatus.Cancelled);
         queue.Jobs.Add(job);
 
@@ -221,11 +215,11 @@ public sealed class CivitaiDownloadQueueSpaceRecheckTests : IDisposable
         // refuses the user's fix.
         var downloader = new InstantDownloader();
         var queue = Queue(downloader);
-        queue.FreeSpaceProbe = (_, _) => Free(1 * Gb);
+        queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Known(1 * Gb);
         queue.Jobs.Add(Job(5 * Gb));
         queue.HasSpaceWarning.Should().BeTrue("the stale warning is in place");
 
-        queue.FreeSpaceProbe = (_, _) => Free(100 * Gb);
+        queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Known(100 * Gb);
         await queue.StartAllAsync();
 
         downloader.CallCount.Should().Be(1);
@@ -237,7 +231,7 @@ public sealed class CivitaiDownloadQueueSpaceRecheckTests : IDisposable
         // The pill sits directly above the verdict. After an Abort it read "0 B" next to a
         // banner demanding 40 GB.
         var queue = Queue();
-        queue.FreeSpaceProbe = (_, _) => Free(100 * Gb);
+        queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Known(100 * Gb);
         queue.Jobs.Add(Job(40 * Gb, status: JobStatus.Cancelled));
 
         queue.TotalQueuedBytes.Should().Be(40 * Gb);
@@ -249,7 +243,7 @@ public sealed class CivitaiDownloadQueueSpaceRecheckTests : IDisposable
         // A version whose primary file carries no sizeKB is enqueued with SizeBytes = 0 and is
         // invisible to a byte comparison, while the stamp claims the destinations were checked.
         var queue = Queue();
-        queue.FreeSpaceProbe = (_, _) => Free(100 * Gb);
+        queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Known(100 * Gb);
         queue.Jobs.Add(Job(5 * Gb));
         queue.Jobs.Add(Job(0));
 
@@ -281,7 +275,7 @@ public sealed class CivitaiDownloadQueueSpaceRecheckTests : IDisposable
         var queue = Queue();
         var deferred = new List<Action>();
         queue.UiInvoke = deferred.Add;
-        queue.FreeSpaceProbe = (_, _) => Free(1 * Gb);
+        queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Known(1 * Gb);
         queue.Clock = () => new DateTimeOffset(2026, 9, 20, 14, 40, 0, TimeSpan.Zero);
 
         queue.Jobs.Add(Job(5 * Gb));
@@ -301,7 +295,7 @@ public sealed class CivitaiDownloadQueueSpaceRecheckTests : IDisposable
         // A share that will not report its size is unknowable, not unreachable. Blocking on it
         // would ban network destinations outright.
         var queue = Queue();
-        queue.FreeSpaceProbe = (_, _) => Unknown;
+        queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Unknown;
         queue.Jobs.Add(Job(5 * Gb));
 
         await queue.RecheckSpaceAsync();
@@ -316,7 +310,7 @@ public sealed class CivitaiDownloadQueueSpaceRecheckTests : IDisposable
         // One bad destination costs that destination's verdict, not the whole check.
         var queue = Queue();
         queue.FreeSpaceProbe = (root, _) =>
-            root.StartsWith("Z", StringComparison.OrdinalIgnoreCase) ? Unreachable : Free(1 * Gb);
+            root.StartsWith("Z", StringComparison.OrdinalIgnoreCase) ? FreeSpaceResult.Unreachable : FreeSpaceResult.Known(1 * Gb);
         queue.Jobs.Add(Job(5 * Gb, targetDir: "Z:/models"));
         queue.Jobs.Add(Job(5 * Gb));
 
@@ -333,7 +327,7 @@ public sealed class CivitaiDownloadQueueSpaceRecheckTests : IDisposable
         // were summed and measured against whichever volume the letter happened to name.
         var (_, mounted) = MountPointProbe.Create(_tempDir);
         var queue = Queue();
-        queue.FreeSpaceProbe = (_, _) => Free(1 * Gb);
+        queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Known(1 * Gb);
         queue.Jobs.Add(Job(5 * Gb));
         queue.Jobs.Add(Job(5 * Gb, targetDir: mounted));
 
@@ -344,13 +338,54 @@ public sealed class CivitaiDownloadQueueSpaceRecheckTests : IDisposable
         queue.SpaceWarning!.Split('\n').Should().HaveCount(2, "two volumes are two verdicts, not one doubled one");
     }
 
+    [MountPointFact]
+    public void TheAutomaticRecompute_AlsoChecksTwoVolumesSeparately_WhenTheyShareADriveLetter()
+    {
+        // The synchronous recompute is the one that gates Start
+        // (IsEnabled="{Binding !Queue.HasSpaceWarning}"), so the mount-point fix has to reach it.
+        // While it grouped by drive letter, downloads bound for a mounted C:\Models were summed
+        // with C:\Users and measured against C: — and StartAllAsync's accurate re-verification
+        // could never correct it, because the button it guards was already disabled.
+        // No RecheckSpaceAsync here: adding the jobs is the whole trigger.
+        var (_, mounted) = MountPointProbe.Create(_tempDir);
+        var queue = Queue();
+        queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Known(1 * Gb);
+
+        queue.Jobs.Add(Job(5 * Gb));
+        queue.Jobs.Add(Job(5 * Gb, targetDir: mounted));
+
+        queue.SpaceWarning.Should().Contain(Root).And.Contain(MountPointProbe.TargetRoot);
+        queue.SpaceWarning!.Split('\n').Should().HaveCount(2, "two volumes are two verdicts, not one doubled one");
+    }
+
+    [Fact]
+    public async Task RecheckSpace_KeepsCheckingTheOtherDrives_WhenOneProbeThrows()
+    {
+        // The containment lives at the call site of the seam rather than inside one
+        // implementation of it: DiskSpace.TryGetVolumeSpace is total by construction, so this
+        // guards a contract violation — but without it one throw unwinds the whole loop and
+        // costs every remaining volume its verdict, which is the guarantee RecheckSpaceAsync's
+        // own handler is written against.
+        var queue = Queue();
+        queue.FreeSpaceProbe = (volume, _) =>
+            volume.StartsWith("Z", StringComparison.OrdinalIgnoreCase)
+                ? throw new InvalidOperationException("a seam that breaks its contract")
+                : FreeSpaceResult.Known(1 * Gb);
+        queue.Jobs.Add(Job(5 * Gb, targetDir: "Z:/models"));
+        queue.Jobs.Add(Job(5 * Gb));
+
+        await queue.RecheckSpaceAsync();
+
+        queue.SpaceWarning.Should().Contain(Root, "the reachable drive is still short and must still be reported");
+    }
+
     [Fact]
     public async Task RecheckSpace_ResolvesRelativeTargets_InsteadOfDroppingThem()
     {
         // Path.GetPathRoot("models/loras") is "", and the empty-root filter drops that job's
         // bytes out of the check entirely.
         var queue = Queue();
-        queue.FreeSpaceProbe = (_, _) => Free(1 * Gb);
+        queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Known(1 * Gb);
         queue.Jobs.Add(Job(5 * Gb, targetDir: Path.Combine("models", "loras")));
 
         await queue.RecheckSpaceAsync();
@@ -364,7 +399,7 @@ public sealed class CivitaiDownloadQueueSpaceRecheckTests : IDisposable
         // SpaceWarning is set through SetProperty, so an identical verdict raises no
         // PropertyChanged and nothing on screen moves — the button looks broken.
         var queue = Queue();
-        queue.FreeSpaceProbe = (_, _) => Free(1 * Gb);
+        queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Known(1 * Gb);
         queue.Jobs.Add(Job(5 * Gb));
         queue.Clock = () => new DateTimeOffset(2026, 9, 20, 14, 32, 10, TimeSpan.Zero);
         await queue.RecheckSpaceAsync();
@@ -386,11 +421,11 @@ public sealed class CivitaiDownloadQueueSpaceRecheckTests : IDisposable
         // at the moment the bytes are actually committed.
         var downloader = new InstantDownloader();
         var queue = Queue(downloader);
-        queue.FreeSpaceProbe = (_, _) => Free(100 * Gb);
+        queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Known(100 * Gb);
         queue.Jobs.Add(Job(5 * Gb));
         queue.HasSpaceWarning.Should().BeFalse("5 GB fits in 100 GB at queue time");
 
-        queue.FreeSpaceProbe = (_, _) => Free(1 * Gb);
+        queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Known(1 * Gb);
         await queue.StartAllAsync();
 
         downloader.CallCount.Should().Be(0, "Start must re-verify free space before committing the bytes");

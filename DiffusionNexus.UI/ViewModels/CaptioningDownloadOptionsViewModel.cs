@@ -40,15 +40,14 @@ public sealed partial class DestinationOptionViewModel : ObservableObject
     private long _requiredBytes;
 
     /// <summary>
-    /// Unknown fails open — refusing a perfectly good network share because it will not report
-    /// its size is the worse error. Unreachable does not: there is nothing to write to.
+    /// The manager's own answer, not a second one: it demands
+    /// <see cref="CaptioningModelManager.FreeSpaceMarginBytes"/> of headroom on top of the file,
+    /// and this dialog used to compare the bare size — so 8.1 GB free with an 8.0 GB model
+    /// showed green, and the download refused after the user had committed.
+    /// Unknown fails open (refusing a perfectly good network share because it will not report its
+    /// size is the worse error); Unreachable does not, because there is nothing to write to.
     /// </summary>
-    public bool HasEnoughSpace => Destination.Space.Kind switch
-    {
-        FreeSpaceKind.Unreachable => false,
-        FreeSpaceKind.Unknown => true,
-        _ => FreeBytes >= RequiredBytes,
-    };
+    public bool HasEnoughSpace => CaptioningModelManager.HasRoomFor(Destination.Space, RequiredBytes);
 
     public string SpaceCheckLabel => IsUnreachable
         ? "NOT REACHABLE — pick another destination"

@@ -490,7 +490,7 @@ public sealed class CaptioningModelManagerTests : IDisposable
         var orphan = Path.Combine(dest, "stale.gguf.download");
         CreateFile(orphan, length: 3);
 
-        var manager = new CaptioningModelManager(_root, httpClient: null, freeSpaceProbe: _ => Free(1_000));
+        var manager = new CaptioningModelManager(_root, httpClient: null, freeSpaceProbe: _ => FreeSpaceResult.Known(1_000));
 
         var ok = await manager.DownloadModelAsync(CaptioningModelType.Qwen3_VL_8B, dest);
 
@@ -504,7 +504,7 @@ public sealed class CaptioningModelManagerTests : IDisposable
         var statuses = new List<ModelDownloadProgress>();
         using var http = new HttpClient(new ThrowingHandler());
         var manager = new CaptioningModelManager(
-            Path.Combine(_root, "space"), http, freeSpaceProbe: _ => Free(1_000));
+            Path.Combine(_root, "space"), http, freeSpaceProbe: _ => FreeSpaceResult.Known(1_000));
 
         var ok = await manager.DownloadModelAsync(
             CaptioningModelType.Qwen3_VL_8B,
@@ -524,7 +524,7 @@ public sealed class CaptioningModelManagerTests : IDisposable
         var statuses = new List<ModelDownloadProgress>();
         using var http = new HttpClient(new ThrowingHandler());
         var manager = new CaptioningModelManager(
-            Path.Combine(_root, "space-unknown"), http, freeSpaceProbe: _ => Unknown);
+            Path.Combine(_root, "space-unknown"), http, freeSpaceProbe: _ => FreeSpaceResult.Unknown);
 
         var ok = await manager.DownloadModelAsync(
             CaptioningModelType.Qwen3_VL_8B,
@@ -545,7 +545,7 @@ public sealed class CaptioningModelManagerTests : IDisposable
         var statuses = new List<ModelDownloadProgress>();
         using var http = new HttpClient(new ThrowingHandler());
         var manager = new CaptioningModelManager(
-            Path.Combine(_root, "space-dead"), http, freeSpaceProbe: _ => Unreachable);
+            Path.Combine(_root, "space-dead"), http, freeSpaceProbe: _ => FreeSpaceResult.Unreachable);
 
         var ok = await manager.DownloadModelAsync(
             CaptioningModelType.Qwen3_VL_8B,
@@ -557,14 +557,8 @@ public sealed class CaptioningModelManagerTests : IDisposable
             "the user must learn the destination is gone, not that the download merely failed");
     }
 
-    /// <summary>A real reading of <paramref name="freeBytes"/> free.</summary>
-    private static FreeSpaceResult Free(long freeBytes) => new(FreeSpaceKind.Known, freeBytes);
 
-    /// <summary>A destination that will not say how much room it has.</summary>
-    private static FreeSpaceResult Unknown => new(FreeSpaceKind.Unknown, 0);
 
-    /// <summary>A destination with no volume behind it.</summary>
-    private static FreeSpaceResult Unreachable => new(FreeSpaceKind.Unreachable, 0);
 
     /// <summary>Fails the test if any HTTP request is actually issued.</summary>
     private sealed class ThrowingHandler : HttpMessageHandler

@@ -21,14 +21,16 @@ public class DiskUtility
     /// </remarks>
     public bool EnoughFreeSpace(string sourcePath, string targetPath)
     {
-        long folderSize = GetDirectorySize(sourcePath);
+        // The target verdict first: it costs microseconds and, for anything but a real reading,
+        // already settles the answer. Walking the source ahead of it recursed an entire LoRA
+        // library before refusing a copy to a dead drive letter.
         var space = DiskSpace.TryGetAvailableSpace(targetPath);
 
         return space.Kind switch
         {
             FreeSpaceKind.Unreachable => false,
             FreeSpaceKind.Unknown => true,
-            _ => folderSize <= space.FreeBytes,
+            _ => GetDirectorySize(sourcePath) <= space.FreeBytes,
         };
     }
 

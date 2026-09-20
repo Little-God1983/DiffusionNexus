@@ -718,7 +718,19 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             TransferCount = plan.TransferCount;
             UpdatePreviewSummary(plan, excludedCandidates.Count);
 
-            ApplyDiskPreflight(plan, targetRoot);
+            // Off the dispatcher: the probe reads the target's volume, which for a NAS target
+            // whose server is down blocks for the SMB timeout (measured: ~5 s). The probe this
+            // replaced threw instantly instead, so taking the reading in place would hang the
+            // window on exactly the target ApplyDiskPreflight's docstring is about — and the
+            // preview re-runs on every option toggle. Directory.Exists rides along for the same
+            // reason: it is the other blocking call the preflight needs.
+            var targetSpace = await Task.Run(
+                () => (Space: _getAvailableSpace(targetRoot), Exists: SafeDirectoryExists(targetRoot)),
+                passCts.Token);
+
+            if (!IsCurrentPass()) return;
+
+            ApplyDiskPreflight(plan, targetRoot, targetSpace.Space, targetSpace.Exists);
 
             // Only clear a stale preview warning — a sort-run result message ("Done: …"/"Cancelled — …")
             // set by StartSortingAsync after its post-run recompute must survive this pass.
@@ -1447,15 +1459,22 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// near-full drive it already lives on.</description></item>
     /// </list>
     /// </summary>
-    private void ApplyDiskPreflight(LoraSortPlan plan, string targetRoot)
+    /// <summary>Folder existence without letting a denied or malformed path escape the preview.</summary>
+    private static bool SafeDirectoryExists(string path)
     {
-        var space = _getAvailableSpace(targetRoot);
+        try { return Directory.Exists(path); }
+        catch { return false; }
+    }
 
+    /// <param name="space">Read off the target's volume by the caller, on a pool thread.</param>
+    /// <param name="targetExists">Whether the target folder is there, read with it.</param>
+    private void ApplyDiskPreflight(LoraSortPlan plan, string targetRoot, FreeSpaceResult space, bool targetExists)
+    {
         // Unknowable AND not there is not the UNC case: there is nothing to sort into, so it
         // must not inherit the fail-open. The folder question is asked here rather than inside
         // the probe because it is a question about the destination, not about the volume.
         if (space.Kind == FreeSpaceKind.Unreachable
-            || (space.Kind == FreeSpaceKind.Unknown && !Directory.Exists(targetRoot)))
+            || (space.Kind == FreeSpaceKind.Unknown && !targetExists))
         {
             _logger?.Warn(LogCategory.FileSystem, LogSource,
                 $"Target '{targetRoot}' could not be reached ({space.Kind}) — run blocked.");

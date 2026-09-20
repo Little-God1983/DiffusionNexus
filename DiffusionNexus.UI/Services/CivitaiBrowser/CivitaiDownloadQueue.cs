@@ -198,13 +198,13 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     }
 
     /// <summary>
-    /// Free space on a volume, as a verdict rather than a number the caller has to interpret:
-    /// "unknowable" and "unreachable" want opposite answers here and this queue used to tell them
-    /// apart by catching exception types (issue #581). The second argument is
-    /// <c>resolveMountPoints</c> — see <see cref="DiskSpace.TryGetAvailableSpace"/>. Test seam.
+    /// Free space on an already-resolved volume root, as a verdict rather than a number the
+    /// caller has to interpret: "unknowable" and "unreachable" want opposite answers here and
+    /// this queue used to tell them apart by catching exception types (issue #581). Takes the
+    /// volume rather than the destination so the grouping's resolution is not repeated. Test seam.
     /// </summary>
-    internal Func<string, bool, FreeSpaceResult> FreeSpaceProbe { get; set; } =
-        (path, resolveMountPoints) => DiskSpace.TryGetAvailableSpace(path, resolveMountPoints);
+    internal Func<string, DiskProbe, FreeSpaceResult> FreeSpaceProbe { get; set; } =
+        DiskSpace.TryGetVolumeSpace;
 
     /// <summary>Test seam for <see cref="LastSpaceCheckDisplay"/>.</summary>
     internal Func<DateTimeOffset> Clock { get; set; } = () => DateTimeOffset.Now;
@@ -246,7 +246,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         try
         {
             var snapshot = SnapshotPending();
-            var state = await Task.Run(() => ComputeSpaceState(snapshot, resolveMountPoints: true));
+            var state = await Task.Run(() => ComputeSpaceState(snapshot, DiskProbe.Full));
             ApplySpaceState(state);
             _logger?.Info(LogCategory.Download, "CivitaiQueue",
                 $"Disk-space recheck: {SpaceWarning ?? SpaceNote ?? "all destinations have room"}");
@@ -263,18 +263,23 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     /// <summary>
     /// Synchronous recompute for the automatic triggers (queue membership, job status,
     /// destination change), which already ran on the UI thread before this existed.
-    /// <c>resolveMountPoints: false</c> keeps it off the volume lookup, which blocks for the SMB
-    /// timeout on a dead network destination (measured: ~5 s) — and this runs twice per job per
-    /// batch. It costs the mount-point resolution and the unknown/unreachable distinction, both
-    /// of which fail towards "unknown" (no gate) and are re-derived properly by the recheck and
-    /// the per-job check.
-    /// Making these triggers async is a pre-existing question, deliberately left alone here.
+    /// <para>
+    /// This is the path that gates the Start button (<c>IsEnabled="{Binding
+    /// !Queue.HasSpaceWarning}"</c>), so it has to be mount-point aware or the accurate
+    /// re-verification inside <see cref="StartAllAsync"/> can never run — the button it guards
+    /// would already be disabled by a reading taken against the wrong volume.
+    /// <see cref="DiskProbe.LocalVolumesOnly"/> buys exactly that: a local volume mounted into a
+    /// folder is resolved and read in full (measured at well under a millisecond), while a
+    /// network destination reports Unknown instead of stalling the window for the SMB timeout.
+    /// Network destinations get their real verdict from the recheck, from Start, and from the
+    /// per-job check, all of which run off this thread.
+    /// </para>
     /// </summary>
     private void RecomputeSpaceWarning()
     {
         try
         {
-            ApplySpaceState(ComputeSpaceState(SnapshotPending(), resolveMountPoints: false));
+            ApplySpaceState(ComputeSpaceState(SnapshotPending(), DiskProbe.LocalVolumesOnly));
         }
         catch (Exception ex)
         {
@@ -321,14 +326,12 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     /// behind one letter. Bucketing them by letter summed bytes bound for different disks and
     /// measured the total against whichever one the letter named (issue #581).
     /// </remarks>
-    private SpaceState ComputeSpaceState(PendingSnapshot snapshot, bool resolveMountPoints)
+    private SpaceState ComputeSpaceState(PendingSnapshot snapshot, DiskProbe probe)
     {
         var byVolume = snapshot.Destinations
             .Select(d => new
             {
-                // A destination whose volume cannot be named is still checked, under its own
-                // path — dropping it would take its bytes out of the gate entirely.
-                Volume = DiskSpace.GetVolumeRoot(d.Directory, resolveMountPoints) ?? d.Directory,
+                Volume = DiskSpace.GetVolumeRoot(d.Directory, probe)!,
                 d.Bytes,
             })
             .GroupBy(x => x.Volume, StringComparer.OrdinalIgnoreCase)
@@ -340,7 +343,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
 
         foreach (var entry in byVolume)
         {
-            var (kind, free) = ClassifyVolume(entry.Volume, entry.Bytes, resolveMountPoints);
+            var (kind, free) = ClassifyVolume(entry.Volume, entry.Bytes, probe);
             switch (kind)
             {
                 case RootSpace.Short:
@@ -373,9 +376,27 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     /// exception types now — this used to split them by catching <see cref="ArgumentException"/>
     /// and probing for the folder, one of four hand-written copies of the same rule (issue #581).
     /// </summary>
-    private (RootSpace Kind, long Free) ClassifyVolume(string volume, long neededBytes, bool resolveMountPoints)
+    /// <remarks>
+    /// The catch stays at the call site of the seam rather than inside one implementation of it.
+    /// <see cref="DiskSpace.TryGetVolumeSpace"/> is total by construction, so this is a guard
+    /// against a contract violation rather than an expected path — but without it a single
+    /// throwing probe unwinds the <c>foreach</c> in <see cref="ComputeSpaceState"/> and costs
+    /// every remaining volume its verdict, which is the guarantee
+    /// <see cref="RecheckSpaceAsync"/>'s own handler is written against.
+    /// </remarks>
+    private (RootSpace Kind, long Free) ClassifyVolume(string volume, long neededBytes, DiskProbe probe)
     {
-        var space = FreeSpaceProbe(volume, resolveMountPoints);
+        FreeSpaceResult space;
+        try
+        {
+            space = FreeSpaceProbe(volume, probe);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Debug(LogCategory.Download, "CivitaiQueue",
+                $"Free-space probe failed for {volume}: {ex.Message}");
+            return (RootSpace.Unknown, 0L);
+        }
 
         return space.Kind switch
         {
@@ -398,7 +419,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         var volume = DiskSpace.GetVolumeRoot(targetDir);
         if (volume is null) return null;
 
-        var (kind, free) = ClassifyVolume(volume, job.SizeBytes, resolveMountPoints: true);
+        var (kind, free) = ClassifyVolume(volume, job.SizeBytes, DiskProbe.Full);
         return kind switch
         {
             RootSpace.Unreachable => $"Destination drive {volume} is not reachable.",
@@ -755,7 +776,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         try
         {
             var snapshot = SnapshotPending();
-            var verdict = await Task.Run(() => ComputeSpaceState(snapshot, resolveMountPoints: true));
+            var verdict = await Task.Run(() => ComputeSpaceState(snapshot, DiskProbe.Full));
             ApplySpaceState(verdict);
             fresh = verdict;
         }

@@ -60,14 +60,8 @@ public sealed class LoraSorterViewModelTests : IDisposable
         return new InstalledModelFile(model, version, file, Path.GetDirectoryName(path)!);
     }
 
-    /// <summary>A real reading of <paramref name="freeBytes"/> free.</summary>
-    private static FreeSpaceResult Free(long freeBytes) => new(FreeSpaceKind.Known, freeBytes);
 
-    /// <summary>A target that will not say how much room it has — blind, not broken.</summary>
-    private static FreeSpaceResult Unknown => new(FreeSpaceKind.Unknown, 0);
 
-    /// <summary>A target with no volume behind it.</summary>
-    private static FreeSpaceResult Unreachable => new(FreeSpaceKind.Unreachable, 0);
 
     private LoraSorterViewModel CreateVm(long freeSpace = long.MaxValue,
         IReadOnlyList<InstalledModelFile>? cached = null,
@@ -91,7 +85,7 @@ public sealed class LoraSorterViewModelTests : IDisposable
             metadataResolver: new SorterMetadataResolver(null, () => Task.FromResult<string?>(null),
                 Path.Combine(_root.FullName, "cache"), resolverHash ?? (_ => "hash"), logger: null),
             fileOperations: new FileOperations(),
-            getAvailableSpace: getAvailableSpace ?? (_ => Free(freeSpace)),
+            getAvailableSpace: getAvailableSpace ?? (_ => FreeSpaceResult.Known(freeSpace)),
             hashFile: _ => "hash",
             fileExistsOnDisk: fileExistsOnDisk ?? File.Exists,
             historyDirectory: Path.Combine(_root.FullName, "history"),
@@ -1416,7 +1410,7 @@ public sealed class LoraSorterViewModelTests : IDisposable
         // so the run may proceed.
         var a = WriteLora(@"flat\a.safetensors");
         var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")],
-            getAvailableSpace: _ => Unknown);
+            getAvailableSpace: _ => FreeSpaceResult.Unknown);
 
         await vm.InitializeAsync();
 
@@ -1435,7 +1429,7 @@ public sealed class LoraSorterViewModelTests : IDisposable
         // 412 failed." Unreachable is not unknowable.
         var a = WriteLora(@"flat\a.safetensors");
         var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")],
-            getAvailableSpace: _ => Unreachable);
+            getAvailableSpace: _ => FreeSpaceResult.Unreachable);
 
         await vm.InitializeAsync();
 
@@ -1451,7 +1445,7 @@ public sealed class LoraSorterViewModelTests : IDisposable
         // nothing to sort into, so this must not inherit the UNC fail-open.
         var a = WriteLora(@"flat\a.safetensors");
         var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")],
-            getAvailableSpace: _ => Unknown);
+            getAvailableSpace: _ => FreeSpaceResult.Unknown);
         vm.CustomTargetFolder = Path.Combine(_root.FullName, "NoSuchTarget");
 
         await vm.InitializeAsync();

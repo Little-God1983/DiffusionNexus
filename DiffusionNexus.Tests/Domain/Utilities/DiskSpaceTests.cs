@@ -86,28 +86,28 @@ public sealed class DiskSpaceTests : IDisposable
     {
         // The distinction that cost a run: failing open on an unplugged drive armed Start and
         // the sorter then reported "Done: 0 sorted, 0 duplicates skipped, 412 failed".
-        var result = DiskSpace.TryGetAvailableSpace(Path.Combine(DeadDriveRoot(), "loras"));
+        var result = DiskSpace.TryGetAvailableSpace(Path.Combine(DriveLetters.DeadRoot(), "loras"));
 
         result.Kind.Should().Be(FreeSpaceKind.Unreachable);
     }
 
     [WindowsFact]
-    public void TryGetAvailableSpace_WithoutMountPointResolution_ReportsUnreachable_ForADeadDriveLetter()
+    public void TryGetAvailableSpace_WithoutNetworkIo_ReportsUnreachable_ForADeadDriveLetter()
     {
-        // The cheap mode gives up mount-point resolution, never the unreachable verdict — that is
-        // the one a caller blocks on.
-        var result = DiskSpace.TryGetAvailableSpace(DeadDriveRoot(), resolveMountPoints: false);
+        // An unmapped letter reports DriveType.NoRootDirectory, which settles it with no I/O at
+        // all — so the UI-thread mode still gives the verdict a caller blocks on.
+        var result = DiskSpace.TryGetAvailableSpace(DriveLetters.DeadRoot(), DiskProbe.LocalVolumesOnly);
 
         result.Kind.Should().Be(FreeSpaceKind.Unreachable);
     }
 
     [WindowsFact]
-    public void TryGetAvailableSpace_WithoutMountPointResolution_ReportsUnknown_ForAUncRoot()
+    public void TryGetAvailableSpace_WithoutNetworkIo_ReportsUnknown_ForAUncPath()
     {
-        // A UNC share has no DriveInfo — new DriveInfo(@"\\nas\share\") throws ArgumentException
-        // on the name alone, without touching the network — so the cheap mode has no number to
-        // give. Unknown, not unreachable: callers fail open and say so.
-        var result = DiskSpace.TryGetAvailableSpace(@"\\nas\share\loras", resolveMountPoints: false);
+        // Measured: reading a dead UNC path costs the full SMB timeout (~5 s), so the mode that
+        // runs on the UI thread must not attempt it. Unknown, not unreachable — callers fail
+        // open and say so, and the off-thread paths get the real answer.
+        var result = DiskSpace.TryGetAvailableSpace(@"\\nas\share\loras", DiskProbe.LocalVolumesOnly);
 
         result.Kind.Should().Be(FreeSpaceKind.Unknown);
         result.FreeBytes.Should().Be(0);
@@ -128,16 +128,110 @@ public sealed class DiskSpaceTests : IDisposable
     }
 
     [MountPointFact]
-    public void TryGetAvailableSpace_WithoutMountPointResolution_MeasuresTheHostDriveLetter()
+    public void TryGetAvailableSpace_WithoutNetworkIo_StillMeasuresAMountedLocalVolume()
     {
-        // Pins the documented cost of the cheap mode, so nobody adopts it by accident: it answers
-        // from the drive letter alone and therefore reports the host volume for a mount point.
+        // The UI-thread mode gives up network volumes, NOT mount points. Measured on a local
+        // path the full reading costs well under a millisecond, and a local disk mounted into a
+        // folder is exactly the case issue #581 is about — so the caller that gates the Start
+        // button gets the accurate number without leaving the dispatcher.
         var (host, mounted) = MountPointProbe.Create(_temp);
 
-        var result = DiskSpace.TryGetAvailableSpace(mounted, resolveMountPoints: false);
+        var result = DiskSpace.TryGetAvailableSpace(
+            Path.Combine(mounted, "model.safetensors"), DiskProbe.LocalVolumesOnly);
 
         result.Kind.Should().Be(FreeSpaceKind.Known);
-        result.FreeBytes.Should().BeCloseTo(host, MountPointProbe.Tolerance);
+        result.FreeBytes.Should().BeCloseTo(MountPointProbe.TargetFreeBytes, MountPointProbe.Tolerance);
+        result.FreeBytes.Should().NotBeCloseTo(host, MountPointProbe.Tolerance);
+    }
+
+    [MountPointFact]
+    public void GetVolumeRoot_WithoutNetworkIo_StillResolvesAMountedLocalVolume()
+    {
+        var (_, mounted) = MountPointProbe.Create(_temp);
+
+        DiskSpace.GetVolumeRoot(Path.Combine(mounted, "deeper"), DiskProbe.LocalVolumesOnly)
+            .Should().Be(MountPointProbe.TargetRoot);
+    }
+
+    [WindowsFact]
+    public void GetVolumeRoot_WithoutNetworkIo_FallsBackToTheShareRoot_ForAUncPath()
+    {
+        DiskSpace.GetVolumeRoot(@"\\nas\share\loras", DiskProbe.LocalVolumesOnly)
+            .Should().Be(@"\\nas\share\", "the user still has to be told which destination was skipped");
+    }
+
+    [WindowsFact]
+    public void GetVolumeRoot_AppendsTheTrailingSeparator_ForAUncPath()
+    {
+        // Path.GetPathRoot(@"\\nas\share\loras") is [\\nas\share] — no separator. The doc
+        // promises one, the string is shown to the user, and GetDiskFreeSpaceEx documents a
+        // trailing backslash as required for a UNC name.
+        DiskSpace.GetVolumeRoot(@"\\nas\share\loras").Should().EndWith(@"\");
+    }
+
+    [Fact]
+    public void TryGetVolumeSpace_MeasuresAnAlreadyResolvedRoot()
+    {
+        // The queue resolves a destination's volume to group by it, then reads that volume. This
+        // overload exists so the second step does not resolve the same path all over again.
+        var volume = DiskSpace.GetVolumeRoot(_temp)!;
+
+        var result = DiskSpace.TryGetVolumeSpace(volume);
+
+        result.Kind.Should().Be(FreeSpaceKind.Known);
+        result.FreeBytes.Should().BeCloseTo(DiskSpace.TryGetAvailableSpace(_temp).FreeBytes, MountPointProbe.Tolerance);
+    }
+
+    [MountPointFact]
+    public void TryGetVolumeSpace_KeepsTheMountedVolumesReading()
+    {
+        var (host, mounted) = MountPointProbe.Create(_temp);
+        var volume = DiskSpace.GetVolumeRoot(mounted)!;
+
+        var result = DiskSpace.TryGetVolumeSpace(volume);
+
+        result.FreeBytes.Should().BeCloseTo(MountPointProbe.TargetFreeBytes, MountPointProbe.Tolerance);
+        result.FreeBytes.Should().NotBeCloseTo(host, MountPointProbe.Tolerance);
+    }
+
+    [Theory]
+    // A destination sitting on a mount deeper than "/" must match that mount, not the root
+    // filesystem — the Unix equivalent of the Windows bug this class exists to fix.
+    [InlineData("/mnt/models/loras/x.safetensors", "/mnt/models")]
+    [InlineData("/mnt/models", "/mnt/models")]
+    [InlineData("/home/chris/loras", "/home")]
+    [InlineData("/var/tmp/x", "/")]
+    [InlineData("/mnt/models-backup/x", "/")]
+    public void LongestMountRootContaining_PicksTheDeepestMountThePathLiesUnder(string path, string expected)
+    {
+        string[] mounts = ["/", "/home", "/mnt/models", "/mnt/other"];
+
+        DiskSpace.LongestMountRootContaining(path, mounts).Should().Be(expected);
+    }
+
+    [Fact]
+    public void LongestMountRootContaining_ReturnsNull_WhenNothingContainsThePath()
+    {
+        DiskSpace.LongestMountRootContaining("/mnt/models/x", ["/home", "/boot"]).Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData(FreeSpaceKind.Unknown)]
+    [InlineData(FreeSpaceKind.Unreachable)]
+    public void FreeSpaceResult_ReportsNoBytes_ForAnythingButKnown(FreeSpaceKind kind)
+    {
+        // The invariant the doc states. Without this the positional constructor lets anyone build
+        // a reading of 12345 bytes that no caller is allowed to compare against.
+        new FreeSpaceResult(kind, 12_345).FreeBytes.Should().Be(0);
+    }
+
+    [Fact]
+    public void FreeSpaceResult_FactoriesAreReachableFromOtherAssemblies()
+    {
+        // They were internal, so four test files hand-rolled the same three helpers.
+        FreeSpaceResult.Known(42).Should().Be(new FreeSpaceResult(FreeSpaceKind.Known, 42));
+        FreeSpaceResult.Unknown.Kind.Should().Be(FreeSpaceKind.Unknown);
+        FreeSpaceResult.Unreachable.Kind.Should().Be(FreeSpaceKind.Unreachable);
     }
 
     [MountPointFact]
@@ -160,7 +254,7 @@ public sealed class DiskSpaceTests : IDisposable
     public void GetVolumeRoot_ReturnsTheDriveRoot_ForADeadDriveLetter()
     {
         // No volume to name, but the user still has to be told which destination is dead.
-        DiskSpace.GetVolumeRoot(Path.Combine(DeadDriveRoot(), "loras")).Should().Be(DeadDriveRoot());
+        DiskSpace.GetVolumeRoot(Path.Combine(DriveLetters.DeadRoot(), "loras")).Should().Be(DriveLetters.DeadRoot());
     }
 
     [Theory]
@@ -172,19 +266,5 @@ public sealed class DiskSpaceTests : IDisposable
         DiskSpace.GetVolumeRoot(path).Should().BeNull();
     }
 
-    /// <summary>Root of a drive letter no volume is mounted on.</summary>
-    private static string DeadDriveRoot()
-    {
-        var taken = DriveInfo.GetDrives()
-            .Select(d => char.ToUpperInvariant(d.Name[0]))
-            .ToHashSet();
-
-        for (var letter = 'Z'; letter >= 'D'; letter--)
-        {
-            if (!taken.Contains(letter)) return $"{letter}:\\";
-        }
-
-        throw new InvalidOperationException("every drive letter is in use; cannot test the dead-letter verdict");
-    }
 }
 

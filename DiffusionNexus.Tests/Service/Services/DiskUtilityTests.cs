@@ -32,7 +32,7 @@ public class DiskUtilityTests
         var dir = Directory.CreateTempSubdirectory("dn-diskutil-").FullName;
         try
         {
-            util.EnoughFreeSpace(dir, Path.Combine(DeadDriveRoot(), "target")).Should().BeFalse();
+            util.EnoughFreeSpace(dir, Path.Combine(DriveLetters.DeadRoot(), "target")).Should().BeFalse();
         }
         finally
         {
@@ -40,16 +40,17 @@ public class DiskUtilityTests
         }
     }
 
-    /// <summary>Root of a drive letter no volume is mounted on.</summary>
-    private static string DeadDriveRoot()
+    [WindowsFact]
+    public void EnoughFreeSpace_AnswersAnUnreachableTarget_WithoutWalkingTheSource()
     {
-        var taken = DriveInfo.GetDrives().Select(d => char.ToUpperInvariant(d.Name[0])).ToHashSet();
-        for (var letter = 'Z'; letter >= 'D'; letter--)
-        {
-            if (!taken.Contains(letter)) return $"{letter}:\\";
-        }
+        // The source walk recurses an entire LoRA library; the disk verdict takes microseconds
+        // and already settles it. Proven by a source path that does not exist: GetDirectorySize
+        // would throw DirectoryNotFoundException if it ran.
+        var util = new DiskUtility();
 
-        throw new InvalidOperationException("every drive letter is in use");
+        util.EnoughFreeSpace(
+            Path.Combine(Path.GetTempPath(), "dn-no-such-source"),
+            Path.Combine(DriveLetters.DeadRoot(), "target")).Should().BeFalse();
     }
 
     [Fact]

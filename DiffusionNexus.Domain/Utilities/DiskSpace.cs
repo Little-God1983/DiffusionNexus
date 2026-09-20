@@ -11,8 +11,9 @@ public enum FreeSpaceKind
     Known,
 
     /// <summary>
-    /// The volume exists as far as anyone can tell, but it will not say how much room it has.
-    /// Callers fail <b>open</b> and say so — refusing to act on a destination that is probably
+    /// The volume exists as far as anyone can tell, but it will not say how much room it has —
+    /// or answering would have meant a network round trip the caller could not afford.
+    /// Callers fail <b>open</b> and say so: refusing to act on a destination that is probably
     /// fine just moves the failure somewhere less informative.
     /// </summary>
     Unknown,
@@ -24,21 +25,46 @@ public enum FreeSpaceKind
     Unreachable,
 }
 
+/// <summary>How far a reading may go to get its answer.</summary>
+public enum DiskProbe
+{
+    /// <summary>
+    /// Read whatever volume the path lands on, network shares included. Measured: an unreachable
+    /// UNC path costs the full SMB timeout (~5 s), so this belongs off the UI thread.
+    /// </summary>
+    Full,
+
+    /// <summary>
+    /// Never touch the network. Local volumes still get the complete mount-point-aware reading —
+    /// measured at well under a millisecond, junctions included — and a network destination
+    /// reports <see cref="FreeSpaceKind.Unknown"/> instead of stalling. Deciding which is which
+    /// costs no I/O at all (a UNC prefix, or <see cref="DriveInfo.DriveType"/>, which reads the
+    /// mount table). Safe on the UI thread.
+    /// </summary>
+    LocalVolumesOnly,
+}
+
 /// <summary>
 /// A free-space reading. <see cref="FreeBytes"/> is 0 for anything but
-/// <see cref="FreeSpaceKind.Known"/>, so it must never be compared against a required size
-/// without checking <see cref="Kind"/> first.
+/// <see cref="FreeSpaceKind.Known"/> — enforced here rather than merely documented, so it can
+/// never be compared against a required size without checking <see cref="Kind"/> first.
 /// </summary>
 public readonly record struct FreeSpaceResult(FreeSpaceKind Kind, long FreeBytes)
 {
+    /// <summary>Zero unless this is a real measurement.</summary>
+    public long FreeBytes { get; init; } = Kind == FreeSpaceKind.Known ? FreeBytes : 0;
+
     /// <summary>True when <see cref="FreeBytes"/> is a real measurement.</summary>
     public bool IsKnown => Kind == FreeSpaceKind.Known;
 
-    internal static FreeSpaceResult Known(long freeBytes) => new(FreeSpaceKind.Known, freeBytes);
+    /// <summary>A real reading of <paramref name="freeBytes"/> free.</summary>
+    public static FreeSpaceResult Known(long freeBytes) => new(FreeSpaceKind.Known, freeBytes);
 
-    internal static FreeSpaceResult Unknown { get; } = new(FreeSpaceKind.Unknown, 0);
+    /// <summary>A volume that will not say how much room it has.</summary>
+    public static FreeSpaceResult Unknown { get; } = new(FreeSpaceKind.Unknown, 0);
 
-    internal static FreeSpaceResult Unreachable { get; } = new(FreeSpaceKind.Unreachable, 0);
+    /// <summary>A path with no volume behind it.</summary>
+    public static FreeSpaceResult Unreachable { get; } = new(FreeSpaceKind.Unreachable, 0);
 }
 
 /// <summary>
@@ -67,8 +93,7 @@ public readonly record struct FreeSpaceResult(FreeSpaceKind Kind, long FreeBytes
 /// with an 8 TB disk mounted at <c>C:\Models</c>, <see cref="DriveInfo"/> reports <c>C:</c>'s free
 /// space and both directions are wrong — a full <c>C:</c> blocks downloads that would land on an
 /// empty disk, and a nearly-full mounted volume reports plenty of room. The Win32 pair resolves
-/// the reparse point; <see cref="Path.GetPathRoot(string)"/> does not. Elsewhere the
-/// <see cref="DriveInfo"/> fallback applies and mount points are not resolved.
+/// the reparse point; <see cref="Path.GetPathRoot(string)"/> does not.
 /// </para>
 /// </remarks>
 public static class DiskSpace
@@ -83,34 +108,35 @@ public static class DiskSpace
     /// probes this replaced fed <see cref="Path.GetPathRoot(string)"/> the raw string, which
     /// returns <c>""</c> for a relative path and left every caller to invent a meaning for it.
     /// </param>
-    /// <param name="resolveMountPoints">
-    /// <see langword="false"/> answers from the drive letter alone: no reparse-point resolution,
-    /// so a volume mounted into a folder reports its <i>host</i> letter's free space. It exists
-    /// for the one caller that runs this synchronously on the UI thread, where the volume lookup
-    /// would block for the SMB timeout on a dead network path (measured: ~5 s). Prefer the
-    /// default everywhere else.
-    /// </param>
-    public static FreeSpaceResult TryGetAvailableSpace(string? path, bool resolveMountPoints = true)
+    /// <param name="probe">See <see cref="DiskProbe"/>. The default may block on a network path.</param>
+    public static FreeSpaceResult TryGetAvailableSpace(string? path, DiskProbe probe = DiskProbe.Full)
     {
-        if (string.IsNullOrWhiteSpace(path)) return FreeSpaceResult.Unreachable;
+        if (!TryResolve(path, out var full)) return FreeSpaceResult.Unreachable;
 
-        string full;
-        try
+        if (probe == DiskProbe.LocalVolumesOnly && VerdictWithoutTouchingTheNetwork(full) is { } cheap)
         {
-            full = Path.GetFullPath(path);
-        }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-        {
-            // Not a path at all. Nothing is going to land here.
-            return FreeSpaceResult.Unreachable;
+            return cheap;
         }
 
-        if (OperatingSystem.IsWindows() && resolveMountPoints)
+        return Measure(VolumeRootOf(full));
+    }
+
+    /// <summary>
+    /// Reads a volume root that <see cref="GetVolumeRoot"/> already resolved, without resolving it
+    /// a second time. The queue groups destinations by volume and then reads each volume once;
+    /// going back through <see cref="TryGetAvailableSpace"/> would repeat the resolution, which on
+    /// an unreachable network destination means paying the SMB timeout twice.
+    /// </summary>
+    public static FreeSpaceResult TryGetVolumeSpace(string? volumeRoot, DiskProbe probe = DiskProbe.Full)
+    {
+        if (!TryResolve(volumeRoot, out var full)) return FreeSpaceResult.Unreachable;
+
+        if (probe == DiskProbe.LocalVolumesOnly && VerdictWithoutTouchingTheNetwork(full) is { } cheap)
         {
-            return MeasureWindowsVolume(full);
+            return cheap;
         }
 
-        return MeasureDriveRoot(full);
+        return Measure(full);
     }
 
     /// <summary>
@@ -121,50 +147,135 @@ public static class DiskSpace
     /// </summary>
     /// <returns>The volume root with a trailing separator, or <see langword="null"/> when the
     /// path is empty or malformed.</returns>
-    /// <param name="resolveMountPoints">See <see cref="TryGetAvailableSpace"/>. When
-    /// <see langword="false"/>, or off Windows, this is the drive root.</param>
-    public static string? GetVolumeRoot(string? path, bool resolveMountPoints = true)
+    /// <param name="probe">See <see cref="DiskProbe"/>. Under
+    /// <see cref="DiskProbe.LocalVolumesOnly"/> a network path falls back to its share root
+    /// rather than being resolved, so the caller still has something to name.</param>
+    public static string? GetVolumeRoot(string? path, DiskProbe probe = DiskProbe.Full)
     {
-        if (string.IsNullOrWhiteSpace(path)) return null;
+        if (!TryResolve(path, out var full)) return null;
 
-        string full;
-        try
+        if (probe == DiskProbe.LocalVolumesOnly && VerdictWithoutTouchingTheNetwork(full) is not null)
         {
-            full = Path.GetFullPath(path);
-        }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-        {
-            return null;
+            return WithTrailingSeparator(Path.GetPathRoot(full));
         }
 
-        if (OperatingSystem.IsWindows() && resolveMountPoints && TryGetVolumePathName(full, out var volume))
-        {
-            return volume;
-        }
-
-        var root = Path.GetPathRoot(full);
-        return string.IsNullOrEmpty(root) ? null : root;
+        return VolumeRootOf(full);
     }
 
     /// <summary>
-    /// Windows reading: resolve the volume the path belongs to, then ask that volume. Both steps
-    /// tolerate a path that does not exist yet — <c>GetVolumePathName</c> walks up to the nearest
-    /// component that does, which is also what makes it land inside a mounted folder rather than
-    /// on its host letter.
+    /// The deepest mount root that <paramref name="fullPath"/> lies under, or <see langword="null"/>
+    /// when none does. Deepest wins: <c>/mnt/models</c> and <c>/</c> both contain
+    /// <c>/mnt/models/loras</c>, and answering <c>/</c> is the same bug this class exists to fix.
+    /// </summary>
+    internal static string? LongestMountRootContaining(string fullPath, IEnumerable<string> mountRoots)
+    {
+        string? best = null;
+        var bestLength = -1;
+
+        foreach (var root in mountRoots)
+        {
+            if (string.IsNullOrEmpty(root)) continue;
+
+            var trimmed = root.TrimEnd('/', '\\');
+
+            // The filesystem root trims to nothing and contains everything. LocalPathRoots.IsUnder
+            // answers false there on purpose — "everything" is the wrong reading of an empty
+            // source folder, which is the question it was written for — so that one case is
+            // settled here rather than by loosening a rule other callers depend on.
+            var contains = trimmed.Length == 0
+                ? fullPath.Length > 0 && LocalPathRoots.IsSeparator(fullPath[0])
+                : LocalPathRoots.IsUnder(fullPath, trimmed);
+
+            if (!contains || trimmed.Length <= bestLength) continue;
+
+            best = root;
+            bestLength = trimmed.Length;
+        }
+
+        return best;
+    }
+
+    private static bool TryResolve(string? path, out string full)
+    {
+        full = string.Empty;
+        if (string.IsNullOrWhiteSpace(path)) return false;
+
+        try
+        {
+            full = Path.GetFullPath(path);
+            return true;
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            // Not a path at all. Nothing is going to land here.
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Settles the paths that must not be read from the UI thread, using no I/O: a UNC path is a
+    /// network path by spelling, a mapped network drive says so through
+    /// <see cref="DriveInfo.DriveType"/> (a mount-table lookup, measured at ~1 µs), and an
+    /// unmapped letter reports <see cref="DriveType.NoRootDirectory"/>, which is a definitive
+    /// "not there" rather than a "did not look".
+    /// </summary>
+    /// <returns>The verdict, or <see langword="null"/> when the volume is local and the full
+    /// reading is safe to take.</returns>
+    private static FreeSpaceResult? VerdictWithoutTouchingTheNetwork(string fullPath)
+    {
+        var root = Path.GetPathRoot(fullPath);
+        if (string.IsNullOrEmpty(root)) return FreeSpaceResult.Unknown;
+
+        if (root.Length > 1 && LocalPathRoots.IsSeparator(root[0]) && LocalPathRoots.IsSeparator(root[1]))
+        {
+            return FreeSpaceResult.Unknown;
+        }
+
+        try
+        {
+            return new DriveInfo(root).DriveType switch
+            {
+                DriveType.Network => FreeSpaceResult.Unknown,
+                DriveType.NoRootDirectory => FreeSpaceResult.Unreachable,
+                _ => null,
+            };
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
+        {
+            return FreeSpaceResult.Unknown;
+        }
+    }
+
+    private static string? VolumeRootOf(string fullPath) => OperatingSystem.IsWindows()
+        ? WindowsVolumeRoot(fullPath)
+        : UnixMountRoot(fullPath);
+
+    private static FreeSpaceResult Measure(string? volumeRoot)
+    {
+        if (string.IsNullOrEmpty(volumeRoot)) return FreeSpaceResult.Unknown;
+
+        return OperatingSystem.IsWindows()
+            ? MeasureWindowsVolume(volumeRoot)
+            : MeasureUnixMount(volumeRoot);
+    }
+
+    /// <summary>
+    /// Windows: <c>GetVolumePathName</c> walks up to the nearest component that exists, which is
+    /// both what tolerates a destination that has not been created yet and what makes it land
+    /// inside a mounted folder rather than on its host letter. Falls back to the drive root, whose
+    /// own failure below is the verdict — a dead drive letter fails here and asking its root is
+    /// still the right next move.
     /// </summary>
     [SupportedOSPlatform("windows")]
-    private static FreeSpaceResult MeasureWindowsVolume(string fullPath)
-    {
-        // A failed volume lookup is not a verdict on its own: a dead drive letter fails here and
-        // the drive root is still the right thing to ask, so the error below is the one that
-        // decides.
-        var volume = TryGetVolumePathName(fullPath, out var resolved)
+    private static string WindowsVolumeRoot(string fullPath) =>
+        WithTrailingSeparator(TryGetVolumePathName(fullPath, out var resolved)
             ? resolved
-            : Path.GetPathRoot(fullPath);
+            : Path.GetPathRoot(fullPath)) ?? string.Empty;
 
-        if (string.IsNullOrEmpty(volume)) return FreeSpaceResult.Unreachable;
-
-        if (GetDiskFreeSpaceExW(volume, out var freeForCaller, out _, out _))
+    [SupportedOSPlatform("windows")]
+    private static FreeSpaceResult MeasureWindowsVolume(string volumeRoot)
+    {
+        if (GetDiskFreeSpaceExW(volumeRoot, out var freeForCaller, out _, out _))
         {
             // freeForCaller honours a per-user quota, which is the number that governs whether
             // this process's write succeeds — not the volume-wide total.
@@ -174,35 +285,71 @@ public static class DiskSpace
         return new FreeSpaceResult(ClassifyProbeFailure(Marshal.GetLastWin32Error()), 0);
     }
 
-    /// <summary>
-    /// Cross-platform reading, and the cheap Windows mode: one <see cref="DriveInfo"/> on the
-    /// path's drive root. No reparse-point resolution, so a mounted folder reports its host.
-    /// </summary>
-    private static FreeSpaceResult MeasureDriveRoot(string fullPath)
+    // TODO: Linux Implementation for issue #581 — mount-point resolution off Windows.
+    // DriveInfo.GetDrives() enumerates the mounted filesystems, so the volume a path belongs to is
+    // the deepest mount root containing it (LongestMountRootContaining). This is the same job
+    // GetVolumePathName does on Windows and it needs no P/Invoke. Two known gaps, left open for
+    // extension rather than guessed at here:
+    //   * LocalPathRoots.IsUnder folds case, which is Windows semantics; on a case-sensitive
+    //     filesystem /Data and /data are different mounts. A case-sensitive comparison belongs
+    //     behind an OperatingSystem check.
+    //   * bind mounts and overlayfs can put one path under several roots that are not nested;
+    //     statvfs(2) answers that exactly, where this picks the longest textual match.
+    private static string? UnixMountRoot(string fullPath)
     {
-        var root = Path.GetPathRoot(fullPath);
-        if (string.IsNullOrEmpty(root)) return FreeSpaceResult.Unknown;
-
         try
         {
-            var drive = new DriveInfo(root);
+            return LongestMountRootContaining(fullPath, ReadableMountRoots());
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
 
-            // Not ready is a volume that is genuinely not there: an empty optical drive, a
-            // disconnected removable disk. Blocking is right.
+    private static FreeSpaceResult MeasureUnixMount(string mountRoot)
+    {
+        try
+        {
+            var drive = new DriveInfo(mountRoot);
             if (!drive.IsReady) return FreeSpaceResult.Unreachable;
-
             return FreeSpaceResult.Known(drive.AvailableFreeSpace);
         }
         catch (ArgumentException)
         {
-            // No DriveInfo exists for this root at all — new DriveInfo(@"\\nas\share\") throws on
-            // the name alone, without touching the network. Blind, not broken.
             return FreeSpaceResult.Unknown;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException)
         {
-            // DriveNotFoundException (an IOException) is the unplugged drive.
+            // The mount exists but will not answer. That is "could not measure", not "not there" —
+            // the same conclusion ERROR_ACCESS_DENIED reaches on Windows.
+            return FreeSpaceResult.Unknown;
+        }
+        catch (IOException)
+        {
+            // DriveNotFoundException lands here: the mount is gone.
             return FreeSpaceResult.Unreachable;
+        }
+    }
+
+    /// <summary>Mount roots we can name without reading any of them.</summary>
+    private static IEnumerable<string> ReadableMountRoots()
+    {
+        foreach (var drive in DriveInfo.GetDrives())
+        {
+            string root;
+            try
+            {
+                // A dead network mount must not be read here — only named.
+                if (drive.DriveType == DriveType.Network) continue;
+                root = drive.RootDirectory.FullName;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                continue;
+            }
+
+            yield return root;
         }
     }
 
@@ -219,6 +366,17 @@ public static class DiskSpace
             or ErrorHostUnreachable => FreeSpaceKind.Unreachable,
         _ => FreeSpaceKind.Unknown,
     };
+
+    /// <summary>
+    /// <c>Path.GetPathRoot(@"\\nas\share\loras")</c> is <c>\\nas\share</c> — no separator — while
+    /// <c>GetDiskFreeSpaceEx</c> documents a trailing backslash as required for a UNC name, and
+    /// this string is shown to the user as the destination to go and free room on.
+    /// </summary>
+    private static string? WithTrailingSeparator(string? root)
+    {
+        if (string.IsNullOrEmpty(root)) return root;
+        return LocalPathRoots.IsSeparator(root[^1]) ? root : root + Path.DirectorySeparatorChar;
+    }
 
     [SupportedOSPlatform("windows")]
     private static bool TryGetVolumePathName(string fullPath, out string volume)

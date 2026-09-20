@@ -241,7 +241,25 @@ public sealed class CaptioningModelManager
     /// expected size, so a download can't grind the volume to zero bytes free
     /// (which destabilizes Windows when the volume is C:).
     /// </summary>
-    private const long FreeSpaceMarginBytes = 256L * 1024 * 1024;
+    /// <remarks>
+    /// Public because the destination picker gates its OK button on the same question and must
+    /// demand the same headroom. It compared bare size against free bytes, so a destination with
+    /// 8.1 GB free showed a green "OK — need 8.0 GB" and the download refused one call later,
+    /// after the user had committed.
+    /// </remarks>
+    public const long FreeSpaceMarginBytes = 256L * 1024 * 1024;
+
+    /// <summary>
+    /// Whether <paramref name="space"/> can take <paramref name="requiredBytes"/> with the
+    /// preflight's headroom. The single answer the picker and
+    /// <see cref="DownloadFileInternalAsync"/> both use, so they cannot disagree.
+    /// </summary>
+    public static bool HasRoomFor(FreeSpaceResult space, long requiredBytes) => space.Kind switch
+    {
+        FreeSpaceKind.Unreachable => false,
+        FreeSpaceKind.Unknown => true,
+        _ => requiredBytes <= 0 || space.FreeBytes >= requiredBytes + FreeSpaceMarginBytes,
+    };
 
     private readonly Func<string, FreeSpaceResult> _freeSpaceProbe;
 
@@ -1061,7 +1079,7 @@ public sealed class CaptioningModelManager
                 return false;
             }
 
-            if (space.IsKnown && expectedSize > 0 && space.FreeBytes < expectedSize + FreeSpaceMarginBytes)
+            if (!HasRoomFor(space, expectedSize))
             {
                 var message =
                     $"Not enough free disk space for {modelName}: needs ~{(expectedSize + FreeSpaceMarginBytes) / (1024 * 1024):N0} MB, " +

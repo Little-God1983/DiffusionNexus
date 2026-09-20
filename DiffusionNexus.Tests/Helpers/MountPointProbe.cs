@@ -104,3 +104,22 @@ public static class MountPointProbe
         });
     }
 }
+
+/// <summary>Drive letters, for tests that need one with nothing behind it.</summary>
+public static class DriveLetters
+{
+    /// <summary>Root of a drive letter no volume is mounted on.</summary>
+    public static string DeadRoot()
+    {
+        var taken = DriveInfo.GetDrives()
+            .Select(d => char.ToUpperInvariant(d.Name[0]))
+            .ToHashSet();
+
+        for (var letter = 'Z'; letter >= 'D'; letter--)
+        {
+            if (!taken.Contains(letter)) return $"{letter}:\\";
+        }
+
+        throw new InvalidOperationException("every drive letter is in use; cannot test the dead-letter verdict");
+    }
+}
