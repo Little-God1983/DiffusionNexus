@@ -1,5 +1,6 @@
 using System.Net;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Utilities;
 using DiffusionNexus.Service.Services;
 using FluentAssertions;
 using Xunit;
@@ -134,6 +135,54 @@ public class OnnxModelManagerTests : IDisposable
         WriteFileOfSize(mgr.Wd14TaggerModelPath, 350_000_000); // model is fine
         WriteFileOfSize(mgr.Wd14TaggerTagsPath, 99_000); // just under the 100KB floor
         mgr.GetWd14TaggerStatus().Should().Be(ModelStatus.Corrupted);
+    }
+
+    // ── Free-space preflight (issue #581) ──
+
+    [Fact]
+    public async Task Download_UnreachableDestination_RefusesWithoutTouchingNetwork()
+    {
+        // This probe used to fail open on every failure, so a models folder on an unplugged
+        // drive started the download and died mid-stream. Unreachable is not unknowable.
+        var handler = new FakeHttpHandler(_ => Ok(RandomBytes(4096)));
+        var mgr = new OnnxModelManager(Models("m"), new HttpClient(handler),
+            freeSpaceProbe: _ => new FreeSpaceResult(FreeSpaceKind.Unreachable, 0));
+        var progress = new RecordingProgress<ModelDownloadProgress>();
+
+        var ok = await mgr.DownloadRmbg14ModelAsync(progress);
+
+        ok.Should().BeFalse();
+        handler.CallCount.Should().Be(0, "nothing should be fetched for a destination that is gone");
+        progress.Items.Should().Contain(p => p.Status.Contains("reach", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task Download_UnknownFreeSpace_StillAttemptsDownload()
+    {
+        // A destination that will not report its size must not be treated as a full one.
+        var handler = new FakeHttpHandler(_ => Ok(RandomBytes(4096)));
+        var mgr = new OnnxModelManager(Models("m"), new HttpClient(handler),
+            freeSpaceProbe: _ => new FreeSpaceResult(FreeSpaceKind.Unknown, 0));
+
+        var ok = await mgr.DownloadRmbg14ModelAsync();
+
+        ok.Should().BeTrue();
+        handler.CallCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Download_InsufficientDiskSpace_RefusesWithoutTouchingNetwork()
+    {
+        var handler = new FakeHttpHandler(_ => Ok(RandomBytes(4096)));
+        var mgr = new OnnxModelManager(Models("m"), new HttpClient(handler),
+            freeSpaceProbe: _ => new FreeSpaceResult(FreeSpaceKind.Known, 1_000));
+        var progress = new RecordingProgress<ModelDownloadProgress>();
+
+        var ok = await mgr.DownloadRmbg14ModelAsync(progress);
+
+        ok.Should().BeFalse();
+        handler.CallCount.Should().Be(0);
+        progress.Items.Should().Contain(p => p.Status.Contains("disk space", StringComparison.OrdinalIgnoreCase));
     }
 
     // ── Download state machine ──
