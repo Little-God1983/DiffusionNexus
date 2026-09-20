@@ -12,7 +12,6 @@ using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Domain.Utilities;
-using DiffusionNexus.Service.Services.IO;
 using DiffusionNexus.Service.Services.Lora;
 using DiffusionNexus.UI.Services.Download;
 using DiffusionNexus.UI.ViewModels;
@@ -162,8 +161,8 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     private string? _spaceNote;
 
     /// <summary>
-    /// Advisory verdict — what the gate could not cover: a root with no <see cref="DriveInfo"/>
-    /// at all (UNC share), a root that cannot be reached, and jobs whose size Civitai never
+    /// Advisory verdict — what the gate could not cover: a volume that will not report its free
+    /// space (UNC share), a volume that cannot be reached, and jobs whose size Civitai never
     /// reported. Does NOT gate Start; the per-job check at commit time is what stops those.
     /// A silent all-clear would be the worse failure, so they are stated rather than hidden.
     /// </summary>
@@ -219,6 +218,10 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     /// </remarks>
     private sealed record PendingBytes(string Directory, long Bytes);
 
+    /// <summary>One volume and the bytes the queue intends to put on it, after the destinations
+    /// aimed at it have been merged.</summary>
+    private sealed record VolumeBytes(string Volume, long Bytes);
+
     /// <summary>
     /// What a Start would commit, read off <see cref="Jobs"/> in one pass on the UI thread.
     /// <paramref name="UnsizedJobs"/> is counted rather than dropped: a version whose primary
@@ -227,7 +230,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     /// </summary>
     private sealed record PendingSnapshot(List<PendingBytes> Destinations, int UnsizedJobs);
 
-    /// <summary>The verdict strings plus how many roots were actually probed.</summary>
+    /// <summary>The verdict strings plus how many volumes were actually probed.</summary>
     private readonly record struct SpaceState(string? Warning, string? Note, int ProbedRoots);
 
     /// <summary>
@@ -329,7 +332,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                 d.Bytes,
             })
             .GroupBy(x => x.Volume, StringComparer.OrdinalIgnoreCase)
-            .Select(g => new PendingBytes(g.Key, g.Sum(x => x.Bytes)))
+            .Select(g => new VolumeBytes(g.Key, g.Sum(x => x.Bytes)))
             .ToList();
 
         var lines = new List<string>();
@@ -337,19 +340,19 @@ public sealed class CivitaiDownloadQueue : ObservableObject
 
         foreach (var entry in byVolume)
         {
-            var (kind, free) = ClassifyVolume(entry.Directory, entry.Bytes, resolveMountPoints);
+            var (kind, free) = ClassifyVolume(entry.Volume, entry.Bytes, resolveMountPoints);
             switch (kind)
             {
                 case RootSpace.Short:
                     lines.Add(
                         $"Need {FormatBytes(entry.Bytes)} + {FormatBytes(SpaceSafetyMarginBytes)} headroom on " +
-                        $"{entry.Directory} — only {FormatBytes(free)} free");
+                        $"{entry.Volume} — only {FormatBytes(free)} free");
                     break;
                 case RootSpace.Unknown:
-                    notes.Add($"Free space unknown on {entry.Directory} (network or unsupported path) — not checked");
+                    notes.Add($"Free space unknown on {entry.Volume} (network or unsupported path) — not checked");
                     break;
                 case RootSpace.Unreachable:
-                    notes.Add($"{entry.Directory} cannot be reached — the {FormatBytes(entry.Bytes)} aimed at it will fail on start");
+                    notes.Add($"{entry.Volume} cannot be reached — the {FormatBytes(entry.Bytes)} aimed at it will fail on start");
                     break;
             }
         }
