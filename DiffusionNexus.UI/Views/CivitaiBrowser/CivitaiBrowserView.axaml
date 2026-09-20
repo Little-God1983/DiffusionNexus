@@ -580,7 +580,7 @@
 
               <Border Grid.Row="0" Padding="12,10" BorderBrush="#2A2A2A" BorderThickness="0,0,0,1">
                 <StackPanel Spacing="8">
-                  <Grid ColumnDefinitions="*,Auto">
+                  <Grid ColumnDefinitions="*,Auto,Auto">
                     <TextBlock Grid.Column="0" Text="Download Queue" FontWeight="SemiBold"/>
                     <TextBlock Grid.Column="1"
                                Text="{Binding Queue.TotalQueuedBytesDisplay}"
@@ -588,6 +588,17 @@
                                FontSize="11"
                                VerticalAlignment="Center"
                                ToolTip.Tip="Total bytes pending in the queue"/>
+                    <!-- Nothing watches the destination drives, so the space check below is
+                         only as fresh as the last queue/destination change. This re-runs it
+                         after the user frees up room (or something else fills the drive). -->
+                    <Button Grid.Column="2"
+                            Command="{Binding RecheckSpaceCommand}"
+                            Padding="6,2"
+                            Margin="6,0,0,0"
+                            VerticalAlignment="Center"
+                            ToolTip.Tip="Re-check free disk space on the destination drives">
+                      <TextBlock Text="&#x21BB;" FontSize="14" VerticalAlignment="Center"/>
+                    </Button>
                   </Grid>
                   <StackPanel Orientation="Horizontal" Spacing="6">
                     <Button Content="Start"

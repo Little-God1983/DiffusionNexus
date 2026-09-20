@@ -456,6 +456,14 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     [RelayCommand]
     private void AbortQueue() => _queue.AbortAllActive();
 
+    /// <summary>
+    /// Re-runs the queue's disk-space check on demand. It is otherwise only recomputed
+    /// when the queue, a job or the destination changes, so a drive that gained or lost
+    /// room outside the app left a stale warning — which keeps Start disabled (issue #379).
+    /// </summary>
+    [RelayCommand]
+    private void RecheckSpace() => _queue.RecheckSpace();
+
     [RelayCommand]
     private void RemoveJob(CivitaiDownloadJob? job)
     {

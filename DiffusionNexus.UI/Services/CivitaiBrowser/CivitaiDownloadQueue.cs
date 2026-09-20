@@ -130,6 +130,30 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     public bool HasSpaceWarning => !string.IsNullOrEmpty(SpaceWarning);
 
     /// <summary>
+    /// Free bytes on the drive hosting a path root, or <c>null</c> when that root is not a
+    /// ready drive. Test seam — production reads the live <see cref="DriveInfo"/>.
+    /// </summary>
+    internal Func<string, long?> FreeSpaceProbe { get; set; } = DefaultFreeSpaceProbe;
+
+    private static long? DefaultFreeSpaceProbe(string root)
+    {
+        try
+        {
+            var drive = new DriveInfo(root);
+            return drive.IsReady ? drive.AvailableFreeSpace : null;
+        }
+        catch { return null; /* not a real drive */ }
+    }
+
+    /// <summary>
+    /// Re-reads free space for every drive the queue targets. Nothing in the app observes
+    /// the drive itself, so once the user frees room (or something else eats it) this is
+    /// the only way to refresh the warning — and a stale warning keeps Start disabled.
+    /// Bound to the queue panel's recheck button (issue #379).
+    /// </summary>
+    public void RecheckSpace() => RecomputeSpaceWarning();
+
+    /// <summary>
     /// Groups queued jobs by the drive root of their resolved target directory and
     /// flags any drive where the required bytes exceed the live <c>AvailableFreeSpace</c>.
     /// Per-drive reporting handles the case where a per-job override sends some
@@ -161,13 +185,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             foreach (var g in groups)
             {
                 var needed = g.Sum(x => x.Job.SizeBytes);
-                long? available = null;
-                try
-                {
-                    var drive = new DriveInfo(g.Key);
-                    if (drive.IsReady) available = drive.AvailableFreeSpace;
-                }
-                catch { /* not a real drive */ }
+                var available = FreeSpaceProbe(g.Key);
 
                 if (available is long avail && needed > avail)
                 {
