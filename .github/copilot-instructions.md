@@ -24,4 +24,4 @@ In this project use the Nuget packages DiffusionNexus.Installer.SDK from its ori
 
 ## Project-Specific Rules
 - The ComfyUI Qwen3\_VQA custom node stores its models in ComfyUI's models/prompt\_generator folder, not in the HuggingFace cache.
-- While the main goal is Windows, create a comment TODO: Linux Implementation for Task X in the code. Also, make sure it is open to extension for the Linux implementation.
+- Windows is the only supported platform. Do not add cross-platform hooks, `TODO: Linux Implementation` markers or non-Windows code paths for their own sake.
