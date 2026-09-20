@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Domain.Utilities;
 using DiffusionNexus.Service.Services.IO;
 using DiffusionNexus.Service.Services.Lora;
 using DiffusionNexus.Service.Services.Sync.Identity;
@@ -14,7 +15,6 @@ using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.Lora.Sorting;
 using DiffusionNexus.UI.Utilities;
 using Microsoft.Extensions.DependencyInjection;
-using DiffusionNexus.Domain.Utilities;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -41,7 +41,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     private readonly ILocalPathUpdater _pathUpdater;
     private readonly SorterMetadataResolver _metadataResolver;
     private readonly IFileOperations _fileOperations;
-    private readonly Func<string, long> _getAvailableSpace;
+    private readonly Func<string, FreeSpaceResult> _getAvailableSpace;
     private readonly Func<string, string> _hashFile;
     private readonly Func<string, bool> _fileExistsOnDisk;
     private readonly string _historyDirectory;
@@ -164,7 +164,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         _metadataResolver = new SorterMetadataResolver(null, () => Task.FromResult<string?>(null),
             SorterMetadataResolver.DefaultCacheDirectory, designTimeHash, logger: null);
         _fileOperations = new FileOperations();
-        _getAvailableSpace = DiskUtility.GetAvailableSpace;
+        _getAvailableSpace = path => DiskSpace.TryGetAvailableSpace(path);
         _hashFile = designTimeHash;
         _fileExistsOnDisk = File.Exists;
         _historyDirectory = SortHistoryWriter.DefaultHistoryDirectory;
@@ -199,7 +199,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         ILocalPathUpdater pathUpdater,
         SorterMetadataResolver metadataResolver,
         IFileOperations fileOperations,
-        Func<string, long> getAvailableSpace,
+        Func<string, FreeSpaceResult> getAvailableSpace,
         Func<string, string> hashFile,
         Func<string, bool> fileExistsOnDisk,
         string historyDirectory,
@@ -718,7 +718,19 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             TransferCount = plan.TransferCount;
             UpdatePreviewSummary(plan, excludedCandidates.Count);
 
-            ApplyDiskPreflight(plan, targetRoot);
+            // Off the dispatcher: the probe reads the target's volume, which for a NAS target
+            // whose server is down blocks for the SMB timeout (measured: ~5 s). The probe this
+            // replaced threw instantly instead, so taking the reading in place would hang the
+            // window on exactly the target ApplyDiskPreflight's docstring is about — and the
+            // preview re-runs on every option toggle. Directory.Exists rides along for the same
+            // reason: it is the other blocking call the preflight needs.
+            var targetSpace = await Task.Run(
+                () => (Space: _getAvailableSpace(targetRoot), Exists: SafeDirectoryExists(targetRoot)),
+                passCts.Token);
+
+            if (!IsCurrentPass()) return;
+
+            ApplyDiskPreflight(plan, targetRoot, targetSpace.Space, targetSpace.Exists);
 
             // Only clear a stale preview warning — a sort-run result message ("Done: …"/"Cancelled — …")
             // set by StartSortingAsync after its post-run recompute must survive this pass.
@@ -1433,60 +1445,60 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// <summary>
     /// Free-space gate for the chosen target. Two things the naive version got wrong:
     /// <list type="bullet">
-    /// <item><description>It assumed every target has a <see cref="DriveInfo"/>. Verified with a
-    /// dotnet probe: <c>new DriveInfo(Path.GetPathRoot(@"\\nas\share\loras"))</c> throws
-    /// <see cref="ArgumentException"/> ("Drive name must be a root directory"), and an unmapped
-    /// letter throws <see cref="DriveNotFoundException"/> (an <see cref="IOException"/>). That
-    /// escaped mid-pass, after the tree was painted but before the gate was set, leaving Start
+    /// <item><description>It assumed every target can report its free space, and let the failure
+    /// escape mid-pass — after the tree was painted but before the gate was set — leaving Start
     /// permanently disabled with no stated reason on a perfectly usable NAS target. The gate now
     /// fails <b>open</b> for that case — an existing folder whose free space is simply not
     /// knowable — and says so; the executor still reports per-file failures if the share really is
-    /// full. An <i>unreachable</i> target (dead drive letter, denied or missing folder) is a
-    /// different thing and still blocks: failing open there just moves the failure to the run,
-    /// where it costs every file.</description></item>
+    /// full. An <i>unreachable</i> target (dead drive letter, missing folder) is a different thing
+    /// and still blocks: failing open there just moves the failure to the run, where it costs
+    /// every file — "Done: 0 sorted, 0 duplicates skipped, 412 failed".</description></item>
     /// <item><description>It applied the 1 GB safety margin to a same-volume move, whose
     /// <see cref="LoraSortPlan.RequiredBytes"/> is 0 because the transfer is a directory-entry
     /// rename. That blocked the primary use case — reorganizing a library in place on the
     /// near-full drive it already lives on.</description></item>
     /// </list>
     /// </summary>
-    private void ApplyDiskPreflight(LoraSortPlan plan, string targetRoot)
+    /// <param name="space">Read off the target's volume by the caller, on a pool thread.</param>
+    /// <param name="targetExists">Whether the target folder is there, read with it.</param>
+    private void ApplyDiskPreflight(LoraSortPlan plan, string targetRoot, FreeSpaceResult space, bool targetExists)
     {
-        long free;
-        try
+        // Unknowable AND not there is not the UNC case: there is nothing to sort into, so it
+        // must not inherit the fail-open. The folder question is asked here rather than inside
+        // the probe because it is a question about the destination, not about the volume.
+        if (space.Kind == FreeSpaceKind.Unreachable
+            || (space.Kind == FreeSpaceKind.Unknown && !targetExists))
         {
-            free = _getAvailableSpace(targetRoot);
-        }
-        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
-        {
-            // Fail open only where there is genuinely no number to give: a target that has no
-            // DriveInfo at all — new DriveInfo(@"\\nas\share\") throws ArgumentException — but
-            // whose folder is right there. "Unknowable" and "unreachable" are different things.
-            // A dead drive letter throws DriveNotFoundException (an IOException) and failing open
-            // on it armed Start for a run the executor then failed on every single file:
-            // "Done: 0 sorted, 0 duplicates skipped, 412 failed."
-            if (ex is ArgumentException && Directory.Exists(targetRoot))
-            {
-                _logger?.Warn(LogCategory.FileSystem, LogSource,
-                    $"Free space unavailable for '{targetRoot}' ({ex.GetType().Name}: {ex.Message}) — disk gate skipped.");
-                HasEnoughSpace = true;
-                DiskSummary = "Free space unknown (network or unsupported path) — proceed with care";
-                BlockReason = null;
-                return;
-            }
-
             _logger?.Warn(LogCategory.FileSystem, LogSource,
-                $"Target '{targetRoot}' could not be probed ({ex.GetType().Name}: {ex.Message}) — run blocked.");
+                $"Target '{targetRoot}' could not be reached ({space.Kind}) — run blocked.");
             HasEnoughSpace = false;
             DiskSummary = "Free space unknown — the target could not be reached";
             BlockReason = "Target drive or folder is not reachable.";
             return;
         }
 
+        if (space.Kind == FreeSpaceKind.Unknown)
+        {
+            _logger?.Warn(LogCategory.FileSystem, LogSource,
+                $"Free space unavailable for '{targetRoot}' — disk gate skipped.");
+            HasEnoughSpace = true;
+            DiskSummary = "Free space unknown (network or unsupported path) — proceed with care";
+            BlockReason = null;
+            return;
+        }
+
+        var free = space.FreeBytes;
         var needed = plan.RequiredBytes > 0 ? plan.RequiredBytes + SafetyMarginBytes : 0;
         HasEnoughSpace = free >= needed;
         DiskSummary = $"{FileSizeFormatter.Format(plan.RequiredBytes)} required · {FileSizeFormatter.Format(free)} free";
         BlockReason = HasEnoughSpace ? null : "Not enough free space on the target drive.";
+    }
+
+    /// <summary>Folder existence without letting a denied or malformed path escape the preview.</summary>
+    private static bool SafeDirectoryExists(string path)
+    {
+        try { return Directory.Exists(path); }
+        catch { return false; }
     }
 
     /// <summary>Drops the resolved-candidate cache so the next recompute re-enumerates disk and

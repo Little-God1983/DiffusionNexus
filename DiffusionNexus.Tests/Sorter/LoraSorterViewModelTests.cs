@@ -2,6 +2,7 @@ using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Domain.Utilities;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.Service.Services.Lora;
 using DiffusionNexus.UI.Services.Lora.Sorting;
@@ -59,9 +60,12 @@ public sealed class LoraSorterViewModelTests : IDisposable
         return new InstalledModelFile(model, version, file, Path.GetDirectoryName(path)!);
     }
 
+
+
+
     private LoraSorterViewModel CreateVm(long freeSpace = long.MaxValue,
         IReadOnlyList<InstalledModelFile>? cached = null,
-        Func<string, long>? getAvailableSpace = null,
+        Func<string, FreeSpaceResult>? getAvailableSpace = null,
         Func<string, bool>? fileExistsOnDisk = null,
         Func<string, string>? resolverHash = null,
         Func<string, CancellationToken, Task>? deleteEmptyDirectories = null,
@@ -81,7 +85,7 @@ public sealed class LoraSorterViewModelTests : IDisposable
             metadataResolver: new SorterMetadataResolver(null, () => Task.FromResult<string?>(null),
                 Path.Combine(_root.FullName, "cache"), resolverHash ?? (_ => "hash"), logger: null),
             fileOperations: new FileOperations(),
-            getAvailableSpace: getAvailableSpace ?? (_ => freeSpace),
+            getAvailableSpace: getAvailableSpace ?? (_ => FreeSpaceResult.Known(freeSpace)),
             hashFile: _ => "hash",
             fileExistsOnDisk: fileExistsOnDisk ?? File.Exists,
             historyDirectory: Path.Combine(_root.FullName, "history"),
@@ -1402,11 +1406,11 @@ public sealed class LoraSorterViewModelTests : IDisposable
     [Fact]
     public async Task UnknowableFreeSpaceOnAnExistingTargetFailsOpenInsteadOfBlockingTheRun()
     {
-        // new DriveInfo(@"\\nas\share\") throws ArgumentException and there is no free-space
-        // number to give for a UNC target — but the folder is right there, so the run may proceed.
+        // There is no free-space number to give for a UNC target — but the folder is right there,
+        // so the run may proceed.
         var a = WriteLora(@"flat\a.safetensors");
         var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")],
-            getAvailableSpace: _ => throw new ArgumentException("Drive name must be a root directory."));
+            getAvailableSpace: _ => FreeSpaceResult.Unknown);
 
         await vm.InitializeAsync();
 
@@ -1417,18 +1421,15 @@ public sealed class LoraSorterViewModelTests : IDisposable
         vm.StatusMessage.Should().NotContain("Preview failed");
     }
 
-    [Theory]
-    // An unplugged Z:\ throws DriveNotFoundException (an IOException). Failing open on it armed
-    // Start, and the executor then threw on CreateDirectory for every single file:
-    // "Done: 0 sorted, 0 duplicates skipped, 412 failed." Unreachable is not unknowable.
-    [InlineData(typeof(DriveNotFoundException))]
-    [InlineData(typeof(IOException))]
-    [InlineData(typeof(UnauthorizedAccessException))]
-    public async Task AnUnreachableTargetBlocksTheRunWithAStatedReason(Type exceptionType)
+    [Fact]
+    public async Task AnUnreachableTargetBlocksTheRunWithAStatedReason()
     {
+        // Failing open on an unplugged Z:\ armed Start, and the executor then threw on
+        // CreateDirectory for every single file: "Done: 0 sorted, 0 duplicates skipped,
+        // 412 failed." Unreachable is not unknowable.
         var a = WriteLora(@"flat\a.safetensors");
         var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")],
-            getAvailableSpace: _ => throw (Exception)Activator.CreateInstance(exceptionType)!);
+            getAvailableSpace: _ => FreeSpaceResult.Unreachable);
 
         await vm.InitializeAsync();
 
@@ -1440,11 +1441,11 @@ public sealed class LoraSorterViewModelTests : IDisposable
     [Fact]
     public async Task AMissingTargetFolderBlocksEvenWhenTheProbeIsUnanswerable()
     {
-        // Same ArgumentException as the UNC case, but the target root does not exist — there is
+        // Same unknowable reading as the UNC case, but the target root does not exist — there is
         // nothing to sort into, so this must not inherit the UNC fail-open.
         var a = WriteLora(@"flat\a.safetensors");
         var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")],
-            getAvailableSpace: _ => throw new ArgumentException("Drive name must be a root directory."));
+            getAvailableSpace: _ => FreeSpaceResult.Unknown);
         vm.CustomTargetFolder = Path.Combine(_root.FullName, "NoSuchTarget");
 
         await vm.InitializeAsync();

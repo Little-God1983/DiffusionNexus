@@ -7,7 +7,6 @@ In this project use the Nuget packages DiffusionNexus.Installer.SDK from its ori
 ## General Guidelines
 - Consult also the Claude.md for instructions if exists.
 - When a bug is found, always check if a unit test can be created to cover/reproduce it before fixing. Ensure that the unit test effectively captures the bug scenario.
-- When a refactoring task is issued then mark the method/function/class you are refactoring as obsolete and to be removed later to avoid code duplication/dead code.
 - Before any Database Entity classes, IEntityTypeConfigurations or the database migrations are modified execute the publish.ps1 script to make sure there is a last backup of the app with a working database.
 - When A Keyboard Shortcut is Added make sure its documented in a file called DiffusionNexus.UI\\Doc\\Shortcuts.md
 - When fixing a failing Unit test, check thoroughly if its the unit test that is in need of fixing or if its the code that has an actual bug.
@@ -25,4 +24,4 @@ In this project use the Nuget packages DiffusionNexus.Installer.SDK from its ori
 
 ## Project-Specific Rules
 - The ComfyUI Qwen3\_VQA custom node stores its models in ComfyUI's models/prompt\_generator folder, not in the HuggingFace cache.
-- While the main goal is Windows, create a comment TODO: Linux Implementation for Task X in the code. Also, make sure it is open to extension for the Linux implementation.
+- Windows is the only supported platform. Do not add cross-platform hooks, `TODO: Linux Implementation` markers or non-Windows code paths for their own sake.
