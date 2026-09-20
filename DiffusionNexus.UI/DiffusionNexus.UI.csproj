@@ -127,6 +127,31 @@
     <LgplRelinkableContent Include="libvlc" />
   </ItemGroup>
 
+  <!-- VideoLAN.LibVLC.Windows copies its payload for every architecture whose flag is unset, and
+       with Platform=AnyCPU that means all three - 178 MB of win-x86 and win-arm64 binaries this
+       app can never load, carrying the same GPL modules as the x64 set. The app is win-x64 only
+       (the CUDA backend alone settles that), so the other two are switched off rather than
+       shipped and attributed. -->
+  <PropertyGroup>
+    <VlcWindowsX86Enabled>false</VlcWindowsX86Enabled>
+    <VlcWindowsArm64Enabled>false</VlcWindowsArm64Enabled>
+  </PropertyGroup>
+
+  <!-- Four of the 323 win-x64 plugins are GPL rather than LGPL and are not on any path this app
+       uses: an H.264 *encoder*, VLC's Lua bindings, and two optional audio filters that are only
+       reachable if a user enables them. Dropping them removes the obligation instead of
+       discharging it. libavcodec and libswscale are GPL too (FFmpeg built with GPL components
+       enabled) and are NOT dropped: removing them was tested and breaks HEVC and MPEG-4/AVI
+       playback, so those two are attributed in supplements.json instead.
+       Guarded by DiffusionNexus.Tests/Licensing/VlcPluginLicenseTests.cs, which re-derives the
+       GPL set from the binaries on every run. -->
+  <ItemGroup>
+    <VlcWindowsX64ExcludeFiles Include="plugins\codec\libx26410b_plugin.dll" />
+    <VlcWindowsX64ExcludeFiles Include="plugins\lua\liblua_plugin.dll" />
+    <VlcWindowsX64ExcludeFiles Include="plugins\audio_filter\libdolby_surround_decoder_plugin.dll" />
+    <VlcWindowsX64ExcludeFiles Include="plugins\audio_filter\libheadphone_channel_mixer_plugin.dll" />
+  </ItemGroup>
+
   <Target Name="KeepLgplAssembliesRelinkable" BeforeTargets="_ComputeFilesToBundle" AfterTargets="_HandleFileConflictsForPublish" Condition="'$(PublishSingleFile)' == 'true'">
     <PropertyGroup>
       <!-- Semicolon-delimited on both ends so the match is exact: a bare Contains would let
