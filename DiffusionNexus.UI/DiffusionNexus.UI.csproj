@@ -109,6 +109,51 @@
     <Folder Include="Tasks\" />
   </ItemGroup>
 
+  <!-- LGPL-2.1 section 6 permits using these libraries only if the recipient can relink the work
+       against a modified version of them. PublishSingleFile welds every managed assembly into the
+       executable, where nothing can be replaced - so these four are kept out of the bundle and
+       ship loose beside the exe, which the single-file host probes as a fallback.
+       VideoLAN.LibVLC.Windows needs the same treatment and it is the easy one to get wrong: its
+       payload arrives as Content, which lands loose in an ordinary build, so it looks replaceable
+       already. It is not - _ComputeFilesToBundle consumes every ResolvedFileToPublish whatever its
+       origin, so libvlc.dll, libvlccore.dll and all 323 plugins were being welded in as well.
+       Guarded by DiffusionNexus.Tests/Licensing/LgplSingleFileComplianceTests.cs, which derives
+       the required set from the generated notices so a new LGPL dependency cannot slip in. -->
+  <ItemGroup>
+    <LgplRelinkableAssembly Include="HPPH" />
+    <LgplRelinkableAssembly Include="HPPH.SkiaSharp" />
+    <LgplRelinkableAssembly Include="LibVLCSharp" />
+    <LgplRelinkableAssembly Include="LibVLCSharp.Avalonia" />
+    <LgplRelinkableContent Include="libvlc" />
+  </ItemGroup>
+
+  <Target Name="KeepLgplAssembliesRelinkable" BeforeTargets="_ComputeFilesToBundle" AfterTargets="_HandleFileConflictsForPublish" Condition="'$(PublishSingleFile)' == 'true'">
+    <PropertyGroup>
+      <!-- Semicolon-delimited on both ends so the match is exact: a bare Contains would let
+           "HPPH" also match "HPPH.SkiaSharp", and more importantly would match any future
+           assembly whose name merely starts with a listed one. -->
+      <_LgplRelinkableList>;@(LgplRelinkableAssembly);</_LgplRelinkableList>
+    </PropertyGroup>
+    <ItemGroup>
+      <ResolvedFileToPublish Condition="'%(Extension)' == '.dll' And $([System.String]::Copy('$(_LgplRelinkableList)').Contains(';%(Filename);'))">
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+
+  <!-- Batched over LgplRelinkableContent so each directory gets an anchored StartsWith rather
+       than a Contains that would also match a directory of that name nested anywhere below. -->
+  <Target Name="KeepLgplContentRelinkable" BeforeTargets="_ComputeFilesToBundle" AfterTargets="_HandleFileConflictsForPublish" Condition="'$(PublishSingleFile)' == 'true'" Outputs="%(LgplRelinkableContent.Identity)">
+    <PropertyGroup>
+      <_LgplContentDir>%(LgplRelinkableContent.Identity)</_LgplContentDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <ResolvedFileToPublish Condition="$([System.String]::Copy('%(RelativePath)').Replace('\','/').StartsWith('$(_LgplContentDir)/'))">
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+
   <!-- LlamaSharp.Backend.Cpu ships duplicate native DLLs under avx / avx2 / avx512 / noavx.
        During single-file publish the bundler sees them all with the same BundleRelativePath
        and fails (MSB4018). This target strips the non-avx2 duplicates from
