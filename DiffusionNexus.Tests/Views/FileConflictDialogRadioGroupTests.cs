@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using DiffusionNexus.Tests.Helpers;
 using FluentAssertions;
 using Xunit;
 
@@ -17,7 +18,7 @@ public class FileConflictDialogRadioGroupTests
     public void ConflictRowRadioButtons_MustNotDeclareAGroupName()
     {
         var axaml = File.ReadAllText(Path.Combine(
-            FindRepoRoot(), "DiffusionNexus.UI", "Views", "Dialogs", "FileConflictDialog.axaml"));
+            RepoRoot.Path, "DiffusionNexus.UI", "Views", "Dialogs", "FileConflictDialog.axaml"));
 
         var radioButtons = Regex.Matches(axaml, @"<RadioButton\b[^>]*>", RegexOptions.Singleline);
         radioButtons.Should().HaveCount(3, "one radio per resolution: Override, Rename, Ignore");
@@ -29,16 +30,4 @@ public class FileConflictDialogRadioGroupTests
         }
     }
 
-    private static string FindRepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null)
-        {
-            if (File.Exists(Path.Combine(dir.FullName, "DiffusionNexus.UI", "DiffusionNexus.UI.csproj")))
-                return dir.FullName;
-            dir = dir.Parent;
-        }
-
-        throw new DirectoryNotFoundException("Could not locate the repository root above " + AppContext.BaseDirectory);
-    }
 }

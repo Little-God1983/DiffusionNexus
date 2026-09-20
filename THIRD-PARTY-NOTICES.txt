@@ -18955,20 +18955,33 @@ SOFTWARE.
 
 ### FFmpeg - SEE-NOTE
 
-NOTE: DiffusionNexus does not bundle FFmpeg. When no ffmpeg/ffprobe pair is found on the machine, FFMpegCore.Extensions.Downloader fetches a prebuilt binary from ffbinaries.com - a third-party mirror, not the FFmpeg project's own distribution - and the application runs it as a separate process. Those binaries are covered by their own licence, which travels with them; the Windows builds served by ffbinaries.com are GPL-configured (libx264 and friends), so GPL rather than LGPL-2.1-or-later is what the downloaded build is expected to carry.
+NOTE: FFmpeg reaches this application two separate ways, with different obligations. (1) The FFmpeg LIBRARIES ARE distributed: libavcodec and libswscale are compiled into VLC's libavcodec_plugin.dll and libswscale_plugin.dll, which ship in the release and declare themselves GPL version 2 or later. They are attributed in full under 'VLC plugins built under the GPL' in this section, together with the libraries statically linked into them. (2) The FFmpeg EXECUTABLES are not distributed: when no ffmpeg/ffprobe pair is found on the machine, FFMpegCore.Extensions.Downloader fetches a prebuilt binary from ffbinaries.com - a third-party mirror, not the FFmpeg project's own distribution - and the application runs it as a separate process. Those binaries are covered by their own licence, which travels with them; the Windows builds served by ffbinaries.com are GPL-configured (libx264 and friends), so GPL rather than LGPL-2.1-or-later is what the downloaded build is expected to carry. The earlier wording of this note denied bundling FFmpeg at all, which was false once the VLC plugins were audited.
 
-DiffusionNexus does not distribute FFmpeg.
+FFmpeg reaches this application two separate ways. They have different licences and
+different obligations, and conflating them is how the earlier version of this note
+came to deny distributing FFmpeg at all while FFmpeg code shipped in the release.
 
-When no ffmpeg/ffprobe pair is present on the machine, the application downloads a
-prebuilt FFmpeg from ffbinaries.com - a third-party mirror, not the FFmpeg project's
-own distribution - and executes it as a separate process. Those binaries are covered
-by their own license, which is distributed with them, and are expected to be GPL:
-the Windows builds served by ffbinaries.com are configured with GPL-licensed
-components such as libx264.
+1. FFmpeg LIBRARIES ARE DISTRIBUTED, inside VLC's plugins.
+
+   libavcodec and libswscale are compiled into libvlc/win-x64/plugins/codec/
+   libavcodec_plugin.dll and libvlc/win-x64/plugins/video_chroma/
+   libswscale_plugin.dll, which ship in the release. Both binaries state their own
+   licence as "GPL version 2 or later", because this FFmpeg build is configured
+   with --enable-gpl. They are attributed in full under "VLC plugins built under
+   the GPL" below, which also covers the libraries statically linked into them.
+
+2. The FFmpeg EXECUTABLES are not distributed.
+
+   When no ffmpeg/ffprobe pair is present on the machine, the application downloads
+   a prebuilt FFmpeg from ffbinaries.com - a third-party mirror, not the FFmpeg
+   project's own distribution - and executes it as a separate process. Those
+   binaries are covered by their own licence, which travels with them, and are
+   expected to be GPL: the Windows builds served by ffbinaries.com are configured
+   with GPL-licensed components such as libx264.
 
 FFmpeg itself is free software licensed under the GNU Lesser General Public License
-version 2.1 or later; builds configured with certain options, including the ones
-downloaded here, are licensed under the GNU General Public License version 2 or
+version 2.1 or later; builds configured with certain options, including both of the
+ones described above, are licensed under the GNU General Public License version 2 or
 later. See https://ffmpeg.org/legal.html
 
 --------------------------------------------------------------------------------
@@ -19068,7 +19081,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ### VLC plugins built under the GPL (bundled by VideoLAN.LibVLC.Windows) - GPL-2.0-or-later
 
-NOTE: Section 1 lists VideoLAN.LibVLC.Windows as LGPL-2.1-or-later, and that is correct for libvlc and libvlccore themselves - but it is NOT the licence of every binary the package carries. The package ships 323 plugin modules for win-x64, and two of the ones this application depends on are built under the GPL rather than the LGPL: libavcodec_plugin.dll and libswscale_plugin.dll, which wrap FFmpeg libraries configured with --enable-gpl (the build stamp is present in both binaries). They are required, not incidental: removing them was tested and breaks HEVC and MPEG-4/AVI playback, because the remaining decoders fall back to Windows Media Foundation, which does not cover those formats here. The other GPL modules in the package are NOT shipped - plugins/codec/libx26410b_plugin.dll (an H.264 encoder), plugins/lua/liblua_plugin.dll, plugins/audio_filter/libdolby_surround_decoder_plugin.dll and plugins/audio_filter/libheadphone_channel_mixer_plugin.dll are excluded in DiffusionNexus.UI.csproj, as are the win-x86 and win-arm64 payloads in their entirety. The GPL set was determined from the binaries themselves rather than from package metadata, and DiffusionNexus.Tests/Licensing/VlcPluginLicenseTests.cs re-derives it on every test run so that a VLC version bump introducing a new GPL module fails the build instead of shipping unattributed. These plugins are separate files under libvlc/win-x64/plugins/, loaded at runtime by libvlc; they are not linked into the application executable, and this application is itself MIT-licensed, which is GPL-compatible. Corresponding source for the exact build is published by VideoLAN at https://download.videolan.org/pub/videolan/vlc/3.0.23/ - the binaries in this package identify themselves as VLC 3.0.23 'Vetinari', git revision 3.0.23-2-0-g79128878dd, read from libvlc.dll's version resource and libvlccore.dll's embedded version string rather than inferred from the NuGet package number. FFmpeg's own source is at https://ffmpeg.org/download.html. The full GPL version 2 text follows.
+NOTE: Section 1 lists VideoLAN.LibVLC.Windows as LGPL-2.1-or-later, and that is correct for libvlc and libvlccore themselves - but it is NOT the licence of every binary the package carries. The package ships 323 plugin modules for win-x64, and two of the ones this application depends on are built under the GPL rather than the LGPL: libavcodec_plugin.dll and libswscale_plugin.dll, which wrap FFmpeg libraries configured with --enable-gpl (the build stamp is present in both binaries). They are required, not incidental: removing them was tested and breaks HEVC and MPEG-4/AVI playback, because the remaining decoders fall back to Windows Media Foundation, which does not cover those formats here. Both plugins are statically linked (--enable-static --disable-shared), so code from several further libraries is compiled INTO libavcodec_plugin.dll rather than loaded from separate DLLs, and ships with it: LAME 3.100 (LGPL - build flag --enable-libmp3lame, with LAME's own version stamp, project URL http://lame.sf.net and runtime strings present in the binary), OpenJPEG (BSD-2-Clause, --enable-libopenjpeg) and libgsm (permissive, Technische Universitaet Berlin, --enable-libgsm). Their full licence texts are not reproduced here; they travel with the corresponding source named below, which is the route by which they are supplied. Note that LAME is LGPL and statically linked, so the relink provision of LGPL section 6 is satisfied through that source route rather than by replacing a file - unlike the LGPL libraries this application ships as separate assemblies. The other GPL modules in the package are NOT shipped - plugins/codec/libx26410b_plugin.dll (an H.264 encoder), plugins/lua/liblua_plugin.dll, plugins/audio_filter/libdolby_surround_decoder_plugin.dll and plugins/audio_filter/libheadphone_channel_mixer_plugin.dll are excluded in DiffusionNexus.UI.csproj, as is the whole lua/** tree (95 files of VLC web-interface assets, 16 of them GPL-2.0-or-later, which nothing can load once the Lua plugin is gone), as are the win-x86 and win-arm64 payloads in their entirety. The GPL set was determined from the binaries themselves rather than from package metadata, and DiffusionNexus.Tests/Licensing/VlcPluginLicenseTests.cs re-derives it on every test run so that a VLC version bump introducing a new GPL module fails the build instead of shipping unattributed. These plugins are separate files under libvlc/win-x64/plugins/, loaded at runtime by libvlc; they are not linked into the application executable, and this application is itself MIT-licensed, which is GPL-compatible. Corresponding source for the exact build is published by VideoLAN at https://download.videolan.org/pub/videolan/vlc/3.0.23/ - the binaries in this package identify themselves as VLC 3.0.23 'Vetinari', git revision 3.0.23-2-0-g79128878dd, read from libvlc.dll's version resource and libvlccore.dll's embedded version string rather than inferred from the NuGet package number. FFmpeg's own source is at https://ffmpeg.org/download.html. The full GPL version 2 text follows.
 
 		    GNU GENERAL PUBLIC LICENSE
 		       Version 2, June 1991

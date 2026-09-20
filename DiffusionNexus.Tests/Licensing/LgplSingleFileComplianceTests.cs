@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using DiffusionNexus.Tests.Helpers;
 using DiffusionNexus.UI.Services.Licensing;
 using FluentAssertions;
 using Xunit;
@@ -61,6 +62,51 @@ public class LgplSingleFileComplianceTests
     }
 
     [Fact]
+    public void WhenAnAssemblyIsListedForExclusionThenItsNameMatchesARealAssemblyExactly()
+    {
+        // The MSBuild target matches with System.String.Contains, which is ORDINAL: a listed name
+        // that differs from the real file even in case silently matches nothing, the assembly is
+        // welded in unreplaceable, and a case-insensitive test would still pass. These assemblies
+        // reach the test output through the ProjectReference to DiffusionNexus.UI, so the file
+        // system itself is the check - and the comparison here is ordinal to match MSBuild.
+        var present = Directory.EnumerateFiles(AppContext.BaseDirectory, "*.dll")
+            .Select(Path.GetFileNameWithoutExtension)
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var name in ReadRelinkableAssemblyNames())
+        {
+            present.Should().Contain(name,
+                $"'{name}' is listed for exclusion but no assembly of exactly that name is in the "
+                + "build output; MSBuild's ordinal match would silently skip it");
+        }
+    }
+
+    [Fact]
+    public void WhenTheVlcPayloadIsConfiguredThenOnlyTheAuditedArchitectureIsEnabled()
+    {
+        // THIRD-PARTY-NOTICES.txt states the win-x86 and win-arm64 payloads are excluded "in
+        // their entirety", and the payload audit only covers x64. If a later edit re-enables one,
+        // ~178 MB of unaudited binaries carrying the same GPL modules ship against that written
+        // claim, and nothing else would catch it - the payload audit reads build/x64 only.
+        var csproj = File.ReadAllText(RepoRoot.Combine("DiffusionNexus.UI", "DiffusionNexus.UI.csproj"));
+
+        foreach (var (property, expected) in new[]
+                 {
+                     ("VlcWindowsX64Enabled", "true"),
+                     ("VlcWindowsX86Enabled", "false"),
+                     ("VlcWindowsArm64Enabled", "false"),
+                 })
+        {
+            var match = Regex.Match(csproj, $"<{property}>([^<]*)</{property}>", RegexOptions.IgnoreCase);
+
+            match.Success.Should().BeTrue(
+                $"{property} must be pinned explicitly; left implicit it follows $(Platform) and can flip");
+            match.Groups[1].Value.Trim().Should().Be(expected,
+                $"{property} is what decides whether that architecture's payload ships and is audited");
+        }
+    }
+
+    [Fact]
     public void WhenAnLgplComponentShipsThenItIsEitherExcludedFromTheBundleOrShipsLoose()
     {
         var excluded = ReadRelinkableAssemblyNames();
@@ -84,24 +130,11 @@ public class LgplSingleFileComplianceTests
 
     private static IReadOnlyCollection<string> ReadItemIncludes(string itemName)
     {
-        var csproj = Path.Combine(FindRepoRoot(), "DiffusionNexus.UI", "DiffusionNexus.UI.csproj");
-        var text = File.ReadAllText(csproj);
+        var text = File.ReadAllText(RepoRoot.Combine("DiffusionNexus.UI", "DiffusionNexus.UI.csproj"));
 
         return Regex.Matches(text, $"<{itemName}\\b[^>]*Include=\"([^\"]+)\"", RegexOptions.IgnoreCase)
             .Select(m => m.Groups[1].Value)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
-    private static string FindRepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null)
-        {
-            if (File.Exists(Path.Combine(dir.FullName, "DiffusionNexus.UI", "DiffusionNexus.UI.csproj")))
-                return dir.FullName;
-            dir = dir.Parent;
-        }
-
-        throw new DirectoryNotFoundException("Could not locate the repository root above " + AppContext.BaseDirectory);
-    }
 }

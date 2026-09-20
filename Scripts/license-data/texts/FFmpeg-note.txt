@@ -1,13 +1,26 @@
-DiffusionNexus does not distribute FFmpeg.
+FFmpeg reaches this application two separate ways. They have different licences and
+different obligations, and conflating them is how the earlier version of this note
+came to deny distributing FFmpeg at all while FFmpeg code shipped in the release.
 
-When no ffmpeg/ffprobe pair is present on the machine, the application downloads a
-prebuilt FFmpeg from ffbinaries.com - a third-party mirror, not the FFmpeg project's
-own distribution - and executes it as a separate process. Those binaries are covered
-by their own license, which is distributed with them, and are expected to be GPL:
-the Windows builds served by ffbinaries.com are configured with GPL-licensed
-components such as libx264.
+1. FFmpeg LIBRARIES ARE DISTRIBUTED, inside VLC's plugins.
+
+   libavcodec and libswscale are compiled into libvlc/win-x64/plugins/codec/
+   libavcodec_plugin.dll and libvlc/win-x64/plugins/video_chroma/
+   libswscale_plugin.dll, which ship in the release. Both binaries state their own
+   licence as "GPL version 2 or later", because this FFmpeg build is configured
+   with --enable-gpl. They are attributed in full under "VLC plugins built under
+   the GPL" below, which also covers the libraries statically linked into them.
+
+2. The FFmpeg EXECUTABLES are not distributed.
+
+   When no ffmpeg/ffprobe pair is present on the machine, the application downloads
+   a prebuilt FFmpeg from ffbinaries.com - a third-party mirror, not the FFmpeg
+   project's own distribution - and executes it as a separate process. Those
+   binaries are covered by their own licence, which travels with them, and are
+   expected to be GPL: the Windows builds served by ffbinaries.com are configured
+   with GPL-licensed components such as libx264.
 
 FFmpeg itself is free software licensed under the GNU Lesser General Public License
-version 2.1 or later; builds configured with certain options, including the ones
-downloaded here, are licensed under the GNU General Public License version 2 or
+version 2.1 or later; builds configured with certain options, including both of the
+ones described above, are licensed under the GNU General Public License version 2 or
 later. See https://ffmpeg.org/legal.html
