@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
+using DiffusionNexus.Domain.Utilities;
 using DiffusionNexus.Inference.Captioning;
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -14,11 +15,23 @@ public sealed partial class DestinationOptionViewModel : ObservableObject
     public CaptioningModelManager.DownloadDestination Destination { get; }
     public string Path => Destination.Path;
     public string Label => Destination.Label;
-    public long FreeBytes => Destination.FreeBytes;
+    public long FreeBytes => Destination.Space.FreeBytes;
 
-    /// <summary>"123.4 GB free" / "unknown" for paths we couldn't probe.</summary>
-    public string FreeBytesLabel =>
-        FreeBytes <= 0 ? "free space unknown" : $"{ToReadable(FreeBytes)} free";
+    /// <summary>
+    /// True when this destination has no volume behind it — a dead drive letter or an unplugged
+    /// disk. It used to be indistinguishable from an unprobeable network share (both reported 0
+    /// free bytes), so the dialog happily confirmed a multi-gigabyte download into a drive that
+    /// was gone (issue #581).
+    /// </summary>
+    public bool IsUnreachable => Destination.Space.Kind == FreeSpaceKind.Unreachable;
+
+    /// <summary>"123.4 GB free" / "unknown" for a share that won't say / "not reachable".</summary>
+    public string FreeBytesLabel => Destination.Space.Kind switch
+    {
+        FreeSpaceKind.Unreachable => "not reachable",
+        FreeSpaceKind.Unknown => "free space unknown",
+        _ => $"{ToReadable(FreeBytes)} free",
+    };
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(SpaceCheckLabel))]
@@ -26,18 +39,31 @@ public sealed partial class DestinationOptionViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(HasEnoughSpace))]
     private long _requiredBytes;
 
-    public bool HasEnoughSpace => FreeBytes <= 0 || FreeBytes >= RequiredBytes;
+    /// <summary>
+    /// Unknown fails open — refusing a perfectly good network share because it will not report
+    /// its size is the worse error. Unreachable does not: there is nothing to write to.
+    /// </summary>
+    public bool HasEnoughSpace => Destination.Space.Kind switch
+    {
+        FreeSpaceKind.Unreachable => false,
+        FreeSpaceKind.Unknown => true,
+        _ => FreeBytes >= RequiredBytes,
+    };
 
-    public string SpaceCheckLabel => RequiredBytes <= 0
-        ? string.Empty
-        : HasEnoughSpace
-            ? $"OK — need {ToReadable(RequiredBytes)}"
-            : $"NOT ENOUGH SPACE — need {ToReadable(RequiredBytes)}";
+    public string SpaceCheckLabel => IsUnreachable
+        ? "NOT REACHABLE — pick another destination"
+        : RequiredBytes <= 0
+            ? string.Empty
+            : HasEnoughSpace
+                ? $"OK — need {ToReadable(RequiredBytes)}"
+                : $"NOT ENOUGH SPACE — need {ToReadable(RequiredBytes)}";
 
     /// <summary>Bound directly by the XAML — avoids needing a value converter.</summary>
-    public string SpaceCheckColor => RequiredBytes <= 0
-        ? "#999999"
-        : HasEnoughSpace ? "#4CAF50" : "#F44336";
+    public string SpaceCheckColor => IsUnreachable
+        ? "#F44336"
+        : RequiredBytes <= 0
+            ? "#999999"
+            : HasEnoughSpace ? "#4CAF50" : "#F44336";
 
     public DestinationOptionViewModel(CaptioningModelManager.DownloadDestination destination)
     {
@@ -118,10 +144,13 @@ public partial class CaptioningDownloadOptionsViewModel : ViewModelBase
         }
     }
 
-    public string InsufficientSpaceWarning =>
-        SelectedDestination is { HasEnoughSpace: false }
-            ? $"⚠ The selected location has only {FormatBytes(SelectedDestination.FreeBytes)} free — not enough for this download."
-            : string.Empty;
+    public string InsufficientSpaceWarning => SelectedDestination switch
+    {
+        { IsUnreachable: true } d => $"⚠ {d.Path} cannot be reached — the drive or folder is not available.",
+        { HasEnoughSpace: false } d =>
+            $"⚠ The selected location has only {FormatBytes(d.FreeBytes)} free — not enough for this download.",
+        _ => string.Empty,
+    };
 
     /// <summary>
     /// OK to confirm only when a destination is picked and it has enough

@@ -1,5 +1,6 @@
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Utilities;
 using Serilog;
 
 namespace DiffusionNexus.Inference.Captioning;
@@ -208,16 +209,15 @@ public sealed class CaptioningModelManager
     /// a test seam — production callers should never need to pass this.
     /// </param>
     /// <param name="freeSpaceProbe">
-    /// Optional override for reading the free bytes on a path's volume
-    /// (-1 = unknown, which skips the preflight). Defaults to
-    /// <see cref="DriveInfo.AvailableFreeSpace"/>. Test seam only.
+    /// Optional override for reading free space on a path's volume. Defaults to
+    /// <see cref="DiskSpace.TryGetAvailableSpace"/>. Test seam only.
     /// </param>
     public CaptioningModelManager(
         string? modelsBasePath,
         HttpClient? httpClient,
         Func<IReadOnlyList<string>>? extraSearchPathsProvider = null,
         Func<string, long>? fileSizeProbe = null,
-        Func<string, long>? freeSpaceProbe = null)
+        Func<string, FreeSpaceResult>? freeSpaceProbe = null)
     {
         _modelsBasePath = modelsBasePath ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -233,7 +233,7 @@ public sealed class CaptioningModelManager
         _staticSearchPaths = BuildStaticSearchPaths(_modelsBasePath);
         _extraSearchPathsProvider = extraSearchPathsProvider;
         _fileSizeProbe = fileSizeProbe ?? (static path => new FileInfo(path).Length);
-        _freeSpaceProbe = freeSpaceProbe ?? ProbeFreeBytes;
+        _freeSpaceProbe = freeSpaceProbe ?? (path => DiskSpace.TryGetAvailableSpace(path));
     }
 
     /// <summary>
@@ -243,27 +243,7 @@ public sealed class CaptioningModelManager
     /// </summary>
     private const long FreeSpaceMarginBytes = 256L * 1024 * 1024;
 
-    private readonly Func<string, long> _freeSpaceProbe;
-
-    /// <summary>
-    /// Free bytes on the volume holding <paramref name="path"/>, or -1 when it
-    /// can't be determined (UNC path, unready drive) — callers must treat -1
-    /// as "unknown, don't block", NOT as "no space".
-    /// </summary>
-    private static long ProbeFreeBytes(string path)
-    {
-        try
-        {
-            var root = Path.GetPathRoot(Path.GetFullPath(path));
-            if (string.IsNullOrWhiteSpace(root)) return -1;
-            var drive = new DriveInfo(root);
-            return drive.IsReady ? drive.AvailableFreeSpace : -1;
-        }
-        catch
-        {
-            return -1;
-        }
-    }
+    private readonly Func<string, FreeSpaceResult> _freeSpaceProbe;
 
     /// <summary>
     /// Deletes leftover <c>*.download</c> partials in <paramref name="directory"/>.
@@ -676,9 +656,14 @@ public sealed class CaptioningModelManager
     /// <see cref="DownloadModelAsync(CaptioningModelType, int, string, IProgress{ModelDownloadProgress}?, CancellationToken)"/>.
     /// </param>
     /// <param name="Label">Multi-line display string for the picker row.</param>
-    /// <param name="FreeBytes">Free disk space on the destination's volume.</param>
+    /// <param name="Space">
+    /// Free disk space on the destination's volume, as a verdict. This used to be a bare
+    /// <c>long</c> where 0 meant "unknown" — which the picker rendered as "free space unknown"
+    /// and treated as confirmable, so an unreachable destination looked exactly like a network
+    /// share and the user could start a multi-gigabyte pull into a drive that was gone (#581).
+    /// </param>
     /// <param name="IsDefault">True for the Core default folder.</param>
-    public sealed record DownloadDestination(string Path, string Label, long FreeBytes, bool IsDefault);
+    public sealed record DownloadDestination(string Path, string Label, FreeSpaceResult Space, bool IsDefault);
 
     /// <summary>
     /// Subfolder appended under each ComfyUI <c>models</c> root so captioning
@@ -705,7 +690,7 @@ public sealed class CaptioningModelManager
         results.Add(new DownloadDestination(
             _modelsBasePath,
             $"Diffusion Nexus Core (default)\n{_modelsBasePath}",
-            GetFreeBytes(_modelsBasePath),
+            _freeSpaceProbe(_modelsBasePath),
             IsDefault: true));
         seen.Add(_modelsBasePath);
 
@@ -736,31 +721,11 @@ public sealed class CaptioningModelManager
             results.Add(new DownloadDestination(
                 writeTarget,
                 $"{path}\n→ {CaptioningSubfolderName} subfolder will be created",
-                GetFreeBytes(path),
+                _freeSpaceProbe(path),
                 IsDefault: false));
         }
 
         return results;
-    }
-
-    /// <summary>
-    /// Free-space lookup with a forgiving fallback: any failure (UNC paths
-    /// without a drive letter, missing root, access denied) returns 0 rather
-    /// than throwing — the UI surfaces "unknown" for that destination.
-    /// </summary>
-    private static long GetFreeBytes(string path)
-    {
-        try
-        {
-            var root = System.IO.Path.GetPathRoot(System.IO.Path.GetFullPath(path));
-            if (string.IsNullOrWhiteSpace(root)) return 0;
-            var drive = new DriveInfo(root);
-            return drive.IsReady ? drive.AvailableFreeSpace : 0;
-        }
-        catch
-        {
-            return 0;
-        }
     }
 
     /// <summary>
@@ -1084,12 +1049,23 @@ public sealed class CaptioningModelManager
 
             // Free-space preflight: refuse to start a multi-GB pull the volume
             // can't hold instead of grinding it to zero and failing mid-stream.
-            var freeBytes = _freeSpaceProbe(destinationPath);
-            if (freeBytes >= 0 && expectedSize > 0 && freeBytes < expectedSize + FreeSpaceMarginBytes)
+            // An unknowable reading proceeds; an unreachable destination does not —
+            // this used to fail open on both (issue #581).
+            var space = _freeSpaceProbe(destinationPath);
+            if (space.Kind == FreeSpaceKind.Unreachable)
+            {
+                var message = $"Cannot reach the destination for {modelName}. " +
+                    "The drive or folder is not available — pick another destination.";
+                Log.Error("Download blocked — {Message} (target: {Path})", message, destinationPath);
+                progress?.Report(new ModelDownloadProgress(0, expectedSize, message));
+                return false;
+            }
+
+            if (space.IsKnown && expectedSize > 0 && space.FreeBytes < expectedSize + FreeSpaceMarginBytes)
             {
                 var message =
                     $"Not enough free disk space for {modelName}: needs ~{(expectedSize + FreeSpaceMarginBytes) / (1024 * 1024):N0} MB, " +
-                    $"volume has {freeBytes / (1024 * 1024):N0} MB free. Free up space or pick another destination.";
+                    $"volume has {space.FreeBytes / (1024 * 1024):N0} MB free. Free up space or pick another destination.";
                 Log.Error("Download blocked — {Message} (target: {Path})", message, destinationPath);
                 progress?.Report(new ModelDownloadProgress(0, expectedSize, message));
                 return false;
