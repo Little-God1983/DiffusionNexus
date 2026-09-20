@@ -1,4 +1,5 @@
 using System;
+using DiffusionNexus.Domain.Utilities;
 
 namespace DiffusionNexus.Service.Services.IO;
 
@@ -8,13 +9,27 @@ namespace DiffusionNexus.Service.Services.IO;
 public class DiskUtility
 {
     /// <summary>
-    /// Determines whether enough free space exists on the drive containing <paramref name="targetPath"/> to copy all files from <paramref name="sourcePath"/>.
+    /// Determines whether enough free space exists on the volume holding <paramref name="targetPath"/>
+    /// to copy all files from <paramref name="sourcePath"/>.
     /// </summary>
+    /// <remarks>
+    /// A target whose free space cannot be read is not a "no": it answers <see langword="true"/>,
+    /// because refusing a copy to a share that simply will not report its size is the worse error.
+    /// A target with no volume behind it is a "no". This used to let
+    /// <see cref="DriveNotFoundException"/> out of a yes/no method, so the caller had to catch it
+    /// to find out (issue #581).
+    /// </remarks>
     public bool EnoughFreeSpace(string sourcePath, string targetPath)
     {
         long folderSize = GetDirectorySize(sourcePath);
-        long availableSpace = GetAvailableSpace(targetPath);
-        return folderSize <= availableSpace;
+        var space = DiskSpace.TryGetAvailableSpace(targetPath);
+
+        return space.Kind switch
+        {
+            FreeSpaceKind.Unreachable => false,
+            FreeSpaceKind.Unknown => true,
+            _ => folderSize <= space.FreeBytes,
+        };
     }
 
     /// <summary>
@@ -31,18 +46,6 @@ public class DiskUtility
             size += new FileInfo(file).Length;
         }
         return size;
-    }
-
-    /// <summary>
-    /// Gets the available free space for the drive containing the supplied path.
-    /// </summary>
-    public static long GetAvailableSpace(string folderPath)
-    {
-        var root = Path.GetPathRoot(folderPath);
-        if (string.IsNullOrEmpty(root))
-            throw new ArgumentException("Invalid path", nameof(folderPath));
-        DriveInfo drive = new DriveInfo(root);
-        return drive.AvailableFreeSpace;
     }
 
     /// <summary>

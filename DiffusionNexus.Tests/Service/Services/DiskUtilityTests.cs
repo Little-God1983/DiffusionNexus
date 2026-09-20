@@ -1,4 +1,5 @@
 using DiffusionNexus.Service.Services.IO;
+using DiffusionNexus.Tests.Helpers;
 using FluentAssertions;
 using Xunit;
 
@@ -20,6 +21,35 @@ public class DiskUtilityTests
         {
             Directory.Delete(dir.FullName, true);
         }
+    }
+
+    [WindowsFact]
+    public void EnoughFreeSpace_ReturnsFalse_ForAnUnreachableTarget()
+    {
+        // It used to let DriveNotFoundException out of a method whose whole job is to answer
+        // yes/no, so every caller had to catch it to find out (issue #581).
+        var util = new DiskUtility();
+        var dir = Directory.CreateTempSubdirectory("dn-diskutil-").FullName;
+        try
+        {
+            util.EnoughFreeSpace(dir, Path.Combine(DeadDriveRoot(), "target")).Should().BeFalse();
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
+    }
+
+    /// <summary>Root of a drive letter no volume is mounted on.</summary>
+    private static string DeadDriveRoot()
+    {
+        var taken = DriveInfo.GetDrives().Select(d => char.ToUpperInvariant(d.Name[0])).ToHashSet();
+        for (var letter = 'Z'; letter >= 'D'; letter--)
+        {
+            if (!taken.Contains(letter)) return $"{letter}:\\";
+        }
+
+        throw new InvalidOperationException("every drive letter is in use");
     }
 
     [Fact]
