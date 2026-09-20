@@ -120,10 +120,16 @@
        Guarded by DiffusionNexus.Tests/Licensing/LgplSingleFileComplianceTests.cs, which derives
        the required set from the generated notices so a new LGPL dependency cannot slip in. -->
   <ItemGroup>
-    <LgplRelinkableAssembly Include="HPPH" />
-    <LgplRelinkableAssembly Include="HPPH.SkiaSharp" />
-    <LgplRelinkableAssembly Include="LibVLCSharp" />
-    <LgplRelinkableAssembly Include="LibVLCSharp.Avalonia" />
+    <!-- Include is the ASSEMBLY file name, because that is what the target below matches on.
+         NoticesId is the component id the generated notices use, for the case where a package
+         id and its assembly name differ; it defaults to Include when they agree, as all four
+         happen to here. Keeping them as one field would make some future LGPL package
+         unguardable: no single string could satisfy both the file match and the notices match,
+         and the pressure would be to weaken one of the two checks. -->
+    <LgplRelinkableAssembly Include="HPPH" NoticesId="HPPH" />
+    <LgplRelinkableAssembly Include="HPPH.SkiaSharp" NoticesId="HPPH.SkiaSharp" />
+    <LgplRelinkableAssembly Include="LibVLCSharp" NoticesId="LibVLCSharp" />
+    <LgplRelinkableAssembly Include="LibVLCSharp.Avalonia" NoticesId="LibVLCSharp.Avalonia" />
     <LgplRelinkableContent Include="libvlc" />
   </ItemGroup>
 

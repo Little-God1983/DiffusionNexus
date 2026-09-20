@@ -9,24 +9,29 @@
     why THIRD-PARTY-NOTICES.txt makes no offer and names no contact point.
 
     Everything is driven by Scripts/license-data/corresponding-source.json: which archives,
-    from where, and their SHA-256. Downloads are cached, so only the first publish on a
-    machine pays for them.
+    from where, and the SHA-256 of each individual source. Downloads are cached, so only the
+    first publish on a machine pays for them.
 
-    Fail-closed by design. The publish stops if an archive cannot be fetched, if a hash does
-    not match, or if the cached source no longer corresponds to the shipped binaries. Shipping
-    a release with missing or mismatched source is worse than not shipping one: mismatched
-    source looks like compliance while being useless to the recipient.
+    Fail-closed by design. The publish stops if no source for a component verifies, or if the
+    cached source no longer corresponds to the shipped binaries. Shipping a release with
+    missing or mismatched source is worse than not shipping one: mismatched source looks like
+    compliance while being useless to the recipient.
+
+    A source is accepted only when its BYTES verify. A host answering 200 with an interstitial
+    HTML page - SourceForge does exactly this - is rejected and the next source is tried, rather
+    than ending the search and failing the release permanently.
 
 .PARAMETER OutputDir
     The publish directory. A 'source' folder is created inside it.
 
 .PARAMETER CacheDir
-    Where downloaded archives are kept between builds. Defaults to .source-cache at the
-    repository root, which is git-ignored - these are tens of megabytes of third-party
-    archives and do not belong in the history.
+    Where verified archives are kept between builds. Defaults to .source-cache at the repository
+    root, which is git-ignored - these are tens of megabytes of third-party archives and do not
+    belong in the history.
 
 .PARAMETER Check
-    Verify the cache and the correspondence without writing to OutputDir.
+    Verify that every component can be satisfied, without writing to OutputDir. Run in CI so that
+    mirror rot surfaces on a pull request instead of in the middle of a release.
 
 .NOTES
     TODO: Linux Implementation for Task Corresponding-Source - the correspondence check reads
@@ -46,8 +51,14 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptDir
 if (-not $CacheDir) { $CacheDir = Join-Path $RepoRoot '.source-cache' }
 
-$manifestPath = Join-Path $ScriptDir 'license-data/corresponding-source.json'
-$manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+# Validated before anything is downloaded: discovering a bad path after pulling ~43 MB across
+# five hosts wastes the operator's time for no reason.
+if (-not $Check) {
+    if (-not $OutputDir) { throw 'OutputDir is required unless -Check is given.' }
+    if (-not (Test-Path $OutputDir)) { throw "OutputDir '$OutputDir' does not exist." }
+}
+
+$manifest = Get-Content (Join-Path $ScriptDir 'license-data/corresponding-source.json') -Raw | ConvertFrom-Json
 
 Write-Host ''
 Write-Host 'Corresponding source (GPL-2.0 section 3a)' -ForegroundColor Cyan
@@ -68,9 +79,25 @@ if ($actualPackage -ne $expectedPackage) {
            "(versions come from contrib/src/<name>/rules.mak inside the VLC tarball) before releasing.")
 }
 
-$packageRoot = Join-Path ($env:NUGET_PACKAGES ?? (Join-Path $env:USERPROFILE '.nuget/packages')) `
-                         "videolan.libvlc.windows/$actualPackage/build/x64"
-$libvlc = Join-Path $packageRoot 'libvlc.dll'
+# Honours a globalPackagesFolder from NuGet.config, which a build machine may well set, rather
+# than assuming the default location.
+$packagesRoot = $env:NUGET_PACKAGES
+if (-not $packagesRoot) {
+    $nugetConfig = Get-ChildItem -Path $RepoRoot -Filter 'NuGet.config' -File -ErrorAction SilentlyContinue |
+                   Select-Object -First 1
+    if ($nugetConfig) {
+        $configured = [regex]::Match(
+            (Get-Content $nugetConfig.FullName -Raw),
+            '<add\s+key="globalPackagesFolder"\s+value="([^"]+)"',
+            'IgnoreCase').Groups[1].Value
+        if ($configured) {
+            $packagesRoot = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $configured))
+        }
+    }
+}
+if (-not $packagesRoot) { $packagesRoot = Join-Path $env:USERPROFILE '.nuget/packages' }
+
+$libvlc = Join-Path $packagesRoot "videolan.libvlc.windows/$actualPackage/build/x64/libvlc.dll"
 if (-not (Test-Path $libvlc)) {
     throw "Cannot verify correspondence: $libvlc is missing. Run: dotnet restore DiffusionNexus.UI -r win-x64"
 }
@@ -83,57 +110,70 @@ if ($binaryVersion -ne $manifest.correspondsTo.upstreamVersion) {
 }
 Write-Host "Corresponds to        : VLC $binaryVersion (package $actualPackage)"
 
-# ------------------------------------------------------------- fetch
+# ------------------------------------------------------------- resolve
 New-Item -ItemType Directory -Force -Path $CacheDir | Out-Null
 $staged = @()
 
+function Test-Archive {
+    param([string]$Path, [string]$ExpectedSha256)
+    if (-not (Test-Path $Path)) { return $false }
+    return (Get-FileHash $Path -Algorithm SHA256).Hash.ToLower() -eq $ExpectedSha256.ToLower()
+}
+
 foreach ($c in $manifest.components) {
-    $cached = Join-Path $CacheDir $c.file
+    $resolved = $null
 
-    if (Test-Path $cached) {
-        $hash = (Get-FileHash $cached -Algorithm SHA256).Hash.ToLower()
-        if ($hash -ne $c.sha256.ToLower()) {
-            # A corrupt or tampered cache entry must not be reused silently.
-            Remove-Item -LiteralPath $cached -Force
-            Write-Host "  $($c.name): cached copy failed its hash, refetching" -ForegroundColor Yellow
+    # A cached copy from any of this component's sources is good enough - they are all
+    # corresponding source for the same binaries, whatever the packaging.
+    foreach ($s in $c.sources) {
+        $cached = Join-Path $CacheDir $s.file
+        if (Test-Archive -Path $cached -ExpectedSha256 $s.sha256) {
+            $resolved = [pscustomobject]@{ Source = $s; Path = $cached; FromCache = $true }
+            break
         }
     }
 
-    if (-not (Test-Path $cached)) {
-        $fetched = $false
-        foreach ($url in $c.urls) {
+    if (-not $resolved) {
+        foreach ($s in $c.sources) {
+            $cached = Join-Path $CacheDir $s.file
             try {
-                Write-Host "  $($c.name): downloading from $url"
-                # Mirrors go stale and hosts disappear; the hash below is what makes trying
-                # several of them safe.
-                Invoke-WebRequest -Uri $url -OutFile $cached -TimeoutSec 300 -MaximumRedirection 10 -UserAgent 'Mozilla/5.0'
-                $fetched = $true
-                break
+                Write-Host "  $($c.name): fetching $($s.url)"
+                Invoke-WebRequest -Uri $s.url -OutFile $cached -TimeoutSec 300 `
+                                  -MaximumRedirection 10 -UserAgent 'Mozilla/5.0'
             } catch {
-                Write-Host "    unavailable" -ForegroundColor DarkGray
+                Write-Host "    unreachable" -ForegroundColor DarkGray
                 if (Test-Path $cached) { Remove-Item -LiteralPath $cached -Force }
+                continue
             }
-        }
-        if (-not $fetched) {
-            throw ("Could not download the corresponding source for $($c.name) from any of its " +
-                   "$($c.urls.Count) sources. The release cannot ship without it. Fetch " +
-                   "$($c.file) by hand into $CacheDir, or add a working mirror to " +
-                   "Scripts/license-data/corresponding-source.json.")
+
+            # The hash is checked HERE, not after the loop. A 200 response is not evidence of
+            # the right bytes: mirrors serve interstitial pages, rate-limit notices and stale
+            # files, and accepting the first non-throwing response would end the search on one
+            # of those and fail the release with mirrors still untried.
+            if (Test-Archive -Path $cached -ExpectedSha256 $s.sha256) {
+                $resolved = [pscustomobject]@{ Source = $s; Path = $cached; FromCache = $false }
+                break
+            }
+
+            Write-Host "    wrong content (hash mismatch), trying the next source" -ForegroundColor Yellow
+            Remove-Item -LiteralPath $cached -Force
         }
     }
 
-    $hash = (Get-FileHash $cached -Algorithm SHA256).Hash.ToLower()
-    if ($hash -ne $c.sha256.ToLower()) {
-        throw ("$($c.file) does not match its pinned SHA-256." + [Environment]::NewLine +
-               "  expected $($c.sha256.ToLower())" + [Environment]::NewLine +
-               "  actual   $hash" + [Environment]::NewLine +
-               "Either the upstream archive changed or the download was tampered with. Do not " +
-               "update the pin without establishing which.")
+    if (-not $resolved) {
+        throw ("No source for $($c.name) could be verified. All $($c.sources.Count) of its " +
+               "sources were tried and none delivered the expected bytes. The release cannot " +
+               "ship without it." + [Environment]::NewLine +
+               "Fix by placing a verified copy in $CacheDir under one of the file names in " +
+               "Scripts/license-data/corresponding-source.json, or by adding a working source to " +
+               "that manifest. Do NOT substitute a different version to make this pass - it would " +
+               "no longer be the corresponding source for the shipped binaries.")
     }
 
-    $sizeMb = (Get-Item $cached).Length / 1MB
-    Write-Host ("  {0,-10} {1,7:N1} MB  verified" -f $c.name, $sizeMb) -ForegroundColor Green
-    $staged += [pscustomobject]@{ Component = $c; Path = $cached; SizeMb = $sizeMb }
+    $sizeMb = (Get-Item $resolved.Path).Length / 1MB
+    $origin = if ($resolved.FromCache) { 'cached' } else { 'downloaded' }
+    Write-Host ("  {0,-10} {1,7:N1} MB  verified ({2})" -f $c.name, $sizeMb, $origin) -ForegroundColor Green
+    $staged += [pscustomobject]@{ Component = $c; Source = $resolved.Source; Path = $resolved.Path; SizeMb = $sizeMb }
 }
 
 if ($Check) {
@@ -142,14 +182,12 @@ if ($Check) {
     exit 0
 }
 
-if (-not $OutputDir) { throw 'OutputDir is required unless -Check is given.' }
-
 # ------------------------------------------------------------- stage
 $sourceDir = Join-Path $OutputDir 'source'
 New-Item -ItemType Directory -Force -Path $sourceDir | Out-Null
 
 foreach ($s in $staged) {
-    Copy-Item -LiteralPath $s.Path -Destination (Join-Path $sourceDir $s.Component.file) -Force
+    Copy-Item -LiteralPath $s.Path -Destination (Join-Path $sourceDir $s.Source.file) -Force
 }
 
 $readme = New-Object System.Text.StringBuilder
@@ -172,10 +210,14 @@ foreach ($s in $staged) {
     $c = $s.Component
     [void]$readme.AppendLine(('-' * 78))
     [void]$readme.AppendLine("$($c.name) $($c.version)")
-    [void]$readme.AppendLine("  file    : $($c.file)")
-    [void]$readme.AppendLine("  sha256  : $($c.sha256)")
-    [void]$readme.AppendLine("  origin  : $($c.urls[0])")
+    [void]$readme.AppendLine("  file    : $($s.Source.file)")
+    [void]$readme.AppendLine("  sha256  : $($s.Source.sha256)")
+    # The source actually used, not the manifest's first entry: recording a URL the file did
+    # not come from is a small lie in a document whose only job is being accurate, and the
+    # first entry has been a dead host before now.
+    [void]$readme.AppendLine("  obtained: $($s.Source.url)")
     [void]$readme.AppendLine("  covers  : $($c.describes)")
+    if ($c.versionNote) { [void]$readme.AppendLine("  note    : $($c.versionNote)") }
     [void]$readme.AppendLine()
 }
 

@@ -109,7 +109,7 @@ public class LgplSingleFileComplianceTests
     [Fact]
     public void WhenAnLgplComponentShipsThenItIsEitherExcludedFromTheBundleOrShipsLoose()
     {
-        var excluded = ReadRelinkableAssemblyNames();
+        var declared = ReadRelinkableNoticesIds();
 
         // Derived from the notices rather than hardcoded, so a newly introduced LGPL dependency
         // fails here instead of shipping welded into the exe. A licence pin cannot catch this:
@@ -117,7 +117,7 @@ public class LgplSingleFileComplianceTests
         var unaccounted = ThirdPartyNotices.Load()
             .Where(c => c.License.Contains("LGPL", StringComparison.OrdinalIgnoreCase))
             .Select(c => c.Id)
-            .Where(id => !excluded.Contains(id) && !ShipsLooseAsContent.ContainsKey(id))
+            .Where(id => !declared.Contains(id) && !ShipsLooseAsContent.ContainsKey(id))
             .ToList();
 
         unaccounted.Should().BeEmpty(
@@ -127,6 +127,29 @@ public class LgplSingleFileComplianceTests
 
     private static IReadOnlyCollection<string> ReadRelinkableAssemblyNames()
         => ReadItemIncludes("LgplRelinkableAssembly");
+
+    /// <summary>
+    /// The notices component ids for the relinkable assemblies: the NoticesId metadata where it
+    /// is given, otherwise the Include. NuGet package ids and assembly file names are not the
+    /// same namespace and need not agree, so conflating them would eventually make some LGPL
+    /// package impossible to declare - no single string could satisfy both the file-exists check
+    /// and the notices check, and the pressure would be to weaken one of them.
+    /// </summary>
+    private static IReadOnlyCollection<string> ReadRelinkableNoticesIds()
+    {
+        var text = File.ReadAllText(RepoRoot.Combine("DiffusionNexus.UI", "DiffusionNexus.UI.csproj"));
+
+        return Regex.Matches(text, @"<LgplRelinkableAssembly\b([^>]*?)/?>", RegexOptions.IgnoreCase)
+            .Select(m =>
+            {
+                var attributes = m.Groups[1].Value;
+                var notices = Regex.Match(attributes, "NoticesId=\"([^\"]+)\"", RegexOptions.IgnoreCase);
+                if (notices.Success) return notices.Groups[1].Value;
+                return Regex.Match(attributes, "Include=\"([^\"]+)\"", RegexOptions.IgnoreCase).Groups[1].Value;
+            })
+            .Where(v => !string.IsNullOrEmpty(v))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
 
     private static IReadOnlyCollection<string> ReadItemIncludes(string itemName)
     {
