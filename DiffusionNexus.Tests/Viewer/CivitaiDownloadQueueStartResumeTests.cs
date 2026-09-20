@@ -101,6 +101,15 @@ public sealed class CivitaiDownloadQueueStartResumeTests : IDisposable
         Status = JobStatus.Queued,
     };
 
+    /// <summary>Waits (bounded) for the worker pool to reach <paramref name="expected"/> calls.</summary>
+    private static async Task WaitForCallsAsync(Func<int> read, int expected)
+    {
+        for (var attempt = 0; attempt < 200 && read() < expected; attempt++)
+        {
+            await Task.Delay(10);
+        }
+    }
+
     [Fact]
     public async Task StartAllAsync_DoesNotCancelAnInFlightRetriedJob()
     {
@@ -184,6 +193,11 @@ public sealed class CivitaiDownloadQueueStartResumeTests : IDisposable
 
         var firstStart = queue.StartAllAsync();
         await downloader.FirstCallStarted.Task;
+        // StartAllAsync re-verifies free space off the UI thread before it schedules, so it now
+        // yields first: the second runner can still be on its way to DownloadAsync when the
+        // first one signals. Wait for the pool to fill rather than assuming synchronous
+        // scheduling — the invariant under test is the single scheduling of version 3.
+        await WaitForCallsAsync(() => downloader.CallCount, 2);
         downloader.CallCount.Should().Be(2, "the pool is two wide; version 3 is queued behind the gate");
 
         // User hits Start again (e.g. after adding nothing, or from the re-run path).
