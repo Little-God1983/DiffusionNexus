@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using DiffusionNexus.Tests.Helpers;
 using FluentAssertions;
 using Xunit;
 
@@ -57,7 +58,7 @@ public class PackageLicensePinTests
 
     private static IEnumerable<string> EnumerateProjectFiles()
     {
-        var root = FindRepoRoot();
+        var root = RepoRoot.Path;
         var projects = Directory.EnumerateFiles(root, "*.csproj", SearchOption.AllDirectories)
             .Where(p => !ContainsBuildOutputDirectory(p, root))
             .ToList();
@@ -76,16 +77,4 @@ public class PackageLicensePinTests
                 segment.Equals("obj", StringComparison.OrdinalIgnoreCase));
     }
 
-    private static string FindRepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null)
-        {
-            if (File.Exists(Path.Combine(dir.FullName, "DiffusionNexus.UI", "DiffusionNexus.UI.csproj")))
-                return dir.FullName;
-            dir = dir.Parent;
-        }
-
-        throw new DirectoryNotFoundException("Could not locate the repository root above " + AppContext.BaseDirectory);
-    }
 }

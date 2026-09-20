@@ -109,6 +109,104 @@
     <Folder Include="Tasks\" />
   </ItemGroup>
 
+  <!-- LGPL-2.1 section 6 permits using these libraries only if the recipient can relink the work
+       against a modified version of them. PublishSingleFile welds every managed assembly into the
+       executable, where nothing can be replaced - so these four are kept out of the bundle and
+       ship loose beside the exe, which the single-file host probes as a fallback.
+       VideoLAN.LibVLC.Windows needs the same treatment and it is the easy one to get wrong: its
+       payload arrives as Content, which lands loose in an ordinary build, so it looks replaceable
+       already. It is not - _ComputeFilesToBundle consumes every ResolvedFileToPublish whatever its
+       origin, so libvlc.dll, libvlccore.dll and all 323 plugins were being welded in as well.
+       Guarded by DiffusionNexus.Tests/Licensing/LgplSingleFileComplianceTests.cs, which derives
+       the required set from the generated notices so a new LGPL dependency cannot slip in. -->
+  <ItemGroup>
+    <!-- Include is the ASSEMBLY file name, because that is what the target below matches on.
+         NoticesId is the component id the generated notices use, for the case where a package
+         id and its assembly name differ; it defaults to Include when they agree, as all four
+         happen to here. Keeping them as one field would make some future LGPL package
+         unguardable: no single string could satisfy both the file match and the notices match,
+         and the pressure would be to weaken one of the two checks. -->
+    <LgplRelinkableAssembly Include="HPPH" NoticesId="HPPH" />
+    <LgplRelinkableAssembly Include="HPPH.SkiaSharp" NoticesId="HPPH.SkiaSharp" />
+    <LgplRelinkableAssembly Include="LibVLCSharp" NoticesId="LibVLCSharp" />
+    <LgplRelinkableAssembly Include="LibVLCSharp.Avalonia" NoticesId="LibVLCSharp.Avalonia" />
+    <LgplRelinkableContent Include="libvlc" />
+  </ItemGroup>
+
+  <!-- VideoLAN.LibVLC.Windows copies its payload for every architecture whose flag is unset, and
+       with Platform=AnyCPU that means all three - 178 MB of win-x86 and win-arm64 binaries this
+       app can never load, carrying the same GPL modules as the x64 set. The app is win-x64 only
+       (the CUDA backend alone settles that), so the other two are switched off rather than
+       shipped and attributed.
+       x64 is pinned true rather than left implicit: the package enables it only when $(Platform)
+       is x64 or AnyCPU, so a Platform=ARM64 build, an added Platforms element or a VS
+       configuration change would switch x64 off while these two stay off - publishing an app
+       with no libvlc at all, failing at runtime.
+       TODO: Linux Implementation - a Linux build would use VideoLAN.LibVLC.Linux instead, whose
+       payload has its own layout and its own licence audit; these three properties are specific
+       to the Windows package and should be conditioned on the target OS when that lands. -->
+  <PropertyGroup>
+    <VlcWindowsX64Enabled>true</VlcWindowsX64Enabled>
+    <VlcWindowsX86Enabled>false</VlcWindowsX86Enabled>
+    <VlcWindowsArm64Enabled>false</VlcWindowsArm64Enabled>
+  </PropertyGroup>
+
+  <!-- Four of the 323 win-x64 plugins are GPL rather than LGPL and are not on any path this app
+       uses: an H.264 *encoder*, VLC's Lua bindings, and two optional audio filters that are only
+       reachable if a user enables them. Dropping them removes the obligation instead of
+       discharging it. libavcodec and libswscale are GPL too (FFmpeg built with GPL components
+       enabled) and are NOT dropped: removing them was tested and breaks HEVC and MPEG-4/AVI
+       playback, so those two are attributed in supplements.json instead.
+       lua\** goes with liblua_plugin.dll: the package's default include set is
+       libvlc.*;libvlccore.*;hrtfs\**;lua\**;plugins\**, so excluding only the plugin left 95
+       files (1.1 MB) of VLC's HTTP web-interface behind, 16 of them plain GPL-2.0-or-later, that
+       nothing can load once the Lua engine is gone.
+       Guarded by DiffusionNexus.Tests/Licensing/VlcPayloadLicenseTests.cs, which re-derives the
+       GPL set from every shipped file on each run and cross-checks it against
+       Scripts/license-data/vlc-payload-audit.json. -->
+  <ItemGroup>
+    <VlcWindowsX64ExcludeFiles Include="plugins\codec\libx26410b_plugin.dll" />
+    <VlcWindowsX64ExcludeFiles Include="plugins\lua\liblua_plugin.dll" />
+    <VlcWindowsX64ExcludeFiles Include="plugins\audio_filter\libdolby_surround_decoder_plugin.dll" />
+    <VlcWindowsX64ExcludeFiles Include="plugins\audio_filter\libheadphone_channel_mixer_plugin.dll" />
+    <!-- %2A%2A, not **: the package's targets build their include/exclude paths through
+         $([MSBuild]::Unescape(...)), so the wildcard must survive as escaped text until then.
+         A literal ** is expanded by MSBuild when this item is declared - against this project's
+         own directory, where no lua folder exists - so the item silently becomes empty and
+         excludes nothing. The package's own include list is written lua\%2A%2A for that reason. -->
+    <VlcWindowsX64ExcludeFiles Include="lua\%2A%2A" />
+  </ItemGroup>
+
+  <Target Name="KeepLgplAssembliesRelinkable" BeforeTargets="_ComputeFilesToBundle" AfterTargets="_HandleFileConflictsForPublish" Condition="'$(PublishSingleFile)' == 'true'">
+    <PropertyGroup>
+      <!-- Semicolon-delimited on both ends so the match is exact: a bare Contains would let
+           "HPPH" also match "HPPH.SkiaSharp", and more importantly would match any future
+           assembly whose name merely starts with a listed one. -->
+      <_LgplRelinkableList>;@(LgplRelinkableAssembly);</_LgplRelinkableList>
+    </PropertyGroup>
+    <ItemGroup>
+      <ResolvedFileToPublish Condition="'%(Extension)' == '.dll' And $([System.String]::Copy('$(_LgplRelinkableList)').Contains(';%(Filename);'))">
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+
+  <!-- Batched over LgplRelinkableContent so each directory gets an anchored StartsWith rather
+       than a Contains that would also match a directory of that name nested anywhere below.
+       TODO: Linux Implementation for Task LGPL-Relink-Content - the directory names are the
+       Windows package's (libvlc\win-x64); a Linux payload lands elsewhere, so the item list is
+       the extension point and the target itself needs no change. -->
+  <Target Name="KeepLgplContentRelinkable" BeforeTargets="_ComputeFilesToBundle" AfterTargets="_HandleFileConflictsForPublish" Condition="'$(PublishSingleFile)' == 'true'" Outputs="%(LgplRelinkableContent.Identity)">
+    <PropertyGroup>
+      <_LgplContentDir>%(LgplRelinkableContent.Identity)</_LgplContentDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <ResolvedFileToPublish Condition="$([System.String]::Copy('%(RelativePath)').Replace('\','/').StartsWith('$(_LgplContentDir)/'))">
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+
   <!-- LlamaSharp.Backend.Cpu ships duplicate native DLLs under avx / avx2 / avx512 / noavx.
        During single-file publish the bundler sees them all with the same BundleRelativePath
        and fails (MSB4018). This target strips the non-avx2 duplicates from

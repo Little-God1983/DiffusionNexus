@@ -35,6 +35,13 @@ jobs:
       shell: pwsh
       run: pwsh Scripts/Generate-ThirdPartyNotices.ps1 -Check
 
+    # The release ships the GPL components' corresponding source, and publish.ps1 refuses to
+    # build a release without it. Checking here means mirror rot surfaces on a pull request
+    # rather than halfway through a release, when the only options are bad ones.
+    - name: Check corresponding source is obtainable
+      shell: pwsh
+      run: pwsh Scripts/Fetch-CorrespondingSource.ps1 -Check
+
     - name: Build
       run: dotnet build --no-restore --configuration Release
 

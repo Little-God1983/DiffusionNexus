@@ -1,0 +1,84 @@
+{
+  "_comment": "Licence audit of the VideoLAN.LibVLC.Windows payload, checked by DiffusionNexus.Tests/Licensing/VlcPayloadLicenseTests.cs. VideoLAN.LibVLC.Windows declares LGPL-2.1-or-later, which is true of libvlc and libvlccore but NOT of everything the package carries. The test re-derives the GPL set from the shipped files on every run and fails if a file carrying GPL evidence is not classified here, so a VLC version bump cannot introduce one silently. Paths are relative to build/<rid>/ in the package and use forward slashes.",
+
+  "packageId": "VideoLAN.LibVLC.Windows",
+  "auditedVersion": "3.0.23.1",
+  "upstreamVersion": "VLC 3.0.23 'Vetinari', git 3.0.23-2-0-g79128878dd",
+  "upstreamVersionSource": "Read from libvlc.dll's version resource (FileVersion 3.0.23) and libvlccore.dll's embedded version string, NOT inferred from the NuGet package number 3.0.23.1, which differs.",
+
+  "shippedGpl": [
+    {
+      "file": "plugins/codec/libavcodec_plugin.dll",
+      "license": "GPL-2.0-or-later",
+      "evidence": "The binary states its own licence: 'libavcodec license: GPL version 2 or later'. Built with --enable-gpl --enable-postproc --enable-static --disable-shared.",
+      "whyShipped": "Required. Removing it was measured against real media and breaks HEVC and MPEG-4/AVI playback: the remaining decoders fall back to Windows Media Foundation, which does not cover those formats here.",
+      "staticallyLinked": [
+        {
+          "library": "LAME 3.100",
+          "license": "LGPL",
+          "evidence": "Build flag --enable-libmp3lame present, plus LAME's own version stamp 'LAME3.100', its project URL 'http://lame.sf.net' and its runtime error strings. --enable-static --disable-shared means it is compiled into this plugin, not loaded from a separate DLL."
+        },
+        {
+          "library": "OpenJPEG",
+          "license": "BSD-2-Clause",
+          "evidence": "Build flag --enable-libopenjpeg present, plus 'OpenJPEG' strings in the binary."
+        },
+        {
+          "library": "libgsm",
+          "license": "Permissive (Technische Universitaet Berlin)",
+          "evidence": "Build flag --enable-libgsm present, plus 'libgsm' strings in the binary."
+        }
+      ]
+    },
+    {
+      "file": "plugins/video_chroma/libswscale_plugin.dll",
+      "license": "GPL-2.0-or-later",
+      "evidence": "The binary states its own licence: 'libswscale license: GPL version 2 or later'. Same FFmpeg build as libavcodec_plugin.dll.",
+      "whyShipped": "Required alongside libavcodec for the same playback paths.",
+      "staticallyLinked": []
+    }
+  ],
+
+  "excludedGpl": [
+    {
+      "file": "plugins/codec/libx26410b_plugin.dll",
+      "license": "GPL-2.0-or-later",
+      "evidence": "Module declares 'Licensed under the terms of the GNU General Public License, version 2 or later.'",
+      "whyExcluded": "An H.264 encoder. This application only plays video back; it never encodes through VLC."
+    },
+    {
+      "file": "plugins/lua/liblua_plugin.dll",
+      "license": "GPL-2.0-or-later",
+      "evidence": "Module declares 'Licensed under the terms of the GNU General Public License, version 2 or later.'",
+      "whyExcluded": "VLC's Lua bindings, used for web-service playlist parsing and art fetching. Not reachable from local file playback. Excluding it is what makes the lua/** data tree dead weight, so that is excluded too."
+    },
+    {
+      "file": "plugins/audio_filter/libdolby_surround_decoder_plugin.dll",
+      "license": "GPL-2.0-or-later",
+      "evidence": "Module declares 'Licensed under the terms of the GNU General Public License, version 2 or later.'",
+      "whyExcluded": "An opt-in audio filter, only active if a user enables it. The video player exposes no such control."
+    },
+    {
+      "file": "plugins/audio_filter/libheadphone_channel_mixer_plugin.dll",
+      "license": "GPL-2.0-or-later",
+      "evidence": "Module declares 'Licensed under the terms of the GNU General Public License, version 2 or later.'",
+      "whyExcluded": "An opt-in audio filter, as above."
+    },
+    {
+      "file": "lua/**",
+      "license": "GPL-2.0-or-later",
+      "evidence": "16 of the 95 files carry a full GPL-2.0-or-later header ('This program is free software; you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation; either version 2 of the License, or (at your option) any later version'): lua/http/{index,mobile,mobile_browse,mobile_equalizer,mobile_view,view,vlm}.html and lua/http/requests/{browse,playlist,status}.{json,xml}, playlist_jstree.xml, vlm.xml, vlm_cmd.xml.",
+      "whyExcluded": "1.1 MB of web-interface assets for VLC's HTTP control server. liblua_plugin.dll is excluded, so nothing can ever load them. Shipping unattributed GPL dead weight for no function."
+    }
+  ],
+
+  "notLicenceDeclarations": [
+    {
+      "file": "libvlccore.dll",
+      "occurrences": 1,
+      "matched": "You may redistribute it under the terms of the GNU General Public License;",
+      "matchedNote": "Recorded without the following sentence because the string carries an embedded newline at that point.",
+      "reason": "VLC's command-line front-end banner, carried as a data string inside libvlccore - it describes the VLC *application*, which is GPL, not this library. libvlccore itself is LGPL-2.1-or-later: VideoLAN relicensed the core in 2012 precisely so libvlc could be embedded in non-GPL applications, and the package's own metadata agrees. Recorded here rather than silently filtered, because a detector tuned to avoid this one string would also miss a real declaration phrased differently."
+    }
+  ]
+}

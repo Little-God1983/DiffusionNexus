@@ -10,13 +10,17 @@ namespace DiffusionNexus.UI.Services.Licensing;
 /// </summary>
 /// <remarks>
 /// The file is produced by Scripts/Generate-ThirdPartyNotices.ps1 and verified fresh by CI;
-/// this class only reads it. Read once through <see cref="Lazy{T}"/>: the payload is 1,270,070
-/// bytes across 115 components, almost all of it licence text, and must not be re-decoded on
-/// every render of the screen that shows it. Much of that bulk is repetition - 1.21 M chars of
-/// licenceText reduce to 23 distinct bodies, the MIT text alone inlined 84 times - but
-/// deduplicating it would
-/// change the emitted JSON schema and this parser, so reading exactly once is what keeps the
-/// cost a one-off instead.
+/// this class only reads it. Read once through <see cref="Lazy{T}"/>: the payload is well over a
+/// megabyte across a hundred-plus components, almost all of it licence text, and must not be
+/// re-decoded on every render of the screen that shows it. Much of that bulk is repetition - the
+/// distinct licence bodies number a couple of dozen, with the MIT text inlined for most packages
+/// that use it - but deduplicating it would change the emitted JSON schema and this parser, so
+/// reading exactly once is what keeps the cost a one-off instead.
+/// <para>
+/// Deliberately no exact byte or component counts here: they were 1,270,070 bytes and 115
+/// components when this was written and were stale within two commits, because every licence
+/// change moves them. The argument for <see cref="Lazy{T}"/> does not depend on the figure.
+/// </para>
 /// </remarks>
 public static class ThirdPartyNotices
 {

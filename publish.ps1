@@ -364,6 +364,19 @@ if (-not (Test-Path $LicenseSource)) {
 Copy-Item -Path $LicenseSource -Destination (Join-Path $OutputDir "LICENSE") -Force
 Write-Host "Product LICENSE copied to publish folder." -ForegroundColor Green
 
+# Stage the corresponding source for the GPL binaries in libvlc/win-x64/plugins/.
+# GPL-2.0 section 3 accepts three routes; shipping the source beside the binary is route (a),
+# and it is the reason THIRD-PARTY-NOTICES.txt makes no written offer and names no contact.
+# A release that cannot produce that source is not a release, so a failure here stops the
+# publish - exactly as a failure to generate the notices does above. Archives are cached in
+# .source-cache, so only the first publish on a machine pays for the downloads.
+Write-SubHeader "Corresponding Source (GPL)"
+& pwsh (Join-Path $ScriptDir "Scripts/Fetch-CorrespondingSource.ps1") -OutputDir $OutputDir
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "CORRESPONDING SOURCE STAGING FAILED!" -ForegroundColor Red
+    exit $LASTEXITCODE
+}
+
 # Show output files
 Write-SubHeader "Output Files (Unzipped - For Quick Testing)"
 Get-ChildItem -Path $OutputDir | Format-Table Name, Length, LastWriteTime

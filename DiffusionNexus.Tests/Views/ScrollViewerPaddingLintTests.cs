@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.Linq;
+using DiffusionNexus.Tests.Helpers;
 using FluentAssertions;
 using Xunit;
 
@@ -35,7 +36,7 @@ public class ScrollViewerPaddingLintTests
     [Fact]
     public void No_axaml_ScrollViewer_uses_Padding()
     {
-        var repoRoot = FindRepoRoot();
+        var repoRoot = RepoRoot.Path;
         var offenders = Directory.EnumerateFiles(repoRoot, "*.axaml", SearchOption.AllDirectories)
             .Where(path => !IsBuildOutput(path))
             .SelectMany(path => FindPaddedScrollViewers(path).Select(line => $"{Path.GetRelativePath(repoRoot, path)}:{line}"))
@@ -133,19 +134,4 @@ public class ScrollViewerPaddingLintTests
         return path.Contains($"{sep}bin{sep}") || path.Contains($"{sep}obj{sep}");
     }
 
-    private static string FindRepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null)
-        {
-            if (File.Exists(Path.Combine(dir.FullName, "DiffusionNexus.UI", "DiffusionNexus.UI.csproj")))
-            {
-                return dir.FullName;
-            }
-
-            dir = dir.Parent;
-        }
-
-        throw new DirectoryNotFoundException("Could not locate the repository root above " + AppContext.BaseDirectory);
-    }
 }
