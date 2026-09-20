@@ -11,6 +11,7 @@ using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Domain.Utilities;
 using DiffusionNexus.Service.Services.IO;
 using DiffusionNexus.Service.Services.Lora;
 using DiffusionNexus.UI.Services.Download;
@@ -198,20 +199,25 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     }
 
     /// <summary>
-    /// Free bytes on the drive hosting a path root. Throws the way
-    /// <see cref="DiskUtility.GetAvailableSpace"/> does — <see cref="ArgumentException"/> when the
-    /// root has no drive (UNC), <see cref="IOException"/> when the drive is gone — because the
-    /// caller has to tell "unknowable" from "unreachable". Test seam.
+    /// Free space on a volume, as a verdict rather than a number the caller has to interpret:
+    /// "unknowable" and "unreachable" want opposite answers here and this queue used to tell them
+    /// apart by catching exception types (issue #581). The second argument is
+    /// <c>resolveMountPoints</c> — see <see cref="DiskSpace.TryGetAvailableSpace"/>. Test seam.
     /// </summary>
-    internal Func<string, long> FreeSpaceProbe { get; set; } = DiskUtility.GetAvailableSpace;
+    internal Func<string, bool, FreeSpaceResult> FreeSpaceProbe { get; set; } =
+        (path, resolveMountPoints) => DiskSpace.TryGetAvailableSpace(path, resolveMountPoints);
 
     /// <summary>Test seam for <see cref="LastSpaceCheckDisplay"/>.</summary>
     internal Func<DateTimeOffset> Clock { get; set; } = () => DateTimeOffset.Now;
 
     private enum RootSpace { Fits, Short, Unknown, Unreachable }
 
-    /// <summary>One drive root and the bytes the queue intends to put on it.</summary>
-    private sealed record PendingBytes(string Root, long Bytes);
+    /// <summary>One destination directory and the bytes the queue intends to put in it.</summary>
+    /// <remarks>
+    /// The directory, not its volume: resolving the volume can block for the SMB timeout and this
+    /// is built on the UI thread. <see cref="ComputeSpaceState"/> does the resolving.
+    /// </remarks>
+    private sealed record PendingBytes(string Directory, long Bytes);
 
     /// <summary>
     /// What a Start would commit, read off <see cref="Jobs"/> in one pass on the UI thread.
@@ -219,7 +225,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     /// file carries no <c>sizeKB</c> is enqueued with <c>SizeBytes = 0</c> and is invisible to a
     /// byte comparison, while the stamp next to the button claims the destinations were checked.
     /// </summary>
-    private sealed record PendingSnapshot(List<PendingBytes> Roots, int UnsizedJobs);
+    private sealed record PendingSnapshot(List<PendingBytes> Destinations, int UnsizedJobs);
 
     /// <summary>The verdict strings plus how many roots were actually probed.</summary>
     private readonly record struct SpaceState(string? Warning, string? Note, int ProbedRoots);
@@ -237,7 +243,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         try
         {
             var snapshot = SnapshotPending();
-            var state = await Task.Run(() => ComputeSpaceState(snapshot, allowFolderProbe: true));
+            var state = await Task.Run(() => ComputeSpaceState(snapshot, resolveMountPoints: true));
             ApplySpaceState(state);
             _logger?.Info(LogCategory.Download, "CivitaiQueue",
                 $"Disk-space recheck: {SpaceWarning ?? SpaceNote ?? "all destinations have room"}");
@@ -254,17 +260,18 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     /// <summary>
     /// Synchronous recompute for the automatic triggers (queue membership, job status,
     /// destination change), which already ran on the UI thread before this existed.
-    /// <c>allowFolderProbe: false</c> keeps it from adding a <see cref="Directory.Exists"/> call on
-    /// that path — for a dead UNC root that is the slowest call of the lot, and this runs twice
-    /// per job per batch. It costs only the unknown/unreachable distinction, which fails towards
-    /// "unknown" (no gate) and is re-derived properly by the recheck and the per-job check.
+    /// <c>resolveMountPoints: false</c> keeps it off the volume lookup, which blocks for the SMB
+    /// timeout on a dead network destination (measured: ~5 s) — and this runs twice per job per
+    /// batch. It costs the mount-point resolution and the unknown/unreachable distinction, both
+    /// of which fail towards "unknown" (no gate) and are re-derived properly by the recheck and
+    /// the per-job check.
     /// Making these triggers async is a pre-existing question, deliberately left alone here.
     /// </summary>
     private void RecomputeSpaceWarning()
     {
         try
         {
-            ApplySpaceState(ComputeSpaceState(SnapshotPending(), allowFolderProbe: false));
+            ApplySpaceState(ComputeSpaceState(SnapshotPending(), resolveMountPoints: false));
         }
         catch (Exception ex)
         {
@@ -273,11 +280,12 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     }
 
     /// <summary>
-    /// Groups the jobs Start would run by the drive root of their resolved target directory.
+    /// Groups the jobs Start would run by their resolved target directory.
     /// The job set has to be the same set <see cref="StartAllAsync"/> runs — <c>Queued</c> AND
     /// <c>Cancelled</c>, per <see cref="AbortAllActive"/>'s contract — or an Abort followed by a
     /// recheck clears the warning and re-arms Start for bytes nobody measured.
-    /// Touches <see cref="Jobs"/>, so it stays on the caller's (UI) thread.
+    /// Touches <see cref="Jobs"/>, so it stays on the caller's (UI) thread — which is also why it
+    /// groups by directory and leaves the volume lookup to <see cref="ComputeSpaceState"/>.
     /// </summary>
     private PendingSnapshot SnapshotPending()
     {
@@ -285,44 +293,63 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             .Where(j => j.Status is JobStatus.Queued or JobStatus.Cancelled)
             .ToList();
 
-        var roots = pending
+        var destinations = pending
             .Where(j => j.SizeBytes > 0)
             .Select(j => new
             {
                 j.SizeBytes,
-                Root = SafeGetPathRoot(j.CustomTargetDirectory ?? j.ExpectedTargetDir)
+                Directory = SafeFullPath(j.CustomTargetDirectory ?? j.ExpectedTargetDir)
             })
-            .Where(x => !string.IsNullOrEmpty(x.Root))
-            .GroupBy(x => x.Root!, StringComparer.OrdinalIgnoreCase)
+            .Where(x => !string.IsNullOrEmpty(x.Directory))
+            .GroupBy(x => x.Directory!, StringComparer.OrdinalIgnoreCase)
             .Select(g => new PendingBytes(g.Key, g.Sum(x => x.SizeBytes)))
             .ToList();
 
-        return new PendingSnapshot(roots, pending.Count(j => j.SizeBytes <= 0));
+        return new PendingSnapshot(destinations, pending.Count(j => j.SizeBytes <= 0));
     }
 
     /// <summary>
-    /// Probes each drive root. Pure I/O over a snapshot — safe to run on a pool thread.
+    /// Resolves each destination to the volume it actually lands on, sums the bytes per volume,
+    /// and probes each one. Pure I/O over a snapshot — safe to run on a pool thread.
     /// </summary>
-    private SpaceState ComputeSpaceState(PendingSnapshot snapshot, bool allowFolderProbe)
+    /// <remarks>
+    /// The re-grouping is the point of resolving volumes rather than drive letters: with an 8 TB
+    /// disk mounted at <c>C:\Models</c>, <c>C:\Models</c> and <c>C:\Users\…</c> are two volumes
+    /// behind one letter. Bucketing them by letter summed bytes bound for different disks and
+    /// measured the total against whichever one the letter named (issue #581).
+    /// </remarks>
+    private SpaceState ComputeSpaceState(PendingSnapshot snapshot, bool resolveMountPoints)
     {
+        var byVolume = snapshot.Destinations
+            .Select(d => new
+            {
+                // A destination whose volume cannot be named is still checked, under its own
+                // path — dropping it would take its bytes out of the gate entirely.
+                Volume = DiskSpace.GetVolumeRoot(d.Directory, resolveMountPoints) ?? d.Directory,
+                d.Bytes,
+            })
+            .GroupBy(x => x.Volume, StringComparer.OrdinalIgnoreCase)
+            .Select(g => new PendingBytes(g.Key, g.Sum(x => x.Bytes)))
+            .ToList();
+
         var lines = new List<string>();
         var notes = new List<string>();
 
-        foreach (var entry in snapshot.Roots)
+        foreach (var entry in byVolume)
         {
-            var (kind, free) = ClassifyRoot(entry.Root, entry.Bytes, allowFolderProbe);
+            var (kind, free) = ClassifyVolume(entry.Directory, entry.Bytes, resolveMountPoints);
             switch (kind)
             {
                 case RootSpace.Short:
                     lines.Add(
                         $"Need {FormatBytes(entry.Bytes)} + {FormatBytes(SpaceSafetyMarginBytes)} headroom on " +
-                        $"{entry.Root} — only {FormatBytes(free)} free");
+                        $"{entry.Directory} — only {FormatBytes(free)} free");
                     break;
                 case RootSpace.Unknown:
-                    notes.Add($"Free space unknown on {entry.Root} (network or unsupported path) — not checked");
+                    notes.Add($"Free space unknown on {entry.Directory} (network or unsupported path) — not checked");
                     break;
                 case RootSpace.Unreachable:
-                    notes.Add($"{entry.Root} cannot be reached — the {FormatBytes(entry.Bytes)} aimed at it will fail on start");
+                    notes.Add($"{entry.Directory} cannot be reached — the {FormatBytes(entry.Bytes)} aimed at it will fail on start");
                     break;
             }
         }
@@ -335,34 +362,25 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         return new SpaceState(
             lines.Count > 0 ? string.Join("\n", lines) : null,
             notes.Count > 0 ? string.Join("\n", notes) : null,
-            snapshot.Roots.Count);
+            byVolume.Count);
     }
 
     /// <summary>
-    /// One root's verdict. The catch lives here, at the call site of the seam rather than inside
-    /// one implementation of it, so a probe that throws costs that root's verdict and not the
-    /// whole check.
-    /// "Unknowable" and "unreachable" are different things, and this repo has already paid for
-    /// conflating them: <c>LoraSorterViewModel.ApplyDiskPreflight</c> failed open on a dead drive
-    /// letter and reported "Done: 0 sorted, 0 duplicates skipped, 412 failed". A UNC share has no
-    /// DriveInfo (ArgumentException) but its folder is right there — blind, not broken.
-    /// The one rule now has four copies across the repo; consolidating them into DiskUtility is
-    /// issue #581.
+    /// One volume's verdict. "Unknowable" and "unreachable" arrive as values rather than
+    /// exception types now — this used to split them by catching <see cref="ArgumentException"/>
+    /// and probing for the folder, one of four hand-written copies of the same rule (issue #581).
     /// </summary>
-    private (RootSpace Kind, long Free) ClassifyRoot(string root, long neededBytes, bool allowFolderProbe)
+    private (RootSpace Kind, long Free) ClassifyVolume(string volume, long neededBytes, bool resolveMountPoints)
     {
-        long free;
-        try
-        {
-            free = FreeSpaceProbe(root);
-        }
-        catch (Exception ex)
-        {
-            var unknowable = ex is ArgumentException && (!allowFolderProbe || SafeDirectoryExists(root));
-            return (unknowable ? RootSpace.Unknown : RootSpace.Unreachable, 0);
-        }
+        var space = FreeSpaceProbe(volume, resolveMountPoints);
 
-        return (neededBytes + SpaceSafetyMarginBytes > free ? RootSpace.Short : RootSpace.Fits, free);
+        return space.Kind switch
+        {
+            FreeSpaceKind.Unknown => (RootSpace.Unknown, 0L),
+            FreeSpaceKind.Unreachable => (RootSpace.Unreachable, 0L),
+            _ => (neededBytes + SpaceSafetyMarginBytes > space.FreeBytes ? RootSpace.Short : RootSpace.Fits,
+                  space.FreeBytes),
+        };
     }
 
     /// <summary>
@@ -374,15 +392,15 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     /// </summary>
     private string? RefuseForSpace(CivitaiDownloadJob job, string targetDir)
     {
-        var root = SafeGetPathRoot(targetDir);
-        if (root is null) return null;
+        var volume = DiskSpace.GetVolumeRoot(targetDir);
+        if (volume is null) return null;
 
-        var (kind, free) = ClassifyRoot(root, job.SizeBytes, allowFolderProbe: true);
+        var (kind, free) = ClassifyVolume(volume, job.SizeBytes, resolveMountPoints: true);
         return kind switch
         {
-            RootSpace.Unreachable => $"Destination drive {root} is not reachable.",
+            RootSpace.Unreachable => $"Destination drive {volume} is not reachable.",
             RootSpace.Short when job.SizeBytes > 0 =>
-                $"Not enough free space on {root}: needs {FormatBytes(job.SizeBytes + SpaceSafetyMarginBytes)}, " +
+                $"Not enough free space on {volume}: needs {FormatBytes(job.SizeBytes + SpaceSafetyMarginBytes)}, " +
                 $"only {FormatBytes(free)} free.",
             _ => null,
         };
@@ -425,24 +443,16 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             : $"Checked {Clock().ToString("HH:mm:ss", CultureInfo.InvariantCulture)}";
     }
 
-    private static bool SafeDirectoryExists(string path)
-    {
-        try { return Directory.Exists(path); }
-        catch { return false; }
-    }
-
     /// <summary>
-    /// Drive root of a target directory. Relative paths are resolved first: <c>GetPathRoot</c>
-    /// returns "" for them, and the empty-root filter would drop that job's bytes out of the
-    /// check entirely (<c>CaptioningModelManager.ProbeFreeBytes</c> guards the same way).
-    /// Known limitation, shared with all four sibling probes: a destination on a volume mount
-    /// point (C:/Models mapped to another volume) reports the host letter's free space —
-    /// answering that needs GetDiskFreeSpaceEx on the directory, tracked in issue #581.
+    /// Absolute form of a target directory, for grouping. Relative paths are resolved because a
+    /// raw relative path has no root at all, and the empty filter in <see cref="SnapshotPending"/>
+    /// would drop that job's bytes out of the check entirely. Pure string work — no I/O, so this
+    /// is safe on the UI thread even for a destination on a dead network share.
     /// </summary>
-    private static string? SafeGetPathRoot(string? path)
+    private static string? SafeFullPath(string? path)
     {
         if (string.IsNullOrWhiteSpace(path)) return null;
-        try { return Path.GetPathRoot(Path.GetFullPath(path)); }
+        try { return Path.GetFullPath(path); }
         catch { return null; }
     }
 
@@ -742,7 +752,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         try
         {
             var snapshot = SnapshotPending();
-            var verdict = await Task.Run(() => ComputeSpaceState(snapshot, allowFolderProbe: true));
+            var verdict = await Task.Run(() => ComputeSpaceState(snapshot, resolveMountPoints: true));
             ApplySpaceState(verdict);
             fresh = verdict;
         }
