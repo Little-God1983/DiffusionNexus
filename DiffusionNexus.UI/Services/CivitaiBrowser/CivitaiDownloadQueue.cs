@@ -10,6 +10,7 @@ using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Service.Services.IO;
 using DiffusionNexus.Service.Services.Lora;
 using DiffusionNexus.UI.Services.Download;
 using DiffusionNexus.UI.ViewModels;
@@ -114,7 +115,21 @@ public sealed class CivitaiDownloadQueue : ObservableObject
 
     public string TotalQueuedBytesDisplay => FormatBytes(TotalQueuedBytes);
 
+    /// <summary>
+    /// Headroom the check keeps free on top of the queued bytes. A download needs its
+    /// <c>.download</c> partial plus the <c>.civitai.json</c>/<c>.preview.png</c> sidecars,
+    /// and a volume ground to zero bytes free destabilizes Windows when it is C:. Siblings
+    /// keep the same kind of margin: <c>CaptioningModelManager</c> 256 MB,
+    /// <c>LoraSorterViewModel</c> 1 GB.
+    /// </summary>
+    private const long SpaceSafetyMarginBytes = 1L << 30;
+
     private string? _spaceWarning;
+
+    /// <summary>
+    /// Blocking verdict: the destination cannot take the queue (too little room, or the
+    /// drive cannot be reached at all). Disables Start.
+    /// </summary>
     public string? SpaceWarning
     {
         get => _spaceWarning;
@@ -129,83 +144,196 @@ public sealed class CivitaiDownloadQueue : ObservableObject
 
     public bool HasSpaceWarning => !string.IsNullOrEmpty(SpaceWarning);
 
-    /// <summary>
-    /// Free bytes on the drive hosting a path root, or <c>null</c> when that root is not a
-    /// ready drive. Test seam — production reads the live <see cref="DriveInfo"/>.
-    /// </summary>
-    internal Func<string, long?> FreeSpaceProbe { get; set; } = DefaultFreeSpaceProbe;
+    private string? _spaceNote;
 
-    private static long? DefaultFreeSpaceProbe(string root)
+    /// <summary>
+    /// Advisory verdict: free space could not be determined (a UNC share has no
+    /// <see cref="DriveInfo"/> at all), so the gate could not run. Does NOT disable Start —
+    /// blocking here would ban network destinations outright — but the user is told the
+    /// check is blind rather than being shown a silent all-clear.
+    /// </summary>
+    public string? SpaceNote
     {
-        try
+        get => _spaceNote;
+        private set
         {
-            var drive = new DriveInfo(root);
-            return drive.IsReady ? drive.AvailableFreeSpace : null;
+            if (SetProperty(ref _spaceNote, value))
+            {
+                OnPropertyChanged(nameof(HasSpaceNote));
+            }
         }
-        catch { return null; /* not a real drive */ }
+    }
+
+    public bool HasSpaceNote => !string.IsNullOrEmpty(SpaceNote);
+
+    private string _lastSpaceCheckDisplay = "Not checked yet";
+
+    /// <summary>
+    /// When the check last ran. <see cref="SpaceWarning"/> goes through <c>SetProperty</c>, so
+    /// re-running it to an identical verdict moves nothing on screen — and a recheck button
+    /// that does nothing visible reads as broken. This always changes.
+    /// </summary>
+    public string LastSpaceCheckDisplay
+    {
+        get => _lastSpaceCheckDisplay;
+        private set => SetProperty(ref _lastSpaceCheckDisplay, value);
     }
 
     /// <summary>
-    /// Re-reads free space for every drive the queue targets. Nothing in the app observes
-    /// the drive itself, so once the user frees room (or something else eats it) this is
-    /// the only way to refresh the warning — and a stale warning keeps Start disabled.
-    /// Bound to the queue panel's recheck button (issue #379).
+    /// Free bytes on the drive hosting a path root. Throws the way
+    /// <see cref="DiskUtility.GetAvailableSpace"/> does — <see cref="ArgumentException"/> when the
+    /// root has no drive (UNC), <see cref="IOException"/> when the drive is gone — because the
+    /// caller has to tell "unknowable" from "unreachable". Test seam.
     /// </summary>
-    public void RecheckSpace() => RecomputeSpaceWarning();
+    internal Func<string, long> FreeSpaceProbe { get; set; } = DiskUtility.GetAvailableSpace;
+
+    /// <summary>Test seam for <see cref="LastSpaceCheckDisplay"/>.</summary>
+    internal Func<DateTimeOffset> Clock { get; set; } = () => DateTimeOffset.Now;
+
+    /// <summary>One drive root and the bytes the queue intends to put on it.</summary>
+    private sealed record PendingBytes(string Root, long Bytes);
+
+    /// <summary>The two verdict strings, computed off the UI thread.</summary>
+    private readonly record struct SpaceState(string? Warning, string? Note);
 
     /// <summary>
-    /// Groups queued jobs by the drive root of their resolved target directory and
-    /// flags any drive where the required bytes exceed the live <c>AvailableFreeSpace</c>.
-    /// Per-drive reporting handles the case where a per-job override sends some
-    /// downloads to a different drive than the global destination.
+    /// Re-reads free space for every drive the queue targets. Nothing in the app observes the
+    /// drives, so once the user frees room (or something else eats it) this is the only way to
+    /// refresh the verdict — and a stale warning keeps Start disabled (issue #379).
+    /// The probe runs off the UI thread: <c>DriveInfo</c> on a mapped network drive whose server
+    /// is gone blocks for the SMB timeout, and "the drive may have changed" is exactly this
+    /// button's premise.
+    /// </summary>
+    public async Task RecheckSpaceAsync()
+    {
+        try
+        {
+            var pending = SnapshotPending();
+            var state = await Task.Run(() => ComputeSpaceState(pending));
+            ApplySpaceState(state);
+            _logger?.Info(LogCategory.Download, "CivitaiQueue",
+                $"Disk-space recheck: {SpaceWarning ?? SpaceNote ?? "all destinations have room"}");
+        }
+        catch (Exception ex)
+        {
+            // Per-drive failures are already contained in ComputeSpaceState; reaching here means
+            // the check itself broke. Keep the last verdict rather than clearing it — silently
+            // re-enabling Start is the one outcome worse than a stale warning.
+            _logger?.Warn(LogCategory.Download, "CivitaiQueue", $"Disk-space recheck failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Synchronous recompute for the automatic triggers (queue membership, job status,
+    /// destination change), which already ran on the UI thread before this existed.
     /// </summary>
     private void RecomputeSpaceWarning()
     {
         try
         {
-            var queued = Jobs
-                .Where(j => j.Status == JobStatus.Queued && j.SizeBytes > 0)
-                .ToList();
-            if (queued.Count == 0)
-            {
-                SpaceWarning = null;
-                return;
-            }
-
-            var groups = queued
-                .Select(j => new
-                {
-                    Job = j,
-                    Root = SafeGetPathRoot(j.CustomTargetDirectory ?? j.ExpectedTargetDir)
-                })
-                .Where(x => !string.IsNullOrEmpty(x.Root))
-                .GroupBy(x => x.Root!, StringComparer.OrdinalIgnoreCase);
-
-            var lines = new List<string>();
-            foreach (var g in groups)
-            {
-                var needed = g.Sum(x => x.Job.SizeBytes);
-                var available = FreeSpaceProbe(g.Key);
-
-                if (available is long avail && needed > avail)
-                {
-                    lines.Add($"Need {FormatBytes(needed)} on {g.Key} — only {FormatBytes(avail)} free");
-                }
-            }
-
-            SpaceWarning = lines.Count > 0 ? string.Join("\n", lines) : null;
+            ApplySpaceState(ComputeSpaceState(SnapshotPending()));
         }
         catch (Exception ex)
         {
             _logger?.Debug(LogCategory.Download, "CivitaiQueue", $"Disk-space check failed: {ex.Message}");
-            SpaceWarning = null;
         }
     }
 
+    /// <summary>
+    /// Groups the jobs Start would run by the drive root of their resolved target directory.
+    /// The job set has to be the same set <see cref="StartAllAsync"/> runs — <c>Queued</c> AND
+    /// <c>Cancelled</c>, per <see cref="AbortAllActive"/>'s contract — or an Abort followed by a
+    /// recheck clears the warning and re-arms Start for bytes nobody measured.
+    /// Touches <see cref="Jobs"/>, so it stays on the caller's (UI) thread.
+    /// </summary>
+    private List<PendingBytes> SnapshotPending() => Jobs
+        .Where(j => (j.Status is JobStatus.Queued or JobStatus.Cancelled) && j.SizeBytes > 0)
+        .Select(j => new
+        {
+            j.SizeBytes,
+            Root = SafeGetPathRoot(j.CustomTargetDirectory ?? j.ExpectedTargetDir)
+        })
+        .Where(x => !string.IsNullOrEmpty(x.Root))
+        .GroupBy(x => x.Root!, StringComparer.OrdinalIgnoreCase)
+        .Select(g => new PendingBytes(g.Key, g.Sum(x => x.SizeBytes)))
+        .ToList();
+
+    /// <summary>
+    /// Probes each drive root. Pure I/O over a snapshot — safe to run on a pool thread.
+    /// </summary>
+    private SpaceState ComputeSpaceState(IReadOnlyList<PendingBytes> pending)
+    {
+        if (pending.Count == 0) return new SpaceState(null, null);
+
+        var lines = new List<string>();
+        var notes = new List<string>();
+        foreach (var entry in pending)
+        {
+            long free;
+            try
+            {
+                free = FreeSpaceProbe(entry.Root);
+            }
+            catch (Exception ex)
+            {
+                // "Unknowable" and "unreachable" are different things, and this repo has already
+                // paid for conflating them: LoraSorter failed open on a dead drive letter and
+                // reported "0 sorted, 412 failed". A UNC share has no DriveInfo (ArgumentException)
+                // but its folder is right there — blind, not broken. Anything else (a dead letter
+                // throws DriveNotFoundException, an IOException) blocks.
+                // The catch lives here, not inside one implementation of the seam, so that one bad
+                // root costs that drive's verdict and not the whole check.
+                if (ex is ArgumentException && SafeDirectoryExists(entry.Root))
+                {
+                    notes.Add($"Free space unknown on {entry.Root} (network or unsupported path) — not checked");
+                }
+                else
+                {
+                    lines.Add($"{entry.Root} is not reachable — {FormatBytes(entry.Bytes)} queued for it");
+                }
+                continue;
+            }
+
+            var needed = entry.Bytes + SpaceSafetyMarginBytes;
+            if (needed > free)
+            {
+                lines.Add(
+                    $"Need {FormatBytes(entry.Bytes)} + {FormatBytes(SpaceSafetyMarginBytes)} headroom on " +
+                    $"{entry.Root} — only {FormatBytes(free)} free");
+            }
+        }
+
+        return new SpaceState(
+            lines.Count > 0 ? string.Join("\n", lines) : null,
+            notes.Count > 0 ? string.Join("\n", notes) : null);
+    }
+
+    private void ApplySpaceState(SpaceState state)
+    {
+        SpaceWarning = state.Warning;
+        SpaceNote = state.Note;
+        LastSpaceCheckDisplay = $"Checked {Clock():HH:mm}";
+    }
+
+    private static bool SafeDirectoryExists(string path)
+    {
+        try { return Directory.Exists(path); }
+        catch { return false; }
+    }
+
+    /// <summary>
+    /// Drive root of a target directory. Relative paths are resolved first: <c>GetPathRoot</c>
+    /// returns "" for them, and the empty-root filter would drop that job's bytes out of the
+    /// check entirely (<c>CaptioningModelManager.ProbeFreeBytes</c> guards the same way).
+    /// Known limitation, shared with all four sibling probes: a destination on a volume mount
+    /// point (C:/Models mapped to another volume) reports the host letter's free space —
+    /// answering that needs GetDiskFreeSpaceEx on the directory, which belongs in DiskUtility
+    /// for all of them rather than as a fifth private copy here.
+    /// </summary>
     private static string? SafeGetPathRoot(string? path)
     {
         if (string.IsNullOrWhiteSpace(path)) return null;
-        try { return Path.GetPathRoot(path); }
+        try { return Path.GetPathRoot(Path.GetFullPath(path)); }
         catch { return null; }
     }
 
@@ -490,6 +618,28 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                 job.Status = JobStatus.Failed;
                 job.StatusMessage = "Download service unavailable.";
             }
+            return;
+        }
+
+        // Re-verify at the moment the bytes are committed. Start's gate in the panel is a
+        // binding on the last computed verdict, and nothing observes the drives in between —
+        // a queue sized against 200 GB free starts happily onto a drive a video export has
+        // since eaten, then dies part-way and leaves .download partials behind.
+        try
+        {
+            ApplySpaceState(await Task.Run(() => ComputeSpaceState(SnapshotPending())));
+        }
+        catch (Exception ex)
+        {
+            // A broken check must not ban every download — per-drive failures are already
+            // contained, so reaching here is an internal fault, not a verdict.
+            _logger?.Warn(LogCategory.Download, "CivitaiQueue",
+                $"Pre-start disk-space check failed, starting anyway: {ex.Message}");
+        }
+
+        if (HasSpaceWarning)
+        {
+            _logger?.Warn(LogCategory.Download, "CivitaiQueue", $"Start aborted — {SpaceWarning}");
             return;
         }
 

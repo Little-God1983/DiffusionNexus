@@ -580,7 +580,7 @@
 
               <Border Grid.Row="0" Padding="12,10" BorderBrush="#2A2A2A" BorderThickness="0,0,0,1">
                 <StackPanel Spacing="8">
-                  <Grid ColumnDefinitions="*,Auto,Auto">
+                  <Grid ColumnDefinitions="*,Auto">
                     <TextBlock Grid.Column="0" Text="Download Queue" FontWeight="SemiBold"/>
                     <TextBlock Grid.Column="1"
                                Text="{Binding Queue.TotalQueuedBytesDisplay}"
@@ -588,17 +588,6 @@
                                FontSize="11"
                                VerticalAlignment="Center"
                                ToolTip.Tip="Total bytes pending in the queue"/>
-                    <!-- Nothing watches the destination drives, so the space check below is
-                         only as fresh as the last queue/destination change. This re-runs it
-                         after the user frees up room (or something else fills the drive). -->
-                    <Button Grid.Column="2"
-                            Command="{Binding RecheckSpaceCommand}"
-                            Padding="6,2"
-                            Margin="6,0,0,0"
-                            VerticalAlignment="Center"
-                            ToolTip.Tip="Re-check free disk space on the destination drives">
-                      <TextBlock Text="&#x21BB;" FontSize="14" VerticalAlignment="Center"/>
-                    </Button>
                   </Grid>
                   <StackPanel Orientation="Horizontal" Spacing="6">
                     <Button Content="Start"
@@ -622,6 +611,26 @@
                             ToolTip.Tip="Remove every job (in-progress downloads are cancelled)"/>
                   </StackPanel>
 
+                  <!-- Disk-space recheck. Labelled, not the &#x21BB; glyph: in this panel that
+                       glyph is already the per-tile Retry affordance. The stamp is the press's
+                       feedback — an unchanged verdict raises no PropertyChanged, so without it
+                       a press that changes nothing looks like a dead button. -->
+                  <Grid ColumnDefinitions="Auto,*">
+                    <Button Grid.Column="0"
+                            Content="Check space"
+                            Command="{Binding RecheckSpaceCommand}"
+                            Padding="8,4"
+                            AutomationProperties.Name="Re-check free disk space on the destination drives"
+                            ToolTip.Tip="Re-read free space on the destination drives. Nothing watches them while the app is open, so this is how you clear a warning after freeing up room."/>
+                    <TextBlock Grid.Column="1"
+                               Text="{Binding Queue.LastSpaceCheckDisplay}"
+                               Margin="8,0,0,0"
+                               Opacity="0.6"
+                               FontSize="11"
+                               VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis"/>
+                  </Grid>
+
                   <!-- Disk-space warning. Disables Start until the user clears jobs or
                        points the destination at a drive with enough free space. -->
                   <Border IsVisible="{Binding Queue.HasSpaceWarning}"
@@ -637,6 +646,27 @@
                                  VerticalAlignment="Top"/>
                       <TextBlock Text="{Binding Queue.SpaceWarning}"
                                  Foreground="#FCA5A5"
+                                 FontSize="11"
+                                 TextWrapping="Wrap"/>
+                    </StackPanel>
+                  </Border>
+
+                  <!-- Advisory, NOT blocking: free space could not be read at all (a UNC share
+                       has no DriveInfo). Blocking here would ban network destinations, but a
+                       silent all-clear would hide that the gate never ran. -->
+                  <Border IsVisible="{Binding Queue.HasSpaceNote}"
+                          Background="#3A2F14"
+                          BorderBrush="#F59E0B"
+                          BorderThickness="1"
+                          CornerRadius="4"
+                          Padding="8,6">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                      <TextBlock Text="&#x2139;"
+                                 Foreground="#F59E0B"
+                                 FontSize="14"
+                                 VerticalAlignment="Top"/>
+                      <TextBlock Text="{Binding Queue.SpaceNote}"
+                                 Foreground="#FCD34D"
                                  FontSize="11"
                                  TextWrapping="Wrap"/>
                     </StackPanel>

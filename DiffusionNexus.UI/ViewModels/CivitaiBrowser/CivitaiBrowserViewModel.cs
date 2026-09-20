@@ -462,7 +462,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     /// room outside the app left a stale warning — which keeps Start disabled (issue #379).
     /// </summary>
     [RelayCommand]
-    private void RecheckSpace() => _queue.RecheckSpace();
+    private Task RecheckSpaceAsync() => _queue.RecheckSpaceAsync();
 
     [RelayCommand]
     private void RemoveJob(CivitaiDownloadJob? job)
