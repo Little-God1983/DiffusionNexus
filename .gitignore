@@ -421,3 +421,8 @@ DemoFiles/
 \
 # Throwaway spike project for StableDiffusion.NET evaluation
 DiffusionNexus.Inference.Sandbox/\
+
+# Cached upstream source archives staged into releases by Scripts/Fetch-CorrespondingSource.ps1.
+# Tens of MB of third-party tarballs, pinned by SHA-256 in corresponding-source.json and
+# re-downloadable from it, so they are cached but never committed.
+.source-cache/
