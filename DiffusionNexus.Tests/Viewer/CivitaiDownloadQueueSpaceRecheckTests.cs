@@ -380,6 +380,43 @@ public sealed class CivitaiDownloadQueueSpaceRecheckTests : IDisposable
     }
 
     [Fact]
+    public void StartAllAsync_TakesTheCommitTimeProbeOffTheCallersThread()
+    {
+        // Start begins on the UI thread, its `await Task.Run(...)` resumes there, and
+        // `pending.Select(...).ToList()` then enters RunGatedAsync inline. `_gate` is
+        // SemaphoreSlim(2), so WaitAsync completes synchronously for the first two jobs, and
+        // nothing awaits between there and RefuseForSpace when a destination is configured —
+        // so the commit-time DiskProbe.Full reading used to run on the dispatcher, ~5 s per
+        // offline network destination. That is the same freeze this PR removed from
+        // ApplyDiskPreflight and RecomputeSpaceWarning, at the one site it did not revisit.
+        var callerThread = Environment.CurrentManagedThreadId;
+        var probeThreads = new System.Collections.Concurrent.ConcurrentBag<int>();
+        var queue = Queue(new InstantDownloader());
+        queue.FreeSpaceProbe = (_, probe) =>
+        {
+            // Only the blocking mode. LocalVolumesOnly is the automatic recompute, which runs on
+            // the caller's thread by design — that is what makes the Start gate accurate.
+            if (probe == DiskProbe.Full) probeThreads.Add(Environment.CurrentManagedThreadId);
+            return FreeSpaceResult.Known(100 * Gb);
+        };
+        queue.Jobs.Add(Job(1 * Gb));
+        queue.Jobs.Add(Job(1 * Gb));
+
+        // Blocking on purpose, and this is the assertion's mechanism rather than a shortcut:
+        // awaiting would return this thread to the pool, where Task.Run could hand it the very
+        // probe we are checking did not run here. Holding it makes "a different thread" an
+        // observation instead of a scheduling coincidence. No deadlock risk — an xUnit test
+        // method carries no synchronization context.
+#pragma warning disable xUnit1031
+        queue.StartAllAsync().GetAwaiter().GetResult();
+#pragma warning restore xUnit1031
+
+        probeThreads.Should().NotBeEmpty();
+        probeThreads.Should().NotContain(callerThread,
+            "no free-space reading may run on the thread that pressed Start");
+    }
+
+    [Fact]
     public async Task RecheckSpace_ResolvesRelativeTargets_InsteadOfDroppingThem()
     {
         // Path.GetPathRoot("models/loras") is "", and the empty-root filter drops that job's

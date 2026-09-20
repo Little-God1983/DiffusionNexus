@@ -59,6 +59,28 @@ public class DestinationOptionViewModelTests
     }
 
     [Fact]
+    public void TheRefusalNamesTheHeadroomItActuallyDemands()
+    {
+        // Otherwise the row reads as a contradiction and the user concludes the dialog is
+        // broken: "8.1 GB free" next to "NOT ENOUGH SPACE — need 8.0 GB". The download's own
+        // refusal already names size + margin; this has to name the same figure.
+        var required = 8 * Gb;
+        var free = required + (CaptioningModelManager.FreeSpaceMarginBytes / 2);
+        var row = Row(FreeSpaceResult.Known(free), required);
+
+        // Built the way the view model builds it: the label is user-facing, so it renders in the
+        // ambient culture ("8,3 GB" under de-DE) and a hard-coded decimal point would only pass
+        // on an en-US machine.
+        string Gigabytes(long bytes) => $"{bytes / (double)Gb:F1} GB";
+
+        row.SpaceCheckLabel.Should().Contain(Gigabytes(required + CaptioningModelManager.FreeSpaceMarginBytes),
+            "8 GB plus the 256 MB margin is what it actually wants");
+        row.SpaceCheckLabel.Should().NotContain($"need {Gigabytes(required)}",
+            "that figure is smaller than the free space the same row reports");
+        row.FreeBytesLabel.Should().Contain(Gigabytes(free));
+    }
+
+    [Fact]
     public void ADestinationWithRoomForTheFileAndTheMargin_IsConfirmable()
     {
         var required = 8 * Gb;

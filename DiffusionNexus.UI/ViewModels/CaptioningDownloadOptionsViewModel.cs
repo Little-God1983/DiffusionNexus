@@ -49,13 +49,21 @@ public sealed partial class DestinationOptionViewModel : ObservableObject
     /// </summary>
     public bool HasEnoughSpace => CaptioningModelManager.HasRoomFor(Destination.Space, RequiredBytes);
 
+    /// <summary>
+    /// What the download will actually demand: the file plus the preflight's headroom. Naming
+    /// the bare file size made the refusal read as a contradiction — "8.1 GB free" beside
+    /// "NOT ENOUGH SPACE — need 8.0 GB" — which sends the user looking for a bug in the dialog.
+    /// </summary>
+    public long RequiredWithHeadroom =>
+        RequiredBytes <= 0 ? 0 : RequiredBytes + CaptioningModelManager.FreeSpaceMarginBytes;
+
     public string SpaceCheckLabel => IsUnreachable
         ? "NOT REACHABLE — pick another destination"
         : RequiredBytes <= 0
             ? string.Empty
             : HasEnoughSpace
-                ? $"OK — need {ToReadable(RequiredBytes)}"
-                : $"NOT ENOUGH SPACE — need {ToReadable(RequiredBytes)}";
+                ? $"OK — need {ToReadable(RequiredWithHeadroom)}"
+                : $"NOT ENOUGH SPACE — need {ToReadable(RequiredWithHeadroom)}";
 
     /// <summary>Bound directly by the XAML — avoids needing a value converter.</summary>
     public string SpaceCheckColor => IsUnreachable
@@ -146,8 +154,11 @@ public partial class CaptioningDownloadOptionsViewModel : ViewModelBase
     public string InsufficientSpaceWarning => SelectedDestination switch
     {
         { IsUnreachable: true } d => $"⚠ {d.Path} cannot be reached — the drive or folder is not available.",
+        // Names the same figure the download will refuse on, for the same reason SpaceCheckLabel
+        // does: "only 8.1 GB free — not enough" reads as nonsense next to an 8.0 GB model.
         { HasEnoughSpace: false } d =>
-            $"⚠ The selected location has only {FormatBytes(d.FreeBytes)} free — not enough for this download.",
+            $"⚠ The selected location has only {FormatBytes(d.FreeBytes)} free — this download needs " +
+            $"{FormatBytes(d.RequiredWithHeadroom)} (the model plus working headroom).",
         _ => string.Empty,
     };
 

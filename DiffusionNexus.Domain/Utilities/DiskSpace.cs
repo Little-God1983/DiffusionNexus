@@ -145,8 +145,14 @@ public static class DiskSpace
     /// grouping several destinations by "same disk", and the correct thing to name in a message
     /// about one: grouping by drive letter puts two genuinely different volumes in one bucket.
     /// </summary>
-    /// <returns>The volume root with a trailing separator, or <see langword="null"/> when the
-    /// path is empty or malformed.</returns>
+    /// <returns>
+    /// The volume root with a trailing separator. <see langword="null"/> only when
+    /// <paramref name="path"/> is not a path at all — blank, or something
+    /// <see cref="Path.GetFullPath(string)"/> rejects. A path that has already resolved through
+    /// <see cref="Path.GetFullPath(string)"/> always gets a root back, including one on a dead
+    /// drive letter or an unreachable share, so a caller holding a resolved path does not need a
+    /// null branch.
+    /// </returns>
     /// <param name="probe">See <see cref="DiskProbe"/>. Under
     /// <see cref="DiskProbe.LocalVolumesOnly"/> a network path falls back to its share root
     /// rather than being resolved, so the caller still has something to name.</param>

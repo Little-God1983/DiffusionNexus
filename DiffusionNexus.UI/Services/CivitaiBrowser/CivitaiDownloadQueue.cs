@@ -331,6 +331,10 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         var byVolume = snapshot.Destinations
             .Select(d => new
             {
+                // Never null here: SnapshotPending only keeps destinations that already came
+                // back from Path.GetFullPath, and GetVolumeRoot returns null only for input that
+                // is not a path at all. A dead letter or an unreachable share still has a root,
+                // and it is ClassifyVolume's job to say so — not this expression's.
                 Volume = DiskSpace.GetVolumeRoot(d.Directory, probe)!,
                 d.Bytes,
             })
@@ -958,7 +962,14 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         // Commit-time check for this job's own destination. The batch gate cannot be the
         // enforcement point: the per-tile Retry is a documented re-run path that never passes
         // through it, and a queue-wide block on one dead root would strand every healthy job.
-        var refusal = RefuseForSpace(job, targetDir!);
+        //
+        // Off the dispatcher, because this is reached synchronously from it: Start resumes on
+        // the UI thread after its own Task.Run, enters RunGatedAsync inline, and _gate's
+        // SemaphoreSlim(2) lets the first two jobs through WaitAsync without yielding — with no
+        // await between there and here once a destination is configured. A DiskProbe.Full
+        // reading of an offline network destination is the SMB timeout (measured: ~5 s), so
+        // taking it in place froze the window for as long as it took, per job.
+        var refusal = await Task.Run(() => RefuseForSpace(job, targetDir!), ct).ConfigureAwait(false);
         if (refusal is not null)
         {
             job.Status = JobStatus.Failed;

@@ -1459,13 +1459,6 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// near-full drive it already lives on.</description></item>
     /// </list>
     /// </summary>
-    /// <summary>Folder existence without letting a denied or malformed path escape the preview.</summary>
-    private static bool SafeDirectoryExists(string path)
-    {
-        try { return Directory.Exists(path); }
-        catch { return false; }
-    }
-
     /// <param name="space">Read off the target's volume by the caller, on a pool thread.</param>
     /// <param name="targetExists">Whether the target folder is there, read with it.</param>
     private void ApplyDiskPreflight(LoraSortPlan plan, string targetRoot, FreeSpaceResult space, bool targetExists)
@@ -1499,6 +1492,13 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         HasEnoughSpace = free >= needed;
         DiskSummary = $"{FileSizeFormatter.Format(plan.RequiredBytes)} required · {FileSizeFormatter.Format(free)} free";
         BlockReason = HasEnoughSpace ? null : "Not enough free space on the target drive.";
+    }
+
+    /// <summary>Folder existence without letting a denied or malformed path escape the preview.</summary>
+    private static bool SafeDirectoryExists(string path)
+    {
+        try { return Directory.Exists(path); }
+        catch { return false; }
     }
 
     /// <summary>Drops the resolved-candidate cache so the next recompute re-enumerates disk and
