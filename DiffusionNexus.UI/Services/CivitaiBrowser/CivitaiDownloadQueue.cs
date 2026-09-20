@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Text.Json;
@@ -110,8 +111,15 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         }
     }
 
-    /// <summary>Sum of bytes for jobs still queued (excludes downloading/done/failed).</summary>
-    public long TotalQueuedBytes => Jobs.Where(j => j.Status == JobStatus.Queued).Sum(j => j.SizeBytes);
+    /// <summary>
+    /// Sum of bytes for the jobs a Start would run (excludes downloading/done/failed).
+    /// Cancelled counts: Start re-runs those, and this pill sits directly above the gate's
+    /// verdict — counting a narrower set made the panel read "0 B" next to a banner demanding
+    /// 40 GB after an Abort.
+    /// </summary>
+    public long TotalQueuedBytes => Jobs
+        .Where(j => j.Status is JobStatus.Queued or JobStatus.Cancelled)
+        .Sum(j => j.SizeBytes);
 
     public string TotalQueuedBytesDisplay => FormatBytes(TotalQueuedBytes);
 
@@ -127,8 +135,14 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     private string? _spaceWarning;
 
     /// <summary>
-    /// Blocking verdict: the destination cannot take the queue (too little room, or the
-    /// drive cannot be reached at all). Disables Start.
+    /// Blocking verdict: a drive the queue targets cannot hold the bytes aimed at it. Gates
+    /// Start queue-wide, as it did before this gate was reworked — an aggregate shortfall is
+    /// precisely what a per-job check cannot see.
+    /// An unreachable drive is deliberately NOT in here: the queue is restored from disk across
+    /// restarts, so one leftover job bound for an unplugged USB stick would have left Start
+    /// permanently dead for every healthy job, with nothing in the UI pointing at the culprit.
+    /// Those are refused per job in <see cref="RunJobAsync"/> instead and reported in
+    /// <see cref="SpaceNote"/>.
     /// </summary>
     public string? SpaceWarning
     {
@@ -147,10 +161,10 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     private string? _spaceNote;
 
     /// <summary>
-    /// Advisory verdict: free space could not be determined (a UNC share has no
-    /// <see cref="DriveInfo"/> at all), so the gate could not run. Does NOT disable Start —
-    /// blocking here would ban network destinations outright — but the user is told the
-    /// check is blind rather than being shown a silent all-clear.
+    /// Advisory verdict — what the gate could not cover: a root with no <see cref="DriveInfo"/>
+    /// at all (UNC share), a root that cannot be reached, and jobs whose size Civitai never
+    /// reported. Does NOT gate Start; the per-job check at commit time is what stops those.
+    /// A silent all-clear would be the worse failure, so they are stated rather than hidden.
     /// </summary>
     public string? SpaceNote
     {
@@ -169,9 +183,13 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     private string _lastSpaceCheckDisplay = "Not checked yet";
 
     /// <summary>
-    /// When the check last ran. <see cref="SpaceWarning"/> goes through <c>SetProperty</c>, so
-    /// re-running it to an identical verdict moves nothing on screen — and a recheck button
-    /// that does nothing visible reads as broken. This always changes.
+    /// When the check last probed a drive. <see cref="SpaceWarning"/> goes through
+    /// <c>SetProperty</c>, so re-running it to an identical verdict moves nothing on screen —
+    /// and a recheck button that does nothing visible reads as broken.
+    /// Seconds, not minutes: two presses inside one wall-clock minute produced a byte-identical
+    /// string and so raised no notification either, which was the same dead button.
+    /// Invariant culture: <c>:</c> in a custom format string is the culture's time separator, so
+    /// this rendered as "14.32" under fi-FI and friends.
     /// </summary>
     public string LastSpaceCheckDisplay
     {
@@ -190,33 +208,43 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     /// <summary>Test seam for <see cref="LastSpaceCheckDisplay"/>.</summary>
     internal Func<DateTimeOffset> Clock { get; set; } = () => DateTimeOffset.Now;
 
+    private enum RootSpace { Fits, Short, Unknown, Unreachable }
+
     /// <summary>One drive root and the bytes the queue intends to put on it.</summary>
     private sealed record PendingBytes(string Root, long Bytes);
 
-    /// <summary>The two verdict strings, computed off the UI thread.</summary>
-    private readonly record struct SpaceState(string? Warning, string? Note);
+    /// <summary>
+    /// What a Start would commit, read off <see cref="Jobs"/> in one pass on the UI thread.
+    /// <paramref name="UnsizedJobs"/> is counted rather than dropped: a version whose primary
+    /// file carries no <c>sizeKB</c> is enqueued with <c>SizeBytes = 0</c> and is invisible to a
+    /// byte comparison, while the stamp next to the button claims the destinations were checked.
+    /// </summary>
+    private sealed record PendingSnapshot(List<PendingBytes> Roots, int UnsizedJobs);
+
+    /// <summary>The verdict strings plus how many roots were actually probed.</summary>
+    private readonly record struct SpaceState(string? Warning, string? Note, int ProbedRoots);
 
     /// <summary>
     /// Re-reads free space for every drive the queue targets. Nothing in the app observes the
     /// drives, so once the user frees room (or something else eats it) this is the only way to
     /// refresh the verdict — and a stale warning keeps Start disabled (issue #379).
-    /// The probe runs off the UI thread: <c>DriveInfo</c> on a mapped network drive whose server
-    /// is gone blocks for the SMB timeout, and "the drive may have changed" is exactly this
-    /// button's premise.
+    /// The snapshot is taken here and the probing happens off the UI thread: <c>DriveInfo</c> on a
+    /// mapped network drive whose server is gone blocks for the SMB timeout, and "the drive may
+    /// have changed" is exactly this button's premise.
     /// </summary>
     public async Task RecheckSpaceAsync()
     {
         try
         {
-            var pending = SnapshotPending();
-            var state = await Task.Run(() => ComputeSpaceState(pending));
+            var snapshot = SnapshotPending();
+            var state = await Task.Run(() => ComputeSpaceState(snapshot, allowFolderProbe: true));
             ApplySpaceState(state);
             _logger?.Info(LogCategory.Download, "CivitaiQueue",
                 $"Disk-space recheck: {SpaceWarning ?? SpaceNote ?? "all destinations have room"}");
         }
         catch (Exception ex)
         {
-            // Per-drive failures are already contained in ComputeSpaceState; reaching here means
+            // Per-root failures are already contained in ComputeSpaceState; reaching here means
             // the check itself broke. Keep the last verdict rather than clearing it — silently
             // re-enabling Start is the one outcome worse than a stale warning.
             _logger?.Warn(LogCategory.Download, "CivitaiQueue", $"Disk-space recheck failed: {ex.Message}");
@@ -226,12 +254,17 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     /// <summary>
     /// Synchronous recompute for the automatic triggers (queue membership, job status,
     /// destination change), which already ran on the UI thread before this existed.
+    /// <c>allowFolderProbe: false</c> keeps it from adding a <see cref="Directory.Exists"/> call on
+    /// that path — for a dead UNC root that is the slowest call of the lot, and this runs twice
+    /// per job per batch. It costs only the unknown/unreachable distinction, which fails towards
+    /// "unknown" (no gate) and is re-derived properly by the recheck and the per-job check.
+    /// Making these triggers async is a pre-existing question, deliberately left alone here.
     /// </summary>
     private void RecomputeSpaceWarning()
     {
         try
         {
-            ApplySpaceState(ComputeSpaceState(SnapshotPending()));
+            ApplySpaceState(ComputeSpaceState(SnapshotPending(), allowFolderProbe: false));
         }
         catch (Exception ex)
         {
@@ -246,73 +279,150 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     /// recheck clears the warning and re-arms Start for bytes nobody measured.
     /// Touches <see cref="Jobs"/>, so it stays on the caller's (UI) thread.
     /// </summary>
-    private List<PendingBytes> SnapshotPending() => Jobs
-        .Where(j => (j.Status is JobStatus.Queued or JobStatus.Cancelled) && j.SizeBytes > 0)
-        .Select(j => new
-        {
-            j.SizeBytes,
-            Root = SafeGetPathRoot(j.CustomTargetDirectory ?? j.ExpectedTargetDir)
-        })
-        .Where(x => !string.IsNullOrEmpty(x.Root))
-        .GroupBy(x => x.Root!, StringComparer.OrdinalIgnoreCase)
-        .Select(g => new PendingBytes(g.Key, g.Sum(x => x.SizeBytes)))
-        .ToList();
+    private PendingSnapshot SnapshotPending()
+    {
+        var pending = Jobs
+            .Where(j => j.Status is JobStatus.Queued or JobStatus.Cancelled)
+            .ToList();
+
+        var roots = pending
+            .Where(j => j.SizeBytes > 0)
+            .Select(j => new
+            {
+                j.SizeBytes,
+                Root = SafeGetPathRoot(j.CustomTargetDirectory ?? j.ExpectedTargetDir)
+            })
+            .Where(x => !string.IsNullOrEmpty(x.Root))
+            .GroupBy(x => x.Root!, StringComparer.OrdinalIgnoreCase)
+            .Select(g => new PendingBytes(g.Key, g.Sum(x => x.SizeBytes)))
+            .ToList();
+
+        return new PendingSnapshot(roots, pending.Count(j => j.SizeBytes <= 0));
+    }
 
     /// <summary>
     /// Probes each drive root. Pure I/O over a snapshot — safe to run on a pool thread.
     /// </summary>
-    private SpaceState ComputeSpaceState(IReadOnlyList<PendingBytes> pending)
+    private SpaceState ComputeSpaceState(PendingSnapshot snapshot, bool allowFolderProbe)
     {
-        if (pending.Count == 0) return new SpaceState(null, null);
-
         var lines = new List<string>();
         var notes = new List<string>();
-        foreach (var entry in pending)
-        {
-            long free;
-            try
-            {
-                free = FreeSpaceProbe(entry.Root);
-            }
-            catch (Exception ex)
-            {
-                // "Unknowable" and "unreachable" are different things, and this repo has already
-                // paid for conflating them: LoraSorter failed open on a dead drive letter and
-                // reported "0 sorted, 412 failed". A UNC share has no DriveInfo (ArgumentException)
-                // but its folder is right there — blind, not broken. Anything else (a dead letter
-                // throws DriveNotFoundException, an IOException) blocks.
-                // The catch lives here, not inside one implementation of the seam, so that one bad
-                // root costs that drive's verdict and not the whole check.
-                if (ex is ArgumentException && SafeDirectoryExists(entry.Root))
-                {
-                    notes.Add($"Free space unknown on {entry.Root} (network or unsupported path) — not checked");
-                }
-                else
-                {
-                    lines.Add($"{entry.Root} is not reachable — {FormatBytes(entry.Bytes)} queued for it");
-                }
-                continue;
-            }
 
-            var needed = entry.Bytes + SpaceSafetyMarginBytes;
-            if (needed > free)
+        foreach (var entry in snapshot.Roots)
+        {
+            var (kind, free) = ClassifyRoot(entry.Root, entry.Bytes, allowFolderProbe);
+            switch (kind)
             {
-                lines.Add(
-                    $"Need {FormatBytes(entry.Bytes)} + {FormatBytes(SpaceSafetyMarginBytes)} headroom on " +
-                    $"{entry.Root} — only {FormatBytes(free)} free");
+                case RootSpace.Short:
+                    lines.Add(
+                        $"Need {FormatBytes(entry.Bytes)} + {FormatBytes(SpaceSafetyMarginBytes)} headroom on " +
+                        $"{entry.Root} — only {FormatBytes(free)} free");
+                    break;
+                case RootSpace.Unknown:
+                    notes.Add($"Free space unknown on {entry.Root} (network or unsupported path) — not checked");
+                    break;
+                case RootSpace.Unreachable:
+                    notes.Add($"{entry.Root} cannot be reached — the {FormatBytes(entry.Bytes)} aimed at it will fail on start");
+                    break;
             }
+        }
+
+        if (snapshot.UnsizedJobs > 0)
+        {
+            notes.Add($"{snapshot.UnsizedJobs} job(s) of unknown size are not covered by this check");
         }
 
         return new SpaceState(
             lines.Count > 0 ? string.Join("\n", lines) : null,
-            notes.Count > 0 ? string.Join("\n", notes) : null);
+            notes.Count > 0 ? string.Join("\n", notes) : null,
+            snapshot.Roots.Count);
     }
 
-    private void ApplySpaceState(SpaceState state)
+    /// <summary>
+    /// One root's verdict. The catch lives here, at the call site of the seam rather than inside
+    /// one implementation of it, so a probe that throws costs that root's verdict and not the
+    /// whole check.
+    /// "Unknowable" and "unreachable" are different things, and this repo has already paid for
+    /// conflating them: <c>LoraSorterViewModel.ApplyDiskPreflight</c> failed open on a dead drive
+    /// letter and reported "Done: 0 sorted, 0 duplicates skipped, 412 failed". A UNC share has no
+    /// DriveInfo (ArgumentException) but its folder is right there — blind, not broken.
+    /// The one rule now has four copies across the repo; consolidating them into DiskUtility is
+    /// issue #581.
+    /// </summary>
+    private (RootSpace Kind, long Free) ClassifyRoot(string root, long neededBytes, bool allowFolderProbe)
+    {
+        long free;
+        try
+        {
+            free = FreeSpaceProbe(root);
+        }
+        catch (Exception ex)
+        {
+            var unknowable = ex is ArgumentException && (!allowFolderProbe || SafeDirectoryExists(root));
+            return (unknowable ? RootSpace.Unknown : RootSpace.Unreachable, 0);
+        }
+
+        return (neededBytes + SpaceSafetyMarginBytes > free ? RootSpace.Short : RootSpace.Fits, free);
+    }
+
+    /// <summary>
+    /// Last check before the bytes are committed, for THIS job's destination — the enforcement
+    /// point both entries share, since <see cref="RetryJobAsync"/> commits bytes without ever
+    /// passing the batch gate. Returns the refusal to show on the tile, or null to proceed.
+    /// Per job on purpose: two jobs that each fit but do not fit together are the aggregate
+    /// check's business, not this one's.
+    /// </summary>
+    private string? RefuseForSpace(CivitaiDownloadJob job, string targetDir)
+    {
+        var root = SafeGetPathRoot(targetDir);
+        if (root is null) return null;
+
+        var (kind, free) = ClassifyRoot(root, job.SizeBytes, allowFolderProbe: true);
+        return kind switch
+        {
+            RootSpace.Unreachable => $"Destination drive {root} is not reachable.",
+            RootSpace.Short when job.SizeBytes > 0 =>
+                $"Not enough free space on {root}: needs {FormatBytes(job.SizeBytes + SpaceSafetyMarginBytes)}, " +
+                $"only {FormatBytes(free)} free.",
+            _ => null,
+        };
+    }
+
+    /// <summary>
+    /// Publishes a verdict. Marshals, because the automatic triggers reach here from job status
+    /// writes that happen off the dispatcher (<c>RunJobAsync</c> sets Status after
+    /// <c>ConfigureAwait(false)</c>), and <see cref="LastSpaceCheckDisplay"/> is bound — an
+    /// off-thread PropertyChanged on it would throw "Call from invalid thread" inside a download,
+    /// intermittently, only when the clock second rolled over between two recomputes.
+    /// </summary>
+    private void ApplySpaceState(SpaceState state) => UiInvoke(() => ApplySpaceStateCore(state));
+
+    /// <summary>
+    /// How a verdict reaches the bound properties. Extracted so the routing is assertable: a
+    /// headless test host reports <c>CheckAccess() == true</c> from every thread, so the
+    /// dispatcher decision itself cannot be observed in a test.
+    /// </summary>
+    internal Action<Action> UiInvoke { get; set; } = static action =>
+    {
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            action();
+            return;
+        }
+
+        Dispatcher.UIThread.Post(action);
+    };
+
+    private void ApplySpaceStateCore(SpaceState state)
     {
         SpaceWarning = state.Warning;
         SpaceNote = state.Note;
-        LastSpaceCheckDisplay = $"Checked {Clock():HH:mm}";
+        // Only claim a check that actually touched a drive: an empty queue (or one where every
+        // job lacks a size) short-circuits without probing anything, and "Checked 09:14" there
+        // reads as "your destinations were verified".
+        LastSpaceCheckDisplay = state.ProbedRoots == 0
+            ? "Nothing to check"
+            : $"Checked {Clock().ToString("HH:mm:ss", CultureInfo.InvariantCulture)}";
     }
 
     private static bool SafeDirectoryExists(string path)
@@ -327,8 +437,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     /// check entirely (<c>CaptioningModelManager.ProbeFreeBytes</c> guards the same way).
     /// Known limitation, shared with all four sibling probes: a destination on a volume mount
     /// point (C:/Models mapped to another volume) reports the host letter's free space —
-    /// answering that needs GetDiskFreeSpaceEx on the directory, which belongs in DiskUtility
-    /// for all of them rather than as a fifth private copy here.
+    /// answering that needs GetDiskFreeSpaceEx on the directory, tracked in issue #581.
     /// </summary>
     private static string? SafeGetPathRoot(string? path)
     {
@@ -625,21 +734,38 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         // binding on the last computed verdict, and nothing observes the drives in between —
         // a queue sized against 200 GB free starts happily onto a drive a video export has
         // since eaten, then dies part-way and leaves .download partials behind.
+        // Snapshot on this thread, probe off it: Jobs is an ObservableCollection the UI mutates,
+        // and enumerating it on the pool thread threw "Collection was modified" whenever a tile
+        // finished enqueueing in the same instant — straight into the catch below, which is the
+        // stale reading this block exists to remove.
+        SpaceState? fresh = null;
         try
         {
-            ApplySpaceState(await Task.Run(() => ComputeSpaceState(SnapshotPending())));
+            var snapshot = SnapshotPending();
+            var verdict = await Task.Run(() => ComputeSpaceState(snapshot, allowFolderProbe: true));
+            ApplySpaceState(verdict);
+            fresh = verdict;
         }
         catch (Exception ex)
         {
-            // A broken check must not ban every download — per-drive failures are already
+            // A broken check must not ban every download — per-root failures are already
             // contained, so reaching here is an internal fault, not a verdict.
             _logger?.Warn(LogCategory.Download, "CivitaiQueue",
-                $"Pre-start disk-space check failed, starting anyway: {ex.Message}");
+                $"Pre-start disk-space check failed, the previous verdict still stands: {ex.Message}");
         }
 
-        if (HasSpaceWarning)
+        // Gate only on a verdict THIS call produced. Falling back to the stored one would refuse
+        // a Start the user had just fixed by freeing space, which is the staleness #379 is about.
+        if (fresh is { Warning: not null } blocked)
         {
-            _logger?.Warn(LogCategory.Download, "CivitaiQueue", $"Start aborted — {SpaceWarning}");
+            // The banner alone reads as "Start did nothing", so say it on the tiles too. Status
+            // stays Queued/Cancelled: these jobs must remain eligible for the next Start.
+            foreach (var job in Jobs.Where(j => j.Status is JobStatus.Queued or JobStatus.Cancelled))
+            {
+                job.StatusMessage = "Not started — not enough free space on the destination drive.";
+            }
+
+            _logger?.Warn(LogCategory.Download, "CivitaiQueue", $"Start aborted — {blocked.Warning}");
             return;
         }
 
@@ -793,6 +919,19 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             // spends every run moving these files out of a folder it never agrees with.
             targetDir = LoraPathBuilder.BuildTargetDirectory(
                 folders[0], job.BaseModel, null, includeBaseModel: true, includeCategory: false);
+        }
+
+        // Commit-time check for this job's own destination. The batch gate cannot be the
+        // enforcement point: the per-tile Retry is a documented re-run path that never passes
+        // through it, and a queue-wide block on one dead root would strand every healthy job.
+        var refusal = RefuseForSpace(job, targetDir!);
+        if (refusal is not null)
+        {
+            job.Status = JobStatus.Failed;
+            job.StatusMessage = refusal;
+            _logger?.Warn(LogCategory.Download, "CivitaiQueue",
+                $"{job.ModelName} — {job.VersionName} not started: {refusal}");
+            return;
         }
 
         // No Directory.CreateDirectory here: it sat outside the try below, so an unwritable or

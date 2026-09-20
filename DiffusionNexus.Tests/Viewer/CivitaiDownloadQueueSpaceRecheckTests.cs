@@ -1,3 +1,4 @@
+using Avalonia.Threading;
 using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.UI.Services;
@@ -145,18 +146,141 @@ public sealed class CivitaiDownloadQueueSpaceRecheckTests : IDisposable
     }
 
     [Fact]
-    public async Task RecheckSpace_BlocksStart_WhenTheDestinationDriveIsUnreachable()
+    public async Task RecheckSpace_ReportsAnUnreachableDrive_WithoutArmingTheQueueWideGate()
     {
-        // A dead drive letter throws DriveNotFoundException (an IOException). Failing open
-        // on that is what produced LoraSorter's "0 sorted, 412 failed".
+        // A dead drive letter throws DriveNotFoundException (an IOException). It must be stated
+        // — failing open silently is what produced LoraSorter's "0 sorted, 412 failed" — but it
+        // must not gate Start: the queue is restored across restarts, so one leftover job bound
+        // for an unplugged stick would leave Start permanently dead with no way back.
         var queue = Queue();
         queue.FreeSpaceProbe = _ => throw new DriveNotFoundException("Z: is gone");
         queue.Jobs.Add(Job(5 * Gb, targetDir: "Z:/models"));
 
         await queue.RecheckSpaceAsync();
 
-        queue.HasSpaceWarning.Should().BeTrue("an unreachable destination must block Start, not report all-clear");
-        queue.SpaceWarning.Should().Contain("reach");
+        queue.SpaceNote.Should().Contain("reach", "the user has to be told which destination is dead");
+        queue.HasSpaceWarning.Should().BeFalse("one dead root must not block jobs bound for healthy drives");
+    }
+
+    [Fact]
+    public async Task StartAllAsync_FailsOnlyTheJobOnTheUnreachableDrive()
+    {
+        var downloader = new InstantDownloader();
+        var queue = Queue(downloader);
+        queue.FreeSpaceProbe = root =>
+            root.StartsWith("Z", StringComparison.OrdinalIgnoreCase)
+                ? throw new DriveNotFoundException("Z: is gone")
+                : 100 * Gb;
+        var dead = Job(5 * Gb, targetDir: "Z:/models");
+        queue.Jobs.Add(dead);
+        queue.Jobs.Add(Job(5 * Gb));
+
+        await queue.StartAllAsync();
+
+        dead.Status.Should().Be(JobStatus.Failed);
+        dead.StatusMessage.Should().Contain("not reachable");
+        downloader.CallCount.Should().Be(1, "the healthy job must still run");
+    }
+
+    [Fact]
+    public async Task RetryJobAsync_RefusesTheJob_WhenItsDriveFilledUp()
+    {
+        // The per-tile Retry is a documented re-run path that never passes the batch gate, so
+        // without a commit-time check the user can push every download through it while the
+        // red banner is up.
+        var downloader = new InstantDownloader();
+        var queue = Queue(downloader);
+        queue.FreeSpaceProbe = _ => 1 * Gb;
+        var job = Job(5 * Gb, status: JobStatus.Cancelled);
+        queue.Jobs.Add(job);
+
+        await queue.RetryJobAsync(job);
+
+        downloader.CallCount.Should().Be(0, "there is no room for this job");
+        job.Status.Should().Be(JobStatus.Failed);
+        job.StatusMessage.Should().Contain("free space");
+    }
+
+    [Fact]
+    public async Task StartAllAsync_StartsOnAFreshVerdict_EvenWhenTheStoredWarningIsStale()
+    {
+        // The stored verdict is exactly what #379 is about: it can be a warning for room that
+        // has since been freed. Gating on it (rather than on the verdict this Start computed)
+        // refuses the user's fix.
+        var downloader = new InstantDownloader();
+        var queue = Queue(downloader);
+        queue.FreeSpaceProbe = _ => 1 * Gb;
+        queue.Jobs.Add(Job(5 * Gb));
+        queue.HasSpaceWarning.Should().BeTrue("the stale warning is in place");
+
+        queue.FreeSpaceProbe = _ => 100 * Gb;
+        await queue.StartAllAsync();
+
+        downloader.CallCount.Should().Be(1);
+    }
+
+    [Fact]
+    public void TotalQueuedBytes_CountsCancelledJobs_LikeTheGateDoes()
+    {
+        // The pill sits directly above the verdict. After an Abort it read "0 B" next to a
+        // banner demanding 40 GB.
+        var queue = Queue();
+        queue.FreeSpaceProbe = _ => 100 * Gb;
+        queue.Jobs.Add(Job(40 * Gb, status: JobStatus.Cancelled));
+
+        queue.TotalQueuedBytes.Should().Be(40 * Gb);
+    }
+
+    [Fact]
+    public async Task RecheckSpace_NotesJobsOfUnknownSize_RatherThanIgnoringThem()
+    {
+        // A version whose primary file carries no sizeKB is enqueued with SizeBytes = 0 and is
+        // invisible to a byte comparison, while the stamp claims the destinations were checked.
+        var queue = Queue();
+        queue.FreeSpaceProbe = _ => 100 * Gb;
+        queue.Jobs.Add(Job(5 * Gb));
+        queue.Jobs.Add(Job(0));
+
+        await queue.RecheckSpaceAsync();
+
+        queue.SpaceNote.Should().Contain("unknown size");
+    }
+
+    [Fact]
+    public async Task RecheckSpace_SaysNothingToCheck_WhenNoRootWasProbed()
+    {
+        // ComputeSpaceState short-circuits on an empty snapshot without touching a drive, so
+        // stamping "Checked 09:14" there claims a verification that never happened.
+        var queue = Queue();
+        queue.Clock = () => new DateTimeOffset(2026, 9, 20, 9, 14, 0, TimeSpan.Zero);
+
+        await queue.RecheckSpaceAsync();
+
+        queue.LastSpaceCheckDisplay.Should().Be("Nothing to check");
+    }
+
+    [Fact]
+    public void ApplySpaceState_GoesThroughTheUiMarshal_NotStraightToTheBoundProperties()
+    {
+        // RunJobAsync writes job.Status after ConfigureAwait(false), which lands here through
+        // OnJobPropertyChanged. LastSpaceCheckDisplay is bound and — unlike the warning — changes
+        // on nearly every recompute, so an unmarshalled write raises PropertyChanged on a pool
+        // thread and Avalonia throws "Call from invalid thread" inside a running download.
+        var queue = Queue();
+        var deferred = new List<Action>();
+        queue.UiInvoke = deferred.Add;
+        queue.FreeSpaceProbe = _ => 1 * Gb;
+        queue.Clock = () => new DateTimeOffset(2026, 9, 20, 14, 40, 0, TimeSpan.Zero);
+
+        queue.Jobs.Add(Job(5 * Gb));
+
+        queue.HasSpaceWarning.Should().BeFalse("no bound property may be touched before the marshal runs");
+        deferred.Should().NotBeEmpty("the verdict has to be handed to the UI thread, not written in place");
+
+        foreach (var apply in deferred) apply();
+
+        queue.HasSpaceWarning.Should().BeTrue();
+        queue.LastSpaceCheckDisplay.Should().Contain("14:40:00");
     }
 
     [Fact]
@@ -214,16 +338,17 @@ public sealed class CivitaiDownloadQueueSpaceRecheckTests : IDisposable
         var queue = Queue();
         queue.FreeSpaceProbe = _ => 1 * Gb;
         queue.Jobs.Add(Job(5 * Gb));
-        queue.Clock = () => new DateTimeOffset(2026, 9, 20, 14, 32, 0, TimeSpan.Zero);
+        queue.Clock = () => new DateTimeOffset(2026, 9, 20, 14, 32, 10, TimeSpan.Zero);
         await queue.RecheckSpaceAsync();
-        queue.LastSpaceCheckDisplay.Should().Contain("14:32");
+        queue.LastSpaceCheckDisplay.Should().Contain("14:32:10");
 
-        // The user frees too little, so the warning string is byte-identical.
-        queue.Clock = () => new DateTimeOffset(2026, 9, 20, 14, 35, 0, TimeSpan.Zero);
+        // The user frees too little and presses again seconds later, so the warning string is
+        // byte-identical — and minute resolution made the stamp identical too.
+        queue.Clock = () => new DateTimeOffset(2026, 9, 20, 14, 32, 20, TimeSpan.Zero);
         await queue.RecheckSpaceAsync();
 
         queue.SpaceWarning.Should().NotBeNull("the verdict has not changed");
-        queue.LastSpaceCheckDisplay.Should().Contain("14:35", "the press itself must leave a visible trace");
+        queue.LastSpaceCheckDisplay.Should().Contain("14:32:20", "the press itself must leave a visible trace");
     }
 
     [Fact]
