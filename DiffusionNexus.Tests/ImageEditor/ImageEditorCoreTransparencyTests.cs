@@ -47,6 +47,15 @@ public class ImageEditorCoreTransparencyTests : IDisposable
         _sut.ApplyCanvasExtend().Should().BeTrue();
     }
 
+    private void ArmMoveTool()
+    {
+        _sut.LayerTransformTool.ImagePixelWidth = _sut.Width;
+        _sut.LayerTransformTool.ImagePixelHeight = _sut.Height;
+        _sut.LayerTransformTool.SetImageBounds(new SKRect(0, 0, _sut.Width, _sut.Height));
+        _sut.LayerTransformTool.IsActive = true;
+        _sut.ArmLayerTransform();
+    }
+
     private SKColor SaveJpegAndReadPixel(SKColor? fillColor, int x, int y)
     {
         var path = Path.Combine(_tempDir.FullName, "export.jpg");
@@ -99,10 +108,15 @@ public class ImageEditorCoreTransparencyTests : IDisposable
     }
 
     [Theory]
-    [InlineData(255, 255, 255)]
-    [InlineData(0, 0, 0)]
-    public void WhenSavingAJpegWithAFillColourThenTransparentAreasTakeThatColour(byte r, byte g, byte b)
+    [InlineData(255, 255, 255, true)]
+    [InlineData(0, 0, 0, true)]
+    [InlineData(255, 255, 255, false)]
+    [InlineData(0, 0, 0, false)]
+    public void WhenSavingAJpegWithAFillColourThenTransparentAreasTakeThatColour(byte r, byte g, byte b, bool layerMode)
     {
+        // Two fill paths: a layer-mode flatten is filled in place, the single working bitmap is
+        // copied onto the fill.
+        if (!layerMode) _sut.DisableLayerMode();
         ExtendRightBy(20);
 
         var strip = SaveJpegAndReadPixel(new SKColor(r, g, b), x: 110, y: 40);
@@ -136,17 +150,61 @@ public class ImageEditorCoreTransparencyTests : IDisposable
     {
         // The check runs before the user answers the prompt. Committing there would bake an open
         // Move/Transform (or placed text) into the layer even when the user then cancels.
-        _sut.LayerTransformTool.ImagePixelWidth = 100;
-        _sut.LayerTransformTool.ImagePixelHeight = 80;
-        _sut.LayerTransformTool.SetImageBounds(new SKRect(0, 0, 100, 80));
-        _sut.LayerTransformTool.IsActive = true;
-        _sut.ArmLayerTransform();
+        ArmMoveTool();
         _sut.LayerTransformTool.Nudge(30, 0);
 
         _sut.HasTransparency().Should().BeTrue("the layer moved 30 px right, leaving the left edge empty");
 
         _sut.LayerTransformTool.HasTransform.Should().BeTrue("the move is still pending, not committed");
         _sut.Layers![0].OffsetX.Should().Be(0);
+    }
+
+    [Fact]
+    public void WhenAPendingScaleEndsBetweenPixelsThenTheCheckAgreesWithTheCommit()
+    {
+        // A scale is committed with anti-aliasing and Mitchell sampling. An edge that ends 0.25 px
+        // inside the canvas comes out partly transparent there, and the JPEG darkens it. A check
+        // that drew the pending scale any other way would miss that edge and not ask.
+        ArmMoveTool();
+        _sut.LayerTransformTool.SetSize(99.5f, 79.6f);
+        _sut.LayerTransformTool.SetPosition(0.25f, 0.2f);
+
+        var checkedBeforeCommit = _sut.HasTransparency();
+        _sut.CommitPendingOperations();
+        using var committed = _sut.Layers!.Flatten()!;
+
+        BitmapTransparency.HasTransparentPixels(committed).Should().BeTrue("the committed edges are anti-aliased");
+        checkedBeforeCommit.Should().BeTrue("the check must see what the commit produces");
+    }
+
+    [Fact]
+    public void WhenAPendingScalePushesTheTransparentStripOffTheCanvasThenThereIsNoTransparency()
+    {
+        // The pending transform counts as committed: doubling the layer from its top-left corner
+        // moves the empty strip past the canvas edge, leaving nothing for a JPEG to lose.
+        ExtendRightBy(20);
+        ArmMoveTool();
+        _sut.LayerTransformTool.SetSize(240f, 160f);
+
+        _sut.HasTransparency().Should().BeFalse();
+        _sut.LayerTransformTool.HasTransform.Should().BeTrue("the check commits nothing");
+    }
+
+    [Fact]
+    public void WhenTheSaveWouldRefuseAPendingTransformThenTheCheckSeesTheLayerUnchanged()
+    {
+        // Past the size guard the commit is refused and the save writes the layer as it is, strip
+        // included. The check has to expect that, not the transform the canvas previews.
+        ExtendRightBy(20);
+        ArmMoveTool();
+        _sut.LayerTransformTool.SetSize(24000f, 16000f);
+
+        var checkedBeforeCommit = _sut.HasTransparency();
+        _sut.CommitPendingOperations();
+        using var committed = _sut.Layers!.Flatten()!;
+
+        BitmapTransparency.HasTransparentPixels(committed).Should().BeTrue("the commit was refused");
+        checkedBeforeCommit.Should().BeTrue("the check must see what the save writes");
     }
 
     [Fact]

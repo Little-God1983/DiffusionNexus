@@ -351,12 +351,12 @@ public class LayerStack : IDisposable
     /// <summary>
     /// Flattens all visible layers into a single bitmap.
     /// </summary>
-    /// <param name="previewOverride">
-    /// Draws one layer through a pending Move/Transform matrix, as the canvas shows it, without
-    /// committing the transform.
+    /// <param name="replacement">
+    /// Draws one layer from other pixels, such as a pending Move/Transform rasterized the way its
+    /// commit will, without changing the layer.
     /// </param>
     /// <returns>A new bitmap with all layers composited.</returns>
-    public SKBitmap? Flatten(LayerRenderOverride? previewOverride = null)
+    public SKBitmap? Flatten(LayerBitmapOverride? replacement = null)
     {
         if (_layers.Count == 0) return null;
 
@@ -368,29 +368,54 @@ public class LayerStack : IDisposable
         // Draw layers from bottom to top (skip inpaint mask layers)
         foreach (var layer in _layers)
         {
-            if (!layer.IsVisible || layer.Bitmap == null || layer.IsInpaintMask) continue;
+            if (!IsFlattened(layer)) continue;
 
             using var paint = new SKPaint
             {
-                Color = SKColors.White.WithAlpha((byte)(layer.Opacity * 255)),
+                Color = SKColors.White.WithAlpha(FlattenAlpha(layer)),
                 BlendMode = layer.BlendMode.ToSKBlendMode()
             };
 
-            if (previewOverride is { } over && ReferenceEquals(over.Layer, layer))
-            {
-                canvas.Save();
-                canvas.Concat(over.Matrix);
-                canvas.DrawBitmap(layer.Bitmap, layer.OffsetX, layer.OffsetY, paint);
-                canvas.Restore();
-            }
+            if (replacement is { } r && ReferenceEquals(r.Layer, layer))
+                canvas.DrawBitmap(r.Bitmap, r.Offset.X, r.Offset.Y, paint);
             else
-            {
                 canvas.DrawBitmap(layer.Bitmap, layer.OffsetX, layer.OffsetY, paint);
-            }
         }
 
         return result;
     }
+
+    /// <summary>
+    /// Whether one layer on its own makes <see cref="Flatten"/>'s result fully opaque: flattened,
+    /// at full opacity, and covering the whole canvas with opaque pixels. Every blend mode keeps
+    /// the result alpha at Sa + Da(1 - Sa), so no other layer can let transparency through. This
+    /// scans one layer and allocates nothing; false means "flatten to find out".
+    /// </summary>
+    /// <param name="except">A layer not to rely on, such as one whose pixels a pending transform will replace.</param>
+    public bool HasOpaqueCoveringLayer(Layer? except = null)
+    {
+        foreach (var layer in _layers)
+        {
+            if (!IsFlattened(layer) || ReferenceEquals(layer, except)) continue;
+            if (FlattenAlpha(layer) != byte.MaxValue) continue;
+
+            var bounds = layer.Bounds;
+            if (bounds.Left > 0 || bounds.Top > 0 || bounds.Right < _width || bounds.Bottom < _height) continue;
+
+            // Scans the whole bitmap, overhang included: a transparent pixel off the canvas only
+            // costs the fast answer.
+            if (!BitmapTransparency.HasTransparentPixels(layer.Bitmap!)) return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>Whether <see cref="Flatten"/> draws <paramref name="layer"/>.</summary>
+    private static bool IsFlattened(Layer layer)
+        => layer.IsVisible && layer.Bitmap is not null && !layer.IsInpaintMask;
+
+    /// <summary>The alpha <see cref="Flatten"/> draws <paramref name="layer"/> with.</summary>
+    private static byte FlattenAlpha(Layer layer) => (byte)(layer.Opacity * 255);
 
     /// <summary>
     /// Clears all layers and creates a new background layer.

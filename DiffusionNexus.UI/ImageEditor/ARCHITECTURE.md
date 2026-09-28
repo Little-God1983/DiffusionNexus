@@ -123,12 +123,16 @@ View ? EditorCore.SaveImage(path)
 A JPEG save (Export as JPEG, or Export / Save As / Save of a .jpg) first asks
 `EditorCore.HasTransparency()` whether the flattened image has non-opaque pixels. If so,
 `ImageEditorViewModel` raises `JpegTransparencyPromptRequested` (Fill with white / black /
-Cancel) and passes the chosen `TransparencyFill` as `SaveImage(..., fillColor)`, which draws
-the image over that colour before encoding. Left alone, the JPEG encoder turns transparent
-areas black (#584). The check commits nothing (it runs before the user decides to save) but
-includes an open Move/Transform as the canvas previews it. Hand-offs to other tools (Upscale,
-Add To..., Send To...) ask nothing: `ImageEditorViewModel.GetHandOffExtension()` keeps the
-original's format, except a JPEG with transparency goes out as PNG.
+Cancel) and passes the chosen `TransparencyFill` through `SaveImageFunc(path, fill)` to
+`SaveImage(..., fillColor)`, which draws the image over that colour before encoding. Left
+alone, the JPEG encoder turns transparent areas black (#584). The check commits nothing (it
+runs before the user decides to save). An open Move/Transform is rasterized by the same code
+its commit uses (`RasterizeLayerTransform`) and drawn in place of the layer, or left out when
+the commit would be refused, so the check sees exactly what the save writes. One opaque layer
+over the whole canvas answers without a flatten (`LayerStack.HasOpaqueCoveringLayer`).
+Hand-offs to other tools (Upscale, Add To..., Send To...) ask nothing:
+`ImageEditorViewModel.ExportHandOffCopy()` keeps the original's format, except a JPEG with
+transparency goes out as PNG.
 
 ### Zoom In
 ```
@@ -222,5 +226,6 @@ User → Move toggle → LayerTransformViewModel.IsPanelOpen = true
 | `LayerTransformToolTests.cs` | Handle hit testing, drag math, matrix composition, commit-on-deactivate |
 | `ImageEditorCoreLayerTransformTests.cs` | Arm/eligibility guards and `ApplyLayerTransform` rasterization |
 | `ImageEditorCoreOffsetLayerTests.cs` | ApplyStroke / ApplyShape land in layer-local pixels on an offset layer; painting outside the layer draws nothing |
-| `ImageEditorCoreTransparencyTests.cs` | `HasTransparency` checks the flattened result; `SaveImage` fill colour replaces the encoder's black |
+| `ImageEditorCoreTransparencyTests.cs` | `HasTransparency` checks the flattened result and sees a pending transform as its commit will; `SaveImage` fill colour replaces the encoder's black |
+| `LayerStackOpaqueCoverTests.cs` | `HasOpaqueCoveringLayer`: when one layer alone makes the flattened image opaque |
 | `LayerTransformViewModelTests.cs` | Panel state, UpdateFromTool, command wiring |

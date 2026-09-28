@@ -9,6 +9,13 @@ namespace DiffusionNexus.UI.ImageEditor;
 public readonly record struct LayerRenderOverride(Layer Layer, SKMatrix Matrix);
 
 /// <summary>
+/// Draws one layer from <paramref name="Bitmap"/> at <paramref name="Offset"/> instead of its own
+/// pixels (<see cref="LayerStack.Flatten"/>). Nothing about the layer changes, and the caller
+/// keeps ownership of the bitmap.
+/// </summary>
+public readonly record struct LayerBitmapOverride(Layer Layer, SKBitmap Bitmap, SKPointI Offset);
+
+/// <summary>
 /// Handles compositing layers together for rendering and export.
 /// </summary>
 public static class LayerCompositor

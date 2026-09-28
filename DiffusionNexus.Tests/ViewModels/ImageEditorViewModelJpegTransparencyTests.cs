@@ -30,7 +30,6 @@ public class ImageEditorViewModelJpegTransparencyTests
     /// <param name="hasTransparency">What the canvas reports.</param>
     /// <param name="answer">The prompt's answer; null is Cancel.</param>
     /// <param name="withPrompt">Whether anything answers the transparency prompt.</param>
-    /// <param name="withJpegSave">Whether the host wires <c>SaveJpegFunc</c> (it always wires SaveImageFunc).</param>
     /// <param name="overwriteConfirmed">The answer to "overwrite your original?".</param>
     private Harness CreateHarness(
         string originalPath,
@@ -38,7 +37,6 @@ public class ImageEditorViewModelJpegTransparencyTests
         bool hasTransparency,
         TransparencyFill? answer,
         bool withPrompt = true,
-        bool withJpegSave = true,
         bool overwriteConfirmed = true)
     {
         var sut = new ImageEditorViewModel(eventAggregator: _mockAggregator.Object);
@@ -46,9 +44,7 @@ public class ImageEditorViewModelJpegTransparencyTests
 
         sut.LoadImage(originalPath);
         sut.ShowSaveFileDialogFunc = (_, _, _) => Task.FromResult<string?>(chosenPath);
-        sut.SaveImageFunc = path => { harness.Writes.Add(new Write(path, null)); return true; };
-        if (withJpegSave)
-            sut.SaveJpegFunc = (path, fill) => { harness.Writes.Add(new Write(path, fill)); return true; };
+        sut.SaveImageFunc = (path, fill) => { harness.Writes.Add(new Write(path, fill)); return true; };
         sut.HasTransparencyFunc = () =>
         {
             harness.TransparencyChecks++;
@@ -182,21 +178,6 @@ public class ImageEditorViewModelJpegTransparencyTests
 
         h.TransparencyChecks.Should().Be(0);
         h.Writes.Should().Equal(new Write(@"C:\out\photo.jpg", null));
-    }
-
-    [Fact]
-    public async Task WhenTheHostWiresOnlySaveImageFuncThenAJpegOriginalStillSaves()
-    {
-        // SaveImageFunc alone was the whole contract of Save / Save as New / Export. Without
-        // SaveJpegFunc no fill could be honoured, so nothing is asked either.
-        var h = CreateHarness(@"C:\in\original.jpg", chosenPath: string.Empty, hasTransparency: true,
-            answer: TransparencyFill.White, withJpegSave: false);
-
-        await h.Sut.SaveOverwriteCommand.ExecuteAsync(null);
-
-        h.Prompts.Should().Be(0);
-        h.Writes.Should().Equal(new Write(@"C:\in\original.jpg", null));
-        h.Sut.StatusMessage.Should().Be("Image saved");
     }
 
     [Fact]

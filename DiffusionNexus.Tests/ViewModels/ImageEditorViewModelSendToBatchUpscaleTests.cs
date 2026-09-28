@@ -89,7 +89,7 @@ public class ImageEditorViewModelSendToBatchUpscaleTests
 
         var sut = CreateSut();
         sut.LoadImage(imagePath);
-        sut.SaveImageFunc = _ => true;
+        sut.SaveImageFunc = (_, _) => true;
 
         sut.SendToBatchUpscaleCommand.Execute(null);
 
@@ -110,7 +110,7 @@ public class ImageEditorViewModelSendToBatchUpscaleTests
 
         var sut = CreateSut();
         sut.LoadImage(imagePath);
-        sut.SaveImageFunc = _ => false;
+        sut.SaveImageFunc = (_, _) => false;
 
         sut.SendToBatchUpscaleCommand.Execute(null);
 

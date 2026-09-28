@@ -87,7 +87,6 @@ public partial class ImageEditView : UserControl
         if (_wiredImageEditor is not null)
         {
             _wiredImageEditor.SaveImageFunc = null;
-            _wiredImageEditor.SaveJpegFunc = null;
             _wiredImageEditor.SaveLayeredTiffFunc = null;
             _wiredImageEditor.HasTransparencyFunc = null;
             _wiredImageEditor.ShowSaveFileDialogFunc = null;
@@ -438,7 +437,7 @@ public partial class ImageEditView : UserControl
 
                 tempPath = Path.Combine(Path.GetTempPath(), $"diffnexus_outpaint_{Guid.NewGuid():N}.png");
 
-                if (imageEditor.SaveImageFunc is null || !imageEditor.SaveImageFunc(tempPath))
+                if (imageEditor.SaveImageFunc is null || !imageEditor.SaveImageFunc(tempPath, null))
                 {
                     imageEditor.StatusMessage = "Failed to export current image for outpainting.";
                     imageEditor.Outpainting.RefreshCommandStates();
@@ -1150,16 +1149,10 @@ public partial class ImageEditView : UserControl
     private void WireSaveAndExportEvents(ImageEditTabViewModel vm, ImageEditorViewModel imageEditor)
     {
         // Provide the View's save capability to the ViewModel (cleaned up in UnwireEvents)
-        imageEditor.SaveImageFunc = path =>
+        imageEditor.SaveImageFunc = (path, fill) =>
         {
             _imageEditorCanvas?.EditorCore.CommitPendingOperations();
-            return _imageEditorCanvas?.EditorCore.SaveImage(path) ?? false;
-        };
-
-        imageEditor.SaveJpegFunc = (path, fill) =>
-        {
-            _imageEditorCanvas?.EditorCore.CommitPendingOperations();
-            return _imageEditorCanvas?.EditorCore.SaveImage(path, SkiaSharp.SKEncodedImageFormat.Jpeg, 95, fill?.ToSKColor()) ?? false;
+            return _imageEditorCanvas?.EditorCore.SaveImage(path, fillColor: fill?.ToSKColor()) ?? false;
         };
 
         imageEditor.SaveLayeredTiffFunc = path =>

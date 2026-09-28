@@ -31,7 +31,7 @@ public sealed class ImageEditTabHandOffTests
         var vm = new ImageEditTabViewModel(aggregator.Object, state.Object);
         var written = new List<string>();
         vm.ImageEditor.LoadImage(@"C:\in\photo.jpg");
-        vm.ImageEditor.SaveImageFunc = path => { written.Add(path); return true; };
+        vm.ImageEditor.SaveImageFunc = (path, _) => { written.Add(path); return true; };
         vm.ImageEditor.HasTransparencyFunc = () => hasTransparency;
 
         await vm.ImageActions.SendToBatchUpscaleCommand.ExecuteAsync(null);

@@ -60,17 +60,11 @@ public partial class ImageEditorViewModel : ObservableObject
     public bool IsImageMode => !_isVideoMode;
 
     /// <summary>
-    /// Callback provided by the View to save the current editor image to a file path.
-    /// Returns true if the save succeeded.
+    /// Callback provided by the View to save the current editor image to a file path, in the
+    /// format its extension names, putting the given fill behind transparent areas (null: encode
+    /// as is). Returns true if the save succeeded.
     /// </summary>
-    public Func<string, bool>? SaveImageFunc { get; set; }
-
-    /// <summary>
-    /// Callback provided by the View to save the current editor image as JPEG (no metadata),
-    /// putting the given fill behind transparent areas (null: encode as is).
-    /// Returns true if the save succeeded.
-    /// </summary>
-    public Func<string, TransparencyFill?, bool>? SaveJpegFunc { get; set; }
+    public Func<string, TransparencyFill?, bool>? SaveImageFunc { get; set; }
 
     /// <summary>
     /// Callback provided by the View: whether the image as it would be saved has any pixel that
@@ -1075,7 +1069,7 @@ public partial class ImageEditorViewModel : ObservableObject
 
         try
         {
-            if (SaveImageFunc(exportPath))
+            if (SaveImageFunc(exportPath, null))
                 OnExportCompleted(exportPath);
             else
                 StatusMessage = "Failed to export PNG.";
@@ -1088,7 +1082,7 @@ public partial class ImageEditorViewModel : ObservableObject
 
     private async Task ExecuteExportAsJpegAsync()
     {
-        if (CurrentImagePath is null || SaveJpegFunc is null || ShowSaveFileDialogFunc is null) return;
+        if (CurrentImagePath is null || SaveImageFunc is null || ShowSaveFileDialogFunc is null) return;
 
         var fileName = Path.GetFileNameWithoutExtension(CurrentImagePath);
         var suggestedName = $"{fileName}_export.jpg";
@@ -1148,14 +1142,11 @@ public partial class ImageEditorViewModel : ObservableObject
     /// <returns>Whether the write succeeded, or null when the user cancelled at the prompt.</returns>
     private async Task<bool?> WriteImageAsync(string path)
     {
-        // Only SaveJpegFunc can apply a fill. A host that wires just SaveImageFunc gets the JPEG it
-        // always got, and is not asked a question whose answer could not be honoured.
-        if (!IsJpegTarget(path) || SaveJpegFunc is null)
-            return SaveImageFunc?.Invoke(path) ?? false;
+        if (SaveImageFunc is null) return false;
 
-        // The cheap check first: the transparency check flattens and scans the whole canvas.
+        // The cheap checks first: the transparency check may flatten the whole canvas.
         TransparencyFill? fill = null;
-        if (JpegTransparencyPromptRequested is not null && HasTransparencyFunc?.Invoke() == true)
+        if (IsJpegTarget(path) && JpegTransparencyPromptRequested is not null && HasTransparencyFunc?.Invoke() == true)
         {
             _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
                 $"JPEG save of {Path.GetFileName(path)}: the image has transparent areas, asking what fills them");
@@ -1172,24 +1163,31 @@ public partial class ImageEditorViewModel : ObservableObject
                 $"JPEG save of {Path.GetFileName(path)}: filling transparent areas with {fill}");
         }
 
-        return SaveJpegFunc(path, fill);
+        return SaveImageFunc(path, fill);
     }
 
     /// <summary>
-    /// The extension for a temp copy of the canvas handed to another tool (Upscale, Add To…,
-    /// Send To…): the original's, unless that is JPEG and the canvas has transparency, which a
-    /// JPEG would turn black. Then PNG, so the destination gets what the canvas shows. Nobody is
-    /// asked: the copy is a hand-off, not the user's file (#584).
+    /// Writes the canvas to a temp file for another tool (Upscale, Add To…, Send To…), so the
+    /// destination gets the edits rather than the file on disk. The copy keeps the original's
+    /// format, unless that is JPEG and the canvas has transparency, which a JPEG would turn black:
+    /// then it is a PNG. Nobody is asked, since the copy is a hand-off, not the user's file (#584).
     /// </summary>
-    public string GetHandOffExtension()
+    /// <param name="purpose">A short tag for the temp file name, such as "upscale".</param>
+    /// <returns>The temp file, or null when there is nothing to export or the export failed.</returns>
+    public string? ExportHandOffCopy(string purpose)
     {
-        var extension = Path.GetExtension(CurrentImagePath) ?? string.Empty;
-        if (CurrentImagePath is null || !IsJpegTarget(CurrentImagePath) || HasTransparencyFunc?.Invoke() != true)
-            return extension;
+        if (CurrentImagePath is null || SaveImageFunc is null) return null;
 
-        _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
-            $"Handing over {Path.GetFileName(CurrentImagePath)} as PNG: the canvas has transparent areas a JPEG would turn black");
-        return ".png";
+        var extension = Path.GetExtension(CurrentImagePath);
+        if (IsJpegTarget(CurrentImagePath) && HasTransparencyFunc?.Invoke() == true)
+        {
+            _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+                $"Handing over {Path.GetFileName(CurrentImagePath)} as PNG: the canvas has transparent areas a JPEG would turn black");
+            extension = ".png";
+        }
+
+        var tempPath = Path.Combine(Path.GetTempPath(), $"DiffusionNexus_{purpose}_{Guid.NewGuid()}{extension}");
+        return SaveImageFunc(tempPath, null) ? tempPath : null;
     }
 
     /// <summary>Whether <paramref name="path"/> is encoded as JPEG, by the same rule the encoder uses.</summary>
@@ -1338,16 +1336,7 @@ public partial class ImageEditorViewModel : ObservableObject
     {
         if (string.IsNullOrEmpty(CurrentImagePath)) return;
 
-        var pathToSend = CurrentImagePath;
-        if (SaveImageFunc is not null)
-        {
-            var ext = GetHandOffExtension();
-            var tempPath = Path.Combine(Path.GetTempPath(), $"DiffusionNexus_{suffix}_{Guid.NewGuid()}{ext}");
-            if (SaveImageFunc(tempPath))
-                pathToSend = tempPath;
-        }
-
-        publish(pathToSend);
+        publish(ExportHandOffCopy(suffix) ?? CurrentImagePath);
     }
 
     #endregion
