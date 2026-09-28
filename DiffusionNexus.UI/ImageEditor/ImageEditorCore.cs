@@ -1141,7 +1141,7 @@ public partial class ImageEditorCore : IDisposable
     {
         FileLogger.LogEntry($"filePath={filePath}, format={format?.ToString() ?? "(from extension)"}, quality={quality}, fill={fillColor?.ToString() ?? "(none)"}");
 
-        var bitmapToSave = GetBitmapToSave(out var needsDispose);
+        var bitmapToSave = GetBitmapToSave(previewOverride: null, out var needsDispose);
 
         if (bitmapToSave is null)
         {
@@ -1162,10 +1162,15 @@ public partial class ImageEditorCore : IDisposable
             if (fillColor is { } fill)
             {
                 FileLogger.Log($"Filling transparent areas with {fill} before encoding");
-                var filled = FillBehind(bitmapToSave, fill);
-                if (needsDispose) bitmapToSave.Dispose();
-                bitmapToSave = filled;
-                needsDispose = true;
+                if (!needsDispose)
+                {
+                    // Outside layer mode this is the working bitmap, the document itself: fill a
+                    // copy. A layer-mode flatten is already a fresh copy and is filled in place.
+                    bitmapToSave = CopyForFill(bitmapToSave);
+                    needsDispose = true;
+                }
+
+                FillBehind(bitmapToSave, fill);
             }
 
             var result = _services!.Document.Save(bitmapToSave, filePath, resolvedFormat, quality);
@@ -1189,11 +1194,16 @@ public partial class ImageEditorCore : IDisposable
     /// <summary>
     /// Whether the image as <see cref="SaveImage"/> writes it has any pixel that is not fully
     /// opaque, i.e. something a JPEG cannot store. Checks the flattened result, not each layer:
-    /// a mostly transparent layer over an opaque one loses nothing. Changes nothing.
+    /// a mostly transparent layer over an opaque one loses nothing.
+    /// <para>
+    /// Changes nothing, and commits nothing: it runs before the user decides whether to save at
+    /// all. An open Move/Transform is included as the canvas previews it, since moving a layer
+    /// can uncover transparency. Placed text and shapes are not; they only add pixels.
+    /// </para>
     /// </summary>
     public bool HasTransparency()
     {
-        var bitmap = GetBitmapToSave(out var owned);
+        var bitmap = GetBitmapToSave(PendingLayerTransformPreview, out var owned);
         if (bitmap is null)
             return false;
 
@@ -1213,30 +1223,56 @@ public partial class ImageEditorCore : IDisposable
     /// The bitmap <see cref="SaveImage"/> writes: a fresh flatten of the layers in layer mode
     /// (<paramref name="owned"/> is true and the caller disposes it), otherwise the working bitmap.
     /// </summary>
-    private SKBitmap? GetBitmapToSave(out bool owned)
+    /// <param name="previewOverride">A pending Move/Transform to draw uncommitted, or null.</param>
+    /// <param name="owned">Whether the caller must dispose the returned bitmap.</param>
+    private SKBitmap? GetBitmapToSave(LayerRenderOverride? previewOverride, out bool owned)
     {
-        if (_isLayerMode && _layers != null && _layers.Count > 0)
+        if (_isLayerMode && _layers is { Count: > 0 } layers)
         {
             FileLogger.Log("Layer mode active, flattening layers...");
             owned = true;
-            return _services?.Layers.Flatten();
+            return layers.Flatten(previewOverride);
         }
 
         owned = false;
         return _workingBitmap;
     }
 
+    /// <summary>The open Move/Transform as the canvas previews it, or null when none is pending.</summary>
+    private LayerRenderOverride? PendingLayerTransformPreview =>
+        LayerTransformTool.IsActive && LayerTransformTool.IsArmed && LayerTransformTool.HasTransform
+        && LayerTransformTool.Layer is { } layer
+            ? new LayerRenderOverride(layer, LayerTransformTool.Matrix)
+            : null;
+
     /// <summary>
-    /// Draws <paramref name="source"/> over a canvas cleared to <paramref name="fill"/>, so
-    /// transparent pixels take the fill and partly transparent ones blend into it.
+    /// An Rgba8888 copy of <paramref name="source"/> to fill without touching the original.
+    /// Throws when the allocation fails: SkiaSharp hands back an empty bitmap instead of throwing.
     /// </summary>
-    private static SKBitmap FillBehind(SKBitmap source, SKColor fill)
+    private static SKBitmap CopyForFill(SKBitmap source)
     {
-        var result = new SKBitmap(source.Width, source.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
-        using var canvas = new SKCanvas(result);
-        canvas.Clear(fill);
+        var copy = new SKBitmap(source.Width, source.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
+        if (copy.IsEmpty || copy.Width != source.Width || copy.Height != source.Height)
+        {
+            copy.Dispose();
+            throw new InvalidOperationException($"Could not allocate a {source.Width}x{source.Height} bitmap to fill.");
+        }
+
+        using var canvas = new SKCanvas(copy);
+        canvas.Clear(SKColors.Transparent);
         canvas.DrawBitmap(source, 0, 0);
-        return result;
+        return copy;
+    }
+
+    /// <summary>
+    /// Paints <paramref name="fill"/> behind <paramref name="bitmap"/> in place: transparent pixels
+    /// take the fill, partly transparent ones blend into it. The fill is made opaque, since a
+    /// translucent one would leave exactly the transparency this is meant to remove.
+    /// </summary>
+    private static void FillBehind(SKBitmap bitmap, SKColor fill)
+    {
+        using var canvas = new SKCanvas(bitmap);
+        canvas.DrawColor(fill.WithAlpha(byte.MaxValue), SKBlendMode.DstOver);
     }
 
     /// <summary>
@@ -1323,11 +1359,7 @@ public partial class ImageEditorCore : IDisposable
             }
             else if (_isLayerMode && _layers != null)
             {
-                var preview = LayerTransformTool.IsActive && LayerTransformTool.IsArmed && LayerTransformTool.HasTransform
-                    && LayerTransformTool.Layer is { } previewLayer
-                    ? new LayerRenderOverride(previewLayer, LayerTransformTool.Matrix)
-                    : (LayerRenderOverride?)null;
-                LayerCompositor.CompositeToCanvas(canvas, _layers, imageRect, preview);
+                LayerCompositor.CompositeToCanvas(canvas, _layers, imageRect, PendingLayerTransformPreview);
             }
             else
             {

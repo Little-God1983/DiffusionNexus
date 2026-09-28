@@ -5,6 +5,7 @@ using DiffusionNexus.UI.ImageEditor.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.Domain.Services;
+using SkiaSharp;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -979,7 +980,7 @@ public partial class ImageEditorViewModel : ObservableObject
             }
             else
             {
-                var written = await WriteImageAsync(newPath, IsJpegPath(newPath));
+                var written = await WriteImageAsync(newPath);
                 if (written is null) return;
                 saved = written.Value;
             }
@@ -1016,7 +1017,7 @@ public partial class ImageEditorViewModel : ObservableObject
 
         try
         {
-            var saved = await WriteImageAsync(CurrentImagePath!, IsJpegPath(CurrentImagePath!));
+            var saved = await WriteImageAsync(CurrentImagePath!);
             if (saved is null) return;
 
             if (saved.Value)
@@ -1046,7 +1047,7 @@ public partial class ImageEditorViewModel : ObservableObject
 
         try
         {
-            var saved = await WriteImageAsync(exportPath, IsJpegPath(exportPath));
+            var saved = await WriteImageAsync(exportPath);
             if (saved is null) return;
 
             if (saved.Value)
@@ -1099,7 +1100,7 @@ public partial class ImageEditorViewModel : ObservableObject
 
         try
         {
-            var saved = await WriteImageAsync(exportPath, isJpeg: true);
+            var saved = await WriteImageAsync(exportPath);
             if (saved is null) return;
 
             if (saved.Value)
@@ -1143,16 +1144,18 @@ public partial class ImageEditorViewModel : ObservableObject
     /// JPEG cannot store transparency and its encoder turns transparent areas black (#584), so a
     /// JPEG write of an image with transparent areas first asks what should fill them.
     /// </summary>
-    /// <param name="path">The file to write.</param>
-    /// <param name="isJpeg">Whether the file is written as JPEG.</param>
+    /// <param name="path">The file to write; its extension decides the format.</param>
     /// <returns>Whether the write succeeded, or null when the user cancelled at the prompt.</returns>
-    private async Task<bool?> WriteImageAsync(string path, bool isJpeg)
+    private async Task<bool?> WriteImageAsync(string path)
     {
-        if (!isJpeg)
+        // Only SaveJpegFunc can apply a fill. A host that wires just SaveImageFunc gets the JPEG it
+        // always got, and is not asked a question whose answer could not be honoured.
+        if (!IsJpegTarget(path) || SaveJpegFunc is null)
             return SaveImageFunc?.Invoke(path) ?? false;
 
+        // The cheap check first: the transparency check flattens and scans the whole canvas.
         TransparencyFill? fill = null;
-        if (HasTransparencyFunc?.Invoke() == true && JpegTransparencyPromptRequested is not null)
+        if (JpegTransparencyPromptRequested is not null && HasTransparencyFunc?.Invoke() == true)
         {
             _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
                 $"JPEG save of {Path.GetFileName(path)}: the image has transparent areas, asking what fills them");
@@ -1169,15 +1172,29 @@ public partial class ImageEditorViewModel : ObservableObject
                 $"JPEG save of {Path.GetFileName(path)}: filling transparent areas with {fill}");
         }
 
-        return SaveJpegFunc?.Invoke(path, fill) ?? false;
+        return SaveJpegFunc(path, fill);
     }
 
-    private static bool IsJpegPath(string path)
+    /// <summary>
+    /// The extension for a temp copy of the canvas handed to another tool (Upscale, Add To…,
+    /// Send To…): the original's, unless that is JPEG and the canvas has transparency, which a
+    /// JPEG would turn black. Then PNG, so the destination gets what the canvas shows. Nobody is
+    /// asked: the copy is a hand-off, not the user's file (#584).
+    /// </summary>
+    public string GetHandOffExtension()
     {
-        var extension = Path.GetExtension(path);
-        return extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase)
-            || extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase);
+        var extension = Path.GetExtension(CurrentImagePath) ?? string.Empty;
+        if (CurrentImagePath is null || !IsJpegTarget(CurrentImagePath) || HasTransparencyFunc?.Invoke() != true)
+            return extension;
+
+        _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+            $"Handing over {Path.GetFileName(CurrentImagePath)} as PNG: the canvas has transparent areas a JPEG would turn black");
+        return ".png";
     }
+
+    /// <summary>Whether <paramref name="path"/> is encoded as JPEG, by the same rule the encoder uses.</summary>
+    private bool IsJpegTarget(string path)
+        => _services.Document.GetFormatFromExtension(path) == SKEncodedImageFormat.Jpeg;
 
     /// <summary>
     /// Ensures an export path carries an extension matching the format the command exports.
@@ -1324,7 +1341,7 @@ public partial class ImageEditorViewModel : ObservableObject
         var pathToSend = CurrentImagePath;
         if (SaveImageFunc is not null)
         {
-            var ext = Path.GetExtension(CurrentImagePath);
+            var ext = GetHandOffExtension();
             var tempPath = Path.Combine(Path.GetTempPath(), $"DiffusionNexus_{suffix}_{Guid.NewGuid()}{ext}");
             if (SaveImageFunc(tempPath))
                 pathToSend = tempPath;

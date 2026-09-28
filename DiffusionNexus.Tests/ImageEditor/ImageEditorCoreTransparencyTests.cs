@@ -132,6 +132,53 @@ public class ImageEditorCoreTransparencyTests : IDisposable
     }
 
     [Fact]
+    public void WhenAMoveIsPendingThenTheCheckSeesTheGapItLeavesWithoutCommittingIt()
+    {
+        // The check runs before the user answers the prompt. Committing there would bake an open
+        // Move/Transform (or placed text) into the layer even when the user then cancels.
+        _sut.LayerTransformTool.ImagePixelWidth = 100;
+        _sut.LayerTransformTool.ImagePixelHeight = 80;
+        _sut.LayerTransformTool.SetImageBounds(new SKRect(0, 0, 100, 80));
+        _sut.LayerTransformTool.IsActive = true;
+        _sut.ArmLayerTransform();
+        _sut.LayerTransformTool.Nudge(30, 0);
+
+        _sut.HasTransparency().Should().BeTrue("the layer moved 30 px right, leaving the left edge empty");
+
+        _sut.LayerTransformTool.HasTransform.Should().BeTrue("the move is still pending, not committed");
+        _sut.Layers![0].OffsetX.Should().Be(0);
+    }
+
+    [Fact]
+    public void WhenTheFillColourIsTranslucentThenTheFillIsStillOpaque()
+    {
+        // A half-transparent fill would leave the areas half-transparent, and the encoder would
+        // darken them to grey again.
+        ExtendRightBy(20);
+
+        var strip = SaveJpegAndReadPixel(new SKColor(255, 255, 255, 128), x: 110, y: 40);
+
+        strip.Red.Should().BeCloseTo(255, 8);
+        strip.Green.Should().BeCloseTo(255, 8);
+        strip.Blue.Should().BeCloseTo(255, 8);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void WhenSavingWithAFillThenTheCanvasKeepsItsTransparency(bool layerMode)
+    {
+        // The fill belongs to the file only. Outside layer mode the bitmap written is the
+        // document itself, so filling it in place would paint over the canvas.
+        if (!layerMode) _sut.DisableLayerMode();
+        ExtendRightBy(20);
+
+        SaveJpegAndReadPixel(SKColors.White, x: 110, y: 40);
+
+        _sut.HasTransparency().Should().BeTrue();
+    }
+
+    [Fact]
     public void WhenCheckingForTransparencyThenTheLayersAreNotFlattened()
     {
         ExtendRightBy(20);

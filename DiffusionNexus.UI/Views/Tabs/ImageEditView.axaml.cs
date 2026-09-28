@@ -1168,31 +1168,20 @@ public partial class ImageEditView : UserControl
             return _imageEditorCanvas?.EditorCore.SaveLayeredTiff(path) ?? false;
         };
 
-        // Commit first, like the saves do: a pending text, shape or layer move can change
-        // whether the saved image is transparent.
-        imageEditor.HasTransparencyFunc = () =>
-        {
-            _imageEditorCanvas?.EditorCore.CommitPendingOperations();
-            return _imageEditorCanvas?.EditorCore.HasTransparency() ?? false;
-        };
+        // No commit here, unlike the saves: this runs before the user decides whether to save at
+        // all, and committing would bake placed text or an open Move into the layer even on Cancel.
+        imageEditor.HasTransparencyFunc = () => _imageEditorCanvas?.EditorCore.HasTransparency() ?? false;
 
         Func<Task<TransparencyFill?>> onJpegTransparencyPrompt = async () =>
         {
             if (vm.DialogService is null) return null;
 
             var choice = await vm.DialogService.ShowOptionsAsync(
-                "JPEG can't store transparency",
-                "This image has transparent areas, and a JPEG has no transparency, so something has "
-                + "to fill them in the saved file. To keep the transparency, cancel and export as "
-                + "PNG instead.",
-                "Fill with white", "Fill with black", "Cancel");
+                TransparencyFillPrompt.Title,
+                TransparencyFillPrompt.Message,
+                [.. TransparencyFillPrompt.Options]);
 
-            return choice switch
-            {
-                0 => TransparencyFill.White,
-                1 => TransparencyFill.Black,
-                _ => null
-            };
+            return TransparencyFillPrompt.FromChoice(choice);
         };
         imageEditor.JpegTransparencyPromptRequested += onJpegTransparencyPrompt;
         _eventCleanup.Add(() => imageEditor.JpegTransparencyPromptRequested -= onJpegTransparencyPrompt);

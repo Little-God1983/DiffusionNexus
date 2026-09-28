@@ -1,3 +1,5 @@
+using System.Numerics;
+using System.Runtime.InteropServices;
 using SkiaSharp;
 
 namespace DiffusionNexus.UI.ImageEditor;
@@ -27,20 +29,33 @@ internal static class BitmapTransparency
             return converted is null || HasTransparentPixels(converted);
         }
 
-        // Both 8888 layouts keep alpha in the fourth byte of every pixel.
+        // Both 8888 layouts keep alpha in the fourth byte. Read as a little-endian uint (every
+        // platform this Windows app runs on), that is the top byte, so a pixel is fully opaque
+        // exactly when it is >= 0xFF000000. Compared a vector of pixels at a time: this runs on
+        // the UI thread, and an opaque image (the usual case) has to be read to the end.
+        var opaqueFloor = new Vector<uint>(OpaqueFloor);
         var pixels = bitmap.GetPixelSpan();
         var rowBytes = bitmap.RowBytes;
         var rowLength = bitmap.Width * 4;
         for (var y = 0; y < bitmap.Height; y++)
         {
-            var row = pixels.Slice(y * rowBytes, rowLength);
-            for (var alpha = 3; alpha < row.Length; alpha += 4)
+            var row = MemoryMarshal.Cast<byte, uint>(pixels.Slice(y * rowBytes, rowLength));
+            var x = 0;
+            for (; x <= row.Length - Vector<uint>.Count; x += Vector<uint>.Count)
             {
-                if (row[alpha] != byte.MaxValue)
+                if (Vector.LessThanAny(new Vector<uint>(row.Slice(x)), opaqueFloor))
+                    return true;
+            }
+
+            for (; x < row.Length; x++)
+            {
+                if (row[x] < OpaqueFloor)
                     return true;
             }
         }
 
         return false;
     }
+
+    private const uint OpaqueFloor = 0xFF000000;
 }

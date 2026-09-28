@@ -658,7 +658,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         string? tempPath = null;
         if (ImageEditor.SaveImageFunc is not null)
         {
-            var ext = Path.GetExtension(currentPath);
+            var ext = ImageEditor.GetHandOffExtension();
             tempPath = Path.Combine(Path.GetTempPath(), $"DiffusionNexus_act_{Guid.NewGuid()}{ext}");
             if (ImageEditor.SaveImageFunc(tempPath))
                 sourcePath = tempPath;

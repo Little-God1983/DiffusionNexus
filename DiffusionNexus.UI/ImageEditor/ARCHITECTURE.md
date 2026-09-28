@@ -125,7 +125,10 @@ A JPEG save (Export as JPEG, or Export / Save As / Save of a .jpg) first asks
 `ImageEditorViewModel` raises `JpegTransparencyPromptRequested` (Fill with white / black /
 Cancel) and passes the chosen `TransparencyFill` as `SaveImage(..., fillColor)`, which draws
 the image over that colour before encoding. Left alone, the JPEG encoder turns transparent
-areas black (#584).
+areas black (#584). The check commits nothing (it runs before the user decides to save) but
+includes an open Move/Transform as the canvas previews it. Hand-offs to other tools (Upscale,
+Add To..., Send To...) ask nothing: `ImageEditorViewModel.GetHandOffExtension()` keeps the
+original's format, except a JPEG with transparency goes out as PNG.
 
 ### Zoom In
 ```
@@ -189,7 +192,7 @@ User → Move toggle → LayerTransformViewModel.IsPanelOpen = true
 | `LayerTransformTool.cs` | Move / Transform tool: Shape-style handles on the active layer, canvas-space matrix, commit-on-deactivate |
 | `TiffExporter.cs` | Multi-page TIFF save/load |
 | `BitmapTransparency.cs` | Detects non-opaque pixels (what a JPEG cannot store) |
-| `TransparencyFill.cs` | White/black fill a JPEG save puts behind transparent areas |
+| `TransparencyFill.cs` | White/black fill a JPEG save puts behind transparent areas; `TransparencyFillPrompt` (dialog text, button order, answer mapping) |
 
 ### `ImageEditor/Services/` � Service Layer
 

@@ -351,8 +351,12 @@ public class LayerStack : IDisposable
     /// <summary>
     /// Flattens all visible layers into a single bitmap.
     /// </summary>
+    /// <param name="previewOverride">
+    /// Draws one layer through a pending Move/Transform matrix, as the canvas shows it, without
+    /// committing the transform.
+    /// </param>
     /// <returns>A new bitmap with all layers composited.</returns>
-    public SKBitmap? Flatten()
+    public SKBitmap? Flatten(LayerRenderOverride? previewOverride = null)
     {
         if (_layers.Count == 0) return null;
 
@@ -372,7 +376,17 @@ public class LayerStack : IDisposable
                 BlendMode = layer.BlendMode.ToSKBlendMode()
             };
 
-            canvas.DrawBitmap(layer.Bitmap, layer.OffsetX, layer.OffsetY, paint);
+            if (previewOverride is { } over && ReferenceEquals(over.Layer, layer))
+            {
+                canvas.Save();
+                canvas.Concat(over.Matrix);
+                canvas.DrawBitmap(layer.Bitmap, layer.OffsetX, layer.OffsetY, paint);
+                canvas.Restore();
+            }
+            else
+            {
+                canvas.DrawBitmap(layer.Bitmap, layer.OffsetX, layer.OffsetY, paint);
+            }
         }
 
         return result;
