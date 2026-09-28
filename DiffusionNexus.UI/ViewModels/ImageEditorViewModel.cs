@@ -65,10 +65,17 @@ public partial class ImageEditorViewModel : ObservableObject
     public Func<string, bool>? SaveImageFunc { get; set; }
 
     /// <summary>
-    /// Callback provided by the View to save the current editor image as JPEG (no metadata).
+    /// Callback provided by the View to save the current editor image as JPEG (no metadata),
+    /// putting the given fill behind transparent areas (null: encode as is).
     /// Returns true if the save succeeded.
     /// </summary>
-    public Func<string, bool>? SaveJpegFunc { get; set; }
+    public Func<string, TransparencyFill?, bool>? SaveJpegFunc { get; set; }
+
+    /// <summary>
+    /// Callback provided by the View: whether the image as it would be saved has any pixel that
+    /// is not fully opaque, which a JPEG cannot store.
+    /// </summary>
+    public Func<bool>? HasTransparencyFunc { get; set; }
 
     /// <summary>
     /// Callback provided by the View to save a layered TIFF to a file path.
@@ -347,6 +354,13 @@ public partial class ImageEditorViewModel : ObservableObject
     public event EventHandler? SwitchCropAspectRatioRequested;
     public event Func<Task<SaveAsResult>>? SaveAsDialogRequested;
     public event Func<Task<bool>>? SaveOverwriteConfirmRequested;
+
+    /// <summary>
+    /// Asked before a user-initiated save writes a JPEG of an image with transparent areas: what
+    /// should fill them. Return null to cancel the save. Without a handler, the save goes ahead
+    /// unfilled.
+    /// </summary>
+    public event Func<Task<TransparencyFill?>>? JpegTransparencyPromptRequested;
     public event EventHandler? ZoomInRequested;
     public event EventHandler? ZoomOutRequested;
     public event EventHandler? ZoomToFitRequested;
@@ -965,7 +979,9 @@ public partial class ImageEditorViewModel : ObservableObject
             }
             else
             {
-                saved = SaveImageFunc(newPath);
+                var written = await WriteImageAsync(newPath, IsJpegPath(newPath));
+                if (written is null) return;
+                saved = written.Value;
             }
 
             if (saved)
@@ -1000,7 +1016,10 @@ public partial class ImageEditorViewModel : ObservableObject
 
         try
         {
-            if (SaveImageFunc(CurrentImagePath!))
+            var saved = await WriteImageAsync(CurrentImagePath!, IsJpegPath(CurrentImagePath!));
+            if (saved is null) return;
+
+            if (saved.Value)
                 OnSaveOverwriteCompleted();
             else
                 StatusMessage = "Failed to save image.";
@@ -1027,7 +1046,10 @@ public partial class ImageEditorViewModel : ObservableObject
 
         try
         {
-            if (SaveImageFunc(exportPath))
+            var saved = await WriteImageAsync(exportPath, IsJpegPath(exportPath));
+            if (saved is null) return;
+
+            if (saved.Value)
                 OnExportCompleted(exportPath);
             else
                 StatusMessage = "Failed to export image.";
@@ -1077,7 +1099,10 @@ public partial class ImageEditorViewModel : ObservableObject
 
         try
         {
-            if (SaveJpegFunc(exportPath))
+            var saved = await WriteImageAsync(exportPath, isJpeg: true);
+            if (saved is null) return;
+
+            if (saved.Value)
                 OnExportCompleted(exportPath);
             else
                 StatusMessage = "Failed to export JPEG.";
@@ -1111,6 +1136,47 @@ public partial class ImageEditorViewModel : ObservableObject
         {
             StatusMessage = $"Error exporting layered TIFF: {ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// Writes the flattened image to <paramref name="path"/> for a user-initiated save or export.
+    /// JPEG cannot store transparency and its encoder turns transparent areas black (#584), so a
+    /// JPEG write of an image with transparent areas first asks what should fill them.
+    /// </summary>
+    /// <param name="path">The file to write.</param>
+    /// <param name="isJpeg">Whether the file is written as JPEG.</param>
+    /// <returns>Whether the write succeeded, or null when the user cancelled at the prompt.</returns>
+    private async Task<bool?> WriteImageAsync(string path, bool isJpeg)
+    {
+        if (!isJpeg)
+            return SaveImageFunc?.Invoke(path) ?? false;
+
+        TransparencyFill? fill = null;
+        if (HasTransparencyFunc?.Invoke() == true && JpegTransparencyPromptRequested is not null)
+        {
+            _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+                $"JPEG save of {Path.GetFileName(path)}: the image has transparent areas, asking what fills them");
+
+            fill = await JpegTransparencyPromptRequested.Invoke();
+            if (fill is null)
+            {
+                _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+                    $"JPEG save of {Path.GetFileName(path)} cancelled at the transparency prompt");
+                return null;
+            }
+
+            _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+                $"JPEG save of {Path.GetFileName(path)}: filling transparent areas with {fill}");
+        }
+
+        return SaveJpegFunc?.Invoke(path, fill) ?? false;
+    }
+
+    private static bool IsJpegPath(string path)
+    {
+        var extension = Path.GetExtension(path);
+        return extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

@@ -27,7 +27,7 @@ public class ImageEditorViewModelExportExtensionTests
         sut.LoadImage(@"C:\datasets\test\original.png");
         sut.ShowSaveFileDialogFunc = (_, _, _) => Task.FromResult<string?>(chosenPath);
         sut.SaveImageFunc = path => { paths.Add(path); return true; };
-        sut.SaveJpegFunc = path => { paths.Add(path); return true; };
+        sut.SaveJpegFunc = (path, _) => { paths.Add(path); return true; };
         sut.SaveLayeredTiffFunc = path => { paths.Add(path); return true; };
         return sut;
     }

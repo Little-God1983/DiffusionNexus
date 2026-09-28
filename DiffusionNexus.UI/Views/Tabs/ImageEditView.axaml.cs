@@ -87,6 +87,9 @@ public partial class ImageEditView : UserControl
         if (_wiredImageEditor is not null)
         {
             _wiredImageEditor.SaveImageFunc = null;
+            _wiredImageEditor.SaveJpegFunc = null;
+            _wiredImageEditor.SaveLayeredTiffFunc = null;
+            _wiredImageEditor.HasTransparencyFunc = null;
             _wiredImageEditor.ShowSaveFileDialogFunc = null;
             _wiredImageEditor = null;
         }
@@ -1153,10 +1156,10 @@ public partial class ImageEditView : UserControl
             return _imageEditorCanvas?.EditorCore.SaveImage(path) ?? false;
         };
 
-        imageEditor.SaveJpegFunc = path =>
+        imageEditor.SaveJpegFunc = (path, fill) =>
         {
             _imageEditorCanvas?.EditorCore.CommitPendingOperations();
-            return _imageEditorCanvas?.EditorCore.SaveImage(path, SkiaSharp.SKEncodedImageFormat.Jpeg, 95) ?? false;
+            return _imageEditorCanvas?.EditorCore.SaveImage(path, SkiaSharp.SKEncodedImageFormat.Jpeg, 95, fill?.ToSKColor()) ?? false;
         };
 
         imageEditor.SaveLayeredTiffFunc = path =>
@@ -1164,6 +1167,35 @@ public partial class ImageEditView : UserControl
             _imageEditorCanvas?.EditorCore.CommitPendingOperations();
             return _imageEditorCanvas?.EditorCore.SaveLayeredTiff(path) ?? false;
         };
+
+        // Commit first, like the saves do: a pending text, shape or layer move can change
+        // whether the saved image is transparent.
+        imageEditor.HasTransparencyFunc = () =>
+        {
+            _imageEditorCanvas?.EditorCore.CommitPendingOperations();
+            return _imageEditorCanvas?.EditorCore.HasTransparency() ?? false;
+        };
+
+        Func<Task<TransparencyFill?>> onJpegTransparencyPrompt = async () =>
+        {
+            if (vm.DialogService is null) return null;
+
+            var choice = await vm.DialogService.ShowOptionsAsync(
+                "JPEG can't store transparency",
+                "This image has transparent areas, and a JPEG has no transparency, so something has "
+                + "to fill them in the saved file. To keep the transparency, cancel and export as "
+                + "PNG instead.",
+                "Fill with white", "Fill with black", "Cancel");
+
+            return choice switch
+            {
+                0 => TransparencyFill.White,
+                1 => TransparencyFill.Black,
+                _ => null
+            };
+        };
+        imageEditor.JpegTransparencyPromptRequested += onJpegTransparencyPrompt;
+        _eventCleanup.Add(() => imageEditor.JpegTransparencyPromptRequested -= onJpegTransparencyPrompt);
 
         // A user-initiated save/export declares the canvas clean; the temp exports that share
         // SaveImageFunc do not raise this.

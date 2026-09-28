@@ -120,6 +120,13 @@ View ? EditorCore.SaveImage(path)
      ? delegates file I/O to DocumentService.Save()
 ```
 
+A JPEG save (Export as JPEG, or Export / Save As / Save of a .jpg) first asks
+`EditorCore.HasTransparency()` whether the flattened image has non-opaque pixels. If so,
+`ImageEditorViewModel` raises `JpegTransparencyPromptRequested` (Fill with white / black /
+Cancel) and passes the chosen `TransparencyFill` as `SaveImage(..., fillColor)`, which draws
+the image over that colour before encoding. Left alone, the JPEG encoder turns transparent
+areas black (#584).
+
 ### Zoom In
 ```
 ViewModel ? _services.Viewport.ZoomIn()
@@ -181,6 +188,8 @@ User → Move toggle → LayerTransformViewModel.IsPanelOpen = true
 | `ShapeTool.cs` | Shape tool (rectangle, ellipse, arrow, etc.) |
 | `LayerTransformTool.cs` | Move / Transform tool: Shape-style handles on the active layer, canvas-space matrix, commit-on-deactivate |
 | `TiffExporter.cs` | Multi-page TIFF save/load |
+| `BitmapTransparency.cs` | Detects non-opaque pixels (what a JPEG cannot store) |
+| `TransparencyFill.cs` | White/black fill a JPEG save puts behind transparent areas |
 
 ### `ImageEditor/Services/` � Service Layer
 
@@ -210,4 +219,5 @@ User → Move toggle → LayerTransformViewModel.IsPanelOpen = true
 | `LayerTransformToolTests.cs` | Handle hit testing, drag math, matrix composition, commit-on-deactivate |
 | `ImageEditorCoreLayerTransformTests.cs` | Arm/eligibility guards and `ApplyLayerTransform` rasterization |
 | `ImageEditorCoreOffsetLayerTests.cs` | ApplyStroke / ApplyShape land in layer-local pixels on an offset layer; painting outside the layer draws nothing |
+| `ImageEditorCoreTransparencyTests.cs` | `HasTransparency` checks the flattened result; `SaveImage` fill colour replaces the encoder's black |
 | `LayerTransformViewModelTests.cs` | Panel state, UpdateFromTool, command wiring |

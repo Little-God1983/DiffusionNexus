@@ -1131,26 +1131,18 @@ public partial class ImageEditorCore : IDisposable
     /// like "Export as JPEG" mean it regardless of what the user typed in the save dialog.
     /// </param>
     /// <param name="quality">Quality for lossy formats (0-100).</param>
+    /// <param name="fillColor">
+    /// An opaque colour to put behind the image before encoding, so transparent areas become that
+    /// colour. For formats without an alpha channel (JPEG), which otherwise turn them black.
+    /// <c>null</c> (the default) encodes the image as it is.
+    /// </param>
     /// <returns>True if saved successfully.</returns>
-    public bool SaveImage(string filePath, SKEncodedImageFormat? format = null, int quality = 95)
+    public bool SaveImage(string filePath, SKEncodedImageFormat? format = null, int quality = 95, SKColor? fillColor = null)
     {
-        FileLogger.LogEntry($"filePath={filePath}, format={format?.ToString() ?? "(from extension)"}, quality={quality}");
-        
-        // Get the bitmap to save - flatten layers if in layer mode
-        SKBitmap? bitmapToSave = null;
-        bool needsDispose = false;
-        
-        if (_isLayerMode && _layers != null && _layers.Count > 0)
-        {
-            FileLogger.Log("Layer mode active, flattening layers for save...");
-            bitmapToSave = _services?.Layers.Flatten();
-            needsDispose = true;
-        }
-        else
-        {
-            bitmapToSave = _workingBitmap;
-        }
-        
+        FileLogger.LogEntry($"filePath={filePath}, format={format?.ToString() ?? "(from extension)"}, quality={quality}, fill={fillColor?.ToString() ?? "(none)"}");
+
+        var bitmapToSave = GetBitmapToSave(out var needsDispose);
+
         if (bitmapToSave is null)
         {
             FileLogger.LogWarning("No bitmap to save (working bitmap is null and no layers)");
@@ -1167,9 +1159,17 @@ public partial class ImageEditorCore : IDisposable
 
         try
         {
+            if (fillColor is { } fill)
+            {
+                FileLogger.Log($"Filling transparent areas with {fill} before encoding");
+                var filled = FillBehind(bitmapToSave, fill);
+                if (needsDispose) bitmapToSave.Dispose();
+                bitmapToSave = filled;
+                needsDispose = true;
+            }
+
             var result = _services!.Document.Save(bitmapToSave, filePath, resolvedFormat, quality);
 
-            if (needsDispose) bitmapToSave.Dispose();
             FileLogger.Log(result ? "Save completed successfully" : "Save failed");
             FileLogger.LogExit(result.ToString());
             return result;
@@ -1177,10 +1177,66 @@ public partial class ImageEditorCore : IDisposable
         catch (Exception ex)
         {
             FileLogger.LogError($"Exception during save to {filePath}", ex);
-            if (needsDispose) bitmapToSave.Dispose();
             FileLogger.LogExit("false");
             return false;
         }
+        finally
+        {
+            if (needsDispose) bitmapToSave.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Whether the image as <see cref="SaveImage"/> writes it has any pixel that is not fully
+    /// opaque, i.e. something a JPEG cannot store. Checks the flattened result, not each layer:
+    /// a mostly transparent layer over an opaque one loses nothing. Changes nothing.
+    /// </summary>
+    public bool HasTransparency()
+    {
+        var bitmap = GetBitmapToSave(out var owned);
+        if (bitmap is null)
+            return false;
+
+        try
+        {
+            var hasTransparency = BitmapTransparency.HasTransparentPixels(bitmap);
+            FileLogger.Log($"Transparency check on {bitmap.Width}x{bitmap.Height}: {hasTransparency}");
+            return hasTransparency;
+        }
+        finally
+        {
+            if (owned) bitmap.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// The bitmap <see cref="SaveImage"/> writes: a fresh flatten of the layers in layer mode
+    /// (<paramref name="owned"/> is true and the caller disposes it), otherwise the working bitmap.
+    /// </summary>
+    private SKBitmap? GetBitmapToSave(out bool owned)
+    {
+        if (_isLayerMode && _layers != null && _layers.Count > 0)
+        {
+            FileLogger.Log("Layer mode active, flattening layers...");
+            owned = true;
+            return _services?.Layers.Flatten();
+        }
+
+        owned = false;
+        return _workingBitmap;
+    }
+
+    /// <summary>
+    /// Draws <paramref name="source"/> over a canvas cleared to <paramref name="fill"/>, so
+    /// transparent pixels take the fill and partly transparent ones blend into it.
+    /// </summary>
+    private static SKBitmap FillBehind(SKBitmap source, SKColor fill)
+    {
+        var result = new SKBitmap(source.Width, source.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
+        using var canvas = new SKCanvas(result);
+        canvas.Clear(fill);
+        canvas.DrawBitmap(source, 0, 0);
+        return result;
     }
 
     /// <summary>
