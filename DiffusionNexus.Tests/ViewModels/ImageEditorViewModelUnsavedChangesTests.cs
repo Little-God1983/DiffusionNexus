@@ -75,7 +75,7 @@ public sealed class ImageEditorViewModelUnsavedChangesTests : IDisposable
     public async Task SaveOverwrite_MarksTheCanvasClean()
     {
         var vm = CreateViewModel();
-        vm.SaveImageFunc = _ => true;
+        vm.SaveImageFunc = (_, _) => true;
         vm.HasUnsavedChanges = true;
         var cleaned = 0;
         vm.CanvasSaved += (_, _) => cleaned++;
@@ -90,7 +90,7 @@ public sealed class ImageEditorViewModelUnsavedChangesTests : IDisposable
     public async Task FailedSave_LeavesTheCanvasDirty()
     {
         var vm = CreateViewModel();
-        vm.SaveImageFunc = _ => false;
+        vm.SaveImageFunc = (_, _) => false;
         vm.HasUnsavedChanges = true;
 
         await vm.SaveOverwriteCommand.ExecuteAsync(null);
@@ -103,7 +103,7 @@ public sealed class ImageEditorViewModelUnsavedChangesTests : IDisposable
     {
         var vm = CreateViewModel();
         var exported = new List<string>();
-        vm.SaveImageFunc = path => { exported.Add(path); return true; };
+        vm.SaveImageFunc = (path, _) => { exported.Add(path); return true; };
         vm.HasUnsavedChanges = true;
 
         vm.SendToCaptioningCommand.Execute(null);

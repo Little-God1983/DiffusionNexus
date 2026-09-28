@@ -87,6 +87,8 @@ public partial class ImageEditView : UserControl
         if (_wiredImageEditor is not null)
         {
             _wiredImageEditor.SaveImageFunc = null;
+            _wiredImageEditor.SaveLayeredTiffFunc = null;
+            _wiredImageEditor.HasTransparencyFunc = null;
             _wiredImageEditor.ShowSaveFileDialogFunc = null;
             _wiredImageEditor = null;
         }
@@ -435,7 +437,7 @@ public partial class ImageEditView : UserControl
 
                 tempPath = Path.Combine(Path.GetTempPath(), $"diffnexus_outpaint_{Guid.NewGuid():N}.png");
 
-                if (imageEditor.SaveImageFunc is null || !imageEditor.SaveImageFunc(tempPath))
+                if (imageEditor.SaveImageFunc is null || !imageEditor.SaveImageFunc(tempPath, null))
                 {
                     imageEditor.StatusMessage = "Failed to export current image for outpainting.";
                     imageEditor.Outpainting.RefreshCommandStates();
@@ -1147,16 +1149,10 @@ public partial class ImageEditView : UserControl
     private void WireSaveAndExportEvents(ImageEditTabViewModel vm, ImageEditorViewModel imageEditor)
     {
         // Provide the View's save capability to the ViewModel (cleaned up in UnwireEvents)
-        imageEditor.SaveImageFunc = path =>
+        imageEditor.SaveImageFunc = (path, fill) =>
         {
             _imageEditorCanvas?.EditorCore.CommitPendingOperations();
-            return _imageEditorCanvas?.EditorCore.SaveImage(path) ?? false;
-        };
-
-        imageEditor.SaveJpegFunc = path =>
-        {
-            _imageEditorCanvas?.EditorCore.CommitPendingOperations();
-            return _imageEditorCanvas?.EditorCore.SaveImage(path, SkiaSharp.SKEncodedImageFormat.Jpeg, 95) ?? false;
+            return _imageEditorCanvas?.EditorCore.SaveImage(path, fillColor: fill?.ToSKColor()) ?? false;
         };
 
         imageEditor.SaveLayeredTiffFunc = path =>
@@ -1164,6 +1160,24 @@ public partial class ImageEditView : UserControl
             _imageEditorCanvas?.EditorCore.CommitPendingOperations();
             return _imageEditorCanvas?.EditorCore.SaveLayeredTiff(path) ?? false;
         };
+
+        // No commit here, unlike the saves: this runs before the user decides whether to save at
+        // all, and committing would bake placed text or an open Move into the layer even on Cancel.
+        imageEditor.HasTransparencyFunc = () => _imageEditorCanvas?.EditorCore.HasTransparency() ?? false;
+
+        Func<Task<TransparencyFill?>> onJpegTransparencyPrompt = async () =>
+        {
+            if (vm.DialogService is null) return null;
+
+            var choice = await vm.DialogService.ShowOptionsAsync(
+                TransparencyFillPrompt.Title,
+                TransparencyFillPrompt.Message,
+                [.. TransparencyFillPrompt.Options]);
+
+            return TransparencyFillPrompt.FromChoice(choice);
+        };
+        imageEditor.JpegTransparencyPromptRequested += onJpegTransparencyPrompt;
+        _eventCleanup.Add(() => imageEditor.JpegTransparencyPromptRequested -= onJpegTransparencyPrompt);
 
         // A user-initiated save/export declares the canvas clean; the temp exports that share
         // SaveImageFunc do not raise this.

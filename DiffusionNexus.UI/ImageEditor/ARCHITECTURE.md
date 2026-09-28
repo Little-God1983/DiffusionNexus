@@ -120,6 +120,23 @@ View ? EditorCore.SaveImage(path)
      ? delegates file I/O to DocumentService.Save()
 ```
 
+A JPEG save (Export as JPEG, or Export / Save As / Save of a .jpg) first asks
+`EditorCore.HasTransparency()` whether the flattened image has non-opaque pixels. If so,
+`ImageEditorViewModel` raises `JpegTransparencyPromptRequested` (Fill with white / black /
+Cancel) and passes the chosen `TransparencyFill` through `SaveImageFunc(path, fill)` to
+`SaveImage(..., fillColor)`, which draws the image over that colour before encoding. Left
+alone, the JPEG encoder turns transparent areas black (#584). The question is about what gets
+saved, not where, so Export as JPEG and Export ask it before their folder picker. Save as New
+asks after its dialog, where Layered TIFF (which keeps transparency) can still be picked, and Save
+after its overwrite confirmation. The check commits nothing (it runs before the user decides to
+save). An open Move/Transform is rasterized by the same code
+its commit uses (`RasterizeLayerTransform`) and drawn in place of the layer, or left out when
+the commit would be refused, so the check sees exactly what the save writes. One opaque layer
+over the whole canvas answers without a flatten (`LayerStack.HasOpaqueCoveringLayer`).
+Hand-offs to other tools (Upscale, Add To..., Send To...) ask nothing:
+`ImageEditorViewModel.ExportHandOffCopy()` keeps the original's format, except a JPEG with
+transparency goes out as PNG.
+
 ### Zoom In
 ```
 ViewModel ? _services.Viewport.ZoomIn()
@@ -181,6 +198,8 @@ User → Move toggle → LayerTransformViewModel.IsPanelOpen = true
 | `ShapeTool.cs` | Shape tool (rectangle, ellipse, arrow, etc.) |
 | `LayerTransformTool.cs` | Move / Transform tool: Shape-style handles on the active layer, canvas-space matrix, commit-on-deactivate |
 | `TiffExporter.cs` | Multi-page TIFF save/load |
+| `BitmapTransparency.cs` | Detects non-opaque pixels (what a JPEG cannot store) |
+| `TransparencyFill.cs` | White/black fill a JPEG save puts behind transparent areas; `TransparencyFillPrompt` (dialog text, button order, answer mapping) |
 
 ### `ImageEditor/Services/` � Service Layer
 
@@ -210,4 +229,6 @@ User → Move toggle → LayerTransformViewModel.IsPanelOpen = true
 | `LayerTransformToolTests.cs` | Handle hit testing, drag math, matrix composition, commit-on-deactivate |
 | `ImageEditorCoreLayerTransformTests.cs` | Arm/eligibility guards and `ApplyLayerTransform` rasterization |
 | `ImageEditorCoreOffsetLayerTests.cs` | ApplyStroke / ApplyShape land in layer-local pixels on an offset layer; painting outside the layer draws nothing |
+| `ImageEditorCoreTransparencyTests.cs` | `HasTransparency` checks the flattened result and sees a pending transform as its commit will; `SaveImage` fill colour replaces the encoder's black |
+| `LayerStackOpaqueCoverTests.cs` | `HasOpaqueCoveringLayer`: when one layer alone makes the flattened image opaque |
 | `LayerTransformViewModelTests.cs` | Panel state, UpdateFromTool, command wiring |

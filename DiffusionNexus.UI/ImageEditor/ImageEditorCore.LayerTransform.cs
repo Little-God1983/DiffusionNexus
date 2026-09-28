@@ -58,59 +58,19 @@ public partial class ImageEditorCore
     public bool ApplyLayerTransform()
     {
         var tool = LayerTransformTool;
-        var layer = tool.Layer;
-        if (layer?.Bitmap is null || !tool.HasTransform) return false;
-        if (layer.IsInpaintMask || layer.IsLocked) return false;
+        if (tool.Layer is not { } layer) return false;
 
-        var matrix = tool.Matrix;
-        var boundsF = matrix.MapRect(SKRect.Create(layer.Bounds.Left, layer.Bounds.Top, layer.Bounds.Width, layer.Bounds.Height));
-        var bounds = new SKRectI((int)MathF.Floor(boundsF.Left), (int)MathF.Floor(boundsF.Top), (int)MathF.Ceiling(boundsF.Right), (int)MathF.Ceiling(boundsF.Bottom));
-        if (bounds.Width <= 0 || bounds.Height <= 0) return false;
-
-        if (bounds.Width > MaxTransformedSide || bounds.Height > MaxTransformedSide ||
-            (long)bounds.Width * bounds.Height > MaxTransformedArea)
+        var result = RasterizeLayerTransform(layer, out var offset, out var failure);
+        if (failure is { } refused)
         {
-            FileLogger.Log($"Layer transform refused: {bounds.Width}x{bounds.Height} exceeds the size guard");
-            LayerTransformFailed?.Invoke(this, LayerTransformFailure.TooLarge);
+            LayerTransformFailed?.Invoke(this, refused);
             return false;
         }
+        if (result is null) return false;
 
         SKBitmap? replaced = null;
         try
         {
-            SKBitmap result;
-            SKPointI offset;
-            if (IsIntegerTranslation(tool, out var dx, out var dy))
-            {
-                result = layer.Bitmap.Copy() ?? throw new InvalidOperationException("Could not copy the layer.");
-                offset = new SKPointI(layer.OffsetX + dx, layer.OffsetY + dy);
-            }
-            else
-            {
-                result = new SKBitmap(bounds.Width, bounds.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
-                if (result.IsEmpty || result.Width != bounds.Width || result.Height != bounds.Height)
-                {
-                    result.Dispose();
-                    throw new InvalidOperationException($"Could not allocate a {bounds.Width}x{bounds.Height} layer.");
-                }
-                try
-                {
-                    result.Erase(SKColors.Transparent);
-                    using var canvas = new SKCanvas(result);
-                    canvas.Translate(-bounds.Left, -bounds.Top);
-                    canvas.Concat(matrix);
-                    using var paint = new SKPaint { IsAntialias = true };
-                    using var source = SKImage.FromBitmap(layer.Bitmap);
-                    canvas.DrawImage(source, layer.OffsetX, layer.OffsetY, new SKSamplingOptions(SKCubicResampler.Mitchell), paint);
-                }
-                catch
-                {
-                    result.Dispose();
-                    throw;
-                }
-                offset = new SKPointI(bounds.Left, bounds.Top);
-            }
-
             lock (_bitmapLock)
             {
                 replaced = layer.AdoptBitmapKeepingOld(result, offset);
@@ -118,17 +78,86 @@ public partial class ImageEditorCore
         }
         catch (Exception ex)
         {
-            FileLogger.LogError($"Layer transform {bounds.Width}x{bounds.Height} failed", ex);
+            FileLogger.LogError($"Layer transform {result.Width}x{result.Height} failed", ex);
             LayerTransformFailed?.Invoke(this, LayerTransformFailure.Allocation);
             return false;
         }
 
         replaced?.Dispose();
-        FileLogger.Log($"Layer transform applied: '{layer.Name}' -> {bounds}");
+        FileLogger.Log($"Layer transform applied: '{layer.Name}' -> {layer.Bounds}");
         tool.Arm(layer); // identity again on the same layer
         OnImageChanged();
         LayerTransformApplied?.Invoke(this, EventArgs.Empty);
         return true;
+    }
+
+    /// <summary>
+    /// The pixels <see cref="ApplyLayerTransform"/> gives <paramref name="layer"/> for the tool's
+    /// pending transform, without adopting them: a new bitmap the caller owns, placed at
+    /// <paramref name="offset"/>. The JPEG transparency check uses it too, so it sees exactly what
+    /// the commit will write. Null with no <paramref name="failure"/> when there is nothing to
+    /// apply; null with a failure when the commit would be refused and leave the layer as it is.
+    /// </summary>
+    private SKBitmap? RasterizeLayerTransform(Layer layer, out SKPointI offset, out LayerTransformFailure? failure)
+    {
+        offset = default;
+        failure = null;
+
+        var tool = LayerTransformTool;
+        if (layer.Bitmap is null || !tool.HasTransform) return null;
+        if (layer.IsInpaintMask || layer.IsLocked) return null;
+
+        var matrix = tool.Matrix;
+        var boundsF = matrix.MapRect(SKRect.Create(layer.Bounds.Left, layer.Bounds.Top, layer.Bounds.Width, layer.Bounds.Height));
+        var bounds = new SKRectI((int)MathF.Floor(boundsF.Left), (int)MathF.Floor(boundsF.Top), (int)MathF.Ceiling(boundsF.Right), (int)MathF.Ceiling(boundsF.Bottom));
+        if (bounds.Width <= 0 || bounds.Height <= 0) return null;
+
+        if (bounds.Width > MaxTransformedSide || bounds.Height > MaxTransformedSide ||
+            (long)bounds.Width * bounds.Height > MaxTransformedArea)
+        {
+            FileLogger.Log($"Layer transform to {bounds.Width}x{bounds.Height} exceeds the size guard");
+            failure = LayerTransformFailure.TooLarge;
+            return null;
+        }
+
+        try
+        {
+            if (IsIntegerTranslation(tool, out var dx, out var dy))
+            {
+                offset = new SKPointI(layer.OffsetX + dx, layer.OffsetY + dy);
+                return layer.Bitmap.Copy() ?? throw new InvalidOperationException("Could not copy the layer.");
+            }
+
+            var result = new SKBitmap(bounds.Width, bounds.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
+            if (result.IsEmpty || result.Width != bounds.Width || result.Height != bounds.Height)
+            {
+                result.Dispose();
+                throw new InvalidOperationException($"Could not allocate a {bounds.Width}x{bounds.Height} layer.");
+            }
+            try
+            {
+                result.Erase(SKColors.Transparent);
+                using var canvas = new SKCanvas(result);
+                canvas.Translate(-bounds.Left, -bounds.Top);
+                canvas.Concat(matrix);
+                using var paint = new SKPaint { IsAntialias = true };
+                using var source = SKImage.FromBitmap(layer.Bitmap);
+                canvas.DrawImage(source, layer.OffsetX, layer.OffsetY, new SKSamplingOptions(SKCubicResampler.Mitchell), paint);
+            }
+            catch
+            {
+                result.Dispose();
+                throw;
+            }
+            offset = new SKPointI(bounds.Left, bounds.Top);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            FileLogger.LogError($"Layer transform {bounds.Width}x{bounds.Height} failed", ex);
+            failure = LayerTransformFailure.Allocation;
+            return null;
+        }
     }
 
     /// <summary>Commits a pending layer transform (a deliberate move is never lost) and re-arms on the current active layer. Call around operations that replace or dispose layers behind the tool's back.</summary>

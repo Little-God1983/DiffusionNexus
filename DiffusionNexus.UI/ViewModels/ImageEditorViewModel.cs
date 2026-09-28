@@ -5,6 +5,7 @@ using DiffusionNexus.UI.ImageEditor.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.Domain.Services;
+using SkiaSharp;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -59,16 +60,17 @@ public partial class ImageEditorViewModel : ObservableObject
     public bool IsImageMode => !_isVideoMode;
 
     /// <summary>
-    /// Callback provided by the View to save the current editor image to a file path.
-    /// Returns true if the save succeeded.
+    /// Callback provided by the View to save the current editor image to a file path, in the
+    /// format its extension names, putting the given fill behind transparent areas (null: encode
+    /// as is). Returns true if the save succeeded.
     /// </summary>
-    public Func<string, bool>? SaveImageFunc { get; set; }
+    public Func<string, TransparencyFill?, bool>? SaveImageFunc { get; set; }
 
     /// <summary>
-    /// Callback provided by the View to save the current editor image as JPEG (no metadata).
-    /// Returns true if the save succeeded.
+    /// Callback provided by the View: whether the image as it would be saved has any pixel that
+    /// is not fully opaque, which a JPEG cannot store.
     /// </summary>
-    public Func<string, bool>? SaveJpegFunc { get; set; }
+    public Func<bool>? HasTransparencyFunc { get; set; }
 
     /// <summary>
     /// Callback provided by the View to save a layered TIFF to a file path.
@@ -347,6 +349,13 @@ public partial class ImageEditorViewModel : ObservableObject
     public event EventHandler? SwitchCropAspectRatioRequested;
     public event Func<Task<SaveAsResult>>? SaveAsDialogRequested;
     public event Func<Task<bool>>? SaveOverwriteConfirmRequested;
+
+    /// <summary>
+    /// Asked before a user-initiated save writes a JPEG of an image with transparent areas: what
+    /// should fill them. Return null to cancel the save. Without a handler, the save goes ahead
+    /// unfilled.
+    /// </summary>
+    public event Func<Task<TransparencyFill?>>? JpegTransparencyPromptRequested;
     public event EventHandler? ZoomInRequested;
     public event EventHandler? ZoomOutRequested;
     public event EventHandler? ZoomToFitRequested;
@@ -965,7 +974,9 @@ public partial class ImageEditorViewModel : ObservableObject
             }
             else
             {
-                saved = SaveImageFunc(newPath);
+                var written = await WriteImageAsync(newPath);
+                if (written is null) return;
+                saved = written.Value;
             }
 
             if (saved)
@@ -1000,7 +1011,10 @@ public partial class ImageEditorViewModel : ObservableObject
 
         try
         {
-            if (SaveImageFunc(CurrentImagePath!))
+            var saved = await WriteImageAsync(CurrentImagePath!);
+            if (saved is null) return;
+
+            if (saved.Value)
                 OnSaveOverwriteCompleted();
             else
                 StatusMessage = "Failed to save image.";
@@ -1020,14 +1034,21 @@ public partial class ImageEditorViewModel : ObservableObject
         var fileName = Path.GetFileNameWithoutExtension(CurrentImagePath);
         var suggestedName = $"{fileName}_export{extension}";
 
-        var exportPath = await ShowSaveFileDialogFunc("Export Image", suggestedName, $"*{extension}");
-        if (string.IsNullOrEmpty(exportPath)) return;
-
-        exportPath = EnsureExtension(exportPath, extension);
-
         try
         {
-            if (SaveImageFunc(exportPath))
+            // The export keeps the original's format (EnsureExtension below), so a JPEG original
+            // is known to become a JPEG before the picker opens.
+            var (cancelled, fill) = IsJpegTarget(CurrentImagePath)
+                ? await AskJpegFillAsync($"JPEG export of {Path.GetFileName(CurrentImagePath)}")
+                : default;
+            if (cancelled) return;
+
+            var exportPath = await ShowSaveFileDialogFunc("Export Image", suggestedName, $"*{extension}");
+            if (string.IsNullOrEmpty(exportPath)) return;
+
+            exportPath = EnsureExtension(exportPath, extension);
+
+            if (SaveImageFunc(exportPath, fill))
                 OnExportCompleted(exportPath);
             else
                 StatusMessage = "Failed to export image.";
@@ -1052,7 +1073,7 @@ public partial class ImageEditorViewModel : ObservableObject
 
         try
         {
-            if (SaveImageFunc(exportPath))
+            if (SaveImageFunc(exportPath, null))
                 OnExportCompleted(exportPath);
             else
                 StatusMessage = "Failed to export PNG.";
@@ -1065,19 +1086,22 @@ public partial class ImageEditorViewModel : ObservableObject
 
     private async Task ExecuteExportAsJpegAsync()
     {
-        if (CurrentImagePath is null || SaveJpegFunc is null || ShowSaveFileDialogFunc is null) return;
+        if (CurrentImagePath is null || SaveImageFunc is null || ShowSaveFileDialogFunc is null) return;
 
         var fileName = Path.GetFileNameWithoutExtension(CurrentImagePath);
         var suggestedName = $"{fileName}_export.jpg";
 
-        var exportPath = await ShowSaveFileDialogFunc("Export as JPEG", suggestedName, "*.jpg");
-        if (string.IsNullOrEmpty(exportPath)) return;
-
-        exportPath = EnsureExtension(exportPath, ".jpg", ".jpeg");
-
         try
         {
-            if (SaveJpegFunc(exportPath))
+            var (cancelled, fill) = await AskJpegFillAsync($"JPEG export of {Path.GetFileName(CurrentImagePath)}");
+            if (cancelled) return;
+
+            var exportPath = await ShowSaveFileDialogFunc("Export as JPEG", suggestedName, "*.jpg");
+            if (string.IsNullOrEmpty(exportPath)) return;
+
+            exportPath = EnsureExtension(exportPath, ".jpg", ".jpeg");
+
+            if (SaveImageFunc(exportPath, fill))
                 OnExportCompleted(exportPath);
             else
                 StatusMessage = "Failed to export JPEG.";
@@ -1112,6 +1136,86 @@ public partial class ImageEditorViewModel : ObservableObject
             StatusMessage = $"Error exporting layered TIFF: {ex.Message}";
         }
     }
+
+    /// <summary>
+    /// Writes the flattened image to <paramref name="path"/> for Save or Save as New, asking first
+    /// what should fill transparent areas when the file is a JPEG (<see cref="AskJpegFillAsync"/>).
+    /// Their own dialog comes first: Save as New's is where Layered TIFF, which keeps transparency,
+    /// can still be picked, so the format is only known once it closes.
+    /// </summary>
+    /// <param name="path">The file to write; its extension decides the format.</param>
+    /// <returns>Whether the write succeeded, or null when the user cancelled at the prompt.</returns>
+    private async Task<bool?> WriteImageAsync(string path)
+    {
+        if (SaveImageFunc is null) return false;
+
+        var (cancelled, fill) = IsJpegTarget(path)
+            ? await AskJpegFillAsync($"JPEG save of {Path.GetFileName(path)}")
+            : default;
+        if (cancelled) return null;
+
+        return SaveImageFunc(path, fill);
+    }
+
+    /// <summary>
+    /// Before a JPEG is written: JPEG cannot store transparency and its encoder turns transparent
+    /// areas black (#584), so when the image has any, asks what should fill them. Exports ask this
+    /// before their folder picker, since it is about what gets saved, not where.
+    /// </summary>
+    /// <param name="write">What is being written, for the log ("JPEG export of photo.jpg").</param>
+    /// <returns>
+    /// Cancelled when the user cancelled; otherwise the chosen fill, or null when nothing needs
+    /// filling or nobody answers the prompt.
+    /// </returns>
+    private async Task<(bool Cancelled, TransparencyFill? Fill)> AskJpegFillAsync(string write)
+    {
+        // The cheap check first: the transparency check may flatten the whole canvas.
+        if (JpegTransparencyPromptRequested is null || HasTransparencyFunc?.Invoke() != true)
+            return (false, null);
+
+        _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+            $"{write}: the image has transparent areas, asking what fills them");
+
+        var fill = await JpegTransparencyPromptRequested.Invoke();
+        if (fill is null)
+        {
+            _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+                $"{write} cancelled at the transparency prompt");
+            return (true, null);
+        }
+
+        _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+            $"{write}: filling transparent areas with {fill}");
+        return (false, fill);
+    }
+
+    /// <summary>
+    /// Writes the canvas to a temp file for another tool (Upscale, Add To…, Send To…), so the
+    /// destination gets the edits rather than the file on disk. The copy keeps the original's
+    /// format, unless that is JPEG and the canvas has transparency, which a JPEG would turn black:
+    /// then it is a PNG. Nobody is asked, since the copy is a hand-off, not the user's file (#584).
+    /// </summary>
+    /// <param name="purpose">A short tag for the temp file name, such as "upscale".</param>
+    /// <returns>The temp file, or null when there is nothing to export or the export failed.</returns>
+    public string? ExportHandOffCopy(string purpose)
+    {
+        if (CurrentImagePath is null || SaveImageFunc is null) return null;
+
+        var extension = Path.GetExtension(CurrentImagePath);
+        if (IsJpegTarget(CurrentImagePath) && HasTransparencyFunc?.Invoke() == true)
+        {
+            _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+                $"Handing over {Path.GetFileName(CurrentImagePath)} as PNG: the canvas has transparent areas a JPEG would turn black");
+            extension = ".png";
+        }
+
+        var tempPath = Path.Combine(Path.GetTempPath(), $"DiffusionNexus_{purpose}_{Guid.NewGuid()}{extension}");
+        return SaveImageFunc(tempPath, null) ? tempPath : null;
+    }
+
+    /// <summary>Whether <paramref name="path"/> is encoded as JPEG, by the same rule the encoder uses.</summary>
+    private bool IsJpegTarget(string path)
+        => _services.Document.GetFormatFromExtension(path) == SKEncodedImageFormat.Jpeg;
 
     /// <summary>
     /// Ensures an export path carries an extension matching the format the command exports.
@@ -1255,16 +1359,7 @@ public partial class ImageEditorViewModel : ObservableObject
     {
         if (string.IsNullOrEmpty(CurrentImagePath)) return;
 
-        var pathToSend = CurrentImagePath;
-        if (SaveImageFunc is not null)
-        {
-            var ext = Path.GetExtension(CurrentImagePath);
-            var tempPath = Path.Combine(Path.GetTempPath(), $"DiffusionNexus_{suffix}_{Guid.NewGuid()}{ext}");
-            if (SaveImageFunc(tempPath))
-                pathToSend = tempPath;
-        }
-
-        publish(pathToSend);
+        publish(ExportHandOffCopy(suffix) ?? CurrentImagePath);
     }
 
     #endregion

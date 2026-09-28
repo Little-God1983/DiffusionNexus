@@ -654,24 +654,12 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         if (string.IsNullOrEmpty(currentPath) || !ImageEditor.HasImage)
             return Task.FromResult(ImageActionPaths.Empty);
 
-        var sourcePath = currentPath;
-        string? tempPath = null;
-        if (ImageEditor.SaveImageFunc is not null)
-        {
-            var ext = Path.GetExtension(currentPath);
-            tempPath = Path.Combine(Path.GetTempPath(), $"DiffusionNexus_act_{Guid.NewGuid()}{ext}");
-            if (ImageEditor.SaveImageFunc(tempPath))
-                sourcePath = tempPath;
-            else
-                tempPath = null;
-        }
-
-        var tempToDelete = tempPath;
-        Action? cleanup = tempToDelete is null
+        var tempPath = ImageEditor.ExportHandOffCopy("act");
+        Action? cleanup = tempPath is null
             ? null
-            : () => { try { File.Delete(tempToDelete); } catch { /* best effort */ } };
+            : () => { try { File.Delete(tempPath); } catch { /* best effort */ } };
 
-        return Task.FromResult(new ImageActionPaths([sourcePath], cleanup));
+        return Task.FromResult(new ImageActionPaths([tempPath ?? currentPath], cleanup));
     }
 
     private void OnImageEditorPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)

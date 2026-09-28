@@ -1131,26 +1131,18 @@ public partial class ImageEditorCore : IDisposable
     /// like "Export as JPEG" mean it regardless of what the user typed in the save dialog.
     /// </param>
     /// <param name="quality">Quality for lossy formats (0-100).</param>
+    /// <param name="fillColor">
+    /// An opaque colour to put behind the image before encoding, so transparent areas become that
+    /// colour. For formats without an alpha channel (JPEG), which otherwise turn them black.
+    /// <c>null</c> (the default) encodes the image as it is.
+    /// </param>
     /// <returns>True if saved successfully.</returns>
-    public bool SaveImage(string filePath, SKEncodedImageFormat? format = null, int quality = 95)
+    public bool SaveImage(string filePath, SKEncodedImageFormat? format = null, int quality = 95, SKColor? fillColor = null)
     {
-        FileLogger.LogEntry($"filePath={filePath}, format={format?.ToString() ?? "(from extension)"}, quality={quality}");
-        
-        // Get the bitmap to save - flatten layers if in layer mode
-        SKBitmap? bitmapToSave = null;
-        bool needsDispose = false;
-        
-        if (_isLayerMode && _layers != null && _layers.Count > 0)
-        {
-            FileLogger.Log("Layer mode active, flattening layers for save...");
-            bitmapToSave = _services?.Layers.Flatten();
-            needsDispose = true;
-        }
-        else
-        {
-            bitmapToSave = _workingBitmap;
-        }
-        
+        FileLogger.LogEntry($"filePath={filePath}, format={format?.ToString() ?? "(from extension)"}, quality={quality}, fill={fillColor?.ToString() ?? "(none)"}");
+
+        var bitmapToSave = GetBitmapToSave(out var needsDispose);
+
         if (bitmapToSave is null)
         {
             FileLogger.LogWarning("No bitmap to save (working bitmap is null and no layers)");
@@ -1167,9 +1159,24 @@ public partial class ImageEditorCore : IDisposable
 
         try
         {
+            if (fillColor is { } fill)
+            {
+                FileLogger.Log($"Filling transparent areas with {fill} before encoding");
+                if (needsDispose)
+                {
+                    // A layer-mode flatten is already a fresh copy: fill it in place.
+                    FillBehind(bitmapToSave, fill);
+                }
+                else
+                {
+                    // Outside layer mode this is the working bitmap, the document itself.
+                    bitmapToSave = CopyOntoFill(bitmapToSave, fill);
+                    needsDispose = true;
+                }
+            }
+
             var result = _services!.Document.Save(bitmapToSave, filePath, resolvedFormat, quality);
 
-            if (needsDispose) bitmapToSave.Dispose();
             FileLogger.Log(result ? "Save completed successfully" : "Save failed");
             FileLogger.LogExit(result.ToString());
             return result;
@@ -1177,11 +1184,136 @@ public partial class ImageEditorCore : IDisposable
         catch (Exception ex)
         {
             FileLogger.LogError($"Exception during save to {filePath}", ex);
-            if (needsDispose) bitmapToSave.Dispose();
             FileLogger.LogExit("false");
             return false;
         }
+        finally
+        {
+            if (needsDispose) bitmapToSave.Dispose();
+        }
     }
+
+    /// <summary>
+    /// Whether the image as <see cref="SaveImage"/> writes it has any pixel that is not fully
+    /// opaque, i.e. something a JPEG cannot store. Checks the flattened result, not each layer:
+    /// a mostly transparent layer over an opaque one loses nothing.
+    /// <para>
+    /// Changes nothing, and commits nothing: it runs before the user decides whether to save at
+    /// all. An open Move/Transform is included exactly as its commit will rasterize it, or left
+    /// out when the commit would be refused, since moving a layer can uncover transparency.
+    /// Placed text and shapes are not included; they only add pixels.
+    /// </para>
+    /// </summary>
+    public bool HasTransparency()
+    {
+        if (!_isLayerMode || _layers is not { Count: > 0 } layers)
+        {
+            var working = _workingBitmap;
+            return working is not null && LogTransparency(working, BitmapTransparency.HasTransparentPixels(working));
+        }
+
+        var pendingLayer = PendingLayerTransformPreview?.Layer;
+
+        // One opaque layer over the whole canvas settles it without a flatten: the usual case.
+        if (layers.HasOpaqueCoveringLayer(except: pendingLayer))
+        {
+            FileLogger.Log("Transparency check: an opaque layer covers the canvas");
+            return false;
+        }
+
+        SKBitmap? transformed = null;
+        LayerBitmapOverride? replacement = null;
+        if (pendingLayer is not null)
+        {
+            transformed = RasterizeLayerTransform(pendingLayer, out var offset, out var failure);
+            if (failure == LayerTransformFailure.Allocation)
+            {
+                // The commit may still succeed and uncover something. Asking is the safe answer.
+                FileLogger.Log("Transparency check: could not rasterize the pending transform, assuming transparency");
+                return true;
+            }
+            // TooLarge: the commit is refused and the layer saved as it is, which Flatten draws.
+            if (transformed is not null)
+                replacement = new LayerBitmapOverride(pendingLayer, transformed, offset);
+        }
+
+        try
+        {
+            using var flattened = layers.Flatten(replacement);
+            return flattened is not null && LogTransparency(flattened, BitmapTransparency.HasTransparentPixels(flattened));
+        }
+        finally
+        {
+            transformed?.Dispose();
+        }
+
+        static bool LogTransparency(SKBitmap bitmap, bool hasTransparency)
+        {
+            FileLogger.Log($"Transparency check on {bitmap.Width}x{bitmap.Height}: {hasTransparency}");
+            return hasTransparency;
+        }
+    }
+
+    /// <summary>
+    /// The bitmap <see cref="SaveImage"/> writes: a fresh flatten of the layers in layer mode
+    /// (<paramref name="owned"/> is true and the caller disposes it), otherwise the working bitmap.
+    /// </summary>
+    /// <param name="owned">Whether the caller must dispose the returned bitmap.</param>
+    private SKBitmap? GetBitmapToSave(out bool owned)
+    {
+        if (_isLayerMode && _layers is { Count: > 0 } layers)
+        {
+            FileLogger.Log("Layer mode active, flattening layers...");
+            owned = true;
+            return layers.Flatten();
+        }
+
+        owned = false;
+        return _workingBitmap;
+    }
+
+    /// <summary>The open Move/Transform as the canvas previews it, or null when none is pending.</summary>
+    private LayerRenderOverride? PendingLayerTransformPreview =>
+        LayerTransformTool.IsActive && LayerTransformTool.IsArmed && LayerTransformTool.HasTransform
+        && LayerTransformTool.Layer is { } layer
+            ? new LayerRenderOverride(layer, LayerTransformTool.Matrix)
+            : null;
+
+    /// <summary>
+    /// An Rgba8888 copy of <paramref name="source"/> drawn over <paramref name="fill"/>, leaving the
+    /// original untouched. The same pixels as <see cref="FillBehind"/> on a copy, in one pass.
+    /// Throws when the allocation fails: SkiaSharp hands back an empty bitmap instead of throwing.
+    /// </summary>
+    private static SKBitmap CopyOntoFill(SKBitmap source, SKColor fill)
+    {
+        var copy = new SKBitmap(source.Width, source.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
+        if (copy.IsEmpty || copy.Width != source.Width || copy.Height != source.Height)
+        {
+            copy.Dispose();
+            throw new InvalidOperationException($"Could not allocate a {source.Width}x{source.Height} bitmap to fill.");
+        }
+
+        using var canvas = new SKCanvas(copy);
+        canvas.Clear(OpaqueFill(fill));
+        canvas.DrawBitmap(source, 0, 0);
+        return copy;
+    }
+
+    /// <summary>
+    /// Paints <paramref name="fill"/> behind <paramref name="bitmap"/> in place: transparent pixels
+    /// take the fill, partly transparent ones blend into it.
+    /// </summary>
+    private static void FillBehind(SKBitmap bitmap, SKColor fill)
+    {
+        using var canvas = new SKCanvas(bitmap);
+        canvas.DrawColor(OpaqueFill(fill), SKBlendMode.DstOver);
+    }
+
+    /// <summary>
+    /// The fill made opaque: a translucent one would leave exactly the transparency it is meant
+    /// to remove.
+    /// </summary>
+    private static SKColor OpaqueFill(SKColor fill) => fill.WithAlpha(byte.MaxValue);
 
     /// <summary>
     /// Renders the current image with zoom and pan support.
@@ -1267,11 +1399,7 @@ public partial class ImageEditorCore : IDisposable
             }
             else if (_isLayerMode && _layers != null)
             {
-                var preview = LayerTransformTool.IsActive && LayerTransformTool.IsArmed && LayerTransformTool.HasTransform
-                    && LayerTransformTool.Layer is { } previewLayer
-                    ? new LayerRenderOverride(previewLayer, LayerTransformTool.Matrix)
-                    : (LayerRenderOverride?)null;
-                LayerCompositor.CompositeToCanvas(canvas, _layers, imageRect, preview);
+                LayerCompositor.CompositeToCanvas(canvas, _layers, imageRect, PendingLayerTransformPreview);
             }
             else
             {
