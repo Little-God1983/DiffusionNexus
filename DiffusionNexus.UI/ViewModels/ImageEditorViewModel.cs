@@ -1034,17 +1034,21 @@ public partial class ImageEditorViewModel : ObservableObject
         var fileName = Path.GetFileNameWithoutExtension(CurrentImagePath);
         var suggestedName = $"{fileName}_export{extension}";
 
-        var exportPath = await ShowSaveFileDialogFunc("Export Image", suggestedName, $"*{extension}");
-        if (string.IsNullOrEmpty(exportPath)) return;
-
-        exportPath = EnsureExtension(exportPath, extension);
-
         try
         {
-            var saved = await WriteImageAsync(exportPath);
-            if (saved is null) return;
+            // The export keeps the original's format (EnsureExtension below), so a JPEG original
+            // is known to become a JPEG before the picker opens.
+            var (cancelled, fill) = IsJpegTarget(CurrentImagePath)
+                ? await AskJpegFillAsync($"JPEG export of {Path.GetFileName(CurrentImagePath)}")
+                : default;
+            if (cancelled) return;
 
-            if (saved.Value)
+            var exportPath = await ShowSaveFileDialogFunc("Export Image", suggestedName, $"*{extension}");
+            if (string.IsNullOrEmpty(exportPath)) return;
+
+            exportPath = EnsureExtension(exportPath, extension);
+
+            if (SaveImageFunc(exportPath, fill))
                 OnExportCompleted(exportPath);
             else
                 StatusMessage = "Failed to export image.";
@@ -1087,17 +1091,17 @@ public partial class ImageEditorViewModel : ObservableObject
         var fileName = Path.GetFileNameWithoutExtension(CurrentImagePath);
         var suggestedName = $"{fileName}_export.jpg";
 
-        var exportPath = await ShowSaveFileDialogFunc("Export as JPEG", suggestedName, "*.jpg");
-        if (string.IsNullOrEmpty(exportPath)) return;
-
-        exportPath = EnsureExtension(exportPath, ".jpg", ".jpeg");
-
         try
         {
-            var saved = await WriteImageAsync(exportPath);
-            if (saved is null) return;
+            var (cancelled, fill) = await AskJpegFillAsync($"JPEG export of {Path.GetFileName(CurrentImagePath)}");
+            if (cancelled) return;
 
-            if (saved.Value)
+            var exportPath = await ShowSaveFileDialogFunc("Export as JPEG", suggestedName, "*.jpg");
+            if (string.IsNullOrEmpty(exportPath)) return;
+
+            exportPath = EnsureExtension(exportPath, ".jpg", ".jpeg");
+
+            if (SaveImageFunc(exportPath, fill))
                 OnExportCompleted(exportPath);
             else
                 StatusMessage = "Failed to export JPEG.";
@@ -1134,9 +1138,10 @@ public partial class ImageEditorViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Writes the flattened image to <paramref name="path"/> for a user-initiated save or export.
-    /// JPEG cannot store transparency and its encoder turns transparent areas black (#584), so a
-    /// JPEG write of an image with transparent areas first asks what should fill them.
+    /// Writes the flattened image to <paramref name="path"/> for Save or Save as New, asking first
+    /// what should fill transparent areas when the file is a JPEG (<see cref="AskJpegFillAsync"/>).
+    /// Their own dialog comes first: Save as New's is where Layered TIFF, which keeps transparency,
+    /// can still be picked, so the format is only known once it closes.
     /// </summary>
     /// <param name="path">The file to write; its extension decides the format.</param>
     /// <returns>Whether the write succeeded, or null when the user cancelled at the prompt.</returns>
@@ -1144,26 +1149,44 @@ public partial class ImageEditorViewModel : ObservableObject
     {
         if (SaveImageFunc is null) return false;
 
-        // The cheap checks first: the transparency check may flatten the whole canvas.
-        TransparencyFill? fill = null;
-        if (IsJpegTarget(path) && JpegTransparencyPromptRequested is not null && HasTransparencyFunc?.Invoke() == true)
-        {
-            _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
-                $"JPEG save of {Path.GetFileName(path)}: the image has transparent areas, asking what fills them");
-
-            fill = await JpegTransparencyPromptRequested.Invoke();
-            if (fill is null)
-            {
-                _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
-                    $"JPEG save of {Path.GetFileName(path)} cancelled at the transparency prompt");
-                return null;
-            }
-
-            _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
-                $"JPEG save of {Path.GetFileName(path)}: filling transparent areas with {fill}");
-        }
+        var (cancelled, fill) = IsJpegTarget(path)
+            ? await AskJpegFillAsync($"JPEG save of {Path.GetFileName(path)}")
+            : default;
+        if (cancelled) return null;
 
         return SaveImageFunc(path, fill);
+    }
+
+    /// <summary>
+    /// Before a JPEG is written: JPEG cannot store transparency and its encoder turns transparent
+    /// areas black (#584), so when the image has any, asks what should fill them. Exports ask this
+    /// before their folder picker, since it is about what gets saved, not where.
+    /// </summary>
+    /// <param name="write">What is being written, for the log ("JPEG export of photo.jpg").</param>
+    /// <returns>
+    /// Cancelled when the user cancelled; otherwise the chosen fill, or null when nothing needs
+    /// filling or nobody answers the prompt.
+    /// </returns>
+    private async Task<(bool Cancelled, TransparencyFill? Fill)> AskJpegFillAsync(string write)
+    {
+        // The cheap check first: the transparency check may flatten the whole canvas.
+        if (JpegTransparencyPromptRequested is null || HasTransparencyFunc?.Invoke() != true)
+            return (false, null);
+
+        _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+            $"{write}: the image has transparent areas, asking what fills them");
+
+        var fill = await JpegTransparencyPromptRequested.Invoke();
+        if (fill is null)
+        {
+            _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+                $"{write} cancelled at the transparency prompt");
+            return (true, null);
+        }
+
+        _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+            $"{write}: filling transparent areas with {fill}");
+        return (false, fill);
     }
 
     /// <summary>

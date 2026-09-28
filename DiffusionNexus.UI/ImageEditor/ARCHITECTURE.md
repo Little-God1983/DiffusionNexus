@@ -125,8 +125,11 @@ A JPEG save (Export as JPEG, or Export / Save As / Save of a .jpg) first asks
 `ImageEditorViewModel` raises `JpegTransparencyPromptRequested` (Fill with white / black /
 Cancel) and passes the chosen `TransparencyFill` through `SaveImageFunc(path, fill)` to
 `SaveImage(..., fillColor)`, which draws the image over that colour before encoding. Left
-alone, the JPEG encoder turns transparent areas black (#584). The check commits nothing (it
-runs before the user decides to save). An open Move/Transform is rasterized by the same code
+alone, the JPEG encoder turns transparent areas black (#584). The question is about what gets
+saved, not where, so Export as JPEG and Export ask it before their folder picker. Save as New
+asks after its dialog, where Layered TIFF (which keeps transparency) can still be picked, and Save
+after its overwrite confirmation. The check commits nothing (it runs before the user decides to
+save). An open Move/Transform is rasterized by the same code
 its commit uses (`RasterizeLayerTransform`) and drawn in place of the layer, or left out when
 the commit would be refused, so the check sees exactly what the save writes. One opaque layer
 over the whole canvas answers without a flatten (`LayerStack.HasOpaqueCoveringLayer`).

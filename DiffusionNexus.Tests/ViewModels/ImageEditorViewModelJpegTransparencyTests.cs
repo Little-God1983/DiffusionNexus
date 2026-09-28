@@ -23,6 +23,9 @@ public class ImageEditorViewModelJpegTransparencyTests
         public List<Write> Writes { get; } = [];
         public int Prompts { get; set; }
         public int TransparencyChecks { get; set; }
+
+        /// <summary>The dialogs in the order they opened: "warning", "picker", "save as".</summary>
+        public List<string> Dialogs { get; } = [];
     }
 
     /// <param name="originalPath">The image open in the editor.</param>
@@ -43,7 +46,11 @@ public class ImageEditorViewModelJpegTransparencyTests
         var harness = new Harness { Sut = sut };
 
         sut.LoadImage(originalPath);
-        sut.ShowSaveFileDialogFunc = (_, _, _) => Task.FromResult<string?>(chosenPath);
+        sut.ShowSaveFileDialogFunc = (_, _, _) =>
+        {
+            harness.Dialogs.Add("picker");
+            return Task.FromResult<string?>(chosenPath);
+        };
         sut.SaveImageFunc = (path, fill) => { harness.Writes.Add(new Write(path, fill)); return true; };
         sut.HasTransparencyFunc = () =>
         {
@@ -55,11 +62,16 @@ public class ImageEditorViewModelJpegTransparencyTests
             sut.JpegTransparencyPromptRequested += () =>
             {
                 harness.Prompts++;
+                harness.Dialogs.Add("warning");
                 return Task.FromResult(answer);
             };
         }
         sut.SaveOverwriteConfirmRequested += () => Task.FromResult(overwriteConfirmed);
-        sut.SaveAsDialogRequested += () => Task.FromResult(SaveAsResult.Success("copy", ImageRatingStatus.Unrated));
+        sut.SaveAsDialogRequested += () =>
+        {
+            harness.Dialogs.Add("save as");
+            return Task.FromResult(SaveAsResult.Success("copy", ImageRatingStatus.Unrated));
+        };
         return harness;
     }
 
@@ -86,6 +98,61 @@ public class ImageEditorViewModelJpegTransparencyTests
         h.Prompts.Should().Be(1);
         h.Writes.Should().BeEmpty();
         h.Sut.StatusMessage.Should().BeNull("a cancel is not a failed export");
+    }
+
+    // ── Order: the warning is about what gets saved, so it comes before choosing where ──
+
+    private static Task Export(ImageEditorViewModel sut, bool asJpeg)
+        => asJpeg ? sut.ExportAsJpegCommand.ExecuteAsync(null) : sut.ExportCommand.ExecuteAsync(null);
+
+    [Theory]
+    [InlineData(true, @"C:\in\original.png", @"C:\out\photo.jpg")]
+    [InlineData(false, @"C:\in\original.jpg", @"C:\out\copy.jpg")]
+    public async Task WhenExportingATransparentImageAsJpegThenTheWarningComesBeforeTheFolderPicker(
+        bool asJpeg, string original, string chosen)
+    {
+        var h = CreateHarness(original, chosen, hasTransparency: true, answer: TransparencyFill.White);
+
+        await Export(h.Sut, asJpeg);
+
+        h.Dialogs.Should().Equal("warning", "picker");
+        h.Writes.Should().Equal(new Write(chosen, TransparencyFill.White));
+    }
+
+    [Theory]
+    [InlineData(true, @"C:\in\original.png")]
+    [InlineData(false, @"C:\in\original.jpg")]
+    public async Task WhenTheWarningIsCancelledThenTheFolderPickerNeverOpens(bool asJpeg, string original)
+    {
+        var h = CreateHarness(original, @"C:\out\photo.jpg", hasTransparency: true, answer: null);
+
+        await Export(h.Sut, asJpeg);
+
+        h.Dialogs.Should().Equal("warning");
+        h.Writes.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task WhenTheFolderPickerIsCancelledAfterTheWarningThenNothingIsWritten()
+    {
+        var h = CreateHarness(@"C:\in\original.png", chosenPath: string.Empty, hasTransparency: true, answer: TransparencyFill.White);
+
+        await h.Sut.ExportAsJpegCommand.ExecuteAsync(null);
+
+        h.Dialogs.Should().Equal("warning", "picker");
+        h.Writes.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task WhenSavingAsNewThenTheWarningComesAfterTheSaveAsDialog()
+    {
+        // The Save As dialog is where the user can still pick Layered TIFF, which keeps the
+        // transparency. Until then it is not known that a JPEG will be written at all.
+        var h = CreateHarness(@"C:\in\original.jpg", chosenPath: string.Empty, hasTransparency: true, answer: TransparencyFill.White);
+
+        await h.Sut.SaveAsNewCommand.ExecuteAsync(null);
+
+        h.Dialogs.Should().Equal("save as", "warning");
     }
 
     [Fact]
