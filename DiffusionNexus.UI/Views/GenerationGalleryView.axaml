@@ -172,6 +172,37 @@
       <Setter Property="BorderBrush" Value="#c9a6ff"/>
       <Setter Property="TextElement.Foreground" Value="#1a1030"/>
     </Style>
+    <!-- Show: All | Images | Videos segmented filter (#583). Same look as the
+         SFW/NSFW rating segments in ImageMetadataPanelView: inactive sides
+         grayed out, the active side carries the accent. -->
+    <Style Selector="Button.mediaSeg">
+      <Setter Property="Background" Value="#26262a"/>
+      <Setter Property="Foreground" Value="#888"/>
+      <Setter Property="BorderBrush" Value="#3a3a3a"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="0"/>
+      <Setter Property="Padding" Value="12,4"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <Style Selector="Button.mediaSeg:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#333338"/>
+      <Setter Property="Foreground" Value="#bbb"/>
+    </Style>
+    <Style Selector="Button.mediaSeg.first">
+      <Setter Property="CornerRadius" Value="4,0,0,4"/>
+    </Style>
+    <Style Selector="Button.mediaSeg.last">
+      <Setter Property="CornerRadius" Value="0,4,4,0"/>
+    </Style>
+    <Style Selector="Button.mediaSeg.active">
+      <Setter Property="Background" Value="#3d2f5c"/>
+      <Setter Property="Foreground" Value="#e3d4ff"/>
+      <Setter Property="BorderBrush" Value="#7b5fb0"/>
+    </Style>
+    <Style Selector="Button.mediaSeg.active:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#3d2f5c"/>
+      <Setter Property="Foreground" Value="#e3d4ff"/>
+    </Style>
     <Style Selector="Border#TagStripHost">
       <Setter Property="Opacity" Value="0"/>
     </Style>
@@ -222,6 +253,21 @@
                   IsChecked="{Binding ShowFavoritesOnly}"
                   Foreground="#FFD700"
                   VerticalAlignment="Center" Margin="0,4,16,4"/>
+
+        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="0,4,16,4">
+          <TextBlock Text="Show" VerticalAlignment="Center"/>
+          <StackPanel Orientation="Horizontal">
+            <Button Classes="mediaSeg first" Classes.active="{Binding IsMediaTypeFilterAll}"
+                    Content="All"
+                    Command="{Binding SetMediaTypeFilterCommand}" CommandParameter="All"/>
+            <Button Classes="mediaSeg" Classes.active="{Binding IsMediaTypeFilterImages}"
+                    Content="🖼 Images" Margin="-1,0,0,0"
+                    Command="{Binding SetMediaTypeFilterCommand}" CommandParameter="Images"/>
+            <Button Classes="mediaSeg last" Classes.active="{Binding IsMediaTypeFilterVideos}"
+                    Content="🎬 Videos" Margin="-1,0,0,0"
+                    Command="{Binding SetMediaTypeFilterCommand}" CommandParameter="Videos"/>
+          </StackPanel>
+        </StackPanel>
 
         <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="0,4,16,4">
           <TextBlock Text="Layout" VerticalAlignment="Center"/>
@@ -453,13 +499,21 @@
 
               <StackPanel Spacing="8">
                 <TextBlock Text="{Binding TagCloudHeader}" FontSize="11" Foreground="#6f6f6f" FontWeight="SemiBold"/>
+                <!-- Show = Videos: no chip can match a video, so the filter
+                     box and cloud are hidden (active chips stay removable in
+                     the "Filtered by:" strip) and this note says why. -->
+                <TextBlock IsVisible="{Binding ShowVideosNotTagIndexedNote}"
+                           Text="Videos are not tag-indexed, so no tags apply while Show is set to Videos. Set Show to 'All' or 'Images' to filter by tag."
+                           TextWrapping="Wrap" FontSize="12" Foreground="#ffa726"/>
                 <!-- Display-only substring filter over the chips below — a
                      fully indexed gallery fills the 200-chip budget with
                      booru tags, far too many to scan by eye. -->
                 <TextBox Watermark="Filter tags…"
+                         IsVisible="{Binding !ShowVideosNotTagIndexedNote}"
                          Text="{Binding TagCloudSearchText, Mode=TwoWay}"
                          FontSize="12"/>
-                <ItemsControl ItemsSource="{Binding TagCloud}">
+                <ItemsControl ItemsSource="{Binding TagCloud}"
+                              IsVisible="{Binding !ShowVideosNotTagIndexedNote}">
                   <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
                   </ItemsControl.ItemsPanel>
