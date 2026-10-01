@@ -258,7 +258,6 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     [NotifyPropertyChangedFor(nameof(IsMediaTypeFilterImages))]
     [NotifyPropertyChangedFor(nameof(IsMediaTypeFilterVideos))]
     [NotifyPropertyChangedFor(nameof(ShowVideosNotTagIndexedNote))]
-    [NotifyPropertyChangedFor(nameof(FilteredMatchCountText))]
     private GalleryMediaTypeFilter _mediaTypeFilter = GalleryMediaTypeFilter.All;
 
     public bool IsMediaTypeFilterAll => MediaTypeFilter == GalleryMediaTypeFilter.All;
@@ -314,7 +313,6 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     private NsfwFilterMode _nsfwFilter = NsfwFilterMode.ShowAll;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(FilteredMatchCountText))]
     private int _filteredMatchCount;
 
     private string _selectedLayoutMode = "Showcase";
@@ -431,18 +429,27 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     {
         get
         {
-            static string Count(int n, string noun) => n == 1 ? $"1 {noun}" : $"{n:N0} {noun}s";
-
             var videos = _filteredVideoCount;
             var images = FilteredMatchCount - videos;
-            if (images > 0 && videos > 0)
-                return $"{Count(images, "image")} and {Count(videos, "video")} match";
-
-            var (n, noun) = videos > 0 || (images == 0 && MediaTypeFilter == GalleryMediaTypeFilter.Videos)
-                ? (videos, "video")
-                : (images, "image");
-            return $"{Count(n, noun)} {(n == 1 ? "matches" : "match")}";
+            var subject = DescribeMediaCount(images, videos);
+            return $"{subject} {(images + videos == 1 ? "matches" : "match")}";
         }
+    }
+
+    /// <summary>
+    /// "2 images and 1 video", "1 video", "0 images" ("0 videos" under
+    /// Show = Videos) — the one wording for a mixed count, shared by the
+    /// footer and the empty-state messages.
+    /// </summary>
+    private string DescribeMediaCount(int images, int videos)
+    {
+        static string Count(int n, string noun) => n == 1 ? $"1 {noun}" : $"{n:N0} {noun}s";
+
+        if (images > 0 && videos > 0)
+            return $"{Count(images, "image")} and {Count(videos, "video")}";
+        return videos > 0 || (images == 0 && MediaTypeFilter == GalleryMediaTypeFilter.Videos)
+            ? Count(videos, "video")
+            : Count(images, "image");
     }
 
     /// <summary>How many of <see cref="FilteredMatchCount"/> are videos.</summary>
@@ -592,6 +599,20 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
     partial void OnMediaTypeFilterChanged(GalleryMediaTypeFilter value)
     {
+        // Deselect the kind the switch hides. A selection the user can no
+        // longer see would survive Ctrl/Shift-clicks on the visible tiles and
+        // come back selected — and deletable — on switching back, and this
+        // toggle is made to flip back and forth. Scoped to the Show switch
+        // on purpose: a search or date change keeps its selection, as before.
+        if (value != GalleryMediaTypeFilter.All)
+        {
+            foreach (var item in _allMediaItems)
+            {
+                if (item.IsSelected && item.IsVideo != (value == GalleryMediaTypeFilter.Videos))
+                    item.IsSelected = false;
+            }
+        }
+
         ApplySortingAndGrouping();
     }
 
@@ -605,7 +626,9 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     {
         if (item is null) return;
 
-        if (isShiftPressed && _lastClickedItem is not null)
+        // A Shift+click whose anchor a filter has hidden has no range to
+        // select, so it falls through and acts as a click.
+        if (isShiftPressed && _lastClickedItem is not null && MediaItems.Contains(_lastClickedItem))
         {
             SelectRange(_lastClickedItem, item);
         }
@@ -1480,23 +1503,35 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         // "clear filters or build the tag index" (the filter branch below)
         // sends them chasing filters over a gallery that has no folders at
         // all — the only useful next step is Settings.
+        // Only the folder messages get the Settings hint; every other branch
+        // names the filter that empties the grid.
+        _emptyStateIsAboutFolders = false;
+
         if (_enabledSourceCount == 0)
         {
             NoMediaMessage = "No generation gallery folders are enabled. Configure Generation Galleries in Settings to get started.";
+            _emptyStateIsAboutFolders = true;
         }
         else if (_allMediaItems.Count == 0 || MediaItems.Count > 0)
         {
             // Nothing on disk at all (no filter is to blame, whichever is
             // set), or tiles are showing and the message is not on screen.
             NoMediaMessage = NoMediaInFoldersMessage;
+            _emptyStateIsAboutFolders = true;
         }
         else if (_lastTagFilterFailed)
         {
             // The pass failed closed. StatusMessage reports it inside the
             // drawer only, so with the drawer closed this is the one place the
             // user learns why the grid is empty.
-            NoMediaMessage = "The tag index could not be queried, so the tag and NSFW filters are hiding everything. " +
-                             "Clear those filters to show the gallery again.";
+            var failedFilters = new List<string>();
+            if (ActiveTagFilters.Count > 0)
+                failedFilters.Add("the tag filter");
+            if (NsfwFilter != NsfwFilterMode.ShowAll)
+                failedFilters.Add("the NSFW mode");
+            var one = failedFilters.Count == 1;
+            NoMediaMessage = $"The tag index could not be queried, so {JoinCulprits(failedFilters)} {(one ? "is" : "are")} hiding everything. " +
+                             $"Clear {(one ? "it" : "them")} to show the gallery again.";
         }
         else if (MediaTypeFilter != GalleryMediaTypeFilter.All && !GalleryHoldsShowFilterKind())
         {
@@ -1524,13 +1559,19 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             // never removes a video, so the Show branch below explains it.)
             var culprits = JoinCulprits(GetHidingFilterCulprits());
             var dateIsCulprit = !string.Equals(SelectedDateFilter, "All Time", StringComparison.OrdinalIgnoreCase);
+            var hiddenVideos = _videosHiddenByOtherFilters;
+            var hidden = DescribeMediaCount(_tagMatchesHiddenByOtherFilters - hiddenVideos, hiddenVideos);
             NoMediaMessage = _tagMatchesHiddenByOtherFilters > 0
                 ? ActiveTagFilters.Count > 0
-                    ? $"{_tagMatchesHiddenByOtherFilters:N0} image(s) match your tag filter, but all of them are hidden by {culprits}. " +
+                    ? $"{hidden} match your tag filter, but all of them are hidden by {culprits}. " +
                       (dateIsCulprit ? "Set the date filter to 'All Time' to see them." : "Adjust those filters to see them.")
-                    : $"All {_tagMatchesHiddenByOtherFilters:N0} image(s) are hidden by your current filters — {culprits}. " +
+                    : $"All {hidden} are hidden by your current filters — {culprits}. " +
                       "Adjust them to see the gallery."
-                : "No images match your current filters. Try clearing the filters, or build the tag index if you haven't done that yet.";
+                // Suggest building the index only when there is none: after
+                // deleting the last tile a chip matched, the index exists.
+                : IndexedImageCount > 0
+                    ? "No images match your current filters. Try clearing the filters."
+                    : "No images match your current filters. Try clearing the filters, or build the tag index if you haven't done that yet.";
         }
         else if (MediaTypeFilter != GalleryMediaTypeFilter.All)
         {
@@ -1542,7 +1583,13 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         }
         else
         {
-            NoMediaMessage = NoMediaInFoldersMessage;
+            // Show = All and no drawer filter, yet the grid is empty over a
+            // gallery that has media: the date window, search box or
+            // favorites toggle hides all of it. The folders are fine.
+            var videos = _allMediaItems.Count(i => i.IsVideo);
+            var total = _allMediaItems.Count;
+            NoMediaMessage = $"{DescribeMediaCount(total - videos, videos)} {(total == 1 ? "is" : "are")} hidden by " +
+                             $"{JoinCulprits(GetDateSearchFavoritesCulprits())}. Widen those filters to see them.";
         }
 
         OnPropertyChanged(nameof(ShowConfigureFoldersHint));
@@ -1557,9 +1604,10 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     /// hold no media (that IS the fix), otherwise only when no filter is
     /// responsible for the grid being empty.
     /// </summary>
-    public bool ShowConfigureFoldersHint =>
-        _enabledSourceCount == 0 || _allMediaItems.Count == 0
-        || (!HasActiveTagFilters && MediaTypeFilter == GalleryMediaTypeFilter.All);
+    public bool ShowConfigureFoldersHint => _emptyStateIsAboutFolders;
+
+    /// <summary>Set by <see cref="UpdateNoMediaMessage"/> for the folder messages.</summary>
+    private bool _emptyStateIsAboutFolders = true;
 
     /// <summary>
     /// Waits for any in-progress sort/filter/group operation to complete.
@@ -1663,7 +1711,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         }
 
         // Run sorting, filtering, and group creation on a background thread
-        var (sortedList, groups, hiddenTagMatches, scopedCounts, videoCount) = await Task.Run(() =>
+        var (sortedList, groups, hiddenTagMatches, hiddenVideos, scopedCounts, videoCount) = await Task.Run(() =>
         {
             IEnumerable<GenerationGalleryMediaItemViewModel> filtered = allItems;
 
@@ -1761,15 +1809,20 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             // are never tag-indexed, so they are not "images and tags" this
             // warning is about. Show = Videos does count — it hides images.
             var tagMatchesHiddenByOtherFilters = 0;
+            var videosHiddenByOtherFilters = 0;
+            var resultVideoCount = resultList.Count(item => item.IsVideo);
             if (!tagFilterFailed)
             {
                 var baselineItems = mediaTypeFilter == GalleryMediaTypeFilter.Images
                     ? allItems.Where(item => item.IsImage)
                     : allItems;
-                var baseline = tagMatchPaths is null
-                    ? baselineItems.Count()
-                    : baselineItems.Count(item => tagMatchPaths.Contains(Path.GetFullPath(item.FilePath)));
-                tagMatchesHiddenByOtherFilters = Math.Max(0, baseline - resultList.Count);
+                if (tagMatchPaths is not null)
+                    baselineItems = baselineItems.Where(item => tagMatchPaths.Contains(Path.GetFullPath(item.FilePath)));
+                var baseline = baselineItems.ToList();
+                tagMatchesHiddenByOtherFilters = Math.Max(0, baseline.Count - resultList.Count);
+                // The video share, so the empty state can say "1 image and
+                // 1 video" like the footer instead of calling them all images.
+                videosHiddenByOtherFilters = Math.Max(0, baseline.Count(item => item.IsVideo) - resultVideoCount);
             }
 
             // Scoped chip counts: how many toolbar-scoped items — further
@@ -1819,8 +1872,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
                 }).ToList();
             }
 
-            return (resultList, resultGroups, tagMatchesHiddenByOtherFilters,
-                hasHydratedTagData ? scopedTagCounts : null, resultList.Count(item => item.IsVideo));
+            return (resultList, resultGroups, tagMatchesHiddenByOtherFilters, videosHiddenByOtherFilters,
+                hasHydratedTagData ? scopedTagCounts : null, resultVideoCount);
         });
 
         // A newer pass started while this one was querying/sorting — its
@@ -1828,13 +1881,16 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         if (generation != Volatile.Read(ref _sortGeneration))
             return;
 
+        // Raised once here, when the new counts land — not on the count's
+        // own change (a second refresh, and none for the same total with a
+        // different mix) nor on the Show switch (the old counts under the
+        // new wording).
         _filteredVideoCount = videoCount;
         FilteredMatchCount = sortedList.Count;
-        // Same total, different mix (Images -> Videos with equal counts):
-        // the count's own change notification would not fire.
         OnPropertyChanged(nameof(FilteredMatchCountText));
         _lastTagFilterFailed = tagFilterFailed;
         _tagMatchesHiddenByOtherFilters = hiddenTagMatches;
+        _videosHiddenByOtherFilters = hiddenVideos;
         OnPropertyChanged(nameof(HasHiddenTagMatches));
         OnPropertyChanged(nameof(HiddenTagMatchesText));
         OnPropertyChanged(nameof(CanRevealHiddenMatches));
@@ -1856,6 +1912,9 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     /// message.
     /// </summary>
     private int _tagMatchesHiddenByOtherFilters;
+
+    /// <summary>How many of <see cref="_tagMatchesHiddenByOtherFilters"/> are videos.</summary>
+    private int _videosHiddenByOtherFilters;
 
     /// <summary>
     /// True when the last pass emptied the grid because the tag-index query
@@ -1982,20 +2041,6 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         List<GenerationGalleryMediaItemViewModel> sortedList,
         List<GenerationGalleryGroupViewModel>? groups)
     {
-        // Deselect whatever this pass leaves out. A selection the user can no
-        // longer see would otherwise survive Ctrl/Shift-clicks on the visible
-        // tiles and come back selected — and deletable — when the filter
-        // changes back.
-        if (sortedList.Count < _allMediaItems.Count)
-        {
-            var kept = new HashSet<GenerationGalleryMediaItemViewModel>(sortedList, ReferenceEqualityComparer.Instance);
-            foreach (var item in _allMediaItems)
-            {
-                if (item.IsSelected && !kept.Contains(item))
-                    item.IsSelected = false;
-            }
-        }
-
         MediaItems.ReplaceAll(sortedList);
 
         // Only materialise the first page in the UI — the rest loads on scroll

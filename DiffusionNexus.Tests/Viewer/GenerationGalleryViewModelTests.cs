@@ -722,6 +722,179 @@ public class GenerationGalleryViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task ShiftClick_WithAnAnchorTheFilterHid_SelectsTheClickedTile()
+    {
+        // Click an image, switch to Videos, Shift+click a video: the anchor
+        // is no longer in the grid, so SelectRange had no start and selected
+        // nothing. A Shift+click without a visible anchor acts as a click.
+        var galleryPath = CreateTempDirectory();
+        File.WriteAllText(Path.Combine(galleryPath, "a.png"), "test");
+        var video = Path.Combine(galleryPath, "clip.mp4");
+        File.WriteAllText(video, "test");
+
+        var viewModel = CreateGalleryViewModel(galleryPath);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+        viewModel.SelectWithModifiers(viewModel.MediaItems.Single(i => i.IsImage), isShiftPressed: false, isCtrlPressed: false);
+
+        viewModel.SetMediaTypeFilterCommand.Execute(nameof(GalleryMediaTypeFilter.Videos));
+        await viewModel.WaitForSortingAsync();
+        viewModel.SelectWithModifiers(viewModel.MediaItems.Single(), isShiftPressed: true, isCtrlPressed: false);
+
+        viewModel.SelectionCount.Should().Be(1);
+        viewModel.MediaItems.Single().IsSelected.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task SearchBox_KeepsTheSelectionOfItemsItHidesForAMoment()
+    {
+        // As on develop: narrowing with the search box and clearing it again
+        // must not drop a selection. Only the Show switch deselects the kind
+        // it hides.
+        var galleryPath = CreateTempDirectory();
+        File.WriteAllText(Path.Combine(galleryPath, "alpha.png"), "test");
+        File.WriteAllText(Path.Combine(galleryPath, "beta.png"), "test");
+
+        var viewModel = CreateGalleryViewModel(galleryPath);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+        viewModel.SelectAllCommand.Execute(null);
+
+        viewModel.SearchText = "alpha";
+        await viewModel.WaitForSortingAsync();
+        viewModel.SearchText = string.Empty;
+        await viewModel.WaitForSortingAsync();
+
+        viewModel.MediaItems.Should().OnlyContain(i => i.IsSelected);
+        viewModel.SelectionCount.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task ShowAll_DateWindowHidingEverything_NamesTheDateFilterNotSettings()
+    {
+        // Already wrong on develop, but this PR also reaches it by deleting
+        // the last visible tile: the folders are fine, the date window hides
+        // every file, and the empty state sent the user to Settings.
+        var galleryPath = CreateTempDirectory();
+        var oldImage = Path.Combine(galleryPath, "old.png");
+        var oldVideo = Path.Combine(galleryPath, "old.mp4");
+        File.WriteAllText(oldImage, "test");
+        File.WriteAllText(oldVideo, "test");
+        File.SetCreationTimeUtc(oldImage, DateTime.UtcNow.AddYears(-1));
+        File.SetCreationTimeUtc(oldVideo, DateTime.UtcNow.AddYears(-1));
+
+        var viewModel = CreateGalleryViewModel(galleryPath);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+
+        viewModel.HasNoMedia.Should().BeTrue();
+        viewModel.NoMediaMessage.Should().Be(
+            "1 image and 1 video are hidden by the date filter ('Last 3 Months'). Widen those filters to see them.");
+        viewModel.ShowConfigureFoldersHint.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task DrawerEmptyState_CountsVideosAsVideos()
+    {
+        // Show = All, Hide NSFW, and a date window that hides an image and a
+        // video: the message must not call the video an image.
+        var galleryPath = CreateTempDirectory();
+        var oldImage = Path.Combine(galleryPath, "old.png");
+        var oldVideo = Path.Combine(galleryPath, "old.mp4");
+        File.WriteAllText(oldImage, "test");
+        File.WriteAllText(oldVideo, "test");
+        File.SetCreationTimeUtc(oldImage, DateTime.UtcNow.AddYears(-1));
+        File.SetCreationTimeUtc(oldVideo, DateTime.UtcNow.AddYears(-1));
+
+        var mockTagIndex = new Mock<ITagIndexService>();
+        mockTagIndex.Setup(t => t.SearchAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<NsfwFilterMode>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<string>());
+
+        var viewModel = CreateGalleryViewModel(galleryPath, mockTagIndex.Object);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+        viewModel.SetNsfwFilterCommand.Execute(nameof(NsfwFilterMode.HideNsfw));
+        await viewModel.WaitForSortingAsync();
+
+        viewModel.NoMediaMessage.Should().StartWith("All 1 image and 1 video are hidden by your current filters")
+            .And.Contain("the date filter ('Last 3 Months') and the NSFW mode");
+    }
+
+    [Fact]
+    public async Task FailedTagQuery_NamesOnlyTheFiltersThatAreOn()
+    {
+        var galleryPath = CreateTempDirectory();
+        File.WriteAllText(Path.Combine(galleryPath, "a.png"), "test");
+
+        var mockTagIndex = new Mock<ITagIndexService>();
+        mockTagIndex.Setup(t => t.SearchAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<NsfwFilterMode>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("index locked"));
+
+        var viewModel = CreateGalleryViewModel(galleryPath, mockTagIndex.Object);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+
+        viewModel.ToggleTagFilterCommand.Execute("dog");
+        await viewModel.WaitForSortingAsync();
+        viewModel.NoMediaMessage.Should().Contain("so the tag filter is hiding everything").And.NotContain("NSFW");
+
+        viewModel.SetNsfwFilterCommand.Execute(nameof(NsfwFilterMode.HideNsfw));
+        await viewModel.WaitForSortingAsync();
+        viewModel.NoMediaMessage.Should().Contain("so the tag filter and the NSFW mode are hiding everything");
+    }
+
+    [Fact]
+    public async Task FilteredMatchCountText_ChangesOncePerPass_AndOnlyToTheNewCounts()
+    {
+        var galleryPath = CreateTempDirectory();
+        File.WriteAllText(Path.Combine(galleryPath, "a.png"), "test");
+        File.WriteAllText(Path.Combine(galleryPath, "clip.mp4"), "test");
+
+        var viewModel = CreateGalleryViewModel(galleryPath);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+
+        var seen = new List<string>();
+        viewModel.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(GenerationGalleryViewModel.FilteredMatchCountText))
+                seen.Add(viewModel.FilteredMatchCountText);
+        };
+
+        viewModel.SetMediaTypeFilterCommand.Execute(nameof(GalleryMediaTypeFilter.Videos));
+        await viewModel.WaitForSortingAsync();
+
+        seen.Should().Equal("1 video matches");
+    }
+
+    [Fact]
+    public async Task DeletingTheLastChipMatch_WithABuiltIndex_DoesNotSayBuildTheIndex()
+    {
+        var galleryPath = CreateTempDirectory();
+        var dog = Path.Combine(galleryPath, "dog.png");
+        File.WriteAllText(dog, "test");
+        File.WriteAllText(Path.Combine(galleryPath, "cat.png"), "test");
+
+        var mockTagIndex = new Mock<ITagIndexService>();
+        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(2);
+        mockTagIndex.Setup(t => t.GetTagsForFilesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, ImageTagLookup>());
+        mockTagIndex.Setup(t => t.SearchAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<NsfwFilterMode>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { dog });
+        mockTagIndex.Setup(t => t.RemoveIndexEntriesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(1);
+
+        var mockDialog = new Mock<IDialogService>();
+        mockDialog.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(true);
+
+        var viewModel = CreateGalleryViewModel(galleryPath, mockTagIndex.Object);
+        viewModel.DialogService = mockDialog.Object;
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+
+        viewModel.ToggleTagFilterCommand.Execute("dog");
+        await viewModel.WaitForSortingAsync();
+        await viewModel.DeleteImageCommand.ExecuteAsync(viewModel.MediaItems.Single());
+
+        viewModel.HasNoMedia.Should().BeTrue();
+        viewModel.NoMediaMessage.Should().Contain("No images match your current filters")
+            .And.NotContain("build the tag index");
+    }
+
+    [Fact]
     public async Task MediaTypeFilter_CountsAsAHidingFilter_AndRevealResetsIt()
     {
         var galleryPath = CreateTempDirectory();
