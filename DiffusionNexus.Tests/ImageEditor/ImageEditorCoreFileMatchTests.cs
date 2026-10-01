@@ -144,11 +144,38 @@ public sealed class ImageEditorCoreFileMatchTests : IDisposable
     public void PendingMove_IsNotInTheFile()
     {
         _sut.LoadImage(_file);
+        _sut.LayerTransformTool.IsActive = true;
         _sut.ArmLayerTransform().Should().Be(LayerTransformEligibility.Ok);
+        _sut.GetUnchangedFilePath().Should().Be(_file, "an open Move without a transform changes nothing");
 
         _sut.LayerTransformTool.Nudge(4, 0);
 
+        _sut.HasPendingOperations.Should().BeTrue();
         _sut.GetUnchangedFilePath().Should().BeNull("a save would commit the open Move first");
+    }
+
+    [Fact]
+    public void SaveOverAnUnknownExtension_DoesNotMatch()
+    {
+        // A save to ".tif" writes PNG bytes under that name, which the tools a hand-off reaches
+        // cannot rely on; LoadLayeredTiff refuses the match for the same reason.
+        var tif = Path.Combine(_tempDir.FullName, "layered.tif");
+        File.WriteAllBytes(tif, _png);
+        _sut.LoadImage(tif).Should().BeTrue("Skia sniffs the PNG bytes");
+        _sut.AddLayer("scratch");
+        _sut.SaveImage(tif).Should().BeTrue();
+
+        _sut.MarkSavedOverFile(tif);
+
+        _sut.MatchesFile.Should().BeFalse();
+    }
+
+    [Fact]
+    public void MatchedFilePath_NamesTheLoadedFile()
+    {
+        _sut.LoadImage(_file);
+
+        _sut.MatchedFilePath.Should().Be(_file);
     }
 
     [Fact]

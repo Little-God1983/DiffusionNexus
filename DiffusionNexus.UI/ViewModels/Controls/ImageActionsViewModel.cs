@@ -18,8 +18,11 @@ namespace DiffusionNexus.UI.ViewModels.Controls;
 /// <see cref="Cleanup"/> that deletes it. <b>Cleanup runs only for the synchronous Add destinations</b>
 /// (the importer copies the file before returning); Send destinations ingest deferred, so they leave
 /// the temp for the OS to reclaim rather than delete it out from under the target.
+/// <para><see cref="KeepInPlace"/> marks files the host still has open (the Image Editor handing over
+/// its unedited original, #586): Add copies them even when the user picked Move, so they do not
+/// vanish from under the host.</para>
 /// </summary>
-public sealed record ImageActionPaths(IReadOnlyList<string> Paths, Action? Cleanup = null)
+public sealed record ImageActionPaths(IReadOnlyList<string> Paths, Action? Cleanup = null, bool KeepInPlace = false)
 {
     public static readonly ImageActionPaths Empty = new([], null);
 }
@@ -52,6 +55,13 @@ public partial class ImageActionsViewModel : ObservableObject
     /// Returns <see cref="ImageActionPaths.Empty"/> when nothing is available.
     /// </summary>
     public Func<Task<ImageActionPaths>>? PathProvider { get; set; }
+
+    /// <summary>
+    /// Asked before a Send to a Workflow acquires any paths: return why the workflow cannot take the
+    /// current images (shown to the user, nothing is sent), or null to go ahead. Lets a host refuse
+    /// without the side effects of <see cref="PathProvider"/>, such as the editor committing tool work.
+    /// </summary>
+    public Func<string, string?>? WorkflowUnavailableReason { get; set; }
 
     /// <summary>
     /// Raised after an Add destination <b>moves</b> (rather than copies) its source files into a
@@ -193,7 +203,7 @@ public partial class ImageActionsViewModel : ObservableObject
             var targetVersion = await ResolveTargetVersionAsync(targetDataset, dialogResult);
             var destinationFolder = targetDataset.GetVersionFolderPath(targetVersion);
 
-            var moveFiles = dialogResult.ImportAction == DatasetImportAction.Move;
+            var moveFiles = ResolveMove(dialogResult.ImportAction, acquired);
             var importer = new DatasetFileImporter(new FileOperations());
             var importResult = await importer.ImportWithDialogAsync(
                 acquired.Paths,
@@ -215,7 +225,7 @@ public partial class ImageActionsViewModel : ObservableObject
             });
 
             StatusMessage = importResult.TotalAdded > 0
-                ? $"Added {importResult.TotalAdded} image(s) to {targetDataset.Name} (V{targetVersion})."
+                ? $"Added {importResult.TotalAdded} image(s) to {targetDataset.Name} (V{targetVersion}).{CopiedInsteadOfMovedNote(dialogResult.ImportAction, moveFiles)}"
                 : "Image(s) already present — nothing added.";
         }
         catch (Exception ex)
@@ -275,7 +285,7 @@ public partial class ImageActionsViewModel : ObservableObject
             var destinationFolder = Path.Combine(runPath, "Presentation");
             Directory.CreateDirectory(destinationFolder);
 
-            var moveFiles = dialogResult.ImportAction == DatasetImportAction.Move;
+            var moveFiles = ResolveMove(dialogResult.ImportAction, acquired);
             var importer = new DatasetFileImporter(new FileOperations());
             var importResult = await importer.ImportWithDialogAsync(
                 acquired.Paths,
@@ -297,7 +307,7 @@ public partial class ImageActionsViewModel : ObservableObject
             });
 
             StatusMessage = importResult.TotalAdded > 0
-                ? $"Added {importResult.TotalAdded} image(s) to training run '{trainingRunName}' ({dataset.Name} V{version})."
+                ? $"Added {importResult.TotalAdded} image(s) to training run '{trainingRunName}' ({dataset.Name} V{version}).{CopiedInsteadOfMovedNote(dialogResult.ImportAction, moveFiles)}"
                 : "Image(s) already present — nothing added.";
         }
         catch (Exception ex)
@@ -311,6 +321,18 @@ public partial class ImageActionsViewModel : ObservableObject
             acquired.Cleanup?.Invoke();
         }
     }
+
+    /// <summary>
+    /// Move only when the user picked it and the host does not still need the files where they are
+    /// (<see cref="ImageActionPaths.KeepInPlace"/>).
+    /// </summary>
+    private static bool ResolveMove(DatasetImportAction action, ImageActionPaths acquired)
+        => action == DatasetImportAction.Move && !acquired.KeepInPlace;
+
+    private static string CopiedInsteadOfMovedNote(DatasetImportAction action, bool moved)
+        => action == DatasetImportAction.Move && !moved
+            ? " Copied rather than moved, because the image is still open here."
+            : string.Empty;
 
     // ── Send Selected To… ──────────────────────────────────────────────────────────
     // Every Send destination ingests the paths *deferred* (the host posts the load to the dispatcher /
@@ -409,6 +431,14 @@ public partial class ImageActionsViewModel : ObservableObject
     private async Task SendToWorkflowAsync(string? workflowId)
     {
         if (string.IsNullOrWhiteSpace(workflowId)) return;
+
+        if (WorkflowUnavailableReason?.Invoke(workflowId) is { } reason)
+        {
+            StatusMessage = reason;
+            if (DialogService is not null)
+                await DialogService.ShowMessageAsync("Can't send this image", reason);
+            return;
+        }
 
         var paths = (await AcquirePathsAsync()).Paths;
         if (paths.Count == 0) return;

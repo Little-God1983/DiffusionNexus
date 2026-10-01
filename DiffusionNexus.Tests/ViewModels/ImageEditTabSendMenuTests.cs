@@ -97,6 +97,41 @@ public sealed class ImageEditTabSendMenuTests : IDisposable
     }
 
     [Fact]
+    public async Task SendToMetadataDistiller_RefusesWhileAToolHasUnfinishedWork()
+    {
+        var aggregator = new Mock<IDatasetEventAggregator>();
+        var state = new Mock<IDatasetState>();
+        state.Setup(s => s.Datasets).Returns(new ObservableCollection<DatasetCardViewModel>());
+        var vm = new ImageEditTabViewModel(aggregator.Object, state.Object);
+        using var _ = LoadWired(vm);
+        _core.LayerTransformTool.IsActive = true;
+        _core.ArmLayerTransform();
+        _core.LayerTransformTool.Nudge(3, 0);
+
+        vm.ImageActions.ShowSendToMetadataDistiller.Should().BeTrue("the entry follows the edit state only");
+        await vm.ImageActions.SendToWorkflowCommand.ExecuteAsync("batch-metadata-distiller");
+
+        aggregator.Verify(a => a.PublishNavigateToWorkflow(It.IsAny<NavigateToWorkflowEventArgs>()), Times.Never);
+        vm.ImageActions.StatusMessage.Should().Contain("no longer matches");
+        _core.LayerTransformTool.HasTransform.Should().BeTrue("refusing must not commit the Move");
+    }
+
+    [Fact]
+    public async Task SendToMetadataDistiller_SendsTheOriginal_WhenUnchanged()
+    {
+        var aggregator = new Mock<IDatasetEventAggregator>();
+        var state = new Mock<IDatasetState>();
+        state.Setup(s => s.Datasets).Returns(new ObservableCollection<DatasetCardViewModel>());
+        var vm = new ImageEditTabViewModel(aggregator.Object, state.Object);
+        using var _ = LoadWired(vm);
+
+        await vm.ImageActions.SendToWorkflowCommand.ExecuteAsync("batch-metadata-distiller");
+
+        aggregator.Verify(a => a.PublishNavigateToWorkflow(
+            It.Is<NavigateToWorkflowEventArgs>(e => e.ImagePaths!.Single() == _file)), Times.Once);
+    }
+
+    [Fact]
     public async Task AddTo_UneditedCanvas_GivesTheOriginal_AndNeverDeletesIt()
     {
         var vm = CreateTab();
@@ -106,6 +141,7 @@ public sealed class ImageEditTabSendMenuTests : IDisposable
 
         paths.Paths.Should().Equal(_file);
         paths.Cleanup.Should().BeNull("the cleanup deletes the file it is given");
+        paths.KeepInPlace.Should().BeTrue("Add must not move the file the editor has open");
         File.Exists(_file).Should().BeTrue();
     }
 
@@ -121,6 +157,7 @@ public sealed class ImageEditTabSendMenuTests : IDisposable
         var copy = paths.Paths.Should().ContainSingle().Subject;
         copy.Should().NotBe(_file);
         paths.Cleanup.Should().NotBeNull();
+        paths.KeepInPlace.Should().BeFalse();
 
         paths.Cleanup!();
 

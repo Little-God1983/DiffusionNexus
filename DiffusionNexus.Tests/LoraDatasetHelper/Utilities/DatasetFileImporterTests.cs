@@ -616,6 +616,42 @@ public class DatasetFileImporterTests
     }
 
     // -------------------------------------------------------------------
+    //  Sources already in the destination folder (#586)
+    // -------------------------------------------------------------------
+
+    [Fact]
+    public async Task ImportWithDialog_SourceAlreadyInDestination_IsLeftAlone_WithoutAConflict()
+    {
+        // The Image Editor hands over its unedited original; adding it to the folder it lives in
+        // must not compare it with itself (Override would copy the file onto itself).
+        _fileOps.ExistingFiles.Add(@"C:\Dest\cat.png");
+        var dialogs = new Moq.Mock<DiffusionNexus.UI.Services.IDialogService>(Moq.MockBehavior.Strict);
+
+        var result = await _importer.ImportWithDialogAsync(
+            [@"C:\Dest\cat.png"], DestFolder, dialogs.Object, videoThumbnailService: null, moveFiles: false);
+
+        result.AlreadyPresent.Should().Be(1);
+        result.TotalAdded.Should().Be(0);
+        _fileOps.CopiedFiles.Should().BeEmpty();
+        _fileOps.MovedFiles.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ImportWithDialog_MixedSources_ImportsOnlyThoseFromElsewhere()
+    {
+        _fileOps.ExistingFiles.Add(@"C:\Dest\cat.png");
+        _fileOps.ExistingFiles.Add(@"C:\Src\dog.png");
+        var dialogs = new Moq.Mock<DiffusionNexus.UI.Services.IDialogService>(Moq.MockBehavior.Strict);
+
+        var result = await _importer.ImportWithDialogAsync(
+            [@"C:\Dest\cat.png", @"C:\Src\dog.png"], DestFolder, dialogs.Object, videoThumbnailService: null, moveFiles: false);
+
+        result.AlreadyPresent.Should().Be(1);
+        result.Copied.Should().Be(1);
+        _fileOps.CopiedFiles.Should().ContainSingle().Which.Should().Be((@"C:\Src\dog.png", @"C:\Dest\dog.png", false));
+    }
+
+    // -------------------------------------------------------------------
     //  Mock IFileOperations — records all operations for assertions.
     // -------------------------------------------------------------------
 

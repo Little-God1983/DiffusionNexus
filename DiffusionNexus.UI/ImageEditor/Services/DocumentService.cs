@@ -43,17 +43,22 @@ internal sealed class DocumentService : IDocumentService
 
     /// <inheritdoc />
     public SKEncodedImageFormat GetFormatFromExtension(string filePath)
+        => TryGetFormatFromExtension(filePath, out var format) ? format : SKEncodedImageFormat.Png;
+
+    /// <inheritdoc />
+    public bool TryGetFormatFromExtension(string filePath, out SKEncodedImageFormat format)
     {
-        var extension = Path.GetExtension(filePath).ToLowerInvariant();
-        return extension switch
+        SKEncodedImageFormat? known = Path.GetExtension(filePath).ToLowerInvariant() switch
         {
             ".jpg" or ".jpeg" => SKEncodedImageFormat.Jpeg,
             ".png" => SKEncodedImageFormat.Png,
             ".webp" => SKEncodedImageFormat.Webp,
             ".bmp" => SKEncodedImageFormat.Bmp,
             ".gif" => SKEncodedImageFormat.Gif,
-            _ => SKEncodedImageFormat.Png
+            _ => null
         };
+        format = known ?? SKEncodedImageFormat.Png;
+        return known is not null;
     }
 
     /// <inheritdoc />

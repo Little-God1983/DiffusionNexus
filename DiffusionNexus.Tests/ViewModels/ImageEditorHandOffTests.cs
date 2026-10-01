@@ -111,6 +111,34 @@ public sealed class ImageEditorHandOffTests : IDisposable
     }
 
     [Fact]
+    public void FailedLoadOfAnotherImage_IsNotTheMatchedFile()
+    {
+        // The view leaves the core on the previous image when a decode fails, while the view
+        // model already shows the new path.
+        var (vm, _, link) = CreateWired();
+        using var _ = link;
+
+        vm.LoadImage(Path.Combine(_tempDir.FullName, "corrupt.png"));
+
+        vm.MatchesOriginalFile.Should().BeFalse();
+        vm.WouldHandOverOriginal().Should().BeFalse();
+    }
+
+    [Fact]
+    public void PendingMove_IsReportedBeforeAnyHandOff()
+    {
+        var (vm, exports, link) = CreateWired();
+        using var _ = link;
+        _core.LayerTransformTool.IsActive = true;
+        _core.ArmLayerTransform();
+        _core.LayerTransformTool.Nudge(3, 0);
+
+        vm.MatchesOriginalFile.Should().BeTrue("the mirror does not follow tool state");
+        vm.WouldHandOverOriginal().Should().BeFalse();
+        exports.Should().BeEmpty("asking must not commit the Move");
+    }
+
+    [Fact]
     public void Unwired_FallsBackToTheCopy()
     {
         var (vm, _, link) = CreateWired();

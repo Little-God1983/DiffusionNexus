@@ -43,6 +43,9 @@ namespace DiffusionNexus.UI.ViewModels.Tabs;
 /// </summary>
 public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAware, IThumbnailAware, IDisposable
 {
+    /// <summary>The Workflows id of the Batch Metadata Distiller, as the Send menu passes it.</summary>
+    private const string MetadataDistillerWorkflowId = "batch-metadata-distiller";
+
     private readonly IDatasetEventAggregator _eventAggregator;
     private readonly IDatasetState _state;
     private readonly IBackgroundRemovalService? _backgroundRemovalService;
@@ -320,6 +323,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
             ShowSendToComparer = false,
             ShowSendToMetadataDistiller = OffersMetadataDistiller(),
             PathProvider = AcquireCurrentImagePathsAsync,
+            WorkflowUnavailableReason = MetadataDistillerUnavailableReason,
         };
         ImageEditor.PropertyChanged += OnImageEditorPropertyChanged;
         ImageEditor.ClearConfirmRequested += ConfirmDiscardChangesAsync;
@@ -646,7 +650,9 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     /// <see cref="ImageEditorViewModel.PrepareHandOff"/>: the original file while the canvas is
     /// unchanged, otherwise a temp copy with the edits. Only a copy gets a cleanup that deletes it;
     /// it runs for the synchronous "Add To…" destinations, while the deferred "Send To…"
-    /// destinations leave the temp for the OS (as the editor always has).
+    /// destinations leave the temp for the OS (as the editor always has). The original is marked
+    /// <see cref="ImageActionPaths.KeepInPlace"/>: Add copies it even when Move is picked, since the
+    /// editor still has it open.
     /// </summary>
     private Task<ImageActionPaths> AcquireCurrentImagePathsAsync()
     {
@@ -657,7 +663,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
             ? () => { try { File.Delete(handOff.Path); } catch { /* best effort */ } }
             : null;
 
-        return Task.FromResult(new ImageActionPaths([handOff.Path], cleanup));
+        return Task.FromResult(new ImageActionPaths([handOff.Path], cleanup, KeepInPlace: !handOff.IsCopy));
     }
 
     private void OnImageEditorPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -693,10 +699,27 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         }
     }
 
-    /// <summary>Gates the Add/Send actions on whether an image is currently loaded in the editor.</summary>
-    // A video keeps the canvas of the image before it, which may still match that image's file.
+    /// <summary>
+    /// Whether the Send menu lists the Batch Metadata Distiller: only while the canvas is the file on
+    /// disk. Not for a video, which keeps the canvas of the image shown before it.
+    /// </summary>
     private bool OffersMetadataDistiller() => ImageEditor.MatchesOriginalFile && !ImageEditor.IsVideoMode;
 
+    /// <summary>
+    /// The click-time check behind the menu entry: tool work that is not committed yet, or a file
+    /// changed on disk, would make the hand-off a re-encoded copy with none of the metadata.
+    /// </summary>
+    private string? MetadataDistillerUnavailableReason(string workflowId)
+    {
+        if (workflowId != MetadataDistillerWorkflowId || ImageEditor.WouldHandOverOriginal())
+            return null;
+
+        return "The Batch Metadata Distiller reads the metadata stored in the image file, but the canvas "
+            + "no longer matches that file: a tool has unfinished work, or the file changed on disk. "
+            + "Finish or cancel the tool, or reload the image, and try again.";
+    }
+
+    /// <summary>Gates the Add/Send actions on whether an image is currently loaded in the editor.</summary>
     private void UpdateImageActionsCanAct()
         => ImageActions.CanAct = ImageEditor.HasImage && !string.IsNullOrEmpty(ImageEditor.CurrentImagePath);
 

@@ -158,6 +158,16 @@ public partial class ImageEditorCore : IDisposable
     }
 
     /// <summary>
+    /// Whether <see cref="CommitPendingOperations"/> would change the canvas: work a save includes
+    /// but the canvas has not committed yet. Keep the two in step.
+    /// </summary>
+    public bool HasPendingOperations =>
+        TextTool.HasPlacedText
+        || ShapeTool.HasPlacedShape
+        || DrawingTool.IsDrawing
+        || (LayerTransformTool.IsActive && LayerTransformTool.IsArmed && LayerTransformTool.HasTransform);
+
+    /// <summary>
     /// Gets the layer stack for layer-based editing.
     /// </summary>
     public LayerStack? Layers => _layers;
@@ -737,6 +747,10 @@ public partial class ImageEditorCore : IDisposable
             // Get file size
             var fileInfo = new FileInfo(filePath);
 
+            // Identify the version about to be decoded: one rewritten during the decode must not
+            // later pass for what the canvas shows (#586).
+            var loadedVersion = FileStamp.TryCapture(filePath);
+
             // Decode before touching editor state: it is the slow part, it must not stall the
             // render thread, and a failed decode then leaves the current image intact.
             using var stream = File.OpenRead(filePath);
@@ -763,7 +777,7 @@ public partial class ImageEditorCore : IDisposable
             
             OnImageChanged(marksDirty: false);
             SetDirty(false);
-            OnLoadedFromFile(filePath);
+            OnLoadedFromFile(loadedVersion);
             return true;
         }
         catch

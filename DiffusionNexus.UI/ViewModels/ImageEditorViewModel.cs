@@ -23,7 +23,7 @@ public partial class ImageEditorViewModel : ObservableObject
     private bool _hasImage;
     private bool _hasUnsavedChanges;
     private bool _matchesOriginalFile;
-    private Func<string?>? _unchangedFilePath;
+    private ImageEditorCore? _fileMatchSource;
     private string? _statusMessage;
     private int _imageWidth;
     private int _imageHeight;
@@ -134,6 +134,7 @@ public partial class ImageEditorViewModel : ObservableObject
                 HasImage = !string.IsNullOrEmpty(value);
                 ImageFileName = HasImage ? Path.GetFileName(value) : null;
                 LayerPanel.CurrentImagePath = value;
+                RefreshFileMatch();
                 NotifyCommandsCanExecuteChanged();
             }
         }
@@ -168,9 +169,11 @@ public partial class ImageEditorViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Mirror of <see cref="ImageEditor.ImageEditorCore.MatchesFile"/>, pushed by
-    /// <see cref="TrackFileMatch"/>: the canvas is the file at <see cref="CurrentImagePath"/>, so a
-    /// hand-off gives other tools that file rather than a re-encoded copy (#586).
+    /// Whether the canvas is the file at <see cref="CurrentImagePath"/>
+    /// (<see cref="ImageEditor.ImageEditorCore.MatchedFilePath"/>, kept current by
+    /// <see cref="TrackFileMatch"/>), so a hand-off gives other tools that file rather than a
+    /// re-encoded copy (#586). Pending tool work and changes on disk are checked only at hand-off:
+    /// see <see cref="WouldHandOverOriginal"/>.
     /// </summary>
     public bool MatchesOriginalFile
     {
@@ -713,25 +716,40 @@ public partial class ImageEditorViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Mirrors <see cref="ImageEditorCore.MatchesFile"/> into <see cref="MatchesOriginalFile"/> and
-    /// lets <see cref="PrepareHandOff"/> ask the core for the unchanged file, until the returned
-    /// handle is disposed. Pushes the current state immediately, like <see cref="TrackUnsavedChanges"/>.
+    /// Follows <paramref name="core"/>'s <see cref="ImageEditorCore.MatchedFilePath"/> into
+    /// <see cref="MatchesOriginalFile"/> and lets <see cref="PrepareHandOff"/> ask it for the
+    /// unchanged file, until the returned handle is disposed. Pushes the current state immediately,
+    /// like <see cref="TrackUnsavedChanges"/>.
     /// </summary>
     public IDisposable TrackFileMatch(ImageEditorCore core)
     {
         ArgumentNullException.ThrowIfNull(core);
-        EventHandler onMatchChanged = (_, _) => MatchesOriginalFile = core.MatchesFile;
+        EventHandler onMatchChanged = (_, _) => RefreshFileMatch();
         core.MatchesFileChanged += onMatchChanged;
-        Func<string?> unchangedFilePath = core.GetUnchangedFilePath;
-        _unchangedFilePath = unchangedFilePath;
-        MatchesOriginalFile = core.MatchesFile;
+        _fileMatchSource = core;
+        RefreshFileMatch();
         return new Unsubscriber(() =>
         {
             core.MatchesFileChanged -= onMatchChanged;
-            if (_unchangedFilePath == unchangedFilePath) _unchangedFilePath = null;
-            MatchesOriginalFile = false;
+            if (ReferenceEquals(_fileMatchSource, core)) _fileMatchSource = null;
+            RefreshFileMatch();
         });
     }
+
+    /// <summary>
+    /// Compared with <see cref="CurrentImagePath"/>, not taken from the core alone: a failed load of
+    /// another image leaves the core on the previous file while this view model shows the new path.
+    /// </summary>
+    private void RefreshFileMatch()
+        => MatchesOriginalFile = FilePaths.AreSame(_fileMatchSource?.MatchedFilePath, CurrentImagePath);
+
+    /// <summary>
+    /// Whether a hand-off right now would give other tools <see cref="CurrentImagePath"/> itself:
+    /// <see cref="MatchesOriginalFile"/>, nothing pending in a tool, and the file unchanged on disk.
+    /// Cheap and side-effect free, unlike <see cref="PrepareHandOff"/>, whose copy commits pending work.
+    /// </summary>
+    public bool WouldHandOverOriginal()
+        => FilePaths.AreSame(_fileMatchSource?.GetUnchangedFilePath(), CurrentImagePath);
 
     private void OnCanvasSaved(string? savedOverPath = null)
     {
@@ -1245,7 +1263,7 @@ public partial class ImageEditorViewModel : ObservableObject
         if (string.IsNullOrEmpty(CurrentImagePath)) return null;
 
         var name = Path.GetFileName(CurrentImagePath);
-        if (_unchangedFilePath?.Invoke() is { } unchanged && IsSameFile(unchanged, CurrentImagePath))
+        if (WouldHandOverOriginal())
         {
             _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
                 $"Handing over {name} itself ({purpose}): the canvas is unchanged since it was loaded or saved");
@@ -1254,7 +1272,7 @@ public partial class ImageEditorViewModel : ObservableObject
 
         var reason = MatchesOriginalFile
             ? "a tool has uncommitted work or the file changed on disk"
-            : "the canvas has edits the file does not";
+            : "the canvas differs from that file (it was edited, or it did not load)";
         var copy = ExportHandOffCopy(purpose);
         if (copy is null)
         {
@@ -1266,18 +1284,6 @@ public partial class ImageEditorViewModel : ObservableObject
         _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
             $"Handing over a copy of the canvas ({purpose}) instead of {name}: {reason}");
         return new ImageHandOff(copy, IsCopy: true);
-    }
-
-    private static bool IsSameFile(string a, string b)
-    {
-        try
-        {
-            return string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
-        }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-        {
-            return false;
-        }
     }
 
     /// <summary>

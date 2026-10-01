@@ -11,6 +11,9 @@ public sealed class DatasetImportResult
     public int Overridden { get; init; }
     public int Renamed { get; init; }
     public int Ignored { get; init; }
+
+    /// <summary>Sources that already sit in the destination folder, left alone.</summary>
+    public int AlreadyPresent { get; init; }
     public IReadOnlyList<string> ProcessedSourceFiles { get; init; } = [];
 
     public int TotalAdded => Copied + Overridden + Renamed;
@@ -45,14 +48,21 @@ public sealed class DatasetFileImporter
         ArgumentException.ThrowIfNullOrWhiteSpace(destinationFolder);
         ArgumentNullException.ThrowIfNull(dialogService);
 
-        var sourceList = sourceFiles
+        var existingSources = sourceFiles
             .Where(_fileOps.FileExists)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+        // A file already in the destination folder is already imported. Compared with itself it
+        // would raise a conflict whose Override copies the file onto itself and fails (#586).
+        var sourceList = existingSources
+            .Where(source => !FilePaths.IsDirectlyIn(source, destinationFolder))
+            .ToList();
+        var alreadyPresent = existingSources.Count - sourceList.Count;
+
         if (sourceList.Count == 0)
         {
-            return new DatasetImportResult();
+            return new DatasetImportResult { AlreadyPresent = alreadyPresent };
         }
 
         _fileOps.CreateDirectory(destinationFolder);
@@ -81,12 +91,23 @@ public sealed class DatasetFileImporter
             }
         }
 
-        return await ImportResolvedAsync(
+        var result = await ImportResolvedAsync(
             conflictResult.NonConflictingFiles,
             resolution,
             destinationFolder,
             videoThumbnailService,
             moveFiles);
+
+        return new DatasetImportResult
+        {
+            Cancelled = result.Cancelled,
+            Copied = result.Copied,
+            Overridden = result.Overridden,
+            Renamed = result.Renamed,
+            Ignored = result.Ignored,
+            AlreadyPresent = alreadyPresent,
+            ProcessedSourceFiles = result.ProcessedSourceFiles
+        };
     }
 
     /// <summary>

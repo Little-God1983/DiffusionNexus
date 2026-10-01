@@ -1,3 +1,5 @@
+using DiffusionNexus.UI.Utilities;
+
 namespace DiffusionNexus.UI.ImageEditor;
 
 public partial class ImageEditorCore
@@ -9,24 +11,28 @@ public partial class ImageEditorCore
     private FileStamp? _matchedFile;
 
     /// <summary>
-    /// True while the canvas is exactly the file at <see cref="CurrentImagePath"/>: unedited since
-    /// it was loaded or reset, or since the last save over that file (#586). This is not the
-    /// inverse of <see cref="IsDirty"/>: Export and Save as New clear the dirty flag while the
-    /// canvas still differs from the file it was loaded from.
+    /// The file the canvas is exactly: unedited since it was loaded or reset, or since the last save
+    /// over that file (#586). Null once edited. This is not the inverse of <see cref="IsDirty"/>:
+    /// Export and Save as New clear the dirty flag while the canvas still differs from the file it
+    /// was loaded from.
     /// </summary>
     /// <remarks>
     /// Does not look at the disk or at pending tool work; <see cref="GetUnchangedFilePath"/> does.
+    /// A failed load leaves it on the previous file, so callers compare it with the path they show.
     /// </remarks>
+    public string? MatchedFilePath => _matchedFile?.Path;
+
+    /// <summary>Whether <see cref="MatchedFilePath"/> is set.</summary>
     public bool MatchesFile => _matchedFile is not null;
 
-    /// <summary>Raised when <see cref="MatchesFile"/> flips.</summary>
+    /// <summary>Raised when <see cref="MatchedFilePath"/> changes.</summary>
     public event EventHandler? MatchesFileChanged;
 
     /// <summary>
     /// The file another tool can be given instead of a re-encoded copy of the canvas, or null when
-    /// the canvas differs from it. Besides <see cref="MatchesFile"/>, nothing may be pending (a
-    /// save would commit placed text or an open Move first), and the file must still be the one
-    /// that was loaded or saved: same size and write time.
+    /// the canvas differs from it. Besides <see cref="MatchedFilePath"/>, nothing may be pending
+    /// (<see cref="HasPendingOperations"/>: a save would commit it first), and the file must still
+    /// be the version that was loaded or saved: same size and write time.
     /// </summary>
     public string? GetUnchangedFilePath()
     {
@@ -38,31 +44,26 @@ public partial class ImageEditorCore
 
     /// <summary>
     /// Declares the canvas equal to <paramref name="filePath"/>, which a save has just written in
-    /// full. Only for a save over the loaded file without a transparency fill: a filled JPEG holds
-    /// a colour where the canvas is transparent.
+    /// full. Only for a save over the loaded file without a transparency fill (a filled JPEG holds a
+    /// colour where the canvas is transparent), and only in a format the extension names: a save to
+    /// ".tif" or another unknown extension writes PNG bytes, which the tools reached by a hand-off
+    /// cannot rely on.
     /// </summary>
     public void MarkSavedOverFile(string filePath)
     {
-        if (string.IsNullOrEmpty(filePath) || CurrentImagePath is null
-            || !string.Equals(Path.GetFullPath(filePath), Path.GetFullPath(CurrentImagePath), StringComparison.OrdinalIgnoreCase))
-            return;
+        if (!FilePaths.AreSame(filePath, CurrentImagePath)) return;
 
         // The file now holds this canvas, so Reset would no longer restore it.
         _loadedFile = null;
-        SetMatchedFile(FileStamp.TryCapture(filePath));
+
+        var writtenAsNamed = _services?.Document.TryGetFormatFromExtension(filePath, out _) == true;
+        SetMatchedFile(writtenAsNamed ? FileStamp.TryCapture(filePath) : null);
     }
 
-    /// <summary>Work a save would commit before encoding, which therefore is not in the file.</summary>
-    private bool HasPendingOperations =>
-        TextTool.HasPlacedText
-        || ShapeTool.HasPlacedShape || ShapeTool.IsDrawing
-        || DrawingTool.IsDrawing
-        || (LayerTransformTool.IsArmed && (LayerTransformTool.HasTransform || LayerTransformTool.IsDragging));
-
-    /// <summary>After a successful load from <paramref name="filePath"/>.</summary>
-    private void OnLoadedFromFile(string filePath)
+    /// <summary>After a successful load of the file version <paramref name="loaded"/>.</summary>
+    private void OnLoadedFromFile(FileStamp? loaded)
     {
-        _loadedFile = FileStamp.TryCapture(filePath);
+        _loadedFile = loaded;
         SetMatchedFile(_loadedFile);
     }
 
@@ -78,9 +79,9 @@ public partial class ImageEditorCore
 
     private void SetMatchedFile(FileStamp? value)
     {
-        var wasMatched = MatchesFile;
+        var previous = _matchedFile?.Path;
         _matchedFile = value;
-        if (wasMatched != MatchesFile)
+        if (!string.Equals(previous, _matchedFile?.Path, StringComparison.Ordinal))
             MatchesFileChanged?.Invoke(this, EventArgs.Empty);
     }
 
