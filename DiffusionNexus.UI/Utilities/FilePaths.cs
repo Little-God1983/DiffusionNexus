@@ -4,39 +4,27 @@ namespace DiffusionNexus.UI.Utilities;
 public static class FilePaths
 {
     /// <summary>
-    /// Whether two paths name the same file: full paths compared case-insensitively, as on Windows.
-    /// False when either is null or not a valid path.
+    /// Whether two paths name the same file or folder, with trailing separators, casing and separator
+    /// spelling forgiven (full paths, compared case-insensitively as on Windows). The comparands often
+    /// come from different worlds, such as a <c>Path.Combine</c>-built spelling and a JSON round-trip
+    /// of whatever spelling a path was stored under. False when either is null or empty.
     /// </summary>
-    public static bool AreSame(string? a, string? b)
+    public static bool AreSame(string? left, string? right)
     {
-        if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return false;
+        if (string.IsNullOrEmpty(left) || string.IsNullOrEmpty(right)) return false;
 
         try
         {
-            return string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
-        }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-        {
-            return false;
-        }
-    }
-
-    /// <summary>Whether <paramref name="filePath"/> sits directly in <paramref name="folder"/>.</summary>
-    public static bool IsDirectlyIn(string? filePath, string? folder)
-    {
-        if (string.IsNullOrEmpty(filePath) || string.IsNullOrEmpty(folder)) return false;
-
-        try
-        {
-            var parent = Path.GetDirectoryName(Path.GetFullPath(filePath));
-            return parent is not null && string.Equals(
-                Path.TrimEndingDirectorySeparator(parent),
-                Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder)),
+            return string.Equals(
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)),
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),
                 StringComparison.OrdinalIgnoreCase);
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
-            return false;
+            // A malformed path cannot be normalized; the literal comparison is the best that is left
+            // (and lets a caller holding the stored string itself still find its entry).
+            return string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
         }
     }
 }

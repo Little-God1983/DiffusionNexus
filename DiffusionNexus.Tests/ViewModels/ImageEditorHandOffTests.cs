@@ -125,6 +125,35 @@ public sealed class ImageEditorHandOffTests : IDisposable
     }
 
     [Fact]
+    public void FailedLoadOfAnotherImage_HandsNothingOver()
+    {
+        // A copy would give out the previous image's pixels under the new image's name.
+        var (vm, exports, link) = CreateWired();
+        using var _ = link;
+        vm.LoadImage(Path.Combine(_tempDir.FullName, "corrupt.png"));
+
+        var handOff = vm.PrepareHandOff("act");
+
+        handOff.Should().BeNull();
+        exports.Should().BeEmpty();
+        vm.StatusMessage.Should().Contain("corrupt.png is not loaded");
+    }
+
+    [Fact]
+    public void Video_IsHandedOverAsItsFile()
+    {
+        var (vm, exports, link) = CreateWired();
+        using var _ = link;
+        var video = Path.Combine(_tempDir.FullName, "clip.mp4");
+        vm.LoadImage(video);
+
+        var handOff = vm.PrepareHandOff("upscale");
+
+        handOff.Should().Be(new ImageHandOff(video, IsCopy: false));
+        exports.Should().BeEmpty("the canvas still holds the previous image, not the video");
+    }
+
+    [Fact]
     public void PendingMove_IsReportedBeforeAnyHandOff()
     {
         var (vm, exports, link) = CreateWired();

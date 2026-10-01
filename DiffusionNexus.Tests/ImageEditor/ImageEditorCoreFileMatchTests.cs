@@ -6,7 +6,7 @@ using SkiaSharp;
 namespace DiffusionNexus.Tests.ImageEditor;
 
 /// <summary>
-/// <see cref="ImageEditorCore.MatchesFile"/> / <see cref="ImageEditorCore.GetUnchangedFilePath"/>
+/// <see cref="ImageEditorCore.MatchedFilePath"/> / <see cref="ImageEditorCore.GetUnchangedFilePath"/>
 /// decide whether a hand-off gives other tools the user's file or a re-encoded copy (#586). A false
 /// positive hands over the file without the user's edits, so every way out of "unchanged" is pinned.
 /// </summary>
@@ -44,7 +44,7 @@ public sealed class ImageEditorCoreFileMatchTests : IDisposable
     {
         _sut.LoadImage(_file).Should().BeTrue();
 
-        _sut.MatchesFile.Should().BeTrue();
+        _sut.MatchedFilePath.Should().Be(_file);
         _sut.GetUnchangedFilePath().Should().Be(_file);
     }
 
@@ -58,7 +58,7 @@ public sealed class ImageEditorCoreFileMatchTests : IDisposable
         _sut.AddLayer("scratch");
         _sut.AddLayer("scratch 2");
 
-        _sut.MatchesFile.Should().BeFalse();
+        _sut.MatchedFilePath.Should().BeNull();
         _sut.GetUnchangedFilePath().Should().BeNull();
         raised.Should().Be(1);
     }
@@ -73,7 +73,7 @@ public sealed class ImageEditorCoreFileMatchTests : IDisposable
         _sut.MarkClean();
 
         _sut.IsDirty.Should().BeFalse();
-        _sut.MatchesFile.Should().BeFalse();
+        _sut.MatchedFilePath.Should().BeNull();
         _sut.GetUnchangedFilePath().Should().BeNull();
     }
 
@@ -102,7 +102,7 @@ public sealed class ImageEditorCoreFileMatchTests : IDisposable
 
         // Reset restores the pixels loaded before the save, which the file no longer holds.
         _sut.ResetToOriginal();
-        _sut.MatchesFile.Should().BeFalse();
+        _sut.MatchedFilePath.Should().BeNull();
     }
 
     [Fact]
@@ -115,7 +115,7 @@ public sealed class ImageEditorCoreFileMatchTests : IDisposable
 
         _sut.MarkSavedOverFile(other);
 
-        _sut.MatchesFile.Should().BeFalse();
+        _sut.MatchedFilePath.Should().BeNull();
     }
 
     [Fact]
@@ -126,7 +126,7 @@ public sealed class ImageEditorCoreFileMatchTests : IDisposable
         File.WriteAllBytes(_file, [.. _png, 0, 0, 0]);
         File.SetLastWriteTimeUtc(_file, DateTime.UtcNow.AddMinutes(1));
 
-        _sut.MatchesFile.Should().BeTrue("the canvas itself was not edited");
+        _sut.MatchedFilePath.Should().Be(_file, "the canvas itself was not edited");
         _sut.GetUnchangedFilePath().Should().BeNull("the file is no longer what the canvas shows");
     }
 
@@ -167,7 +167,7 @@ public sealed class ImageEditorCoreFileMatchTests : IDisposable
 
         _sut.MarkSavedOverFile(tif);
 
-        _sut.MatchesFile.Should().BeFalse();
+        _sut.MatchedFilePath.Should().BeNull();
     }
 
     [Fact]
@@ -185,7 +185,7 @@ public sealed class ImageEditorCoreFileMatchTests : IDisposable
 
         _sut.LoadImage(_png).Should().BeTrue();
 
-        _sut.MatchesFile.Should().BeFalse();
+        _sut.MatchedFilePath.Should().BeNull();
         _sut.GetUnchangedFilePath().Should().BeNull();
     }
 
@@ -196,7 +196,7 @@ public sealed class ImageEditorCoreFileMatchTests : IDisposable
 
         _sut.Clear();
 
-        _sut.MatchesFile.Should().BeFalse();
+        _sut.MatchedFilePath.Should().BeNull();
         _sut.GetUnchangedFilePath().Should().BeNull();
     }
 }

@@ -1574,7 +1574,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     private async Task RemoveExclusionAsync(string? path)
     {
         if (string.IsNullOrEmpty(path)) return;
-        var existing = ExcludedFolders.FirstOrDefault(f => PathsEqual(f, path));
+        var existing = ExcludedFolders.FirstOrDefault(f => FilePaths.AreSame(f, path));
         if (existing is null) return;
         ExcludedFolders.Remove(existing);
         await OnExclusionsChangedAsync();
@@ -1885,35 +1885,9 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     }
 
     /// <summary>Whether this exact folder is on the exclusion list — spelling forgiven, see
-    /// <see cref="PathsEqual"/>.</summary>
+    /// <see cref="FilePaths.AreSame"/>.</summary>
     private bool IsExclusionRootPath(string path)
-        => ExcludedFolders.Any(folder => PathsEqual(path, folder));
-
-    /// <summary>
-    /// Path equality with trailing separators, casing and separator spelling forgiven, because the
-    /// comparands come from different worlds: the tree's <c>Path.Combine</c>-built spelling on one
-    /// side, a JSON round-trip of whatever spelling the source was registered under on the other.
-    /// Everything that answers "is this stored entry that folder" must use this one predicate —
-    /// the un-exclude menu item was shown by the normalized comparison and then acted through a
-    /// raw string compare, which made it a silent no-op for any equivalent-but-different spelling.
-    /// </summary>
-    private static bool PathsEqual(string left, string right)
-    {
-        try
-        {
-            return string.Equals(
-                Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)),
-                Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),
-                StringComparison.OrdinalIgnoreCase);
-        }
-        catch (ArgumentException)
-        {
-            // A malformed entry cannot be normalized; the literal comparison is the best that is
-            // left, and it is exactly what lets the rail's ✕ (which passes the stored string
-            // itself) still remove it.
-            return string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
-        }
-    }
+        => ExcludedFolders.Any(folder => FilePaths.AreSame(path, folder));
 
     /// <summary>
     /// Points both search boxes at the tree that now exists. The text the user typed survives a

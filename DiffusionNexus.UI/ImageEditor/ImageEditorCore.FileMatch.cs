@@ -22,9 +22,6 @@ public partial class ImageEditorCore
     /// </remarks>
     public string? MatchedFilePath => _matchedFile?.Path;
 
-    /// <summary>Whether <see cref="MatchedFilePath"/> is set.</summary>
-    public bool MatchesFile => _matchedFile is not null;
-
     /// <summary>Raised when <see cref="MatchedFilePath"/> changes.</summary>
     public event EventHandler? MatchesFileChanged;
 
@@ -79,21 +76,24 @@ public partial class ImageEditorCore
 
     private void SetMatchedFile(FileStamp? value)
     {
-        var previous = _matchedFile?.Path;
+        var previous = MatchedFilePath;
         _matchedFile = value;
-        if (!string.Equals(previous, _matchedFile?.Path, StringComparison.Ordinal))
+        if (!string.Equals(previous, MatchedFilePath, StringComparison.Ordinal))
             MatchesFileChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>Identifies one version of a file: a rewrite changes its write time or size.</summary>
     private sealed record FileStamp(string Path, long Length, DateTime LastWriteTimeUtc)
     {
+        /// <summary>The version <paramref name="info"/> describes as last read; null when it does not exist.</summary>
+        public static FileStamp? From(FileInfo info)
+            => info.Exists ? new FileStamp(info.FullName, info.Length, info.LastWriteTimeUtc) : null;
+
         public static FileStamp? TryCapture(string path)
         {
             try
             {
-                var info = new FileInfo(path);
-                return info.Exists ? new FileStamp(info.FullName, info.Length, info.LastWriteTimeUtc) : null;
+                return From(new FileInfo(path));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
             {

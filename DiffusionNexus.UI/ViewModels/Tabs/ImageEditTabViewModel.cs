@@ -6,6 +6,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.Pipelines;
 using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.UI.ViewModels.Controls;
 
@@ -43,9 +44,6 @@ namespace DiffusionNexus.UI.ViewModels.Tabs;
 /// </summary>
 public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAware, IThumbnailAware, IDisposable
 {
-    /// <summary>The Workflows id of the Batch Metadata Distiller, as the Send menu passes it.</summary>
-    private const string MetadataDistillerWorkflowId = "batch-metadata-distiller";
-
     private readonly IDatasetEventAggregator _eventAggregator;
     private readonly IDatasetState _state;
     private readonly IBackgroundRemovalService? _backgroundRemovalService;
@@ -711,12 +709,13 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     /// </summary>
     private string? MetadataDistillerUnavailableReason(string workflowId)
     {
-        if (workflowId != MetadataDistillerWorkflowId || ImageEditor.WouldHandOverOriginal())
+        if (workflowId != WorkflowIds.BatchMetadataDistiller || ImageEditor.WouldHandOverOriginal())
             return null;
 
         return "The Batch Metadata Distiller reads the metadata stored in the image file, but the canvas "
-            + "no longer matches that file: a tool has unfinished work, or the file changed on disk. "
-            + "Finish or cancel the tool, or reload the image, and try again.";
+            + "no longer matches that file. Either a tool has unfinished work: cancel it, because finishing "
+            + "it edits the image, and an edited image has no metadata to read. Or the file changed on "
+            + "disk: reload the image.";
     }
 
     /// <summary>Gates the Add/Send actions on whether an image is currently loaded in the editor.</summary>

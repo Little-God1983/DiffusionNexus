@@ -169,8 +169,8 @@ public abstract partial class PipelineRunViewModel : ViewModelBase, IDisposable,
         var actions = new ImageActionsViewModel(datasetState, eventAggregator, videoThumbnailService, settingsService)
         {
             DialogService = dialogs,
-            ShowSendToAnimeToReal = manifest.Id != "anime-to-real",
-            ShowSendToImageEdit = manifest.Id != "image-to-image",
+            ShowSendToAnimeToReal = manifest.Id != Services.Pipelines.WorkflowIds.AnimeToReal,
+            ShowSendToImageEdit = manifest.Id != Services.Pipelines.WorkflowIds.ImageToImage,
         };
         // clearOnNewRun: false — a Workflow's strip is a session run history. Starting another run
         // appends to it instead of wiping what the previous run produced (Captioning, which shows only

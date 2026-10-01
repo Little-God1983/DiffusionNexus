@@ -616,19 +616,20 @@ public class DatasetFileImporterTests
     }
 
     // -------------------------------------------------------------------
-    //  Sources already in the destination folder (#586)
+    //  A source that is already the destination file (#586)
     // -------------------------------------------------------------------
 
     [Fact]
-    public async Task ImportWithDialog_SourceAlreadyInDestination_IsLeftAlone_WithoutAConflict()
+    public async Task ImportResolved_OverrideOfAFileWithItself_LeavesItAlone()
     {
-        // The Image Editor hands over its unedited original; adding it to the folder it lives in
-        // must not compare it with itself (Override would copy the file onto itself).
+        // The Image Editor hands over its unedited original; added to its own folder it conflicts
+        // with itself, and copying a file onto itself throws.
         _fileOps.ExistingFiles.Add(@"C:\Dest\cat.png");
-        var dialogs = new Moq.Mock<DiffusionNexus.UI.Services.IDialogService>(Moq.MockBehavior.Strict);
+        var resolution = MakeResolution(
+            MakeConflict("cat.png", @"C:\Dest\cat.png", @"C:\Dest\cat.png", FileConflictResolution.Override));
 
-        var result = await _importer.ImportWithDialogAsync(
-            [@"C:\Dest\cat.png"], DestFolder, dialogs.Object, videoThumbnailService: null, moveFiles: false);
+        var result = await _importer.ImportResolvedAsync(
+            [], resolution, DestFolder, videoThumbnailService: null, moveFiles: false);
 
         result.AlreadyPresent.Should().Be(1);
         result.TotalAdded.Should().Be(0);
@@ -637,18 +638,18 @@ public class DatasetFileImporterTests
     }
 
     [Fact]
-    public async Task ImportWithDialog_MixedSources_ImportsOnlyThoseFromElsewhere()
+    public async Task ImportResolved_RenameOfAFileWithItself_StillKeepsBoth()
     {
         _fileOps.ExistingFiles.Add(@"C:\Dest\cat.png");
-        _fileOps.ExistingFiles.Add(@"C:\Src\dog.png");
-        var dialogs = new Moq.Mock<DiffusionNexus.UI.Services.IDialogService>(Moq.MockBehavior.Strict);
+        var resolution = MakeResolution(
+            MakeConflict("cat.png", @"C:\Dest\cat.png", @"C:\Dest\cat.png", FileConflictResolution.Rename));
 
-        var result = await _importer.ImportWithDialogAsync(
-            [@"C:\Dest\cat.png", @"C:\Src\dog.png"], DestFolder, dialogs.Object, videoThumbnailService: null, moveFiles: false);
+        var result = await _importer.ImportResolvedAsync(
+            [], resolution, DestFolder, videoThumbnailService: null, moveFiles: false);
 
-        result.AlreadyPresent.Should().Be(1);
-        result.Copied.Should().Be(1);
-        _fileOps.CopiedFiles.Should().ContainSingle().Which.Should().Be((@"C:\Src\dog.png", @"C:\Dest\dog.png", false));
+        result.Renamed.Should().Be(1);
+        result.AlreadyPresent.Should().Be(0);
+        _fileOps.CopiedFiles.Should().ContainSingle().Which.Should().Be((@"C:\Dest\cat.png", @"C:\Dest\cat_1.png", false));
     }
 
     // -------------------------------------------------------------------

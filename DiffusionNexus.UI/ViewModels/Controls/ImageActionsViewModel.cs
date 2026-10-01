@@ -225,7 +225,7 @@ public partial class ImageActionsViewModel : ObservableObject
             });
 
             StatusMessage = importResult.TotalAdded > 0
-                ? $"Added {importResult.TotalAdded} image(s) to {targetDataset.Name} (V{targetVersion}).{CopiedInsteadOfMovedNote(dialogResult.ImportAction, moveFiles)}"
+                ? $"Added {importResult.TotalAdded} image(s) to {targetDataset.Name} (V{targetVersion}).{AlreadyPresentNote(importResult)}{CopiedInsteadOfMovedNote(dialogResult.ImportAction, moveFiles)}"
                 : "Image(s) already present — nothing added.";
         }
         catch (Exception ex)
@@ -307,7 +307,7 @@ public partial class ImageActionsViewModel : ObservableObject
             });
 
             StatusMessage = importResult.TotalAdded > 0
-                ? $"Added {importResult.TotalAdded} image(s) to training run '{trainingRunName}' ({dataset.Name} V{version}).{CopiedInsteadOfMovedNote(dialogResult.ImportAction, moveFiles)}"
+                ? $"Added {importResult.TotalAdded} image(s) to training run '{trainingRunName}' ({dataset.Name} V{version}).{AlreadyPresentNote(importResult)}{CopiedInsteadOfMovedNote(dialogResult.ImportAction, moveFiles)}"
                 : "Image(s) already present — nothing added.";
         }
         catch (Exception ex)
@@ -328,6 +328,9 @@ public partial class ImageActionsViewModel : ObservableObject
     /// </summary>
     private static bool ResolveMove(DatasetImportAction action, ImageActionPaths acquired)
         => action == DatasetImportAction.Move && !acquired.KeepInPlace;
+
+    private static string AlreadyPresentNote(DatasetImportResult result)
+        => result.AlreadyPresent > 0 ? $" {result.AlreadyPresent} already there, left as is." : string.Empty;
 
     private static string CopiedInsteadOfMovedNote(DatasetImportAction action, bool moved)
         => action == DatasetImportAction.Move && !moved

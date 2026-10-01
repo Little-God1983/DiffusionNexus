@@ -134,15 +134,31 @@ its commit uses (`RasterizeLayerTransform`) and drawn in place of the layer, or 
 the commit would be refused, so the check sees exactly what the save writes. One opaque layer
 over the whole canvas answers without a flatten (`LayerStack.HasOpaqueCoveringLayer`).
 Hand-offs to other tools (Upscale, Add To..., Send To...) ask nothing and go through
-`ImageEditorViewModel.PrepareHandOff()`. While the canvas is the file at `CurrentImagePath`
-(`ImageEditorCore.MatchesFile`: unedited since the load, a Reset, or a Save over that file without
-a transparency fill), the tool gets that file itself, so a JPEG is not compressed again and the
-metadata and name survive (#586). `GetUnchangedFilePath()` also refuses while a tool has
-uncommitted work or the file changed on disk. The dirty flag cannot answer this: Export and Save
-as New clear it while the canvas still differs from the loaded file. Otherwise
-`ExportHandOffCopy()` writes a temp copy in the original's format, except a JPEG with
-transparency goes out as PNG. `ImageHandOff.IsCopy` says which one it is; only a copy may be
-deleted afterwards.
+`ImageEditorViewModel.PrepareHandOff()` (#586):
+
+- **The original file** while the canvas is exactly the file at `CurrentImagePath`, so a JPEG
+  is not compressed again and the metadata and name survive. The core tracks which file that is
+  (`ImageEditorCore.MatchedFilePath`): set by a load and by Reset, cleared by any edit, by Clear,
+  by a load from bytes or of a layered TIFF, and set again by a Save over the original with no
+  transparency fill, in a format the extension names (a save to `.tif` writes PNG bytes, so no
+  match). The view model compares it with its own `CurrentImagePath` (`MatchesOriginalFile`),
+  because a failed load leaves the core on the previous image. The dirty flag cannot answer this:
+  Export and Save as New clear it while the canvas still differs from the loaded file. At
+  hand-off `GetUnchangedFilePath()` also requires no pending tool work
+  (`HasPendingOperations`, kept in step with `CommitPendingOperations`) and the file unchanged on
+  disk (size and write time, read before the decode).
+- **A temp copy** otherwise (`ExportHandOffCopy()`), in the original's format, except a JPEG with
+  transparency goes out as PNG.
+- **The video file** in video mode, and **nothing** (with a status message) when the canvas
+  belongs to another file because this one failed to load.
+
+`ImageHandOff.IsCopy` says which one it is; only a copy may be deleted afterwards. Add To... marks
+the original `ImageActionPaths.KeepInPlace`, so Move copies it rather than taking it from under
+the editor. Adding it to its own folder conflicts with itself: Rename makes a copy beside it,
+Override counts it as already there (`DatasetImportResult.AlreadyPresent`) instead of copying the
+file onto itself. Send To -> Batch Metadata Distiller is listed while `MatchesOriginalFile`, and
+refused at click time (`ImageActionsViewModel.WorkflowUnavailableReason`) when the hand-off would
+still be a copy, before anything commits the tool's work.
 
 ### Zoom In
 ```

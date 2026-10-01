@@ -745,11 +745,12 @@ public partial class ImageEditorCore : IDisposable
             ClearPreview(raiseEvent: false);
 
             // Get file size
+            // Read size and write time once, before the decode, and use that one reading for both
+            // the size shown and the version the canvas is: a file rewritten during the decode must
+            // not later pass for what the canvas shows (#586).
             var fileInfo = new FileInfo(filePath);
-
-            // Identify the version about to be decoded: one rewritten during the decode must not
-            // later pass for what the canvas shows (#586).
-            var loadedVersion = FileStamp.TryCapture(filePath);
+            fileInfo.Refresh();
+            var loadedVersion = FileStamp.From(fileInfo);
 
             // Decode before touching editor state: it is the slow part, it must not stall the
             // render thread, and a failed decode then leaves the current image intact.

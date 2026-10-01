@@ -12,7 +12,10 @@ public sealed class DatasetImportResult
     public int Renamed { get; init; }
     public int Ignored { get; init; }
 
-    /// <summary>Sources that already sit in the destination folder, left alone.</summary>
+    /// <summary>
+    /// Conflicts resolved with Override whose source is the very file it would overwrite: the
+    /// image is already there, so nothing is copied (#586).
+    /// </summary>
     public int AlreadyPresent { get; init; }
     public IReadOnlyList<string> ProcessedSourceFiles { get; init; } = [];
 
@@ -48,21 +51,14 @@ public sealed class DatasetFileImporter
         ArgumentException.ThrowIfNullOrWhiteSpace(destinationFolder);
         ArgumentNullException.ThrowIfNull(dialogService);
 
-        var existingSources = sourceFiles
+        var sourceList = sourceFiles
             .Where(_fileOps.FileExists)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        // A file already in the destination folder is already imported. Compared with itself it
-        // would raise a conflict whose Override copies the file onto itself and fails (#586).
-        var sourceList = existingSources
-            .Where(source => !FilePaths.IsDirectlyIn(source, destinationFolder))
-            .ToList();
-        var alreadyPresent = existingSources.Count - sourceList.Count;
-
         if (sourceList.Count == 0)
         {
-            return new DatasetImportResult { AlreadyPresent = alreadyPresent };
+            return new DatasetImportResult();
         }
 
         _fileOps.CreateDirectory(destinationFolder);
@@ -91,23 +87,12 @@ public sealed class DatasetFileImporter
             }
         }
 
-        var result = await ImportResolvedAsync(
+        return await ImportResolvedAsync(
             conflictResult.NonConflictingFiles,
             resolution,
             destinationFolder,
             videoThumbnailService,
             moveFiles);
-
-        return new DatasetImportResult
-        {
-            Cancelled = result.Cancelled,
-            Copied = result.Copied,
-            Overridden = result.Overridden,
-            Renamed = result.Renamed,
-            Ignored = result.Ignored,
-            AlreadyPresent = alreadyPresent,
-            ProcessedSourceFiles = result.ProcessedSourceFiles
-        };
     }
 
     /// <summary>
@@ -128,6 +113,7 @@ public sealed class DatasetFileImporter
         var overridden = 0;
         var renamed = 0;
         var ignored = 0;
+        var alreadyPresent = 0;
 
         // Track filenames used in this batch to prevent intra-batch collisions.
         var usedFileNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -165,6 +151,13 @@ public sealed class DatasetFileImporter
             {
                 switch (conflict.Resolution)
                 {
+                    // A source already in the destination folder conflicts with itself (the Image
+                    // Editor hands over its unedited original, #586). Overriding it would copy the file
+                    // onto itself, which throws; it is already there. Rename still makes a copy beside it.
+                    case FileConflictResolution.Override when FilePaths.AreSame(conflict.NewFilePath, conflict.ExistingFilePath):
+                        alreadyPresent++;
+                        break;
+
                     case FileConflictResolution.Override when overriddenTargets.Add(conflict.ExistingFilePath):
                         CopyOrMove(conflict.NewFilePath, conflict.ExistingFilePath, moveFiles, overwrite: true);
                         processedSources.Add(conflict.NewFilePath);
@@ -215,6 +208,7 @@ public sealed class DatasetFileImporter
             Overridden = overridden,
             Renamed = renamed,
             Ignored = ignored,
+            AlreadyPresent = alreadyPresent,
             ProcessedSourceFiles = processedSources
         };
     }

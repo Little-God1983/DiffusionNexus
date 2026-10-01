@@ -1254,15 +1254,36 @@ public partial class ImageEditorViewModel : ObservableObject
     /// canvas is the file at <see cref="CurrentImagePath"/>, that file itself: a copy would compress
     /// a JPEG again, drop the original's metadata and arrive under a generated name (#586).
     /// Otherwise a temp copy of the canvas (<see cref="ExportHandOffCopy"/>), so the destination
-    /// gets the edits; when that copy cannot be written, the file on disk as before.
+    /// gets the edits; when that copy cannot be written, the file on disk as before. A video is
+    /// handed over as its file: the canvas is not where it is shown. Nothing is handed over when the
+    /// canvas belongs to another file (this one failed to load), since a copy would give out the
+    /// previous image under this one's name.
     /// </summary>
     /// <param name="purpose">A short tag for a temp copy's file name, such as "upscale".</param>
-    /// <returns>The file to hand over, or null when no image is loaded.</returns>
+    /// <returns>
+    /// The file to hand over, or null when no image is loaded or the canvas is not this image
+    /// (<see cref="StatusMessage"/> then says why).
+    /// </returns>
     public ImageHandOff? PrepareHandOff(string purpose)
     {
         if (string.IsNullOrEmpty(CurrentImagePath)) return null;
 
         var name = Path.GetFileName(CurrentImagePath);
+        if (IsVideoMode)
+        {
+            _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+                $"Handing over the video {name} itself ({purpose})");
+            return new ImageHandOff(CurrentImagePath, IsCopy: false);
+        }
+
+        if (_fileMatchSource is { } core && !FilePaths.AreSame(core.CurrentImagePath, CurrentImagePath))
+        {
+            StatusMessage = $"{name} is not loaded in the editor, so there is nothing to hand over.";
+            _unifiedLogger?.Warn(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+                $"Not handing anything over ({purpose}): the canvas holds {core.CurrentImagePath ?? "no file"}, not {name}, which did not load");
+            return null;
+        }
+
         if (WouldHandOverOriginal())
         {
             _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
@@ -1272,7 +1293,7 @@ public partial class ImageEditorViewModel : ObservableObject
 
         var reason = MatchesOriginalFile
             ? "a tool has uncommitted work or the file changed on disk"
-            : "the canvas differs from that file (it was edited, or it did not load)";
+            : "the canvas has edits the file does not";
         var copy = ExportHandOffCopy(purpose);
         if (copy is null)
         {
