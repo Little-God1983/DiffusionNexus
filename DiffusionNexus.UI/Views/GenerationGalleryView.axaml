@@ -499,8 +499,9 @@
 
               <StackPanel Spacing="8">
                 <TextBlock Text="{Binding TagCloudHeader}" FontSize="11" Foreground="#6f6f6f" FontWeight="SemiBold"/>
-                <!-- Show = Videos scopes every chip to zero, so the cloud
-                     below is empty; say why. -->
+                <!-- Show = Videos: no chip can match a video, so the filter
+                     box and cloud are hidden (active chips stay removable in
+                     the "Filtered by:" strip) and this note says why. -->
                 <TextBlock IsVisible="{Binding ShowVideosNotTagIndexedNote}"
                            Text="Videos are not tag-indexed, so no tags apply while Show is set to Videos. Set Show to 'All' or 'Images' to filter by tag."
                            TextWrapping="Wrap" FontSize="12" Foreground="#ffa726"/>
@@ -508,9 +509,11 @@
                      fully indexed gallery fills the 200-chip budget with
                      booru tags, far too many to scan by eye. -->
                 <TextBox Watermark="Filter tags…"
+                         IsVisible="{Binding !ShowVideosNotTagIndexedNote}"
                          Text="{Binding TagCloudSearchText, Mode=TwoWay}"
                          FontSize="12"/>
-                <ItemsControl ItemsSource="{Binding TagCloud}">
+                <ItemsControl ItemsSource="{Binding TagCloud}"
+                              IsVisible="{Binding !ShowVideosNotTagIndexedNote}">
                   <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
                   </ItemsControl.ItemsPanel>
