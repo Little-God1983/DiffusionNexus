@@ -257,11 +257,20 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     [NotifyPropertyChangedFor(nameof(IsMediaTypeFilterAll))]
     [NotifyPropertyChangedFor(nameof(IsMediaTypeFilterImages))]
     [NotifyPropertyChangedFor(nameof(IsMediaTypeFilterVideos))]
+    [NotifyPropertyChangedFor(nameof(ShowVideosNotTagIndexedNote))]
+    [NotifyPropertyChangedFor(nameof(FilteredMatchCountText))]
     private GalleryMediaTypeFilter _mediaTypeFilter = GalleryMediaTypeFilter.All;
 
     public bool IsMediaTypeFilterAll => MediaTypeFilter == GalleryMediaTypeFilter.All;
     public bool IsMediaTypeFilterImages => MediaTypeFilter == GalleryMediaTypeFilter.Images;
     public bool IsMediaTypeFilterVideos => MediaTypeFilter == GalleryMediaTypeFilter.Videos;
+
+    /// <summary>
+    /// With Show = Videos every tag chip scopes to zero (videos are never
+    /// tag-indexed) and zero-scoped chips are hidden, so the drawer's tag
+    /// cloud empties; this note in the drawer says why.
+    /// </summary>
+    public bool ShowVideosNotTagIndexedNote => MediaTypeFilter == GalleryMediaTypeFilter.Videos;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IndexStatusText))]
@@ -413,7 +422,9 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     /// </summary>
     public bool IsTaggingAvailable => _tagIndexService is not null;
 
-    public string FilteredMatchCountText => $"{FilteredMatchCount:N0} images match";
+    public string FilteredMatchCountText => MediaTypeFilter == GalleryMediaTypeFilter.Videos
+        ? $"{FilteredMatchCount:N0} videos match"
+        : $"{FilteredMatchCount:N0} images match";
 
     // Counts the full entry list, not the filtered TagCloud view — the header
     // describes the index, and must not shrink while the user types in the
@@ -1435,6 +1446,10 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     /// </summary>
     private void UpdateNoMediaMessage()
     {
+        var showFilterKind = MediaTypeFilter == GalleryMediaTypeFilter.Videos ? "videos" : "images";
+        var galleryHasShowFilterKind = MediaTypeFilter == GalleryMediaTypeFilter.All
+            || _allMediaItems.Any(i => MediaTypeFilter == GalleryMediaTypeFilter.Videos ? i.IsVideo : i.IsImage);
+
         // Zero enabled folders wins over everything: telling that user to
         // "clear filters or build the tag index" (the filter branch below)
         // sends them chasing filters over a gallery that has no folders at
@@ -1443,12 +1458,27 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         {
             NoMediaMessage = "No generation gallery folders are enabled. Configure Generation Galleries in Settings to get started.";
         }
-        else if (MediaItems.Count == 0 && MediaTypeFilter == GalleryMediaTypeFilter.Videos
+        else if (_allMediaItems.Count == 0)
+        {
+            // Nothing on disk at all: no filter is to blame, whichever is set.
+            NoMediaMessage = NoMediaInFoldersMessage;
+        }
+        else if (MediaItems.Count == 0 && !galleryHasShowFilterKind)
+        {
+            // The Show filter asks for a kind the gallery does not hold, so no
+            // other filter can matter — checked before the drawer branch,
+            // which an active NSFW mode would otherwise win with advice about
+            // date/search/favorites that are not the cause.
+            NoMediaMessage = $"Your gallery folders contain no {showFilterKind}. Set Show to 'All' to see everything else.";
+        }
+        else if (MediaItems.Count == 0 && MediaTypeFilter == GalleryMediaTypeFilter.Videos && !_lastTagFilterFailed
                  && (ActiveTagFilters.Count > 0 || NsfwFilter == NsfwFilterMode.NsfwOnly))
         {
             // Only images are tag-indexed, so a tag chip or "NSFW only" can
             // never match a video. Neither the date-filter advice nor "build
             // the tag index" (the branch below) would ever fill this grid.
+            // A failed index query empties the grid for its own reason and
+            // goes to the branch below, alongside its status message.
             NoMediaMessage = "Videos are not tag-indexed, so tag filters and the 'NSFW only' mode never match a video. " +
                              "Set Show to 'All' or 'Images' to see the images that match.";
         }
@@ -1459,45 +1489,45 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             // favorites toggle excluded every match — a partially built index
             // tends to cover the oldest files first, which is exactly what a
             // recent-only date window hides. Name the culprit and the fix.
+            var showClause = MediaTypeFilter == GalleryMediaTypeFilter.All ? "" : ", the Show filter";
             NoMediaMessage = _tagMatchesHiddenByOtherFilters > 0
                 ? ActiveTagFilters.Count > 0
                     ? $"{_tagMatchesHiddenByOtherFilters:N0} image(s) match your tag filter, but the date filter " +
-                      $"('{SelectedDateFilter}'), the search box, the favorites toggle or the NSFW mode is hiding " +
+                      $"('{SelectedDateFilter}'), the search box, the favorites toggle{showClause} or the NSFW mode is hiding " +
                       "all of them. Set the date filter to 'All Time' to see them."
                     : $"All {_tagMatchesHiddenByOtherFilters:N0} image(s) are hidden by your current filters — " +
-                      $"the date filter ('{SelectedDateFilter}'), the search box, the favorites toggle or the NSFW mode. " +
+                      $"the date filter ('{SelectedDateFilter}'), the search box, the favorites toggle{showClause} or the NSFW mode. " +
                       "Adjust them to see the gallery."
                 : "No images match your current filters. Try clearing the filters, or build the tag index if you haven't done that yet.";
         }
         else if (MediaTypeFilter != GalleryMediaTypeFilter.All && MediaItems.Count == 0)
         {
-            // The Show filter emptied the grid. The generic text below would
-            // send the user to Settings over folders that are fine.
-            var wantVideos = MediaTypeFilter == GalleryMediaTypeFilter.Videos;
-            var kind = wantVideos ? "videos" : "images";
-            var galleryHasKind = _allMediaItems.Any(i => wantVideos ? i.IsVideo : i.IsImage);
-            var culprits = GetDateSearchFavoritesCulprits();
-            NoMediaMessage = galleryHasKind
-                ? $"No {kind} match your current filters — they are hidden by {JoinCulprits(culprits)}. " +
-                  "Widen those filters, or set Show to 'All'."
-                : $"Your gallery folders contain no {kind}. Set Show to 'All' to see everything else.";
+            // The gallery holds this kind, so the date window, search box or
+            // favorites toggle is hiding it. The generic text below would send
+            // the user to Settings over folders that are fine.
+            NoMediaMessage = $"No {showFilterKind} match your current filters — they are hidden by " +
+                             $"{JoinCulprits(GetDateSearchFavoritesCulprits())}. Widen those filters, or set Show to 'All'.";
         }
         else
         {
-            NoMediaMessage = "No media found in enabled generation gallery folders. Check your Generation Galleries in Settings.";
+            NoMediaMessage = NoMediaInFoldersMessage;
         }
 
         OnPropertyChanged(nameof(ShowConfigureFoldersHint));
     }
 
+    private const string NoMediaInFoldersMessage =
+        "No media found in enabled generation gallery folders. Check your Generation Galleries in Settings.";
+
     /// <summary>
     /// Gates the "Open Settings → Generation Galleries…" line under the
-    /// empty-state message: always shown when no folders are enabled (that IS
-    /// the fix), otherwise only when no filter is responsible for the grid
-    /// being empty.
+    /// empty-state message: always shown when no folders are enabled or they
+    /// hold no media (that IS the fix), otherwise only when no filter is
+    /// responsible for the grid being empty.
     /// </summary>
     public bool ShowConfigureFoldersHint =>
-        _enabledSourceCount == 0 || (!HasActiveTagFilters && MediaTypeFilter == GalleryMediaTypeFilter.All);
+        _enabledSourceCount == 0 || _allMediaItems.Count == 0
+        || (!HasActiveTagFilters && MediaTypeFilter == GalleryMediaTypeFilter.All);
 
     /// <summary>
     /// Waits for any in-progress sort/filter/group operation to complete.
@@ -1507,6 +1537,9 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
     private void ApplySortingAndGrouping()
     {
+        if (_suppressFilterPasses)
+            return;
+
         _lastSortTask = ApplySortingAndGroupingAsync();
     }
 
@@ -1692,12 +1725,18 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             // NSFW mode) removed from that baseline counts as hidden. The
             // chips themselves are exempt: narrowing to a tag is the search
             // the user asked for, not something being withheld from it.
+            // Show = Images is exempt the same way: the videos it leaves out
+            // are never tag-indexed, so they are not "images and tags" this
+            // warning is about. Show = Videos does count — it hides images.
             var tagMatchesHiddenByOtherFilters = 0;
             if (!tagFilterFailed)
             {
+                var baselineItems = mediaTypeFilter == GalleryMediaTypeFilter.Images
+                    ? allItems.Where(item => item.IsImage)
+                    : allItems;
                 var baseline = tagMatchPaths is null
-                    ? allItems.Count
-                    : allItems.Count(item => tagMatchPaths.Contains(Path.GetFullPath(item.FilePath)));
+                    ? baselineItems.Count()
+                    : baselineItems.Count(item => tagMatchPaths.Contains(Path.GetFullPath(item.FilePath)));
                 tagMatchesHiddenByOtherFilters = Math.Max(0, baseline - resultList.Count);
             }
 
@@ -1758,6 +1797,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
             return;
 
         FilteredMatchCount = sortedList.Count;
+        _lastTagFilterFailed = tagFilterFailed;
         _tagMatchesHiddenByOtherFilters = hiddenTagMatches;
         OnPropertyChanged(nameof(HasHiddenTagMatches));
         OnPropertyChanged(nameof(HiddenTagMatchesText));
@@ -1780,6 +1820,12 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     /// message.
     /// </summary>
     private int _tagMatchesHiddenByOtherFilters;
+
+    /// <summary>
+    /// True when the last pass emptied the grid because the tag-index query
+    /// failed (fail closed), so the empty state does not invent another cause.
+    /// </summary>
+    private bool _lastTagFilterFailed;
 
     /// <summary>
     /// The scoped chip counts from the last completed filter pass, kept so a
@@ -1814,7 +1860,9 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         get
         {
             var culprits = GetDateSearchFavoritesCulprits();
-            if (MediaTypeFilter != GalleryMediaTypeFilter.All)
+            // Only Videos hides images; Images hides only untaggable videos,
+            // which the baseline leaves out.
+            if (MediaTypeFilter == GalleryMediaTypeFilter.Videos)
                 culprits.Add($"the Show filter ('{MediaTypeFilter}')");
             if (NsfwFilter != NsfwFilterMode.ShowAll)
                 culprits.Add("the NSFW mode");
@@ -1856,11 +1904,28 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     [RelayCommand]
     private void RevealHiddenMatches()
     {
-        SelectedDateFilter = "All Time";
-        SearchText = string.Empty;
-        ShowFavoritesOnly = false;
-        MediaTypeFilter = GalleryMediaTypeFilter.All;
+        // Each setter would start its own full filter pass; run one instead.
+        _suppressFilterPasses = true;
+        try
+        {
+            SelectedDateFilter = "All Time";
+            SearchText = string.Empty;
+            ShowFavoritesOnly = false;
+            MediaTypeFilter = GalleryMediaTypeFilter.All;
+        }
+        finally
+        {
+            _suppressFilterPasses = false;
+        }
+
+        ApplySortingAndGrouping();
     }
+
+    /// <summary>
+    /// Set while several filter properties are reset together, so their
+    /// change handlers do not each start a pass.
+    /// </summary>
+    private bool _suppressFilterPasses;
 
     private void ApplyScopedTagCounts(Dictionary<string, int>? scopedCounts)
     {
@@ -1955,7 +2020,10 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
 
     private void ClearSelectionSilent()
     {
-        foreach (var item in MediaItems)
+        // Every item, not just the visible ones: an item a filter hides would
+        // otherwise stay selected out of sight and come back selected (and
+        // deletable) when the filter changes.
+        foreach (var item in _allMediaItems)
         {
             item.IsSelected = false;
         }

@@ -446,8 +446,12 @@ public class GenerationGalleryViewModelTests : IDisposable
     }
 
     [Fact]
-    public async Task MediaTypeFilter_CountsAsAHidingFilter_AndRevealResetsIt()
+    public async Task MediaTypeFilter_Images_DoesNotWarnAboutHiddenUntaggableVideos()
     {
+        // The drawer's warning is about images and tags. Videos are never
+        // tag-indexed, so the videos Show = Images leaves out are not
+        // "images and tags hidden" — warning about them would keep the
+        // banner up for as long as the user stays in the view they chose.
         var galleryPath = CreateTempDirectory();
         File.WriteAllText(Path.Combine(galleryPath, "still.png"), "test");
         File.WriteAllText(Path.Combine(galleryPath, "clip.mp4"), "test");
@@ -459,8 +463,142 @@ public class GenerationGalleryViewModelTests : IDisposable
         viewModel.SetMediaTypeFilterCommand.Execute(nameof(GalleryMediaTypeFilter.Images));
         await viewModel.WaitForSortingAsync();
 
-        viewModel.HasHiddenTagMatches.Should().BeTrue("the video is hidden");
-        viewModel.HiddenTagMatchesText.Should().Contain("the Show filter ('Images')");
+        viewModel.MediaItems.Should().ContainSingle();
+        viewModel.HasHiddenTagMatches.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task MediaTypeFilter_EmptyGallery_KeepsTheFolderGuidance()
+    {
+        // No files at all: "Set Show to 'All' to see everything else" would
+        // be wrong — there is nothing else — and the Settings hint is the fix.
+        var galleryPath = CreateTempDirectory();
+
+        var viewModel = CreateGalleryViewModel(galleryPath);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+
+        viewModel.SetMediaTypeFilterCommand.Execute(nameof(GalleryMediaTypeFilter.Images));
+        await viewModel.WaitForSortingAsync();
+
+        viewModel.HasNoMedia.Should().BeTrue();
+        viewModel.NoMediaMessage.Should().Contain("Settings").And.NotContain("Show");
+        viewModel.ShowConfigureFoldersHint.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task MediaTypeFilter_VideosOverStillsWithHideNsfw_StillBlamesTheShowFilter()
+    {
+        // Hide NSFW counts as an active drawer filter, so the drawer's
+        // empty-state branch used to win and list date/search/favorites/NSFW
+        // — none of which is the cause — without ever naming Show.
+        var galleryPath = CreateTempDirectory();
+        File.WriteAllText(Path.Combine(galleryPath, "still.png"), "test");
+
+        var mockTagIndex = new Mock<ITagIndexService>();
+        mockTagIndex.Setup(t => t.SearchAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<NsfwFilterMode>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<string>());
+
+        var viewModel = CreateGalleryViewModel(galleryPath, mockTagIndex.Object);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+
+        viewModel.SetNsfwFilterCommand.Execute(nameof(NsfwFilterMode.HideNsfw));
+        viewModel.SetMediaTypeFilterCommand.Execute(nameof(GalleryMediaTypeFilter.Videos));
+        await viewModel.WaitForSortingAsync();
+
+        viewModel.HasNoMedia.Should().BeTrue();
+        viewModel.NoMediaMessage.Should().Contain("no videos").And.Contain("'All'");
+    }
+
+    [Fact]
+    public async Task MediaTypeFilter_VideosWithFailedTagQuery_DoesNotBlameTagIndexing()
+    {
+        // A failed tag-index query empties the grid on purpose (fail closed)
+        // and reports the failure; the empty state must not then claim the
+        // cause is that videos are not tag-indexed.
+        var galleryPath = CreateTempDirectory();
+        File.WriteAllText(Path.Combine(galleryPath, "clip.mp4"), "test");
+
+        var mockTagIndex = new Mock<ITagIndexService>();
+        mockTagIndex.Setup(t => t.SearchAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<NsfwFilterMode>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("index locked"));
+
+        var viewModel = CreateGalleryViewModel(galleryPath, mockTagIndex.Object);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+
+        viewModel.SetMediaTypeFilterCommand.Execute(nameof(GalleryMediaTypeFilter.Videos));
+        viewModel.ToggleTagFilterCommand.Execute("dog");
+        await viewModel.WaitForSortingAsync();
+
+        viewModel.HasNoMedia.Should().BeTrue();
+        viewModel.StatusMessage.Should().Contain("Tag filter unavailable");
+        viewModel.NoMediaMessage.Should().NotContain("not tag-indexed");
+    }
+
+    [Fact]
+    public async Task MediaTypeFilter_Videos_ExplainsWhyTheTagCloudIsEmpty()
+    {
+        // With Show = Videos every chip scopes to zero (videos carry no tags)
+        // and zero-scoped chips are hidden, so the cloud empties. The drawer
+        // has to say why.
+        var galleryPath = CreateTempDirectory();
+        File.WriteAllText(Path.Combine(galleryPath, "clip.mp4"), "test");
+
+        var viewModel = CreateGalleryViewModel(galleryPath);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+        viewModel.ShowVideosNotTagIndexedNote.Should().BeFalse();
+
+        viewModel.SetMediaTypeFilterCommand.Execute(nameof(GalleryMediaTypeFilter.Videos));
+        await viewModel.WaitForSortingAsync();
+        viewModel.ShowVideosNotTagIndexedNote.Should().BeTrue();
+        viewModel.FilteredMatchCountText.Should().Be("1 videos match", "the drawer footer must not call videos images");
+    }
+
+    [Fact]
+    public async Task PlainClick_ClearsTheSelectionOfItemsAFilterHides()
+    {
+        // Select both stills, switch to Videos, plain-click the video, switch
+        // back: only the video may be selected. Clearing over the visible
+        // items alone left the stills selected out of sight, and Delete
+        // Selected would then have removed all three.
+        var galleryPath = CreateTempDirectory();
+        File.WriteAllText(Path.Combine(galleryPath, "a.png"), "test");
+        File.WriteAllText(Path.Combine(galleryPath, "b.png"), "test");
+        var video = Path.Combine(galleryPath, "clip.mp4");
+        File.WriteAllText(video, "test");
+
+        var viewModel = CreateGalleryViewModel(galleryPath);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+
+        viewModel.SetMediaTypeFilterCommand.Execute(nameof(GalleryMediaTypeFilter.Images));
+        await viewModel.WaitForSortingAsync();
+        viewModel.SelectAllCommand.Execute(null);
+
+        viewModel.SetMediaTypeFilterCommand.Execute(nameof(GalleryMediaTypeFilter.Videos));
+        await viewModel.WaitForSortingAsync();
+        viewModel.SelectWithModifiers(viewModel.MediaItems.Single(), isShiftPressed: false, isCtrlPressed: false);
+
+        viewModel.SetMediaTypeFilterCommand.Execute(nameof(GalleryMediaTypeFilter.All));
+        await viewModel.WaitForSortingAsync();
+
+        viewModel.MediaItems.Where(i => i.IsSelected).Select(i => i.FilePath).Should().Equal(video);
+    }
+
+    [Fact]
+    public async Task MediaTypeFilter_CountsAsAHidingFilter_AndRevealResetsIt()
+    {
+        var galleryPath = CreateTempDirectory();
+        File.WriteAllText(Path.Combine(galleryPath, "still.png"), "test");
+        File.WriteAllText(Path.Combine(galleryPath, "clip.mp4"), "test");
+
+        var viewModel = CreateGalleryViewModel(galleryPath);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+        viewModel.SelectedDateFilter = "All Time";
+
+        viewModel.SetMediaTypeFilterCommand.Execute(nameof(GalleryMediaTypeFilter.Videos));
+        await viewModel.WaitForSortingAsync();
+
+        viewModel.HasHiddenTagMatches.Should().BeTrue("the still is hidden");
+        viewModel.HiddenTagMatchesText.Should().Contain("the Show filter ('Videos')");
         viewModel.CanRevealHiddenMatches.Should().BeTrue();
 
         viewModel.RevealHiddenMatchesCommand.Execute(null);
