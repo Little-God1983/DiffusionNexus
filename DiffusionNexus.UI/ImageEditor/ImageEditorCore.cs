@@ -763,6 +763,7 @@ public partial class ImageEditorCore : IDisposable
             
             OnImageChanged(marksDirty: false);
             SetDirty(false);
+            OnLoadedFromFile(filePath);
             return true;
         }
         catch
@@ -806,6 +807,7 @@ public partial class ImageEditorCore : IDisposable
             
             OnImageChanged(marksDirty: false);
             SetDirty(false);
+            ForgetLoadedFile();
             return true;
         }
         catch
@@ -892,6 +894,7 @@ public partial class ImageEditorCore : IDisposable
 
         OnImageChanged(marksDirty: false);
         SetDirty(false);
+        OnResetToLoadedFile();
     }
 
     /// <summary>
@@ -928,6 +931,7 @@ public partial class ImageEditorCore : IDisposable
         CurrentImagePath = null;
         OnImageChanged(marksDirty: false);
         SetDirty(false);
+        ForgetLoadedFile();
     }
 
     /// <summary>
@@ -2094,6 +2098,9 @@ public partial class ImageEditorCore : IDisposable
         LayersChanged?.Invoke(this, EventArgs.Empty);
         SetDirty(false);
 
+        // Skia cannot decode TIFF, so the tools a hand-off reaches need a flattened copy.
+        ForgetLoadedFile();
+
         return true;
     }
 
@@ -2124,6 +2131,8 @@ public partial class ImageEditorCore : IDisposable
 
     private void SetDirty(bool value)
     {
+        // Every edit leaves the file behind, including one made while already dirty.
+        if (value) SetMatchedFile(null);
         if (IsDirty == value) return;
         IsDirty = value;
         IsDirtyChanged?.Invoke(this, EventArgs.Empty);

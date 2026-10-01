@@ -309,16 +309,16 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         ImageEditor = new ImageEditorViewModel(_eventAggregator, _backgroundRemovalService, _comfyUiService, readinessService: _readinessService, unifiedLogger: unifiedLogger, downloadCoordinator: downloadCoordinator);
 
         // Reusable Add/Send actions over the current edited image. "Image Editor" + "Comparer" are
-        // hidden; enablement tracks whether an image is loaded. The Batch Metadata Distiller is hidden
-        // too: AcquireCurrentImagePathsAsync hands destinations a Skia re-encoded temp copy of the
-        // canvas, which carries none of the original PNG text chunks the distiller exists to read.
+        // hidden; enablement tracks whether an image is loaded. The Batch Metadata Distiller shows
+        // only while the canvas is the file on disk: an edited canvas is handed over as a Skia
+        // re-encoded temp copy, which carries none of the PNG text chunks the distiller reads (#586).
         ImageActions = new ImageActionsViewModel(_state, _eventAggregator, _videoThumbnailService, _settingsService)
         {
             AddButtonText = "Add To...",
             SendButtonText = "Send To...",
             ShowSendToImageEditor = false,
             ShowSendToComparer = false,
-            ShowSendToMetadataDistiller = false,
+            ShowSendToMetadataDistiller = OffersMetadataDistiller(),
             PathProvider = AcquireCurrentImagePathsAsync,
         };
         ImageEditor.PropertyChanged += OnImageEditorPropertyChanged;
@@ -642,24 +642,22 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     #region Private Methods
 
     /// <summary>
-    /// Supplies the current edited image to <see cref="ImageActions"/>: exports the in-memory edits to
-    /// a temp file (so destinations receive the edits, not the on-disk original) and returns a cleanup
-    /// that deletes it. The cleanup runs for the synchronous "Add To…" destinations; the deferred
-    /// "Send To…" destinations leave the temp for the OS (as the editor always has). Falls back to the
-    /// on-disk path when export isn't available.
+    /// Supplies the current image to <see cref="ImageActions"/> through
+    /// <see cref="ImageEditorViewModel.PrepareHandOff"/>: the original file while the canvas is
+    /// unchanged, otherwise a temp copy with the edits. Only a copy gets a cleanup that deletes it;
+    /// it runs for the synchronous "Add To…" destinations, while the deferred "Send To…"
+    /// destinations leave the temp for the OS (as the editor always has).
     /// </summary>
     private Task<ImageActionPaths> AcquireCurrentImagePathsAsync()
     {
-        var currentPath = ImageEditor.CurrentImagePath;
-        if (string.IsNullOrEmpty(currentPath) || !ImageEditor.HasImage)
+        if (!ImageEditor.HasImage || ImageEditor.PrepareHandOff("act") is not { } handOff)
             return Task.FromResult(ImageActionPaths.Empty);
 
-        var tempPath = ImageEditor.ExportHandOffCopy("act");
-        Action? cleanup = tempPath is null
-            ? null
-            : () => { try { File.Delete(tempPath); } catch { /* best effort */ } };
+        Action? cleanup = handOff.IsCopy
+            ? () => { try { File.Delete(handOff.Path); } catch { /* best effort */ } }
+            : null;
 
-        return Task.FromResult(new ImageActionPaths([tempPath ?? currentPath], cleanup));
+        return Task.FromResult(new ImageActionPaths([handOff.Path], cleanup));
     }
 
     private void OnImageEditorPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -670,6 +668,10 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
             UpdateImageActionsCanAct();
             AddAsLayerCommand.NotifyCanExecuteChanged();
         }
+
+        if (e.PropertyName is nameof(ImageEditorViewModel.MatchesOriginalFile)
+            or nameof(ImageEditorViewModel.IsVideoMode))
+            ImageActions.ShowSendToMetadataDistiller = OffersMetadataDistiller();
 
         // The editor's own status line ("Canvas extended to …", tool hints, apply failures)
         // has no binding of its own in the editor view: surface it in the shared status bar
@@ -692,6 +694,9 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     }
 
     /// <summary>Gates the Add/Send actions on whether an image is currently loaded in the editor.</summary>
+    // A video keeps the canvas of the image before it, which may still match that image's file.
+    private bool OffersMetadataDistiller() => ImageEditor.MatchesOriginalFile && !ImageEditor.IsVideoMode;
+
     private void UpdateImageActionsCanAct()
         => ImageActions.CanAct = ImageEditor.HasImage && !string.IsNullOrEmpty(ImageEditor.CurrentImagePath);
 

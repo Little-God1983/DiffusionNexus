@@ -273,6 +273,10 @@ public partial class ImageEditView : UserControl
         // anything replaces the canvas (#567).
         _eventCleanup.Add(imageEditor.TrackUnsavedChanges(_imageEditorCanvas.EditorCore).Dispose);
 
+        // ...and whether the canvas is still the file on disk, so hand-offs can give tools that
+        // file instead of a re-encoded copy (#586).
+        _eventCleanup.Add(imageEditor.TrackFileMatch(_imageEditorCanvas.EditorCore).Dispose);
+
         EventHandler onZoomChanged = (_, _) =>
         {
             imageEditor.UpdateZoomInfo(
@@ -1180,8 +1184,16 @@ public partial class ImageEditView : UserControl
         _eventCleanup.Add(() => imageEditor.JpegTransparencyPromptRequested -= onJpegTransparencyPrompt);
 
         // A user-initiated save/export declares the canvas clean; the temp exports that share
-        // SaveImageFunc do not raise this.
-        EventHandler onCanvasSaved = (_, _) => _imageEditorCanvas?.EditorCore.MarkClean();
+        // SaveImageFunc do not raise this. A save over the loaded file also makes the canvas that
+        // file again, which hand-offs then give out as is (#586).
+        EventHandler<CanvasSavedEventArgs> onCanvasSaved = (_, e) =>
+        {
+            var core = _imageEditorCanvas?.EditorCore;
+            if (core is null) return;
+            core.MarkClean();
+            if (e.SavedOverPath is { } savedOver)
+                core.MarkSavedOverFile(savedOver);
+        };
         imageEditor.CanvasSaved += onCanvasSaved;
         _eventCleanup.Add(() => imageEditor.CanvasSaved -= onCanvasSaved);
 

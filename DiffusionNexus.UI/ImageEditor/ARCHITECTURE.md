@@ -133,9 +133,16 @@ save). An open Move/Transform is rasterized by the same code
 its commit uses (`RasterizeLayerTransform`) and drawn in place of the layer, or left out when
 the commit would be refused, so the check sees exactly what the save writes. One opaque layer
 over the whole canvas answers without a flatten (`LayerStack.HasOpaqueCoveringLayer`).
-Hand-offs to other tools (Upscale, Add To..., Send To...) ask nothing:
-`ImageEditorViewModel.ExportHandOffCopy()` keeps the original's format, except a JPEG with
-transparency goes out as PNG.
+Hand-offs to other tools (Upscale, Add To..., Send To...) ask nothing and go through
+`ImageEditorViewModel.PrepareHandOff()`. While the canvas is the file at `CurrentImagePath`
+(`ImageEditorCore.MatchesFile`: unedited since the load, a Reset, or a Save over that file without
+a transparency fill), the tool gets that file itself, so a JPEG is not compressed again and the
+metadata and name survive (#586). `GetUnchangedFilePath()` also refuses while a tool has
+uncommitted work or the file changed on disk. The dirty flag cannot answer this: Export and Save
+as New clear it while the canvas still differs from the loaded file. Otherwise
+`ExportHandOffCopy()` writes a temp copy in the original's format, except a JPEG with
+transparency goes out as PNG. `ImageHandOff.IsCopy` says which one it is; only a copy may be
+deleted afterwards.
 
 ### Zoom In
 ```
