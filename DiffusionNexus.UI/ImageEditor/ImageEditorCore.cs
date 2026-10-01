@@ -158,6 +158,16 @@ public partial class ImageEditorCore : IDisposable
     }
 
     /// <summary>
+    /// Whether <see cref="CommitPendingOperations"/> would change the canvas: work a save includes
+    /// but the canvas has not committed yet. Keep the two in step.
+    /// </summary>
+    public bool HasPendingOperations =>
+        TextTool.HasPlacedText
+        || ShapeTool.HasPlacedShape
+        || DrawingTool.IsDrawing
+        || (LayerTransformTool.IsActive && LayerTransformTool.IsArmed && LayerTransformTool.HasTransform);
+
+    /// <summary>
     /// Gets the layer stack for layer-based editing.
     /// </summary>
     public LayerStack? Layers => _layers;
@@ -735,7 +745,12 @@ public partial class ImageEditorCore : IDisposable
             ClearPreview(raiseEvent: false);
 
             // Get file size
+            // Read size and write time once, before the decode, and use that one reading for both
+            // the size shown and the version the canvas is: a file rewritten during the decode must
+            // not later pass for what the canvas shows (#586).
             var fileInfo = new FileInfo(filePath);
+            fileInfo.Refresh();
+            var loadedVersion = FileStamp.From(fileInfo);
 
             // Decode before touching editor state: it is the slow part, it must not stall the
             // render thread, and a failed decode then leaves the current image intact.
@@ -763,6 +778,7 @@ public partial class ImageEditorCore : IDisposable
             
             OnImageChanged(marksDirty: false);
             SetDirty(false);
+            OnLoadedFromFile(loadedVersion);
             return true;
         }
         catch
@@ -806,6 +822,7 @@ public partial class ImageEditorCore : IDisposable
             
             OnImageChanged(marksDirty: false);
             SetDirty(false);
+            ForgetLoadedFile();
             return true;
         }
         catch
@@ -892,6 +909,7 @@ public partial class ImageEditorCore : IDisposable
 
         OnImageChanged(marksDirty: false);
         SetDirty(false);
+        OnResetToLoadedFile();
     }
 
     /// <summary>
@@ -928,6 +946,7 @@ public partial class ImageEditorCore : IDisposable
         CurrentImagePath = null;
         OnImageChanged(marksDirty: false);
         SetDirty(false);
+        ForgetLoadedFile();
     }
 
     /// <summary>
@@ -2094,6 +2113,9 @@ public partial class ImageEditorCore : IDisposable
         LayersChanged?.Invoke(this, EventArgs.Empty);
         SetDirty(false);
 
+        // Skia cannot decode TIFF, so the tools a hand-off reaches need a flattened copy.
+        ForgetLoadedFile();
+
         return true;
     }
 
@@ -2124,6 +2146,8 @@ public partial class ImageEditorCore : IDisposable
 
     private void SetDirty(bool value)
     {
+        // Every edit leaves the file behind, including one made while already dirty.
+        if (value) SetMatchedFile(null);
         if (IsDirty == value) return;
         IsDirty = value;
         IsDirtyChanged?.Invoke(this, EventArgs.Empty);

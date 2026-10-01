@@ -616,6 +616,43 @@ public class DatasetFileImporterTests
     }
 
     // -------------------------------------------------------------------
+    //  A source that is already the destination file (#586)
+    // -------------------------------------------------------------------
+
+    [Fact]
+    public async Task ImportResolved_OverrideOfAFileWithItself_LeavesItAlone()
+    {
+        // The Image Editor hands over its unedited original; added to its own folder it conflicts
+        // with itself, and copying a file onto itself throws.
+        _fileOps.ExistingFiles.Add(@"C:\Dest\cat.png");
+        var resolution = MakeResolution(
+            MakeConflict("cat.png", @"C:\Dest\cat.png", @"C:\Dest\cat.png", FileConflictResolution.Override));
+
+        var result = await _importer.ImportResolvedAsync(
+            [], resolution, DestFolder, videoThumbnailService: null, moveFiles: false);
+
+        result.AlreadyPresent.Should().Be(1);
+        result.TotalAdded.Should().Be(0);
+        _fileOps.CopiedFiles.Should().BeEmpty();
+        _fileOps.MovedFiles.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ImportResolved_RenameOfAFileWithItself_StillKeepsBoth()
+    {
+        _fileOps.ExistingFiles.Add(@"C:\Dest\cat.png");
+        var resolution = MakeResolution(
+            MakeConflict("cat.png", @"C:\Dest\cat.png", @"C:\Dest\cat.png", FileConflictResolution.Rename));
+
+        var result = await _importer.ImportResolvedAsync(
+            [], resolution, DestFolder, videoThumbnailService: null, moveFiles: false);
+
+        result.Renamed.Should().Be(1);
+        result.AlreadyPresent.Should().Be(0);
+        _fileOps.CopiedFiles.Should().ContainSingle().Which.Should().Be((@"C:\Dest\cat.png", @"C:\Dest\cat_1.png", false));
+    }
+
+    // -------------------------------------------------------------------
     //  Mock IFileOperations — records all operations for assertions.
     // -------------------------------------------------------------------
 

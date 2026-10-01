@@ -11,6 +11,12 @@ public sealed class DatasetImportResult
     public int Overridden { get; init; }
     public int Renamed { get; init; }
     public int Ignored { get; init; }
+
+    /// <summary>
+    /// Conflicts resolved with Override whose source is the very file it would overwrite: the
+    /// image is already there, so nothing is copied (#586).
+    /// </summary>
+    public int AlreadyPresent { get; init; }
     public IReadOnlyList<string> ProcessedSourceFiles { get; init; } = [];
 
     public int TotalAdded => Copied + Overridden + Renamed;
@@ -107,6 +113,7 @@ public sealed class DatasetFileImporter
         var overridden = 0;
         var renamed = 0;
         var ignored = 0;
+        var alreadyPresent = 0;
 
         // Track filenames used in this batch to prevent intra-batch collisions.
         var usedFileNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -144,6 +151,13 @@ public sealed class DatasetFileImporter
             {
                 switch (conflict.Resolution)
                 {
+                    // A source already in the destination folder conflicts with itself (the Image
+                    // Editor hands over its unedited original, #586). Overriding it would copy the file
+                    // onto itself, which throws; it is already there. Rename still makes a copy beside it.
+                    case FileConflictResolution.Override when FilePaths.AreSame(conflict.NewFilePath, conflict.ExistingFilePath):
+                        alreadyPresent++;
+                        break;
+
                     case FileConflictResolution.Override when overriddenTargets.Add(conflict.ExistingFilePath):
                         CopyOrMove(conflict.NewFilePath, conflict.ExistingFilePath, moveFiles, overwrite: true);
                         processedSources.Add(conflict.NewFilePath);
@@ -194,6 +208,7 @@ public sealed class DatasetFileImporter
             Overridden = overridden,
             Renamed = renamed,
             Ignored = ignored,
+            AlreadyPresent = alreadyPresent,
             ProcessedSourceFiles = processedSources
         };
     }

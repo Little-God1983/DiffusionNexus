@@ -22,6 +22,8 @@ public partial class ImageEditorViewModel : ObservableObject
     private string? _imageFileName;
     private bool _hasImage;
     private bool _hasUnsavedChanges;
+    private bool _matchesOriginalFile;
+    private ImageEditorCore? _fileMatchSource;
     private string? _statusMessage;
     private int _imageWidth;
     private int _imageHeight;
@@ -132,6 +134,7 @@ public partial class ImageEditorViewModel : ObservableObject
                 HasImage = !string.IsNullOrEmpty(value);
                 ImageFileName = HasImage ? Path.GetFileName(value) : null;
                 LayerPanel.CurrentImagePath = value;
+                RefreshFileMatch();
                 NotifyCommandsCanExecuteChanged();
             }
         }
@@ -163,6 +166,19 @@ public partial class ImageEditorViewModel : ObservableObject
     {
         get => _hasUnsavedChanges;
         set => SetProperty(ref _hasUnsavedChanges, value);
+    }
+
+    /// <summary>
+    /// Whether the canvas is the file at <see cref="CurrentImagePath"/>
+    /// (<see cref="ImageEditor.ImageEditorCore.MatchedFilePath"/>, kept current by
+    /// <see cref="TrackFileMatch"/>), so a hand-off gives other tools that file rather than a
+    /// re-encoded copy (#586). Pending tool work and changes on disk are checked only at hand-off:
+    /// see <see cref="WouldHandOverOriginal"/>.
+    /// </summary>
+    public bool MatchesOriginalFile
+    {
+        get => _matchesOriginalFile;
+        private set => SetProperty(ref _matchesOriginalFile, value);
     }
 
     /// <summary>Status message to display.</summary>
@@ -369,10 +385,11 @@ public partial class ImageEditorViewModel : ObservableObject
 
     /// <summary>
     /// Raised after a user-initiated Save / Save As / Export succeeded. The view answers it with
-    /// <see cref="ImageEditor.ImageEditorCore.MarkClean"/>. Temp exports (Send To…, outpaint input)
-    /// go through <see cref="SaveImageFunc"/> too and must not raise this.
+    /// <see cref="ImageEditor.ImageEditorCore.MarkClean"/>, and after a save over the original with
+    /// <see cref="ImageEditor.ImageEditorCore.MarkSavedOverFile"/>. Temp exports (Send To…, outpaint
+    /// input) go through <see cref="SaveImageFunc"/> too and must not raise this.
     /// </summary>
-    public event EventHandler? CanvasSaved;
+    public event EventHandler<CanvasSavedEventArgs>? CanvasSaved;
 
     /// <summary>
     /// Asked before <see cref="ClearImageCommand"/> discards the canvas; return false to keep it.
@@ -698,10 +715,46 @@ public partial class ImageEditorViewModel : ObservableObject
         return new Unsubscriber(() => core.IsDirtyChanged -= onDirtyChanged);
     }
 
-    private void OnCanvasSaved()
+    /// <summary>
+    /// Follows <paramref name="core"/>'s <see cref="ImageEditorCore.MatchedFilePath"/> into
+    /// <see cref="MatchesOriginalFile"/> and lets <see cref="PrepareHandOff"/> ask it for the
+    /// unchanged file, until the returned handle is disposed. Pushes the current state immediately,
+    /// like <see cref="TrackUnsavedChanges"/>.
+    /// </summary>
+    public IDisposable TrackFileMatch(ImageEditorCore core)
+    {
+        ArgumentNullException.ThrowIfNull(core);
+        EventHandler onMatchChanged = (_, _) => RefreshFileMatch();
+        core.MatchesFileChanged += onMatchChanged;
+        _fileMatchSource = core;
+        RefreshFileMatch();
+        return new Unsubscriber(() =>
+        {
+            core.MatchesFileChanged -= onMatchChanged;
+            if (ReferenceEquals(_fileMatchSource, core)) _fileMatchSource = null;
+            RefreshFileMatch();
+        });
+    }
+
+    /// <summary>
+    /// Compared with <see cref="CurrentImagePath"/>, not taken from the core alone: a failed load of
+    /// another image leaves the core on the previous file while this view model shows the new path.
+    /// </summary>
+    private void RefreshFileMatch()
+        => MatchesOriginalFile = FilePaths.AreSame(_fileMatchSource?.MatchedFilePath, CurrentImagePath);
+
+    /// <summary>
+    /// Whether a hand-off right now would give other tools <see cref="CurrentImagePath"/> itself:
+    /// <see cref="MatchesOriginalFile"/>, nothing pending in a tool, and the file unchanged on disk.
+    /// Cheap and side-effect free, unlike <see cref="PrepareHandOff"/>, whose copy commits pending work.
+    /// </summary>
+    public bool WouldHandOverOriginal()
+        => FilePaths.AreSame(_fileMatchSource?.GetUnchangedFilePath(), CurrentImagePath);
+
+    private void OnCanvasSaved(string? savedOverPath = null)
     {
         HasUnsavedChanges = false;
-        CanvasSaved?.Invoke(this, EventArgs.Empty);
+        CanvasSaved?.Invoke(this, new CanvasSavedEventArgs(savedOverPath));
     }
 
     private sealed class Unsubscriber(Action unsubscribe) : IDisposable
@@ -792,9 +845,13 @@ public partial class ImageEditorViewModel : ObservableObject
     }
 
     /// <summary>Called when Save Overwrite completes successfully.</summary>
-    public void OnSaveOverwriteCompleted()
+    /// <param name="transparencyFilled">
+    /// True when transparent areas were filled for a JPEG: the file then differs from the canvas,
+    /// which keeps its transparency, so a hand-off still needs a copy.
+    /// </param>
+    public void OnSaveOverwriteCompleted(bool transparencyFilled = false)
     {
-        OnCanvasSaved();
+        OnCanvasSaved(transparencyFilled ? null : CurrentImagePath);
         FileLogger.LogEntry($"CurrentImagePath={CurrentImagePath ?? "(null)"}");
 
         try
@@ -976,7 +1033,7 @@ public partial class ImageEditorViewModel : ObservableObject
             {
                 var written = await WriteImageAsync(newPath);
                 if (written is null) return;
-                saved = written.Value;
+                saved = written.Value.Saved;
             }
 
             if (saved)
@@ -1011,11 +1068,11 @@ public partial class ImageEditorViewModel : ObservableObject
 
         try
         {
-            var saved = await WriteImageAsync(CurrentImagePath!);
-            if (saved is null) return;
+            var written = await WriteImageAsync(CurrentImagePath!);
+            if (written is null) return;
 
-            if (saved.Value)
-                OnSaveOverwriteCompleted();
+            if (written.Value.Saved)
+                OnSaveOverwriteCompleted(written.Value.Filled);
             else
                 StatusMessage = "Failed to save image.";
         }
@@ -1144,17 +1201,20 @@ public partial class ImageEditorViewModel : ObservableObject
     /// can still be picked, so the format is only known once it closes.
     /// </summary>
     /// <param name="path">The file to write; its extension decides the format.</param>
-    /// <returns>Whether the write succeeded, or null when the user cancelled at the prompt.</returns>
-    private async Task<bool?> WriteImageAsync(string path)
+    /// <returns>
+    /// Whether the write succeeded and whether transparent areas were filled, or null when the user
+    /// cancelled at the prompt.
+    /// </returns>
+    private async Task<(bool Saved, bool Filled)?> WriteImageAsync(string path)
     {
-        if (SaveImageFunc is null) return false;
+        if (SaveImageFunc is null) return (false, false);
 
         var (cancelled, fill) = IsJpegTarget(path)
             ? await AskJpegFillAsync($"JPEG save of {Path.GetFileName(path)}")
             : default;
         if (cancelled) return null;
 
-        return SaveImageFunc(path, fill);
+        return (SaveImageFunc(path, fill), fill is not null);
     }
 
     /// <summary>
@@ -1190,14 +1250,72 @@ public partial class ImageEditorViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Writes the canvas to a temp file for another tool (Upscale, Add To…, Send To…), so the
-    /// destination gets the edits rather than the file on disk. The copy keeps the original's
-    /// format, unless that is JPEG and the canvas has transparency, which a JPEG would turn black:
-    /// then it is a PNG. Nobody is asked, since the copy is a hand-off, not the user's file (#584).
+    /// Picks the file another tool (Upscale, Add To…, Send To…) receives for the canvas. While the
+    /// canvas is the file at <see cref="CurrentImagePath"/>, that file itself: a copy would compress
+    /// a JPEG again, drop the original's metadata and arrive under a generated name (#586).
+    /// Otherwise a temp copy of the canvas (<see cref="ExportHandOffCopy"/>), so the destination
+    /// gets the edits; when that copy cannot be written, the file on disk as before. A video is
+    /// handed over as its file: the canvas is not where it is shown. Nothing is handed over when the
+    /// canvas belongs to another file (this one failed to load), since a copy would give out the
+    /// previous image under this one's name.
+    /// </summary>
+    /// <param name="purpose">A short tag for a temp copy's file name, such as "upscale".</param>
+    /// <returns>
+    /// The file to hand over, or null when no image is loaded or the canvas is not this image
+    /// (<see cref="StatusMessage"/> then says why).
+    /// </returns>
+    public ImageHandOff? PrepareHandOff(string purpose)
+    {
+        if (string.IsNullOrEmpty(CurrentImagePath)) return null;
+
+        var name = Path.GetFileName(CurrentImagePath);
+        if (IsVideoMode)
+        {
+            _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+                $"Handing over the video {name} itself ({purpose})");
+            return new ImageHandOff(CurrentImagePath, IsCopy: false);
+        }
+
+        if (_fileMatchSource is { } core && !FilePaths.AreSame(core.CurrentImagePath, CurrentImagePath))
+        {
+            StatusMessage = $"{name} is not loaded in the editor, so there is nothing to hand over.";
+            _unifiedLogger?.Warn(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+                $"Not handing anything over ({purpose}): the canvas holds {core.CurrentImagePath ?? "no file"}, not {name}, which did not load");
+            return null;
+        }
+
+        if (WouldHandOverOriginal())
+        {
+            _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+                $"Handing over {name} itself ({purpose}): the canvas is unchanged since it was loaded or saved");
+            return new ImageHandOff(CurrentImagePath, IsCopy: false);
+        }
+
+        var reason = MatchesOriginalFile
+            ? "a tool has uncommitted work or the file changed on disk"
+            : "the canvas has edits the file does not";
+        var copy = ExportHandOffCopy(purpose);
+        if (copy is null)
+        {
+            _unifiedLogger?.Warn(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+                $"Could not write a copy of the canvas ({purpose}); handing over {name} as it is on disk");
+            return new ImageHandOff(CurrentImagePath, IsCopy: false);
+        }
+
+        _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+            $"Handing over a copy of the canvas ({purpose}) instead of {name}: {reason}");
+        return new ImageHandOff(copy, IsCopy: true);
+    }
+
+    /// <summary>
+    /// Writes the canvas to a temp file for another tool, so the destination gets the edits rather
+    /// than the file on disk. The copy keeps the original's format, unless that is JPEG and the
+    /// canvas has transparency, which a JPEG would turn black: then it is a PNG. Nobody is asked,
+    /// since the copy is a hand-off, not the user's file (#584).
     /// </summary>
     /// <param name="purpose">A short tag for the temp file name, such as "upscale".</param>
     /// <returns>The temp file, or null when there is nothing to export or the export failed.</returns>
-    public string? ExportHandOffCopy(string purpose)
+    private string? ExportHandOffCopy(string purpose)
     {
         if (CurrentImagePath is null || SaveImageFunc is null) return null;
 
@@ -1351,18 +1469,34 @@ public partial class ImageEditorViewModel : ObservableObject
             new NavigateToCaptioningEventArgs { ImagePaths = [path] }));
 
     /// <summary>
-    /// Exports the current edited image to a temp file (so the destination receives the edits,
-    /// not the original on disk) and hands the resulting path to <paramref name="publish"/>.
-    /// Falls back to the on-disk path when no export function is wired or the export fails.
+    /// Hands <paramref name="publish"/> the file <see cref="PrepareHandOff"/> picks: the original
+    /// while the canvas is unchanged, otherwise a temp copy with the edits.
     /// </summary>
     private void SendCurrentImageTo(string suffix, Action<string> publish)
     {
-        if (string.IsNullOrEmpty(CurrentImagePath)) return;
-
-        publish(ExportHandOffCopy(suffix) ?? CurrentImagePath);
+        if (PrepareHandOff(suffix) is { } handOff)
+            publish(handOff.Path);
     }
 
     #endregion
+}
+
+/// <summary>The file a hand-off gives another tool for the editor's canvas.</summary>
+/// <param name="Path">The file to give the tool.</param>
+/// <param name="IsCopy">
+/// True for a temp copy the caller may delete once the tool is done with it; false for the user's
+/// own file, which must never be deleted.
+/// </param>
+public sealed record ImageHandOff(string Path, bool IsCopy);
+
+/// <summary>Arguments of <see cref="ImageEditorViewModel.CanvasSaved"/>.</summary>
+/// <param name="SavedOverPath">
+/// The loaded file when the save wrote the canvas over it exactly (no transparency fill), so the
+/// canvas equals that file again; otherwise null.
+/// </param>
+public sealed class CanvasSavedEventArgs(string? savedOverPath) : EventArgs
+{
+    public string? SavedOverPath { get; } = savedOverPath;
 }
 
 /// <summary>Event arguments for the "Generate and Compare" inpainting result.</summary>

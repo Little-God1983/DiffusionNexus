@@ -1009,9 +1009,9 @@ public partial class App : Application
         services.AddTransient<Func<PipelineTileViewModel, ViewModels.Pipelines.IPipelineRun>>(sp => tile =>
             tile.Id switch
             {
-                "anime-to-real" => ActivatorUtilities.CreateInstance<ViewModels.Pipelines.AnimeToRealPipelineRunViewModel>(sp, tile.Manifest),
-                "image-to-image" => ActivatorUtilities.CreateInstance<ViewModels.Pipelines.ImageToImagePipelineRunViewModel>(sp, tile.Manifest),
-                "batch-metadata-distiller" => ActivatorUtilities.CreateInstance<ViewModels.Pipelines.BatchMetadataDistillerViewModel>(sp, tile.Manifest),
+                global::DiffusionNexus.UI.Services.Pipelines.WorkflowIds.AnimeToReal => ActivatorUtilities.CreateInstance<ViewModels.Pipelines.AnimeToRealPipelineRunViewModel>(sp, tile.Manifest),
+                global::DiffusionNexus.UI.Services.Pipelines.WorkflowIds.ImageToImage => ActivatorUtilities.CreateInstance<ViewModels.Pipelines.ImageToImagePipelineRunViewModel>(sp, tile.Manifest),
+                global::DiffusionNexus.UI.Services.Pipelines.WorkflowIds.BatchMetadataDistiller => ActivatorUtilities.CreateInstance<ViewModels.Pipelines.BatchMetadataDistillerViewModel>(sp, tile.Manifest),
                 _ => throw new NotSupportedException($"No run UI is registered for pipeline '{tile.Id}'."),
             });
 
