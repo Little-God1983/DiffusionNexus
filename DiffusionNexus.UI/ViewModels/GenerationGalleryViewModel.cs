@@ -254,6 +254,16 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     private bool _showFavoritesOnly;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsMediaTypeFilterAll))]
+    [NotifyPropertyChangedFor(nameof(IsMediaTypeFilterImages))]
+    [NotifyPropertyChangedFor(nameof(IsMediaTypeFilterVideos))]
+    private GalleryMediaTypeFilter _mediaTypeFilter = GalleryMediaTypeFilter.All;
+
+    public bool IsMediaTypeFilterAll => MediaTypeFilter == GalleryMediaTypeFilter.All;
+    public bool IsMediaTypeFilterImages => MediaTypeFilter == GalleryMediaTypeFilter.Images;
+    public bool IsMediaTypeFilterVideos => MediaTypeFilter == GalleryMediaTypeFilter.Videos;
+
+    [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IndexStatusText))]
     private int _indexedImageCount;
 
@@ -545,6 +555,17 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     partial void OnShowFavoritesOnlyChanged(bool value)
     {
         ApplySortingAndGrouping();
+    }
+
+    partial void OnMediaTypeFilterChanged(GalleryMediaTypeFilter value)
+    {
+        ApplySortingAndGrouping();
+    }
+
+    [RelayCommand]
+    private void SetMediaTypeFilter(string mode)
+    {
+        MediaTypeFilter = Enum.Parse<GalleryMediaTypeFilter>(mode);
     }
 
     public void SelectWithModifiers(GenerationGalleryMediaItemViewModel? item, bool isShiftPressed, bool isCtrlPressed)
@@ -1422,6 +1443,15 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         {
             NoMediaMessage = "No generation gallery folders are enabled. Configure Generation Galleries in Settings to get started.";
         }
+        else if (MediaItems.Count == 0 && MediaTypeFilter == GalleryMediaTypeFilter.Videos
+                 && (ActiveTagFilters.Count > 0 || NsfwFilter == NsfwFilterMode.NsfwOnly))
+        {
+            // Only images are tag-indexed, so a tag chip or "NSFW only" can
+            // never match a video. Neither the date-filter advice nor "build
+            // the tag index" (the branch below) would ever fill this grid.
+            NoMediaMessage = "Videos are not tag-indexed, so tag filters and the 'NSFW only' mode never match a video. " +
+                             "Set Show to 'All' or 'Images' to see the images that match.";
+        }
         else if (HasActiveTagFilters && MediaItems.Count == 0)
         {
             // Field-diagnosed trap: the tag filter DID match files, but the
@@ -1439,6 +1469,19 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
                       "Adjust them to see the gallery."
                 : "No images match your current filters. Try clearing the filters, or build the tag index if you haven't done that yet.";
         }
+        else if (MediaTypeFilter != GalleryMediaTypeFilter.All && MediaItems.Count == 0)
+        {
+            // The Show filter emptied the grid. The generic text below would
+            // send the user to Settings over folders that are fine.
+            var wantVideos = MediaTypeFilter == GalleryMediaTypeFilter.Videos;
+            var kind = wantVideos ? "videos" : "images";
+            var galleryHasKind = _allMediaItems.Any(i => wantVideos ? i.IsVideo : i.IsImage);
+            var culprits = GetDateSearchFavoritesCulprits();
+            NoMediaMessage = galleryHasKind
+                ? $"No {kind} match your current filters — they are hidden by {JoinCulprits(culprits)}. " +
+                  "Widen those filters, or set Show to 'All'."
+                : $"Your gallery folders contain no {kind}. Set Show to 'All' to see everything else.";
+        }
         else
         {
             NoMediaMessage = "No media found in enabled generation gallery folders. Check your Generation Galleries in Settings.";
@@ -1453,7 +1496,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     /// the fix), otherwise only when no filter is responsible for the grid
     /// being empty.
     /// </summary>
-    public bool ShowConfigureFoldersHint => _enabledSourceCount == 0 || !HasActiveTagFilters;
+    public bool ShowConfigureFoldersHint =>
+        _enabledSourceCount == 0 || (!HasActiveTagFilters && MediaTypeFilter == GalleryMediaTypeFilter.All);
 
     /// <summary>
     /// Waits for any in-progress sort/filter/group operation to complete.
@@ -1487,6 +1531,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         var groupingOption = SelectedGroupingOption;
         var isGroupingEnabled = IsGroupingEnabled;
         var showFavoritesOnly = ShowFavoritesOnly;
+        var mediaTypeFilter = MediaTypeFilter;
         var nsfwFilter = NsfwFilter;
 
         // Tag/NSFW filtering needs the database, so it's resolved here (async,
@@ -1574,8 +1619,17 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
                 filtered = filtered.Where(item => item.IsFavorite);
             }
 
+            if (mediaTypeFilter == GalleryMediaTypeFilter.Images)
+            {
+                filtered = filtered.Where(item => item.IsImage);
+            }
+            else if (mediaTypeFilter == GalleryMediaTypeFilter.Videos)
+            {
+                filtered = filtered.Where(item => item.IsVideo);
+            }
+
             // Materialized checkpoint: everything the TOOLBAR filters
-            // (date/search/favorites) leave visible, before the drawer's
+            // (date/search/favorites/media type) leave visible, before the drawer's
             // tag/NSFW filters apply. This is the scope the tag-cloud chip
             // counts are computed against below.
             var toolbarScoped = filtered.ToList();
@@ -1745,7 +1799,8 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     public bool CanRevealHiddenMatches =>
         !string.Equals(SelectedDateFilter, "All Time", StringComparison.OrdinalIgnoreCase)
         || !string.IsNullOrWhiteSpace(SearchText)
-        || ShowFavoritesOnly;
+        || ShowFavoritesOnly
+        || MediaTypeFilter != GalleryMediaTypeFilter.All;
 
     /// <summary>
     /// Deliberately counter-less (user feedback): the old "N hidden" number
@@ -1758,25 +1813,39 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
     {
         get
         {
-            var culprits = new List<string>();
-            if (!string.Equals(SelectedDateFilter, "All Time", StringComparison.OrdinalIgnoreCase))
-                culprits.Add($"the date filter ('{SelectedDateFilter}')");
-            if (!string.IsNullOrWhiteSpace(SearchText))
-                culprits.Add("the search box");
-            if (ShowFavoritesOnly)
-                culprits.Add("the favorites toggle");
+            var culprits = GetDateSearchFavoritesCulprits();
+            if (MediaTypeFilter != GalleryMediaTypeFilter.All)
+                culprits.Add($"the Show filter ('{MediaTypeFilter}')");
             if (NsfwFilter != NsfwFilterMode.ShowAll)
                 culprits.Add("the NSFW mode");
 
-            var subject = culprits.Count switch
-            {
-                0 => "the current filters",
-                1 => culprits[0],
-                _ => string.Join(", ", culprits.Take(culprits.Count - 1)) + " and " + culprits[^1],
-            };
-            return $"⚠ Due to {subject}, images and tags may be hidden.";
+            return $"⚠ Due to {JoinCulprits(culprits)}, images and tags may be hidden.";
         }
     }
+
+    /// <summary>
+    /// Names the date window, search box and favorites toggle when each is
+    /// narrowing the view — the toolbar filters an empty-state or warning
+    /// message can point the user at.
+    /// </summary>
+    private List<string> GetDateSearchFavoritesCulprits()
+    {
+        var culprits = new List<string>();
+        if (!string.Equals(SelectedDateFilter, "All Time", StringComparison.OrdinalIgnoreCase))
+            culprits.Add($"the date filter ('{SelectedDateFilter}')");
+        if (!string.IsNullOrWhiteSpace(SearchText))
+            culprits.Add("the search box");
+        if (ShowFavoritesOnly)
+            culprits.Add("the favorites toggle");
+        return culprits;
+    }
+
+    private static string JoinCulprits(List<string> culprits) => culprits.Count switch
+    {
+        0 => "the current filters",
+        1 => culprits[0],
+        _ => string.Join(", ", culprits.Take(culprits.Count - 1)) + " and " + culprits[^1],
+    };
 
     /// <summary>
     /// One-click escape from the hidden-matches situation: widen the toolbar
@@ -1790,6 +1859,7 @@ public partial class GenerationGalleryViewModel : BusyViewModelBase, IThumbnailA
         SelectedDateFilter = "All Time";
         SearchText = string.Empty;
         ShowFavoritesOnly = false;
+        MediaTypeFilter = GalleryMediaTypeFilter.All;
     }
 
     private void ApplyScopedTagCounts(Dictionary<string, int>? scopedCounts)

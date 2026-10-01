@@ -316,6 +316,162 @@ public class GenerationGalleryViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task MediaTypeFilter_ShowsOnlyTheChosenKind_AndAllRestoresBoth()
+    {
+        var galleryPath = CreateTempDirectory();
+        var image = Path.Combine(galleryPath, "still.png");
+        var video = Path.Combine(galleryPath, "clip.mp4");
+        File.WriteAllText(image, "test");
+        File.WriteAllText(video, "test");
+
+        var viewModel = CreateGalleryViewModel(galleryPath);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+
+        viewModel.MediaTypeFilter.Should().Be(GalleryMediaTypeFilter.All, "the gallery opens showing everything");
+        viewModel.MediaItems.Should().HaveCount(2);
+
+        viewModel.SetMediaTypeFilterCommand.Execute(nameof(GalleryMediaTypeFilter.Images));
+        await viewModel.WaitForSortingAsync();
+        viewModel.MediaItems.Select(i => i.FilePath).Should().Equal(image);
+        viewModel.IsMediaTypeFilterImages.Should().BeTrue();
+        viewModel.IsMediaTypeFilterAll.Should().BeFalse();
+
+        viewModel.SetMediaTypeFilterCommand.Execute(nameof(GalleryMediaTypeFilter.Videos));
+        await viewModel.WaitForSortingAsync();
+        viewModel.MediaItems.Select(i => i.FilePath).Should().Equal(video);
+        viewModel.IsMediaTypeFilterVideos.Should().BeTrue();
+
+        viewModel.SetMediaTypeFilterCommand.Execute(nameof(GalleryMediaTypeFilter.All));
+        await viewModel.WaitForSortingAsync();
+        viewModel.MediaItems.Should().HaveCount(2);
+        viewModel.IsMediaTypeFilterAll.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task MediaTypeFilter_CombinesWithFavoritesOnly()
+    {
+        var galleryPath = CreateTempDirectory();
+        var favImage = Path.Combine(galleryPath, "fav.png");
+        var favVideo = Path.Combine(galleryPath, "fav.mp4");
+        var plainVideo = Path.Combine(galleryPath, "plain.mp4");
+        File.WriteAllText(favImage, "test");
+        File.WriteAllText(favVideo, "test");
+        File.WriteAllText(plainVideo, "test");
+
+        var favoritesService = new ImageFavoritesService();
+        await favoritesService.SetFavoriteAsync(favImage, true);
+        await favoritesService.SetFavoriteAsync(favVideo, true);
+
+        var viewModel = CreateGalleryViewModel(galleryPath, favoritesService: favoritesService);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+
+        viewModel.ShowFavoritesOnly = true;
+        viewModel.MediaTypeFilter = GalleryMediaTypeFilter.Videos;
+        await viewModel.WaitForSortingAsync();
+
+        viewModel.MediaItems.Select(i => i.FilePath).Should().Equal(favVideo);
+    }
+
+    [Fact]
+    public async Task MediaTypeFilter_GalleryWithoutThatKind_BlamesTheFilterNotTheFolders()
+    {
+        // Selecting Videos over a gallery of stills empties the grid. The
+        // generic "No media found … check Settings" text would send the user
+        // to reconfigure folders that are fine — the empty state has to name
+        // the Show filter instead.
+        var galleryPath = CreateTempDirectory();
+        File.WriteAllText(Path.Combine(galleryPath, "still.png"), "test");
+
+        var viewModel = CreateGalleryViewModel(galleryPath);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+
+        viewModel.SetMediaTypeFilterCommand.Execute(nameof(GalleryMediaTypeFilter.Videos));
+        await viewModel.WaitForSortingAsync();
+
+        viewModel.HasNoMedia.Should().BeTrue();
+        viewModel.NoMediaMessage.Should().Contain("no videos").And.Contain("'All'");
+        viewModel.NoMediaMessage.Should().NotContain("Settings");
+        viewModel.ShowConfigureFoldersHint.Should().BeFalse("the folders are not the problem");
+    }
+
+    [Fact]
+    public async Task MediaTypeFilter_KindHiddenByDateFilter_NamesTheDateFilter()
+    {
+        var galleryPath = CreateTempDirectory();
+        File.WriteAllText(Path.Combine(galleryPath, "new.png"), "test");
+        var oldVideo = Path.Combine(galleryPath, "old.mp4");
+        File.WriteAllText(oldVideo, "test");
+        File.SetCreationTimeUtc(oldVideo, DateTime.UtcNow.AddYears(-1));
+
+        var viewModel = CreateGalleryViewModel(galleryPath);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+
+        viewModel.SetMediaTypeFilterCommand.Execute(nameof(GalleryMediaTypeFilter.Videos));
+        await viewModel.WaitForSortingAsync();
+
+        viewModel.HasNoMedia.Should().BeTrue();
+        viewModel.NoMediaMessage.Should().Contain("No videos match")
+            .And.Contain("Last 3 Months");
+        viewModel.NoMediaMessage.Should().NotContain("Settings");
+    }
+
+    [Fact]
+    public async Task MediaTypeFilter_VideosWithTagFilter_ExplainsVideosAreNotTagIndexed()
+    {
+        // Only images are tag-indexed, so a tag chip can never match a video.
+        // Videos + a chip is always empty; "build the tag index" or "widen the
+        // date filter" would both be wrong advice.
+        var galleryPath = CreateTempDirectory();
+        var image = Path.Combine(galleryPath, "dog.png");
+        File.WriteAllText(image, "test");
+        File.WriteAllText(Path.Combine(galleryPath, "clip.mp4"), "test");
+
+        var mockTagIndex = new Mock<ITagIndexService>();
+        mockTagIndex.Setup(t => t.GetIndexedCountAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(1);
+        mockTagIndex.Setup(t => t.GetTagsForFilesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, ImageTagLookup>());
+        mockTagIndex.Setup(t => t.SearchAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<NsfwFilterMode>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { image });
+
+        var viewModel = CreateGalleryViewModel(galleryPath, mockTagIndex.Object);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+
+        viewModel.ToggleTagFilterCommand.Execute("dog");
+        viewModel.SetMediaTypeFilterCommand.Execute(nameof(GalleryMediaTypeFilter.Videos));
+        await viewModel.WaitForSortingAsync();
+
+        viewModel.HasNoMedia.Should().BeTrue();
+        viewModel.NoMediaMessage.Should().Contain("Videos are not tag-indexed");
+        viewModel.NoMediaMessage.Should().NotContain("All Time");
+    }
+
+    [Fact]
+    public async Task MediaTypeFilter_CountsAsAHidingFilter_AndRevealResetsIt()
+    {
+        var galleryPath = CreateTempDirectory();
+        File.WriteAllText(Path.Combine(galleryPath, "still.png"), "test");
+        File.WriteAllText(Path.Combine(galleryPath, "clip.mp4"), "test");
+
+        var viewModel = CreateGalleryViewModel(galleryPath);
+        await viewModel.LoadMediaCommand.ExecuteAsync(null);
+        viewModel.SelectedDateFilter = "All Time";
+
+        viewModel.SetMediaTypeFilterCommand.Execute(nameof(GalleryMediaTypeFilter.Images));
+        await viewModel.WaitForSortingAsync();
+
+        viewModel.HasHiddenTagMatches.Should().BeTrue("the video is hidden");
+        viewModel.HiddenTagMatchesText.Should().Contain("the Show filter ('Images')");
+        viewModel.CanRevealHiddenMatches.Should().BeTrue();
+
+        viewModel.RevealHiddenMatchesCommand.Execute(null);
+        await viewModel.WaitForSortingAsync();
+
+        viewModel.MediaTypeFilter.Should().Be(GalleryMediaTypeFilter.All);
+        viewModel.MediaItems.Should().HaveCount(2);
+        viewModel.HasHiddenTagMatches.Should().BeFalse();
+    }
+
+    [Fact]
     public async Task WhenSelectAllFavorites_ThenOnlyFavoritesAreSelected()
     {
         var galleryPath = CreateTempDirectory();
@@ -1989,7 +2145,7 @@ public class GenerationGalleryViewModelTests : IDisposable
     /// index service.
     /// </summary>
     private static GenerationGalleryViewModel CreateGalleryViewModel(
-        string galleryPath, ITagIndexService tagIndexService, ITaskTracker? taskTracker = null,
+        string galleryPath, ITagIndexService? tagIndexService = null, ITaskTracker? taskTracker = null,
         IImageFavoritesService? favoritesService = null)
     {
         var settings = new AppSettings
