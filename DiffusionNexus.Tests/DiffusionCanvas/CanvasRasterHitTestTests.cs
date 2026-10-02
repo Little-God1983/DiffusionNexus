@@ -51,4 +51,15 @@ public class CanvasRasterHitTestTests
 
         CanvasRasterHitTest.TopmostAt([empty], new Point(0, 0)).Should().BeNull();
     }
+
+    [Fact]
+    public void HiddenAndFullyTransparentRastersAreNeverHit()
+    {
+        var below = new CanvasRasterSnapshot(0, 0, 1024, 1024, null, IsVisible: true, Opacity: 1);
+        var hiddenAbove = new CanvasRasterSnapshot(0, 0, 1024, 1024, null, IsVisible: false, Opacity: 1);
+        var clearAbove = new CanvasRasterSnapshot(0, 0, 1024, 1024, null, IsVisible: true, Opacity: 0);
+
+        CanvasRasterHitTest.TopmostAt([below, hiddenAbove, clearAbove], new Point(10, 10))
+            .Should().BeSameAs(below, "right-click acts on what the user can see");
+    }
 }

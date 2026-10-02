@@ -3,8 +3,8 @@ using SkiaSharp;
 
 namespace DiffusionNexus.UI.DiffusionCanvas;
 
-/// <summary>One already-decoded raster with the world rectangle it occupies.</summary>
-public readonly record struct CanvasCompositeSource(SKBitmap Bitmap, Rect WorldRect);
+/// <summary>One already-decoded raster with the world rectangle it occupies and the opacity it is drawn at.</summary>
+public readonly record struct CanvasCompositeSource(SKBitmap Bitmap, Rect WorldRect, double Opacity = 1.0);
 
 /// <summary>
 /// The pixels found under the bounding box, plus how much of the region they actually cover.
@@ -50,9 +50,21 @@ public static class CanvasRegionCompositor
     public static readonly SKColor NeutralFill = new(0x80, 0x80, 0x80, 0xFF);
 
     /// <summary>
+    /// Whether a raster is part of what the model sees: visible and not fully transparent. The surface's
+    /// hit test, the canvas's region readout and <see cref="LoadIntersecting"/> all use this one rule.
+    /// </summary>
+    public static bool IsShown(ICanvasRaster raster) => raster.IsVisible && raster.Opacity > 0;
+
+    /// <summary>
     /// Draws every raster overlapping <paramref name="worldRegion"/> into a bitmap of the box's latent
     /// size. Sources are drawn in list order, so the caller's z-order (last = top) is preserved.
     /// </summary>
+    /// <remarks>
+    /// Each source is drawn at its <see cref="CanvasCompositeSource.Opacity"/>, and the result is flattened
+    /// over <see cref="NeutralFill"/> before encoding. A semi-transparent layer therefore reaches the model
+    /// mixed with grey, while on screen it mixes with the dark canvas background. That small difference is
+    /// accepted (#594).
+    /// </remarks>
     /// <param name="sources">Decoded rasters with their world rectangles. Not disposed by this method.</param>
     /// <param name="worldRegion">The bounding box, in world units.</param>
     /// <param name="outputWidth">Latent width — the output bitmap's pixel width.</param>
@@ -92,7 +104,7 @@ public static class CanvasRegionCompositor
 
                 foreach (var source in sources)
                 {
-                    if (source.Bitmap is null || source.Bitmap.IsEmpty)
+                    if (source.Bitmap is null || source.Bitmap.IsEmpty || source.Opacity <= 0)
                         continue;
                     if (!source.WorldRect.Intersects(worldRegion))
                         continue;
@@ -104,7 +116,20 @@ public static class CanvasRegionCompositor
                         (float)((source.WorldRect.Bottom - worldRegion.Y) * scaleY));
 
                     var src = new SKRect(0, 0, source.Bitmap.Width, source.Bitmap.Height);
-                    canvas.DrawBitmap(source.Bitmap, src, dest);
+                    if (source.Opacity >= 1)
+                    {
+                        canvas.DrawBitmap(source.Bitmap, src, dest);
+                    }
+                    else
+                    {
+                        // The paint's alpha scales the bitmap's, the same as the surface's PushOpacity, so a
+                        // half-transparent layer reaches the model as it looks on screen.
+                        using var paint = new SKPaint
+                        {
+                            Color = SKColors.White.WithAlpha((byte)Math.Round(255 * source.Opacity)),
+                        };
+                        canvas.DrawBitmap(source.Bitmap, src, dest, paint);
+                    }
                 }
             }
 
@@ -135,6 +160,11 @@ public static class CanvasRegionCompositor
         {
             foreach (var raster in rasters)
             {
+                // A hidden or fully transparent layer is the user's choice, not a read failure, so it is
+                // skipped without onSkipped: the caller counts skips as a degraded region.
+                if (!IsShown(raster))
+                    continue;
+
                 var rect = raster.WorldRect;
                 if (rect.Width <= 0 || rect.Height <= 0 || !rect.Intersects(worldRegion))
                     continue;
@@ -153,7 +183,7 @@ public static class CanvasRegionCompositor
                     continue;
                 }
 
-                loaded.Add(new CanvasCompositeSource(bitmap, rect));
+                loaded.Add(new CanvasCompositeSource(bitmap, rect, Math.Clamp(raster.Opacity, 0.0, 1.0)));
             }
         }
         catch
