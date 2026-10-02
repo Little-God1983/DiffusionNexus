@@ -673,6 +673,12 @@ public partial class App : Application
         // Register SDK installation pipeline and all step handlers
         services.AddInstallationServices();
 
+        // One client for the Gist-backed documents below: both are fetched in parallel at startup
+        // from the same host, so they share a connection pool. Safe to share because each service
+        // sets its User-Agent per request and applies its own timeout. Lives as long as the app
+        // (neither service owns it).
+        var gistHttpClient = new Lazy<HttpClient>(() => new HttpClient());
+
         // Gist-backed server message service (operator announcements shown in the main window banner).
         // Edit the Gist to change what users see — no rebuild required. App id "app" filters targeting.
         services.AddSingleton<IServerMessageService>(_ => new GistServerMessageService(
@@ -680,8 +686,16 @@ public partial class App : Application
             {
                 Url = "https://gist.githubusercontent.com/Little-God1983/358c5fccc6655f6e56aef8470bb17c1c/raw/messages.json"
             },
-            new HttpClient(),
-            ownsHttpClient: true));
+            gistHttpClient.Value,
+            ownsHttpClient: false));
+
+        // Gist-backed community links (the sidebar's YouTube/Patreon/... buttons). The options
+        // default to SharedConstants.CommunityLinksDocumentUrl, the document every DiffusionNexus
+        // app reads, and to a short timeout: a slow source never delays the window.
+        services.AddSingleton<ICommunityLinksService>(_ => new GistCommunityLinksService(
+            new CommunityLinksServiceOptions(),
+            gistHttpClient.Value,
+            ownsHttpClient: false));
 
         // Feedback reporting service (posts to the Cloudflare Worker relay, which holds
         // the GitHub credential — see docs/superpowers/plans/2026-07-03-feedback-sdk-and-relay.md
@@ -1460,7 +1474,8 @@ public partial class App : Application
                 }),
                 Timed(sw, "datasetStorageCheck", () => loraDatasetHelperVm.DatasetManagement
                     .CheckStorageConfigurationCommand.ExecuteAsync(null)),
-                Timed(sw, "serverMessages", () => mainViewModel.LoadServerMessagesAsync()));
+                Timed(sw, "serverMessages", () => mainViewModel.LoadServerMessagesAsync()),
+                Timed(sw, "communityLinks", () => mainViewModel.LoadCommunityLinksAsync()));
             Serilog.Log.Information("LoadStartupData: all phases complete at +{Total}ms", sw.ElapsedMilliseconds);
         }
         catch (Exception ex)

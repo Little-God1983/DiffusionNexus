@@ -60,8 +60,7 @@ public partial class ModelDetailViewModel : ViewModelBase
     internal CivitaiModel? CachedCivitaiModel { get; set; }
 
     /// <summary>Seam for "open in browser", same pattern as the browse tab's opener.</summary>
-    public Action<string> UrlOpener { get; set; } = url =>
-        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+    public Action<string> UrlOpener { get; set; } = UrlLauncher.Open;
 
     /// <summary>
     /// Cancels any in-flight Civitai thumbnail download when the selected version tab changes.

@@ -484,20 +484,9 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     /// Launches URLs in the default browser. Swappable so tests can capture the
     /// URL instead of actually spawning a browser window.
     /// </summary>
-    public Action<string> UrlOpener { get; set; } = url =>
-        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+    public Action<string> UrlOpener { get; set; } = UrlLauncher.Open;
 
-    private void OpenUrl(string url)
-    {
-        try
-        {
-            UrlOpener(url);
-        }
-        catch (Exception ex)
-        {
-            _logger?.Warn(LogCategory.General, "CivitaiWaitlist", $"Failed to launch browser for {url}: {ex.Message}");
-        }
-    }
+    private void OpenUrl(string url) => UrlLauncher.TryOpen(url, UrlOpener, _logger, "CivitaiWaitlist");
 
     [RelayCommand]
     private void RemoveWaitlistEntry(CivitaiWaitlistEntry? entry)

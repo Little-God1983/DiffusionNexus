@@ -27,8 +27,7 @@ public sealed class GatedDownloadPreflight
     }
 
     /// <summary>Seam for "open in browser", same pattern as the browse tab's opener.</summary>
-    public Action<string> UrlOpener { get; set; } = url =>
-        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+    public Action<string> UrlOpener { get; set; } = UrlLauncher.Open;
 
     /// <summary>Everything the preflight needs to know about the gated version.</summary>
     public sealed record Subject(
@@ -122,15 +121,5 @@ public sealed class GatedDownloadPreflight
         }
     }
 
-    private void OpenUrl(string url)
-    {
-        try
-        {
-            UrlOpener(url);
-        }
-        catch (Exception ex)
-        {
-            _logger?.Warn(LogCategory.General, "LoraDownload", $"Failed to launch browser for {url}: {ex.Message}");
-        }
-    }
+    private void OpenUrl(string url) => UrlLauncher.TryOpen(url, UrlOpener, _logger, "LoraDownload");
 }
