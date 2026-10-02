@@ -2,7 +2,8 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="using:DiffusionNexus.UI.Views.Controls"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
-             x:Class="DiffusionNexus.UI.Views.Controls.LayerStackPanel">
+             x:Class="DiffusionNexus.UI.Views.Controls.LayerStackPanel"
+             x:Name="Root">
 
   <UserControl.Styles>
     <Style Selector="ListBox#LayerList > ListBoxItem">
@@ -10,24 +11,27 @@
     </Style>
   </UserControl.Styles>
 
-  <!-- Host buttons first, then the shared reorder/delete trio. The host owns every command, so each
+  <!-- Bound through #Root, not $parent[...]: a $parent binding goes null while the view is detached
+       (navigating away), which empties the ListBox and makes it drop its selection; it does not
+       re-select when the view comes back. #Root resolves through the name scope and survives that.
+       Host buttons first, then the shared reorder/delete trio. The host owns every command, so each
        screen keeps its own rules (a locked layer cannot be deleted; the editor keeps its last layer). -->
   <DockPanel>
     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="2" Margin="0,0,0,6">
-      <ContentControl Content="{Binding $parent[local:LayerStackPanel].LeadingTools}" />
-      <Button Content="&#x2191;" Command="{Binding $parent[local:LayerStackPanel].MoveUpCommand}"
+      <ContentControl Content="{Binding #Root.LeadingTools}" />
+      <Button Content="&#x2191;" Command="{Binding #Root.MoveUpCommand}"
               Padding="6,2" FontSize="12" ToolTip.Tip="Move the layer up" />
-      <Button Content="&#x2193;" Command="{Binding $parent[local:LayerStackPanel].MoveDownCommand}"
+      <Button Content="&#x2193;" Command="{Binding #Root.MoveDownCommand}"
               Padding="6,2" FontSize="12" ToolTip.Tip="Move the layer down" />
-      <Button Content="&#x2212;" Command="{Binding $parent[local:LayerStackPanel].DeleteCommand}"
+      <Button Content="&#x2212;" Command="{Binding #Root.DeleteCommand}"
               Padding="6,2" FontSize="12" FontWeight="Bold"
               ToolTip.Tip="Delete the layer. A locked layer cannot be deleted." />
     </StackPanel>
 
     <ListBox x:Name="LayerList"
-             ItemsSource="{Binding $parent[local:LayerStackPanel].Items}"
-             SelectedItem="{Binding $parent[local:LayerStackPanel].SelectedItem, Mode=TwoWay}"
-             MaxHeight="{Binding $parent[local:LayerStackPanel].ListMaxHeight}"
+             ItemsSource="{Binding #Root.Items}"
+             SelectedItem="{Binding #Root.SelectedItem, Mode=TwoWay}"
+             MaxHeight="{Binding #Root.ListMaxHeight}"
              SelectionMode="Single"
              Background="#252525" CornerRadius="2" MinHeight="60"
              ScrollViewer.HorizontalScrollBarVisibility="Disabled">

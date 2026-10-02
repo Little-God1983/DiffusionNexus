@@ -5,6 +5,7 @@ using Avalonia.Controls;
 using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Threading;
 using DiffusionNexus.UI.ViewModels;
 
 namespace DiffusionNexus.UI.Views.Controls;
@@ -81,6 +82,24 @@ public partial class LayerStackPanel : UserControl
 
     /// <summary>Caps the list's height; unbounded by default so a docked panel can fill its column.</summary>
     public double ListMaxHeight { get => GetValue(ListMaxHeightProperty); set => SetValue(ListMaxHeightProperty, value); }
+
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+
+        // While the host's list is away (its view detached on navigation, or its DataContext cleared on a
+        // tab switch) the ListBox is empty and drops its selection, and the host's view model rightly
+        // refuses that null. When the list comes back nothing would re-select the row, so put the host's
+        // selection back once the ListBox has its items again.
+        if (change.Property == ItemsProperty && change.NewValue is not null && SelectedItem is { } selected)
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (ReferenceEquals(SelectedItem, selected))
+                    LayerList.SelectedItem = selected;
+            });
+        }
+    }
 
     private void OnNameDoubleTapped(object? sender, TappedEventArgs e)
     {
