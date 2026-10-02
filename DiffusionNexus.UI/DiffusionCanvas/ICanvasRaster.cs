@@ -33,6 +33,16 @@ public interface ICanvasRaster
     /// </summary>
     string? ImagePath { get; }
 
+    /// <summary>
+    /// Whether the raster is shown. A hidden raster is neither drawn nor fed to the model: what is under
+    /// the box is what the model sees, so a layer the user hid must not leak into the input (#594).
+    /// </summary>
+    /// <remarks>A default member so a raster with no layer state (test stubs, snapshots) is simply shown.</remarks>
+    bool IsVisible => true;
+
+    /// <summary>Opacity from 0 to 1, applied on screen and in the composited region alike.</summary>
+    double Opacity => 1.0;
+
     /// <summary>The raster's world rectangle.</summary>
     Rect WorldRect => new(CanvasX, CanvasY, Width, Height);
 }

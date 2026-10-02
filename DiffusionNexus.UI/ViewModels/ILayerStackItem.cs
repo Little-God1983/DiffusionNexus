@@ -1,0 +1,55 @@
+using System.ComponentModel;
+using Avalonia.Media.Imaging;
+
+namespace DiffusionNexus.UI.ViewModels;
+
+/// <summary>
+/// One row of a <c>LayerStackPanel</c>. Implemented by the Image Editor's <see cref="LayerViewModel"/>
+/// and by the Diffusion Canvas's <c>GenerationFrameViewModel</c>, so both screens share one layer list.
+/// </summary>
+/// <remarks>
+/// The interface covers only what a row edits in place. Reordering and deleting stay commands on the
+/// host's own view model, which is where each screen's rules live (a locked layer cannot be deleted; the
+/// editor cannot delete its last layer).
+/// </remarks>
+public interface ILayerStackItem : INotifyPropertyChanged
+{
+    /// <summary>Display name. Rename commits through <see cref="LayerStackNaming.Resolve"/>.</summary>
+    string Name { get; set; }
+
+    /// <summary>Whether the layer is shown.</summary>
+    bool IsVisible { get; set; }
+
+    /// <summary>Whether the layer is protected from removal.</summary>
+    bool IsLocked { get; set; }
+
+    /// <summary>Opacity as display text, already formatted invariantly ("75%").</summary>
+    string OpacityText { get; }
+
+    /// <summary>Row thumbnail, or null while the layer has no pixels.</summary>
+    Bitmap? Thumbnail { get; }
+}
+
+/// <summary>The one rule for what a rename commits.</summary>
+public static class LayerStackNaming
+{
+    /// <summary>Longest name kept. A pasted paragraph would otherwise push every row's controls off-screen.</summary>
+    public const int MaxLength = 64;
+
+    /// <summary>
+    /// The name to store for <paramref name="proposed"/>: control characters become spaces (a pasted
+    /// line break would otherwise land in a single-line row), the result is trimmed and capped, and a
+    /// blank result keeps <paramref name="current"/>. A layer always has a name.
+    /// </summary>
+    public static string Resolve(string? proposed, string current)
+    {
+        if (proposed is null)
+            return current;
+
+        var cleaned = new string(proposed.Select(c => char.IsControl(c) ? ' ' : c).ToArray()).Trim();
+        if (cleaned.Length == 0)
+            return current;
+
+        return cleaned.Length > MaxLength ? cleaned[..MaxLength].TrimEnd() : cleaned;
+    }
+}
