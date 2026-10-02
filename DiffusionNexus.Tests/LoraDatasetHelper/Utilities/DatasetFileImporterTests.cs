@@ -1,3 +1,4 @@
+using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
@@ -655,6 +656,90 @@ public class DatasetFileImporterTests
     // -------------------------------------------------------------------
     //  Mock IFileOperations — records all operations for assertions.
     // -------------------------------------------------------------------
+
+    // -------------------------------------------------------------------
+    //  Ratings (issue #317) - real files, because ratings live on disk
+    // -------------------------------------------------------------------
+
+    [Fact]
+    public async Task ImportResolved_WhenOverride_ClearsTheReplacedFilesRating()
+    {
+        using var dirs = new RatingFolders();
+        var source = dirs.SourceFile("a.png");
+        var existing = dirs.DestFile("a.png");
+        ImageRatingStore.Shared.Set(existing, ImageRatingStatus.Rejected);
+        var importer = new DatasetFileImporter(new FileOperations());
+
+        await importer.ImportResolvedAsync(
+            [], MakeResolution(MakeConflict("a.png", source, existing, FileConflictResolution.Override)),
+            dirs.Dest, videoThumbnailService: null, moveFiles: false);
+
+        new ImageRatingStore().Get(existing).Should().Be(ImageRatingStatus.Unrated,
+            "the old rating judged a different image");
+    }
+
+    [Fact]
+    public async Task ImportResolved_WhenMoving_TheRatingMovesWithTheFile()
+    {
+        using var dirs = new RatingFolders();
+        var source = dirs.SourceFile("a.png");
+        ImageRatingStore.Shared.Set(source, ImageRatingStatus.Approved);
+        var importer = new DatasetFileImporter(new FileOperations());
+
+        await importer.ImportResolvedAsync(
+            [source], conflictResolutions: null, dirs.Dest, videoThumbnailService: null, moveFiles: true);
+
+        var store = new ImageRatingStore();
+        store.Get(Path.Combine(dirs.Dest, "a.png")).Should().Be(ImageRatingStatus.Approved);
+        store.Get(source).Should().Be(ImageRatingStatus.Unrated, "the source folder must not keep a stale entry");
+    }
+
+    [Fact]
+    public async Task ImportResolved_WhenCopying_LeavesTheSourceRatingAlone()
+    {
+        using var dirs = new RatingFolders();
+        var source = dirs.SourceFile("a.png");
+        ImageRatingStore.Shared.Set(source, ImageRatingStatus.Approved);
+        var importer = new DatasetFileImporter(new FileOperations());
+
+        await importer.ImportResolvedAsync(
+            [source], conflictResolutions: null, dirs.Dest, videoThumbnailService: null, moveFiles: false);
+
+        var store = new ImageRatingStore();
+        store.Get(source).Should().Be(ImageRatingStatus.Approved);
+        store.Get(Path.Combine(dirs.Dest, "a.png")).Should().Be(ImageRatingStatus.Unrated);
+    }
+
+    private sealed class RatingFolders : IDisposable
+    {
+        private readonly string _root = Path.Combine(Path.GetTempPath(), $"DatasetFileImporterRatings_{Guid.NewGuid()}");
+
+        public RatingFolders()
+        {
+            Directory.CreateDirectory(Source);
+            Directory.CreateDirectory(Dest);
+        }
+
+        public string Source => Path.Combine(_root, "src");
+        public string Dest => Path.Combine(_root, "dest");
+
+        public string SourceFile(string name) => Write(Path.Combine(Source, name));
+        public string DestFile(string name) => Write(Path.Combine(Dest, name));
+
+        private static string Write(string path)
+        {
+            File.WriteAllBytes(path, [1, 2, 3]);
+            return path;
+        }
+
+        public void Dispose()
+        {
+            if (Directory.Exists(_root))
+            {
+                Directory.Delete(_root, recursive: true);
+            }
+        }
+    }
 
     private sealed class MockFileOperations : IFileOperations
     {

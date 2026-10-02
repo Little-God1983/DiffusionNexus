@@ -644,8 +644,9 @@ public partial class TrainingRunCardViewModel : ObservableObject, IDialogService
         if (!Directory.Exists(PresentationFolderPath))
             return 0;
 
+        // Dot-files (.ratings.json, .favorites.json) are app metadata the Presentation tab does not list
         return Directory.EnumerateFiles(PresentationFolderPath)
-            .Count(f => PresentationFileItem.IsSupportedFile(f));
+            .Count(f => !Path.GetFileName(f).StartsWith('.') && PresentationFileItem.IsSupportedFile(f));
     }
 
     /// <summary>

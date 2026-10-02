@@ -519,6 +519,9 @@ public partial class DatasetManagementView : UserControl
                             File.Delete(conflict.ExistingFilePath);
                         }
                         File.Copy(conflict.NewFilePath, conflict.ExistingFilePath);
+
+                        // The old file's rating judged a different image
+                        ImageRatingStore.Shared.Set(conflict.ExistingFilePath, ImageRatingStatus.Unrated);
                         
                         // Handle paired caption - override it too
                         if (conflict.HasPairedCaption && conflict.PairedCaptionPath is not null)

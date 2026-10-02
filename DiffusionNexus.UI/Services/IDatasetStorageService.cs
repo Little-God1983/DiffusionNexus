@@ -81,7 +81,8 @@ public interface IDatasetStorageService
     void DeleteFile(string path);
 
     /// <summary>
-    /// Deletes related media files for a dataset item, such as the image, caption, and thumbnail.
+    /// Deletes related media files for a dataset item, such as the image, caption, and thumbnail,
+    /// and forgets the image's rating (<see cref="ImageRatingStore.Remove"/>).
     /// </summary>
     /// <param name="imagePath">The path to the image file to delete.</param>
     /// <param name="captionPath">The path to the caption file to delete, or <see langword="null"/> if none.</param>

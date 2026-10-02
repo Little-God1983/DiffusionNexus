@@ -218,10 +218,19 @@ public sealed class DatasetFileImporter
         if (moveFiles)
         {
             _fileOps.MoveFile(sourcePath, destinationPath, overwrite);
+
+            // A moved file keeps its rating, and an overwritten one loses the old file's
+            ImageRatingStore.Shared.Move(sourcePath, destinationPath);
         }
         else
         {
             _fileOps.CopyFile(sourcePath, destinationPath, overwrite);
+
+            // A copy arrives unrated; an overwritten file's rating judged a different image
+            if (overwrite)
+            {
+                ImageRatingStore.Shared.Set(destinationPath, ImageRatingStatus.Unrated);
+            }
         }
     }
 

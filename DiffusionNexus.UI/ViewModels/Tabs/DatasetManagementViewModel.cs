@@ -1694,6 +1694,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
                 if (!samePath)
                 {
+                    // The rating follows the image to its new name
+                    ImageRatingStore.Shared.Move(image.ImagePath, destPath);
                     image.ImagePath = destPath;
                 }
 
@@ -2023,9 +2025,9 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             {
                 var sourcePath = ActiveDataset.GetVersionFolderPath(sourceVersion);
                 
-                // Build a dictionary of file base names with their ratings that match the rating filter
+                // Build the set of file base names that match the rating filter
                 // (based on DatasetImages which has the rating info)
-                var allowedFiles = new Dictionary<string, ImageRatingStatus>(StringComparer.OrdinalIgnoreCase);
+                var allowedFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var img in DatasetImages)
                 {
                     var shouldInclude = 
@@ -2036,8 +2038,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                     if (shouldInclude)
                     {
                         // Add the base name (without extension) for matching media and caption files
-                        var baseName = Path.GetFileNameWithoutExtension(img.ImagePath);
-                        allowedFiles[baseName] = img.RatingStatus;
+                        allowedFiles.Add(Path.GetFileNameWithoutExtension(img.ImagePath));
                     }
                 }
 
@@ -2048,29 +2049,26 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 foreach (var sourceFile in files)
                 {
                     var baseName = Path.GetFileNameWithoutExtension(sourceFile);
-                    var extension = Path.GetExtension(sourceFile).ToLowerInvariant();
                     var shouldCopy = false;
+                    var isMedia = false;
 
                     // Check if this file type should be copied based on user selection
                     if (result.CopyImages && MediaFileExtensions.IsImageFile(sourceFile))
                     {
                         // For images, check if base name is in allowed set (rating filter)
-                        shouldCopy = allowedFiles.ContainsKey(baseName);
+                        shouldCopy = allowedFiles.Contains(baseName);
+                        isMedia = true;
                     }
                     else if (result.CopyVideos && MediaFileExtensions.IsVideoFile(sourceFile))
                     {
                         // For videos, check if base name is in allowed set (rating filter)
-                        shouldCopy = allowedFiles.ContainsKey(baseName);
+                        shouldCopy = allowedFiles.Contains(baseName);
+                        isMedia = true;
                     }
                     else if (result.CopyCaptions && MediaFileExtensions.IsCaptionFile(sourceFile))
                     {
                         // For captions, only copy if the corresponding media file is being copied
-                        shouldCopy = allowedFiles.ContainsKey(baseName);
-                    }
-                    else if (extension == ".rating")
-                    {
-                        // Skip .rating files in the main loop - we handle them separately below
-                        continue;
+                        shouldCopy = allowedFiles.Contains(baseName);
                     }
 
                     if (shouldCopy)
@@ -2079,21 +2077,12 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                         var destFile = Path.Combine(destPath, fileName);
                         _datasetStorageService.CopyFile(sourceFile, destFile, overwrite: false);
                         copied++;
-                    }
-                }
 
-                // Copy ratings if the option is selected
-                if (result.CopyRatings)
-                {
-                    foreach (var (baseName, rating) in allowedFiles)
-                    {
-                        // Only copy rating if it's not Unrated (Unrated means no .rating file)
-                        if (rating != ImageRatingStatus.Unrated)
+                        // Ratings are read from the source folder (its ratings file or a legacy
+                        // .rating) and written into the new version's ratings file
+                        if (isMedia && result.CopyRatings)
                         {
-                            var sourceRatingFile = Path.Combine(sourcePath, baseName + ".rating");
-                            var destRatingFile = Path.Combine(destPath, baseName + ".rating");
-                            
-                            _datasetStorageService.CopyFileIfExists(sourceRatingFile, destRatingFile, overwrite: false);
+                            ImageRatingStore.Shared.Copy(sourceFile, destFile);
                         }
                     }
                 }

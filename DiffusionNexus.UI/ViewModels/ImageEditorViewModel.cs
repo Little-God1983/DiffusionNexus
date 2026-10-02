@@ -1040,7 +1040,7 @@ public partial class ImageEditorViewModel : ObservableObject
             {
                 if (result.Destination != SaveAsDestination.LayeredTiff)
                 {
-                    SaveRatingToFile(newPath, result.Rating);
+                    ImageRatingStore.Shared.Set(newPath, result.Rating);
                 }
                 OnSaveAsNewCompleted(newPath, result.Rating);
             }
@@ -1423,27 +1423,6 @@ public partial class ImageEditorViewModel : ObservableObject
         }
 
         return Path.Combine(datasetFolderPath, result.FileName + extension);
-    }
-
-    /// <summary>Saves the rating to a .rating file next to the image.</summary>
-    private static void SaveRatingToFile(string imagePath, ImageRatingStatus rating)
-    {
-        try
-        {
-            var ratingFilePath = Path.ChangeExtension(imagePath, ".rating");
-
-            if (rating == ImageRatingStatus.Unrated)
-            {
-                if (File.Exists(ratingFilePath))
-                    File.Delete(ratingFilePath);
-            }
-            else
-            {
-                File.WriteAllText(ratingFilePath, rating.ToString());
-            }
-        }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
     }
 
     private void ExecuteZoomIn() { _services.Viewport.ZoomIn(); ZoomInRequested?.Invoke(this, EventArgs.Empty); }

@@ -430,10 +430,7 @@ public partial class PresentationTabViewModel : ObservableObject, IDialogService
             {
                 File.Delete(mediaVm.CaptionFilePath);
             }
-            if (File.Exists(mediaVm.RatingFilePath))
-            {
-                File.Delete(mediaVm.RatingFilePath);
-            }
+            ImageRatingStore.Shared.Remove(mediaVm.ImagePath);
 
             MediaFiles.Remove(mediaVm);
             StatusMessage = $"Deleted '{mediaVm.FullFileName}'";

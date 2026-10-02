@@ -9,13 +9,30 @@ namespace DiffusionNexus.Tests.LoraDatasetHelper.ViewModels;
 /// Unit tests for <see cref="DatasetImageViewModel"/>.
 /// Tests FromFile factory, caption/rating operations, selection state, and property changes.
 /// </summary>
-public class DatasetImageViewModelTests
+public class DatasetImageViewModelTests : IDisposable
 {
     private readonly Mock<IDatasetEventAggregator> _mockEventAggregator;
+
+    // Rating commands persist through ImageRatingStore, so they get a real folder of their own
+    // instead of writing into the test process's working directory.
+    private readonly string _testFolder;
+    private readonly string _testImagePath;
 
     public DatasetImageViewModelTests()
     {
         _mockEventAggregator = new Mock<IDatasetEventAggregator>();
+        _testFolder = Path.Combine(Path.GetTempPath(), $"DatasetImageViewModelTests_{Guid.NewGuid()}");
+        Directory.CreateDirectory(_testFolder);
+        _testImagePath = Path.Combine(_testFolder, "test.png");
+        File.WriteAllBytes(_testImagePath, [1, 2, 3]);
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_testFolder))
+        {
+            Directory.Delete(_testFolder, recursive: true);
+        }
     }
 
     #region Constructor Tests
@@ -269,13 +286,45 @@ public class DatasetImageViewModelTests
     }
 
     [Fact]
-    public void RatingFilePath_ReturnsPathWithRatingExtension()
+    public void FromFile_ReadsRatingFromTheFolderRatingsFile()
     {
         // Arrange
-        var vm = new DatasetImageViewModel { ImagePath = "/path/to/image.png" };
+        File.WriteAllText(Path.Combine(_testFolder, ImageRatingStore.RatingsFileName),
+            """{ "version": 1, "ratings": { "test.png": "Rejected" } }""");
+
+        // Act
+        var vm = DatasetImageViewModel.FromFile(_testImagePath);
 
         // Assert
-        vm.RatingFilePath.Should().Be("/path/to/image.rating");
+        vm.RatingStatus.Should().Be(ImageRatingStatus.Rejected);
+    }
+
+    [Fact]
+    public void FromFile_FallsBackToTheLegacyRatingFile()
+    {
+        // Arrange
+        File.WriteAllText(Path.Combine(_testFolder, "test.rating"), "Approved");
+
+        // Act
+        var vm = DatasetImageViewModel.FromFile(_testImagePath);
+
+        // Assert
+        vm.RatingStatus.Should().Be(ImageRatingStatus.Approved);
+    }
+
+    [Fact]
+    public void MarkApprovedCommand_PersistsToTheFolderRatingsFile_NotAPerImageFile()
+    {
+        // Arrange
+        var vm = DatasetImageViewModel.FromFile(_testImagePath, _mockEventAggregator.Object);
+
+        // Act
+        vm.MarkApprovedCommand.Execute(null);
+
+        // Assert
+        File.Exists(Path.Combine(_testFolder, ImageRatingStore.RatingsFileName)).Should().BeTrue();
+        File.Exists(Path.Combine(_testFolder, "test.rating")).Should().BeFalse();
+        DatasetImageViewModel.FromFile(_testImagePath).RatingStatus.Should().Be(ImageRatingStatus.Approved);
     }
 
     #endregion
@@ -377,7 +426,7 @@ public class DatasetImageViewModelTests
         // Arrange
         var vm = new DatasetImageViewModel(_mockEventAggregator.Object)
         {
-            ImagePath = "test.png"
+            ImagePath = _testImagePath
         };
         vm.RatingStatus.Should().Be(ImageRatingStatus.Unrated);
 
@@ -394,7 +443,7 @@ public class DatasetImageViewModelTests
         // Arrange
         var vm = new DatasetImageViewModel(_mockEventAggregator.Object)
         {
-            ImagePath = "test.png",
+            ImagePath = _testImagePath,
             RatingStatus = ImageRatingStatus.Approved
         };
 
@@ -411,7 +460,7 @@ public class DatasetImageViewModelTests
         // Arrange
         var vm = new DatasetImageViewModel(_mockEventAggregator.Object)
         {
-            ImagePath = "test.png"
+            ImagePath = _testImagePath
         };
 
         // Act
@@ -436,7 +485,7 @@ public class DatasetImageViewModelTests
         // Arrange
         var vm = new DatasetImageViewModel(_mockEventAggregator.Object)
         {
-            ImagePath = "test.png"
+            ImagePath = _testImagePath
         };
 
         // Act
@@ -452,7 +501,7 @@ public class DatasetImageViewModelTests
         // Arrange
         var vm = new DatasetImageViewModel(_mockEventAggregator.Object)
         {
-            ImagePath = "test.png",
+            ImagePath = _testImagePath,
             RatingStatus = ImageRatingStatus.Rejected
         };
 
@@ -473,7 +522,7 @@ public class DatasetImageViewModelTests
         // Arrange
         var vm = new DatasetImageViewModel(_mockEventAggregator.Object)
         {
-            ImagePath = "test.png",
+            ImagePath = _testImagePath,
             RatingStatus = ImageRatingStatus.Approved
         };
 
@@ -490,7 +539,7 @@ public class DatasetImageViewModelTests
         // Arrange
         var vm = new DatasetImageViewModel(_mockEventAggregator.Object)
         {
-            ImagePath = "test.png",
+            ImagePath = _testImagePath,
             RatingStatus = ImageRatingStatus.Rejected
         };
 

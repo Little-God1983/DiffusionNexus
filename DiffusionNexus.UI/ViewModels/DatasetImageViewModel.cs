@@ -302,9 +302,6 @@ public class DatasetImageViewModel : ObservableObject
     /// <summary>Path to the caption text file.</summary>
     public string CaptionFilePath => Path.ChangeExtension(_imagePath, ".txt");
 
-    /// <summary>Path to the rating metadata file.</summary>
-    public string RatingFilePath => Path.ChangeExtension(_imagePath, ".rating");
-
     #region Commands
 
     private IRelayCommand<DatasetImageViewModel?>? _addAsLayerCommand;
@@ -429,62 +426,31 @@ public class DatasetImageViewModel : ObservableObject
         HasUnsavedChanges = false;
     }
 
-    /// <summary>Loads the rating from the associated .rating file.</summary>
+    /// <summary>
+    /// Loads the rating from the folder's ratings file, falling back to a legacy
+    /// <c>.rating</c> sidecar (see <see cref="ImageRatingStore"/>).
+    /// </summary>
     public void LoadRating()
     {
-        if (File.Exists(RatingFilePath))
-        {
-            try
-            {
-                var content = File.ReadAllText(RatingFilePath).Trim();
-                if (Enum.TryParse<ImageRatingStatus>(content, out var status))
-                {
-                    _ratingStatus = status;
-                    OnPropertyChanged(nameof(RatingStatus));
-                    OnPropertyChanged(nameof(IsApproved));
-                    OnPropertyChanged(nameof(IsRejected));
-                    OnPropertyChanged(nameof(IsUnrated));
-                }
-            }
-            catch (IOException)
-            {
-                // File may be locked or inaccessible
-                _ratingStatus = ImageRatingStatus.Unrated;
-            }
-            catch (UnauthorizedAccessException)
-            {
-                // No permission to read
-                _ratingStatus = ImageRatingStatus.Unrated;
-            }
-        }
-        else
-        {
-            _ratingStatus = ImageRatingStatus.Unrated;
-        }
+        _ratingStatus = string.IsNullOrWhiteSpace(_imagePath)
+            ? ImageRatingStatus.Unrated
+            : ImageRatingStore.Shared.Get(_imagePath);
+        OnPropertyChanged(nameof(RatingStatus));
+        OnPropertyChanged(nameof(IsApproved));
+        OnPropertyChanged(nameof(IsRejected));
+        OnPropertyChanged(nameof(IsUnrated));
     }
 
-    /// <summary>Saves the rating to the associated .rating file.</summary>
+    /// <summary>
+    /// Saves the rating to the folder's ratings file. The first change in a folder that still
+    /// has legacy <c>.rating</c> files converts the whole folder.
+    /// </summary>
     public void SaveRating()
     {
-        try
+        if (!string.IsNullOrWhiteSpace(_imagePath))
         {
-            if (_ratingStatus == ImageRatingStatus.Unrated)
-            {
-                if (File.Exists(RatingFilePath))
-                    File.Delete(RatingFilePath);
-            }
-            else
-            {
-                File.WriteAllText(RatingFilePath, _ratingStatus.ToString());
-            }
-        }
-        catch (IOException)
-        {
-            // File may be in use or read-only - rating will be lost on reload
-        }
-        catch (UnauthorizedAccessException)
-        {
-            // No permission to write - rating will be lost on reload
+            // A failed write is logged by the store; the rating is then lost on reload.
+            ImageRatingStore.Shared.Set(_imagePath, _ratingStatus);
         }
     }
 
