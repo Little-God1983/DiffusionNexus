@@ -710,6 +710,37 @@ public class DatasetFileImporterTests
         store.Get(Path.Combine(dirs.Dest, "a.png")).Should().Be(ImageRatingStatus.Unrated);
     }
 
+    [Fact]
+    public async Task ImportResolved_WhenMovingACaption_DoesNotGiveItTheImagesLegacyRating()
+    {
+        using var dirs = new RatingFolders();
+        dirs.SourceFile("foo.png");
+        var caption = dirs.SourceFile("foo.txt");
+        File.WriteAllText(Path.Combine(dirs.Source, "foo.rating"), "Approved");
+        var importer = new DatasetFileImporter(new FileOperations());
+
+        await importer.ImportResolvedAsync(
+            [caption], conflictResolutions: null, dirs.Dest, videoThumbnailService: null, moveFiles: true);
+
+        File.Exists(Path.Combine(dirs.Dest, ImageRatingStore.RatingsFileName)).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ImportResolved_WhenCopyingOntoAStaleEntry_TheFileArrivesUnrated()
+    {
+        using var dirs = new RatingFolders();
+        var gone = dirs.DestFile("a.png");
+        ImageRatingStore.Shared.Set(gone, ImageRatingStatus.Rejected);
+        File.Delete(gone); // deleted outside the app, so its entry stays behind
+        var source = dirs.SourceFile("a.png");
+        var importer = new DatasetFileImporter(new FileOperations());
+
+        await importer.ImportResolvedAsync(
+            [source], conflictResolutions: null, dirs.Dest, videoThumbnailService: null, moveFiles: false);
+
+        new ImageRatingStore().Get(Path.Combine(dirs.Dest, "a.png")).Should().Be(ImageRatingStatus.Unrated);
+    }
+
     private sealed class RatingFolders : IDisposable
     {
         private readonly string _root = Path.Combine(Path.GetTempPath(), $"DatasetFileImporterRatings_{Guid.NewGuid()}");

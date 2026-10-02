@@ -65,9 +65,9 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
         File.Copy(CreateTempPng(_host.RootPath), Path.Combine(v1, "a.png"));
         File.Copy(CreateTempPng(_host.RootPath), Path.Combine(v1, "b.png"));
         File.Copy(CreateTempPng(_host.RootPath), Path.Combine(v1, "c.png"));
-        ImageRatingStore.Shared.Set(Path.Combine(v1, "b.png"), ImageRatingStatus.Rejected);
-        // Written after the set, so it stays a legacy file next to the new ratings file
+        // A version that was never converted: its ratings are still legacy sidecars
         File.WriteAllText(Path.Combine(v1, "a.rating"), "Approved");
+        File.WriteAllText(Path.Combine(v1, "b.rating"), "Rejected");
 
         var datasetCard = DatasetCardViewModel.FromFolder(datasetPath);
         await viewModel.OpenDatasetCommand.ExecuteAsync(datasetCard);

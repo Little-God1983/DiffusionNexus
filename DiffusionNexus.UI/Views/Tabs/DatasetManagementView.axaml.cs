@@ -504,6 +504,7 @@ public partial class DatasetManagementView : UserControl
                 var fileName = Path.GetFileName(sourceFile);
                 var destPath = Path.Combine(destFolderPath, fileName);
                 File.Copy(sourceFile, destPath);
+                ImageRatingStore.Shared.Set(destPath, ImageRatingStatus.Unrated); // never a stale entry's
                 copied++;
             }
 
@@ -548,6 +549,7 @@ public partial class DatasetManagementView : UserControl
                         // Copy media file with new name
                         var newMediaPath = Path.Combine(destFolderPath, newBaseName + mediaExtension);
                         File.Copy(conflict.NewFilePath, newMediaPath);
+                        ImageRatingStore.Shared.Set(newMediaPath, ImageRatingStatus.Unrated);
                         
                         // Copy paired caption with same new base name
                         if (conflict.HasPairedCaption && conflict.PairedCaptionPath is not null)

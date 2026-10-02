@@ -226,11 +226,9 @@ public sealed class DatasetFileImporter
         {
             _fileOps.CopyFile(sourcePath, destinationPath, overwrite);
 
-            // A copy arrives unrated; an overwritten file's rating judged a different image
-            if (overwrite)
-            {
-                ImageRatingStore.Shared.Set(destinationPath, ImageRatingStatus.Unrated);
-            }
+            // A copy arrives unrated: an overwritten file's rating, or the stale entry of a file
+            // deleted outside the app, judged a different image
+            ImageRatingStore.Shared.Set(destinationPath, ImageRatingStatus.Unrated);
         }
     }
 

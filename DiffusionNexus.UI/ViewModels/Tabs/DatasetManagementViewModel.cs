@@ -2045,6 +2045,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 var files = _datasetStorageService.EnumerateFiles(sourcePath)
                     .Where(f => !Path.GetFileName(f).StartsWith("."))
                     .ToList();
+                var copiedRatings = new List<KeyValuePair<string, ImageRatingStatus>>();
 
                 foreach (var sourceFile in files)
                 {
@@ -2082,10 +2083,13 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                         // .rating) and written into the new version's ratings file
                         if (isMedia && result.CopyRatings)
                         {
-                            ImageRatingStore.Shared.Copy(sourceFile, destFile);
+                            copiedRatings.Add(new(destFile, ImageRatingStore.Shared.Get(sourceFile)));
                         }
                     }
                 }
+
+                // One write for the whole version instead of one per file
+                ImageRatingStore.Shared.SetMany(copiedRatings);
             }
 
             // Inherit NSFW flag from the parent version by default
