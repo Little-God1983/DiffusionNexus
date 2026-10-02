@@ -1,0 +1,68 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:DiffusionNexus.UI.Views.Controls"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             x:Class="DiffusionNexus.UI.Views.Controls.LayerStackPanel">
+
+  <UserControl.Styles>
+    <Style Selector="ListBox#LayerList > ListBoxItem">
+      <Setter Property="Padding" Value="2,1" />
+    </Style>
+  </UserControl.Styles>
+
+  <!-- Host buttons first, then the shared reorder/delete trio. The host owns every command, so each
+       screen keeps its own rules (a locked layer cannot be deleted; the editor keeps its last layer). -->
+  <DockPanel>
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="2" Margin="0,0,0,6">
+      <ContentControl Content="{Binding $parent[local:LayerStackPanel].LeadingTools}" />
+      <Button Content="&#x2191;" Command="{Binding $parent[local:LayerStackPanel].MoveUpCommand}"
+              Padding="6,2" FontSize="12" ToolTip.Tip="Move the layer up" />
+      <Button Content="&#x2193;" Command="{Binding $parent[local:LayerStackPanel].MoveDownCommand}"
+              Padding="6,2" FontSize="12" ToolTip.Tip="Move the layer down" />
+      <Button Content="&#x2212;" Command="{Binding $parent[local:LayerStackPanel].DeleteCommand}"
+              Padding="6,2" FontSize="12" FontWeight="Bold"
+              ToolTip.Tip="Delete the layer. A locked layer cannot be deleted." />
+    </StackPanel>
+
+    <ListBox x:Name="LayerList"
+             ItemsSource="{Binding $parent[local:LayerStackPanel].Items}"
+             SelectedItem="{Binding $parent[local:LayerStackPanel].SelectedItem, Mode=TwoWay}"
+             MaxHeight="{Binding $parent[local:LayerStackPanel].ListMaxHeight}"
+             SelectionMode="Single"
+             Background="#252525" CornerRadius="2" MinHeight="60"
+             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+      <ListBox.ItemTemplate>
+        <DataTemplate x:DataType="vm:ILayerStackItem">
+          <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto" ColumnSpacing="4" Height="36">
+            <ToggleButton Grid.Column="0" IsChecked="{Binding IsVisible, Mode=TwoWay}"
+                          Padding="4,2" VerticalAlignment="Center" ToolTip.Tip="Show or hide the layer">
+              <TextBlock Text="&#x1F441;" FontSize="10" />
+            </ToggleButton>
+
+            <Border Grid.Column="1" Width="28" Height="28" CornerRadius="2" Background="#333" ClipToBounds="True">
+              <Image Source="{Binding Thumbnail}" Stretch="Uniform" />
+            </Border>
+
+            <!-- Name and its in-place editor share one cell. Double-click swaps them (code-behind). -->
+            <Panel Grid.Column="2" VerticalAlignment="Center">
+              <TextBlock Classes="layerName" Text="{Binding Name}" FontSize="11"
+                         TextTrimming="CharacterEllipsis" ToolTip.Tip="Double-click to rename"
+                         DoubleTapped="OnNameDoubleTapped" />
+              <TextBox Classes="layerRename" IsVisible="False" FontSize="11" Padding="2,0" MinHeight="0"
+                       MaxLength="200" LostFocus="OnRenameLostFocus" />
+            </Panel>
+
+            <ToggleButton Grid.Column="3" IsChecked="{Binding IsLocked, Mode=TwoWay}"
+                          Padding="4,2" VerticalAlignment="Center"
+                          ToolTip.Tip="{Binding $parent[local:LayerStackPanel].LockToolTip}">
+              <TextBlock Text="&#x1F512;" FontSize="10" />
+            </ToggleButton>
+
+            <TextBlock Grid.Column="4" Text="{Binding OpacityText}" FontSize="9" Opacity="0.6"
+                       VerticalAlignment="Center" MinWidth="28" TextAlignment="Right" />
+          </Grid>
+        </DataTemplate>
+      </ListBox.ItemTemplate>
+    </ListBox>
+  </DockPanel>
+</UserControl>
