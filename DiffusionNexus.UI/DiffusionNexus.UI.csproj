@@ -36,6 +36,17 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The Installer SDK catalog seed: the stable catalog this build ships, so a fresh or offline
+         machine has a full workload list before the startup update check reaches the network.
+         EmbeddedResource (not Content) so it survives single-file publish; LogicalName is what
+         AddInstallerSdkCatalog asks for. Refresh with Scripts/Update-CatalogSeed.ps1. Removed from
+         AvaloniaResource (Assets\** above) so the 2 MB archive is not embedded twice. -->
+    <AvaloniaResource Remove="Assets\Catalog\**" />
+    <EmbeddedResource Include="Assets\Catalog\catalog.zip" LogicalName="catalog.zip" />
+    <EmbeddedResource Include="Assets\Catalog\manifest.json" LogicalName="manifest.json" />
+  </ItemGroup>
+
+  <ItemGroup>
     <AvaloniaResource Remove="Assets\Workflows\**" />
     <AvaloniaXaml Remove="Assets\Workflows\**" />
     <Compile Remove="Assets\Workflows\**" />
@@ -81,11 +92,10 @@
     <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
     <PackageReference Include="SkiaSharp" Version="3.119.4" />
     <PackageReference Include="BitMiracle.LibTiff.NET" Version="2.4.660" />
-    <PackageReference Include="DiffusionNexus.Installer.SDK.Models" Version="1.2.44" />
-    <PackageReference Include="DiffusionNexus.Installer.SDK.Services" Version="1.2.44" />
-    <PackageReference Include="DiffusionNexus.Installer.SDK.DataAccess" Version="1.2.44" />
-    <PackageReference Include="DiffusionNexus.Installer.SDK.Shared" Version="1.2.44" />
-    <PackageReference Include="DiffusionNexus.Installer.SDK.Database" Version="1.2.44" />
+    <PackageReference Include="DiffusionNexus.Installer.SDK.Models" Version="2.1.0" />
+    <PackageReference Include="DiffusionNexus.Installer.SDK.Services" Version="2.1.0" />
+    <PackageReference Include="DiffusionNexus.Installer.SDK.Shared" Version="2.1.0" />
+    <PackageReference Include="DiffusionNexus.Installer.SDK.Catalog" Version="2.1.0" />
     <PackageReference Include="StableDiffusion.NET.Backend.Cuda12.Windows" Version="6.0.0" />
     <PackageReference Include="WeCantSpell.Hunspell" Version="7.0.1" />
     <!-- Pin transitive dependency to fix NU1903 (GHSA-xrw6-gwf8-vvr9) -->

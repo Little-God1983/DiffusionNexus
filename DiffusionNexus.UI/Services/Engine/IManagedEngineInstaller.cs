@@ -1,5 +1,4 @@
 using DiffusionNexus.Installer.SDK.Services;
-using DiffusionNexus.Installer.SDK.Shared;
 
 namespace DiffusionNexus.UI.Services.Engine;
 

@@ -404,6 +404,9 @@ EfaWzpDlgX/Platforms/Windows/Package.appxmanifest
 
 # ZIP files
 *.zip
+# ...except the embedded Installer SDK catalog seed: the UI project embeds it, so a clone without
+# it does not build (CS1566). Refreshed by Scripts/Update-CatalogSeed.ps1.
+!DiffusionNexus.UI/Assets/Catalog/catalog.zip
 
 # Ignore a file with the specified name.
 # Scoped to the 'logs' subfolder.

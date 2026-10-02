@@ -3,7 +3,7 @@ using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
-using DiffusionNexus.Installer.SDK.DataAccess;
+using DiffusionNexus.Installer.SDK.Catalog;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.ConfigurationChecker;
 using DiffusionNexus.UI.Services.Engine;
@@ -24,7 +24,7 @@ internal static class EngineTestHarness
         Action<InstallerPackage>? onPackageAdded = null,
         IReadOnlyList<BaseModelFolder>? baseModelFolders = null,
         Mock<IDialogService>? dialogMock = null,
-        Mock<IConfigurationRepository>? configurationRepositoryMock = null,
+        Mock<ICatalog>? catalogMock = null,
         Action<InstallerPackage>? onPackageUpdated = null,
         Action<InstallerPackage>? onPackageRemoved = null)
     {
@@ -65,7 +65,7 @@ internal static class EngineTestHarness
         return new InstallerManagerViewModel(
             dialog.Object, uow.Object, new PackageProcessManager(),
             new Mock<IDatasetEventAggregator>().Object,
-            (configurationRepositoryMock ?? new Mock<IConfigurationRepository>()).Object,
+            (catalogMock ?? new Mock<ICatalog>()).Object,
             new Mock<IConfigurationCheckerService>().Object,
             new Mock<IWorkloadInstallService>().Object,
             [], new Mock<IUnifiedLogger>().Object,

@@ -13,10 +13,10 @@ In this project use the Nuget packages DiffusionNexus.Installer.SDK from its ori
 - Every time new UI elements are added or UI is built from the ground up, always look first for reusable components in the project before creating new ones. The catalog of reusable controls, base classes, dialogs, converters and helpers is `DiffusionNexus.UI\REUSABLES.md` — check it before writing a new control, and add a row to it in the same commit whenever you create a new reusable piece.
 
 ## Database Management
-- There are TWO separate databases in the DiffusionNexus project:
-  - **diffusion_nexus.db** — belongs to the Installer SDK (from the NuGet package `DiffusionNexus.Installer.SDK.Database`). Runtime location: `C:\Users\Little God\AppData\Local\diffusion_nexus.db` (directly in %LocalAppData%, NOT in a subfolder). Contains workload configurations from the SDK.
-  - **Diffusion_Nexus-core.db** — belongs to the DiffusionNexus application itself (managed by `DiffusionNexusCoreDbContext` in the `DiffusionNexus.DataAccess` project). Stored at `%LocalAppData%/DiffusionNexus/Data/`. Contains app-specific data (models, settings, etc.).
-- Do NOT mix these up.
+- The app has ONE database and reads ONE JSON catalog. Do NOT mix them up:
+  - **Diffusion_Nexus-core.db** — belongs to the DiffusionNexus application itself (managed by `DiffusionNexusCoreDbContext` in the `DiffusionNexus.DataAccess` project). Stored at `%LocalAppData%/DiffusionNexus/Data/`. Contains app-specific data (models, settings, installed packages, etc.).
+  - **Installer SDK workload catalog** — JSON, not a database (Installer SDK 2.x, package `DiffusionNexus.Installer.SDK.Catalog`). Installed at `%LocalAppData%\DiffusionNexus\catalog\`, shared with the 3.x installer, read through `ICatalog`. The app follows the catalog channel the installer saved and never writes it. A stable seed is embedded in `DiffusionNexus.UI/Assets/Catalog` (refresh with `Scripts/Update-CatalogSeed.ps1`); a background check applies updates at startup. Point at a `DiffusionNexus.Catalog` checkout with the env var `DIFFUSIONNEXUS_CATALOG_PATH`.
+- The legacy SDK 1.x database `%LocalAppData%\diffusion_nexus.db` (with its backups and `db_override.txt`) is no longer used by this app, but the Legacy 1.x installer still reads it: never delete it.
 
 ## Code Style
 - Use specific formatting rules

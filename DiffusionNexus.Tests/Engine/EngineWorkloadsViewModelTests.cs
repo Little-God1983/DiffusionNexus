@@ -1,4 +1,4 @@
-using DiffusionNexus.Installer.SDK.DataAccess;
+using DiffusionNexus.Installer.SDK.Catalog;
 using DiffusionNexus.Installer.SDK.Models.Configuration;
 using DiffusionNexus.Installer.SDK.Models.Enums;
 using DiffusionNexus.UI.Services;
@@ -29,8 +29,8 @@ public class EngineWorkloadsViewModelTests
             Config(Guid.NewGuid(), "Some other workload")
         };
 
-        var repo = new Mock<IConfigurationRepository>();
-        repo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync(configs);
+        var repo = new Mock<ICatalog>();
+        repo.Setup(r => r.GetWorkloadsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(configs);
 
         var vm = new WorkloadsViewModel(
             repo.Object,
@@ -55,8 +55,8 @@ public class EngineWorkloadsViewModelTests
             Config(Guid.NewGuid(), "Some other workload")
         };
 
-        var repo = new Mock<IConfigurationRepository>();
-        repo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync(configs);
+        var repo = new Mock<ICatalog>();
+        repo.Setup(r => r.GetWorkloadsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(configs);
 
         var vm = new WorkloadsViewModel(
             repo.Object,
@@ -68,6 +68,31 @@ public class EngineWorkloadsViewModelTests
 
         vm.DiffusionNexusWorkloads.Concat(vm.InstallerWorkloads).Should().HaveCount(2,
             "the ordinary Workloads dialog must keep showing everything");
+    }
+
+    [Fact]
+    public async Task EveryLoad_RereadsTheCatalog_SoABackgroundApplyShowsUp()
+    {
+        // The startup catalog update applies in the background and invalidates ICatalog; the
+        // dialog must show the new content on its next load, not a list cached from before.
+        var catalog = new Mock<ICatalog>();
+        catalog.SetupSequence(c => c.GetWorkloadsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([Config(Guid.NewGuid(), "Before the apply")])
+            .ReturnsAsync([Config(Guid.NewGuid(), "After the apply")]);
+
+        var vm = new WorkloadsViewModel(
+            catalog.Object,
+            new Mock<IConfigurationCheckerService>().Object,
+            new Mock<IWorkloadInstallService>().Object,
+            @"C:\ComfyUI");
+
+        await vm.LoadWorkloadsCommand.ExecuteAsync(null);
+        await vm.LoadWorkloadsCommand.ExecuteAsync(null);
+
+        catalog.Verify(c => c.GetWorkloadsAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+        vm.DiffusionNexusWorkloads.Concat(vm.InstallerWorkloads)
+            .Select(w => w.Name)
+            .Should().BeEquivalentTo(["After the apply"]);
     }
 
     // --- VRAM-tier suggestion -------------------------------------------------------------
@@ -92,7 +117,7 @@ public class EngineWorkloadsViewModelTests
             .ReturnsAsync(new ResourceSnapshot { VramTotalMB = 16384 }); // 16 GB card
 
         var vm = new WorkloadsViewModel(
-            new Mock<IConfigurationRepository>().Object,
+            new Mock<ICatalog>().Object,
             new Mock<IConfigurationCheckerService>().Object,
             new Mock<IWorkloadInstallService>().Object,
             @"C:\ComfyUI",
@@ -107,7 +132,7 @@ public class EngineWorkloadsViewModelTests
     public async Task ComputeSuggestedVramGb_WithoutResourceMonitor_ComputesNoSuggestion()
     {
         var vm = new WorkloadsViewModel(
-            new Mock<IConfigurationRepository>().Object,
+            new Mock<ICatalog>().Object,
             new Mock<IConfigurationCheckerService>().Object,
             new Mock<IWorkloadInstallService>().Object,
             @"C:\ComfyUI");

@@ -1,6 +1,6 @@
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
-using DiffusionNexus.Installer.SDK.DataAccess;
+using DiffusionNexus.Installer.SDK.Catalog;
 using DiffusionNexus.UI.Services;
 using FluentAssertions;
 using Moq;
@@ -23,14 +23,14 @@ public class EngineWorkloadsRequestTests
     public async Task EngineNotInstalled_ShowsRefusalMessage_AndNeverAttemptsToLoadWorkloads()
     {
         var dialog = new Mock<IDialogService>();
-        var configRepo = new Mock<IConfigurationRepository>();
+        var catalog = new Mock<ICatalog>();
 
         // No "Diffusion Nexus Engine" row among the packages -> the engine card starts
         // uninstalled (IsEngineInstalled = false, InstallationPath empty).
         var vm = EngineTestHarness.CreateInstallerManagerViewModel(
             packages: [],
             dialogMock: dialog,
-            configurationRepositoryMock: configRepo);
+            catalogMock: catalog);
 
         vm.IsEngineTileVisible = true;
         await vm.LoadInstallationsCommand.ExecuteAsync(null);
@@ -47,7 +47,7 @@ public class EngineWorkloadsRequestTests
 
         // Confirms the refusal returns before ever constructing a WorkloadsViewModel /
         // attempting to open the (Avalonia) workloads dialog.
-        configRepo.Verify(r => r.GetAllAsync(It.IsAny<CancellationToken>()), Times.Never);
+        catalog.Verify(r => r.GetWorkloadsAsync(It.IsAny<CancellationToken>()), Times.Never);
         dialog.Verify(d => d.ShowMessageAsync("Error", It.IsAny<string>()), Times.Never);
     }
 
@@ -59,7 +59,7 @@ public class EngineWorkloadsRequestTests
         // refusal guard also checks InstallationPath directly, so a dialog is never opened
         // against an empty path even if IsEngineInstalled were somehow true.
         var dialog = new Mock<IDialogService>();
-        var configRepo = new Mock<IConfigurationRepository>();
+        var catalog = new Mock<ICatalog>();
 
         var packages = new List<InstallerPackage>
         {
@@ -77,7 +77,7 @@ public class EngineWorkloadsRequestTests
         var vm = EngineTestHarness.CreateInstallerManagerViewModel(
             packages: packages,
             dialogMock: dialog,
-            configurationRepositoryMock: configRepo);
+            catalogMock: catalog);
 
         vm.IsEngineTileVisible = true;
         await vm.LoadInstallationsCommand.ExecuteAsync(null);
@@ -92,6 +92,6 @@ public class EngineWorkloadsRequestTests
                 "Diffusion Nexus Engine",
                 "Install the engine first — workloads are installed into it."),
             Times.Once);
-        configRepo.Verify(r => r.GetAllAsync(It.IsAny<CancellationToken>()), Times.Never);
+        catalog.Verify(r => r.GetWorkloadsAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 }

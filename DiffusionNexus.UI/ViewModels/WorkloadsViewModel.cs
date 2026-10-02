@@ -3,7 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using DiffusionNexus.Installer.SDK.DataAccess;
+using DiffusionNexus.Installer.SDK.Catalog;
 using DiffusionNexus.Installer.SDK.Models.Configuration;
 using DiffusionNexus.Installer.SDK.Models.Enums;
 using DiffusionNexus.Installer.SDK.Services;
@@ -17,11 +17,11 @@ namespace DiffusionNexus.UI.ViewModels;
 
 /// <summary>
 /// ViewModel for the Workloads dialog showing ComfyUI workloads
-/// from the SDK database, split into two tabs by <see cref="WorkloadTargetType"/>.
+/// from the workload catalog, split into two tabs by <see cref="WorkloadTargetType"/>.
 /// </summary>
 public partial class WorkloadsViewModel : ViewModelBase
 {
-    private readonly IConfigurationRepository _configurationRepository;
+    private readonly ICatalog _catalog;
     private readonly IConfigurationCheckerService _checkerService;
     private readonly IWorkloadInstallService _installService;
     private readonly string _comfyUIRootPath;
@@ -55,19 +55,19 @@ public partial class WorkloadsViewModel : ViewModelBase
     public ObservableCollection<WorkloadItemViewModel> InstallerWorkloads { get; } = [];
 
     public WorkloadsViewModel(
-        IConfigurationRepository configurationRepository,
+        ICatalog catalog,
         IConfigurationCheckerService checkerService,
         IWorkloadInstallService installService,
         string comfyUIRootPath,
         IReadOnlyList<Guid>? allowedConfigurationIds = null,
         IResourceMonitorService? resourceMonitor = null)
     {
-        ArgumentNullException.ThrowIfNull(configurationRepository);
+        ArgumentNullException.ThrowIfNull(catalog);
         ArgumentNullException.ThrowIfNull(checkerService);
         ArgumentNullException.ThrowIfNull(installService);
         ArgumentException.ThrowIfNullOrWhiteSpace(comfyUIRootPath);
 
-        _configurationRepository = configurationRepository;
+        _catalog = catalog;
         _checkerService = checkerService;
         _installService = installService;
         _comfyUIRootPath = comfyUIRootPath;
@@ -76,7 +76,7 @@ public partial class WorkloadsViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Loads ComfyUI workloads from the SDK database, splits them by target type,
+    /// Loads ComfyUI workloads from the workload catalog, splits them by target type,
     /// and runs the configuration checker against the local ComfyUI installation.
     /// </summary>
     [RelayCommand]
@@ -88,9 +88,11 @@ public partial class WorkloadsViewModel : ViewModelBase
             DiffusionNexusWorkloads.Clear();
             InstallerWorkloads.Clear();
 
-            var configurations = await _configurationRepository.GetAllAsync();
+            // Read on every load, never cached here: a background catalog apply invalidates the
+            // catalog, so the next open of this dialog shows the new content.
+            var configurations = await _catalog.GetWorkloadsAsync();
 
-            Serilog.Log.Information("WorkloadsViewModel: Loaded {Count} configurations from SDK database", configurations.Count);
+            Serilog.Log.Information("WorkloadsViewModel: Loaded {Count} configurations from the workload catalog", configurations.Count);
 
             var comfyConfigurations = configurations
                 .Where(c => c.Repository.Type == RepositoryType.ComfyUI)
@@ -130,7 +132,7 @@ public partial class WorkloadsViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            Serilog.Log.Error(ex, "Failed to load workloads from SDK database");
+            Serilog.Log.Error(ex, "Failed to load workloads from the workload catalog");
         }
         finally
         {
