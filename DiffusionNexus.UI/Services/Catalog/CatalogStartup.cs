@@ -84,12 +84,16 @@ public static class CatalogStartup
 
             // State is always the installed catalog's (FileCatalog reads it from InstalledCatalogPath),
             // so under an override it does not describe what the app is reading.
+            // The channel shown is the installed catalog's own, which can differ from the one followed
+            // (the fallback guard in CatalogStartupUpdater skips exactly that case). An SDK 2.0.0 state
+            // records no section channel, only the file-level stamp.
             var state = catalog.State;
-            var versions = $"workloads {Version(state.Workloads)}, workflows {Version(state.Workflows)}, channel {channel}";
+            var installedChannel = state.Workloads?.Channel ?? state.Workflows?.Channel ?? state.Channel;
+            var versions = $"workloads {Version(state.Workloads)}, workflows {Version(state.Workflows)}, channel {installedChannel}";
             var label = catalogSource.Kind == CatalogSourceKind.Override
                 ? "Installed catalog (not in use while the override is active)"
                 : "Catalog version";
-            activityLog?.LogInfo(LogSource, $"{label}: {versions}", $"Channel source: {source}");
+            activityLog?.LogInfo(LogSource, $"{label}: {versions}", $"Following {channel} ({source})");
 
             foreach (var diagnostic in catalog.Diagnostics)
             {

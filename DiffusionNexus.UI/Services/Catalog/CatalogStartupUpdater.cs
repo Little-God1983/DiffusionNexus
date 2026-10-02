@@ -66,7 +66,7 @@ public sealed class CatalogStartupUpdater
             if (source == CatalogChannelSource.Default && InstalledOnAnotherChannel(check.Local, channel) is { } installed)
             {
                 _activityLog?.LogWarning(LogSource,
-                    $"Catalog update skipped: the installed catalog follows {installed}, and no {channel} channel was saved or set.",
+                    $"Catalog update skipped: the installed catalog follows {installed}; no channel was saved or set, so {channel} is only a fallback.",
                     "The Diffusion Nexus installer updates it on its own channel.");
                 return;
             }
@@ -106,14 +106,18 @@ public sealed class CatalogStartupUpdater
         }
     }
 
-    /// <summary>The channel of a section recorded on another channel; null when none is (an unknown channel does not count).</summary>
+    /// <summary>
+    /// The installed channel when it differs from <paramref name="channel"/>, else null. Section channels
+    /// (SDK 2.1.0+) decide; without any, the file-level stamp does, because installers on SDK 2.0.0
+    /// (3.0.10) write only the stamp. The SDK's update check ignores the stamp (2.0.0 could stamp a
+    /// channel whose content never landed), but a Preview stamp still means the user picked Preview in
+    /// the installer, which is reason enough not to apply a Stable guess.
+    /// </summary>
     private static CatalogChannel? InstalledOnAnotherChannel(LocalCatalogState local, CatalogChannel channel)
     {
-        foreach (var section in new[] { local.Workloads, local.Workflows })
-        {
-            if (section?.Channel is { } recorded && recorded != channel)
-                return recorded;
-        }
-        return null;
+        CatalogChannel?[] sections = [local.Workloads?.Channel, local.Workflows?.Channel];
+        if (sections.All(c => c is null))
+            return local.Channel != channel ? local.Channel : null;
+        return sections.FirstOrDefault(c => c is { } recorded && recorded != channel);
     }
 }

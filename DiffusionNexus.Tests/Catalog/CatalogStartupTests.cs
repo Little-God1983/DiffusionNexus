@@ -104,6 +104,26 @@ public class CatalogStartupTests
         _log.GetEntries().Should().OnlyContain(e => e.Source == CatalogStartup.LogSource);
     }
 
+    [Theory]
+    [InlineData(CatalogChannel.Preview, CatalogChannel.Stable, "Preview")]  // a section channel outranks the stamp
+    [InlineData(null, CatalogChannel.Preview, "Preview")]                   // SDK 2.0.0 state: only the stamp
+    public void The_version_line_shows_the_installed_catalogs_channel_and_the_detail_the_followed_one(
+        CatalogChannel? section, CatalogChannel stamp, string expected)
+    {
+        _catalog.SetupGet(c => c.State).Returns(new LocalCatalogState
+        {
+            Channel = stamp,
+            Workloads = new SectionState(5, "abc", DateTimeOffset.UnixEpoch) { Channel = section },
+            Workflows = new SectionState(4, "abc", DateTimeOffset.UnixEpoch) { Channel = section }
+        });
+
+        Report(CatalogChannel.Stable, CatalogChannelSource.Default);
+
+        var entry = _log.GetEntries().Single(e => e.Message.StartsWith("Catalog version:"));
+        entry.Message.Should().Be($"Catalog version: workloads v5, workflows v4, channel {expected}");
+        entry.Details.Should().Be("Following Stable (Default)");
+    }
+
     [Fact]
     public void A_section_without_state_reads_n_a_not_an_empty_version()
     {
@@ -166,7 +186,27 @@ public class CatalogStartupTests
         await Run();
 
         _updates.Verify(u => u.CheckAsync(CatalogChannel.Preview, It.IsAny<CancellationToken>()), Times.Once);
-        Messages.Should().Contain(m => m.StartsWith("Catalog version:") && m.EndsWith("channel Preview"));
+        _log.GetEntries().Should().Contain(e => e.Message.StartsWith("Catalog version:") && e.Details == "Following Preview (Setting)");
+    }
+
+    [Fact]
+    public async Task Run_passes_a_Default_source_through_so_the_fallback_guard_holds()
+    {
+        // Nothing saved: if RunAsync reported the source as anything but Default, Stable would be applied
+        // over this Preview catalog.
+        var previewState = new LocalCatalogState
+        {
+            Channel = CatalogChannel.Preview,
+            Workloads = new SectionState(5, "abc", DateTimeOffset.UnixEpoch) { Channel = CatalogChannel.Preview }
+        };
+        _updates.Setup(u => u.CheckAsync(It.IsAny<CatalogChannel>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CatalogChannel c, CancellationToken _) =>
+                new CatalogUpdateCheck(CatalogUpdateOutcome.UpdatesAvailable, c, new CatalogManifest { CatalogVersion = 6 }, previewState, [], [], null));
+
+        await Run();
+
+        _updates.Verify(u => u.ApplyAsync(It.IsAny<CatalogUpdateCheck>(), It.IsAny<CatalogSections>(),
+            It.IsAny<IProgress<CatalogDownloadProgress>?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

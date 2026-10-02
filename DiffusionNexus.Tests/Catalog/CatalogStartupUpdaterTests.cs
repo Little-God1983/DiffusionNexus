@@ -33,8 +33,10 @@ public class CatalogStartupUpdaterTests
             local ?? new LocalCatalogState(),
             workloads ?? [], [], error);
 
-    private static LocalCatalogState InstalledOn(CatalogChannel? channel) => new()
+    /// <param name="stamp">The file-level stamp. Installers on SDK 2.0.0 (installer 3.0.10) write only this, never a section channel.</param>
+    private static LocalCatalogState InstalledOn(CatalogChannel? channel, CatalogChannel stamp = CatalogChannel.Stable) => new()
     {
+        Channel = stamp,
         Workloads = new SectionState(5, "abc", DateTimeOffset.UnixEpoch) { Channel = channel },
         Workflows = new SectionState(5, "abc", DateTimeOffset.UnixEpoch) { Channel = channel }
     };
@@ -180,16 +182,29 @@ public class CatalogStartupUpdaterTests
         await Run(CatalogChannel.Stable, CatalogChannelSource.Default);
 
         VerifyNoApply();
-        Entries.Should().ContainSingle(e => e.Severity == ActivitySeverity.Warning
-            && e.Message.Contains("Preview") && e.Message.Contains("Stable"));
+        Entries.Should().ContainSingle(e => e.Severity == ActivitySeverity.Warning)
+            .Which.Message.Should().Be("Catalog update skipped: the installed catalog follows Preview; no channel was saved or set, so Stable is only a fallback.");
+    }
+
+    [Fact]
+    public async Task A_fallback_channel_never_applies_over_a_catalog_an_older_installer_stamped_Preview()
+    {
+        // Every catalog installed by 3.0.10 (SDK 2.0.0): no section channel, only the file-level stamp.
+        CheckReturns(Check(CatalogUpdateOutcome.UpdatesAvailable, local: InstalledOn(null, stamp: CatalogChannel.Preview)));
+
+        await Run(CatalogChannel.Stable, CatalogChannelSource.Default);
+
+        VerifyNoApply();
+        Entries.Should().ContainSingle(e => e.Severity == ActivitySeverity.Warning && e.Message.Contains("follows Preview"));
     }
 
     [Theory]
-    [InlineData(CatalogChannel.Stable)]
-    [InlineData(null)] // a state written before SDK 2.1.0 records no channel
-    public async Task A_fallback_channel_applies_over_a_catalog_on_the_same_or_an_unknown_channel(CatalogChannel? installed)
+    [InlineData(CatalogChannel.Stable, CatalogChannel.Stable)]
+    [InlineData(null, CatalogChannel.Stable)] // older installer, stamped Stable (also the stamp's default)
+    [InlineData(CatalogChannel.Stable, CatalogChannel.Preview)] // a section channel outranks the stamp
+    public async Task A_fallback_channel_applies_over_a_catalog_on_the_same_channel(CatalogChannel? installed, CatalogChannel stamp)
     {
-        var check = Check(CatalogUpdateOutcome.UpdatesAvailable, local: InstalledOn(installed));
+        var check = Check(CatalogUpdateOutcome.UpdatesAvailable, local: InstalledOn(installed, stamp));
         CheckReturns(check);
         ApplySucceeds(check);
 
