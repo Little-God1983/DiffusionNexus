@@ -260,8 +260,8 @@
                       ToolTip.Tip="{Binding ControlNetTooltip}" />
               <Button Content="Mask" Command="{Binding ActivateMaskToolCommand}" IsEnabled="False"
                       ToolTip.Tip="{Binding MaskTooltip}" />
-              <Button Content="Layers" Command="{Binding ToggleLayerPanelCommand}" IsEnabled="False"
-                      ToolTip.Tip="The layer stack arrives in issue #518 region D." />
+              <ToggleButton Content="Layers" IsChecked="{Binding IsLayerPanelVisible}"
+                            ToolTip.Tip="Show or hide the layer stack" />
             </StackPanel>
           </ScrollViewer>
         </Border>
