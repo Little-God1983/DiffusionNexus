@@ -269,4 +269,22 @@ public class CanvasLayerStackViewModelTests
 
         count.Should().Be(0);
     }
+
+    [Fact]
+    public void ANullFromTheViewIsIgnoredWhileTheSelectedLayerIsStillOnTheCanvas()
+    {
+        // A ListBox writes null into its two-way SelectedItem on a Ctrl+click of the selected row and when
+        // the view detaches (navigating away clears its ItemsSource). Neither is the user deselecting.
+        var stack = Create();
+        var a = Frame("a");
+        _frames.Add(a);
+        stack.SelectedLayer = a;
+        var notified = false;
+        stack.PropertyChanged += (_, e) => notified |= e.PropertyName == nameof(CanvasLayerStackViewModel.SelectedLayer);
+
+        stack.SelectedLayer = null;
+
+        stack.SelectedLayer.Should().BeSameAs(a);
+        notified.Should().BeTrue("the view must be told to re-select the row it just cleared");
+    }
 }

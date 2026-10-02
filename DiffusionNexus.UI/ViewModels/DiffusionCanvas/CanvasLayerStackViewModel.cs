@@ -52,12 +52,31 @@ public sealed partial class CanvasLayerStackViewModel : ObservableObject
     /// <summary>The layers top first, as the panel lists them.</summary>
     public ObservableCollection<GenerationFrameViewModel> DisplayLayers { get; } = [];
 
-    /// <summary>The layer the inspector edits and the surface outlines.</summary>
-    [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(MoveUpCommand))]
-    [NotifyCanExecuteChangedFor(nameof(MoveDownCommand))]
-    [NotifyCanExecuteChangedFor(nameof(DeleteSelectedCommand))]
     private GenerationFrameViewModel? _selectedLayer;
+
+    /// <summary>The layer the inspector edits and the surface outlines.</summary>
+    /// <remarks>
+    /// A null is ignored while the selected layer is still on the canvas. The panel's ListBox writes null
+    /// into its two-way SelectedItem on a Ctrl+click of the selected row and when the view detaches
+    /// (navigating away clears its ItemsSource); neither is the user deselecting, and accepting it would
+    /// blank the inspector and drop the outline. The view is told to re-select instead. Every path that
+    /// genuinely needs null — the layer was removed — runs after the layer has left the collection.
+    /// </remarks>
+    public GenerationFrameViewModel? SelectedLayer
+    {
+        get => _selectedLayer;
+        set
+        {
+            if (value is null && _selectedLayer is not null && _frames.Contains(_selectedLayer))
+            {
+                OnPropertyChanged();
+                return;
+            }
+
+            if (SetProperty(ref _selectedLayer, value))
+                NotifyCommands();
+        }
+    }
 
     /// <summary>True when the canvas holds at least one layer.</summary>
     public bool HasLayers => _frames.Count > 0;

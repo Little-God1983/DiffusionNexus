@@ -360,4 +360,22 @@ public class LayerPanelViewModelTests
     }
 
     #endregion
+
+    [Fact]
+    public void ANullFromTheViewOutsideASyncKeepsTheActiveLayer()
+    {
+        // Ctrl+click on the selected row, or the view detaching on a tab switch, makes the ListBox write
+        // null. Accepting it would null the editor core's active layer and strokes would go nowhere.
+        var stack = new LayerStack(10, 10);
+        stack.AddLayer("Bottom");
+        var top = stack.AddLayer("Top");
+        _sut.SyncLayers(stack);
+        var raisedNull = false;
+        _sut.LayerSelectionChanged += (_, layer) => raisedNull |= layer is null;
+
+        _sut.SelectedLayer = null;
+
+        raisedNull.Should().BeFalse();
+        _sut.SelectedLayer!.Layer.Should().BeSameAs(top);
+    }
 }

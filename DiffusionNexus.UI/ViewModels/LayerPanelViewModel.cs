@@ -80,6 +80,15 @@ public partial class LayerPanelViewModel : ObservableObject
             if (_isSyncing && value is null)
                 return;
 
+            // Outside a sync the ListBox still writes null on a Ctrl+click of the selected row and when
+            // the view detaches on a tab switch. Neither is the user deselecting, and accepting it would
+            // null the editor core's active layer so strokes go nowhere. Tell the view to re-select.
+            if (value is null && _selectedLayer is not null && _layers.Contains(_selectedLayer))
+            {
+                OnPropertyChanged();
+                return;
+            }
+
             if (SetProperty(ref _selectedLayer, value))
             {
                 foreach (var layer in _layers)
