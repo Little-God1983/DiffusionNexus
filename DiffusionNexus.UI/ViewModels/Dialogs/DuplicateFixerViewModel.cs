@@ -22,7 +22,7 @@ public partial class DuplicateFixerImageItem : ObservableObject
     /// <summary>Parent cluster this image belongs to.</summary>
     public required DuplicateFixerClusterItem Cluster { get; init; }
 
-    /// <summary>Rating status loaded from the .rating sidecar file.</summary>
+    /// <summary>Rating status loaded through <see cref="ImageRatingStore"/>.</summary>
     public ImageRatingStatus RatingStatus { get; private set; } = ImageRatingStatus.Unrated;
 
     /// <summary>Display label for the rating: "Ready", "Trash", or empty for unrated.</summary>
@@ -44,24 +44,8 @@ public partial class DuplicateFixerImageItem : ObservableObject
         _ => "Transparent"
     };
 
-    /// <summary>Loads rating from the .rating sidecar file next to the image.</summary>
-    public void LoadRating()
-    {
-        var ratingPath = Path.ChangeExtension(FilePath, ".rating");
-        if (!File.Exists(ratingPath))
-            return;
-
-        try
-        {
-            var content = File.ReadAllText(ratingPath).Trim();
-            if (Enum.TryParse<ImageRatingStatus>(content, out var status))
-            {
-                RatingStatus = status;
-            }
-        }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
-    }
+    /// <summary>Loads the rating from the folder's ratings file or a legacy <c>.rating</c> sidecar.</summary>
+    public void LoadRating() => RatingStatus = ImageRatingStore.Shared.Get(FilePath);
 }
 
 /// <summary>
@@ -296,6 +280,7 @@ public partial class DuplicateFixerViewModel : ObservableObject
                 // Also delete associated caption sidecar files
                 File.Delete(toDelete.FilePath);
                 DeleteSidecarFiles(toDelete.FilePath);
+                ImageRatingStore.Shared.Remove(toDelete.FilePath);
                 Logger.Information("Deleted duplicate image: {Path}", toDelete.FilePath);
             }
 

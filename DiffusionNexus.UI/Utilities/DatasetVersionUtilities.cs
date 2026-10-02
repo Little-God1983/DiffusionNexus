@@ -22,8 +22,11 @@ public static class DatasetVersionUtilities
             {
                 var ext = Path.GetExtension(f).ToLowerInvariant();
                 var fileName = Path.GetFileName(f);
+                // Ratings travel with their images: the folder file, and legacy sidecars as they are
+                if (string.Equals(fileName, ImageRatingStore.RatingsFileName, StringComparison.OrdinalIgnoreCase)) return true;
                 if (fileName.StartsWith(".")) return false;
-                return MediaFileExtensions.MediaExtensions.Contains(ext) || ext == ".txt";
+                return MediaFileExtensions.MediaExtensions.Contains(ext) || ext == ".txt"
+                    || ext == ImageRatingStore.LegacyExtension;
             })
             .ToList();
 

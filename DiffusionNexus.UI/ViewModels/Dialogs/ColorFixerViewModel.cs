@@ -297,7 +297,7 @@ public partial class ColorFixerViewModel : ObservableObject
     /// <summary>Skips the selected image without fixing.</summary>
     public IRelayCommand SkipSelectedCommand { get; }
 
-    /// <summary>Marks the selected outlier image as trash by writing a .rating sidecar file.</summary>
+    /// <summary>Marks the selected outlier image as trash in the folder's ratings file.</summary>
     public IRelayCommand RejectSelectedCommand { get; }
 
     /// <summary>Auto-fixes all remaining (unfixed, unskipped) images.</summary>
@@ -367,15 +367,10 @@ public partial class ColorFixerViewModel : ObservableObject
                 Detail = src.Detail
             };
 
-            // Detect pre-existing .rating sidecar marking the image as rejected
-            var ratingPath = Path.ChangeExtension(src.FilePath, ".rating");
-            if (File.Exists(ratingPath))
+            // An image already marked as trash needs no attention
+            if (ImageRatingStore.Shared.Get(src.FilePath) == ImageRatingStatus.Rejected)
             {
-                var rating = File.ReadAllText(ratingPath).Trim();
-                if (string.Equals(rating, "Rejected", StringComparison.OrdinalIgnoreCase))
-                {
-                    item.IsRejected = true;
-                }
+                item.IsRejected = true;
             }
 
             Images.Add(item);
@@ -452,25 +447,15 @@ public partial class ColorFixerViewModel : ObservableObject
         }
     }
 
-    /// <summary>Marks the selected outlier image as trash by writing a .rating sidecar file.</summary>
+    /// <summary>Marks the selected outlier image as trash in the folder's ratings file.</summary>
     private void RejectSelected()
     {
         if (_selectedImage is null || _selectedImage.IsResolved)
             return;
 
-        var ratingPath = Path.ChangeExtension(_selectedImage.FilePath, ".rating");
-        try
+        if (!ImageRatingStore.Shared.Set(_selectedImage.FilePath, ImageRatingStatus.Rejected))
         {
-            File.WriteAllText(ratingPath, "Rejected");
-        }
-        catch (IOException ex)
-        {
-            Logger.Warning(ex, "Failed to write rating file for {FilePath}", _selectedImage.FilePath);
-            return;
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            Logger.Warning(ex, "No permission to write rating file for {FilePath}", _selectedImage.FilePath);
+            Logger.Warning("Failed to save the trash rating for {FilePath}", _selectedImage.FilePath);
             return;
         }
 

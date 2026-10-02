@@ -365,6 +365,7 @@ public partial class PresentationTabViewModel : ObservableObject, IDialogService
 
             var copied = 0;
             var skipped = 0;
+            var arrived = new List<string>();
 
             foreach (var sourcePath in filePaths)
             {
@@ -385,8 +386,13 @@ public partial class PresentationTabViewModel : ObservableObject, IDialogService
                 }
 
                 await Task.Run(() => File.Copy(sourcePath, destPath));
+                arrived.Add(destPath);
                 copied++;
             }
+
+            // A copy arrives unrated, never with the stale entry of a file deleted outside the app
+            ImageRatingStore.Shared.SetMany(
+                arrived.Select(p => new KeyValuePair<string, ImageRatingStatus>(p, ImageRatingStatus.Unrated)));
 
             StatusMessage = skipped > 0
                 ? $"Added {copied} file(s), skipped {skipped}"
@@ -430,10 +436,7 @@ public partial class PresentationTabViewModel : ObservableObject, IDialogService
             {
                 File.Delete(mediaVm.CaptionFilePath);
             }
-            if (File.Exists(mediaVm.RatingFilePath))
-            {
-                File.Delete(mediaVm.RatingFilePath);
-            }
+            ImageRatingStore.Shared.Remove(mediaVm.ImagePath);
 
             MediaFiles.Remove(mediaVm);
             StatusMessage = $"Deleted '{mediaVm.FullFileName}'";
