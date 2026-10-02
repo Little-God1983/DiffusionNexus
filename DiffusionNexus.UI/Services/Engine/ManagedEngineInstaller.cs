@@ -1,4 +1,4 @@
-using DiffusionNexus.Installer.SDK.DataAccess;
+using DiffusionNexus.Installer.SDK.Catalog;
 using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.Installer.SDK.Shared;
 using DiffusionNexus.Installer.SDK.Shared.Services;
@@ -27,20 +27,20 @@ public sealed class ManagedEngineInstaller : IManagedEngineInstaller
     public const string BaseConfigurationId = "E79C079A-2FD7-4FE7-8086-23731092555D";
 
     private readonly IInstallationCoordinator _coordinator;
-    private readonly IConfigurationRepository _configurationRepository;
+    private readonly ICatalog _catalog;
     private readonly IUserPromptService _promptService;
 
     public ManagedEngineInstaller(
         IInstallationCoordinator coordinator,
-        IConfigurationRepository configurationRepository,
+        ICatalog catalog,
         IUserPromptService promptService)
     {
         ArgumentNullException.ThrowIfNull(coordinator);
-        ArgumentNullException.ThrowIfNull(configurationRepository);
+        ArgumentNullException.ThrowIfNull(catalog);
         ArgumentNullException.ThrowIfNull(promptService);
 
         _coordinator = coordinator;
-        _configurationRepository = configurationRepository;
+        _catalog = catalog;
         _promptService = promptService;
     }
 
@@ -64,14 +64,14 @@ public sealed class ManagedEngineInstaller : IManagedEngineInstaller
             });
         }
 
-        var configuration = await _configurationRepository
-            .GetByIdAsync(Guid.Parse(BaseConfigurationId), cancellationToken)
+        var configuration = await _catalog
+            .GetWorkloadAsync(Guid.Parse(BaseConfigurationId), cancellationToken)
             .ConfigureAwait(false);
 
         if (configuration is null)
         {
             return new EngineInstallOutcome(false, false,
-                $"The engine base configuration {BaseConfigurationId} was not found in the catalog database. " +
+                $"The engine base configuration {BaseConfigurationId} was not found in the workload catalog. " +
                 "The shipped catalog may be out of date.", null);
         }
 

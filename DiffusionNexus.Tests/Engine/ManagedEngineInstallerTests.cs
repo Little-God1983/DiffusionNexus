@@ -1,4 +1,4 @@
-using DiffusionNexus.Installer.SDK.DataAccess;
+using DiffusionNexus.Installer.SDK.Catalog;
 using DiffusionNexus.Installer.SDK.Models.Configuration;
 using DiffusionNexus.Installer.SDK.Models.Entities;
 using DiffusionNexus.Installer.SDK.Services;
@@ -51,11 +51,11 @@ public class ManagedEngineInstallerTests
         }
     };
 
-    private static (Mock<IInstallationCoordinator> Coordinator, Mock<IConfigurationRepository> Repo)
+    private static (Mock<IInstallationCoordinator> Coordinator, Mock<ICatalog> Repo)
         Mocks(InstallationConfiguration config)
     {
-        var repo = new Mock<IConfigurationRepository>();
-        repo.Setup(r => r.GetByIdAsync(config.Id, It.IsAny<CancellationToken>()))
+        var repo = new Mock<ICatalog>();
+        repo.Setup(r => r.GetWorkloadAsync(config.Id, It.IsAny<CancellationToken>()))
             .ReturnsAsync(config);
 
         var coordinator = new Mock<IInstallationCoordinator>();
@@ -79,7 +79,7 @@ public class ManagedEngineInstallerTests
     }
 
     private static ManagedEngineInstaller Create(
-        Mock<IInstallationCoordinator> coordinator, Mock<IConfigurationRepository> repo)
+        Mock<IInstallationCoordinator> coordinator, Mock<ICatalog> repo)
         => new(coordinator.Object, repo.Object, new Mock<IUserPromptService>().Object);
 
     [Fact]
@@ -248,16 +248,20 @@ public class ManagedEngineInstallerTests
     [Fact]
     public async Task InstallBaseEngine_FailsClearlyWhenTheConfigurationIsMissing()
     {
-        var repo = new Mock<IConfigurationRepository>();
-        repo.Setup(r => r.GetByIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+        var repo = new Mock<ICatalog>();
+        repo.Setup(r => r.GetWorkloadAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((InstallationConfiguration?)null);
 
-        var outcome = await Create(new Mock<IInstallationCoordinator>(), repo).InstallBaseEngineAsync(
+        var coordinator = new Mock<IInstallationCoordinator>();
+
+        var outcome = await Create(coordinator, repo).InstallBaseEngineAsync(
             new EngineInstallRequest(@"C:\Engine\ComfyUI", []),
             new Progress<InstallLogEntry>(), new Progress<InstallationProgress>(), CancellationToken.None);
 
         outcome.IsSuccess.Should().BeFalse();
         outcome.Message.Should().Contain(ManagedEngineInstaller.BaseConfigurationId);
+        outcome.Message.Should().Contain("workload catalog");
+        coordinator.VerifyNoOtherCalls();
     }
 
     [Fact]

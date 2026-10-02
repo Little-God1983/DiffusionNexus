@@ -4,7 +4,7 @@ using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
-using DiffusionNexus.Installer.SDK.DataAccess;
+using DiffusionNexus.Installer.SDK.Catalog;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.ConfigurationChecker;
 using DiffusionNexus.UI.ViewModels;
@@ -60,7 +60,7 @@ public class InstallerManagerViewModelTests
             .Setup(e => e.PublishSettingsSaved(It.IsAny<SettingsSavedEventArgs>()))
             .Callback(() => settingsSavedCount++);
 
-        var mockConfigRepo = new Mock<IConfigurationRepository>();
+        var mockConfigRepo = new Mock<ICatalog>();
         var mockCheckerService = new Mock<IConfigurationCheckerService>();
         var mockInstallService = new Mock<IWorkloadInstallService>();
 
@@ -111,7 +111,7 @@ public class InstallerManagerViewModelTests
         var mockAppSettings = new Mock<IAppSettingsRepository>();
         mockUow.Setup(u => u.AppSettings).Returns(mockAppSettings.Object);
         var mockEventAggregator = new Mock<IDatasetEventAggregator>();
-        var mockConfigRepo = new Mock<IConfigurationRepository>();
+        var mockConfigRepo = new Mock<ICatalog>();
         var mockCheckerService = new Mock<IConfigurationCheckerService>();
         var mockInstallService = new Mock<IWorkloadInstallService>();
 
@@ -171,7 +171,7 @@ public class InstallerManagerViewModelTests
         mockUow.Setup(u => u.InstallerPackages).Returns(mockRepo.Object);
         var mockProcessManager = new PackageProcessManager();
         var mockEventAggregator = new Mock<IDatasetEventAggregator>();
-        var mockConfigRepo = new Mock<IConfigurationRepository>();
+        var mockConfigRepo = new Mock<ICatalog>();
         var mockCheckerService = new Mock<IConfigurationCheckerService>();
         var mockInstallService = new Mock<IWorkloadInstallService>();
 
@@ -282,7 +282,7 @@ public class InstallerManagerViewModelTests
                 Uow.Object,
                 new PackageProcessManager(),
                 EventAggregator.Object,
-                new Mock<IConfigurationRepository>().Object,
+                new Mock<ICatalog>().Object,
                 new Mock<IConfigurationCheckerService>().Object,
                 new Mock<IWorkloadInstallService>().Object,
                 Enumerable.Empty<IInstallerUpdateService>(),

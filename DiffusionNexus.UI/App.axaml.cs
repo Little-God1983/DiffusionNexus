@@ -9,7 +9,7 @@ using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Infrastructure;
 using DiffusionNexus.Infrastructure.Services;
-using DiffusionNexus.Installer.SDK.DataAccess;
+using DiffusionNexus.Installer.SDK.Catalog;
 using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.Installer.SDK.Services.Installation;
 using DiffusionNexus.Installer.SDK.Shared.Services;
@@ -21,13 +21,13 @@ using DiffusionNexus.Service.Services.Sync;
 using DiffusionNexus.UI.Converters;
 using DiffusionNexus.UI.Controls;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.Catalog;
 using DiffusionNexus.UI.Services.ConfigurationChecker;
 using DiffusionNexus.UI.Services.SpellCheck;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using SdkContext = DiffusionNexus.Installer.SDK.DataAccess.DiffusionNexusContext;
 
 namespace DiffusionNexus.UI;
 
@@ -205,8 +205,8 @@ public partial class App : Application
             {
                 Serilog.Log.Information("Initializing app database...");
                 InitializeDatabase();
-                Serilog.Log.Information("Initializing SDK database...");
-                InitializeSdkDatabase();
+                Serilog.Log.Information("Initializing workload catalog...");
+                InitializeCatalog();
             });
             startupProgress.Complete("database");
 
@@ -491,94 +491,27 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Reports the SDK catalog database status and applies any pending EF Core migrations.
-    /// Path resolution and the embedded-catalog deploy are owned entirely by
-    /// <see cref="ServiceCollectionExtensions.AddDiffusionNexusDataAccess"/> (which ran at DI
-    /// registration); this method reads the resulting <see cref="ISdkCatalogDatabase"/> for
-    /// reporting and migrates the SAME context the app uses. It deliberately does NOT re-resolve
-    /// the path or re-deploy — doing so previously diverged from the file the context opened
-    /// (a hardcoded %LocalAppData% deploy vs. an honored db_override.txt), surfacing as
-    /// "SQLite Error 14: unable to open database file".
+    /// First load of the Installer SDK 2.x JSON catalog, reported to the Unified Console. Runs off the
+    /// UI thread: <see cref="ICatalog.Source"/> blocks while the embedded seed unpacks on a fresh
+    /// machine. Never fails startup; see <see cref="CatalogStartup"/>.
     /// </summary>
-    private static void InitializeSdkDatabase()
+    private static void InitializeCatalog()
     {
-        const string logSource = "Installer SDK";
-
-        var activityLog = Services!.GetService<IActivityLogService>();
-
         try
         {
-            // Single source of truth: the resolved path + embedded-deploy outcome captured at
-            // registration. The deploy already happened there (before the first connection).
-            var catalog = Services!.GetRequiredService<ISdkCatalogDatabase>();
-            var runtimeDb = catalog.DatabasePath;
-            var deploy = catalog.DeployResult;
-
-            if (deploy is not null)
-            {
-                // a) DB version (always)
-                activityLog?.LogInfo(
-                    logSource,
-                    $"SDK database version: {deploy.ShippedVersion}",
-                    $"Path: {runtimeDb}");
-
-                // b) up-to-date / c) replaced
-                switch (deploy.Outcome)
-                {
-                    case SdkDatabaseDeployOutcome.UpToDate:
-                    case SdkDatabaseDeployOutcome.SamePath:
-                        activityLog?.LogInfo(logSource, "SDK database is up to date.");
-                        break;
-                    case SdkDatabaseDeployOutcome.FirstTimeDeploy:
-                        activityLog?.LogSuccess(
-                            logSource,
-                            $"SDK database deployed for the first time (v{deploy.ShippedVersion}).");
-                        break;
-                    case SdkDatabaseDeployOutcome.Upgraded:
-                        activityLog?.LogSuccess(
-                            logSource,
-                            $"SDK database upgraded from v{deploy.RuntimeVersionBefore ?? "unknown"} to v{deploy.ShippedVersion}.",
-                            $"Backup saved to: {deploy.BackupPath}");
-                        break;
-                    case SdkDatabaseDeployOutcome.NoShippedDatabase:
-                        activityLog?.LogWarning(
-                            logSource,
-                            "No shipped SDK database found; using existing runtime DB.");
-                        break;
-                }
-            }
-            else
-            {
-                // Consumer-managed path (a valid db_override.txt or an explicit path): the SDK does
-                // not deploy or version-stamp it — it is opened as-is.
-                activityLog?.LogInfo(
-                    logSource,
-                    "Using consumer-managed SDK database (no embedded deploy).",
-                    $"Path: {runtimeDb}");
-            }
-
-            // Apply pending schema migrations against the SAME context the app uses — but only
-            // when there are any; an unconditional Migrate() costs a full EF migration pass on
-            // every launch (mirrors the core-DB gating above).
-            var sdkContext = Services!.GetRequiredService<SdkContext>();
-            var pendingSdkMigrations = sdkContext.Database.GetPendingMigrations().ToList();
-            if (pendingSdkMigrations.Count > 0)
-            {
-                Serilog.Log.Information("InitializeSdkDatabase: Applying {Count} pending migration(s)...", pendingSdkMigrations.Count);
-                sdkContext.Database.Migrate();
-                Serilog.Log.Information("InitializeSdkDatabase: Migration completed successfully");
-            }
-            else
-            {
-                Serilog.Log.Information("InitializeSdkDatabase: No pending migrations - SKIPPING Migrate()");
-            }
-
-            activityLog?.LogInfo(logSource, $"Database loaded from: {runtimeDb}");
+            CatalogStartup.InitializeAsync(
+                    Services!.GetRequiredService<ICatalog>(),
+                    Services!.GetRequiredService<DiffusionNexus.Installer.SDK.Catalog.Updates.CatalogOptions>(),
+                    Services!.GetRequiredService<DiffusionNexus.Installer.SDK.Services.Settings.IUserSettingsRepository>(),
+                    Environment.GetEnvironmentVariable(CatalogChannelResolver.EnvironmentVariable),
+                    Services!.GetService<IActivityLogService>())
+                .GetAwaiter().GetResult();
         }
         catch (Exception ex)
         {
-            Serilog.Log.Error(ex, "InitializeSdkDatabase: Failed to initialize SDK database");
-            activityLog?.LogError(logSource, "Failed to initialize SDK database", ex);
+            // CatalogStartup never throws; this guards the service resolution around it.
+            Serilog.Log.Error(ex, "InitializeCatalog: Failed to initialize the workload catalog");
+            Services!.GetService<IActivityLogService>()?.LogError(CatalogStartup.LogSource, "Failed to initialize the workload catalog", ex);
         }
     }
 
@@ -727,8 +660,10 @@ public partial class App : Application
 
 
         // ?? Installer SDK services ??
-        // Register SDK data access layer (uses shared database at %LocalAppData%\diffusion_nexus.db from NuGet source)
-        services.AddDiffusionNexusDataAccess();
+        // Installer SDK 2.x: JSON workload catalog (no database) + user settings. Shares
+        // %LocalAppData%\DiffusionNexus\catalog with the 3.x installer, follows the channel the
+        // installer saved and never writes it. Also registers the dismissed-banner store.
+        services.AddInstallerSdkCatalog(typeof(App).Assembly);
 
         // Register SDK installation pipeline and all step handlers
         services.AddInstallationServices();
@@ -742,12 +677,6 @@ public partial class App : Application
             },
             new HttpClient(),
             ownsHttpClient: true));
-        services.AddSingleton(_ =>
-        {
-            var settingsPath = DiffusionNexus.Installer.SDK.DataAccess.ServiceCollectionExtensions.GetUserSettingsFilePath();
-            var dir = System.IO.Path.GetDirectoryName(settingsPath) ?? AppContext.BaseDirectory;
-            return new DismissedMessageStore(System.IO.Path.Combine(dir, "dismissed_messages.json"));
-        });
 
         // Feedback reporting service (posts to the Cloudflare Worker relay, which holds
         // the GitHub credential — see docs/superpowers/plans/2026-07-03-feedback-sdk-and-relay.md
@@ -808,7 +737,7 @@ public partial class App : Application
         services.AddSingleton<Services.Engine.IManagedEngineInstaller>(sp =>
             new Services.Engine.ManagedEngineInstaller(
                 sp.GetRequiredService<IInstallationCoordinator>(),
-                sp.GetRequiredService<IConfigurationRepository>(),
+                sp.GetRequiredService<ICatalog>(),
                 sp.GetRequiredService<DiffusionNexus.Installer.SDK.Shared.Services.IUserPromptService>()));
         services.AddSingleton<Services.Engine.ManagedComfyUiEngine>(sp =>
             new Services.Engine.ManagedComfyUiEngine(
@@ -1027,7 +956,7 @@ public partial class App : Application
             sp.GetRequiredService<IUnitOfWork>(),
             sp.GetRequiredService<PackageProcessManager>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),
-            sp.GetRequiredService<IConfigurationRepository>(),
+            sp.GetRequiredService<ICatalog>(),
             sp.GetRequiredService<IConfigurationCheckerService>(),
             sp.GetRequiredService<IWorkloadInstallService>(),
             sp.GetServices<Domain.Services.IInstallerUpdateService>(),

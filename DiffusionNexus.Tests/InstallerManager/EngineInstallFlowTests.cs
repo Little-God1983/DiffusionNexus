@@ -1,7 +1,6 @@
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Installer.SDK.Services;
-using DiffusionNexus.Installer.SDK.Shared;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.Engine;
 using FluentAssertions;

@@ -7,7 +7,7 @@ using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
-using DiffusionNexus.Installer.SDK.DataAccess;
+using DiffusionNexus.Installer.SDK.Catalog;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.ConfigurationChecker;
 using DiffusionNexus.Domain.Services;
@@ -37,7 +37,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
     private readonly PackageProcessManager _processManager;
     private readonly IDatasetEventAggregator _eventAggregator;
-    private readonly IConfigurationRepository _configurationRepository;
+    private readonly ICatalog _catalog;
     private readonly IConfigurationCheckerService _checkerService;
     private readonly IWorkloadInstallService _installService;
     private readonly IEnumerable<IInstallerUpdateService> _updateServices;
@@ -119,7 +119,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         IUnitOfWork unitOfWork,
         PackageProcessManager processManager,
         IDatasetEventAggregator eventAggregator,
-        IConfigurationRepository configurationRepository,
+        ICatalog catalog,
         IConfigurationCheckerService checkerService,
         IWorkloadInstallService installService,
         IEnumerable<IInstallerUpdateService> updateServices,
@@ -139,7 +139,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         _unitOfWorkFactory = unitOfWorkFactory;
         _processManager = processManager;
         _eventAggregator = eventAggregator;
-        _configurationRepository = configurationRepository;
+        _catalog = catalog;
         _checkerService = checkerService;
         _installService = installService;
         _updateServices = updateServices;
@@ -797,7 +797,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         try
         {
             var vm = new WorkloadsViewModel(
-                _configurationRepository, _checkerService, _installService,
+                _catalog, _checkerService, _installService,
                 comfyUiRoot, allowedConfigurationIds, _resourceMonitor);
             await vm.LoadWorkloadsCommand.ExecuteAsync(null);
 
