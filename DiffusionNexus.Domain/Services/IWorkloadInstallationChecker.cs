@@ -30,7 +30,7 @@ public interface IWorkloadInstallationChecker
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>
     /// A summary describing whether the workload is fully installed on disk plus the list
-    /// of missing items. When the check could not run at all (workload not in the SDK DB,
+    /// of missing items. When the check could not run at all (workload not in the workload catalog,
     /// no ComfyUI installation registered, or the check threw), the returned summary has
     /// <see cref="WorkloadCheckSummary.IsFullyInstalled"/> = <c>false</c> and a single
     /// human-readable entry in <see cref="WorkloadCheckSummary.MissingItems"/> describing

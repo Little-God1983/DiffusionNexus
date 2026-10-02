@@ -132,7 +132,7 @@ public partial class WorkloadsViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            Serilog.Log.Error(ex, "Failed to load workloads from SDK database");
+            Serilog.Log.Error(ex, "Failed to load workloads from the workload catalog");
         }
         finally
         {
