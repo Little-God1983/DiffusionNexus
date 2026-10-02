@@ -57,6 +57,7 @@ public partial class LayerStackPanel : UserControl
 
         // Tunnel, so Enter and Escape reach us even if the TextBox would mark them handled.
         AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
+        LayerList.SelectionChanged += OnListSelectionChanged;
     }
 
     /// <summary>Rows implementing <see cref="ILayerStackItem"/>, top layer first.</summary>
@@ -99,6 +100,28 @@ public partial class LayerStackPanel : UserControl
                     LayerList.SelectedItem = selected;
             });
         }
+    }
+
+    /// <summary>
+    /// A layer list always has its selected layer selected while that layer exists. A Single-mode
+    /// ListBox deselects on Ctrl+click (and Ctrl+Space) of the selected row; the host's view model
+    /// refuses that null, but the row would stay unhighlighted. Put the row back on the next turn.
+    /// A removal is not a deselect: the dropped item is no longer in <see cref="Items"/>.
+    /// </summary>
+    private void OnListSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (LayerList.SelectedItem is not null || e.RemovedItems.Count == 0 || Items is null)
+            return;
+
+        var dropped = e.RemovedItems[0];
+        if (dropped is null || !Items.Cast<object>().Contains(dropped))
+            return;
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (LayerList.SelectedItem is null && Items is { } items && items.Cast<object>().Contains(dropped))
+                LayerList.SelectedItem = dropped;
+        });
     }
 
     private void OnNameDoubleTapped(object? sender, TappedEventArgs e)

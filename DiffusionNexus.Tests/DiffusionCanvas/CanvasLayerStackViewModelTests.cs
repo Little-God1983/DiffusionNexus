@@ -285,6 +285,8 @@ public class CanvasLayerStackViewModelTests
         stack.SelectedLayer = null;
 
         stack.SelectedLayer.Should().BeSameAs(a);
+        notified.Should().BeFalse("Avalonia ignores a source update raised inside its own write-back");
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         notified.Should().BeTrue("the view must be told to re-select the row it just cleared");
     }
 }

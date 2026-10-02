@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
@@ -59,7 +60,8 @@ public sealed partial class CanvasLayerStackViewModel : ObservableObject
     /// A null is ignored while the selected layer is still on the canvas. The panel's ListBox writes null
     /// into its two-way SelectedItem on a Ctrl+click of the selected row and when the view detaches
     /// (navigating away clears its ItemsSource); neither is the user deselecting, and accepting it would
-    /// blank the inspector and drop the outline. The view is told to re-select instead. Every path that
+    /// blank the inspector and drop the outline. The view is told to re-select instead, on the next
+    /// dispatcher turn: Avalonia ignores a source update raised inside its own write-back. Every path that
     /// genuinely needs null — the layer was removed — runs after the layer has left the collection.
     /// </remarks>
     public GenerationFrameViewModel? SelectedLayer
@@ -69,7 +71,7 @@ public sealed partial class CanvasLayerStackViewModel : ObservableObject
         {
             if (value is null && _selectedLayer is not null && _frames.Contains(_selectedLayer))
             {
-                OnPropertyChanged();
+                Dispatcher.UIThread.Post(() => OnPropertyChanged(nameof(SelectedLayer)));
                 return;
             }
 

@@ -372,10 +372,15 @@ public class LayerPanelViewModelTests
         _sut.SyncLayers(stack);
         var raisedNull = false;
         _sut.LayerSelectionChanged += (_, layer) => raisedNull |= layer is null;
+        var notified = false;
+        _sut.PropertyChanged += (_, e) => notified |= e.PropertyName == nameof(LayerPanelViewModel.SelectedLayer);
 
         _sut.SelectedLayer = null;
 
         raisedNull.Should().BeFalse();
         _sut.SelectedLayer!.Layer.Should().BeSameAs(top);
+        notified.Should().BeFalse("Avalonia ignores a source update raised inside its own write-back");
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        notified.Should().BeTrue("the view must be told to re-select the row it just cleared");
     }
 }

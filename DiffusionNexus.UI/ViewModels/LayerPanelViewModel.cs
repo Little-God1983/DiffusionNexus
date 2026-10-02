@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.ImageEditor;
@@ -82,10 +83,11 @@ public partial class LayerPanelViewModel : ObservableObject
 
             // Outside a sync the ListBox still writes null on a Ctrl+click of the selected row and when
             // the view detaches on a tab switch. Neither is the user deselecting, and accepting it would
-            // null the editor core's active layer so strokes go nowhere. Tell the view to re-select.
+            // null the editor core's active layer so strokes go nowhere. Tell the view to re-select, on
+            // the next dispatcher turn: Avalonia ignores a source update raised inside its own write-back.
             if (value is null && _selectedLayer is not null && _layers.Contains(_selectedLayer))
             {
-                OnPropertyChanged();
+                Dispatcher.UIThread.Post(() => OnPropertyChanged(nameof(SelectedLayer)));
                 return;
             }
 
