@@ -683,6 +683,14 @@ public partial class App : Application
             new HttpClient(),
             ownsHttpClient: true));
 
+        // Gist-backed community links (the sidebar's YouTube/Patreon/... buttons). The options
+        // default to SharedConstants.CommunityLinksDocumentUrl, the document every DiffusionNexus
+        // app reads, and to a short timeout: a slow source never delays the window.
+        services.AddSingleton<ICommunityLinksService>(_ => new GistCommunityLinksService(
+            new CommunityLinksServiceOptions(),
+            new HttpClient(),
+            ownsHttpClient: true));
+
         // Feedback reporting service (posts to the Cloudflare Worker relay, which holds
         // the GitHub credential — see docs/superpowers/plans/2026-07-03-feedback-sdk-and-relay.md
         // in the DiffusionNexus.Installer.SDK repo).
@@ -1460,7 +1468,8 @@ public partial class App : Application
                 }),
                 Timed(sw, "datasetStorageCheck", () => loraDatasetHelperVm.DatasetManagement
                     .CheckStorageConfigurationCommand.ExecuteAsync(null)),
-                Timed(sw, "serverMessages", () => mainViewModel.LoadServerMessagesAsync()));
+                Timed(sw, "serverMessages", () => mainViewModel.LoadServerMessagesAsync()),
+                Timed(sw, "communityLinks", () => mainViewModel.LoadCommunityLinksAsync()));
             Serilog.Log.Information("LoadStartupData: all phases complete at +{Total}ms", sw.ElapsedMilliseconds);
         }
         catch (Exception ex)

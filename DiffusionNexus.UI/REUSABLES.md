@@ -71,6 +71,11 @@ All paths are relative to `DiffusionNexus.UI/`.
 | `RadarChart` | [Views/Controls/RadarChart.cs](Views/Controls/RadarChart.cs) |
 | `ScoreTrendChart` | [Views/Controls/ScoreTrendChart.cs](Views/Controls/ScoreTrendChart.cs) |
 
+### Icons
+| Control | Purpose |
+|---------|---------|
+| `CommunityLinkIcon` | [Views/Controls/CommunityLinkIcon.cs](Views/Controls/CommunityLinkIcon.cs) — monochrome vector glyph for a community-link `icon` key (`youtube`, `patreon`, `civitai`, `globe`, `mail`, `linktree`), drawn in the inherited `Foreground`; unknown keys get a neutral link glyph. Same glyphs as the 3.x installer. Use it wherever a community link is shown, and add a new key's path here rather than shipping another PNG. Pairs with `CommunityLinkSlots`, the "N slots, last one becomes More" split for a list of any length. |
+
 ### Datasets
 | Control | Purpose |
 |---------|---------|

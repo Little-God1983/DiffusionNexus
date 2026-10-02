@@ -1,4 +1,6 @@
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Interactivity;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels;
 
@@ -19,6 +21,10 @@ public partial class DiffusionNexusMainWindow : Window
         }
         Closing += OnWindowClosing;
     }
+
+    /// <summary>Opens the community links behind "More" beside the sidebar pane.</summary>
+    private void OnMoreCommunityLinksClick(object? sender, RoutedEventArgs e)
+        => FlyoutBase.ShowAttachedFlyout(SidebarPane);
 
     private async void OnWindowClosing(object? sender, WindowClosingEventArgs e)
     {

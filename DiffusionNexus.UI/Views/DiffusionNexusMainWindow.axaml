@@ -32,7 +32,28 @@ x:Name="MainWin">
                 
                 <!-- Sidebar Navigation Pane -->
                 <SplitView.Pane>
-                    <Border Background="#1E1E1E">
+                    <Border x:Name="SidebarPane" Background="#1E1E1E">
+                        <!-- The community links behind "More". Anchored to the pane rather than
+                             the button: sidebar buttons are 196 wide even when the pane is
+                             collapsed to 48, so a button-anchored flyout would float far from it. -->
+                        <FlyoutBase.AttachedFlyout>
+                            <MenuFlyout Placement="RightEdgeAlignedBottom"
+                                        ItemsSource="{Binding OverflowCommunityLinks}">
+                                <MenuFlyout.ItemContainerTheme>
+                                    <ControlTheme TargetType="MenuItem"
+                                                  BasedOn="{StaticResource {x:Type MenuItem}}"
+                                                  x:DataType="vm:CommunityLinkItemViewModel">
+                                        <Setter Property="Header" Value="{Binding Name}"/>
+                                        <Setter Property="Command" Value="{Binding OpenCommand}"/>
+                                        <Setter Property="Icon">
+                                            <Template>
+                                                <controls:CommunityLinkIcon IconKey="{Binding Icon}" Width="16" Height="16"/>
+                                            </Template>
+                                        </Setter>
+                                    </ControlTheme>
+                                </MenuFlyout.ItemContainerTheme>
+                            </MenuFlyout>
+                        </FlyoutBase.AttachedFlyout>
                         <DockPanel>
                             <!-- Hamburger Menu Toggle -->
                             <Button DockPanel.Dock="Top"
@@ -66,37 +87,49 @@ x:Name="MainWin">
                                     </StackPanel>
                                 </Button>
 
-                                <!-- Community links. Kept in their own container because
-                                     DiffusionNexus.Installer issue #6 makes this list remote
-                                     (gist/catalog JSON) and variable in length. When that lands,
-                                     ONLY this panel's contents become an ItemsControl; anything
-                                     app-owned must stay outside it so remote data can never
-                                     reorder or displace it. -->
+                                <!-- Community links: the operator-edited list from the SDK
+                                     (Gist), variable in length. ONLY this panel holds remote rows;
+                                     anything app-owned stays outside it so remote data can never
+                                     reorder or displace it. Fixed height: at most
+                                     CommunityLinkSlots.Count slots, the last one turning into
+                                     "More" (a flyout with the rest) when the list is longer, so
+                                     the module list above never loses room to it. -->
                                 <StackPanel x:Name="CommunityLinks" Spacing="5">
+                                    <ItemsControl ItemsSource="{Binding InlineCommunityLinks}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <StackPanel Spacing="5"/>
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:CommunityLinkItemViewModel">
+                                                <Button Width="196" Height="48" Margin="2,2"
+                                                        Command="{Binding OpenCommand}"
+                                                        ToolTip.Tip="{Binding Name}"
+                                                        HorizontalContentAlignment="Left">
+                                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                                        <Border Width="32" Height="32" Background="#3C3C3C" CornerRadius="4">
+                                                            <controls:CommunityLinkIcon IconKey="{Binding Icon}" Width="18" Height="18"/>
+                                                        </Border>
+                                                        <TextBlock Text="{Binding Name}" VerticalAlignment="Center"
+                                                                   IsVisible="{Binding $parent[Window].DataContext.IsMenuOpen}"/>
+                                                    </StackPanel>
+                                                </Button>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+
                                     <Button Width="196" Height="48" Margin="2,2"
-                                            Command="{Binding OpenYoutubeCommand}"
+                                            IsVisible="{Binding HasCommunityLinkOverflow}"
+                                            ToolTip.Tip="More community links"
+                                            Click="OnMoreCommunityLinksClick"
                                             HorizontalContentAlignment="Left">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <Image Source="{m:SafeAsset avares://DiffusionNexus.UI/Assets/yt.png}" Width="32" Height="32"/>
-                                            <TextBlock Text="Youtube" VerticalAlignment="Center"
-                                                       IsVisible="{Binding IsMenuOpen}"/>
-                                        </StackPanel>
-                                    </Button>
-                                    <Button Width="196" Height="48" Margin="2,2"
-                                            Command="{Binding OpenPatreonCommand}"
-                                            HorizontalContentAlignment="Left">
-                                        <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <Image Source="{m:SafeAsset avares://DiffusionNexus.UI/Assets/patreon.png}" Width="32" Height="32"/>
-                                            <TextBlock Text="Patreon" VerticalAlignment="Center"
-                                                       IsVisible="{Binding IsMenuOpen}"/>
-                                        </StackPanel>
-                                    </Button>
-                                    <Button Width="196" Height="48" Margin="2,2"
-                                            Command="{Binding OpenCivitaiCommand}"
-                                            HorizontalContentAlignment="Left">
-                                        <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <Image Source="{m:SafeAsset avares://DiffusionNexus.UI/Assets/civitai.png}" Width="32" Height="32"/>
-                                            <TextBlock Text="Civitai" VerticalAlignment="Center"
+                                            <Border Width="32" Height="32" Background="#3C3C3C" CornerRadius="4">
+                                                <TextBlock Text="⋯" FontSize="18"
+                                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                            <TextBlock Text="{Binding CommunityLinkOverflowLabel}" VerticalAlignment="Center"
                                                        IsVisible="{Binding IsMenuOpen}"/>
                                         </StackPanel>
                                     </Button>
