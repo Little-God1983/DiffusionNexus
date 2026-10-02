@@ -86,6 +86,39 @@ public class CommunityLinkIcon : Control
         return normalized is not null && Glyphs.ContainsKey(normalized) ? normalized : FallbackKey;
     }
 
+    private static Geometry GetGeometry(string key)
+    {
+        if (!ParsedGlyphs.TryGetValue(key, out var geometry))
+        {
+            geometry = Geometry.Parse(Glyphs[key].Data);
+            ParsedGlyphs[key] = geometry;
+        }
+        return geometry;
+    }
+
+    // Resolved when IconKey changes, not per frame: Render runs on every hover/pressed change of
+    // the host button (the inherited Foreground changes), for every icon on screen.
+    private string _glyphKey = FallbackKey;
+    private Geometry? _geometry;
+
+    // Rebuilt only when Foreground changes.
+    private IPen? _pen;
+
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+
+        if (change.Property == IconKeyProperty)
+        {
+            _glyphKey = ResolveKey(IconKey);
+            _geometry = null;
+        }
+        else if (change.Property == ForegroundProperty)
+        {
+            _pen = null;
+        }
+    }
+
     public override void Render(DrawingContext context)
     {
         base.Render(context);
@@ -95,13 +128,8 @@ public class CommunityLinkIcon : Control
         if (brush is null || size <= 0)
             return;
 
-        var key = ResolveKey(IconKey);
-        var (data, stroked) = Glyphs[key];
-        if (!ParsedGlyphs.TryGetValue(key, out var geometry))
-        {
-            geometry = Geometry.Parse(data);
-            ParsedGlyphs[key] = geometry;
-        }
+        var stroked = Glyphs[_glyphKey].Stroked;
+        var geometry = _geometry ??= GetGeometry(_glyphKey);
 
         // Scale the 24-unit box to the control, pen included, so stroked and filled glyphs keep
         // the same proportions at any size.
@@ -113,8 +141,8 @@ public class CommunityLinkIcon : Control
         {
             if (stroked)
             {
-                var pen = new Pen(brush, StrokeThickness, lineCap: PenLineCap.Round, lineJoin: PenLineJoin.Round);
-                context.DrawGeometry(null, pen, geometry);
+                _pen ??= new Pen(brush, StrokeThickness, lineCap: PenLineCap.Round, lineJoin: PenLineJoin.Round);
+                context.DrawGeometry(null, _pen, geometry);
             }
             else
             {

@@ -74,7 +74,7 @@ All paths are relative to `DiffusionNexus.UI/`.
 ### Icons
 | Control | Purpose |
 |---------|---------|
-| `CommunityLinkIcon` | [Views/Controls/CommunityLinkIcon.cs](Views/Controls/CommunityLinkIcon.cs) — monochrome vector glyph for a community-link `icon` key (`youtube`, `patreon`, `civitai`, `globe`, `mail`, `linktree`), drawn in the inherited `Foreground`; unknown keys get a neutral link glyph. Same glyphs as the 3.x installer. Use it wherever a community link is shown, and add a new key's path here rather than shipping another PNG. Pairs with `CommunityLinkSlots`, the "N slots, last one becomes More" split for a list of any length. |
+| `CommunityLinkIcon` | [Views/Controls/CommunityLinkIcon.cs](Views/Controls/CommunityLinkIcon.cs) — monochrome vector glyph for a community-link `icon` key (`youtube`, `patreon`, `civitai`, `globe`, `mail`, `linktree`), drawn in the inherited `Foreground`; unknown keys get a neutral link glyph. Same glyphs as the 3.x installer. Use it wherever a community link is shown, and add a new key's path here rather than shipping another PNG. |
 
 ### Datasets
 | Control | Purpose |
@@ -145,6 +145,8 @@ Others worth knowing:
 | `SafeAssetExtension` | [Markup/SafeAssetExtension.cs](Markup/SafeAssetExtension.cs) | XAML markup extension for assets that may be missing (pairs with `SafeAssetBitmap`). |
 | `IUiScheduler` / `AvaloniaUiScheduler` | [Services/](Services/) | Marshal to the UI thread — inject this rather than calling `Dispatcher.UIThread` from a ViewModel. |
 | `IThumbnailOrchestrator` / `ThumbnailService` / `LruKeyTracker` | [Services/](Services/) | Thumbnail generation and caching. Any new image grid uses this. |
+| `UrlLauncher` | [Services/UrlLauncher.cs](Services/UrlLauncher.cs) | Opening a web URL in the system browser. Give the ViewModel a swappable `Action<string>` opener defaulting to `UrlLauncher.Open` (tests capture the URL) and launch through `UrlLauncher.TryOpen(url, opener, logger, source)`, which logs a warning instead of throwing when there is no default browser. Never call `Process.Start(url)` from a command. |
+| `CommunityLinkSlots` | [ViewModels/CommunityLinkSlots.cs](ViewModels/CommunityLinkSlots.cs) | Fitting a list of any length into a fixed number of slots: all items when they fit, otherwise all but the last slot plus a "More" overflow (`Split` returns inline + overflow). Used by the sidebar's community links; reuse it for any "N visible, the rest behind More" list. |
 | `AvaloniaClipboardService` | [Services/AvaloniaClipboardService.cs](Services/AvaloniaClipboardService.cs) | Clipboard access. |
 | `FileConflictDetector`, `IFileOperations` / `FileOperations`, `MediaFileExtensions` | [Utilities/](Utilities/) | File-level helpers backing the dialogs above. |
 | `FilePaths.AreSame` | [Utilities/FilePaths.cs](Utilities/FilePaths.cs) | Whether two paths name the same file or folder: full paths, trailing separators and casing forgiven, never throws. Use it for any "is this that file/folder" check instead of a raw string compare. For "is this under that folder" use `Domain.Utilities.LocalPathRoots.IsUnder`. |

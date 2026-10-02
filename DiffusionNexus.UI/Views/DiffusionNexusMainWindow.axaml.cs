@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Interactivity;
@@ -22,9 +23,38 @@ public partial class DiffusionNexusMainWindow : Window
         Closing += OnWindowClosing;
     }
 
+    private DiffusionNexusMainWindowViewModel? _observedViewModel;
+
     /// <summary>Opens the community links behind "More" beside the sidebar pane.</summary>
     private void OnMoreCommunityLinksClick(object? sender, RoutedEventArgs e)
         => FlyoutBase.ShowAttachedFlyout(SidebarPane);
+
+    protected override void OnDataContextChanged(EventArgs e)
+    {
+        base.OnDataContextChanged(e);
+
+        if (_observedViewModel is not null)
+        {
+            _observedViewModel.PropertyChanged -= OnViewModelPropertyChanged;
+        }
+
+        _observedViewModel = DataContext as DiffusionNexusMainWindowViewModel;
+        if (_observedViewModel is not null)
+        {
+            _observedViewModel.PropertyChanged += OnViewModelPropertyChanged;
+        }
+    }
+
+    private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        // The flyout can be open on the built-in list when a shorter remote list lands and the
+        // "More" button disappears; without this the flyout would stay up as an empty box.
+        if (e.PropertyName == nameof(DiffusionNexusMainWindowViewModel.HasCommunityLinkOverflow)
+            && sender is DiffusionNexusMainWindowViewModel { HasCommunityLinkOverflow: false })
+        {
+            FlyoutBase.GetAttachedFlyout(SidebarPane)?.Hide();
+        }
+    }
 
     private async void OnWindowClosing(object? sender, WindowClosingEventArgs e)
     {

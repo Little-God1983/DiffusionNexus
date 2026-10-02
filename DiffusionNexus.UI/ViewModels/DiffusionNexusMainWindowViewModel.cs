@@ -179,7 +179,7 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     public string CommunityLinkOverflowLabel => $"More ({OverflowCommunityLinks.Count})";
 
     /// <summary>Opens a URL in the system browser. Replaceable so tests never launch one.</summary>
-    internal Action<string> OpenExternalUrl { get; init; } = OpenUrl;
+    internal Action<string> OpenExternalUrl { get; init; } = UrlLauncher.Open;
 
     private const string CommunityLinksLogSource = "CommunityLinks";
 
@@ -214,32 +214,31 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     {
         logger?.Debug(LogCategory.Network, CommunityLinksLogSource, "Fetching community links");
 
-        CommunityLinksResult result;
         try
         {
-            result = await service.GetLinksAsync();
+            var result = await service.GetLinksAsync();
+
+            if (result.IsFallback)
+            {
+                // Info, not Warn: offline is a normal state and must not light the status bar every launch.
+                logger?.Info(LogCategory.Network, CommunityLinksLogSource,
+                    "Community links unavailable; keeping the built-in list", result.ErrorMessage);
+                return;
+            }
+
+            await uiScheduler.InvokeAsync(() => ApplyCommunityLinks(result.Links));
+
+            logger?.Info(LogCategory.Network, CommunityLinksLogSource,
+                $"Loaded {result.Links.Count} community links ({InlineCommunityLinks.Count} in the sidebar, {OverflowCommunityLinks.Count} under More)");
         }
         catch (Exception ex)
         {
             // The service reports failures in its result and only throws on cancellation, which
-            // nothing here requests. Guarded anyway: the sidebar must never take startup down.
-            logger?.Info(LogCategory.Network, CommunityLinksLogSource,
-                "Community links fetch failed; keeping the built-in list", ex.Message);
-            return;
+            // nothing here requests; the swap itself runs binding handlers. Guarded as a whole:
+            // the sidebar must never take startup down, and the failure belongs under this source.
+            logger?.Warn(LogCategory.Network, CommunityLinksLogSource,
+                "Community links update failed", ex.Message);
         }
-
-        if (result.IsFallback)
-        {
-            // Info, not Warn: offline is a normal state and must not light the status bar every launch.
-            logger?.Info(LogCategory.Network, CommunityLinksLogSource,
-                "Community links unavailable; keeping the built-in list", result.ErrorMessage);
-            return;
-        }
-
-        await uiScheduler.InvokeAsync(() => ApplyCommunityLinks(result.Links));
-
-        logger?.Info(LogCategory.Network, CommunityLinksLogSource,
-            $"Loaded {result.Links.Count} community links ({InlineCommunityLinks.Count} in the sidebar, {OverflowCommunityLinks.Count} under More)");
     }
 
     /// <summary>Replaces the sidebar's community links with <paramref name="links"/>, split per <see cref="CommunityLinkSlots"/>.</summary>
@@ -265,18 +264,17 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
 
     private void OpenCommunityLink(CommunityLinkItemViewModel link)
     {
-        var logger = App.Services?.GetService<IUnifiedLogger>();
-        try
-        {
-            logger?.Info(LogCategory.General, CommunityLinksLogSource, $"Opening community link '{link.Name}'", link.Url);
-            OpenExternalUrl(link.Url);
-        }
-        catch (Exception ex)
-        {
-            // No default browser, or the shell refused: a sidebar link must not crash the app.
-            logger?.Error(LogCategory.General, CommunityLinksLogSource, $"Could not open community link '{link.Name}'", ex);
-        }
+        App.Services?.GetService<IUnifiedLogger>()
+            ?.Info(LogCategory.General, CommunityLinksLogSource, $"Opening community link '{link.Name}'", link.Url);
+        OpenUrl(link.Url, CommunityLinksLogSource);
     }
+
+    /// <summary>
+    /// Every URL this window opens (sidebar links, banner actions) goes through here, so a machine
+    /// with no default browser logs a warning instead of crashing a command on the UI thread.
+    /// </summary>
+    private void OpenUrl(string url, string source)
+        => UrlLauncher.TryOpen(url, OpenExternalUrl, App.Services?.GetService<IUnifiedLogger>(), source);
 
     /// <summary>
     /// Fetches applicable server messages (Gist-backed) and populates <see cref="ServerMessages"/>.
@@ -308,7 +306,7 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
                 ServerMessages.Clear();
                 foreach (var msg in result.Messages)
                 {
-                    ServerMessages.Add(new ServerMessageItemViewModel(msg, DismissServerMessage, OpenUrl));
+                    ServerMessages.Add(new ServerMessageItemViewModel(msg, DismissServerMessage, url => OpenUrl(url, "ServerMessages")));
                 }
                 OnPropertyChanged(nameof(HasServerMessages));
             });
@@ -530,8 +528,6 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
             module.IsSelected = false;
         }
     }
-
-    private static void OpenUrl(string url) => Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
 
     /// <summary>
         /// Registers a module for navigation.
