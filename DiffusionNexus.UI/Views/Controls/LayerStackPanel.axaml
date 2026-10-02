@@ -43,13 +43,16 @@
               <Image Source="{Binding Thumbnail}" Stretch="Uniform" />
             </Border>
 
-            <!-- Name and its in-place editor share one cell. Double-click swaps them (code-behind). -->
-            <Panel Grid.Column="2" VerticalAlignment="Center">
-              <TextBlock Classes="layerName" Text="{Binding Name}" FontSize="11"
-                         TextTrimming="CharacterEllipsis" ToolTip.Tip="Double-click to rename"
-                         DoubleTapped="OnNameDoubleTapped" />
+            <!-- Name and its in-place editor share one cell. Double-click swaps them (code-behind). The
+                 handler is on the cell, with a transparent background, because a TextBlock without a
+                 background only takes the pointer over its glyphs: a double-click right of a short
+                 name would otherwise miss it and reach the list item instead. -->
+            <Panel Grid.Column="2" Background="Transparent" ToolTip.Tip="Double-click to rename"
+                   DoubleTapped="OnNameDoubleTapped">
+              <TextBlock Classes="layerName" Text="{Binding Name}" FontSize="11" VerticalAlignment="Center"
+                         TextTrimming="CharacterEllipsis" />
               <TextBox Classes="layerRename" IsVisible="False" FontSize="11" Padding="2,0" MinHeight="0"
-                       MaxLength="200" LostFocus="OnRenameLostFocus" />
+                       VerticalAlignment="Center" MaxLength="200" LostFocus="OnRenameLostFocus" />
             </Panel>
 
             <ToggleButton Grid.Column="3" IsChecked="{Binding IsLocked, Mode=TwoWay}"

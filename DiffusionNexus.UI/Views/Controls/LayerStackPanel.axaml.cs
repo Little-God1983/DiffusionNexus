@@ -84,11 +84,12 @@ public partial class LayerStackPanel : UserControl
 
     private void OnNameDoubleTapped(object? sender, TappedEventArgs e)
     {
-        if (sender is not TextBlock label || label.DataContext is not ILayerStackItem item || label.Parent is not Panel cell)
+        if (sender is not Panel cell || cell.DataContext is not ILayerStackItem item)
             return;
 
+        var label = cell.Children.OfType<TextBlock>().FirstOrDefault();
         var editor = cell.Children.OfType<TextBox>().FirstOrDefault();
-        if (editor is null)
+        if (label is null || editor is null || editor.IsVisible)
             return;
 
         editor.Text = item.Name;
