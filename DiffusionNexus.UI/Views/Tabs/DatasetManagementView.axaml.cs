@@ -491,6 +491,10 @@ public partial class DatasetManagementView : UserControl
         if (vm.ActiveDataset is null) return;
 
         vm.IsLoading = true;
+
+        // Every copy arrives unrated: an overwritten file's rating, or the stale entry of a file
+        // deleted outside the app, judged a different image. Written once at the end.
+        var arrived = new List<string>();
         try
         {
             var copied = 0;
@@ -504,7 +508,7 @@ public partial class DatasetManagementView : UserControl
                 var fileName = Path.GetFileName(sourceFile);
                 var destPath = Path.Combine(destFolderPath, fileName);
                 File.Copy(sourceFile, destPath);
-                ImageRatingStore.Shared.Set(destPath, ImageRatingStatus.Unrated); // never a stale entry's
+                arrived.Add(destPath);
                 copied++;
             }
 
@@ -520,9 +524,7 @@ public partial class DatasetManagementView : UserControl
                             File.Delete(conflict.ExistingFilePath);
                         }
                         File.Copy(conflict.NewFilePath, conflict.ExistingFilePath);
-
-                        // The old file's rating judged a different image
-                        ImageRatingStore.Shared.Set(conflict.ExistingFilePath, ImageRatingStatus.Unrated);
+                        arrived.Add(conflict.ExistingFilePath);
                         
                         // Handle paired caption - override it too
                         if (conflict.HasPairedCaption && conflict.PairedCaptionPath is not null)
@@ -549,7 +551,7 @@ public partial class DatasetManagementView : UserControl
                         // Copy media file with new name
                         var newMediaPath = Path.Combine(destFolderPath, newBaseName + mediaExtension);
                         File.Copy(conflict.NewFilePath, newMediaPath);
-                        ImageRatingStore.Shared.Set(newMediaPath, ImageRatingStatus.Unrated);
+                        arrived.Add(newMediaPath);
                         
                         // Copy paired caption with same new base name
                         if (conflict.HasPairedCaption && conflict.PairedCaptionPath is not null)
@@ -580,6 +582,7 @@ public partial class DatasetManagementView : UserControl
                 ? $"Added {totalAdded} files: " + string.Join(", ", statusParts)
                 : "No files added";
 
+            ClearRatings(arrived);
             await vm.RefreshActiveDatasetAsync();
         }
         catch (IOException ex)
@@ -592,8 +595,17 @@ public partial class DatasetManagementView : UserControl
         }
         finally
         {
+            ClearRatings(arrived);
             vm.IsLoading = false;
         }
+    }
+
+    /// <summary>Clears the ratings of files that just arrived, with one write per folder.</summary>
+    private static void ClearRatings(List<string> arrived)
+    {
+        ImageRatingStore.Shared.SetMany(
+            arrived.Select(p => new KeyValuePair<string, ImageRatingStatus>(p, ImageRatingStatus.Unrated)));
+        arrived.Clear();
     }
 
     /// <summary>
@@ -816,6 +828,7 @@ public partial class DatasetManagementView : UserControl
         if (vm.ActiveDataset is null) return;
 
         vm.IsLoading = true;
+        var arrived = new List<string>();
         try
         {
             var copied = 0;
@@ -833,6 +846,7 @@ public partial class DatasetManagementView : UserControl
                 if (!File.Exists(destPath))
                 {
                     File.Copy(sourceFile, destPath);
+                    arrived.Add(destPath); // never a stale entry's rating
                     
                     // Use centralized MediaFileExtensions for file type detection
                     if (MediaFileExtensions.IsCaptionFile(sourceFile))
@@ -864,6 +878,7 @@ public partial class DatasetManagementView : UserControl
                 vm.StatusMessage = $"Skipped {skipped} duplicates (files already exist)";
             }
 
+            ClearRatings(arrived);
             await vm.RefreshActiveDatasetAsync();
         }
         catch (IOException ex)
@@ -876,6 +891,7 @@ public partial class DatasetManagementView : UserControl
         }
         finally
         {
+            ClearRatings(arrived);
             vm.IsLoading = false;
         }
     }

@@ -1,7 +1,9 @@
 using System.Text.Json;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using FluentAssertions;
+using Moq;
 
 namespace DiffusionNexus.Tests.LoraDatasetHelper.Services;
 
@@ -139,13 +141,15 @@ public class ImageRatingStoreTests : IDisposable
     }
 
     [Fact]
-    public void Get_CorruptRatingsFile_FallsBackToLegacy()
+    public void Get_CorruptRatingsFile_IgnoresLeftoverLegacyFiles()
     {
+        // A ratings file, even a corrupt one, means the folder was converted: a sidecar beside it
+        // is a leftover whose rating may have been cleared since
         var image = Media("a.png");
         File.WriteAllText(RatingsFile, "{ not json");
         Legacy("a", "Approved");
 
-        _sut.Get(image).Should().Be(ImageRatingStatus.Approved);
+        _sut.Get(image).Should().Be(ImageRatingStatus.Unrated);
     }
 
     [Fact]
@@ -614,6 +618,166 @@ public class ImageRatingStoreTests : IDisposable
         _sut.Set(c, ImageRatingStatus.Approved);
 
         ReadRatingsFile().Keys.Should().BeEquivalentTo(["a.png", "c.png"]);
+    }
+
+    #endregion
+
+    #region Review round 2
+
+    private string OtherFolder(string name)
+    {
+        var folder = Path.Combine(_folder, name);
+        Directory.CreateDirectory(folder);
+        return folder;
+    }
+
+    [Fact]
+    public void Move_DestinationRatingsFileLocked_KeepsTheSourceRating()
+    {
+        var a = Media("a.png");
+        _sut.Set(a, ImageRatingStatus.Approved);
+        var destFolder = OtherFolder("V2");
+        var other = Path.Combine(destFolder, "other.png");
+        File.WriteAllBytes(other, [1]);
+        _sut.Set(other, ImageRatingStatus.Rejected);
+        var dest = Path.Combine(destFolder, "a.png");
+        File.Move(a, dest);
+
+        using (new FileStream(Path.Combine(destFolder, ImageRatingStore.RatingsFileName),
+                   FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            _sut.Move(a, dest).Should().BeFalse();
+        }
+
+        ReadRatingsFile()["a.png"].Should().Be("Approved", "the rating never arrived, so the source keeps it");
+    }
+
+    [Fact]
+    public void Move_SourceRatingsFileLocked_LeavesBothSidesAlone()
+    {
+        var a = Media("a.png");
+        var b = Media("b.png");
+        _sut.Set(a, ImageRatingStatus.Approved);
+        _sut.Set(b, ImageRatingStatus.Rejected);
+        var destFolder = OtherFolder("V2");
+        var dest = Path.Combine(destFolder, "a.png");
+        File.WriteAllBytes(dest, [1]);
+        var store = new ImageRatingStore();
+
+        using (new FileStream(RatingsFile, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            store.Move(a, dest).Should().BeFalse();
+        }
+
+        ReadRatingsFile()["a.png"].Should().Be("Approved");
+        File.Exists(Path.Combine(destFolder, ImageRatingStore.RatingsFileName)).Should().BeFalse(
+            "an unknown rating is not carried over as Unrated");
+    }
+
+    [Fact]
+    public void MoveMany_CarriesEveryRatingAndForgetsTheSources()
+    {
+        var a = Media("a.png");
+        var b = Media("b.png");
+        var keep = Media("keep.png");
+        _sut.Set(a, ImageRatingStatus.Approved);
+        _sut.Set(b, ImageRatingStatus.Rejected);
+        _sut.Set(keep, ImageRatingStatus.Approved);
+        var destFolder = OtherFolder("V2");
+        var destA = Path.Combine(destFolder, "a.png");
+        var destB = Path.Combine(destFolder, "b.png");
+        File.Move(a, destA);
+        File.Move(b, destB);
+
+        _sut.MoveMany([(a, destA), (b, destB)]).Should().BeTrue();
+
+        _sut.Get(destA).Should().Be(ImageRatingStatus.Approved);
+        _sut.Get(destB).Should().Be(ImageRatingStatus.Rejected);
+        ReadRatingsFile().Keys.Should().BeEquivalentTo(["keep.png"]);
+    }
+
+    [Fact]
+    public void RemoveMany_ForgetsEveryRating()
+    {
+        var a = Media("a.png");
+        var b = Media("b.png");
+        var keep = Media("keep.png");
+        _sut.SetMany([
+            new(a, ImageRatingStatus.Approved),
+            new(b, ImageRatingStatus.Rejected),
+            new(keep, ImageRatingStatus.Approved)
+        ]);
+
+        _sut.RemoveMany([a, b]);
+
+        ReadRatingsFile().Keys.Should().BeEquivalentTo(["keep.png"]);
+    }
+
+    [Fact]
+    public void Set_ClearingWhileTheRatingsFileIsLocked_RefusesAndKeepsTheRating()
+    {
+        var a = Media("a.png");
+        _sut.Set(a, ImageRatingStatus.Approved);
+        var store = new ImageRatingStore();
+
+        using (new FileStream(RatingsFile, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            store.Set(a, ImageRatingStatus.Unrated).Should().BeFalse("nothing was cleared");
+        }
+
+        store.Get(a).Should().Be(ImageRatingStatus.Approved);
+    }
+
+    [Fact]
+    public void Get_LockedRatingsFile_IsReportedOncePerFolder()
+    {
+        var a = Media("a.png");
+        var b = Media("b.png");
+        _sut.Set(a, ImageRatingStatus.Approved);
+        var logger = new Mock<IUnifiedLogger>();
+        var store = new ImageRatingStore(() => logger.Object);
+
+        using (new FileStream(RatingsFile, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            store.Get(a);
+            store.Get(b);
+            store.Get(a);
+        }
+
+        logger.Verify(l => l.Warn(It.IsAny<LogCategory>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>()),
+            Times.Once);
+        store.Get(a).Should().Be(ImageRatingStatus.Approved, "a failed read is still never cached");
+    }
+
+    [Fact]
+    public void Set_LegacyFileUnreadableDuringConversion_RefusesAndKeepsIt()
+    {
+        var a = Media("a.png");
+        var b = Media("b.png");
+        var legacy = Legacy("a", "Approved");
+
+        using (new FileStream(legacy, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            _sut.Set(b, ImageRatingStatus.Approved).Should().BeFalse();
+        }
+
+        File.Exists(RatingsFile).Should().BeFalse("converting without a.rating would lose it for good");
+        _sut.Get(a).Should().Be(ImageRatingStatus.Approved);
+    }
+
+    [Fact]
+    public void Set_FileDeletedBetweenTwoWrites_IsStillDropped()
+    {
+        var a = Media("a.png");
+        var b = Media("b.png");
+        _sut.Set(a, ImageRatingStatus.Approved);
+        _sut.Set(b, ImageRatingStatus.Approved);
+        _sut.Set(a, ImageRatingStatus.Rejected);
+        File.Delete(b);
+
+        _sut.Set(a, ImageRatingStatus.Approved);
+
+        ReadRatingsFile().Keys.Should().BeEquivalentTo(["a.png"]);
     }
 
     #endregion

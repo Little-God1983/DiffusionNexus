@@ -44,6 +44,7 @@ public class DatasetImageViewModel : ObservableObject
     private bool _hasUnsavedChanges;
     private bool _isSelected;
     private ImageRatingStatus _ratingStatus = ImageRatingStatus.Unrated;
+    private ImageRatingStatus _savedRatingStatus = ImageRatingStatus.Unrated;
     private string? _thumbnailPath;
     private bool _isEditorSelected;
     private bool _isVideo;
@@ -435,6 +436,7 @@ public class DatasetImageViewModel : ObservableObject
         _ratingStatus = string.IsNullOrWhiteSpace(_imagePath)
             ? ImageRatingStatus.Unrated
             : ImageRatingStore.Shared.Get(_imagePath);
+        _savedRatingStatus = _ratingStatus;
         OnPropertyChanged(nameof(RatingStatus));
         OnPropertyChanged(nameof(IsApproved));
         OnPropertyChanged(nameof(IsRejected));
@@ -443,15 +445,25 @@ public class DatasetImageViewModel : ObservableObject
 
     /// <summary>
     /// Saves the rating to the folder's ratings file. The first change in a folder that still
-    /// has legacy <c>.rating</c> files converts the whole folder.
+    /// has legacy <c>.rating</c> files converts the whole folder. When the store refuses (the file
+    /// is locked or cannot be written; it logs why), the rating goes back to the last saved one so
+    /// the badge never shows a rating that is not on disk, and this returns false.
     /// </summary>
-    public void SaveRating()
+    public bool SaveRating()
     {
-        if (!string.IsNullOrWhiteSpace(_imagePath))
+        if (string.IsNullOrWhiteSpace(_imagePath))
         {
-            // A failed write is logged by the store; the rating is then lost on reload.
-            ImageRatingStore.Shared.Set(_imagePath, _ratingStatus);
+            return true;
         }
+
+        if (ImageRatingStore.Shared.Set(_imagePath, _ratingStatus))
+        {
+            _savedRatingStatus = _ratingStatus;
+            return true;
+        }
+
+        RatingStatus = _savedRatingStatus;
+        return false;
     }
 
     private void SaveCaption()
@@ -555,7 +567,10 @@ public class DatasetImageViewModel : ObservableObject
     {
         var previousRating = _ratingStatus;
         RatingStatus = newRating;
-        SaveRating();
+        if (!SaveRating())
+        {
+            return;
+        }
 
         _eventAggregator?.PublishImageRatingChanged(new ImageRatingChangedEventArgs
         {

@@ -318,10 +318,11 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
         _currentImage.RatingStatus = _currentImage.IsApproved 
             ? ImageRatingStatus.Unrated 
             : ImageRatingStatus.Approved;
-        _currentImage.SaveRating();
+        var saved = _currentImage.SaveRating();
         
         OnPropertyChanged(nameof(IsApproved));
         OnPropertyChanged(nameof(IsRejected));
+        if (!saved) return;
 
         // Publish event via aggregator
         _eventAggregator?.PublishImageRatingChanged(new ImageRatingChangedEventArgs
@@ -340,10 +341,11 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
         _currentImage.RatingStatus = _currentImage.IsRejected 
             ? ImageRatingStatus.Unrated 
             : ImageRatingStatus.Rejected;
-        _currentImage.SaveRating();
+        var saved = _currentImage.SaveRating();
         
         OnPropertyChanged(nameof(IsApproved));
         OnPropertyChanged(nameof(IsRejected));
+        if (!saved) return;
 
         // Publish event via aggregator
         _eventAggregator?.PublishImageRatingChanged(new ImageRatingChangedEventArgs
@@ -360,10 +362,11 @@ public partial class ImageViewerViewModel : ObservableObject, IDisposable
         
         var previousRating = _currentImage.RatingStatus;
         _currentImage.RatingStatus = ImageRatingStatus.Unrated;
-        _currentImage.SaveRating();
+        var saved = _currentImage.SaveRating();
         
         OnPropertyChanged(nameof(IsApproved));
         OnPropertyChanged(nameof(IsRejected));
+        if (!saved) return;
 
         // Publish event via aggregator
         _eventAggregator?.PublishImageRatingChanged(new ImageRatingChangedEventArgs

@@ -327,6 +327,26 @@ public class DatasetImageViewModelTests : IDisposable
         DatasetImageViewModel.FromFile(_testImagePath).RatingStatus.Should().Be(ImageRatingStatus.Approved);
     }
 
+    [Fact]
+    public void MarkApprovedCommand_RatingsFileLocked_RevertsAndPublishesNothing()
+    {
+        // Arrange
+        var ratingsFile = Path.Combine(_testFolder, ImageRatingStore.RatingsFileName);
+        File.WriteAllText(ratingsFile, """{ "version": 1, "ratings": {} }""");
+        var vm = DatasetImageViewModel.FromFile(_testImagePath, _mockEventAggregator.Object);
+
+        // Act
+        using (new FileStream(ratingsFile, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            vm.MarkApprovedCommand.Execute(null);
+        }
+
+        // Assert
+        vm.RatingStatus.Should().Be(ImageRatingStatus.Unrated, "the badge must not show a rating that was not saved");
+        _mockEventAggregator.Verify(e => e.PublishImageRatingChanged(It.IsAny<ImageRatingChangedEventArgs>()), Times.Never);
+        DatasetImageViewModel.FromFile(_testImagePath).RatingStatus.Should().Be(ImageRatingStatus.Unrated);
+    }
+
     #endregion
 
     #region Selection Tests

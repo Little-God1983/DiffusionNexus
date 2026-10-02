@@ -1708,7 +1708,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 var uniquePath = _datasetStorageService.GetUniqueFilePath(destFolder, newFileName);
                 
                 _datasetStorageService.CopyFile(sourcePath, uniquePath, false);
-                
+                ImageRatingStore.Shared.Set(uniquePath, ImageRatingStatus.Unrated); // never a stale entry's rating
+
                 var newImageVm = DatasetImageViewModel.FromFile(uniquePath, _eventAggregator, _thumbnailOrchestrator, OwnerToken);
                 if (newImageVm.IsVideo && _videoThumbnailService != null)
                 {
@@ -2547,11 +2548,16 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         var selected = DatasetImages.Where(i => i.IsSelected).ToList();
         if (selected.Count == 0) return;
 
+        var notSaved = 0;
         foreach (var image in selected)
         {
             var previousRating = image.RatingStatus;
             image.RatingStatus = newRating;
-            image.SaveRating();
+            if (!image.SaveRating())
+            {
+                notSaved++;
+                continue;
+            }
 
             _eventAggregator.PublishImageRatingChanged(new ImageRatingChangedEventArgs
             {
@@ -2561,7 +2567,10 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             });
         }
 
-        StatusMessage = string.Format(statusMessageFormat, selected.Count);
+        StatusMessage = notSaved == 0
+            ? string.Format(statusMessageFormat, selected.Count)
+            : string.Format(statusMessageFormat, selected.Count - notSaved)
+              + $"; {notSaved} not saved: the folder's ratings file is in use (see the Unified Console)";
     }
 
     private void SelectApproved()

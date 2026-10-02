@@ -105,6 +105,28 @@ public sealed class DatasetFileImporter
         IVideoThumbnailService? videoThumbnailService,
         bool moveFiles)
     {
+        // Ratings are written once per folder when the files are in place, also after a failure
+        // part way, so the files that did arrive are rated right
+        var ratings = new PendingRatings();
+        try
+        {
+            return await ImportResolvedAsync(
+                nonConflictingFiles, conflictResolutions, destinationFolder, videoThumbnailService, moveFiles, ratings);
+        }
+        finally
+        {
+            ratings.Apply();
+        }
+    }
+
+    private async Task<DatasetImportResult> ImportResolvedAsync(
+        IEnumerable<string> nonConflictingFiles,
+        FileConflictResolutionResult? conflictResolutions,
+        string destinationFolder,
+        IVideoThumbnailService? videoThumbnailService,
+        bool moveFiles,
+        PendingRatings ratings)
+    {
         ArgumentNullException.ThrowIfNull(nonConflictingFiles);
         ArgumentException.ThrowIfNullOrWhiteSpace(destinationFolder);
 
@@ -131,7 +153,7 @@ public sealed class DatasetFileImporter
                 usedFileNames.Add(Path.GetFileName(destPath));
             }
 
-            CopyOrMove(sourceFile, destPath, moveFiles, overwrite: false);
+            CopyOrMove(sourceFile, destPath, moveFiles, overwrite: false, ratings);
             processedSources.Add(sourceFile);
             copied++;
 
@@ -159,7 +181,7 @@ public sealed class DatasetFileImporter
                         break;
 
                     case FileConflictResolution.Override when overriddenTargets.Add(conflict.ExistingFilePath):
-                        CopyOrMove(conflict.NewFilePath, conflict.ExistingFilePath, moveFiles, overwrite: true);
+                        CopyOrMove(conflict.NewFilePath, conflict.ExistingFilePath, moveFiles, overwrite: true, ratings);
                         processedSources.Add(conflict.NewFilePath);
                         overridden++;
 
@@ -187,7 +209,7 @@ public sealed class DatasetFileImporter
                         var finalRenamedPath = Path.Combine(destinationFolder, finalNewName);
 
                         usedFileNames.Add(finalNewName);
-                        CopyOrMove(conflict.NewFilePath, finalRenamedPath, moveFiles, overwrite: false);
+                        CopyOrMove(conflict.NewFilePath, finalRenamedPath, moveFiles, overwrite: false, ratings);
                         processedSources.Add(conflict.NewFilePath);
                         renamed++;
 
@@ -213,22 +235,39 @@ public sealed class DatasetFileImporter
         };
     }
 
-    private void CopyOrMove(string sourcePath, string destinationPath, bool moveFiles, bool overwrite)
+    private void CopyOrMove(string sourcePath, string destinationPath, bool moveFiles, bool overwrite,
+        PendingRatings ratings)
     {
         if (moveFiles)
         {
             _fileOps.MoveFile(sourcePath, destinationPath, overwrite);
-
-            // A moved file keeps its rating, and an overwritten one loses the old file's
-            ImageRatingStore.Shared.Move(sourcePath, destinationPath);
+            ratings.Moves.Add((sourcePath, destinationPath));
         }
         else
         {
             _fileOps.CopyFile(sourcePath, destinationPath, overwrite);
+            ratings.Copies.Add(destinationPath);
+        }
+    }
+
+    /// <summary>
+    /// The rating changes of one import. Writing them file by file rewrites the folder's whole
+    /// ratings file each time, which an import of thousands of files cannot afford.
+    /// </summary>
+    private sealed class PendingRatings
+    {
+        public List<(string Source, string Destination)> Moves { get; } = [];
+        public List<string> Copies { get; } = [];
+
+        public void Apply()
+        {
+            // A moved file keeps its rating, and an overwritten one loses the old file's
+            ImageRatingStore.Shared.MoveMany(Moves);
 
             // A copy arrives unrated: an overwritten file's rating, or the stale entry of a file
             // deleted outside the app, judged a different image
-            ImageRatingStore.Shared.Set(destinationPath, ImageRatingStatus.Unrated);
+            ImageRatingStore.Shared.SetMany(
+                Copies.Select(c => new KeyValuePair<string, ImageRatingStatus>(c, ImageRatingStatus.Unrated)));
         }
     }
 

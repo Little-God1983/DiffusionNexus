@@ -25,7 +25,7 @@ namespace DiffusionNexus.UI.Services;
 /// against the file's write time and length, so another writer (a second instance, a restored
 /// backup) is picked up. Every write reads the file again first, so it keeps another writer's
 /// changes; two instances writing in the same millisecond can still lose one of them. A file that
-/// cannot be read is never cached and never written over.
+/// cannot be read is never cached and never written over, and a change it blocks is refused.
 /// </para>
 /// </summary>
 public sealed class ImageRatingStore
@@ -49,6 +49,10 @@ public sealed class ImageRatingStore
     private readonly ConcurrentDictionary<string, FolderRatings> _cache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, object> _locks = new(StringComparer.OrdinalIgnoreCase);
 
+    // Stamp of a ratings file whose read failure was already reported, so a locked file read for
+    // every image of a large folder logs once, not once per image
+    private readonly ConcurrentDictionary<string, (DateTime, long)> _reportedUnreadable = new(StringComparer.OrdinalIgnoreCase);
+
     public ImageRatingStore(Func<IUnifiedLogger?>? loggerProvider = null)
     {
         _loggerProvider = loggerProvider ?? (() => null);
@@ -62,27 +66,44 @@ public sealed class ImageRatingStore
     public ImageRatingStatus Get(string imagePath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(imagePath);
+        TryGet(imagePath, out var status);
+        return status;
+    }
+
+    /// <summary>
+    /// Like <see cref="Get"/>, but false when the folder file could not be read, so a caller that
+    /// carries the rating somewhere else can tell "unrated" from "unknown".
+    /// </summary>
+    private bool TryGet(string imagePath, out ImageRatingStatus status)
+    {
+        status = ImageRatingStatus.Unrated;
         if (!IsRatable(imagePath))
         {
-            return ImageRatingStatus.Unrated;
+            return true;
         }
 
         var folder = FolderOf(imagePath);
         lock (LockFor(folder))
         {
             var ratings = Load(folder);
-            if (ratings.Entries.TryGetValue(Path.GetFileName(imagePath), out var status))
+            if (ratings.State == FileState.Unreadable)
             {
-                return status;
+                return false;
+            }
+
+            if (ratings.Entries.TryGetValue(Path.GetFileName(imagePath), out status))
+            {
+                return true;
             }
 
             if (!ratings.UsesLegacy)
             {
-                return ImageRatingStatus.Unrated;
+                return true;
             }
         }
 
-        return ReadLegacy(Path.ChangeExtension(imagePath, LegacyExtension)) ?? ImageRatingStatus.Unrated;
+        status = ReadLegacy(Path.ChangeExtension(imagePath, LegacyExtension)) ?? ImageRatingStatus.Unrated;
+        return true;
     }
 
     /// <summary>
@@ -100,27 +121,37 @@ public sealed class ImageRatingStore
     public bool SetMany(IEnumerable<KeyValuePair<string, ImageRatingStatus>> ratings)
     {
         ArgumentNullException.ThrowIfNull(ratings);
+        return SetManyCore(ratings).Count == 0;
+    }
 
-        var ok = true;
+    /// <summary>Sets ratings folder by folder; returns the folders that could not be updated.</summary>
+    private HashSet<string> SetManyCore(IEnumerable<KeyValuePair<string, ImageRatingStatus>> ratings)
+    {
+        var failed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var group in ratings
                      .Where(r => !string.IsNullOrWhiteSpace(r.Key) && IsRatable(r.Key))
                      .GroupBy(r => FolderOf(r.Key), StringComparer.OrdinalIgnoreCase))
         {
-            ok &= SetInFolder(group.Key, group.ToList());
+            if (!SetInFolder(group.Key, group.ToList()))
+            {
+                failed.Add(group.Key);
+            }
         }
 
-        return ok;
+        return failed;
     }
 
     private bool SetInFolder(string folder, List<KeyValuePair<string, ImageRatingStatus>> ratings)
     {
         lock (LockFor(folder))
         {
-            // Clearing images that have no rating changes nothing, so it converts nothing either
+            // Clearing images that have no rating changes nothing, so it converts nothing either.
+            // A file that could not be read says nothing about that, so it never takes this path.
             var cached = Load(folder);
-            if (ratings.All(r => r.Value == ImageRatingStatus.Unrated
-                                 && !cached.Entries.ContainsKey(Path.GetFileName(r.Key))
-                                 && !(cached.UsesLegacy && File.Exists(Path.ChangeExtension(r.Key, LegacyExtension)))))
+            if (cached.State != FileState.Unreadable
+                && ratings.All(r => r.Value == ImageRatingStatus.Unrated
+                                     && !cached.Entries.ContainsKey(Path.GetFileName(r.Key))
+                                     && !(cached.UsesLegacy && File.Exists(Path.ChangeExtension(r.Key, LegacyExtension)))))
             {
                 return true;
             }
@@ -187,46 +218,91 @@ public sealed class ImageRatingStore
     public void Remove(string imagePath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(imagePath);
-        if (!IsRatable(imagePath))
-        {
-            return;
-        }
+        RemoveMany([imagePath]);
+    }
 
-        var folder = FolderOf(imagePath);
+    /// <summary>Forgets the ratings of many media files with one write per folder.</summary>
+    public void RemoveMany(IEnumerable<string> imagePaths)
+    {
+        ArgumentNullException.ThrowIfNull(imagePaths);
+        foreach (var group in imagePaths
+                     .Where(p => !string.IsNullOrWhiteSpace(p) && IsRatable(p))
+                     .GroupBy(FolderOf, StringComparer.OrdinalIgnoreCase))
+        {
+            RemoveInFolder(group.Key, group.ToList());
+        }
+    }
+
+    private void RemoveInFolder(string folder, List<string> imagePaths)
+    {
         lock (LockFor(folder))
         {
-            var name = Path.GetFileName(imagePath);
-            if (Load(folder).Entries.ContainsKey(name))
+            var names = imagePaths.Select(p => Path.GetFileName(p)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (Load(folder).Entries.Keys.Any(names.Contains))
             {
                 var current = Load(folder, reread: true);
-                if (current.State == FileState.Valid && current.Entries.ContainsKey(name))
+                if (current.State == FileState.Valid && current.Entries.Keys.Any(names.Contains))
                 {
-                    var entries = new Dictionary<string, ImageRatingStatus>(current.Entries, StringComparer.OrdinalIgnoreCase);
-                    entries.Remove(name);
+                    var entries = current.Entries
+                        .Where(e => !names.Contains(e.Key))
+                        .ToDictionary(e => e.Key, e => e.Value, StringComparer.OrdinalIgnoreCase);
                     Persist(folder, entries, setAsideCorrupt: false, keep: NoNames);
                 }
             }
 
-            var legacy = Path.ChangeExtension(imagePath, LegacyExtension);
-            if (File.Exists(legacy) && !HasOtherMediaWithBaseName(folder, imagePath))
+            foreach (var imagePath in imagePaths)
             {
-                DeleteLegacyFiles([legacy]);
+                var legacy = Path.ChangeExtension(imagePath, LegacyExtension);
+                if (File.Exists(legacy) && !HasOtherMediaWithBaseName(folder, imagePath))
+                {
+                    DeleteLegacyFiles([legacy]);
+                }
             }
         }
     }
 
-    /// <summary>Gives <paramref name="destinationImagePath"/> the rating of <paramref name="sourceImagePath"/>.</summary>
-    public void Copy(string sourceImagePath, string destinationImagePath)
-        => Set(destinationImagePath, Get(sourceImagePath));
+    /// <summary>
+    /// Gives <paramref name="destinationImagePath"/> the rating of <paramref name="sourceImagePath"/>.
+    /// False, with nothing changed, when either folder file could not be read or written.
+    /// </summary>
+    public bool Copy(string sourceImagePath, string destinationImagePath)
+        => TryGet(sourceImagePath, out var status) && Set(destinationImagePath, status);
 
     /// <summary>Carries a rating to a media file's new path and forgets the old one.</summary>
-    public void Move(string sourceImagePath, string destinationImagePath)
+    public bool Move(string sourceImagePath, string destinationImagePath)
+        => MoveMany([(sourceImagePath, destinationImagePath)]);
+
+    /// <summary>
+    /// Carries many ratings to their files' new paths with one write per folder. A source is
+    /// forgotten only once its rating has arrived: when its folder file cannot be read, or the
+    /// destination's cannot be written, the source keeps its rating. False when any move failed.
+    /// </summary>
+    public bool MoveMany(IEnumerable<(string Source, string Destination)> moves)
     {
-        Copy(sourceImagePath, destinationImagePath);
-        if (!FilePaths.AreSame(sourceImagePath, destinationImagePath))
+        ArgumentNullException.ThrowIfNull(moves);
+
+        var ok = true;
+        var carried = new List<(string Source, KeyValuePair<string, ImageRatingStatus> Rating)>();
+        foreach (var (source, destination) in moves)
         {
-            Remove(sourceImagePath);
+            if (TryGet(source, out var status))
+            {
+                carried.Add((source, new KeyValuePair<string, ImageRatingStatus>(destination, status)));
+            }
+            else
+            {
+                ok = false;
+            }
         }
+
+        var failed = SetManyCore(carried.Select(c => c.Rating));
+        ok &= failed.Count == 0;
+
+        RemoveMany(carried
+            .Where(c => !FilePaths.AreSame(c.Source, c.Rating.Key)
+                        && !(IsRatable(c.Rating.Key) && failed.Contains(FolderOf(c.Rating.Key))))
+            .Select(c => c.Source));
+        return ok;
     }
 
     private static bool IsRatable(string path) => MediaFileExtensions.IsDisplayableMediaFile(path);
@@ -250,20 +326,23 @@ public sealed class ImageRatingStore
             return cached;
         }
 
-        var loaded = file.Exists ? Parse(file.FullName, stamp) : FolderRatings.Empty(stamp, FileState.Missing);
+        var report = !(_reportedUnreadable.TryGetValue(folder, out var reported) && reported == stamp);
+        var loaded = file.Exists ? Parse(file.FullName, stamp, report) : FolderRatings.Empty(stamp, FileState.Missing);
         if (loaded.State == FileState.Unreadable)
         {
             _cache.TryRemove(folder, out _);
+            _reportedUnreadable[folder] = stamp;
         }
         else
         {
             _cache[folder] = loaded;
+            _reportedUnreadable.TryRemove(folder, out _);
         }
 
         return loaded;
     }
 
-    private FolderRatings Parse(string path, (DateTime, long) stamp)
+    private FolderRatings Parse(string path, (DateTime, long) stamp, bool reportUnreadable)
     {
         try
         {
@@ -292,15 +371,19 @@ public sealed class ImageRatingStore
         {
             Logger.Warning(ex, "Ratings file {Path} is not valid", path);
             _loggerProvider()?.Warn(LogCategory.FileSystem, LogSource,
-                $"{path} is not valid; falling back to legacy .rating files", ex.Message);
+                $"{path} is not valid; it is set aside on the next rating change", ex.Message);
             return FolderRatings.Empty(stamp, FileState.Corrupt);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // A locked file is not corrupt: never set it aside, never write over it
-            Logger.Warning(ex, "Could not read ratings file {Path}", path);
-            _loggerProvider()?.Warn(LogCategory.FileSystem, LogSource,
-                $"Could not read {path}; ratings in this folder are not changed until it can be read", ex.Message);
+            if (reportUnreadable)
+            {
+                Logger.Warning(ex, "Could not read ratings file {Path}", path);
+                _loggerProvider()?.Warn(LogCategory.FileSystem, LogSource,
+                    $"Could not read {path}; ratings in this folder are not changed until it can be read", ex.Message);
+            }
+
             return FolderRatings.Empty(stamp, FileState.Unreadable);
         }
     }
@@ -332,7 +415,8 @@ public sealed class ImageRatingStore
     /// <summary>
     /// Folds the folder's legacy sidecars into <paramref name="entries"/>. An entry already in the
     /// folder file wins, the same precedence <see cref="Get"/> applies. Null when the folder could
-    /// not be listed: converting without its legacy ratings would lose them.
+    /// not be listed or a sidecar could not be read: a converted folder ignores its sidecars, so
+    /// converting without one of them would lose its rating for good.
     /// </summary>
     private static LegacyConversion? ConvertLegacy(string folder, Dictionary<string, ImageRatingStatus> entries)
     {
@@ -368,7 +452,22 @@ public sealed class ImageRatingStore
                 continue;
             }
 
-            if (ReadLegacy(legacy) is not { } status)
+            string text;
+            try
+            {
+                text = File.ReadAllText(legacy);
+            }
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+            {
+                continue; // deleted since the listing
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Logger.Warning(ex, "Could not read legacy rating {Path}; {Folder} is not converted", legacy, folder);
+                return null;
+            }
+
+            if (!TryParseStatus(text, out var status))
             {
                 continue;
             }
@@ -405,8 +504,11 @@ public sealed class ImageRatingStore
     /// Writes the folder file through a temp file and a rename, so a crash never leaves it half
     /// written. Entries of files that are gone are dropped, except the ones in
     /// <paramref name="keep"/> (just set by the caller), so a deleted file's rating never sticks to
-    /// a later file of the same name. An empty map still writes the file: it marks the folder as
-    /// converted, so leftover legacy files stay ignored. Updates the cache on success.
+    /// a later file of the same name. That lists the folder on every write (about 3 ms for 5,000
+    /// files): the folder's own write time cannot stand in for it, because a delete in the same
+    /// clock tick as the previous write leaves it unchanged. An empty map still writes the file: it
+    /// marks the folder as converted, so leftover legacy files stay ignored. Updates the cache on
+    /// success.
     /// </summary>
     private bool Persist(string folder, Dictionary<string, ImageRatingStatus> entries, bool setAsideCorrupt,
         IReadOnlySet<string> keep)
@@ -523,8 +625,11 @@ public sealed class ImageRatingStore
         (DateTime WriteTime, long Length) Stamp,
         FileState State)
     {
-        /// <summary>Legacy sidecars count only until the folder has a ratings file of its own.</summary>
-        public bool UsesLegacy => State is FileState.Missing or FileState.Corrupt;
+        /// <summary>
+        /// Legacy sidecars count only until the folder has a ratings file of its own. A corrupt one
+        /// still marks the folder as converted: any sidecar beside it is a leftover.
+        /// </summary>
+        public bool UsesLegacy => State == FileState.Missing;
 
         public static FolderRatings Empty((DateTime, long) stamp, FileState state)
             => new(new Dictionary<string, ImageRatingStatus>(StringComparer.OrdinalIgnoreCase), stamp, state);
