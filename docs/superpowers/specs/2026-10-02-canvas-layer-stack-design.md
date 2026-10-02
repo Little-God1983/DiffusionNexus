@@ -38,7 +38,9 @@ move onto it, and the editor gains rename and a lock toggle as a side effect.
 - The selected layer gets a thin solid accent outline on the canvas, unlike the box's marching ants.
 - Accepting a candidate (Enter or the Accept button) adds a new **top** layer named `Layer N` and
   selects it. N counts up per session and is never reused.
-- Right-click → Delete on a locked raster is disabled, with the tooltip "Unlock the layer to delete it".
+- Right-click → Delete on a locked raster is disabled, and its text says why: "Delete result (locked:
+  unlock it in the layer panel first)". The reason is in the menu text because Avalonia does not show
+  tooltips on disabled items by default.
 - **Clear canvas** removes every unlocked layer. Its log line says how many locked layers it kept, and
   the command is disabled when every layer is locked.
 
@@ -68,7 +70,8 @@ So:
 
 ### `LayerStackPanel` (new, `Views/Controls/`)
 
-A reusable control on `ControlBase`, listed in `REUSABLES.md` in the same commit.
+A plain `UserControl` (like `SearchableBaseModelPicker`; it needs no injected services), listed in
+`REUSABLES.md` in the same commit.
 
 - `Items` (`IEnumerable`): rows implementing `ILayerStackItem`, already in display order (top
   first). The host owns the order; the control never reverses anything.
