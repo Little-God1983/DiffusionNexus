@@ -205,10 +205,12 @@ public partial class App : Application
             {
                 Serilog.Log.Information("Initializing app database...");
                 InitializeDatabase();
-                Serilog.Log.Information("Initializing workload catalog...");
-                InitializeCatalog();
             });
             startupProgress.Complete("database");
+
+            // Not part of the ready check: the first catalog load can unpack the embedded seed or wait
+            // on the installer's apply lock, and nothing on screen needs it before its async reads.
+            StartCatalogInBackground();
 
             // Everything below resumes on the Avalonia UI thread (its SynchronizationContext
             // was captured at the await above), which these steps require: they touch
@@ -491,28 +493,31 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// First load of the Installer SDK 2.x JSON catalog, reported to the Unified Console. Runs off the
-    /// UI thread: <see cref="ICatalog.Source"/> blocks while the embedded seed unpacks on a fresh
-    /// machine. Never fails startup; see <see cref="CatalogStartup"/>.
+    /// The Installer SDK 2.x JSON catalog's startup work, fire-and-forget on the thread pool: channel,
+    /// Unified Console report, then the background update check (<see cref="CatalogStartup.RunAsync"/>).
+    /// Never fails startup.
     /// </summary>
-    private static void InitializeCatalog()
+    private static void StartCatalogInBackground()
     {
-        try
+        _ = Task.Run(async () =>
         {
-            CatalogStartup.InitializeAsync(
+            try
+            {
+                Serilog.Log.Information("Starting the workload catalog in the background...");
+                await CatalogStartup.RunAsync(
                     Services!.GetRequiredService<ICatalog>(),
-                    Services!.GetRequiredService<DiffusionNexus.Installer.SDK.Catalog.Updates.CatalogOptions>(),
                     Services!.GetRequiredService<DiffusionNexus.Installer.SDK.Services.Settings.IUserSettingsRepository>(),
+                    Services!.GetRequiredService<CatalogStartupUpdater>(),
                     Environment.GetEnvironmentVariable(CatalogChannelResolver.EnvironmentVariable),
-                    Services!.GetService<IActivityLogService>())
-                .GetAwaiter().GetResult();
-        }
-        catch (Exception ex)
-        {
-            // CatalogStartup never throws; this guards the service resolution around it.
-            Serilog.Log.Error(ex, "InitializeCatalog: Failed to initialize the workload catalog");
-            Services!.GetService<IActivityLogService>()?.LogError(CatalogStartup.LogSource, "Failed to initialize the workload catalog", ex);
-        }
+                    Services!.GetService<IActivityLogService>());
+            }
+            catch (Exception ex)
+            {
+                // CatalogStartup never throws; this guards the service resolution around it.
+                Serilog.Log.Error(ex, "StartCatalogInBackground: Failed to start the workload catalog");
+                Services!.GetService<IActivityLogService>()?.LogError(CatalogStartup.LogSource, "Failed to start the workload catalog", ex);
+            }
+        });
     }
 
     private static void ConfigureServices(IServiceCollection services)
@@ -1431,13 +1436,6 @@ public partial class App : Application
             // Disclaimer + settings must complete first - other modules depend on them.
             await Timed(sw, "disclaimer", () => mainViewModel.CheckDisclaimerStatusAsync());
             await Timed(sw, "settings", () => settingsVm.LoadCommand.ExecuteAsync(null));
-
-            // Background catalog update: fire-and-forget on the thread pool, so a slow download
-            // never holds up the startup phases below. RunAsync never throws and logs every
-            // outcome to the Unified Console under "Catalog".
-            var catalogUpdater = Services?.GetService<CatalogStartupUpdater>();
-            if (catalogUpdater is not null)
-                _ = Task.Run(() => catalogUpdater.RunAsync());
 
             // Remaining modules are independent - load in parallel.
             // NOTE: each command runs synchronously on the UI thread until its first

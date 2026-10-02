@@ -1,5 +1,7 @@
 using System.Reflection;
 using DiffusionNexus.Installer.SDK.Catalog;
+using DiffusionNexus.Service.Services;
+using DiffusionNexus.UI.Services.Engine;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -14,13 +16,28 @@ public class CatalogSeedTests
 {
     private static readonly Assembly Ui = typeof(DiffusionNexus.UI.App).Assembly;
 
+    /// <summary>Read from the code that hardcodes them, so a new feature's workload is covered without editing this test.</summary>
+    private static IReadOnlyList<Guid> Ids() => FeatureRegistry.GetAll()
+        .Select(r => r.WorkloadConfigurationId)
+        .OfType<Guid>()
+        .Concat(EngineWorkloadCatalog.WorkloadIds)
+        .Distinct()
+        .ToList();
+
+    public static TheoryData<Guid> HardcodedWorkloadIds() => new(Ids());
+
+    [Fact]
+    public void Every_hardcoded_source_contributes_ids()
+    {
+        // Guards the member data itself: an empty registry would turn the theory into a silent no-op.
+        var ids = Ids();
+        ids.Should().Contain(EngineWorkloadCatalog.Krea2Turbo);
+        ids.Should().HaveCountGreaterThan(EngineWorkloadCatalog.WorkloadIds.Count);
+    }
+
     [Theory]
-    [InlineData("701DA214-2B25-44B4-A904-E4B036621564")] // Captioning   (FeatureRegistry)
-    [InlineData("4C486765-A4C1-4E94-ACC2-BBAC0E405B6A")] // Inpainting   (FeatureRegistry)
-    [InlineData("137929E4-5C05-4304-80D4-5D785D45FD3F")] // Outpaint     (FeatureRegistry)
-    [InlineData("B853EB7C-0A0E-48A6-985E-E32B2F8848F5")] // BatchUpscale (FeatureRegistry)
-    [InlineData("E79C079A-2FD7-4FE7-8086-23731092555D")] // Engine base  (EngineWorkloadCatalog / ManagedEngineInstaller)
-    public async Task Embedded_seed_contains_every_hardcoded_workload(string id)
+    [MemberData(nameof(HardcodedWorkloadIds))]
+    public async Task Embedded_seed_contains_every_hardcoded_workload(Guid id)
     {
         var dir = Directory.CreateTempSubdirectory().FullName;
         try
@@ -35,7 +52,7 @@ public class CatalogSeedTests
             using var provider = services.BuildServiceProvider();
             var catalog = provider.GetRequiredService<ICatalog>();
 
-            (await catalog.GetWorkloadAsync(Guid.Parse(id))).Should().NotBeNull();
+            (await catalog.GetWorkloadAsync(id)).Should().NotBeNull();
             catalog.Source.SeededFromEmbedded.Should().BeTrue();
             catalog.Diagnostics.Should().NotContain(d => d.Severity == CatalogDiagnosticSeverity.Error);
         }

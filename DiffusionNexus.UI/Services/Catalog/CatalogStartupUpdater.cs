@@ -1,4 +1,5 @@
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Installer.SDK.Catalog.Packaging;
 using DiffusionNexus.Installer.SDK.Catalog.Updates;
 using Serilog;
 
@@ -10,9 +11,11 @@ namespace DiffusionNexus.UI.Services.Catalog;
 /// happened to run the installer. Every outcome goes to the Unified Console; nothing is shown as a
 /// dialog, and nothing escapes <see cref="RunAsync"/>: an offline machine simply keeps its catalog.
 /// <para>
-/// Runs after <see cref="CatalogStartup"/> has set <see cref="CatalogOptions.Channel"/> to the
-/// installer's channel, which <see cref="ICatalogUpdateService.CheckAsync(CancellationToken)"/> reads.
-/// An apply invalidates <c>ICatalog</c>, so the next read (e.g. the Workloads dialog) sees it.
+/// Checks the channel it is handed (<see cref="ICatalogUpdateService.CheckAsync(CatalogChannel, CancellationToken)"/>),
+/// never <see cref="CatalogOptions.Channel"/>, which the main app leaves at its default. A
+/// <see cref="CatalogChannelSource.Default"/> channel is only a fallback, so it never replaces a
+/// catalog section on another channel. An apply invalidates <c>ICatalog</c>, so the next read
+/// (e.g. the Workloads dialog) sees it.
 /// </para>
 /// </summary>
 public sealed class CatalogStartupUpdater
@@ -29,11 +32,11 @@ public sealed class CatalogStartupUpdater
         _activityLog = activityLog;
     }
 
-    public async Task RunAsync(CancellationToken ct = default)
+    public async Task RunAsync(CatalogChannel channel, CatalogChannelSource source, CancellationToken ct = default)
     {
         try
         {
-            var check = await _updates.CheckAsync(ct).ConfigureAwait(false);
+            var check = await _updates.CheckAsync(channel, ct).ConfigureAwait(false);
             var remote = check.Remote is null ? "" : $" v{check.Remote.CatalogVersion}";
 
             switch (check.Outcome)
@@ -55,6 +58,17 @@ public sealed class CatalogStartupUpdater
                 default:
                     _activityLog?.LogWarning(LogSource, $"Unknown catalog update outcome {check.Outcome}; nothing applied.");
                     return;
+            }
+
+            // Both apps share the installed catalog. With nothing saved or set (or a settings file the SDK
+            // could not read, which it reports as empty), Stable is a guess: applying it would swap a
+            // Preview user's catalog back to Stable for both apps. The installer owns the switch.
+            if (source == CatalogChannelSource.Default && InstalledOnAnotherChannel(check.Local, channel) is { } installed)
+            {
+                _activityLog?.LogWarning(LogSource,
+                    $"Catalog update skipped: the installed catalog follows {installed}, and no {channel} channel was saved or set.",
+                    "The Diffusion Nexus installer updates it on its own channel.");
+                return;
             }
 
             _activityLog?.LogInfo(LogSource, $"Catalog update available ({check.Channel}{remote}); applying in the background.");
@@ -90,5 +104,16 @@ public sealed class CatalogStartupUpdater
             Log.Warning(ex, "CatalogStartupUpdater: background catalog update failed");
             _activityLog?.LogWarning(LogSource, "Background catalog update failed; keeping the installed catalog.", ex.Message);
         }
+    }
+
+    /// <summary>The channel of a section recorded on another channel; null when none is (an unknown channel does not count).</summary>
+    private static CatalogChannel? InstalledOnAnotherChannel(LocalCatalogState local, CatalogChannel channel)
+    {
+        foreach (var section in new[] { local.Workloads, local.Workflows })
+        {
+            if (section?.Channel is { } recorded && recorded != channel)
+                return recorded;
+        }
+        return null;
     }
 }

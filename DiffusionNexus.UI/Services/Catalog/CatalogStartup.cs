@@ -8,33 +8,53 @@ using Serilog;
 namespace DiffusionNexus.UI.Services.Catalog;
 
 /// <summary>
-/// The first catalog load at startup: picks the channel the installer saved, then reports where the
-/// catalog came from, its versions and every diagnostic to the Unified Console.
+/// The catalog's startup work, all of it in one background task (<see cref="RunAsync"/>): pick the
+/// channel the installer saved, report where the catalog came from, its versions and every diagnostic
+/// to the Unified Console, then check that channel for updates.
 /// <para>
-/// Call it off the UI thread: <see cref="ICatalog.Source"/>, <see cref="ICatalog.State"/> and
-/// <see cref="ICatalog.Diagnostics"/> block, and the first read can unpack the embedded seed.
-/// Never throws; startup never fails because of the catalog.
+/// Nothing here gates the startup overlay. <see cref="ICatalog.Source"/>, <see cref="ICatalog.State"/>
+/// and <see cref="ICatalog.Diagnostics"/> block on the first load, which can unpack the embedded seed
+/// or wait up to 30 s on the installer's apply lock; the UI reads the catalog through the async
+/// members, which await that same load. Never throws; startup never fails because of the catalog.
 /// </para>
 /// </summary>
 public static class CatalogStartup
 {
     public const string LogSource = "Installer SDK";
 
-    /// <returns>The channel now set on <paramref name="options"/>.</returns>
-    public static async Task<CatalogChannel> InitializeAsync(
+    public static async Task RunAsync(
         ICatalog catalog,
-        CatalogOptions options,
         IUserSettingsRepository settings,
+        CatalogStartupUpdater updater,
         string? environmentChannel,
         IActivityLogService? activityLog,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(catalog);
-        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(settings);
+        ArgumentNullException.ThrowIfNull(updater);
+
+        var (channel, source) = await ResolveChannelAsync(settings, environmentChannel, activityLog, ct).ConfigureAwait(false);
+        Report(catalog, channel, source, activityLog);
+        // The channel goes in as an argument, never through CatalogOptions.Channel: the updater must
+        // not depend on an earlier step having mutated a shared singleton.
+        await updater.RunAsync(channel, source, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Environment, then the installer's saved setting, then Stable as a <see cref="CatalogChannelSource.Default"/>.</summary>
+    public static async Task<(CatalogChannel Channel, CatalogChannelSource Source)> ResolveChannelAsync(
+        IUserSettingsRepository settings,
+        string? environmentChannel,
+        IActivityLogService? activityLog,
+        CancellationToken ct = default)
+    {
         ArgumentNullException.ThrowIfNull(settings);
 
         // Read-only lookup: GetOrCreateForCurrentUserAsync would write user_settings.json, which
         // the installer owns. The main app never writes the channel.
+        // The SDK's JSON repository reads a locked or corrupt file as empty instead of throwing, so the
+        // result is then Default; CatalogStartupUpdater refuses to apply a Default channel over a
+        // catalog on another channel. The catch covers other repository implementations.
         string? savedChannel = null;
         try
         {
@@ -47,8 +67,14 @@ public static class CatalogStartup
         }
 
         var (channel, source) = CatalogChannelResolver.Resolve(environmentChannel, savedChannel);
-        options.Channel = channel;
         Log.Information("CatalogStartup: following the {Channel} catalog channel ({Source})", channel, source);
+        return (channel, source);
+    }
+
+    /// <summary>Blocks on the first catalog load; call it off the UI thread.</summary>
+    public static void Report(ICatalog catalog, CatalogChannel channel, CatalogChannelSource source, IActivityLogService? activityLog)
+    {
+        ArgumentNullException.ThrowIfNull(catalog);
 
         try
         {
@@ -56,10 +82,14 @@ public static class CatalogStartup
             var seeded = catalogSource.SeededFromEmbedded ? " (seeded from embedded)" : "";
             activityLog?.LogInfo(LogSource, $"Catalog: {catalogSource.Kind} at {catalogSource.Path}{seeded}");
 
+            // State is always the installed catalog's (FileCatalog reads it from InstalledCatalogPath),
+            // so under an override it does not describe what the app is reading.
             var state = catalog.State;
-            activityLog?.LogInfo(LogSource,
-                $"Catalog version: workloads v{state.Workloads?.CatalogVersion}, workflows v{state.Workflows?.CatalogVersion}, channel {channel}",
-                $"Channel source: {source}");
+            var versions = $"workloads {Version(state.Workloads)}, workflows {Version(state.Workflows)}, channel {channel}";
+            var label = catalogSource.Kind == CatalogSourceKind.Override
+                ? "Installed catalog (not in use while the override is active)"
+                : "Catalog version";
+            activityLog?.LogInfo(LogSource, $"{label}: {versions}", $"Channel source: {source}");
 
             foreach (var diagnostic in catalog.Diagnostics)
             {
@@ -75,7 +105,7 @@ public static class CatalogStartup
             Log.Error(ex, "CatalogStartup: failed to load the workload catalog");
             activityLog?.LogError(LogSource, "Failed to load the workload catalog", ex);
         }
-
-        return channel;
     }
+
+    private static string Version(SectionState? section) => section is null ? "n/a" : $"v{section.CatalogVersion}";
 }

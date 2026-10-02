@@ -19,18 +19,32 @@ public class CatalogStartupUpdaterTests
 
     private CatalogStartupUpdater Updater() => new(_updates.Object, _log);
 
+    private Task Run(CatalogChannel channel = CatalogChannel.Stable, CatalogChannelSource source = CatalogChannelSource.Setting)
+        => Updater().RunAsync(channel, source);
+
     private static CatalogUpdateCheck Check(
         CatalogUpdateOutcome outcome,
         string? error = null,
         IReadOnlyList<WorkloadChange>? workloads = null,
-        int remoteVersion = 6)
+        int remoteVersion = 6,
+        LocalCatalogState? local = null)
         => new(outcome, CatalogChannel.Stable,
             new CatalogManifest { CatalogVersion = remoteVersion },
-            new LocalCatalogState(),
+            local ?? new LocalCatalogState(),
             workloads ?? [], [], error);
 
+    private static LocalCatalogState InstalledOn(CatalogChannel? channel) => new()
+    {
+        Workloads = new SectionState(5, "abc", DateTimeOffset.UnixEpoch) { Channel = channel },
+        Workflows = new SectionState(5, "abc", DateTimeOffset.UnixEpoch) { Channel = channel }
+    };
+
+    private void ApplySucceeds(CatalogUpdateCheck check)
+        => _updates.Setup(u => u.ApplyAsync(check, CatalogSections.All, It.IsAny<IProgress<CatalogDownloadProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogApplyResult(CatalogSections.All, CatalogSections.None, null));
+
     private void CheckReturns(CatalogUpdateCheck check)
-        => _updates.Setup(u => u.CheckAsync(It.IsAny<CancellationToken>())).ReturnsAsync(check);
+        => _updates.Setup(u => u.CheckAsync(It.IsAny<CatalogChannel>(), It.IsAny<CancellationToken>())).ReturnsAsync(check);
 
     private void VerifyNoApply()
         => _updates.Verify(u => u.ApplyAsync(It.IsAny<CatalogUpdateCheck>(), It.IsAny<CatalogSections>(),
@@ -43,7 +57,7 @@ public class CatalogStartupUpdaterTests
     {
         CheckReturns(Check(CatalogUpdateOutcome.Failed, error: "no network"));
 
-        await Updater().RunAsync();
+        await Run();
 
         Entries.Should().ContainSingle(e => e.Severity == ActivitySeverity.Warning)
             .Which.Should().Match<ActivityLogEntry>(e => (e.Message + e.Details).Contains("no network"));
@@ -55,7 +69,7 @@ public class CatalogStartupUpdaterTests
     {
         CheckReturns(Check(CatalogUpdateOutcome.OverrideActive));
 
-        await Updater().RunAsync();
+        await Run();
 
         Entries.Should().ContainSingle(e => e.Severity == ActivitySeverity.Info && e.Message.Contains("override active"));
         VerifyNoApply();
@@ -66,7 +80,7 @@ public class CatalogStartupUpdaterTests
     {
         CheckReturns(Check(CatalogUpdateOutcome.UpToDate));
 
-        await Updater().RunAsync();
+        await Run();
 
         Entries.Should().ContainSingle(e => e.Severity == ActivitySeverity.Info && e.Message.Contains("up to date"));
         VerifyNoApply();
@@ -77,7 +91,7 @@ public class CatalogStartupUpdaterTests
     {
         CheckReturns(Check(CatalogUpdateOutcome.RequiresNewerSoftware));
 
-        await Updater().RunAsync();
+        await Run();
 
         Entries.Should().ContainSingle(e => e.Severity == ActivitySeverity.Warning
             && e.Message.Contains("needs a newer Diffusion Nexus"));
@@ -96,7 +110,7 @@ public class CatalogStartupUpdaterTests
         _updates.Setup(u => u.ApplyAsync(check, CatalogSections.All, It.IsAny<IProgress<CatalogDownloadProgress>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new CatalogApplyResult(CatalogSections.All, CatalogSections.None, null));
 
-        await Updater().RunAsync();
+        await Run();
 
         _updates.Verify(u => u.ApplyAsync(check, CatalogSections.All, It.IsAny<IProgress<CatalogDownloadProgress>?>(), It.IsAny<CancellationToken>()), Times.Once);
         Entries.Should().Contain(e => e.Message.Contains("Updated") && e.Message.Contains("Krea-2-Turbo") && e.Message.Contains("2.1") && e.Message.Contains("2.2"));
@@ -112,7 +126,7 @@ public class CatalogStartupUpdaterTests
         _updates.Setup(u => u.ApplyAsync(check, CatalogSections.All, It.IsAny<IProgress<CatalogDownloadProgress>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new CatalogApplyResult(CatalogSections.Workloads, CatalogSections.Workflows, "file locked"));
 
-        await Updater().RunAsync();
+        await Run();
 
         Entries.Should().ContainSingle(e => e.Severity == ActivitySeverity.Warning)
             .Which.Should().Match<ActivityLogEntry>(e => (e.Message + e.Details).Contains("Workflows") && (e.Message + e.Details).Contains("file locked"));
@@ -122,9 +136,9 @@ public class CatalogStartupUpdaterTests
     [Fact]
     public async Task A_throwing_check_is_logged_and_nothing_escapes()
     {
-        _updates.Setup(u => u.CheckAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new HttpRequestException("boom"));
+        _updates.Setup(u => u.CheckAsync(It.IsAny<CatalogChannel>(), It.IsAny<CancellationToken>())).ThrowsAsync(new HttpRequestException("boom"));
 
-        var act = () => Updater().RunAsync();
+        var act = () => Run();
 
         await act.Should().NotThrowAsync();
         Entries.Should().ContainSingle(e => e.Severity == ActivitySeverity.Warning);
@@ -139,10 +153,62 @@ public class CatalogStartupUpdaterTests
         _updates.Setup(u => u.ApplyAsync(check, CatalogSections.All, It.IsAny<IProgress<CatalogDownloadProgress>?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new IOException("disk full"));
 
-        var act = () => Updater().RunAsync();
+        var act = () => Run();
 
         await act.Should().NotThrowAsync();
         Entries.Should().Contain(e => e.Severity == ActivitySeverity.Warning && (e.Message + e.Details).Contains("disk full"));
+    }
+
+    [Fact]
+    public async Task Checks_the_channel_it_is_given_never_the_options_default()
+    {
+        CheckReturns(Check(CatalogUpdateOutcome.UpToDate));
+
+        await Run(CatalogChannel.Preview);
+
+        _updates.Verify(u => u.CheckAsync(CatalogChannel.Preview, It.IsAny<CancellationToken>()), Times.Once);
+        _updates.Verify(u => u.CheckAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task A_fallback_channel_never_applies_over_a_catalog_on_another_channel()
+    {
+        // Preview user, user_settings.json locked at startup: the SDK reads it as empty, so the channel
+        // falls back to Stable. Applying it would swap Stable into the catalog both apps share.
+        CheckReturns(Check(CatalogUpdateOutcome.UpdatesAvailable, local: InstalledOn(CatalogChannel.Preview)));
+
+        await Run(CatalogChannel.Stable, CatalogChannelSource.Default);
+
+        VerifyNoApply();
+        Entries.Should().ContainSingle(e => e.Severity == ActivitySeverity.Warning
+            && e.Message.Contains("Preview") && e.Message.Contains("Stable"));
+    }
+
+    [Theory]
+    [InlineData(CatalogChannel.Stable)]
+    [InlineData(null)] // a state written before SDK 2.1.0 records no channel
+    public async Task A_fallback_channel_applies_over_a_catalog_on_the_same_or_an_unknown_channel(CatalogChannel? installed)
+    {
+        var check = Check(CatalogUpdateOutcome.UpdatesAvailable, local: InstalledOn(installed));
+        CheckReturns(check);
+        ApplySucceeds(check);
+
+        await Run(CatalogChannel.Stable, CatalogChannelSource.Default);
+
+        _updates.Verify(u => u.ApplyAsync(check, CatalogSections.All, It.IsAny<IProgress<CatalogDownloadProgress>?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task A_saved_channel_applies_over_a_catalog_on_another_channel()
+    {
+        // The user switched Preview -> Stable in the installer: that switch must land.
+        var check = Check(CatalogUpdateOutcome.UpdatesAvailable, local: InstalledOn(CatalogChannel.Preview));
+        CheckReturns(check);
+        ApplySucceeds(check);
+
+        await Run(CatalogChannel.Stable, CatalogChannelSource.Setting);
+
+        _updates.Verify(u => u.ApplyAsync(check, CatalogSections.All, It.IsAny<IProgress<CatalogDownloadProgress>?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -150,7 +216,7 @@ public class CatalogStartupUpdaterTests
     {
         CheckReturns(Check(CatalogUpdateOutcome.UpToDate));
 
-        await Updater().RunAsync();
+        await Run();
 
         Entries.Should().OnlyContain(e => e.Source == CatalogStartupUpdater.LogSource);
         CatalogStartupUpdater.LogSource.Should().Be("Catalog");

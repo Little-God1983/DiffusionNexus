@@ -46,6 +46,33 @@ public class CatalogRegistrationTests
     }
 
     [Fact]
+    public async Task A_seed_missing_from_the_assembly_names_the_resource_instead_of_a_null_stream()
+    {
+        // A LogicalName in the csproj that drifts from the name the code opens: GetManifestResourceStream
+        // returns null, and the SDK's StreamReader would fail with a bare ArgumentNullException.
+        var dir = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            var services = new ServiceCollection();
+            services.AddInstallerSdkCatalog(
+                typeof(object).Assembly,
+                userSettingsPath: Path.Combine(dir, "user_settings.json"),
+                configure: o =>
+                {
+                    o.InstalledCatalogPath = Path.Combine(dir, "catalog");
+                    o.LocalOverridePath = null;
+                });
+            using var provider = services.BuildServiceProvider();
+
+            var act = () => provider.GetRequiredService<ICatalog>().GetWorkloadsAsync();
+
+            (await act.Should().ThrowAsync<InvalidOperationException>())
+                .WithMessage("*embedded catalog seed*" + InstallerSdkServiceCollectionExtensions.SeedManifestResource + "*");
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    [Fact]
     public void Catalog_override_comes_from_the_environment_variable_the_installer_uses()
         => InstallerSdkServiceCollectionExtensions.CatalogPathEnvironmentVariable
             .Should().Be("DIFFUSIONNEXUS_CATALOG_PATH");

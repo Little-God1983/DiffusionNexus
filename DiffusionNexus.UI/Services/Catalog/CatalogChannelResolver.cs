@@ -11,6 +11,8 @@ public enum CatalogChannelSource { Default, Setting, Environment }
 /// %LocalAppData%\DiffusionNexus\catalog, so they must agree on the channel, or each startup would
 /// apply over the other's content. The main app only reads the setting; the installer owns it.
 /// </summary>
+// TODO: delete this copy once the resolver lives in DiffusionNexus.Installer.SDK.Catalog and both
+// apps call it (Little-God1983/DiffusionNexus.Installer.SDK#74). Until then, change both copies together.
 public static class CatalogChannelResolver
 {
     public const string EnvironmentVariable = "DIFFUSIONNEXUS_CATALOG_CHANNEL";

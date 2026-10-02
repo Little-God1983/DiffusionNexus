@@ -19,6 +19,10 @@ public static class InstallerSdkServiceCollectionExtensions
     /// <summary>A catalog checkout to read instead of the installed catalog. Same name as the installer's.</summary>
     public const string CatalogPathEnvironmentVariable = "DIFFUSIONNEXUS_CATALOG_PATH";
 
+    /// <summary>The <c>LogicalName</c>s of the embedded seed in DiffusionNexus.UI.csproj; the two must match.</summary>
+    public const string SeedArchiveResource = "catalog.zip";
+    public const string SeedManifestResource = "manifest.json";
+
     /// <param name="seedAssembly">The assembly embedding <c>catalog.zip</c> and <c>manifest.json</c>.</param>
     /// <param name="userSettingsPath">Defaults to <see cref="UserSettingsPaths.Default"/>, the file the installer uses.</param>
     /// <param name="configure">Runs after the defaults; tests point the catalog at a temp folder.</param>
@@ -35,12 +39,12 @@ public static class InstallerSdkServiceCollectionExtensions
         services.AddDiffusionNexusUserSettings(settingsPath);
 
         // The default InstalledCatalogPath (%LocalAppData%\DiffusionNexus\catalog) is shared with
-        // the 3.x installer on purpose: both apps see the same catalog. CatalogOptions.Channel is
-        // set later, off the UI thread, by CatalogStartup.
+        // the 3.x installer on purpose: both apps see the same catalog. CatalogOptions.Channel stays
+        // at its default: CatalogStartup passes the installer's channel to the update check directly.
         services.AddDiffusionNexusCatalog(o =>
         {
-            o.EmbeddedArchive = () => seedAssembly.GetManifestResourceStream("catalog.zip")!;
-            o.EmbeddedManifest = () => seedAssembly.GetManifestResourceStream("manifest.json")!;
+            o.EmbeddedArchive = () => OpenSeed(seedAssembly, SeedArchiveResource);
+            o.EmbeddedManifest = () => OpenSeed(seedAssembly, SeedManifestResource);
             // A missing path warns and falls back rather than failing to start.
             o.LocalOverridePath = Environment.GetEnvironmentVariable(CatalogPathEnvironmentVariable);
             configure?.Invoke(o);
@@ -59,4 +63,10 @@ public static class InstallerSdkServiceCollectionExtensions
 
         return services;
     }
+
+    // A null stream would surface from the SDK as a bare ArgumentNullException with no hint at the cause.
+    private static Stream OpenSeed(Assembly assembly, string name)
+        => assembly.GetManifestResourceStream(name)
+           ?? throw new InvalidOperationException(
+               $"The embedded catalog seed '{name}' is missing from {assembly.GetName().Name}. Check its EmbeddedResource LogicalName in the csproj.");
 }
