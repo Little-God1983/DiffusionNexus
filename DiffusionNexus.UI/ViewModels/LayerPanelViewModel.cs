@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.ImageEditor;
@@ -12,18 +13,33 @@ namespace DiffusionNexus.UI.ViewModels;
 public partial class LayerPanelViewModel : ObservableObject
 {
     private readonly Func<bool> _hasImage;
+    private readonly Action<string>? _trace;
+
+    /// <summary>
+    /// True while <see cref="SyncLayers"/> rebuilds <see cref="Layers"/>. The panel's ListBox writes null
+    /// into <see cref="SelectedLayer"/> when its items are cleared; accepting that mid-sync would clear
+    /// the editor core's active layer before the sync reads it.
+    /// </summary>
+    private bool _isSyncing;
+
+    /// <summary>
+    /// Last traced (name, locked) per row. LayerViewModel raises each change twice (its own setter plus
+    /// the forwarded Layer event), so the trace compares against this to log once.
+    /// </summary>
+    private readonly Dictionary<LayerViewModel, (string Name, bool Locked)> _traced = [];
     private bool _isLayerMode;
     private LayerViewModel? _selectedLayer;
     private ObservableCollection<LayerViewModel> _layers = new();
 
-    public LayerPanelViewModel(Func<bool> hasImage)
+    public LayerPanelViewModel(Func<bool> hasImage, Action<string>? trace = null)
     {
         ArgumentNullException.ThrowIfNull(hasImage);
         _hasImage = hasImage;
+        _trace = trace;
 
         ToggleLayerModeCommand = new RelayCommand(ExecuteToggleLayerMode, () => _hasImage());
         AddLayerCommand = new RelayCommand(ExecuteAddLayer, () => _hasImage());
-        DeleteLayerCommand = new RelayCommand(ExecuteDeleteLayer, () => _hasImage() && SelectedLayer is not null && Layers.Count > 1 && !SelectedLayer.Layer.IsInpaintMask);
+        DeleteLayerCommand = new RelayCommand(ExecuteDeleteLayer, () => _hasImage() && SelectedLayer is not null && Layers.Count > 1 && !SelectedLayer.Layer.IsInpaintMask && !SelectedLayer.IsLocked);
         DuplicateLayerCommand = new RelayCommand(ExecuteDuplicateLayer, () => _hasImage() && SelectedLayer is not null && !SelectedLayer.Layer.IsInpaintMask);
         MoveLayerUpCommand = new RelayCommand(ExecuteMoveLayerUp, () => _hasImage() && SelectedLayer is not null && CanMoveLayerUp);
         MoveLayerDownCommand = new RelayCommand(ExecuteMoveLayerDown, () => _hasImage() && SelectedLayer is not null && CanMoveLayerDown);
@@ -61,6 +77,9 @@ public partial class LayerPanelViewModel : ObservableObject
         get => _selectedLayer;
         set
         {
+            if (_isSyncing && value is null)
+                return;
+
             if (SetProperty(ref _selectedLayer, value))
             {
                 foreach (var layer in _layers)
@@ -167,33 +186,59 @@ public partial class LayerPanelViewModel : ObservableObject
     /// </summary>
     public void SyncLayers(LayerStack? layerStack)
     {
-        foreach (var vm in _layers)
-        {
-            vm.Dispose();
-        }
-        _layers.Clear();
+        // Read before clearing: clearing can trigger a null selection write-back (see _isSyncing).
+        var active = layerStack?.ActiveLayer;
+        LayerViewModel? target = null;
 
-        if (layerStack is null || layerStack.Count == 0)
+        _isSyncing = true;
+        try
         {
-            SelectedLayer = null;
+            foreach (var vm in _layers)
+            {
+                vm.PropertyChanged -= OnRowPropertyChanged;
+                vm.Dispose();
+            }
+            _layers.Clear();
+            _traced.Clear();
+
+            if (layerStack is not null)
+            {
+                for (var i = layerStack.Count - 1; i >= 0; i--)
+                {
+                    var vm = new LayerViewModel(layerStack[i], OnLayerSelectionRequested, OnLayerDeleteRequested);
+                    vm.PropertyChanged += OnRowPropertyChanged;
+                    _traced[vm] = (vm.Name, vm.IsLocked);
+                    _layers.Add(vm);
+                }
+
+                target = active is not null
+                    ? _layers.FirstOrDefault(vm => vm.Layer == active)
+                    : _layers.FirstOrDefault();
+            }
+        }
+        finally
+        {
+            _isSyncing = false;
+        }
+
+        SelectedLayer = target;
+    }
+
+    private void OnRowPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (sender is not LayerViewModel row || !_traced.TryGetValue(row, out var seen))
             return;
-        }
 
-        for (var i = layerStack.Count - 1; i >= 0; i--)
+        if (e.PropertyName == nameof(LayerViewModel.IsLocked) && row.IsLocked != seen.Locked)
         {
-            var layer = layerStack[i];
-            var vm = new LayerViewModel(layer, OnLayerSelectionRequested, OnLayerDeleteRequested);
-            _layers.Add(vm);
+            _traced[row] = (seen.Name, row.IsLocked);
+            _trace?.Invoke($"Layer '{row.Name}' {(row.IsLocked ? "locked" : "unlocked")}.");
+            NotifyCommandsCanExecuteChanged();
         }
-
-        if (layerStack.ActiveLayer is not null)
+        else if (e.PropertyName == nameof(LayerViewModel.Name) && row.Name != seen.Name)
         {
-            var activeVm = _layers.FirstOrDefault(vm => vm.Layer == layerStack.ActiveLayer);
-            SelectedLayer = activeVm;
-        }
-        else if (_layers.Count > 0)
-        {
-            SelectedLayer = _layers[0];
+            _traced[row] = (row.Name, seen.Locked);
+            _trace?.Invoke($"Renamed a layer to '{row.Name}'.");
         }
     }
 

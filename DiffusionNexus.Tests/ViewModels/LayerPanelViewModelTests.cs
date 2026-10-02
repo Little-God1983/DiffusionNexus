@@ -279,4 +279,85 @@ public class LayerPanelViewModelTests
     }
 
     #endregion
+
+    #region Layer stack panel (#594)
+
+    [Fact]
+    public void DeleteIsDisabledForALockedLayer()
+    {
+        var stack = new LayerStack(10, 10);
+        stack.AddLayer("Bottom");
+        stack.AddLayer("Top");
+        _sut.SyncLayers(stack);
+        _sut.SelectedLayer = _sut.Layers[0];
+        _sut.DeleteLayerCommand.CanExecute(null).Should().BeTrue();
+
+        _sut.Layers[0].IsLocked = true;
+
+        _sut.DeleteLayerCommand.CanExecute(null).Should().BeFalse();
+    }
+
+    [Fact]
+    public void SyncLayers_IgnoresTheListBoxNullWriteBackAndKeepsTheActiveLayer()
+    {
+        var stack = new LayerStack(10, 10);
+        stack.AddLayer("Bottom");
+        var top = stack.AddLayer("Top");
+        stack.AddLayer("Third");
+        stack.ActiveLayer = top;
+
+        // A first sync leaves a layer selected, as in the running editor. Without it the null write-back
+        // below is a no-op (null to null) and the test proves nothing.
+        _sut.SyncLayers(stack);
+        var raisedNull = false;
+        _sut.LayerSelectionChanged += (_, layer) =>
+        {
+            if (layer is null)
+            {
+                raisedNull = true;
+                stack.ActiveLayer = null;   // what ImageEditView's handler does with a null selection
+            }
+        };
+
+        // Mimic the ListBox: when its ItemsSource is cleared it writes null into SelectedItem.
+        _sut.Layers.CollectionChanged += (_, e) =>
+        {
+            if (e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Reset)
+                _sut.SelectedLayer = null;
+        };
+
+        _sut.SyncLayers(stack);
+
+        raisedNull.Should().BeFalse("a sync is not the user clearing the selection");
+        _sut.SelectedLayer!.Layer.Should().BeSameAs(top);
+    }
+
+    [Fact]
+    public void SyncLayers_OfAnEmptyStackClearsTheSelection()
+    {
+        var stack = new LayerStack(10, 10);
+        stack.AddLayer("Only");
+        _sut.SyncLayers(stack);
+
+        _sut.SyncLayers(null);
+
+        _sut.SelectedLayer.Should().BeNull();
+    }
+
+    [Fact]
+    public void LockAndRenameAreTracedOnce()
+    {
+        var trace = new List<string>();
+        var sut = new LayerPanelViewModel(hasImage: () => true, trace: trace.Add);
+        var stack = new LayerStack(10, 10);
+        stack.AddLayer("Sky");
+        sut.SyncLayers(stack);
+
+        sut.Layers[0].IsLocked = true;
+        sut.Layers[0].Name = "Clouds";
+
+        trace.Should().Equal("Layer 'Sky' locked.", "Renamed a layer to 'Clouds'.");
+    }
+
+    #endregion
 }
