@@ -35,6 +35,7 @@ public class CatalogRegistrationTests
             provider.GetRequiredService<ICatalogUpdateService>().Should().NotBeNull();
             provider.GetRequiredService<IUserSettingsRepository>().Should().NotBeNull();
             provider.GetRequiredService<DismissedMessageStore>().Should().NotBeNull();
+            provider.GetRequiredService<CatalogStartupUpdater>().Should().NotBeNull();
             var catalog = provider.GetRequiredService<ICatalog>();
 
             (await catalog.GetWorkloadsAsync()).Should().NotBeEmpty();

@@ -1,4 +1,5 @@
 using System.Reflection;
+using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Installer.SDK.Catalog;
 using DiffusionNexus.Installer.SDK.Catalog.Updates;
 using DiffusionNexus.Installer.SDK.Services.Settings;
@@ -9,7 +10,8 @@ namespace DiffusionNexus.UI.Services.Catalog;
 
 /// <summary>
 /// The Installer SDK 2.x registrations that replaced 1.x's <c>AddDiffusionNexusDataAccess</c>: the
-/// JSON workload catalog, the user settings file and the dismissed-banner store beside it. In one
+/// JSON workload catalog and its startup updater, the user settings file and the dismissed-banner
+/// store beside it. In one
 /// method so <c>CatalogRegistrationTests</c> exercises exactly what App.ConfigureServices registers.
 /// </summary>
 public static class InstallerSdkServiceCollectionExtensions
@@ -43,6 +45,10 @@ public static class InstallerSdkServiceCollectionExtensions
             o.LocalOverridePath = Environment.GetEnvironmentVariable(CatalogPathEnvironmentVariable);
             configure?.Invoke(o);
         });
+
+        services.AddSingleton(sp => new CatalogStartupUpdater(
+            sp.GetRequiredService<ICatalogUpdateService>(),
+            sp.GetService<IActivityLogService>()));
 
         // Beside user_settings.json, as in 1.x, so banners dismissed before the upgrade stay dismissed.
         services.AddSingleton(_ =>

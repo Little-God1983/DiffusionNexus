@@ -1432,6 +1432,13 @@ public partial class App : Application
             await Timed(sw, "disclaimer", () => mainViewModel.CheckDisclaimerStatusAsync());
             await Timed(sw, "settings", () => settingsVm.LoadCommand.ExecuteAsync(null));
 
+            // Background catalog update: fire-and-forget on the thread pool, so a slow download
+            // never holds up the startup phases below. RunAsync never throws and logs every
+            // outcome to the Unified Console under "Catalog".
+            var catalogUpdater = Services?.GetService<CatalogStartupUpdater>();
+            if (catalogUpdater is not null)
+                _ = Task.Run(() => catalogUpdater.RunAsync());
+
             // Remaining modules are independent - load in parallel.
             // NOTE: each command runs synchronously on the UI thread until its first
             // real await — the per-phase "synchronous head" stamps expose which load
