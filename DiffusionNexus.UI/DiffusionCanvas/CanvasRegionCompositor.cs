@@ -50,10 +50,14 @@ public static class CanvasRegionCompositor
     public static readonly SKColor NeutralFill = new(0x80, 0x80, 0x80, 0xFF);
 
     /// <summary>
-    /// Whether a raster is part of what the model sees: visible and not fully transparent. The surface's
-    /// hit test, the canvas's region readout and <see cref="LoadIntersecting"/> all use this one rule.
+    /// Whether a raster is part of what the model sees: visible, and drawn opaquely enough that its pixels
+    /// rise above <see cref="OpaqueAlphaThreshold"/>. A layer at 1–3 % composites to zero coverage, so
+    /// counting it would make the readout promise image to image and Generate then refuse the run as
+    /// degraded. The surface's hit test, the canvas's region readout and <see cref="LoadIntersecting"/> all
+    /// use this one rule.
     /// </summary>
-    public static bool IsShown(ICanvasRaster raster) => raster.IsVisible && raster.Opacity > 0;
+    public static bool IsShown(ICanvasRaster raster) =>
+        raster.IsVisible && Math.Round(255 * Math.Clamp(raster.Opacity, 0.0, 1.0)) > OpaqueAlphaThreshold;
 
     /// <summary>
     /// Draws every raster overlapping <paramref name="worldRegion"/> into a bitmap of the box's latent

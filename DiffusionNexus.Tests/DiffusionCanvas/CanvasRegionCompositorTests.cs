@@ -284,6 +284,27 @@ public class CanvasRegionCompositorTests
         }
     }
 
+    [Theory]
+    [InlineData(0.00, false)]
+    [InlineData(0.02, false)]
+    [InlineData(0.03, false)]
+    [InlineData(0.04, true)]
+    [InlineData(1.00, true)]
+    public void IsShown_AgreesWithWhatTheCompositeCountsAsCoverage(double opacity, bool shown)
+    {
+        // A layer whose drawn alpha cannot rise above OpaqueAlphaThreshold composites to zero coverage.
+        // Counting it as shown would make the readout promise image to image and Generate then refuse
+        // the run as degraded, with a message telling the user to move the box.
+        var raster = new CanvasRasterSnapshot(0, 0, 64, 64, "x.png", IsVisible: true, Opacity: opacity);
+        using var bitmap = SolidBitmap(16, 16, SKColors.White);
+        var region = new Rect(0, 0, 64, 64);
+        using var composite = CanvasRegionCompositor.Composite(
+            [new CanvasCompositeSource(bitmap, region, opacity)], region, 64, 64);
+
+        CanvasRegionCompositor.IsShown(raster).Should().Be(shown);
+        composite.IsEmpty.Should().Be(!shown, "the readout's rule must match what the composite counts");
+    }
+
     /// <summary>Minimal <see cref="ICanvasRaster"/> that needs no Avalonia bitmap.</summary>
     private sealed record StubRaster(
         double CanvasX, double CanvasY, int Width, int Height, string? ImagePath) : ICanvasRaster

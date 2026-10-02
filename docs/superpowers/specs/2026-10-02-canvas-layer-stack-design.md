@@ -53,7 +53,9 @@ So:
   the region. A 50 % layer therefore reaches the model at 50 %, flattened over the existing neutral
   grey fill. (The canvas background is dark rather than grey, so on screen and in the input such a
   layer differs slightly. That is accepted and documented in the compositor.)
-- A layer at 0 % opacity counts as not contributing, the same as hidden.
+- A layer below 4 % opacity counts as not contributing, the same as hidden: its drawn alpha cannot
+  rise above the compositor's coverage threshold, so counting it would promise image to image for a run
+  that composites nothing.
 - The region readout is recomputed whenever a layer's visibility or opacity changes, not only when
   the collection changes as it does today.
 
