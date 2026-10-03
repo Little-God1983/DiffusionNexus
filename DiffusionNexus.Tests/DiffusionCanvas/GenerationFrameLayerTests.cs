@@ -92,6 +92,18 @@ public class GenerationFrameLayerTests
     }
 
     [Fact]
+    public void LayerStackNaming_DropsLoneSurrogatesAtAnyLength()
+    {
+        // Built in code: a lone surrogate in [InlineData] reaches the test as U+FFFD.
+        const char high = '\uD83D', low = '\uDE00';
+
+        LayerStackNaming.Resolve("ab" + high + "cd", "Old").Should().Be("abcd", "a lone high half mid-name, as a box cut at its limit leaves");
+        LayerStackNaming.Resolve("ab" + low + "cd", "Old").Should().Be("abcd", "a lone low half");
+        LayerStackNaming.Resolve("name" + high, "Old").Should().Be("name", "short enough for the cap, still dropped");
+        LayerStackNaming.Resolve("a" + high + low + "b", "Old").Should().Be("a" + high + low + "b", "a whole emoji is kept");
+    }
+
+    [Fact]
     public void LayerStackNaming_NeverCutsAnEmojiInHalf()
     {
         // 63 characters, then an emoji whose first UTF-16 half would be the 64th unit.

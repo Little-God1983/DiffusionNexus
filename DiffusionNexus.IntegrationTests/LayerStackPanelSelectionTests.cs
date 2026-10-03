@@ -1,8 +1,13 @@
 using System.Collections.ObjectModel;
 using Avalonia.Controls;
+using Avalonia.Controls.Presenters;
+using Avalonia.Controls.Primitives;
+using Avalonia.Controls.Templates;
 using Avalonia.Data;
 using Avalonia.Headless.XUnit;
+using Avalonia.Styling;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using DiffusionNexus.UI.ImageEditor;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.ViewModels.DiffusionCanvas;
@@ -197,11 +202,11 @@ public class LayerStackPanelSelectionTests
     }
 
     [AvaloniaFact]
-    public void AHostThatAnswersAPickWithAnotherRowGetsThatRowHighlighted()
+    public void AHostThatSyncsWhileHandlingAPickKeepsItsRowsAndTheHighlight()
     {
-        // Picking a row while a Move/Transform is pending commits it, and the commit rebuilds the editor's
-        // rows: the host answers the pick with a new row object. Rebuilding them inside the ListBox's own
-        // selection change made Avalonia throw (swallowed by the binding, rows half rebuilt).
+        // Picking a row while a Move/Transform is pending commits it, and the commit syncs the editor's
+        // rows from inside the pick. A sync that rebuilt the rows changed the list inside the ListBox's own
+        // selection change: Avalonia threw (swallowed by the binding) and the rows stayed half rebuilt.
         var layers = new LayerStack(10, 10);
         var bottom = layers.AddLayer("Bottom");
         var top = layers.AddLayer("Top");
@@ -221,11 +226,14 @@ public class LayerStackPanelSelectionTests
         var (window, panel, list) = Host(panelVm, nameof(panelVm.Layers), nameof(panelVm.SelectedLayer));
         try
         {
-            list.SelectedItem = panelVm.Layers.Single(l => l.Layer == bottom);
+            var rows = panelVm.Layers.ToList();
+            var picked = rows.Single(l => l.Layer == bottom);
+
+            list.SelectedItem = picked;
             Dispatcher.UIThread.RunJobs();
 
-            panelVm.Layers.Select(l => l.Name).Should().Equal("Top", "Bottom");
-            panelVm.SelectedLayer!.Layer.Should().BeSameAs(bottom);
+            panelVm.Layers.Should().Equal(rows, "a sync keeps the rows of layers still in the stack");
+            panelVm.SelectedLayer.Should().BeSameAs(picked);
             panel.SelectedItem.Should().BeSameAs(panelVm.SelectedLayer);
             list.SelectedItem.Should().BeSameAs(panelVm.SelectedLayer, "the list shows the host's row");
         }
@@ -251,6 +259,124 @@ public class LayerStackPanelSelectionTests
 
             panelVm.SelectedLayer.Should().BeSameAs(stale, "the host has not chosen yet");
             list.SelectedItem.Should().BeNull("the old row is not in the new list");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>
+    /// The headless session has no theme, so a ListBox realizes no rows. These two templates are the
+    /// least that makes it create a container, with the panel's row template, for each layer.
+    /// </summary>
+    private static void GiveTheListRows(Window window)
+    {
+        window.Styles.Add(new Style(x => x.OfType<ListBox>())
+        {
+            Setters =
+            {
+                new Setter(TemplatedControl.TemplateProperty, new FuncControlTemplate<ListBox>((_, scope) =>
+                    new ItemsPresenter { Name = "PART_ItemsPresenter" }.RegisterInNameScope(scope))),
+            },
+        });
+        window.Styles.Add(new Style(x => x.OfType<ListBoxItem>())
+        {
+            Setters =
+            {
+                new Setter(TemplatedControl.TemplateProperty, new FuncControlTemplate<ListBoxItem>((_, scope) =>
+                    new ContentPresenter
+                    {
+                        Name = "PART_ContentPresenter",
+                        [!ContentPresenter.ContentProperty] = new TemplateBinding(ContentControl.ContentProperty),
+                        [!ContentPresenter.ContentTemplateProperty] = new TemplateBinding(ContentControl.ContentTemplateProperty),
+                    }.RegisterInNameScope(scope))),
+            },
+        });
+    }
+
+    /// <summary>Opens the row's rename box the way a double-click on the name does.</summary>
+    private static TextBox StartRename(ListBox list, object row, string typed)
+    {
+        var container = (Control)list.ContainerFromItem(row)!;
+        var editor = container.GetVisualDescendants().OfType<TextBox>().Single(t => t.Classes.Contains("layerRename"));
+        var label = container.GetVisualDescendants().OfType<TextBlock>().Single(t => t.Classes.Contains("layerName"));
+        editor.Text = typed;
+        label.IsVisible = false;
+        editor.IsVisible = true;
+        editor.Focus();
+        Dispatcher.UIThread.RunJobs();
+        editor.IsKeyboardFocusWithin.Should().BeTrue("the rename box has the keyboard");
+        return editor;
+    }
+
+    [AvaloniaFact]
+    public void ARenameWhoseLayerLeavesIsCancelledAndTheListTakesTheKeyboard()
+    {
+        // A background result (inpaint, outpaint, a drop) syncs the editor while a rename is open, and the
+        // layer being renamed is no longer there. The typed text must not land on another layer, and the
+        // keyboard must not end up nowhere. (It may land on the layer that left: the row's container loses
+        // focus first and commits onto its own layer, which no longer shows.)
+        var layers = new LayerStack(10, 10);
+        layers.AddLayer("Bottom");
+        var top = layers.AddLayer("Top");
+        var panelVm = new LayerPanelViewModel(hasImage: () => true);
+        panelVm.SyncLayers(layers);
+        var panel = new LayerStackPanel();
+        panel.Bind(LayerStackPanel.ItemsProperty, new Binding(nameof(panelVm.Layers)));
+        panel.Bind(LayerStackPanel.SelectedItemProperty, new Binding(nameof(panelVm.SelectedLayer), BindingMode.TwoWay));
+        var window = new Window { Width = 400, Height = 600, DataContext = panelVm, Content = panel };
+        GiveTheListRows(window);
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        var list = panel.FindControl<ListBox>("LayerList")!;
+        try
+        {
+            var editor = StartRename(list, panelVm.Layers.Single(r => r.Layer == top), "renamed");
+
+            layers.RemoveLayer(top);
+            panelVm.SyncLayers(layers);
+            Dispatcher.UIThread.RunJobs();
+
+            editor.IsVisible.Should().BeFalse("the rename is over");
+            panelVm.Layers.Select(r => r.Name).Should().Equal("Bottom");
+            list.IsKeyboardFocusWithin.Should().BeTrue("the list takes the keyboard back");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void ARenameStaysOpenOnItsLayerWhenAnotherLayerArrives()
+    {
+        // With the editor's sync keeping its rows, a layer added under an open rename leaves the rename
+        // where it was, on the layer it was opened for.
+        var layers = new LayerStack(10, 10);
+        var bottom = layers.AddLayer("Bottom");
+        var panelVm = new LayerPanelViewModel(hasImage: () => true);
+        panelVm.SyncLayers(layers);
+        var panel = new LayerStackPanel();
+        panel.Bind(LayerStackPanel.ItemsProperty, new Binding(nameof(panelVm.Layers)));
+        panel.Bind(LayerStackPanel.SelectedItemProperty, new Binding(nameof(panelVm.SelectedLayer), BindingMode.TwoWay));
+        var window = new Window { Width = 400, Height = 600, DataContext = panelVm, Content = panel };
+        GiveTheListRows(window);
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        var list = panel.FindControl<ListBox>("LayerList")!;
+        try
+        {
+            var row = panelVm.Layers.Single(r => r.Layer == bottom);
+            var editor = StartRename(list, row, "renamed");
+
+            layers.AddLayer("Arrived");
+            panelVm.SyncLayers(layers);
+            Dispatcher.UIThread.RunJobs();
+
+            editor.IsVisible.Should().BeTrue();
+            editor.DataContext.Should().BeSameAs(row);
+            editor.Text.Should().Be("renamed");
         }
         finally
         {

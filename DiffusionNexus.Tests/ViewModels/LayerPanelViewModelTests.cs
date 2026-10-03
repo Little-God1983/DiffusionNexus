@@ -351,20 +351,77 @@ public class LayerPanelViewModelTests
     }
 
     [Fact]
-    public void ALockedInpaintMaskDisablesFlattenButNotMergeVisible()
+    public void ALockedInpaintMaskDisablesFlattenAndMergeVisible()
     {
-        // Flatten All replaces the whole stack, mask included; Merge Visible keeps the mask.
+        // Flatten All replaces the whole stack, mask included.
         var stack = new LayerStack(10, 10);
         stack.AddLayer("Bottom");
         stack.AddLayer("Top");
         var mask = stack.AddLayer("Mask");
-        mask!.IsInpaintMask = true;
+        mask.IsInpaintMask = true;
         _sut.SyncLayers(stack);
 
         _sut.Layers[0].IsLocked = true;
 
         _sut.FlattenLayersCommand.CanExecute(null).Should().BeFalse();
-        _sut.MergeVisibleLayersCommand.CanExecute(null).Should().BeTrue();
+        _sut.MergeVisibleLayersCommand.CanExecute(null).Should().BeFalse();
+    }
+
+    [Fact]
+    public void DeleteLayerCommandExecuteRefusesTheMaskAndTheLastLayer()
+    {
+        // RelayCommand.Execute does not consult CanExecute, so the rule must hold in Execute as well.
+        var stack = new LayerStack(10, 10);
+        var only = stack.AddLayer("Only");
+        _sut.SyncLayers(stack);
+        var requested = new List<Layer>();
+        _sut.DeleteLayerRequested += (_, layer) => requested.Add(layer);
+
+        _sut.DeleteLayerCommand.Execute(null);        // the last layer
+        requested.Should().BeEmpty();
+
+        var mask = stack.AddLayer("Mask");
+        mask.IsInpaintMask = true;
+        _sut.SyncLayers(stack);
+        _sut.SelectedLayer = _sut.Layers[0];          // the mask
+
+        _sut.DeleteLayerCommand.Execute(null);
+
+        requested.Should().BeEmpty();
+        _sut.SelectedLayer = _sut.Layers[1];
+        _sut.DeleteLayerCommand.Execute(null);
+        requested.Should().Equal(only);
+    }
+
+    [Fact]
+    public void SyncLayersKeepsTheRowOfEveryLayerStillInTheStack()
+    {
+        // A rebuild would answer a pick that commits a pending transform with a new row object, reset the
+        // list while it is changing its selection, and hand an open rename to another layer.
+        var stack = new LayerStack(10, 10);
+        var bottom = stack.AddLayer("Bottom");
+        var middle = stack.AddLayer("Middle");
+        var top = stack.AddLayer("Top");
+        _sut.SyncLayers(stack);
+        var rowOf = _sut.Layers.ToDictionary(r => r.Layer);
+        var resets = 0;
+        _sut.Layers.CollectionChanged += (_, e) =>
+            resets += e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Reset ? 1 : 0;
+
+        _sut.SyncLayers(stack);
+        _sut.Layers.Should().Equal(rowOf[top], rowOf[middle], rowOf[bottom]);
+
+        var added = stack.AddLayer("Added");
+        stack.RemoveLayer(middle);
+        stack.MoveLayerDown(top);                     // bottom-up: Bottom, Top, Added -> Top, Bottom, Added
+        _sut.SyncLayers(stack);
+
+        _sut.Layers.Select(r => r.Name).Should().Equal(
+            Enumerable.Range(0, stack.Count).Reverse().Select(i => stack[i].Name));
+        _sut.Layers.Should().Contain(rowOf[top]).And.Contain(rowOf[bottom]);
+        _sut.Layers.Should().NotContain(rowOf[middle]);
+        _sut.Layers.Single(r => r.Layer == added).Should().NotBeNull();
+        resets.Should().Be(0);
     }
 
     [Fact]

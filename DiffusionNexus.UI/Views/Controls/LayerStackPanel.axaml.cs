@@ -115,36 +115,21 @@ public partial class LayerStackPanel : UserControl
     /// the next selection itself.
     /// </summary>
     /// <remarks>
-    /// A pick reaches the host on the next dispatcher turn, not from inside this handler. The host may
-    /// answer a pick by rebuilding its rows (the editor does when the pick commits a pending
-    /// Move/Transform), and changing the collection while the ListBox is inside its own selection change
-    /// makes Avalonia throw; the binding swallows the exception and the rows stay half rebuilt.
+    /// A pick is relayed synchronously, so a host must keep its row objects while it handles one: changing
+    /// <see cref="Items"/> from inside the ListBox's selection change makes Avalonia throw, and a binding
+    /// swallows that. Both hosts keep their rows (the canvas mirrors its frames incrementally, the editor's
+    /// sync keeps the row of every layer still in the stack).
     /// </remarks>
     private void OnListSelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         if (LayerList.SelectedItem is { } picked)
         {
-            Dispatcher.UIThread.Post(() => RelayPick(picked));
+            SelectedItem = picked;
             return;
         }
 
         // Posted: the ListBox is still inside its own selection change and would undo an immediate set.
         ReconcileLater();
-    }
-
-    private void RelayPick(object picked)
-    {
-        // A later pick, or a deselect, superseded this one.
-        if (!ReferenceEquals(LayerList.SelectedItem, picked))
-            return;
-
-        SelectedItem = picked;
-
-        // A host that answers with a different row does so inside this binding write-back, where Avalonia
-        // ignores the source's change notification, so the panel would keep the picked row. Read the host's
-        // value again now that the write-back is over.
-        BindingOperations.GetBindingExpressionBase(this, SelectedItemProperty)?.UpdateTarget();
-        Reconcile();
     }
 
     /// <summary>On the next dispatcher turn, <see cref="Reconcile"/>.</summary>
@@ -202,26 +187,46 @@ public partial class LayerStackPanel : UserControl
     }
 
     /// <summary>
-    /// Clicking or tabbing elsewhere commits. Focus is left where the user put it: pulling it back to the
-    /// list would send their typing to the layer list instead of the prompt they just clicked.
+    /// Clicking or tabbing elsewhere commits, onto the row's own layer. Focus is left where the user put
+    /// it: pulling it back to the list would send their typing to the layer list instead of the prompt
+    /// they just clicked. This also runs when the box is taken away under the user (its row left the
+    /// list), which leaves focus nowhere; <see cref="TakeTheKeyboardIfNobodyHasIt"/> covers that.
     /// </summary>
     private void OnRenameLostFocus(object? sender, RoutedEventArgs e)
     {
         if (sender is TextBox { IsVisible: true } editor)
             EndRename(editor, commit: true, refocusList: false);
+
+        Dispatcher.UIThread.Post(TakeTheKeyboardIfNobodyHasIt);
     }
 
     /// <summary>
-    /// The row's container was handed to another layer while a rename was open (the ListBox recycles
-    /// containers when its items are rebuilt, as the editor's sync does). The typed text belongs to the
-    /// old layer, so cancel rather than commit it onto the new one.
+    /// The row's container was cleared or handed to another layer while a rename was open (the host
+    /// replaced the list, or the row was recycled). The typed text belongs to the old layer, so cancel
+    /// rather than commit it onto another one.
     /// </summary>
     private void OnRenameDataContextChanged(object? sender, EventArgs e)
     {
-        // Hiding a focused TextBox does not move focus off it, so typing would vanish into the hidden box
-        // (and the canvas leaves every key to a focused TextBox). Give the list the keyboard back then.
         if (sender is TextBox { IsVisible: true } editor)
-            EndRename(editor, commit: false, refocusList: editor.IsKeyboardFocusWithin);
+        {
+            EndRename(editor, commit: false, refocusList: false);
+            Dispatcher.UIThread.Post(TakeTheKeyboardIfNobodyHasIt);
+        }
+    }
+
+    /// <summary>
+    /// Run on the turn after a rename box lost the keyboard. If the user gave it to something (a click on
+    /// the prompt or the canvas, Tab) it stays there. If nothing has it, the box was taken away under the
+    /// user and keys would reach no control until they clicked somewhere, so the list takes it.
+    /// </summary>
+    private void TakeTheKeyboardIfNobodyHasIt()
+    {
+        if (TopLevel.GetTopLevel(this)?.FocusManager is { } focus
+            && focus.GetFocusedElement() is null
+            && LayerList.IsEffectivelyVisible)
+        {
+            LayerList.Focus();
+        }
     }
 
     private void EndRename(TextBox editor, bool commit, bool refocusList = true)
@@ -229,7 +234,8 @@ public partial class LayerStackPanel : UserControl
         if (!editor.IsVisible)
             return;
 
-        // Hide first: moving focus away below raises LostFocus, which must find nothing left to commit.
+        // Hide first. Hiding the focused box clears focus and raises LostFocus right here, and the LostFocus
+        // handler must find the box already hidden so it does not commit a second time.
         editor.IsVisible = false;
         if (editor.Parent is Panel cell)
         {
@@ -244,7 +250,8 @@ public partial class LayerStackPanel : UserControl
                 item.Name = name;
         }
 
-        // Enter and Escape: the user is still in the panel, so keep the keyboard in the list.
+        // Focus is now nowhere. Enter and Escape: the user is still in the panel, so the list takes the
+        // keyboard back and Up/Down keep working.
         if (refocusList)
             LayerList.Focus();
     }

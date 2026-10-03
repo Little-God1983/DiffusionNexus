@@ -46,7 +46,7 @@ public static class LayerStackNaming
         if (proposed is null)
             return current;
 
-        var cleaned = new string(proposed.Select(c => char.IsControl(c) ? ' ' : c).ToArray()).Trim();
+        var cleaned = WithoutLoneSurrogates(new string(proposed.Select(c => char.IsControl(c) ? ' ' : c).ToArray())).Trim();
         if (cleaned.Length == 0)
             return current;
 
@@ -57,5 +57,32 @@ public static class LayerStackNaming
         // a broken character on screen and invalid UTF-8 in the TIFF layer names and the logs.
         var length = char.IsHighSurrogate(cleaned[MaxLength - 1]) ? MaxLength - 1 : MaxLength;
         return cleaned[..length].TrimEnd();
+    }
+
+    /// <summary>
+    /// Drops any UTF-16 surrogate that is not half of a pair. Text can arrive with one at any length (a
+    /// text box that cuts a paste at its own limit cuts by code unit), and a lone half is a broken
+    /// character on screen and invalid UTF-8 in the TIFF layer names and the logs.
+    /// </summary>
+    private static string WithoutLoneSurrogates(string text)
+    {
+        if (!text.Any(char.IsSurrogate))
+            return text;
+
+        var kept = new System.Text.StringBuilder(text.Length);
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (char.IsHighSurrogate(text[i]) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
+            {
+                kept.Append(text[i]).Append(text[i + 1]);
+                i++;
+            }
+            else if (!char.IsSurrogate(text[i]))
+            {
+                kept.Append(text[i]);
+            }
+        }
+
+        return kept.ToString();
     }
 }
