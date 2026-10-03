@@ -44,6 +44,15 @@ public static class Krea2WorkflowPatcher
     /// <summary>Injected <c>VAEEncode</c> turning that region into the sampler's starting latent.</summary>
     private const string InjectedVaeEncodeNodeId = "9002";
 
+    /// <summary>Injected <c>LoadImage</c> holding the inpaint mask (white = repaint, black = keep).</summary>
+    private const string InjectedMaskLoadNodeId = "9003";
+
+    /// <summary>Injected <c>ImageToMask</c> reading the mask PNG's red channel as a mask.</summary>
+    private const string InjectedImageToMaskNodeId = "9004";
+
+    /// <summary>Injected <c>SetLatentNoiseMask</c> confining the sampler to the mask.</summary>
+    private const string InjectedNoiseMaskNodeId = "9005";
+
     /// <summary>Output prefix used for canvas generations inside the engine's output folder.</summary>
     private const string CanvasFilenamePrefix = "DiffusionNexus/Canvas";
 
@@ -86,13 +95,24 @@ public static class Krea2WorkflowPatcher
     /// than naming a loader node, so re-wiring the template's VAE does not silently break this path.
     /// <c>EmptySD3LatentImage</c> then becomes unreachable and ComfyUI never executes it — the same trick
     /// the size patch above uses to strand the resolution selector.
+    /// <para>
+    /// <b>Inpaint.</b> Passing <paramref name="maskImageFileName"/> as well injects a <c>LoadImage</c>, an
+    /// <c>ImageToMask</c> (red channel; the canvas writes an opaque grey PNG) and a
+    /// <c>SetLatentNoiseMask</c> between the encoded region and the sampler, so the sampler only denoises
+    /// where the mask is white and a feathered edge blends. All three are core ComfyUI types too. A mask
+    /// without an init image is refused: there would be nothing outside the mask to keep.
+    /// </para>
     /// </remarks>
+    /// <param name="maskImageFileName">
+    /// The name ComfyUI stored the uploaded inpaint mask under, or null for no mask.
+    /// </param>
     public static string Patch(
         string templateJson,
         DiffusionRequest request,
         long seed,
         string? ggufFileName,
-        string? initImageFileName = null)
+        string? initImageFileName = null,
+        string? maskImageFileName = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(templateJson);
         ArgumentNullException.ThrowIfNull(request);
@@ -120,8 +140,17 @@ public static class Krea2WorkflowPatcher
 
         Inputs(graph, SaveImageNodeId)["filename_prefix"] = CanvasFilenamePrefix;
 
-        if (!string.IsNullOrWhiteSpace(initImageFileName))
-            ApplyImageToImage(graph, sampler, initImageFileName, request.InitImage?.Strength ?? 1.0f);
+        var hasInit = !string.IsNullOrWhiteSpace(initImageFileName);
+        var hasMask = !string.IsNullOrWhiteSpace(maskImageFileName);
+        if (hasMask && !hasInit)
+            throw new InvalidOperationException(
+                "An inpaint mask needs an image to image run: without an init image there is nothing outside the mask to keep.");
+
+        if (hasInit)
+            ApplyImageToImage(graph, sampler, initImageFileName!, request.InitImage?.Strength ?? 1.0f);
+
+        if (hasMask)
+            ApplyMask(graph, sampler, maskImageFileName!);
 
         return graph.ToJsonString(new JsonSerializerOptions { WriteIndented = false });
     }
@@ -165,6 +194,54 @@ public static class Krea2WorkflowPatcher
 
         sampler["latent_image"] = new JsonArray(InjectedVaeEncodeNodeId, 0);
         sampler["denoise"] = Math.Clamp(strength, 0f, 1f);
+    }
+
+    /// <summary>
+    /// Confines the image-to-image run to the mask: the encoded region gets a noise mask before it
+    /// reaches the sampler. Runs after <see cref="ApplyImageToImage"/>, whose encoder it wraps.
+    /// </summary>
+    private static void ApplyMask(JsonObject graph, JsonObject sampler, string maskImageFileName)
+    {
+        if (graph[InjectedMaskLoadNodeId] is not null
+            || graph[InjectedImageToMaskNodeId] is not null
+            || graph[InjectedNoiseMaskNodeId] is not null)
+        {
+            throw new InvalidOperationException(
+                $"The workflow template already defines node '{InjectedMaskLoadNodeId}', " +
+                $"'{InjectedImageToMaskNodeId}' or '{InjectedNoiseMaskNodeId}'. The asset and the patcher are out of sync.");
+        }
+
+        graph[InjectedMaskLoadNodeId] = new JsonObject
+        {
+            ["class_type"] = "LoadImage",
+            ["inputs"] = new JsonObject
+            {
+                ["image"] = maskImageFileName,
+                ["upload"] = "image",
+            },
+        };
+
+        graph[InjectedImageToMaskNodeId] = new JsonObject
+        {
+            ["class_type"] = "ImageToMask",
+            ["inputs"] = new JsonObject
+            {
+                ["image"] = new JsonArray(InjectedMaskLoadNodeId, 0),
+                ["channel"] = "red",
+            },
+        };
+
+        graph[InjectedNoiseMaskNodeId] = new JsonObject
+        {
+            ["class_type"] = "SetLatentNoiseMask",
+            ["inputs"] = new JsonObject
+            {
+                ["samples"] = new JsonArray(InjectedVaeEncodeNodeId, 0),
+                ["mask"] = new JsonArray(InjectedImageToMaskNodeId, 0),
+            },
+        };
+
+        sampler["latent_image"] = new JsonArray(InjectedNoiseMaskNodeId, 0);
     }
 
     private static JsonObject Inputs(JsonObject graph, string nodeId)

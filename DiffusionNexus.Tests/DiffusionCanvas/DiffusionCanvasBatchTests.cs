@@ -17,7 +17,11 @@ public class DiffusionCanvasBatchTests
 {
     private static DiffusionCanvasViewModel Canvas(FakeDiffusionBackend backend)
     {
-        var vm = new DiffusionCanvasViewModel(backend) { PromptText = "a lighthouse at dusk" };
+        var vm = new DiffusionCanvasViewModel(backend)
+        {
+            PromptText = "a lighthouse at dusk",
+            ScratchDirectory = CanvasScratch.NewDirectory(),
+        };
         vm.SelectedModel.Should().NotBeNull("the engine catalog populates the dropdown on selection");
 
         // There is no Avalonia platform in this project, so a real Bitmap cannot be decoded. The view
