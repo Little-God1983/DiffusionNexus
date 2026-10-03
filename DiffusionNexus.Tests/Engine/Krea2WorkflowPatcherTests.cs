@@ -263,11 +263,101 @@ public class Krea2WorkflowPatcherTests
         act.Should().Throw<InvalidOperationException>().WithMessage("*out of sync*");
     }
 
+    // ────────────────────── Inpaint (issue #595: the mask layer) ──────────────────────
+
+    private static DiffusionRequest InpaintRequest(float strength = 0.75f)
+        => new()
+        {
+            ModelKey = "krea2",
+            Prompt = "a lighthouse at dusk",
+            Width = 1024,
+            Height = 1024,
+            InitImage = new DiffusionReferenceImage(@"C:\scratch\region.png", strength),
+            MaskImage = new DiffusionReferenceImage(@"C:\scratch\mask.png"),
+        };
+
+    private static string PatchInpaint(float strength = 0.75f) => Krea2WorkflowPatcher.Patch(
+        Template, InpaintRequest(strength), seed: 7, ggufFileName: null,
+        initImageFileName: "region.png", maskImageFileName: "mask_00001.png");
+
+    [Fact]
+    public void Patch_WithAMaskLoadsItAndReadsTheRedChannelAsTheMask()
+    {
+        var graph = JsonDocument.Parse(PatchInpaint()).RootElement;
+
+        var load = graph.GetProperty("9003");
+        load.GetProperty("class_type").GetString().Should().Be("LoadImage");
+        load.GetProperty("inputs").GetProperty("image").GetString().Should().Be("mask_00001.png");
+
+        var toMask = graph.GetProperty("9004");
+        toMask.GetProperty("class_type").GetString().Should().Be("ImageToMask");
+        toMask.GetProperty("inputs").GetProperty("image")[0].GetString().Should().Be("9003");
+        toMask.GetProperty("inputs").GetProperty("channel").GetString().Should().Be("red");
+    }
+
+    [Fact]
+    public void Patch_WithAMaskPutsANoiseMaskBetweenTheEncodedRegionAndTheSampler()
+    {
+        var patched = PatchInpaint();
+        var graph = JsonDocument.Parse(patched).RootElement;
+
+        var noiseMask = graph.GetProperty("9005");
+        noiseMask.GetProperty("class_type").GetString().Should().Be("SetLatentNoiseMask");
+        noiseMask.GetProperty("inputs").GetProperty("samples")[0].GetString().Should().Be("9002");
+        noiseMask.GetProperty("inputs").GetProperty("mask")[0].GetString().Should().Be("9004");
+
+        Inputs(patched, "37").GetProperty("latent_image")[0].GetString().Should().Be("9005",
+            "the sampler only denoises where the mask is white");
+    }
+
+    [Fact]
+    public void Patch_WithAMaskTakesDenoiseFromTheInitImageStrength()
+    {
+        Inputs(PatchInpaint(strength: 0.9f), "37").GetProperty("denoise").GetDouble()
+            .Should().BeApproximately(0.9, 0.0001);
+    }
+
+    [Fact]
+    public void Patch_WithoutAMaskInjectsNoMaskNodes()
+    {
+        var patched = Krea2WorkflowPatcher.Patch(
+            Template, ImageToImageRequest(), seed: 7, ggufFileName: null, initImageFileName: "r.png");
+
+        var graph = JsonDocument.Parse(patched).RootElement;
+        graph.TryGetProperty("9003", out _).Should().BeFalse();
+        graph.TryGetProperty("9004", out _).Should().BeFalse();
+        graph.TryGetProperty("9005", out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public void Patch_RefusesAMaskWithoutAnInitImage()
+    {
+        // A mask says "keep the rest"; with no image there is no rest to keep, and dropping the mask
+        // silently would repaint everything the user protected.
+        var act = () => Krea2WorkflowPatcher.Patch(
+            Template, Request(), seed: 7, ggufFileName: null, initImageFileName: null, maskImageFileName: "m.png");
+
+        act.Should().Throw<InvalidOperationException>().WithMessage("*mask*image to image*");
+    }
+
+    [Fact]
+    public void Patch_ThrowsWhenTheTemplateAlreadyUsesTheInjectedMaskNodeIds()
+    {
+        var colliding = Template.Replace("\"65\":", "\"9005\":");
+
+        var act = () => Krea2WorkflowPatcher.Patch(
+            colliding, InpaintRequest(), seed: 7, ggufFileName: null,
+            initImageFileName: "r.png", maskImageFileName: "m.png");
+
+        act.Should().Throw<InvalidOperationException>().WithMessage("*out of sync*");
+    }
+
     [Fact]
     public void ImageToImageNeedsNoAdditionalCustomNodes()
     {
-        // LoadImage and VAEEncode are core ComfyUI types, so the engine's readiness check -- and the
-        // Krea 2 Turbo workload it tells users to install -- stay exactly as they were.
+        // LoadImage, VAEEncode, ImageToMask and SetLatentNoiseMask are core ComfyUI types, so the engine's
+        // readiness check -- and the Krea 2 Turbo workload it tells users to install -- stay exactly as
+        // they were.
         Krea2WorkflowPatcher.RequiredCustomNodeTypes.Should()
             .BeEquivalentTo(["LoaderGGUF", "Power Lora Loader (rgthree)", "AI2GoResolutionSelector"]);
     }

@@ -56,10 +56,10 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
 
     /// <inheritdoc />
     /// <remarks>
-    /// Steps, guidance, sampler, scheduler, seed, LoRAs and the negative prompt all reach the native
-    /// generator. The three gaps are real native limits rather than unwired plumbing: this build has no
-    /// ControlNet path for DiT models, no mask parameter on the generation call, and no cancel hook
-    /// inside <c>GenerateImage</c> — the token can only be observed between phases.
+    /// Steps, guidance, sampler, scheduler, seed, LoRAs, the negative prompt and an inpaint mask all reach
+    /// the native generator. The two gaps are real native limits rather than unwired plumbing: this build
+    /// has no ControlNet path for DiT models, and no cancel hook inside <c>GenerateImage</c> — the token
+    /// can only be observed between phases.
     /// </remarks>
     public BackendCapabilities Capabilities => LocalCapabilities;
 
@@ -72,8 +72,6 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
     {
         [BackendFeature.ControlNet] =
             "Diffusion Nexus Core has no ControlNet path for these models. Switch to the Diffusion Nexus Engine to use control layers.",
-        [BackendFeature.Inpainting] =
-            "Diffusion Nexus Core cannot restrict a generation to a mask. Switch to the Diffusion Nexus Engine for inpainting.",
         [BackendFeature.MidSampleInterrupt] =
             "Cancelling stops the batch, but the image already sampling finishes on the GPU before it is discarded.",
     });
@@ -243,7 +241,7 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
         {
             var initImage = HPPH.SkiaSharp.ImageHelper.LoadImage(init.FilePath);
             genParams = SDNet.ImageGenerationParameter.ImageToImage(req.Prompt, initImage)
-                .WithStrength(init.Strength);
+                .WithStrength(InitStrengthFor(req));
         }
         else
         {
@@ -304,10 +302,16 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
         if (!string.IsNullOrWhiteSpace(req.NegativePrompt))
             genParams = genParams.WithNegativePrompt(req.NegativePrompt);
 
-        // TODO(v2-controlnet): apply req.ControlNets via .WithControlNet(image, strength).
-        // TODO(v2-inpaint):    apply req.MaskImage via .WithMaskImage(...) for inpaint flows.
-        // Both are reported as unsupported through Capabilities, so the UI disables their controls
-        // with a reason instead of offering something this backend drops.
+        // Inpaint mask (white = repaint, black = keep), alongside the init image above. Each step blends
+        // the denoised latent back onto the encoded init image outside the mask, so a feathered edge
+        // blends and the rest of the region is kept. ValidateRequest has already refused a mask without
+        // an init image.
+        if (HasMask(req))
+            genParams = genParams.WithMaskImage(HPPH.SkiaSharp.ImageHelper.LoadImage(req.MaskImage!.FilePath));
+
+        // TODO(v2-controlnet): apply req.ControlNets via .WithControlNet(image, strength). Reported as
+        // unsupported through Capabilities, so the UI disables the control with a reason instead of
+        // offering something this backend drops.
 
         var image = model.GenerateImage(genParams)
             ?? throw new InvalidOperationException("Native generator returned a null image.");
@@ -358,7 +362,23 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
         _ => SDNet.Scheduler.Simple,
     };
 
-    private static void ValidateRequest(DiffusionRequest req, ModelDescriptor d)
+    /// <summary>
+    /// Highest denoise strength a masked run is given. stable-diffusion.cpp does not encode the init
+    /// image at strength 1.0, which would leave the area outside the mask nothing to blend back onto.
+    /// </summary>
+    internal const float MaxMaskedStrength = 0.99f;
+
+    private static bool HasMask(DiffusionRequest req) =>
+        req.MaskImage is { } mask && !string.IsNullOrWhiteSpace(mask.FilePath);
+
+    /// <summary>The init image's strength as sent to the native generator: capped for a masked run.</summary>
+    internal static float InitStrengthFor(DiffusionRequest req)
+    {
+        var strength = req.InitImage?.Strength ?? 1.0f;
+        return HasMask(req) ? Math.Min(strength, MaxMaskedStrength) : strength;
+    }
+
+    internal static void ValidateRequest(DiffusionRequest req, ModelDescriptor d)
     {
         if (string.IsNullOrWhiteSpace(req.Prompt))
             throw new ArgumentException("Prompt is required.", nameof(req));
@@ -367,6 +387,13 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
         if (req.Width % d.DimensionAlignment != 0 || req.Height % d.DimensionAlignment != 0)
             throw new ArgumentException(
                 $"Width and height must be multiples of {d.DimensionAlignment} for {d.DisplayName}.", nameof(req));
+
+        // A mask says "keep the rest". With no init image there is no rest, and dropping the mask silently
+        // would repaint everything the user protected.
+        if (HasMask(req) && (req.InitImage is null || string.IsNullOrWhiteSpace(req.InitImage.FilePath)))
+            throw new ArgumentException(
+                "An inpaint mask needs an image to image run: without an init image there is nothing outside the mask to keep.",
+                nameof(req));
     }
 
     private static void TryWrite(Channel<DiffusionStreamItem> channel, DiffusionProgress progress)
