@@ -1,6 +1,5 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
-using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.ImageEditor;
@@ -15,13 +14,6 @@ public partial class LayerPanelViewModel : ObservableObject
 {
     private readonly Func<bool> _hasImage;
     private readonly Action<string>? _trace;
-
-    /// <summary>
-    /// True while <see cref="SyncLayers"/> rebuilds <see cref="Layers"/>. The panel's ListBox writes null
-    /// into <see cref="SelectedLayer"/> when its items are cleared; accepting that mid-sync would clear
-    /// the editor core's active layer before the sync reads it.
-    /// </summary>
-    private bool _isSyncing;
 
     /// <summary>
     /// Last traced (name, locked) per row. LayerViewModel raises each change twice (its own setter plus
@@ -45,8 +37,8 @@ public partial class LayerPanelViewModel : ObservableObject
         MoveLayerUpCommand = new RelayCommand(ExecuteMoveLayerUp, () => _hasImage() && SelectedLayer is not null && CanMoveLayerUp);
         MoveLayerDownCommand = new RelayCommand(ExecuteMoveLayerDown, () => _hasImage() && SelectedLayer is not null && CanMoveLayerDown);
         MergeLayerDownCommand = new RelayCommand(ExecuteMergeLayerDown, () => _hasImage() && SelectedLayer is not null && CanMergeDown);
-        MergeVisibleLayersCommand = new RelayCommand(ExecuteMergeVisibleLayers, () => _hasImage() && Layers.Count > 1);
-        FlattenLayersCommand = new RelayCommand(ExecuteFlattenLayers, () => _hasImage() && Layers.Count > 1);
+        MergeVisibleLayersCommand = new RelayCommand(ExecuteMergeVisibleLayers, () => _hasImage() && Layers.Count > 1 && !HasLockedLayers);
+        FlattenLayersCommand = new RelayCommand(ExecuteFlattenLayers, () => _hasImage() && Layers.Count > 1 && !HasLockedLayers);
         SaveLayeredTiffCommand = new AsyncRelayCommand(ExecuteSaveLayeredTiffAsync, () => _hasImage());
     }
 
@@ -72,25 +64,16 @@ public partial class LayerPanelViewModel : ObservableObject
         set => SetProperty(ref _layers, value);
     }
 
-    /// <summary>Currently selected layer.</summary>
+    /// <summary>
+    /// Currently selected layer. A null clears the editor core's active layer, so strokes go nowhere; the
+    /// layer panel never writes one on its own (a ListBox's Ctrl+click, clear or detach deselect stays
+    /// inside <c>LayerStackPanel</c>), and <see cref="SyncLayers"/> only sets null for an empty stack.
+    /// </summary>
     public LayerViewModel? SelectedLayer
     {
         get => _selectedLayer;
         set
         {
-            if (_isSyncing && value is null)
-                return;
-
-            // Outside a sync the ListBox still writes null on a Ctrl+click of the selected row and when
-            // the view detaches on a tab switch. Neither is the user deselecting, and accepting it would
-            // null the editor core's active layer so strokes go nowhere. Tell the view to re-select, on
-            // the next dispatcher turn: Avalonia ignores a source update raised inside its own write-back.
-            if (value is null && _selectedLayer is not null && _layers.Contains(_selectedLayer))
-            {
-                Dispatcher.UIThread.Post(() => OnPropertyChanged(nameof(SelectedLayer)));
-                return;
-            }
-
             if (SetProperty(ref _selectedLayer, value))
             {
                 foreach (var layer in _layers)
@@ -125,16 +108,25 @@ public partial class LayerPanelViewModel : ObservableObject
         }
     }
 
-    /// <summary>Whether the selected layer can be merged down.</summary>
+    /// <summary>
+    /// Whether the selected layer can be merged down. Not when it is locked: merging removes it, and lock
+    /// protects a layer from removal. Merging into a locked layer below is allowed; that layer stays.
+    /// </summary>
     public bool CanMergeDown
     {
         get
         {
-            if (_selectedLayer is null) return false;
+            if (_selectedLayer is null || _selectedLayer.IsLocked) return false;
             var index = _layers.IndexOf(_selectedLayer);
             return index < _layers.Count - 1;
         }
     }
+
+    /// <summary>
+    /// Whether any layer is locked. Merge Visible and Flatten All replace every layer with one, so they
+    /// are unavailable while a locked layer would be removed by them.
+    /// </summary>
+    public bool HasLockedLayers => _layers.Any(l => l.IsLocked && !l.Layer.IsInpaintMask);
 
     #endregion
 
@@ -197,39 +189,30 @@ public partial class LayerPanelViewModel : ObservableObject
     /// </summary>
     public void SyncLayers(LayerStack? layerStack)
     {
-        // Read before clearing: clearing can trigger a null selection write-back (see _isSyncing).
         var active = layerStack?.ActiveLayer;
         LayerViewModel? target = null;
 
-        _isSyncing = true;
-        try
+        foreach (var vm in _layers)
         {
-            foreach (var vm in _layers)
-            {
-                vm.PropertyChanged -= OnRowPropertyChanged;
-                vm.Dispose();
-            }
-            _layers.Clear();
-            _traced.Clear();
-
-            if (layerStack is not null)
-            {
-                for (var i = layerStack.Count - 1; i >= 0; i--)
-                {
-                    var vm = new LayerViewModel(layerStack[i], OnLayerSelectionRequested, OnLayerDeleteRequested);
-                    vm.PropertyChanged += OnRowPropertyChanged;
-                    _traced[vm] = (vm.Name, vm.IsLocked);
-                    _layers.Add(vm);
-                }
-
-                target = active is not null
-                    ? _layers.FirstOrDefault(vm => vm.Layer == active)
-                    : _layers.FirstOrDefault();
-            }
+            vm.PropertyChanged -= OnRowPropertyChanged;
+            vm.Dispose();
         }
-        finally
+        _layers.Clear();
+        _traced.Clear();
+
+        if (layerStack is not null)
         {
-            _isSyncing = false;
+            for (var i = layerStack.Count - 1; i >= 0; i--)
+            {
+                var vm = new LayerViewModel(layerStack[i], OnLayerSelectionRequested, OnLayerDeleteRequested);
+                vm.PropertyChanged += OnRowPropertyChanged;
+                _traced[vm] = (vm.Name, vm.IsLocked);
+                _layers.Add(vm);
+            }
+
+            target = active is not null
+                ? _layers.FirstOrDefault(vm => vm.Layer == active)
+                : _layers.FirstOrDefault();
         }
 
         SelectedLayer = target;
@@ -272,6 +255,7 @@ public partial class LayerPanelViewModel : ObservableObject
         OnPropertyChanged(nameof(CanMoveLayerUp));
         OnPropertyChanged(nameof(CanMoveLayerDown));
         OnPropertyChanged(nameof(CanMergeDown));
+        OnPropertyChanged(nameof(HasLockedLayers));
     }
 
     #endregion
@@ -292,6 +276,14 @@ public partial class LayerPanelViewModel : ObservableObject
     private void ExecuteDeleteLayer()
     {
         if (SelectedLayer is null) return;
+
+        // Also reached from a row's own delete callback, which bypasses the command's CanExecute.
+        if (SelectedLayer.IsLocked)
+        {
+            _trace?.Invoke($"Refused to delete layer '{SelectedLayer.Name}': it is locked.");
+            return;
+        }
+
         DeleteLayerRequested?.Invoke(this, SelectedLayer.Layer);
     }
 
@@ -315,17 +307,19 @@ public partial class LayerPanelViewModel : ObservableObject
 
     private void ExecuteMergeLayerDown()
     {
-        if (SelectedLayer is null) return;
+        if (SelectedLayer is null || !CanMergeDown) return;
         MergeLayerDownRequested?.Invoke(this, SelectedLayer.Layer);
     }
 
     private void ExecuteMergeVisibleLayers()
     {
+        if (HasLockedLayers) return;
         MergeVisibleLayersRequested?.Invoke(this, EventArgs.Empty);
     }
 
     private void ExecuteFlattenLayers()
     {
+        if (HasLockedLayers) return;
         FlattenLayersRequested?.Invoke(this, EventArgs.Empty);
     }
 

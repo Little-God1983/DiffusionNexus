@@ -746,9 +746,10 @@ public class DiffusionCanvasSurface : Control
     {
         foreach (var raster in EnumerateRasters())
         {
-            // Hidden means hidden: no pixels and no outline. The compositor applies the same rule, so the
-            // canvas never shows something the model will not get, or the reverse.
-            if (!raster.IsVisible)
+            // Hidden means hidden: no pixels and no outline. A layer too faint to count (below 4 %) is
+            // treated the same, because the hit test and the compositor skip it too: drawing its outline
+            // would invite a right-click that lands on the layer underneath. One rule, IsShown, for all three.
+            if (!CanvasRegionCompositor.IsShown(raster))
                 continue;
 
             var screen = Viewport.WorldToScreen(raster.WorldRect);

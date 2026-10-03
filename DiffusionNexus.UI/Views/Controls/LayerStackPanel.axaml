@@ -14,6 +14,8 @@
   <!-- Bound through #Root, not $parent[...]: a $parent binding goes null while the view is detached
        (navigating away), which empties the ListBox and makes it drop its selection; it does not
        re-select when the view comes back. #Root resolves through the name scope and survives that.
+       The ListBox's selection is deliberately not bound: code-behind relays it, so a null the ListBox
+       produces on its own never reaches the host (see LayerStackPanel.OnListSelectionChanged).
        Host buttons first, then the shared reorder/delete trio. The host owns every command, so each
        screen keeps its own rules (a locked layer cannot be deleted; the editor keeps its last layer). -->
   <DockPanel>
@@ -30,7 +32,6 @@
 
     <ListBox x:Name="LayerList"
              ItemsSource="{Binding #Root.Items}"
-             SelectedItem="{Binding #Root.SelectedItem, Mode=TwoWay}"
              MaxHeight="{Binding #Root.ListMaxHeight}"
              SelectionMode="Single"
              Background="#252525" CornerRadius="2" MinHeight="60"
@@ -56,7 +57,8 @@
               <TextBlock Classes="layerName" Text="{Binding Name}" FontSize="11" VerticalAlignment="Center"
                          TextTrimming="CharacterEllipsis" />
               <TextBox Classes="layerRename" IsVisible="False" FontSize="11" Padding="2,0" MinHeight="0"
-                       VerticalAlignment="Center" MaxLength="200" LostFocus="OnRenameLostFocus" />
+                       VerticalAlignment="Center" MaxLength="200" LostFocus="OnRenameLostFocus"
+                       DataContextChanged="OnRenameDataContextChanged" />
             </Panel>
 
             <ToggleButton Grid.Column="3" IsChecked="{Binding IsLocked, Mode=TwoWay}"

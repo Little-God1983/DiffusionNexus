@@ -298,38 +298,76 @@ public class LayerPanelViewModelTests
     }
 
     [Fact]
-    public void SyncLayers_IgnoresTheListBoxNullWriteBackAndKeepsTheActiveLayer()
+    public void ARowsOwnDeleteRefusesALockedLayer()
     {
+        // The row's DeleteCommand calls back into the panel and bypasses DeleteLayerCommand's CanExecute.
+        var trace = new List<string>();
+        var sut = new LayerPanelViewModel(hasImage: () => true, trace: trace.Add);
         var stack = new LayerStack(10, 10);
         stack.AddLayer("Bottom");
-        var top = stack.AddLayer("Top");
-        stack.AddLayer("Third");
-        stack.ActiveLayer = top;
+        stack.AddLayer("Top");
+        sut.SyncLayers(stack);
+        sut.SelectedLayer = sut.Layers[0];
+        sut.Layers[0].IsLocked = true;
+        var requested = false;
+        sut.DeleteLayerRequested += (_, _) => requested = true;
 
-        // A first sync leaves a layer selected, as in the running editor. Without it the null write-back
-        // below is a no-op (null to null) and the test proves nothing.
+        sut.Layers[0].DeleteCommand.Execute(null);
+
+        requested.Should().BeFalse();
+        trace.Should().Contain("Refused to delete layer 'Top': it is locked.");
+    }
+
+    [Fact]
+    public void MergeDownIsDisabledForALockedLayer()
+    {
+        // Merging down removes the merged layer, and lock protects a layer from removal.
+        var stack = new LayerStack(10, 10);
+        stack.AddLayer("Bottom");
+        stack.AddLayer("Top");
         _sut.SyncLayers(stack);
-        var raisedNull = false;
-        _sut.LayerSelectionChanged += (_, layer) =>
-        {
-            if (layer is null)
-            {
-                raisedNull = true;
-                stack.ActiveLayer = null;   // what ImageEditView's handler does with a null selection
-            }
-        };
+        _sut.SelectedLayer = _sut.Layers[0];
+        _sut.MergeLayerDownCommand.CanExecute(null).Should().BeTrue();
 
-        // Mimic the ListBox: when its ItemsSource is cleared it writes null into SelectedItem.
-        _sut.Layers.CollectionChanged += (_, e) =>
-        {
-            if (e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Reset)
-                _sut.SelectedLayer = null;
-        };
+        _sut.Layers[0].IsLocked = true;
 
+        _sut.MergeLayerDownCommand.CanExecute(null).Should().BeFalse();
+    }
+
+    [Fact]
+    public void MergingIntoALockedLayerBelowIsAllowed()
+    {
+        // The locked layer below stays in the stack; only the unlocked one on top goes.
+        var stack = new LayerStack(10, 10);
+        stack.AddLayer("Bottom");
+        stack.AddLayer("Top");
         _sut.SyncLayers(stack);
+        _sut.Layers[1].IsLocked = true;
+        _sut.SelectedLayer = _sut.Layers[0];
 
-        raisedNull.Should().BeFalse("a sync is not the user clearing the selection");
-        _sut.SelectedLayer!.Layer.Should().BeSameAs(top);
+        _sut.MergeLayerDownCommand.CanExecute(null).Should().BeTrue();
+    }
+
+    [Fact]
+    public void MergeVisibleAndFlattenAreDisabledWhileAnyLayerIsLocked()
+    {
+        // Both replace every layer with one, so a locked layer anywhere would be removed.
+        var stack = new LayerStack(10, 10);
+        stack.AddLayer("Bottom");
+        stack.AddLayer("Top");
+        _sut.SyncLayers(stack);
+        _sut.SelectedLayer = _sut.Layers[0];
+        _sut.FlattenLayersCommand.CanExecute(null).Should().BeTrue();
+        _sut.MergeVisibleLayersCommand.CanExecute(null).Should().BeTrue();
+
+        _sut.Layers[1].IsLocked = true;
+
+        _sut.FlattenLayersCommand.CanExecute(null).Should().BeFalse();
+        _sut.MergeVisibleLayersCommand.CanExecute(null).Should().BeFalse();
+
+        _sut.Layers[1].IsLocked = false;
+
+        _sut.FlattenLayersCommand.CanExecute(null).Should().BeTrue();
     }
 
     [Fact]
@@ -360,27 +398,4 @@ public class LayerPanelViewModelTests
     }
 
     #endregion
-
-    [Fact]
-    public void ANullFromTheViewOutsideASyncKeepsTheActiveLayer()
-    {
-        // Ctrl+click on the selected row, or the view detaching on a tab switch, makes the ListBox write
-        // null. Accepting it would null the editor core's active layer and strokes would go nowhere.
-        var stack = new LayerStack(10, 10);
-        stack.AddLayer("Bottom");
-        var top = stack.AddLayer("Top");
-        _sut.SyncLayers(stack);
-        var raisedNull = false;
-        _sut.LayerSelectionChanged += (_, layer) => raisedNull |= layer is null;
-        var notified = false;
-        _sut.PropertyChanged += (_, e) => notified |= e.PropertyName == nameof(LayerPanelViewModel.SelectedLayer);
-
-        _sut.SelectedLayer = null;
-
-        raisedNull.Should().BeFalse();
-        _sut.SelectedLayer!.Layer.Should().BeSameAs(top);
-        notified.Should().BeFalse("Avalonia ignores a source update raised inside its own write-back");
-        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
-        notified.Should().BeTrue("the view must be told to re-select the row it just cleared");
-    }
 }

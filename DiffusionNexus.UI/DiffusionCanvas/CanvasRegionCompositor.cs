@@ -120,20 +120,15 @@ public static class CanvasRegionCompositor
                         (float)((source.WorldRect.Bottom - worldRegion.Y) * scaleY));
 
                     var src = new SKRect(0, 0, source.Bitmap.Width, source.Bitmap.Height);
-                    if (source.Opacity >= 1)
+
+                    // The paint's alpha scales the bitmap's, the same as the surface's PushOpacity, so a
+                    // half-transparent layer reaches the model as it looks on screen. At 255 it draws the
+                    // same pixels as no paint, so there is one draw path.
+                    using var paint = new SKPaint
                     {
-                        canvas.DrawBitmap(source.Bitmap, src, dest);
-                    }
-                    else
-                    {
-                        // The paint's alpha scales the bitmap's, the same as the surface's PushOpacity, so a
-                        // half-transparent layer reaches the model as it looks on screen.
-                        using var paint = new SKPaint
-                        {
-                            Color = SKColors.White.WithAlpha((byte)Math.Round(255 * source.Opacity)),
-                        };
-                        canvas.DrawBitmap(source.Bitmap, src, dest, paint);
-                    }
+                        Color = SKColors.White.WithAlpha((byte)Math.Round(255 * Math.Clamp(source.Opacity, 0.0, 1.0))),
+                    };
+                    canvas.DrawBitmap(source.Bitmap, src, dest, paint);
                 }
             }
 

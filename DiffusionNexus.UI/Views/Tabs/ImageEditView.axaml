@@ -278,7 +278,7 @@
                                           MoveUpCommand="{Binding ImageEditor.LayerPanel.MoveLayerUpCommand}"
                                           MoveDownCommand="{Binding ImageEditor.LayerPanel.MoveLayerDownCommand}"
                                           DeleteCommand="{Binding ImageEditor.LayerPanel.DeleteLayerCommand}"
-                                          LockToolTip="Lock the layer: it cannot be moved, transformed or deleted"
+                                          LockToolTip="Lock the layer: the Move tool cannot move or transform it, and it cannot be deleted or merged away"
                                           ListMaxHeight="200">
                   <reusable:LayerStackPanel.LeadingTools>
                     <StackPanel Orientation="Horizontal" Spacing="2">
@@ -307,9 +307,13 @@
                 <!-- Merge/Flatten Options -->
                 <StackPanel Spacing="4">
                   <Button Content="Merge Down" Command="{Binding ImageEditor.LayerPanel.MergeLayerDownCommand}" 
-                          HorizontalAlignment="Stretch" Padding="6,3" FontSize="10"/>
+                          HorizontalAlignment="Stretch" Padding="6,3" FontSize="10"
+                          ToolTip.ShowOnDisabled="True"
+                          ToolTip.Tip="Merge the layer into the one below. Not available for a locked layer."/>
                   <Button Content="Flatten All" Command="{Binding ImageEditor.LayerPanel.FlattenLayersCommand}" 
-                          HorizontalAlignment="Stretch" Padding="6,3" FontSize="10"/>
+                          HorizontalAlignment="Stretch" Padding="6,3" FontSize="10"
+                          ToolTip.ShowOnDisabled="True"
+                          ToolTip.Tip="Combine every layer into one. Not available while a layer is locked."/>
                 </StackPanel>
               </StackPanel>
             </Border>

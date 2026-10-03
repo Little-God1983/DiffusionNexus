@@ -215,7 +215,11 @@ public partial class DiffusionCanvasView : UserControl
                 or Key.Home or Key.End or Key.PageUp or Key.PageDown,
 
             // The staging strip: its own arrow navigation does the same thing as ours, so let it.
-            ListBox => key is Key.Left or Key.Right or Key.Up or Key.Down or Key.Home or Key.End,
+            ListBox { Name: "StagingList" } => key is Key.Left or Key.Right or Key.Up or Key.Down or Key.Home or Key.End,
+
+            // The layer list is vertical and has no use for Left/Right, which stay staging Previous/Next
+            // (Enter and Escape on a rename put focus here).
+            ListBox => key is Key.Up or Key.Down or Key.Home or Key.End,
 
             // CheckBox before ToggleButton before Button: the first two derive from the last.
             CheckBox => key is Key.Space,

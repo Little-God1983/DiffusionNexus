@@ -1,7 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
-using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
@@ -57,24 +56,14 @@ public sealed partial class CanvasLayerStackViewModel : ObservableObject
 
     /// <summary>The layer the inspector edits and the surface outlines.</summary>
     /// <remarks>
-    /// A null is ignored while the selected layer is still on the canvas. The panel's ListBox writes null
-    /// into its two-way SelectedItem on a Ctrl+click of the selected row and when the view detaches
-    /// (navigating away clears its ItemsSource); neither is the user deselecting, and accepting it would
-    /// blank the inspector and drop the outline. The view is told to re-select instead, on the next
-    /// dispatcher turn: Avalonia ignores a source update raised inside its own write-back. Every path that
-    /// genuinely needs null — the layer was removed — runs after the layer has left the collection.
+    /// The panel never writes null here on its own (a ListBox's Ctrl+click or detach deselect stays inside
+    /// <c>LayerStackPanel</c>), so null means the stack chose it: the last layer has gone.
     /// </remarks>
     public GenerationFrameViewModel? SelectedLayer
     {
         get => _selectedLayer;
         set
         {
-            if (value is null && _selectedLayer is not null && _frames.Contains(_selectedLayer))
-            {
-                Dispatcher.UIThread.Post(() => OnPropertyChanged(nameof(SelectedLayer)));
-                return;
-            }
-
             if (SetProperty(ref _selectedLayer, value))
                 NotifyCommands();
         }
@@ -110,6 +99,9 @@ public sealed partial class CanvasLayerStackViewModel : ObservableObject
 
     /// <summary>
     /// Removes and disposes <paramref name="layer"/>. Returns false, and traces why, for a locked layer.
+    /// Returns false, and touches nothing, for a layer that is no longer on the canvas: the canvas's
+    /// right-click menu hands over the raster it captured when it opened, which may be gone by the time
+    /// Delete is picked, and disposing it twice or logging a deletion that did not happen is wrong.
     /// If the deleted layer was selected, the row that takes its place is selected, so the inspector
     /// does not go blank.
     /// </summary>
@@ -128,7 +120,9 @@ public sealed partial class CanvasLayerStackViewModel : ObservableObject
         var displayIndex = DisplayLayers.IndexOf(layer);
 
         // Detach before disposing: a bitmap still bound into the visual tree faults the render.
-        _frames.Remove(layer);
+        if (!_frames.Remove(layer))
+            return false;
+
         layer.Dispose();
 
         if (wasSelected)

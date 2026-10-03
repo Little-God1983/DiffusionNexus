@@ -203,6 +203,27 @@ public class CanvasLayerStackViewModelTests
     }
 
     [Fact]
+    public void Delete_OfALayerNoLongerOnTheCanvasDoesNothing()
+    {
+        // The right-click menu hands over the raster it captured when it opened; the layer can be gone
+        // (deleted from the panel, or cleared) by the time Delete is picked.
+        var stack = Create();
+        var a = Frame("a");
+        var b = Frame("b");
+        _frames.Add(a);
+        _frames.Add(b);
+        stack.SelectedLayer = b;
+        stack.Delete(a).Should().BeTrue();
+        _trace.Clear();
+
+        stack.Delete(a).Should().BeFalse();
+
+        _trace.Should().BeEmpty("no deletion happened");
+        stack.SelectedLayer.Should().BeSameAs(b);
+        _frames.Should().Equal(b);
+    }
+
+    [Fact]
     public void ClearUnlocked_KeepsLockedLayersAndReportsCounts()
     {
         var stack = Create();
@@ -268,25 +289,5 @@ public class CanvasLayerStackViewModelTests
         a.IsVisible = false;
 
         count.Should().Be(0);
-    }
-
-    [Fact]
-    public void ANullFromTheViewIsIgnoredWhileTheSelectedLayerIsStillOnTheCanvas()
-    {
-        // A ListBox writes null into its two-way SelectedItem on a Ctrl+click of the selected row and when
-        // the view detaches (navigating away clears its ItemsSource). Neither is the user deselecting.
-        var stack = Create();
-        var a = Frame("a");
-        _frames.Add(a);
-        stack.SelectedLayer = a;
-        var notified = false;
-        stack.PropertyChanged += (_, e) => notified |= e.PropertyName == nameof(CanvasLayerStackViewModel.SelectedLayer);
-
-        stack.SelectedLayer = null;
-
-        stack.SelectedLayer.Should().BeSameAs(a);
-        notified.Should().BeFalse("Avalonia ignores a source update raised inside its own write-back");
-        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
-        notified.Should().BeTrue("the view must be told to re-select the row it just cleared");
     }
 }

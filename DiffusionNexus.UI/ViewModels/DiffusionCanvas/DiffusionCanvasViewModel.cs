@@ -497,11 +497,31 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
 
     #endregion
 
+    // Design-time ctor: no backend. MUST stay parameterless — CanvasBackendSelectionTests
+    // constructs the view model this way, so a required parameter here breaks the test project's build.
     public DiffusionCanvasViewModel()
+        : this(provider: null, engine: null, logger: null, catalog: null, monitor: null)
     {
-        // Design-time ctor: no backend. MUST stay parameterless — CanvasBackendSelectionTests
-        // constructs the view model this way, so a required parameter here breaks the test project's build.
-        _backendProvider = null;
+    }
+
+    /// <summary>
+    /// The one place every constructor goes through, so the layer stack and the delete command are built
+    /// once. Named parameters differ from the public constructor's, which keeps the chained calls
+    /// unambiguous.
+    /// </summary>
+    private DiffusionCanvasViewModel(
+        LocalDiffusionBackendProvider? provider,
+        IDiffusionBackend? engine,
+        IUnifiedLogger? logger,
+        ILoraCatalog? catalog,
+        ResourceMonitorViewModel? monitor)
+    {
+        _backendProvider = provider;
+        ResourceMonitor = monitor;
+        _engineBackend = engine;
+        _unifiedLogger = logger;
+        _loraCatalog = catalog;
+        AdoptEngineCapabilities();
         _selectedBackend = AvailableBackends[0];
         Layers = new CanvasLayerStackViewModel(Frames, EmitInfo);
         DeleteFrameCommand = new RelayCommand<GenerationFrameViewModel?>(DeleteFrame, CanvasLayerStackViewModel.CanDelete);
@@ -517,18 +537,13 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         IDiffusionBackend? engineBackend = null,
         IUnifiedLogger? unifiedLogger = null,
         ILoraCatalog? loraCatalog = null)
+        : this(
+            provider: backendProvider ?? throw new ArgumentNullException(nameof(backendProvider)),
+            engine: engineBackend,
+            logger: unifiedLogger,
+            catalog: loraCatalog,
+            monitor: resourceMonitor)
     {
-        _backendProvider = backendProvider ?? throw new ArgumentNullException(nameof(backendProvider));
-        ResourceMonitor = resourceMonitor;
-        _engineBackend = engineBackend;
-        _unifiedLogger = unifiedLogger;
-        _loraCatalog = loraCatalog;
-        AdoptEngineCapabilities();
-        _selectedBackend = AvailableBackends[0];
-        Layers = new CanvasLayerStackViewModel(Frames, EmitInfo);
-        DeleteFrameCommand = new RelayCommand<GenerationFrameViewModel?>(DeleteFrame, CanvasLayerStackViewModel.CanDelete);
-        WireCanvasEvents();
-
         // Populate the model dropdown in the background. Uses a lightweight catalog built directly
         // from the resolved model roots, so it does NOT load the native CUDA library at startup —
         // that happens only on the first Generate.
@@ -545,17 +560,13 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     /// <c>InternalsVisibleTo("DiffusionNexus.Tests")</c>.
     /// </remarks>
     internal DiffusionCanvasViewModel(IDiffusionBackend engineBackend, IUnifiedLogger? unifiedLogger = null)
+        : this(
+            provider: null,
+            engine: engineBackend ?? throw new ArgumentNullException(nameof(engineBackend)),
+            logger: unifiedLogger,
+            catalog: null,
+            monitor: null)
     {
-        ArgumentNullException.ThrowIfNull(engineBackend);
-
-        _backendProvider = null;
-        _engineBackend = engineBackend;
-        _unifiedLogger = unifiedLogger;
-        AdoptEngineCapabilities();
-        Layers = new CanvasLayerStackViewModel(Frames, EmitInfo);
-        DeleteFrameCommand = new RelayCommand<GenerationFrameViewModel?>(DeleteFrame, CanvasLayerStackViewModel.CanDelete);
-        WireCanvasEvents();
-
         // Assigning through the property runs OnSelectedBackendChanged, which fills AvailableModels
         // from the engine's own catalog — the same path the toolbar takes.
         SelectedBackend = AvailableBackends.First(b => b.Key == CanvasBackendKeys.Engine);

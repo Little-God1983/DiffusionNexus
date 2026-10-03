@@ -23,6 +23,12 @@ namespace DiffusionNexus.UI.Views.Controls;
 /// Rename is UI state local to this control. Only the committed name reaches the row, through
 /// <see cref="LayerStackNaming.Resolve"/>, so a blank name never lands.
 /// </para>
+/// <para>
+/// A layer list always has a selected layer while it has layers, and the host decides when that changes.
+/// The control therefore never writes null into <see cref="SelectedItem"/>: a ListBox drops its selection
+/// on a Ctrl+click of the selected row, when its items are cleared and while the view is detached, and
+/// none of those is the user choosing "no layer". Hosts keep plain setters.
+/// </para>
 /// </remarks>
 public partial class LayerStackPanel : UserControl
 {
@@ -88,12 +94,17 @@ public partial class LayerStackPanel : UserControl
     {
         base.OnPropertyChanged(change);
 
-        // While the host's list is away (its view detached on navigation, or its DataContext cleared on a
-        // tab switch) the ListBox is empty and drops its selection, and the host's view model rightly
-        // refuses that null. When the list comes back nothing would re-select the row, so put the host's
-        // selection back once the ListBox has its items again.
-        if (change.Property == ItemsProperty && change.NewValue is not null && SelectedItem is { } selected)
+        if (change.Property == SelectedItemProperty)
         {
+            // The host's choice, including null once its last layer has gone, goes straight to the list.
+            if (!ReferenceEquals(LayerList.SelectedItem, change.NewValue))
+                LayerList.SelectedItem = change.NewValue;
+        }
+        else if (change.Property == ItemsProperty && change.NewValue is not null && SelectedItem is { } selected)
+        {
+            // While the host's list is away (its DataContext cleared on a tab switch) the ListBox is empty
+            // and drops its selection. When the list comes back nothing would re-select the row, so put
+            // the host's selection back once the ListBox has its items again.
             Dispatcher.UIThread.Post(() =>
             {
                 if (ReferenceEquals(SelectedItem, selected))
@@ -103,26 +114,31 @@ public partial class LayerStackPanel : UserControl
     }
 
     /// <summary>
-    /// A layer list always has its selected layer selected while that layer exists. A Single-mode
-    /// ListBox deselects on Ctrl+click (and Ctrl+Space) of the selected row; the host's view model
-    /// refuses that null, but the row would stay unhighlighted. Put the row back on the next turn.
-    /// A removal is not a deselect: the dropped item is no longer in <see cref="Items"/>.
+    /// Relays the ListBox's selection to <see cref="SelectedItem"/>, except a null. When the ListBox
+    /// drops a row that is still listed (a Ctrl+click or Ctrl+Space on the selected row) the row is put
+    /// back on the next turn. When the row has left <see cref="Items"/> the host is removing it and picks
+    /// the next selection itself.
     /// </summary>
     private void OnListSelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
-        if (LayerList.SelectedItem is not null || e.RemovedItems.Count == 0 || Items is null)
+        if (LayerList.SelectedItem is { } picked)
+        {
+            SelectedItem = picked;
+            return;
+        }
+
+        if (SelectedItem is not { } kept || !IsListed(kept))
             return;
 
-        var dropped = e.RemovedItems[0];
-        if (dropped is null || !Items.Cast<object>().Contains(dropped))
-            return;
-
+        // Posted: the ListBox is still inside its own selection change and would undo an immediate set.
         Dispatcher.UIThread.Post(() =>
         {
-            if (LayerList.SelectedItem is null && Items is { } items && items.Cast<object>().Contains(dropped))
-                LayerList.SelectedItem = dropped;
+            if (LayerList.SelectedItem is null && ReferenceEquals(SelectedItem, kept) && IsListed(kept))
+                LayerList.SelectedItem = kept;
         });
     }
+
+    private bool IsListed(object item) => Items is { } items && items.Cast<object>().Contains(item);
 
     private void OnNameDoubleTapped(object? sender, TappedEventArgs e)
     {
@@ -159,13 +175,28 @@ public partial class LayerStackPanel : UserControl
         }
     }
 
+    /// <summary>
+    /// Clicking or tabbing elsewhere commits. Focus is left where the user put it: pulling it back to the
+    /// list would send their typing to the layer list instead of the prompt they just clicked.
+    /// </summary>
     private void OnRenameLostFocus(object? sender, RoutedEventArgs e)
     {
         if (sender is TextBox { IsVisible: true } editor)
-            EndRename(editor, commit: true);
+            EndRename(editor, commit: true, refocusList: false);
     }
 
-    private void EndRename(TextBox editor, bool commit)
+    /// <summary>
+    /// The row's container was handed to another layer while a rename was open (the ListBox recycles
+    /// containers when its items are rebuilt, as the editor's sync does). The typed text belongs to the
+    /// old layer, so cancel rather than commit it onto the new one.
+    /// </summary>
+    private void OnRenameDataContextChanged(object? sender, EventArgs e)
+    {
+        if (sender is TextBox { IsVisible: true } editor)
+            EndRename(editor, commit: false, refocusList: false);
+    }
+
+    private void EndRename(TextBox editor, bool commit, bool refocusList = true)
     {
         if (!editor.IsVisible)
             return;
@@ -185,6 +216,8 @@ public partial class LayerStackPanel : UserControl
                 item.Name = name;
         }
 
-        LayerList.Focus();
+        // Enter and Escape: the user is still in the panel, so keep the keyboard in the list.
+        if (refocusList)
+            LayerList.Focus();
     }
 }
