@@ -93,6 +93,12 @@ internal sealed class FakeDiffusionBackend : IDiffusionBackend
     /// </summary>
     public byte[]? InitImageBytesAtCallTime { get; private set; }
 
+    /// <summary>A real PNG to return as every result; null returns four bytes that are not an image.</summary>
+    public byte[]? ResultPng { get; init; }
+
+    /// <summary>The mask file's bytes, read when the backend was called. Same reason as the init image's.</summary>
+    public byte[]? MaskImageBytesAtCallTime { get; private set; }
+
     public Task<bool> IsAvailableAsync(CancellationToken ct = default)
     {
         AvailabilityTokenWasCancellable = ct.CanBeCanceled;
@@ -112,6 +118,9 @@ internal sealed class FakeDiffusionBackend : IDiffusionBackend
 
         if (request.InitImage is { } init && File.Exists(init.FilePath))
             InitImageBytesAtCallTime = File.ReadAllBytes(init.FilePath);
+
+        if (request.MaskImage is { } mask && File.Exists(mask.FilePath))
+            MaskImageBytesAtCallTime = File.ReadAllBytes(mask.FilePath);
 
         MaxConcurrentRuns = Math.Max(MaxConcurrentRuns, ++_concurrent);
         try
@@ -152,7 +161,7 @@ internal sealed class FakeDiffusionBackend : IDiffusionBackend
                 new DiffusionResult(
                     // Not a decodable PNG: the view model must survive a decode failure, and there
                     // is no Avalonia platform here to decode a real one anyway.
-                    [1, 2, 3, 4],
+                    ResultPng ?? [1, 2, 3, 4],
                     request.Width,
                     request.Height,
                     request.Seed ?? 42,
@@ -198,6 +207,17 @@ internal sealed class FakeDiffusionBackend : IDiffusionBackend
 /// A real PNG on disk plus the accepted raster that points at it. The compositor reads rasters back
 /// from their saved file, so an image-to-image test needs genuine bytes rather than a stand-in.
 /// </summary>
+/// <summary>
+/// A scratch folder per test view model. The view model's default folder is one per process, and test
+/// classes run in parallel: one class's Generate rewrites the fixed-name files another is asserting on,
+/// and a Dispose deletes the folder under everyone.
+/// </summary>
+internal static class CanvasScratch
+{
+    public static string NewDirectory() =>
+        Path.Combine(Path.GetTempPath(), "DiffusionNexus", "canvas-tests", Guid.NewGuid().ToString("N"));
+}
+
 internal sealed class TempCanvasFile : IDisposable
 {
     public TempCanvasFile(int width, int height, SKColor colour)

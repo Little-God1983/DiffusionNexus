@@ -94,6 +94,9 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
     private readonly List<string> _missingRequirements = [];
     private readonly UploadedInitImageCache _uploadCache = new();
 
+    /// <summary>The inpaint mask's own upload cache: the cache holds one file, and a masked run uploads two.</summary>
+    private readonly UploadedInitImageCache _maskUploadCache = new();
+
     /// <summary>The install root the last readiness probe accepted; null until the engine looks installed.</summary>
     private string? _installRoot;
 
@@ -129,7 +132,8 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
     /// <see cref="Krea2WorkflowPatcher"/> actually writes. Prompt, negative prompt, size, seed, steps
     /// and cfg are patched; the sampler and scheduler are baked into the template's KSampler and the
     /// graph's LoRA loader is never touched, so both are reported as unsupported rather than accepted
-    /// and dropped. Interrupting mid-sample is the one thing this backend can do that the local one
+    /// and dropped. An inpaint mask is honoured: the patcher puts a <c>SetLatentNoiseMask</c> in front
+    /// of the sampler (#595). Interrupting mid-sample is the one thing this backend can do that the local one
     /// cannot.
     /// </remarks>
     public BackendCapabilities Capabilities => EngineCapabilities;
@@ -146,8 +150,6 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
             "The Diffusion Nexus Engine cannot load LoRAs yet. Switch to Diffusion Nexus Core to use them.",
         [BackendFeature.ControlNet] =
             "Control layers are not wired into the engine's workflow yet.",
-        [BackendFeature.Inpainting] =
-            "Masked inpainting is not wired into the engine's workflow yet.",
     });
 
     public async Task<bool> IsAvailableAsync(CancellationToken ct = default)
@@ -290,8 +292,17 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
             // server chose — it may differ from ours when a file of that name already exists.
             var initImageFileName = await UploadInitImageAsync(wrapper, request, cancellationToken)
                 .ConfigureAwait(false);
+            // A lost init image degrades a plain image-to-image run to text-to-image, but a masked run
+            // cannot degrade: dropping the mask with it would repaint what the user meant to keep.
+            if (initImageFileName is null && request.MaskImage is not null)
+                throw new InvalidOperationException(
+                    "The canvas region for this inpaint run could not be read, so the mask has nothing to keep. Generate again.");
 
-            var workflowJson = Krea2WorkflowPatcher.Patch(templateJson, request, seed, gguf, initImageFileName);
+            var maskImageFileName = await UploadMaskImageAsync(wrapper, request, cancellationToken)
+                .ConfigureAwait(false);
+
+            var workflowJson = Krea2WorkflowPatcher.Patch(
+                templateJson, request, seed, gguf, initImageFileName, maskImageFileName);
 
             // QueueWorkflowAsync loads its workflow from a file path and applies per-node modifiers
             // itself (it's shared with the inpaint/outpaint/caption flows, which patch node-by-node).
@@ -392,6 +403,36 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
         Logger.Information(
             "Uploaded the canvas region as {StoredName}; generating image-to-image at denoise {Strength}.",
             stored, init.Strength);
+        return stored;
+    }
+
+    /// <summary>
+    /// Uploads the request's inpaint mask, or returns null when the request has none.
+    /// </summary>
+    /// <remarks>
+    /// Unlike the init image, a mask that cannot be read is fatal. Running without it would repaint the
+    /// whole region, including everything the user left unpainted to keep.
+    /// </remarks>
+    private async Task<string?> UploadMaskImageAsync(
+        ComfyUIWrapperService wrapper, DiffusionRequest request, CancellationToken ct)
+    {
+        if (request.MaskImage is not { } mask || string.IsNullOrWhiteSpace(mask.FilePath))
+            return null;
+
+        if (!File.Exists(mask.FilePath))
+            throw new FileNotFoundException(
+                "The inpaint mask file is gone, so the run would repaint the whole region. Generate again.",
+                mask.FilePath);
+
+        if (_maskUploadCache.TryGet(mask.FilePath, StoredInputStillExists, out var cached))
+        {
+            Logger.Debug("Reusing the already uploaded inpaint mask {StoredName}.", cached);
+            return cached;
+        }
+
+        var stored = await wrapper.UploadImageAsync(mask.FilePath, ct).ConfigureAwait(false);
+        _maskUploadCache.Remember(mask.FilePath, stored);
+        Logger.Information("Uploaded the inpaint mask as {StoredName}; the sampler is confined to it.", stored);
         return stored;
     }
 

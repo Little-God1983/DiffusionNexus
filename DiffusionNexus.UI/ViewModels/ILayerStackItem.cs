@@ -37,17 +37,17 @@ public static class LayerStackNaming
     public const int MaxLength = 64;
 
     /// <summary>
-    /// The name to store for <paramref name="proposed"/>: control characters become spaces (a pasted
-    /// line break would otherwise land in a single-line row), the result is trimmed and capped, and a
-    /// blank result keeps <paramref name="current"/>. A layer always has a name.
-    /// </summary>
-    /// <summary>
     /// The rename box's own limit: far above <see cref="MaxLength"/>, so normal typing and pasting never
     /// reach it (a box at the cap cut by UTF-16 unit and blocked typing into longer names), yet a wrong
     /// clipboard of megabytes cannot land in a single-line box. <see cref="Resolve"/> makes the cut.
     /// </summary>
     public const int EditorMaxLength = 16 * MaxLength;
 
+    /// <summary>
+    /// The name to store for <paramref name="proposed"/>: control characters become spaces (a pasted
+    /// line break would otherwise land in a single-line row), the result is trimmed and capped, and a
+    /// blank result keeps <paramref name="current"/>. A layer always has a name.
+    /// </summary>
     public static string Resolve(string? proposed, string current)
     {
         if (proposed is null)

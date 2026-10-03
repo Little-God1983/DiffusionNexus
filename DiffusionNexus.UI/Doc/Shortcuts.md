@@ -70,6 +70,10 @@
 | B | Centre the view on the generation box | Not typing in a text box |
 | G | Toggle the dot grid | Not typing in a text box |
 | Escape | Abandon the in-progress box drag | Dragging the generation box |
+| Left-drag | Paint (Brush) or erase (Eraser) the inpaint mask; the box is not moved | Brush or Eraser on, the mask selected and visible |
+| [ / ] | Shrink / grow the brush by a quarter (4–512 px). Matched by the typed character, so on a German keyboard it is AltGr+8 / AltGr+9 | Brush or Eraser on, not typing in a text box |
+| Shift + mouse wheel | Shrink / grow the brush (instead of zooming), as in the Image Editor | Brush or Eraser on |
+| Escape | Put the Brush or Eraser down, dropping a stroke in progress (also abandons a box drag) | Brush or Eraser on |
 | Right-click a result | Open its menu (Delete result) | Pointer over an accepted result |
 | Left / Right Arrow | Previous / next candidate | Staging strip has candidates |
 | Space (held) | Flip the candidate away to compare it against the canvas underneath | Staging strip has candidates |

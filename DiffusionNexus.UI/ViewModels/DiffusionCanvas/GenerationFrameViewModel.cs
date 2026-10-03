@@ -85,7 +85,7 @@ public partial class GenerationFrameViewModel : ObservableObject, ICanvasRaster,
 
     // ────────────────────────────── Layer (#594) ──────────────────────────────
 
-    /// <summary>What this layer holds. Always <see cref="CanvasLayerKind.Raster"/> until #595–#597.</summary>
+    /// <summary>What this layer holds: always <see cref="CanvasLayerKind.Raster"/>.</summary>
     public CanvasLayerKind Kind => CanvasLayerKind.Raster;
 
     /// <summary>Layer name shown in the layer stack. Assigned "Layer N" when the candidate is accepted.</summary>

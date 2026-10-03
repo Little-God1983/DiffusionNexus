@@ -293,7 +293,7 @@ public partial class ImageEditorCore
     {
         try
         {
-            using var feathered = FeatherMask(maskBitmap, featherRadius);
+            using var feathered = MaskFeathering.Feather(maskBitmap, featherRadius);
 
             // Convert base to unpremultiplied alpha so RGB values are stored straight
             using var unpremul = new SKBitmap(
@@ -358,44 +358,6 @@ public partial class ImageEditorCore
             var maskLayer = _layers?.Layers.FirstOrDefault(l => l.IsInpaintMask);
             return maskLayer?.IsVisible ?? false;
         }
-    }
-
-    /// <summary>
-    /// Feathers an inpaint mask by dilating then blurring.
-    /// Softens hard binary brush edges so the inpainting model can blend at boundaries.
-    /// </summary>
-    private static SKBitmap FeatherMask(SKBitmap maskBitmap, float featherRadius)
-    {
-        if (featherRadius < 0.5f)
-            return maskBitmap.Copy();
-
-        var dilateRadius = Math.Max(1, (int)(featherRadius * 0.5f));
-        var blurSigma = featherRadius;
-
-        var dilated = new SKBitmap(
-            maskBitmap.Width, maskBitmap.Height,
-            SKColorType.Rgba8888, SKAlphaType.Premul);
-        using (var canvas = new SKCanvas(dilated))
-        {
-            canvas.Clear(SKColors.Transparent);
-            using var paint = new SKPaint();
-            paint.ImageFilter = SKImageFilter.CreateDilate(dilateRadius, dilateRadius);
-            canvas.DrawBitmap(maskBitmap, 0, 0, paint);
-        }
-
-        var feathered = new SKBitmap(
-            maskBitmap.Width, maskBitmap.Height,
-            SKColorType.Rgba8888, SKAlphaType.Premul);
-        using (var canvas = new SKCanvas(feathered))
-        {
-            canvas.Clear(SKColors.Transparent);
-            using var paint = new SKPaint();
-            paint.ImageFilter = SKImageFilter.CreateBlur(blurSigma, blurSigma);
-            canvas.DrawBitmap(dilated, 0, 0, paint);
-        }
-
-        dilated.Dispose();
-        return feathered;
     }
 
     #endregion Inpainting

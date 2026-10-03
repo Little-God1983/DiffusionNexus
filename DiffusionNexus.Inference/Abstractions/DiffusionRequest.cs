@@ -87,7 +87,14 @@ public sealed class DiffusionRequest
     /// </summary>
     public bool AutoResizeReferenceImages { get; init; } = true;
 
-    // TODO(v2-inpaint): Backend currently ignores this — placeholder for inpaint mask painting.
-    /// <summary>Mask for inpainting (white = repaint, black = keep). <b>Currently ignored by the v1 backend.</b></summary>
+    /// <summary>
+    /// Inpaint mask: an opaque greyscale image the size of the output, white = repaint, black = keep, grey
+    /// = a feathered blend. <b>Honored by both backends, and only together with <see cref="InitImage"/></b>
+    /// (a mask without one is refused): the stable-diffusion.cpp backend passes it to
+    /// <c>WithMaskImage</c> and caps the strength just below 1.0, which it needs to encode the init image;
+    /// the ComfyUI engine uploads it and puts a <c>SetLatentNoiseMask</c> in front of its sampler. Its
+    /// <c>Strength</c> is unused; the denoise is the init image's.
+    /// </summary>
+    /// <remarks>The Diffusion Canvas's inpaint mask layer rasterises to this (issue #595).</remarks>
     public DiffusionReferenceImage? MaskImage { get; init; }
 }
