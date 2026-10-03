@@ -121,6 +121,9 @@ public partial class DiffusionCanvasView : UserControl
 
             case Key.Escape:
                 Surface?.CancelActiveGesture();
+                // Escape also puts the brush or eraser down, so a left drag moves the box again.
+                if (vm is not null)
+                    vm.PaintTool = DiffusionNexus.UI.DiffusionCanvas.CanvasPaintTool.None;
                 e.Handled = true;
                 return;
 
@@ -155,7 +158,29 @@ public partial class DiffusionCanvasView : UserControl
                 e.Handled = true;
                 return;
         }
+
+        // [ and ] resize the brush while a paint tool is active. Matched by the typed symbol as well as
+        // the US key: on a German keyboard [ is AltGr+8 and has no key of its own.
+        if (vm is { PaintTool: not DiffusionNexus.UI.DiffusionCanvas.CanvasPaintTool.None }
+            && BrushStep(e) is { } grow)
+        {
+            vm.StepBrushSize(grow);
+            e.Handled = true;
+        }
     }
+
+    /// <summary>True for "grow" (]), false for "shrink" ([), null for any other key.</summary>
+    private static bool? BrushStep(KeyEventArgs e) => e.Key switch
+    {
+        Key.OemCloseBrackets => true,
+        Key.OemOpenBrackets => false,
+        _ => e.KeySymbol switch
+        {
+            "]" => true,
+            "[" => false,
+            _ => null,
+        },
+    };
 
     private void OnPreviewKeyUp(object? sender, KeyEventArgs e)
     {
@@ -217,9 +242,8 @@ public partial class DiffusionCanvasView : UserControl
             // The staging strip: its own arrow navigation does the same thing as ours, so let it.
             ListBox { Name: "StagingList" } => key is Key.Left or Key.Right or Key.Up or Key.Down or Key.Home or Key.End,
 
-            // The layer list is vertical and has no use for Left/Right, which stay staging Previous/Next
-            // (Enter and Escape on a rename put focus here).
-            ListBox => key is Key.Up or Key.Down or Key.Home or Key.End,
+            // A focused layer row is a ListBoxItem (the layer ListBox itself is not focusable) and needs no
+            // arm: the canvas claims no vertical keys, and Left/Right stay staging Previous/Next.
 
             // CheckBox before ToggleButton before Button: the first two derive from the last.
             CheckBox => key is Key.Space,

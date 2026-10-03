@@ -205,6 +205,8 @@
                 <Slider Minimum="0.05" Maximum="1.0" TickFrequency="0.05" IsSnapToTickEnabled="True"
                         Value="{Binding DenoiseStrength}"
                         ToolTip.Tip="How far from the pixels under the box the result may travel. 0 keeps the input, 1 ignores it." />
+                <TextBlock Text="Inpaint run: the mask layer's own Denoise is used instead." Foreground="#C89A5A"
+                           FontSize="10" TextWrapping="Wrap" IsVisible="{Binding IsInpaintRun}" />
               </StackPanel>
 
               <TextBlock Text="{Binding StatusText}" Foreground="#CCC" FontSize="11" TextWrapping="Wrap"
@@ -254,12 +256,21 @@
 
               <Border Width="1" Margin="6,2" Background="#3A3A3A" />
 
-              <!-- Region D. Disabled, and the tooltip says both why the feature is missing and, when the
-                   selected backend could not run it either, that too. -->
+              <!-- Region D. ControlNet is still disabled, and its tooltip says why. -->
               <Button Content="+ ControlNet" Command="{Binding AddControlNetCommand}" IsEnabled="False"
                       ToolTip.Tip="{Binding ControlNetTooltip}" />
-              <Button Content="Mask" Command="{Binding ActivateMaskToolCommand}" IsEnabled="False"
+
+              <!-- The inpaint mask (#595). Brush and Eraser only work on the selected, visible mask; their
+                   tooltips say how to get there, so they show while disabled. -->
+              <Button Content="+ Mask" Command="{Binding AddMaskCommand}"
                       ToolTip.Tip="{Binding MaskTooltip}" />
+              <ToggleButton Content="Brush" IsChecked="{Binding IsBrushActive}" IsEnabled="{Binding CanPaint}"
+                            ToolTip.Tip="{Binding BrushTooltip}" ToolTip.ShowOnDisabled="True" />
+              <ToggleButton Content="Eraser" IsChecked="{Binding IsEraserActive}" IsEnabled="{Binding CanPaint}"
+                            ToolTip.Tip="{Binding EraserTooltip}" ToolTip.ShowOnDisabled="True" />
+              <TextBlock Text="{Binding BrushSizeText}" VerticalAlignment="Center" Foreground="#999"
+                         MinWidth="44" IsVisible="{Binding CanPaint}"
+                         ToolTip.Tip="Brush size in the image's pixels. [ and ] change it." />
               <ToggleButton Content="Layers" IsChecked="{Binding IsLayerPanelVisible}"
                             ToolTip.Tip="Show or hide the layer stack" />
             </StackPanel>
@@ -277,7 +288,10 @@
                                          IsPreviewHidden="{Binding Staging.IsComparing}"
                                          SpacePanEnabled="{Binding !Staging.HasCandidates}"
                                          DeleteRasterCommand="{Binding DeleteFrameCommand}"
-                                         SelectedRaster="{Binding Layers.SelectedLayer}" />
+                                         SelectedRaster="{Binding Layers.SelectedRaster}"
+                                         Mask="{Binding Layers.Mask}"
+                                         PaintTool="{Binding PaintTool}"
+                                         BrushSize="{Binding BrushSize, Mode=TwoWay}" />
 
         <!-- ── Staging strip ── -->
         <Border Grid.Row="2" Background="#1B1B1B" BorderBrush="#333" BorderThickness="0,1,0,0"
@@ -354,31 +368,71 @@
         <DockPanel>
           <TextBlock DockPanel.Dock="Top" Text="Layers" FontWeight="SemiBold" FontSize="14" Margin="0,0,0,8" />
 
-          <!-- Inspector, docked to the bottom so the list fills the height between. It swaps with the
-               selection rather than opening a dialog, so adjusting opacity never covers the image. -->
+          <!-- Inspectors, docked to the bottom so the list fills the height between. They swap with the
+               selection rather than opening a dialog, so adjusting a layer never covers the image. One
+               per layer kind; at most one is visible. -->
           <Border DockPanel.Dock="Bottom" BorderBrush="#444" BorderThickness="0,1,0,0"
                   Padding="0,8,0,0" Margin="0,8,0,0"
-                  IsVisible="{Binding Layers.SelectedLayer, Converter={x:Static ObjectConverters.IsNotNull}}">
+                  IsVisible="{Binding Layers.SelectedRaster, Converter={x:Static ObjectConverters.IsNotNull}}">
             <StackPanel Spacing="6">
               <TextBlock Text="Opacity" FontSize="11" Opacity="0.7" />
               <Grid ColumnDefinitions="*,40">
                 <Slider Grid.Column="0" Minimum="0" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True"
-                        Value="{Binding Layers.SelectedLayer.OpacityPercent}" />
-                <TextBlock Grid.Column="1" Text="{Binding Layers.SelectedLayer.OpacityText}" FontSize="10"
+                        Value="{Binding Layers.SelectedRaster.OpacityPercent}" />
+                <TextBlock Grid.Column="1" Text="{Binding Layers.SelectedRaster.OpacityText}" FontSize="10"
                            VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7" />
               </Grid>
               <CheckBox Content="Locked: cannot be deleted or cleared"
-                        IsChecked="{Binding Layers.SelectedLayer.IsLocked}" />
+                        IsChecked="{Binding Layers.SelectedRaster.IsLocked}" />
               <TextBlock Text="Prompt" FontSize="11" Opacity="0.7" Margin="0,4,0,0" />
               <ScrollViewer MaxHeight="90" HorizontalScrollBarVisibility="Disabled">
-                <SelectableTextBlock Text="{Binding Layers.SelectedLayer.Prompt}" TextWrapping="Wrap" FontSize="11" />
+                <SelectableTextBlock Text="{Binding Layers.SelectedRaster.Prompt}" TextWrapping="Wrap" FontSize="11" />
               </ScrollViewer>
-              <TextBlock Text="{Binding Layers.SelectedLayer.ProvenanceText}" FontSize="10" Opacity="0.7"
+              <TextBlock Text="{Binding Layers.SelectedRaster.ProvenanceText}" FontSize="10" Opacity="0.7"
                          TextWrapping="Wrap" />
             </StackPanel>
           </Border>
 
-          <TextBlock DockPanel.Dock="Top" Text="Accepted results appear here as layers."
+          <Border DockPanel.Dock="Bottom" BorderBrush="#444" BorderThickness="0,1,0,0"
+                  Padding="0,8,0,0" Margin="0,8,0,0"
+                  IsVisible="{Binding Layers.SelectedMask, Converter={x:Static ObjectConverters.IsNotNull}}">
+            <StackPanel Spacing="6">
+              <TextBlock Text="Paint where the next image to image run may repaint; the rest of the box is kept. It takes part while the box is over results."
+                         FontSize="10" Opacity="0.7" TextWrapping="Wrap" />
+              <TextBlock Text="Brush size" FontSize="11" Opacity="0.7" />
+              <Grid ColumnDefinitions="*,48">
+                <Slider Grid.Column="0" Minimum="4" Maximum="512" TickFrequency="1" IsSnapToTickEnabled="True"
+                        Value="{Binding BrushSize}"
+                        ToolTip.Tip="Brush diameter in the image's pixels. [ and ] change it while painting." />
+                <TextBlock Grid.Column="1" Text="{Binding BrushSizeText}" FontSize="10"
+                           VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7" />
+              </Grid>
+              <TextBlock Text="Feather" FontSize="11" Opacity="0.7" />
+              <Grid ColumnDefinitions="*,48">
+                <Slider Grid.Column="0" Minimum="0" Maximum="64" TickFrequency="1" IsSnapToTickEnabled="True"
+                        Value="{Binding Layers.SelectedMask.Feather}"
+                        ToolTip.Tip="Softens the mask's edges, in the image's pixels, so the repainted area blends in." />
+                <TextBlock Grid.Column="1" Text="{Binding Layers.SelectedMask.FeatherText}" FontSize="10"
+                           VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7" />
+              </Grid>
+              <TextBlock Text="Denoise" FontSize="11" Opacity="0.7" />
+              <Grid ColumnDefinitions="*,48">
+                <Slider Grid.Column="0" Minimum="0.05" Maximum="1" TickFrequency="0.05" IsSnapToTickEnabled="True"
+                        Value="{Binding Layers.SelectedMask.Denoise}"
+                        ToolTip.Tip="How far the masked area may move from what is there. It replaces the panel's Denoise for an inpaint run." />
+                <TextBlock Grid.Column="1" Text="{Binding Layers.SelectedMask.DenoiseText}" FontSize="10"
+                           VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7" />
+              </Grid>
+              <CheckBox Content="Invert: repaint everything in the box except the painting"
+                        IsChecked="{Binding Layers.SelectedMask.Invert}" />
+              <CheckBox Content="Locked: cannot be deleted or cleared"
+                        IsChecked="{Binding Layers.SelectedMask.IsLocked}" />
+              <Button Content="Clear mask" Command="{Binding Layers.SelectedMask.ClearStrokesCommand}"
+                      ToolTip.Tip="Remove everything painted on the mask" />
+            </StackPanel>
+          </Border>
+
+          <TextBlock DockPanel.Dock="Top" Text="Accepted results appear here as layers. + Mask adds an inpaint mask."
                      Foreground="#888" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,6"
                      IsVisible="{Binding !Layers.HasLayers}" />
 

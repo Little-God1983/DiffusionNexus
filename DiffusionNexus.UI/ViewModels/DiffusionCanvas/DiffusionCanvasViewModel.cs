@@ -91,7 +91,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
 
     /// <summary>
     /// File name of the composited region handed to a backend as the init image. Fixed, and deliberately
-    /// distinctive — see the remarks on <see cref="_regionScratchPath"/>.
+    /// distinctive — see the remarks on <see cref="RegionScratchPath"/>.
     /// </summary>
     internal const string RegionScratchFileName = "diffusionnexus_canvas_region.png";
 
@@ -108,8 +108,21 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     /// same name in that folder. The per-process <b>directory</b> is what keeps concurrent app instances
     /// from overwriting each other's scratch.
     /// </remarks>
-    private readonly string _regionScratchPath = Path.Combine(
-        Path.GetTempPath(), "DiffusionNexus", $"canvas-{Environment.ProcessId}", RegionScratchFileName);
+    private string RegionScratchPath => Path.Combine(ScratchDirectory, RegionScratchFileName);
+
+    /// <summary>File name of the rasterised inpaint mask. Fixed for the same reason as <see cref="RegionScratchFileName"/>.</summary>
+    internal const string MaskScratchFileName = "diffusionnexus_canvas_mask.png";
+
+    /// <summary>Scratch file the rasterised inpaint mask is written to, beside the region's.</summary>
+    private string MaskScratchPath => Path.Combine(ScratchDirectory, MaskScratchFileName);
+
+    /// <summary>
+    /// The per-process folder both scratch files live in; <see cref="Dispose"/> deletes it. A test seam:
+    /// one process hosts many view models in tests, and one disposing must not delete another's files
+    /// mid-run.
+    /// </summary>
+    internal string ScratchDirectory { get; set; } =
+        Path.Combine(Path.GetTempPath(), "DiffusionNexus", $"canvas-{Environment.ProcessId}");
 
     /// <summary>All accepted results on the canvas, in z-order (last = top).</summary>
     public ObservableCollection<GenerationFrameViewModel> Frames { get; } = [];
@@ -179,6 +192,13 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     /// <summary>True when the box overlaps at least one accepted result, so the denoise control matters.</summary>
     [ObservableProperty]
     private bool _isRegionOccupied;
+
+    /// <summary>
+    /// True when Generate will run as an inpaint: the mask is visible, painted, meets the box, and the box
+    /// is over pixels it can keep. The panel's Denoise then gives way to the mask's (#595).
+    /// </summary>
+    [ObservableProperty]
+    private bool _isInpaintRun;
 
     /// <summary>
     /// The two-word form of <see cref="RegionModeText"/> for the panel's header chip, which has about
@@ -335,9 +355,12 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         "Control layers arrive with the layer stack (issue #518 region D).",
         SelectedCapabilities.LimitationFor(BackendFeature.ControlNet));
 
-    /// <summary>Why the disabled mask button is disabled. Same composition as <see cref="ControlNetTooltip"/>.</summary>
+    /// <summary>
+    /// What the mask button does, plus the selected backend's inpainting limitation if it has one. Both
+    /// shipped backends honour a mask (#595), so the limitation is there for a future backend that does not.
+    /// </summary>
     public string MaskTooltip => Compose(
-        "Inpaint mask painting arrives with the layer stack (issue #518 region D).",
+        "Add the inpaint mask layer, or select it. Paint where the next image to image run may repaint; the rest of the box is kept.",
         SelectedCapabilities.LimitationFor(BackendFeature.Inpainting));
 
     private static string Compose(string primary, string? backendLimit) =>
@@ -473,18 +496,6 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     [RelayCommand(CanExecute = nameof(AlwaysFalse))]
     private void AddControlNet() { /* placeholder */ }
 
-    // TODO(v2-mask-tools): activate brush mode in the canvas overlay.
-    [RelayCommand(CanExecute = nameof(AlwaysFalse))]
-    private void ActivateBrushTool() { /* placeholder */ }
-
-    // TODO(v2-mask-tools): activate eraser mode in the canvas overlay.
-    [RelayCommand(CanExecute = nameof(AlwaysFalse))]
-    private void ActivateEraserTool() { /* placeholder */ }
-
-    // TODO(v2-mask-tools): activate inpaint mask painting overlay.
-    [RelayCommand(CanExecute = nameof(AlwaysFalse))]
-    private void ActivateMaskTool() { /* placeholder */ }
-
     // TODO(v2-undo): a shallow undo stack over layer operations (issue #518, deliberately not unbounded).
     [RelayCommand(CanExecute = nameof(AlwaysFalse))]
     private void Undo() { /* placeholder */ }
@@ -496,6 +507,111 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     private static bool AlwaysFalse() => false;
 
     #endregion
+
+    // ────────────────────────────── Inpaint mask (#595) ──────────────────────────────
+
+    /// <summary>Smallest brush, in world pixels.</summary>
+    public const double MinBrushSize = 4;
+
+    /// <summary>Largest brush, in world pixels.</summary>
+    public const double MaxBrushSize = 512;
+
+    /// <summary>Creates the inpaint mask layer, or selects it, and shows the layer panel so its row is in view.</summary>
+    [RelayCommand]
+    private void AddMask()
+    {
+        Layers.AddMask();
+        IsLayerPanelVisible = true;
+    }
+
+    /// <summary>What a left drag on the canvas does. Only a visible, selected mask can be painted.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsBrushActive), nameof(IsEraserActive))]
+    private CanvasPaintTool _paintTool;
+
+    partial void OnPaintToolChanged(CanvasPaintTool value) => EmitInfo(value switch
+    {
+        CanvasPaintTool.Brush => string.Create(CultureInfo.InvariantCulture, $"Mask brush on ({BrushSize:0} px)."),
+        CanvasPaintTool.Eraser => string.Create(CultureInfo.InvariantCulture, $"Mask eraser on ({BrushSize:0} px)."),
+        _ => "Paint tool off: a left drag moves the box again.",
+    });
+
+    /// <summary>The Brush toggle. Turning it on while the mask cannot be painted does nothing.</summary>
+    public bool IsBrushActive
+    {
+        get => PaintTool == CanvasPaintTool.Brush;
+        set => SetPaintTool(CanvasPaintTool.Brush, value);
+    }
+
+    /// <summary>The Eraser toggle.</summary>
+    public bool IsEraserActive
+    {
+        get => PaintTool == CanvasPaintTool.Eraser;
+        set => SetPaintTool(CanvasPaintTool.Eraser, value);
+    }
+
+    private void SetPaintTool(CanvasPaintTool tool, bool on)
+    {
+        if (on && CanPaint)
+            PaintTool = tool;
+        else if (!on && PaintTool == tool)
+            PaintTool = CanvasPaintTool.None;
+
+        // A toggle the user clicked while painting is impossible has already flipped itself on screen.
+        OnPropertyChanged(nameof(IsBrushActive));
+        OnPropertyChanged(nameof(IsEraserActive));
+    }
+
+    /// <summary>True while the mask is selected and visible: painting on a hidden mask would be painting blind.</summary>
+    public bool CanPaint => Layers.SelectedMask is { IsVisible: true };
+
+    /// <summary>The Brush toggle's tooltip: what it does, or why it cannot.</summary>
+    public string BrushTooltip => CanPaint
+        ? "Paint where to repaint. [ and ] change the size; Escape puts the brush down."
+        : PaintBlockedReason;
+
+    /// <summary>The Eraser toggle's tooltip.</summary>
+    public string EraserTooltip => CanPaint
+        ? "Erase painted mask. [ and ] change the size; Escape puts the eraser down."
+        : PaintBlockedReason;
+
+    private string PaintBlockedReason => Layers.SelectedMask is { IsVisible: false }
+        ? "The mask is hidden. Show it in the layer panel to paint on it."
+        : "Select the inpaint mask in the layer panel to paint on it. + Mask creates it.";
+
+    private double _brushSize = 64;
+
+    /// <summary>Brush diameter in world pixels (the generated image's pixels), <see cref="MinBrushSize"/> to <see cref="MaxBrushSize"/>.</summary>
+    public double BrushSize
+    {
+        get => _brushSize;
+        set
+        {
+            var clamped = double.IsNaN(value) ? _brushSize : Math.Clamp(Math.Round(value), MinBrushSize, MaxBrushSize);
+            if (SetProperty(ref _brushSize, clamped))
+                OnPropertyChanged(nameof(BrushSizeText));
+        }
+    }
+
+    /// <summary>Brush size as display text, formatted invariantly.</summary>
+    public string BrushSizeText => string.Create(CultureInfo.InvariantCulture, $"{BrushSize:0} px");
+
+    /// <summary>Steps the brush size, the <c>[</c> / <c>]</c> keys.</summary>
+    public void StepBrushSize(bool grow) => BrushSize = CanvasBrush.Step(BrushSize, grow);
+
+    /// <summary>
+    /// Re-reads whether the mask can be painted, and puts the tool down when it no longer can: another
+    /// layer was selected, or the mask was hidden or deleted.
+    /// </summary>
+    private void RefreshPaintAvailability()
+    {
+        OnPropertyChanged(nameof(CanPaint));
+        OnPropertyChanged(nameof(BrushTooltip));
+        OnPropertyChanged(nameof(EraserTooltip));
+
+        if (!CanPaint && PaintTool != CanvasPaintTool.None)
+            PaintTool = CanvasPaintTool.None;
+    }
 
     // Design-time ctor: no backend. MUST stay parameterless — CanvasBackendSelectionTests
     // constructs the view model this way, so a required parameter here breaks the test project's build.
@@ -603,8 +719,14 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         Layers.LayersChanged += (_, _) =>
         {
             RefreshRegionMode();
+            RefreshPaintAvailability();
             ClearCanvasCommand.NotifyCanExecuteChanged();
             DeleteFrameCommand.NotifyCanExecuteChanged();
+        };
+        Layers.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(CanvasLayerStackViewModel.SelectedLayer))
+                RefreshPaintAvailability();
         };
         Staging.CandidateAccepted += OnCandidateAccepted;
         RefreshRegionMode();
@@ -650,16 +772,63 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     {
         var region = Box.WorldRect;
         var overlapping = Frames.Count(f => CanContribute(f) && f.WorldRect.Intersects(region));
+        var mask = EvaluateMask(Layers.Mask, region, overlapping);
 
         IsRegionOccupied = overlapping > 0;
-        RegionModeBadge = overlapping > 0 ? "Image to image" : "Text to image";
-        RegionModeText = overlapping switch
+        IsInpaintRun = mask == MaskUse.Applies;
+
+        var results = overlapping == 1 ? "1 result" : $"{overlapping} results";
+        RegionModeBadge = IsInpaintRun ? "Inpaint" : overlapping > 0 ? "Image to image" : "Text to image";
+        RegionModeText = (overlapping, mask) switch
         {
-            0 => "Text to image — the box is over empty canvas",
-            1 => "Image to image — the box is over 1 result",
-            _ => $"Image to image — the box is over {overlapping} results",
+            (_, MaskUse.Applies) => Layers.Mask!.Invert
+                ? $"Inpaint — the box is over {results}; everything but the painting is repainted"
+                : $"Inpaint — the mask meets the box over {results}; only the painting is repainted",
+            (0, MaskUse.NothingToKeep) =>
+                "Text to image — the box is over empty canvas (the mask needs an image under the box to keep)",
+            (0, _) => "Text to image — the box is over empty canvas",
+            (_, MaskUse.Hidden) => $"Image to image — the box is over {results} (the mask is hidden)",
+            (_, MaskUse.Empty) => $"Image to image — the box is over {results} (nothing is painted on the mask)",
+            (_, MaskUse.OutsideTheBox) => $"Image to image — the box is over {results} (the mask is outside the box)",
+            _ => $"Image to image — the box is over {results}",
         };
     }
+
+    /// <summary>Whether, and why not, the mask takes part in the next run.</summary>
+    private enum MaskUse
+    {
+        NoMask,
+        Hidden,
+        Empty,
+        NothingToKeep,
+        OutsideTheBox,
+        Applies,
+    }
+
+    /// <summary>
+    /// The one rule for whether the mask takes part, shared by the readout and Generate: visible,
+    /// painted, over pixels to keep, and meeting the box. An inverted mask always meets it: everything
+    /// in the box except the painting is repainted. Cheap: bounds only, no rasterising.
+    /// </summary>
+    private static MaskUse EvaluateMask(InpaintMaskLayerViewModel? mask, Rect region, int overlapping)
+    {
+        if (mask is null)
+            return MaskUse.NoMask;
+        if (!mask.IsVisible)
+            return MaskUse.Hidden;
+        if (!mask.HasStrokes || (!mask.Invert && mask.PaintedBounds is null))
+            return MaskUse.Empty;
+        if (overlapping == 0)
+            return MaskUse.NothingToKeep;
+        if (!mask.Invert && !mask.PaintedBounds!.Value.Intersects(region))
+            return MaskUse.OutsideTheBox;
+
+        return MaskUse.Applies;
+    }
+
+    /// <summary>The mask as Generate takes it: frozen for the whole batch, like the panel.</summary>
+    private sealed record MaskSnapshot(
+        string Name, IReadOnlyList<CanvasMaskStroke> Strokes, double Feather, bool Invert, double Denoise);
 
     /// <summary>
     /// True when the raster is shown (visible, not fully transparent) and has a saved file the compositor
@@ -1003,6 +1172,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
 
         var token = cts.Token;
         string? regionImagePath = null;
+        string? maskImagePath = null;
 
         try
         {
@@ -1057,6 +1227,14 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             // the snapshot copies visibility and opacity, so hiding a layer or dragging its opacity mid-run
             // cannot change this run's input.
             var rasters = Frames.Select(f => (ICanvasRaster)CanvasRasterSnapshot.Of(f)).ToArray();
+
+            // The mask is frozen on the same terms. Its strokes list is replaced on every change, never
+            // mutated, so holding the reference is a snapshot.
+            var overlapping = rasters.Count(r => CanContribute(r) && r.WorldRect.Intersects(region));
+            var maskSnapshot = Layers.Mask is { } liveMask && EvaluateMask(liveMask, region, overlapping) == MaskUse.Applies
+                ? new MaskSnapshot(liveMask.Name, liveMask.Strokes, liveMask.Feather, liveMask.Invert, liveMask.Denoise)
+                : null;
+
             var composed = await Task
                 .Run(() => BuildRegionInitImage(rasters, region, width, height), token)
                 .ConfigureAwait(true);
@@ -1075,14 +1253,48 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
                 return;
             }
 
+            var strength = DenoiseStrength;
+            if (maskSnapshot is not null && regionImagePath is not null)
+            {
+                var masked = await Task
+                    .Run(() => BuildRegionMask(maskSnapshot, region, width, height), token)
+                    .ConfigureAwait(true);
+
+                maskImagePath = masked.Path;
+                token.ThrowIfCancellationRequested();
+
+                if (maskImagePath is null)
+                {
+                    // The readout promised inpaint from the strokes' bounds, but erasing left nothing inside
+                    // the box. Running unmasked would repaint the whole box the user meant to protect.
+                    StatusText = "The mask has nothing painted inside the box: everything there was erased. " +
+                                 "Paint what to repaint, or hide the mask to run image to image.";
+                    EmitWarning("Refused to generate: the mask is empty inside the box.");
+                    return;
+                }
+
+                strength = maskSnapshot.Denoise;
+                if (SelectedBackend?.Key == CanvasBackendKeys.Local && strength > StableDiffusionCppBackend.MaxMaskedStrength)
+                {
+                    EmitInfo(string.Create(
+                        CultureInfo.InvariantCulture,
+                        $"Diffusion Nexus Core runs a masked image at denoise {StableDiffusionCppBackend.MaxMaskedStrength:0.00} at most: at 1.00 it does not encode the image to keep."));
+                }
+            }
+            else if (maskSnapshot is not null)
+            {
+                EmitWarning("The mask was left out: the region under the box gave no image to keep.");
+            }
+
             var initImage = regionImagePath is null
                 ? null
-                : new DiffusionReferenceImage(regionImagePath, (float)DenoiseStrength);
+                : new DiffusionReferenceImage(regionImagePath, (float)strength);
+            var maskImage = maskImagePath is null ? null : new DiffusionReferenceImage(maskImagePath);
 
             var candidates = Staging.BeginBatch(BatchCount, region);
             EmitInfo($"Staged {candidates.Count} candidate slot(s).");
 
-            await RunBatchAsync(backend, descriptor, candidates, settings, initImage, width, height, composed.Coverage, token)
+            await RunBatchAsync(backend, descriptor, candidates, settings, initImage, maskImage, width, height, composed.Coverage, token)
                 .ConfigureAwait(true);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
@@ -1104,6 +1316,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         finally
         {
             DeleteScratchFile(regionImagePath);
+            DeleteScratchFile(maskImagePath);
             EndRunEpoch(cts);
             IsGenerating = false;
             Staging.RefreshCommands();
@@ -1252,10 +1465,10 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     /// or returns null when the box is over empty canvas (a plain text2img run).
     /// </summary>
     /// <remarks>
-    /// Partial coverage is honest about its limits: with no <c>MaskImage</c> support in either backend,
-    /// the uncovered part is flattened onto neutral grey and the whole region is denoised, so the known
-    /// pixels are regenerated rather than preserved. True masked outpainting needs the inpaint mask
-    /// layer (#595).
+    /// Partial coverage is honest about its limits: the uncovered part is flattened onto neutral grey, and
+    /// without an inpaint mask the whole region is denoised, so the known pixels are regenerated rather
+    /// than preserved. A mask (#595) confines the repaint; filling the uncovered part automatically
+    /// (outpainting) is not done, because the local backend cannot run a masked area at denoise 1.0.
     /// </remarks>
     /// <param name="rasters">
     /// A snapshot of the accepted results, taken on the UI thread. This method runs on the thread pool,
@@ -1301,25 +1514,44 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             }
 
             var png = CanvasRegionCompositor.EncodeAsPng(composite.Bitmap, CanvasRegionCompositor.NeutralFill);
-            Directory.CreateDirectory(Path.GetDirectoryName(_regionScratchPath)!);
-            File.WriteAllBytes(_regionScratchPath, png);
+            Directory.CreateDirectory(ScratchDirectory);
+            File.WriteAllBytes(RegionScratchPath, png);
 
             var percent = (int)Math.Round(coverage * 100);
             EmitInfo($"Region composited: {percent}% covered, denoise {DenoiseStrength:0.00} — running image to image.");
             if (!composite.IsFullyCovered)
             {
                 EmitWarning(
-                    $"The box is only {percent}% over existing pixels. Without mask support the uncovered area is " +
-                    "neutral grey input, so the known pixels are regenerated rather than preserved.");
+                    $"The box is only {percent}% over existing pixels. The uncovered area is neutral grey input, and " +
+                    "unless an inpaint mask limits the repaint the known pixels are regenerated rather than preserved.");
             }
 
-            return (_regionScratchPath, coverage, Degraded: false);
+            return (RegionScratchPath, coverage, Degraded: false);
         }
         finally
         {
             foreach (var source in sources)
                 source.Bitmap.Dispose();
         }
+    }
+
+    /// <summary>
+    /// Rasterises the mask over the box to the mask scratch PNG, or returns a null path when nothing inside
+    /// the box is marked for repaint. Runs on the thread pool, from a snapshot.
+    /// </summary>
+    private (string? Path, double RepaintFraction) BuildRegionMask(MaskSnapshot mask, Rect region, int width, int height)
+    {
+        using var raster = CanvasMaskRasterizer.Rasterize(mask.Strokes, region, width, height, mask.Feather, mask.Invert);
+        if (raster.IsEmpty)
+            return (null, 0);
+
+        Directory.CreateDirectory(ScratchDirectory);
+        File.WriteAllBytes(MaskScratchPath, raster.EncodePng());
+
+        EmitInfo(string.Create(
+            CultureInfo.InvariantCulture,
+            $"Mask '{mask.Name}' rasterised: {raster.RepaintFraction * 100:0.#}% of the box repainted, {mask.Strokes.Count} stroke(s), feather {mask.Feather:0} px{(mask.Invert ? ", inverted" : string.Empty)}, denoise {mask.Denoise:0.00} — running inpaint."));
+        return (MaskScratchPath, raster.RepaintFraction);
     }
 
     /// <summary>
@@ -1363,6 +1595,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         IReadOnlyList<StagedCandidateViewModel> candidates,
         BatchSettings settings,
         DiffusionReferenceImage? initImage,
+        DiffusionReferenceImage? maskImage,
         int width,
         int height,
         double coverage,
@@ -1405,6 +1638,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
                 // Each image in a batch needs its own seed, or every candidate comes back identical.
                 Seed = settings.Seed + i,
                 InitImage = initImage,
+                MaskImage = maskImage,
             };
 
             try
@@ -1691,9 +1925,8 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
 
         try
         {
-            var scratchDirectory = Path.GetDirectoryName(_regionScratchPath);
-            if (scratchDirectory is not null && Directory.Exists(scratchDirectory))
-                Directory.Delete(scratchDirectory, recursive: true);
+            if (Directory.Exists(ScratchDirectory))
+                Directory.Delete(ScratchDirectory, recursive: true);
         }
         catch (IOException) { /* best-effort scratch cleanup */ }
         catch (UnauthorizedAccessException) { /* best-effort scratch cleanup */ }

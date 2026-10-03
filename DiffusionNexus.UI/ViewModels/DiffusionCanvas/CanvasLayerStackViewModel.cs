@@ -8,7 +8,7 @@ namespace DiffusionNexus.UI.ViewModels.DiffusionCanvas;
 
 /// <summary>
 /// The canvas's layer stack (#594, #518 region D): ordering, selection, lock and naming rules over the
-/// canvas's <c>Frames</c>.
+/// canvas's <c>Frames</c>, plus its one inpaint <see cref="Mask"/> (#595).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -16,6 +16,11 @@ namespace DiffusionNexus.UI.ViewModels.DiffusionCanvas;
 /// the region compositor all iterate it that way. <see cref="DisplayLayers"/> is a top-first mirror for
 /// the layer panel. It is maintained incrementally rather than rebuilt, so a change touches only the rows
 /// it concerns and the panel's rows and selection stay in step with the surface and the hit test.
+/// </para>
+/// <para>
+/// The mask is not in <c>Frames</c>: it is an instruction to the model, not pixels in the picture, so
+/// nothing that composites the picture may see it. Its row is pinned to the top of
+/// <see cref="DisplayLayers"/>; ↑/↓ move rasters only, and a raster cannot rise above it.
 /// </para>
 /// <para>
 /// Lock protects a layer from removal only: Delete refuses it and <see cref="ClearUnlocked"/> keeps it.
@@ -45,55 +50,85 @@ public sealed partial class CanvasLayerStackViewModel : ObservableObject
 
     /// <summary>
     /// Raised when anything that changes what the model sees or what may be removed changes: the
-    /// collection, or a layer's visibility, opacity or lock. Not raised for a rename.
+    /// collection, a layer's visibility, opacity or lock, or the mask's strokes, feather or invert. Not
+    /// raised for a rename.
     /// </summary>
     public event EventHandler? LayersChanged;
 
-    /// <summary>The layers top first, as the panel lists them.</summary>
-    public ObservableCollection<GenerationFrameViewModel> DisplayLayers { get; } = [];
+    /// <summary>The layers top first, as the panel lists them: the mask (when there is one), then the rasters.</summary>
+    public ObservableCollection<ILayerStackItem> DisplayLayers { get; } = [];
 
-    private GenerationFrameViewModel? _selectedLayer;
+    /// <summary>The canvas's inpaint mask, or null until <see cref="AddMask"/> creates it.</summary>
+    [ObservableProperty]
+    private InpaintMaskLayerViewModel? _mask;
+
+    /// <summary>Rows above the first raster in <see cref="DisplayLayers"/>: the mask's, when there is one.</summary>
+    private int RasterRowOffset => Mask is null ? 0 : 1;
+
+    private ILayerStackItem? _selectedLayer;
 
     /// <summary>The layer the inspector edits and the surface outlines.</summary>
     /// <remarks>
     /// The panel never writes null here on its own (a ListBox's Ctrl+click or detach deselect stays inside
     /// <c>LayerStackPanel</c>), so null means the stack chose it: the last layer has gone.
     /// </remarks>
-    public GenerationFrameViewModel? SelectedLayer
+    public ILayerStackItem? SelectedLayer
     {
         get => _selectedLayer;
         set
         {
-            if (SetProperty(ref _selectedLayer, value))
-                NotifyCommands();
+            if (!SetProperty(ref _selectedLayer, value))
+                return;
+
+            OnPropertyChanged(nameof(SelectedRaster));
+            OnPropertyChanged(nameof(SelectedMask));
+            NotifyCommands();
         }
     }
 
+    /// <summary>The selected layer when it is a raster, for the raster inspector and the surface's outline.</summary>
+    public GenerationFrameViewModel? SelectedRaster => SelectedLayer as GenerationFrameViewModel;
+
+    /// <summary>The selected layer when it is the mask, for the mask inspector and the paint tools.</summary>
+    public InpaintMaskLayerViewModel? SelectedMask => SelectedLayer as InpaintMaskLayerViewModel;
+
     /// <summary>True when the canvas holds at least one layer.</summary>
-    public bool HasLayers => _frames.Count > 0;
+    public bool HasLayers => _frames.Count > 0 || Mask is not null;
 
     /// <summary>True when Clear canvas would remove something.</summary>
-    public bool HasUnlockedLayers => _frames.Any(f => !f.IsLocked);
+    public bool HasUnlockedLayers => _frames.Any(f => !f.IsLocked) || Mask is { IsLocked: false };
 
     /// <summary>Whether <paramref name="layer"/> may be deleted: it exists and is not locked.</summary>
-    public static bool CanDelete(GenerationFrameViewModel? layer) => layer is { IsLocked: false };
+    public static bool CanDelete(ILayerStackItem? layer) => layer is { IsLocked: false };
 
-    /// <summary>Raises the selected layer one step toward the top.</summary>
+    /// <summary>Raises the selected raster one step toward the top.</summary>
     [RelayCommand(CanExecute = nameof(CanMoveUp))]
     private void MoveUp() => Move(+1);
 
     private bool CanMoveUp() =>
-        SelectedLayer is { } layer && _frames.IndexOf(layer) is var index && index >= 0 && index < _frames.Count - 1;
+        SelectedLayer is GenerationFrameViewModel layer
+        && _frames.IndexOf(layer) is var index && index >= 0 && index < _frames.Count - 1;
 
-    /// <summary>Lowers the selected layer one step toward the bottom.</summary>
+    /// <summary>Lowers the selected raster one step toward the bottom.</summary>
     [RelayCommand(CanExecute = nameof(CanMoveDown))]
     private void MoveDown() => Move(-1);
 
-    private bool CanMoveDown() => SelectedLayer is { } layer && _frames.IndexOf(layer) > 0;
+    private bool CanMoveDown() => SelectedLayer is GenerationFrameViewModel layer && _frames.IndexOf(layer) > 0;
 
     /// <summary>Deletes the selected layer unless it is locked.</summary>
     [RelayCommand(CanExecute = nameof(CanDeleteSelected))]
-    private void DeleteSelected() => Delete(SelectedLayer);
+    private void DeleteSelected()
+    {
+        switch (SelectedLayer)
+        {
+            case GenerationFrameViewModel frame:
+                Delete(frame);
+                break;
+            case InpaintMaskLayerViewModel:
+                DeleteMask();
+                break;
+        }
+    }
 
     private bool CanDeleteSelected() => CanDelete(SelectedLayer);
 
@@ -126,17 +161,62 @@ public sealed partial class CanvasLayerStackViewModel : ObservableObject
         layer.Dispose();
 
         if (wasSelected)
-        {
-            SelectedLayer = DisplayLayers.Count == 0
-                ? null
-                : DisplayLayers[Math.Clamp(displayIndex, 0, DisplayLayers.Count - 1)];
-        }
+            SelectedLayer = RowNear(displayIndex);
 
         _trace($"Deleted layer '{layer.Name}' ({_frames.Count} layer(s) left).");
         return true;
     }
 
-    /// <summary>Removes and disposes every unlocked layer; returns how many went and how many stayed.</summary>
+    /// <summary>
+    /// Creates the inpaint mask and selects it, or selects the existing one: the canvas has one mask.
+    /// </summary>
+    public InpaintMaskLayerViewModel AddMask()
+    {
+        if (Mask is { } existing)
+        {
+            SelectedLayer = existing;
+            _trace($"Selected the existing mask '{existing.Name}' (the canvas has one).");
+            return existing;
+        }
+
+        var mask = new InpaintMaskLayerViewModel(_trace);
+        Mask = mask;
+        DisplayLayers.Insert(0, mask);
+        Observe(mask);
+        SelectedLayer = mask;
+
+        _trace($"Added the mask '{mask.Name}' on top. Paint where the next image to image run may repaint.");
+        StackChanged();
+        return mask;
+    }
+
+    /// <summary>Removes the mask. Returns false, and traces why, when it is locked or absent.</summary>
+    public bool DeleteMask()
+    {
+        if (Mask is not { } mask)
+            return false;
+
+        if (mask.IsLocked)
+        {
+            _trace($"Refused to delete the mask '{mask.Name}': it is locked.");
+            return false;
+        }
+
+        var wasSelected = ReferenceEquals(SelectedLayer, mask);
+        RemoveMaskRow(mask);
+
+        if (wasSelected)
+            SelectedLayer = RowNear(0);
+
+        _trace($"Deleted the mask '{mask.Name}' ({mask.Strokes.Count} stroke(s)).");
+        StackChanged();
+        return true;
+    }
+
+    /// <summary>
+    /// Removes every unlocked layer, the mask included, releasing the rasters' bitmaps; returns how many
+    /// went and how many stayed.
+    /// </summary>
     public (int Removed, int Kept) ClearUnlocked()
     {
         var removed = 0;
@@ -147,14 +227,21 @@ public sealed partial class CanvasLayerStackViewModel : ObservableObject
             removed++;
         }
 
-        if (SelectedLayer is null || !_frames.Contains(SelectedLayer))
+        if (Mask is { IsLocked: false } mask)
+        {
+            RemoveMaskRow(mask);
+            removed++;
+            StackChanged();
+        }
+
+        if (SelectedLayer is null || !DisplayLayers.Contains(SelectedLayer))
             SelectedLayer = DisplayLayers.FirstOrDefault();
 
-        return (removed, _frames.Count);
+        return (removed, DisplayLayers.Count);
     }
 
     /// <summary>
-    /// Puts an accepted candidate on top of the stack and selects it. An unnamed frame is named
+    /// Puts an accepted candidate on top of the rasters and selects it. An unnamed frame is named
     /// "Layer N", where N counts up for the session and is never reused.
     /// </summary>
     public void AddAccepted(GenerationFrameViewModel frame)
@@ -169,9 +256,20 @@ public sealed partial class CanvasLayerStackViewModel : ObservableObject
         _trace($"Added layer '{frame.Name}' on top ({_frames.Count} layer(s)).");
     }
 
+    private void RemoveMaskRow(InpaintMaskLayerViewModel mask)
+    {
+        DisplayLayers.Remove(mask);
+        Unobserve(mask);
+        Mask = null;
+    }
+
+    /// <summary>The row at <paramref name="displayIndex"/>, or the nearest one; null when the list is empty.</summary>
+    private ILayerStackItem? RowNear(int displayIndex) =>
+        DisplayLayers.Count == 0 ? null : DisplayLayers[Math.Clamp(displayIndex, 0, DisplayLayers.Count - 1)];
+
     private void Move(int delta)
     {
-        if (SelectedLayer is not { } layer)
+        if (SelectedLayer is not GenerationFrameViewModel layer)
             return;
 
         var from = _frames.IndexOf(layer);
@@ -193,7 +291,8 @@ public sealed partial class CanvasLayerStackViewModel : ObservableObject
             case NotifyCollectionChangedAction.Add:
             {
                 var added = (GenerationFrameViewModel)e.NewItems![0]!;
-                // Frames index i maps to display index (count - 1 - i); the display list is one short here.
+                // Frames index i maps to display index (offset + count - 1 - i); the display list is one
+                // short here, so that is the display count minus i.
                 DisplayLayers.Insert(DisplayLayers.Count - e.NewStartingIndex, added);
                 Observe(added);
                 break;
@@ -208,7 +307,7 @@ public sealed partial class CanvasLayerStackViewModel : ObservableObject
             case NotifyCollectionChangedAction.Move:
             {
                 var last = _frames.Count - 1;
-                DisplayLayers.Move(last - e.OldStartingIndex, last - e.NewStartingIndex);
+                DisplayLayers.Move(RasterRowOffset + last - e.OldStartingIndex, RasterRowOffset + last - e.NewStartingIndex);
                 break;
             }
             case NotifyCollectionChangedAction.Replace:
@@ -222,12 +321,16 @@ public sealed partial class CanvasLayerStackViewModel : ObservableObject
             }
             default:
             {
-                foreach (var layer in DisplayLayers)
-                    Unobserve(layer);
-                DisplayLayers.Clear();
+                // Reset: the mask is not in Frames, so its row stays; every raster row is rebuilt.
+                for (var i = DisplayLayers.Count - 1; i >= RasterRowOffset; i--)
+                {
+                    Unobserve(DisplayLayers[i]);
+                    DisplayLayers.RemoveAt(i);
+                }
+
                 foreach (var layer in _frames)
                 {
-                    DisplayLayers.Insert(0, layer);
+                    DisplayLayers.Insert(RasterRowOffset, layer);
                     Observe(layer);
                 }
 
@@ -235,46 +338,61 @@ public sealed partial class CanvasLayerStackViewModel : ObservableObject
             }
         }
 
-        if (SelectedLayer is not null && !_frames.Contains(SelectedLayer))
+        if (SelectedLayer is GenerationFrameViewModel selected && !_frames.Contains(selected))
             SelectedLayer = null;
 
+        StackChanged();
+    }
+
+    /// <summary>The stack's own membership changed: refresh what depends on it and tell the canvas.</summary>
+    private void StackChanged()
+    {
         OnPropertyChanged(nameof(HasLayers));
         OnPropertyChanged(nameof(HasUnlockedLayers));
         NotifyCommands();
         LayersChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    private void Observe(GenerationFrameViewModel layer) => layer.PropertyChanged += OnLayerPropertyChanged;
+    private void Observe(ILayerStackItem layer) => layer.PropertyChanged += OnLayerPropertyChanged;
 
-    private void Unobserve(GenerationFrameViewModel layer) => layer.PropertyChanged -= OnLayerPropertyChanged;
+    private void Unobserve(ILayerStackItem layer) => layer.PropertyChanged -= OnLayerPropertyChanged;
 
     private void OnLayerPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (sender is not GenerationFrameViewModel layer)
+        if (sender is not ILayerStackItem layer)
             return;
+
+        var noun = layer is InpaintMaskLayerViewModel ? "Mask" : "Layer";
 
         switch (e.PropertyName)
         {
-            case nameof(GenerationFrameViewModel.IsVisible):
-                _trace($"Layer '{layer.Name}' {(layer.IsVisible ? "shown" : "hidden")}.");
+            case nameof(ILayerStackItem.IsVisible):
+                _trace($"{noun} '{layer.Name}' {(layer.IsVisible ? "shown" : "hidden")}.");
                 LayersChanged?.Invoke(this, EventArgs.Empty);
                 break;
 
             case nameof(GenerationFrameViewModel.Opacity):
-                // Not traced: a slider drag raises this dozens of times. The region-composite trace at
-                // Generate records what the model actually received.
+            case nameof(InpaintMaskLayerViewModel.Feather):
+                // Not traced: a slider drag raises this dozens of times. The trace at Generate records
+                // what the model actually received.
                 LayersChanged?.Invoke(this, EventArgs.Empty);
                 break;
 
-            case nameof(GenerationFrameViewModel.IsLocked):
-                _trace($"Layer '{layer.Name}' {(layer.IsLocked ? "locked" : "unlocked")}.");
+            case nameof(InpaintMaskLayerViewModel.Revision):
+            case nameof(InpaintMaskLayerViewModel.Invert):
+                // The mask traces its own strokes and invert; the canvas re-reads whether it meets the box.
+                LayersChanged?.Invoke(this, EventArgs.Empty);
+                break;
+
+            case nameof(ILayerStackItem.IsLocked):
+                _trace($"{noun} '{layer.Name}' {(layer.IsLocked ? "locked" : "unlocked")}.");
                 OnPropertyChanged(nameof(HasUnlockedLayers));
                 DeleteSelectedCommand.NotifyCanExecuteChanged();
                 LayersChanged?.Invoke(this, EventArgs.Empty);
                 break;
 
-            case nameof(GenerationFrameViewModel.Name):
-                _trace($"Renamed a layer to '{layer.Name}'.");
+            case nameof(ILayerStackItem.Name):
+                _trace($"Renamed a {noun.ToLowerInvariant()} to '{layer.Name}'.");
                 break;
         }
     }

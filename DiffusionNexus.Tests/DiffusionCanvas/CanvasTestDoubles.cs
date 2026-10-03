@@ -93,6 +93,9 @@ internal sealed class FakeDiffusionBackend : IDiffusionBackend
     /// </summary>
     public byte[]? InitImageBytesAtCallTime { get; private set; }
 
+    /// <summary>The mask file's bytes, read when the backend was called. Same reason as the init image's.</summary>
+    public byte[]? MaskImageBytesAtCallTime { get; private set; }
+
     public Task<bool> IsAvailableAsync(CancellationToken ct = default)
     {
         AvailabilityTokenWasCancellable = ct.CanBeCanceled;
@@ -112,6 +115,9 @@ internal sealed class FakeDiffusionBackend : IDiffusionBackend
 
         if (request.InitImage is { } init && File.Exists(init.FilePath))
             InitImageBytesAtCallTime = File.ReadAllBytes(init.FilePath);
+
+        if (request.MaskImage is { } mask && File.Exists(mask.FilePath))
+            MaskImageBytesAtCallTime = File.ReadAllBytes(mask.FilePath);
 
         MaxConcurrentRuns = Math.Max(MaxConcurrentRuns, ++_concurrent);
         try

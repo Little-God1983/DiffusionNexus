@@ -498,7 +498,8 @@ public class CanvasGeneratePanelTests
         var vm = Canvas(new FakeDiffusionBackend());
 
         vm.ControlNetTooltip.Should().NotBeNullOrWhiteSpace().And.Contain("region D");
-        vm.MaskTooltip.Should().NotBeNullOrWhiteSpace().And.Contain("region D");
+        // The mask button is live since #595; its tooltip says what it does instead.
+        vm.MaskTooltip.Should().NotBeNullOrWhiteSpace().And.NotContain("region D");
         vm.ControlNetTooltip.Should().NotBe(vm.MaskTooltip);
     }
 

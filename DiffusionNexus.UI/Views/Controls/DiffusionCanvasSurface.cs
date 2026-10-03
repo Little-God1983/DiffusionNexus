@@ -8,9 +8,13 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.Immutable;
+using Avalonia.Platform;
+using Avalonia.Rendering.SceneGraph;
+using Avalonia.Skia;
 using Avalonia.Threading;
 using DiffusionNexus.UI.DiffusionCanvas;
 using DiffusionNexus.UI.ViewModels;
+using SkiaSharp;
 
 namespace DiffusionNexus.UI.Views.Controls;
 
@@ -33,6 +37,11 @@ namespace DiffusionNexus.UI.Views.Controls;
 /// invalidating the whole surface for that re-issued the grid's hundreds of dot fills plus a
 /// <c>DrawImage</c> per accepted raster on an idle screen. The child layer is the only thing the ants tick
 /// invalidates.
+///
+/// The inpaint mask (#595) is a second child visual (<see cref="MaskLayer"/>) under the box, for the same
+/// reason: a brush stroke redraws it on every pointer move, and nothing under it has changed. It is drawn
+/// through Skia because the eraser needs a clearing blend, and only from immutable stroke snapshots, so
+/// nothing the render thread reads can change under it.
 /// </summary>
 public class DiffusionCanvasSurface : Control
 {
@@ -50,6 +59,14 @@ public class DiffusionCanvasSurface : Control
     private static readonly IPen SelectedRasterOutline = new Pen(new SolidColorBrush(Color.Parse("#3D8BFD")), 2);
     private static readonly IPen HandlePen = new Pen(new SolidColorBrush(Color.Parse("#1A1A1A")), 1);
     private static readonly IPen AntsBackPen = new Pen(new SolidColorBrush(Color.Parse("#141414")), 2);
+    private static readonly IPen BrushCursorPen = new Pen(new SolidColorBrush(Color.Parse("#F0F0F0")), 1);
+    private static readonly IPen BrushCursorBackPen = new Pen(new SolidColorBrush(Color.Parse("#141414")), 3);
+
+    /// <summary>The mask overlay's colour: the repaint area, drawn translucent so the image shows through.</summary>
+    private static readonly SKColor MaskOverlayColor = new(0xE0, 0x30, 0x30);
+
+    /// <summary>The mask overlay's opacity, applied to the whole overlay so overlapping strokes do not darken.</summary>
+    private const byte MaskOverlayAlpha = 110;
 
     /// <summary>Screen-space edge length of a resize handle. Constant, so handles never scale with zoom.</summary>
     private const double HandleScreenSize = 10;
@@ -89,6 +106,7 @@ public class DiffusionCanvasSurface : Control
     private static readonly Dictionary<StandardCursorType, Cursor> CursorCache = [];
 
     private readonly DispatcherTimer _antsTimer;
+    private readonly MaskLayer _maskLayer;
     private readonly BoxLayer _boxLayer;
     private int _antsOffset;
 
@@ -104,6 +122,16 @@ public class DiffusionCanvasSurface : Control
     private bool _isPanning;
     private Point _panLastScreen;
     private bool _isDraggingBox;
+
+    /// <summary>World points of the brush or eraser stroke in progress; null when not painting.</summary>
+    private List<Point>? _paintPoints;
+    private bool _paintIsErase;
+    private double _paintSize;
+
+    /// <summary>Where the pointer is, for the brush cursor; null when it is outside the control.</summary>
+    private Point? _hoverScreen;
+
+    private ICanvasMask? _observedMask;
 
     /// <summary>The raster under a right-button press, resolved on press and acted on at release.</summary>
     private ICanvasRaster? _contextRaster;
@@ -124,6 +152,10 @@ public class DiffusionCanvasSurface : Control
         Viewport = new CanvasViewport();
         _observedViewport = Viewport;
         Viewport.Changed += OnViewportChanged;
+
+        _maskLayer = new MaskLayer(this);
+        VisualChildren.Add(_maskLayer);
+        LogicalChildren.Add(_maskLayer);
 
         _boxLayer = new BoxLayer(this);
         VisualChildren.Add(_boxLayer);
@@ -243,6 +275,42 @@ public class DiffusionCanvasSurface : Control
         set => SetValue(SelectedRasterProperty, value);
     }
 
+    public static readonly StyledProperty<ICanvasMask?> MaskProperty =
+        AvaloniaProperty.Register<DiffusionCanvasSurface, ICanvasMask?>(nameof(Mask));
+
+    /// <summary>The inpaint mask, drawn as a translucent overlay and painted on with <see cref="PaintTool"/>.</summary>
+    public ICanvasMask? Mask
+    {
+        get => GetValue(MaskProperty);
+        set => SetValue(MaskProperty, value);
+    }
+
+    public static readonly StyledProperty<CanvasPaintTool> PaintToolProperty =
+        AvaloniaProperty.Register<DiffusionCanvasSurface, CanvasPaintTool>(nameof(PaintTool));
+
+    /// <summary>
+    /// What a left drag does. While a paint tool is active a left press paints the mask and never grabs
+    /// the box, so the box cannot be dragged by accident; panning, zooming and right-click still work.
+    /// </summary>
+    public CanvasPaintTool PaintTool
+    {
+        get => GetValue(PaintToolProperty);
+        set => SetValue(PaintToolProperty, value);
+    }
+
+    public static readonly StyledProperty<double> BrushSizeProperty =
+        AvaloniaProperty.Register<DiffusionCanvasSurface, double>(nameof(BrushSize), defaultValue: 64);
+
+    /// <summary>Brush diameter in world pixels.</summary>
+    public double BrushSize
+    {
+        get => GetValue(BrushSizeProperty);
+        set => SetValue(BrushSizeProperty, value);
+    }
+
+    /// <summary>True when a left drag paints: a paint tool is active and the mask is there and visible.</summary>
+    private bool CanPaintNow => PaintTool != CanvasPaintTool.None && Mask is { IsVisible: true } && BrushSize > 0;
+
     private static readonly DirectProperty<DiffusionCanvasSurface, double> ZoomPropertyInternal =
         AvaloniaProperty.RegisterDirect<DiffusionCanvasSurface, double>(nameof(Zoom), o => o.Zoom);
 
@@ -275,6 +343,8 @@ public class DiffusionCanvasSurface : Control
         _antsTimer.Stop();
         IsSpaceHeld = false;
         _contextRaster = null;
+        _hoverScreen = null;
+        CommitPaintStroke();
         ReleaseGesture();
         base.OnDetachedFromVisualTree(e);
     }
@@ -291,6 +361,30 @@ public class DiffusionCanvasSurface : Control
         else if (change.Property == BoxProperty)
         {
             AttachBox(change.GetNewValue<GenerationBoundingBox?>());
+            _boxLayer.InvalidateVisual();
+        }
+        else if (change.Property == MaskProperty)
+        {
+            AttachMask(change.GetNewValue<ICanvasMask?>());
+            _maskLayer.InvalidateVisual();
+        }
+        else if (change.Property == PaintToolProperty)
+        {
+            // The tool was put down (Escape, the mask hidden or deselected) while a stroke was in progress:
+            // that stroke was never finished, so it is dropped rather than committed.
+            if (_paintPoints is not null && !CanPaintNow)
+            {
+                _paintPoints = null;
+                ReleaseGesture();
+            }
+
+            _maskLayer.InvalidateVisual();
+            _boxLayer.InvalidateVisual();
+            if (_hoverScreen is { } hover)
+                UpdateCursor(hover);
+        }
+        else if (change.Property == BrushSizeProperty)
+        {
             _boxLayer.InvalidateVisual();
         }
         else if (change.Property == ShowGridProperty
@@ -317,8 +411,29 @@ public class DiffusionCanvasSurface : Control
     {
         Zoom = Viewport.Zoom;
         InvalidateVisual();
+        _maskLayer.InvalidateVisual();
         _boxLayer.InvalidateVisual();
     }
+
+    private void AttachMask(ICanvasMask? mask)
+    {
+        if (_observedMask is not null)
+            _observedMask.PropertyChanged -= OnMaskPropertyChanged;
+
+        _observedMask = mask;
+
+        if (_observedMask is not null)
+            _observedMask.PropertyChanged += OnMaskPropertyChanged;
+
+        // A stroke in progress belongs to the mask it started on.
+        if (_paintPoints is not null)
+        {
+            _paintPoints = null;
+            ReleaseGesture();
+        }
+    }
+
+    private void OnMaskPropertyChanged(object? sender, PropertyChangedEventArgs e) => _maskLayer.InvalidateVisual();
 
     private void AttachBox(GenerationBoundingBox? box)
     {
@@ -420,6 +535,13 @@ public class DiffusionCanvasSurface : Control
     /// <summary>Abandons an in-progress box gesture, restoring the box to where the drag began.</summary>
     public void CancelActiveGesture()
     {
+        if (_paintPoints is not null)
+        {
+            // Escape mid-stroke takes the stroke back.
+            _paintPoints = null;
+            _maskLayer.InvalidateVisual();
+        }
+
         if (_isDraggingBox && Box is { } box)
         {
             box.CancelDrag();
@@ -487,6 +609,17 @@ public class DiffusionCanvasSurface : Control
             return;
         }
 
+        if (point.Properties.IsLeftButtonPressed && PaintTool != CanvasPaintTool.None)
+        {
+            // A paint tool owns the left button, even over the box, so painting near the box never moves
+            // it. Without a paintable mask the press does nothing rather than falling through to the box.
+            if (CanPaintNow)
+                BeginPaint(e.Pointer, Viewport.ScreenToWorld(screen));
+
+            e.Handled = true;
+            return;
+        }
+
         if (!point.Properties.IsLeftButtonPressed || Box is not { } box)
             return;
 
@@ -514,6 +647,15 @@ public class DiffusionCanvasSurface : Control
             return;
         }
 
+        if (_paintPoints is not null)
+        {
+            ExtendPaint(Viewport.ScreenToWorld(screen));
+            _hoverScreen = screen;
+            _boxLayer.InvalidateVisual();
+            e.Handled = true;
+            return;
+        }
+
         if (_isDraggingBox && Box is { } dragging)
         {
             // Alt suspends POSITION snapping only. Sizes always snap: a latent size off the model's
@@ -525,7 +667,22 @@ public class DiffusionCanvasSurface : Control
             return;
         }
 
+        _hoverScreen = screen;
+        if (PaintTool != CanvasPaintTool.None)
+            _boxLayer.InvalidateVisual();
+
         UpdateCursor(screen);
+    }
+
+    protected override void OnPointerExited(PointerEventArgs e)
+    {
+        base.OnPointerExited(e);
+
+        if (_paintPoints is not null)
+            return;
+
+        _hoverScreen = null;
+        _boxLayer.InvalidateVisual();
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
@@ -552,6 +709,7 @@ public class DiffusionCanvasSurface : Control
             box.SnapPositionToGrid = true;
         }
 
+        CommitPaintStroke();
         ReleaseGesture();
         UpdateCursor(e.GetPosition(this));
     }
@@ -572,6 +730,8 @@ public class DiffusionCanvasSurface : Control
             box.SnapPositionToGrid = true;
         }
 
+        // What was drawn before the capture went is kept: the user saw it land.
+        CommitPaintStroke();
         ReleaseGesture();
     }
 
@@ -581,6 +741,15 @@ public class DiffusionCanvasSurface : Control
 
         if (e.Delta.Y == 0)
             return;
+
+        // Shift+wheel resizes the brush while a paint tool is active, as in the Image Editor. The host
+        // binds BrushSize two-way and clamps it.
+        if (PaintTool != CanvasPaintTool.None && e.KeyModifiers.HasFlag(KeyModifiers.Shift))
+        {
+            SetCurrentValue(BrushSizeProperty, CanvasBrush.Step(BrushSize, grow: e.Delta.Y > 0));
+            e.Handled = true;
+            return;
+        }
 
         var factor = e.Delta.Y > 0 ? 1.15 : 1 / 1.15;
         Viewport.ZoomAt(e.GetPosition(this), factor);
@@ -606,6 +775,43 @@ public class DiffusionCanvasSurface : Control
             CommandParameter = raster,
         });
         flyout.ShowAt(this, showAtPointer: true);
+    }
+
+    private void BeginPaint(IPointer pointer, Point world)
+    {
+        _paintPoints = [world];
+        _paintIsErase = PaintTool == CanvasPaintTool.Eraser;
+        _paintSize = BrushSize;
+        Capture(pointer);
+        _maskLayer.InvalidateVisual();
+    }
+
+    private void ExtendPaint(Point world)
+    {
+        // Skip points closer than a quarter of the brush (at least one screen pixel): a slow drag would
+        // otherwise record hundreds of points that change nothing a round-capped path draws.
+        var last = _paintPoints![^1];
+        var minStep = Math.Max(_paintSize / 4, Viewport.ScreenToWorldLength(1));
+        var dx = world.X - last.X;
+        var dy = world.Y - last.Y;
+        if (dx * dx + dy * dy < minStep * minStep)
+            return;
+
+        _paintPoints.Add(world);
+        _maskLayer.InvalidateVisual();
+    }
+
+    /// <summary>Hands the stroke in progress to the mask as one finished stroke. A no-op when not painting.</summary>
+    private void CommitPaintStroke()
+    {
+        if (_paintPoints is not { Count: > 0 } points)
+            return;
+
+        _paintPoints = null;
+        if (Mask is { IsVisible: true } mask)
+            mask.AddStroke(new CanvasMaskStroke(points, _paintSize, _paintIsErase));
+
+        _maskLayer.InvalidateVisual();
     }
 
     private void BeginPan(IPointer pointer, Point screen)
@@ -635,6 +841,7 @@ public class DiffusionCanvasSurface : Control
 
         _isPanning = false;
         _isDraggingBox = false;
+        _paintPoints = null;
         ApplyCursor(IsSpaceHeld ? CursorFor(StandardCursorType.Hand) : Cursor.Default);
     }
 
@@ -642,6 +849,13 @@ public class DiffusionCanvasSurface : Control
     {
         if (IsSpaceHeld)
             return;
+
+        if (PaintTool != CanvasPaintTool.None)
+        {
+            // The brush circle drawn by the box layer is the real cursor; the cross marks its centre.
+            ApplyCursor(CursorFor(StandardCursorType.Cross));
+            return;
+        }
 
         if (Box is not { } box)
         {
@@ -791,6 +1005,8 @@ public class DiffusionCanvasSurface : Control
     /// <summary>The bounding box: ants, handles and readout. Drawn by <see cref="BoxLayer"/>.</summary>
     private void DrawBox(DrawingContext context)
     {
+        DrawBrushCursor(context);
+
         if (Box is not { } box)
             return;
 
@@ -803,6 +1019,42 @@ public class DiffusionCanvasSurface : Control
 
         DrawHandles(context, box);
         DrawReadout(context, box, screen);
+    }
+
+    /// <summary>The brush's true on-screen size around the pointer, while a paint tool is active.</summary>
+    private void DrawBrushCursor(DrawingContext context)
+    {
+        if (PaintTool == CanvasPaintTool.None || _hoverScreen is not { } centre)
+            return;
+
+        var size = _paintPoints is not null ? _paintSize : BrushSize;
+        var radius = Math.Max(2, size * Viewport.Zoom / 2);
+        context.DrawEllipse(null, BrushCursorBackPen, centre, radius, radius);
+        context.DrawEllipse(null, BrushCursorPen, centre, radius, radius);
+    }
+
+    /// <summary>
+    /// The mask overlay's draw operation for this frame, or null when there is nothing to draw: no mask,
+    /// a hidden mask, or a mask with no strokes that is not inverted.
+    /// </summary>
+    private MaskDrawOperation? CreateMaskDrawOperation()
+    {
+        if (Mask is not { IsVisible: true } mask)
+            return null;
+
+        var strokes = mask.Strokes;
+        if (_paintPoints is { Count: > 0 } live)
+            strokes = [.. strokes, new CanvasMaskStroke(live.ToArray(), _paintSize, _paintIsErase)];
+
+        if (strokes.Count == 0 && !mask.Invert)
+            return null;
+
+        // Inverted, the repaint area is the box minus the painting, so the overlay is confined to the box.
+        Rect? clip = mask.Invert ? (Box is { } box ? Viewport.WorldToScreen(box.WorldRect) : null) : null;
+        if (mask.Invert && clip is null)
+            return null;
+
+        return new MaskDrawOperation(new Rect(Bounds.Size), strokes, Viewport.Zoom, Viewport.PanX, Viewport.PanY, clip);
     }
 
     private void DrawHandles(DrawingContext context, GenerationBoundingBox box)
@@ -860,6 +1112,98 @@ public class DiffusionCanvasSurface : Control
         var boxRect = new Rect(x, y, width, height);
         context.FillRectangle(ReadoutBackground, boxRect);
         context.DrawText(formatted, new Point(boxRect.X + padding, boxRect.Y + padding));
+    }
+
+    /// <summary>
+    /// The inpaint mask as its own visual, between the rasters and the box. A stroke in progress redraws
+    /// only this. Not hit-testable: every pointer gesture belongs to the surface.
+    /// </summary>
+    private sealed class MaskLayer : Control
+    {
+        private readonly DiffusionCanvasSurface _owner;
+
+        public MaskLayer(DiffusionCanvasSurface owner)
+        {
+            _owner = owner;
+            IsHitTestVisible = false;
+        }
+
+        public override void Render(DrawingContext context)
+        {
+            if (_owner.CreateMaskDrawOperation() is { } operation)
+                context.Custom(operation);
+        }
+    }
+
+    /// <summary>
+    /// Draws the mask's repaint area through Skia, from an immutable snapshot: the stroke list is replaced,
+    /// never mutated, and the live stroke is copied, so the render thread reads nothing the UI thread can
+    /// change. Strokes are drawn opaque into a layer that is composited translucent, so overlaps do not
+    /// darken; erasers clear within that layer; an inverted mask fills the box and clears the painting.
+    /// </summary>
+    private sealed class MaskDrawOperation : ICustomDrawOperation
+    {
+        private readonly IReadOnlyList<CanvasMaskStroke> _strokes;
+        private readonly double _zoom;
+        private readonly double _panX;
+        private readonly double _panY;
+        private readonly Rect? _invertClip;
+
+        public MaskDrawOperation(
+            Rect bounds, IReadOnlyList<CanvasMaskStroke> strokes, double zoom, double panX, double panY, Rect? invertClip)
+        {
+            Bounds = bounds;
+            _strokes = strokes;
+            _zoom = zoom;
+            _panX = panX;
+            _panY = panY;
+            _invertClip = invertClip;
+        }
+
+        public Rect Bounds { get; }
+
+        public bool HitTest(Point p) => false;
+
+        public bool Equals(ICustomDrawOperation? other) => false;
+
+        public void Dispose()
+        {
+        }
+
+        public void Render(ImmediateDrawingContext context)
+        {
+            if (context.TryGetFeature(typeof(ISkiaSharpApiLeaseFeature)) is not ISkiaSharpApiLeaseFeature leaseFeature)
+                return;
+
+            using var lease = leaseFeature.Lease();
+            var canvas = lease.SkCanvas;
+            var bounds = new SKRect(0, 0, (float)Bounds.Width, (float)Bounds.Height);
+
+            canvas.Save();
+            canvas.ClipRect(bounds);
+            if (_invertClip is { } clip)
+                canvas.ClipRect(new SKRect((float)clip.X, (float)clip.Y, (float)clip.Right, (float)clip.Bottom));
+
+            using (var layerPaint = new SKPaint { Color = SKColors.White.WithAlpha(MaskOverlayAlpha) })
+                canvas.SaveLayer(bounds, layerPaint);
+
+            canvas.Save();
+            canvas.Translate((float)_panX, (float)_panY);
+            canvas.Scale((float)_zoom);
+            CanvasMaskRasterizer.DrawStrokes(canvas, _strokes, MaskOverlayColor);
+            canvas.Restore();
+
+            if (_invertClip is not null)
+            {
+                // Xor with an opaque fill: full colour where nothing was painted, clear where it was, and a
+                // soft blend on antialiased edges.
+                using var fill = new SKPaint { Color = MaskOverlayColor, BlendMode = SKBlendMode.Xor };
+                canvas.DrawRect(bounds, fill);
+            }
+
+            canvas.Restore();   // the translucent layer
+            canvas.Restore();   // the clips
+        }
     }
 
     /// <summary>

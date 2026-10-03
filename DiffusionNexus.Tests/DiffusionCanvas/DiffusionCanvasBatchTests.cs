@@ -626,6 +626,9 @@ public class DiffusionCanvasBatchTests
     {
         var backend = new FakeDiffusionBackend();
         var vm = Canvas(backend);
+        // Dispose deletes the scratch folder. The default one is shared by every view model in this
+        // process, and test classes run in parallel: deleting it would pull files out from under them.
+        vm.ScratchDirectory = Path.Combine(Path.GetTempPath(), "DiffusionNexus", $"canvas-test-{Guid.NewGuid():N}");
         vm.BatchCount = 2;
         await vm.GenerateCommand.ExecuteAsync(null);
         vm.Staging.AcceptCommand.Execute(null);

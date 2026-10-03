@@ -366,7 +366,7 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
     /// Highest denoise strength a masked run is given. stable-diffusion.cpp does not encode the init
     /// image at strength 1.0, which would leave the area outside the mask nothing to blend back onto.
     /// </summary>
-    internal const float MaxMaskedStrength = 0.99f;
+    public const float MaxMaskedStrength = 0.99f;
 
     private static bool HasMask(DiffusionRequest req) =>
         req.MaskImage is { } mask && !string.IsNullOrWhiteSpace(mask.FilePath);
