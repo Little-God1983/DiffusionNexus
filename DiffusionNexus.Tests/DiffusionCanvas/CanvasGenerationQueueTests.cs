@@ -16,7 +16,7 @@ public class CanvasGenerationQueueTests
 
         public Harness()
         {
-            Queue = new CanvasGenerationQueue(RunAsync, Trace.Add, () => Now);
+            Queue = new CanvasGenerationQueue(Trace.Add, () => Now);
         }
 
         public CanvasGenerationQueue Queue { get; }
@@ -27,12 +27,25 @@ public class CanvasGenerationQueueTests
 
         public List<int> Started { get; } = [];
 
+        public List<int> Dropped { get; } = [];
+
+        public List<int> Cancelling { get; } = [];
+
         public Dictionary<int, CancellationToken> Tokens { get; } = [];
 
         public int? ThrowOn { get; set; }
 
-        public CanvasQueuedBatchViewModel Batch(int number, int images = 1, int steps = 10) =>
-            new(number, images, steps, $"prompt {number}");
+        public CanvasQueuedBatchViewModel Batch(int number, int images = 1, int steps = 10, string paceKey = "") =>
+            new(number, images, steps, $"prompt {number}", paceKey);
+
+        public Task Enqueue(CanvasQueuedBatchViewModel batch, Func<int>? pendingImages = null) =>
+            Queue.Enqueue(batch, new CanvasBatchWork(
+                Run: token => RunAsync(batch, token),
+                OnDropped: () => Dropped.Add(batch.Number),
+                OnCancelling: () => Cancelling.Add(batch.Number),
+                PendingImages: pendingImages));
+
+        public void At(double seconds) => Now = TimeSpan.FromSeconds(seconds);
 
         /// <summary>Lets the running batch end.</summary>
         public void Finish(int number) => _gates[number].TrySetResult();
@@ -56,8 +69,8 @@ public class CanvasGenerationQueueTests
     {
         var h = new Harness();
 
-        h.Queue.Enqueue(h.Batch(1));
-        h.Queue.Enqueue(h.Batch(2));
+        h.Enqueue(h.Batch(1));
+        h.Enqueue(h.Batch(2));
 
         h.Started.Should().Equal(1);
         h.Queue.IsBusy.Should().BeTrue();
@@ -70,9 +83,9 @@ public class CanvasGenerationQueueTests
     public async Task BatchesRunInTheOrderTheyWereAdded()
     {
         var h = new Harness();
-        var first = h.Queue.Enqueue(h.Batch(1));
-        var second = h.Queue.Enqueue(h.Batch(2));
-        var third = h.Queue.Enqueue(h.Batch(3));
+        var first = h.Enqueue(h.Batch(1));
+        var second = h.Enqueue(h.Batch(2));
+        var third = h.Enqueue(h.Batch(3));
 
         h.Finish(1);
         await first;
@@ -93,7 +106,7 @@ public class CanvasGenerationQueueTests
         // Whoever awaits a batch must see the queue already settled, or a Cancel button bound to IsBusy
         // is still live for a batch that is over.
         var h = new Harness();
-        var task = h.Queue.Enqueue(h.Batch(1));
+        var task = h.Enqueue(h.Batch(1));
         bool? busyAtCompletion = null;
         var observer = task.ContinueWith(_ => busyAtCompletion = h.Queue.IsBusy, TaskContinuationOptions.ExecuteSynchronously);
 
@@ -107,13 +120,14 @@ public class CanvasGenerationQueueTests
     public async Task CancelRunning_StopsThatBatchAndTheNextOneStarts()
     {
         var h = new Harness();
-        var first = h.Queue.Enqueue(h.Batch(1));
-        h.Queue.Enqueue(h.Batch(2));
+        var first = h.Enqueue(h.Batch(1));
+        h.Enqueue(h.Batch(2));
 
         var cancelled = h.Queue.CancelRunning();
         await first;
 
         cancelled!.Number.Should().Be(1);
+        h.Cancelling.Should().Equal(1);
         h.Tokens[1].IsCancellationRequested.Should().BeTrue();
         h.Started.Should().Equal(1, 2);
         h.Tokens[2].IsCancellationRequested.Should().BeFalse("each batch has its own epoch");
@@ -134,8 +148,8 @@ public class CanvasGenerationQueueTests
         // The epoch invariant: never cancel without nulling. A cancelled source left installed would be
         // cancelled again while the next batch's own source stayed untouched, or the reverse.
         var h = new Harness();
-        var first = h.Queue.Enqueue(h.Batch(1));
-        h.Queue.Enqueue(h.Batch(2));
+        var first = h.Enqueue(h.Batch(1));
+        h.Enqueue(h.Batch(2));
 
         h.Queue.CancelRunning();
         await first;
@@ -144,40 +158,42 @@ public class CanvasGenerationQueueTests
         h.Queue.CancelRunning();
 
         h.Tokens[2].IsCancellationRequested.Should().BeTrue();
+        h.Cancelling.Should().Equal(1, 2);
     }
 
     [Fact]
     public async Task Remove_DropsAQueuedBatchWithoutRunningIt()
     {
         var h = new Harness();
-        var first = h.Queue.Enqueue(h.Batch(1));
+        var first = h.Enqueue(h.Batch(1));
         var queued = h.Batch(2);
-        var second = h.Queue.Enqueue(queued);
-        var dropped = new List<int>();
-        h.Queue.BatchDropped += (_, b) => dropped.Add(b.Number);
+        var second = h.Enqueue(queued);
 
         h.Queue.Remove(queued);
 
         second.IsCompleted.Should().BeTrue("whoever awaits a removed batch must not wait forever");
-        dropped.Should().Equal(2);
+        h.Dropped.Should().Equal(2);
         h.Finish(1);
         await first;
         h.Started.Should().Equal(1);
     }
 
     [Fact]
-    public void Remove_OnTheRunningBatchAsksTheOwnerToCancel()
+    public async Task Remove_OnTheRunningBatchCancelsItWithoutTheOwnersHelp()
     {
+        // Review finding: this used to raise an event and rely on a subscriber to do the cancelling, so
+        // the row's Cancel button did nothing for an owner that had not wired it.
         var h = new Harness();
         var running = h.Batch(1);
-        h.Queue.Enqueue(running);
-        var asked = 0;
-        h.Queue.RunningCancelRequested += (_, _) => asked++;
+        var task = h.Enqueue(running);
 
         running.RemoveCommand!.Execute(null);
+        await task;
 
-        asked.Should().Be(1);
-        h.Queue.Batches.Should().Contain(running, "the owner cancels it through its own path");
+        h.Tokens[1].IsCancellationRequested.Should().BeTrue();
+        h.Cancelling.Should().Equal(1);
+        h.Dropped.Should().BeEmpty("a cancelled batch ran; it was not dropped");
+        h.Queue.IsBusy.Should().BeFalse();
     }
 
     [Fact]
@@ -185,14 +201,15 @@ public class CanvasGenerationQueueTests
     {
         var h = new Harness();
         h.Queue.ClearQueuedCommand.CanExecute(null).Should().BeFalse();
-        h.Queue.Enqueue(h.Batch(1));
-        h.Queue.Enqueue(h.Batch(2));
-        h.Queue.Enqueue(h.Batch(3));
+        h.Enqueue(h.Batch(1));
+        h.Enqueue(h.Batch(2));
+        h.Enqueue(h.Batch(3));
         h.Queue.ClearQueuedCommand.CanExecute(null).Should().BeTrue();
 
         h.Queue.ClearQueuedCommand.Execute(null);
 
         h.Queue.Batches.Should().ContainSingle().Which.Number.Should().Be(1);
+        h.Dropped.Should().Equal(2, 3);
         h.Queue.ClearQueuedCommand.CanExecute(null).Should().BeFalse();
     }
 
@@ -201,8 +218,8 @@ public class CanvasGenerationQueueTests
     {
         var h = new Harness { ThrowOn = 1 };
 
-        var first = h.Queue.Enqueue(h.Batch(1));
-        var second = h.Queue.Enqueue(h.Batch(2));
+        var first = h.Enqueue(h.Batch(1));
+        var second = h.Enqueue(h.Batch(2));
         await first;
 
         h.Started.Should().Equal(1, 2);
@@ -213,14 +230,63 @@ public class CanvasGenerationQueueTests
     }
 
     [Fact]
+    public async Task AThrowingListenerCannotWedgeTheQueue()
+    {
+        // Review finding: the worker is fire-and-forget. A handler that threw while the queue went idle
+        // left the worker flag set with no worker behind it, and every later batch staged and never ran.
+        var h = new Harness();
+        var armed = true;
+        h.Queue.PropertyChanged += (_, e) =>
+        {
+            if (armed && e.PropertyName == nameof(CanvasGenerationQueue.IsBusy) && !h.Queue.IsBusy)
+                throw new InvalidOperationException("a view handler blew up");
+        };
+        var first = h.Enqueue(h.Batch(1));
+
+        h.Finish(1);
+        await first;
+        armed = false;
+        var second = h.Enqueue(h.Batch(2));
+
+        h.Started.Should().Equal(1, 2);
+        h.Finish(2);
+        await second;
+        h.Queue.IsBusy.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task AThrowingListenerAtBatchStartDoesNotStrandTheBatchesBehindIt()
+    {
+        var h = new Harness();
+        var throwOnce = true;
+        h.Queue.PropertyChanged += (_, e) =>
+        {
+            if (throwOnce && e.PropertyName == nameof(CanvasGenerationQueue.IsBusy) && h.Queue.IsBusy)
+            {
+                throwOnce = false;
+                throw new InvalidOperationException("a view handler blew up");
+            }
+        };
+
+        var first = h.Enqueue(h.Batch(1));
+        var second = h.Enqueue(h.Batch(2));
+        await first;
+
+        h.Started.Should().Equal([2], "batch 1 was lost to the fault, but batch 2 must still run");
+        h.Finish(2);
+        await second;
+        h.Queue.Batches.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task EnqueueAfterTheQueueWentIdleStartsItAgain()
     {
         var h = new Harness();
-        var first = h.Queue.Enqueue(h.Batch(1));
+        var first = h.Enqueue(h.Batch(1));
         h.Finish(1);
         await first;
 
-        h.Queue.Enqueue(h.Batch(2));
+        h.Enqueue(h.Batch(2));
 
         h.Started.Should().Equal(1, 2);
         h.Queue.IsBusy.Should().BeTrue();
@@ -230,8 +296,8 @@ public class CanvasGenerationQueueTests
     public void Shutdown_CancelsTheRunningBatchAndDropsTheRest()
     {
         var h = new Harness();
-        h.Queue.Enqueue(h.Batch(1));
-        var second = h.Queue.Enqueue(h.Batch(2));
+        h.Enqueue(h.Batch(1));
+        var second = h.Enqueue(h.Batch(2));
 
         h.Queue.Shutdown();
 
@@ -244,9 +310,9 @@ public class CanvasGenerationQueueTests
     public void EveryTransitionIsTraced()
     {
         var h = new Harness();
-        h.Queue.Enqueue(h.Batch(1));
+        h.Enqueue(h.Batch(1));
         var queued = h.Batch(2);
-        h.Queue.Enqueue(queued);
+        h.Enqueue(queued);
         h.Queue.Remove(queued);
         h.Finish(1);
 
@@ -256,6 +322,74 @@ public class CanvasGenerationQueueTests
         h.Trace.Should().Contain(l => l.Contains("#2 removed"));
         h.Trace.Should().Contain(l => l.Contains("#1 finished"));
         h.Trace.Should().Contain(l => l.Contains("queue is empty"));
+    }
+
+    // ────────────────────────────── Discarded slots ──────────────────────────────
+
+    [Fact]
+    public void TheCountAndTheEtaLeaveOutSlotsTheUserDiscarded()
+    {
+        // Review finding: both used the size the batch was queued with.
+        var h = new Harness();
+        var left = 8;
+        h.Enqueue(h.Batch(1, images: 1, steps: 10));
+        h.Enqueue(h.Batch(2, images: 8, steps: 10), () => left);
+        h.Queue.ImageStarted();
+        h.Queue.ReportStep(5, 10, 1.0);
+        h.Queue.QueueText.Should().Be("Image 1/1 · 1 batch queued (8 images)");
+        h.Queue.EstimateRemaining().Should().Be(TimeSpan.FromSeconds(85));
+
+        left = 3;
+        h.Queue.SlotsChanged();
+
+        h.Queue.QueueText.Should().Be("Image 1/1 · 1 batch queued (3 images)");
+        h.Queue.EstimateRemaining().Should().Be(TimeSpan.FromSeconds(35));
+    }
+
+    [Fact]
+    public void AWaitingBatchWithNoSlotLeftLeavesTheQueue()
+    {
+        var h = new Harness();
+        var left = 2;
+        h.Enqueue(h.Batch(1));
+        var second = h.Enqueue(h.Batch(2, images: 2), () => left);
+
+        left = 0;
+        h.Queue.SlotsChanged();
+
+        h.Queue.Batches.Should().ContainSingle().Which.Number.Should().Be(1);
+        h.Dropped.Should().Equal(2);
+        second.IsCompleted.Should().BeTrue();
+        h.Queue.QueueText.Should().Be("Image 1/1");
+    }
+
+    [Fact]
+    public void TheRunningBatchIsNeverDroppedForHavingNoSlotLeft()
+    {
+        // Its last image may be the one in flight; the worker ends it, not the slot count.
+        var h = new Harness();
+        h.Enqueue(h.Batch(1), () => 0);
+
+        h.Queue.SlotsChanged();
+
+        h.Queue.Running!.Number.Should().Be(1);
+        h.Dropped.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void TheEtaLeavesOutDiscardedSlotsOfTheRunningBatch()
+    {
+        var h = new Harness();
+        var left = 3;
+        h.Enqueue(h.Batch(1, images: 4, steps: 10), () => left);
+        h.Queue.ImageStarted();
+        h.Queue.ReportStep(0, 10, 1.0);
+        h.Queue.EstimateRemaining().Should().Be(TimeSpan.FromSeconds(40));
+
+        left = 1;
+        h.Queue.SlotsChanged();
+
+        h.Queue.EstimateRemaining().Should().Be(TimeSpan.FromSeconds(20));
     }
 
     // ────────────────────────────── Readout ──────────────────────────────
@@ -274,13 +408,13 @@ public class CanvasGenerationQueueTests
     public void QueueText_NamesTheImageAndWhatWaits()
     {
         var h = new Harness();
-        h.Queue.Enqueue(h.Batch(1, images: 4));
+        h.Enqueue(h.Batch(1, images: 4));
         h.Queue.QueueText.Should().Be("Image 1/4");
 
         h.Queue.ImageStarted();
         h.Queue.ImageFinished(succeeded: true);
-        h.Queue.Enqueue(h.Batch(2, images: 3));
-        h.Queue.Enqueue(h.Batch(3, images: 5));
+        h.Enqueue(h.Batch(2, images: 3));
+        h.Enqueue(h.Batch(3, images: 5));
 
         h.Queue.QueueText.Should().Be("Image 2/4 · 2 batches queued (8 images)");
     }
@@ -289,8 +423,8 @@ public class CanvasGenerationQueueTests
     public void QueueText_UsesTheSingularForOneBatchOfOneImage()
     {
         var h = new Harness();
-        h.Queue.Enqueue(h.Batch(1));
-        h.Queue.Enqueue(h.Batch(2));
+        h.Enqueue(h.Batch(1));
+        h.Enqueue(h.Batch(2));
 
         h.Queue.QueueText.Should().Be("Image 1/1 · 1 batch queued (1 image)");
     }
@@ -299,7 +433,7 @@ public class CanvasGenerationQueueTests
     public void Eta_IsUnknownUntilSomethingWasMeasured()
     {
         var h = new Harness();
-        h.Queue.Enqueue(h.Batch(1, images: 2));
+        h.Enqueue(h.Batch(1, images: 2));
         h.Queue.ImageStarted();
 
         h.Queue.EtaText.Should().Be("ETA —", "a guess before the first measurement would be a made-up number");
@@ -310,8 +444,8 @@ public class CanvasGenerationQueueTests
     public void Eta_FromTheStepRateCoversTheImageInFlightAndEverythingBehindIt()
     {
         var h = new Harness();
-        h.Queue.Enqueue(h.Batch(1, images: 2, steps: 10));
-        h.Queue.Enqueue(h.Batch(2, images: 1, steps: 20));
+        h.Enqueue(h.Batch(1, images: 2, steps: 10));
+        h.Enqueue(h.Batch(2, images: 1, steps: 20));
         h.Queue.ImageStarted();
 
         h.Queue.ReportStep(step: 4, totalSteps: 10, iterationsPerSecond: 2.0);
@@ -324,52 +458,108 @@ public class CanvasGenerationQueueTests
     }
 
     [Fact]
-    public void Eta_PrefersTheMeasuredTimePerStepForImagesNotStarted()
+    public void TheMeasuredPaceLeavesOutTheModelLoad()
     {
-        // A step rate leaves out the load, encode and decode time; a finished image has measured them.
+        // Review finding: the pace was measured from the image's start, and the first image of a cold
+        // run spends a minute loading the model before its first step. That made every image behind it
+        // look several times slower than it is.
         var h = new Harness();
-        h.Queue.Enqueue(h.Batch(1, images: 3, steps: 10));
+        h.Enqueue(h.Batch(1, images: 3, steps: 10));
         h.Queue.ImageStarted();
+        h.At(60);                                          // a minute of loading
+        h.Queue.ReportStep(1, 10, 2.0);
+        h.At(69);                                          // nine more steps and the decode: 1 s each
         h.Queue.ReportStep(10, 10, 2.0);
-        h.Now = TimeSpan.FromSeconds(20);
-        h.Queue.ImageFinished(succeeded: true);          // 20 s for 10 steps: 2 s per step, all in
+        h.Queue.ImageFinished(succeeded: true);
         h.Queue.ImageStarted();
 
         h.Queue.ReportStep(step: 5, totalSteps: 10, iterationsPerSecond: 2.0);
 
-        // 5 steps left at 2 it/s = 2.5 s, plus one image not started at the measured 2 s per step = 20 s.
-        h.Queue.EstimateRemaining().Should().Be(TimeSpan.FromSeconds(22.5));
-        h.Queue.EtaText.Should().Be("ETA 0:23");
+        // 5 steps left at 2 it/s = 2.5 s, plus one image not started at the measured 1 s per step = 10 s.
+        // Counting the load would have made that image 69 s.
+        h.Queue.EstimateRemaining().Should().Be(TimeSpan.FromSeconds(12.5));
+        h.Queue.EtaText.Should().Be("ETA 0:13");
     }
 
     [Fact]
-    public void Eta_WithoutAStepRateUsesTheMeasuredImages()
+    public void Eta_WithoutAStepRateUsesTheLastMeasuredImage()
     {
         // The engine reports no steps: the pace is whole images.
         var h = new Harness();
-        h.Queue.Enqueue(h.Batch(1, images: 3, steps: 8));
+        h.Enqueue(h.Batch(1, images: 3, steps: 8));
         h.Queue.ImageStarted();
-        h.Now = TimeSpan.FromSeconds(16);
+        h.At(16);
         h.Queue.ImageFinished(succeeded: true);
         h.Queue.ThroughputText.Should().Be("16 s/image");
 
         h.Queue.ImageStarted();
-        h.Now = TimeSpan.FromSeconds(20);                // 4 s into the second image
+        h.At(20);                                          // 4 s into the second image
 
         // 12 s left of the image in flight, 16 s for the one not started.
         h.Queue.EstimateRemaining().Should().Be(TimeSpan.FromSeconds(28));
     }
 
     [Fact]
+    public void AColdFirstImageStopsCountingOnceAWarmOneHasFinished()
+    {
+        // Without steps the load cannot be told from the sampling, so the first image is slow by the
+        // load. The latest image replaces it instead of being averaged with it.
+        var h = new Harness();
+        h.Enqueue(h.Batch(1, images: 3, steps: 8));
+        h.Queue.ImageStarted();
+        h.At(70);
+        h.Queue.ImageFinished(succeeded: true);
+        h.Queue.ImageStarted();
+        h.At(80);
+        h.Queue.ImageFinished(succeeded: true);
+
+        h.Queue.ThroughputText.Should().Be("10 s/image");
+        h.Queue.EstimateRemaining().Should().Be(TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
+    public void Eta_CountsDownByTheClockAndTickAnnouncesIt()
+    {
+        // Review finding: without a step rate nothing re-raised the ETA while an image was in flight.
+        var h = new Harness();
+        h.Enqueue(h.Batch(1, images: 2, steps: 8));
+        h.Queue.ImageStarted();
+        h.At(16);
+        h.Queue.ImageFinished(succeeded: true);
+        h.Queue.ImageStarted();
+        h.Queue.EtaText.Should().Be("ETA 0:16");
+        var raised = new List<string?>();
+        h.Queue.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+        h.At(21);
+        h.Queue.Tick();
+
+        raised.Should().Equal(nameof(CanvasGenerationQueue.EtaText));
+        h.Queue.EtaText.Should().Be("ETA 0:11");
+    }
+
+    [Fact]
+    public void Tick_IsSilentWhileIdle()
+    {
+        var h = new Harness();
+        var raised = 0;
+        h.Queue.PropertyChanged += (_, _) => raised++;
+
+        h.Queue.Tick();
+
+        raised.Should().Be(0);
+    }
+
+    [Fact]
     public void Eta_NeverGoesNegativeWhenAnImageOverruns()
     {
         var h = new Harness();
-        h.Queue.Enqueue(h.Batch(1, images: 2, steps: 8));
+        h.Enqueue(h.Batch(1, images: 2, steps: 8));
         h.Queue.ImageStarted();
-        h.Now = TimeSpan.FromSeconds(10);
+        h.At(10);
         h.Queue.ImageFinished(succeeded: true);
         h.Queue.ImageStarted();
-        h.Now = TimeSpan.FromSeconds(60);
+        h.At(60);
 
         h.Queue.EstimateRemaining().Should().Be(TimeSpan.Zero);
     }
@@ -379,9 +569,9 @@ public class CanvasGenerationQueueTests
     {
         // A failure usually dies in a second; counting it would make the ETA wildly optimistic.
         var h = new Harness();
-        h.Queue.Enqueue(h.Batch(1, images: 3, steps: 8));
+        h.Enqueue(h.Batch(1, images: 3, steps: 8));
         h.Queue.ImageStarted();
-        h.Now = TimeSpan.FromSeconds(1);
+        h.At(1);
         h.Queue.ImageFinished(succeeded: false);
         h.Queue.ImageStarted();
 
@@ -393,7 +583,7 @@ public class CanvasGenerationQueueTests
     public void Throughput_BelowOneStepPerSecondReadsAsSecondsPerStep()
     {
         var h = new Harness();
-        h.Queue.Enqueue(h.Batch(1));
+        h.Enqueue(h.Batch(1));
         h.Queue.ImageStarted();
 
         h.Queue.ReportStep(1, 10, 0.5);
@@ -405,7 +595,7 @@ public class CanvasGenerationQueueTests
     public void Throughput_KeepsTheLastRateBetweenImages()
     {
         var h = new Harness();
-        h.Queue.Enqueue(h.Batch(1, images: 2));
+        h.Enqueue(h.Batch(1, images: 2));
         h.Queue.ImageStarted();
         h.Queue.ReportStep(10, 10, 3.0);
         h.Queue.ImageFinished(succeeded: true);
@@ -418,23 +608,57 @@ public class CanvasGenerationQueueTests
     }
 
     [Fact]
-    public async Task Throughput_KeepsTheLastRateIntoTheNextBatchAndDropsItWhenIdle()
+    public async Task ThePaceCarriesIntoABatchThatRunsTheSameWay()
     {
         var h = new Harness();
-        var first = h.Queue.Enqueue(h.Batch(1));
-        var second = h.Queue.Enqueue(h.Batch(2));
+        var first = h.Enqueue(h.Batch(1, paceKey: "local|flux|1024x1024"));
+        h.Enqueue(h.Batch(2, paceKey: "local|flux|1024x1024"));
         h.Queue.ImageStarted();
         h.Queue.ReportStep(10, 10, 3.0);
         h.Queue.ImageFinished(succeeded: true);
 
         h.Finish(1);
         await first;
-        h.Queue.ThroughputText.Should().Be("3.0 it/s");
 
-        h.Finish(2);
-        await second;
-        h.Queue.Enqueue(h.Batch(3));
+        h.Queue.Running!.Number.Should().Be(2);
+        h.Queue.ThroughputText.Should().Be("3.0 it/s");
+    }
+
+    [Fact]
+    public async Task ThePaceIsDroppedForABatchWithAnotherModelSizeOrBackend()
+    {
+        // Review finding: batch 1's 8 it/s stayed on the bar, and in the ETA, while a 2048px batch on
+        // another backend ran.
+        var h = new Harness();
+        var first = h.Enqueue(h.Batch(1, paceKey: "local|zimage|1024x1024"));
+        h.Enqueue(h.Batch(2, images: 2, paceKey: "engine|krea2|2048x2048"));
         h.Queue.ImageStarted();
+        h.Queue.ReportStep(1, 10, 8.0);
+        h.At(2);
+        h.Queue.ImageFinished(succeeded: true);
+
+        h.Finish(1);
+        await first;
+        h.Queue.ImageStarted();
+
+        h.Queue.ThroughputText.Should().BeEmpty();
+        h.Queue.EtaText.Should().Be("ETA —");
+    }
+
+    [Fact]
+    public async Task ThePaceIsDroppedWhenTheQueueGoesIdle()
+    {
+        var h = new Harness();
+        var first = h.Enqueue(h.Batch(1));
+        h.Queue.ImageStarted();
+        h.Queue.ReportStep(10, 10, 3.0);
+        h.Queue.ImageFinished(succeeded: true);
+        h.Finish(1);
+        await first;
+
+        h.Enqueue(h.Batch(2));
+        h.Queue.ImageStarted();
+
         h.Queue.ThroughputText.Should().BeEmpty("a new session of the queue must not show the last one's pace");
     }
 
@@ -442,7 +666,7 @@ public class CanvasGenerationQueueTests
     public void Eta_FormatsHours()
     {
         var h = new Harness();
-        h.Queue.Enqueue(h.Batch(1, images: 1, steps: 4000));
+        h.Enqueue(h.Batch(1, images: 1, steps: 4000));
         h.Queue.ImageStarted();
 
         h.Queue.ReportStep(0, 4000, 1.0);
@@ -454,7 +678,7 @@ public class CanvasGenerationQueueTests
     public void ASkippedImageCountsAsDoneWithoutBeingMeasured()
     {
         var h = new Harness();
-        h.Queue.Enqueue(h.Batch(1, images: 2));
+        h.Enqueue(h.Batch(1, images: 2));
 
         h.Queue.ImageSkipped();
 
@@ -467,7 +691,7 @@ public class CanvasGenerationQueueTests
     public void TheReadoutRaisesChangeNotifications()
     {
         var h = new Harness();
-        h.Queue.Enqueue(h.Batch(1));
+        h.Enqueue(h.Batch(1));
         h.Queue.ImageStarted();
         var raised = new List<string?>();
         h.Queue.PropertyChanged += (_, e) => raised.Add(e.PropertyName);

@@ -382,6 +382,98 @@ public class DiffusionCanvasQueueTests
     }
 
     [Fact]
+    public async Task DiscardingAWaitingBatchsSlotsTakesItOutOfTheQueueAtOnce()
+    {
+        // Review finding: the bar kept saying "1 batch queued (8 images)" and the list kept the batch
+        // until the worker reached it.
+        var backend = new FakeDiffusionBackend();
+        var vm = Canvas(backend);
+        Task? second = null;
+        string? afterOneDiscard = null;
+        int? queuedAfterAllDiscarded = null;
+        backend.BeforeRun = run =>
+        {
+            if (run != 1)
+                return;
+
+            vm.BatchCount = 3;
+            second = vm.GenerateCommand.ExecuteAsync(null);
+
+            vm.Staging.Current = vm.Staging.Candidates[3];
+            vm.Staging.DiscardCommand.Execute(null);
+            afterOneDiscard = vm.Queue.QueueText;
+
+            while (vm.Staging.Candidates.Count > 1)
+            {
+                vm.Staging.Current = vm.Staging.Candidates[^1];
+                vm.Staging.DiscardCommand.Execute(null);
+            }
+
+            queuedAfterAllDiscarded = vm.Queue.QueuedCount;
+        };
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+        await second!;
+
+        afterOneDiscard.Should().Be("Image 1/1 · 1 batch queued (2 images)");
+        queuedAfterAllDiscarded.Should().Be(0);
+        second!.IsCompleted.Should().BeTrue();
+        backend.RunCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task RemovingAWaitingBatchLeavesTheSelectionWhereItWas()
+    {
+        var backend = new FakeDiffusionBackend();
+        var vm = Canvas(backend);
+        await vm.GenerateCommand.ExecuteAsync(null);
+        var judged = vm.Staging.Candidates[0];
+        Task? third = null;
+        StagedCandidateViewModel? selectedAfterRemoval = null;
+        backend.BeforeRun = run =>
+        {
+            if (run != 2)
+                return;
+
+            // The user goes back to the first result while batch 2 renders, queues a third batch and
+            // then removes it again.
+            vm.Staging.Current = judged;
+            vm.BatchCount = 2;
+            third = vm.GenerateCommand.ExecuteAsync(null);
+            vm.Queue.Batches[1].RemoveCommand!.Execute(null);
+            selectedAfterRemoval = vm.Staging.Current;
+        };
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+        await third!;
+
+        selectedAfterRemoval.Should().BeSameAs(judged);
+    }
+
+    [Fact]
+    public async Task CancellingTheRunningBatchLeavesTheSelectionOnAnEarlierResult()
+    {
+        var backend = new FakeDiffusionBackend();
+        var vm = Canvas(backend);
+        await vm.GenerateCommand.ExecuteAsync(null);
+        var judged = vm.Staging.Candidates[0];
+        vm.BatchCount = 3;
+        backend.BeforeRun = run =>
+        {
+            if (run != 2)
+                return;
+
+            vm.Staging.Current = judged;
+            vm.CancelCommand.Execute(null);
+        };
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+
+        vm.Staging.Current.Should().BeSameAs(judged);
+        vm.Staging.Candidates.Should().ContainSingle();
+    }
+
+    [Fact]
     public async Task TheQueueReadoutIsLiveDuringABatchAndEmptyAfterIt()
     {
         var backend = new FakeDiffusionBackend();

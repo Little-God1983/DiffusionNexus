@@ -248,8 +248,12 @@ public partial class CanvasStagingViewModel : ObservableObject
         if (index < 0)
             return;
 
+        // Only the selected slot's removal picks a new selection. Removing another one, e.g. a waiting
+        // batch's slots or a cancelled batch's, must leave the candidate the user is judging selected.
+        var wasCurrent = ReferenceEquals(candidate, Current);
         Candidates.Remove(candidate);
-        SelectAfterRemoval(index);
+        if (wasCurrent)
+            SelectAfterRemoval(index);
 
         // Detach first, dispose second — disposing a bitmap that is still bound faults the render.
         candidate.Dispose();

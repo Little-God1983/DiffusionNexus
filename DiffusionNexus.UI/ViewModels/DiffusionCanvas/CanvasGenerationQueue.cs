@@ -7,6 +7,22 @@ using CommunityToolkit.Mvvm.Input;
 namespace DiffusionNexus.UI.ViewModels.DiffusionCanvas;
 
 /// <summary>
+/// What a queued batch does, supplied by its owner as closures so the queue carries no untyped payload.
+/// </summary>
+/// <param name="Run">Runs the batch to its end. It should handle its own failures; one that throws is logged and the queue carries on.</param>
+/// <param name="OnDropped">The batch left the queue without running (removed, cleared, or nothing left to make).</param>
+/// <param name="OnCancelling">The running batch is about to be cancelled; called before its token fires.</param>
+/// <param name="PendingImages">
+/// How many of the batch's images are still to start. The user can discard a slot before it runs, so
+/// this is asked for rather than counted down from the image count. Null means "none were discarded".
+/// </param>
+public sealed record CanvasBatchWork(
+    Func<CancellationToken, Task> Run,
+    Action? OnDropped = null,
+    Action? OnCancelling = null,
+    Func<int>? PendingImages = null);
+
+/// <summary>
 /// One Generate press waiting in, or running from, the <see cref="CanvasGenerationQueue"/>.
 /// </summary>
 public sealed partial class CanvasQueuedBatchViewModel : ObservableObject
@@ -14,18 +30,21 @@ public sealed partial class CanvasQueuedBatchViewModel : ObservableObject
     private const int PromptPreviewLength = 60;
 
     /// <param name="number">Session-wide batch number, 1-based, shown in the queue list and the console.</param>
-    /// <param name="imageCount">How many images the batch produces.</param>
+    /// <param name="imageCount">How many images the batch was queued with.</param>
     /// <param name="steps">Sampling steps per image, which is what the ETA is counted in.</param>
     /// <param name="prompt">The batch's prompt; the list shows its start.</param>
-    /// <param name="payload">Whatever the owner needs to run the batch. The queue never looks at it.</param>
-    public CanvasQueuedBatchViewModel(int number, int imageCount, int steps, string prompt, object? payload = null)
+    /// <param name="paceKey">
+    /// What the batch's speed depends on (backend, model, size). A batch with another key than the one
+    /// before it starts with no known pace instead of inheriting a wrong one.
+    /// </param>
+    public CanvasQueuedBatchViewModel(int number, int imageCount, int steps, string prompt, string paceKey = "")
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(imageCount, 1);
 
         Number = number;
         ImageCount = imageCount;
         Steps = Math.Max(1, steps);
-        Payload = payload;
+        PaceKey = paceKey ?? string.Empty;
 
         var flat = (prompt ?? string.Empty).ReplaceLineEndings(" ").Trim();
         PromptPreview = flat.Length <= PromptPreviewLength ? flat : flat[..PromptPreviewLength] + "…";
@@ -37,9 +56,9 @@ public sealed partial class CanvasQueuedBatchViewModel : ObservableObject
 
     public int Steps { get; }
 
-    public string PromptPreview { get; }
+    public string PaceKey { get; }
 
-    public object? Payload { get; }
+    public string PromptPreview { get; }
 
     /// <summary>The list row's first line, e.g. <c>#3 · ×4 · a lighthouse at dusk</c>.</summary>
     public string Label => $"#{Number} · ×{ImageCount} · {PromptPreview}";
@@ -61,6 +80,8 @@ public sealed partial class CanvasQueuedBatchViewModel : ObservableObject
     /// <summary>Removes this batch from its queue (cancels it when it is the running one). Set by the queue on enqueue.</summary>
     public IRelayCommand? RemoveCommand { get; internal set; }
 
+    internal CanvasBatchWork? Work { get; set; }
+
     internal TaskCompletionSource Completion { get; } = new();
 }
 
@@ -71,19 +92,17 @@ public sealed partial class CanvasQueuedBatchViewModel : ObservableObject
 /// <remarks>
 /// Batches run one at a time on purpose. <c>DiffusionContextHost</c> keeps a single model resident, so
 /// two batches at once would either serialise behind its lock or thrash VRAM. The queue does not know
-/// what a batch does; the owner supplies the runner and reports progress back.
+/// what a batch does; the owner supplies a <see cref="CanvasBatchWork"/> per batch and reports progress
+/// back.
+/// <para>
+/// <b>Not thread-safe: use it from one thread</b>, the UI thread in the app. Its collection is bound to
+/// the view and its worker resumes on the caller's context, so there is no lock to trust.
+/// </para>
 /// </remarks>
 public sealed partial class CanvasGenerationQueue : ObservableObject
 {
-    private readonly Func<CanvasQueuedBatchViewModel, CancellationToken, Task> _runBatch;
     private readonly Action<string> _trace;
     private readonly Func<TimeSpan> _clock;
-
-    /// <summary>
-    /// Guards the worker flag and <see cref="_runCts"/>. Enqueue decides whether to start the worker and
-    /// Cancel cancels-and-nulls the epoch; without a lock those can interleave with the worker's own exit.
-    /// </summary>
-    private readonly object _gate = new();
 
     private bool _pumping;
 
@@ -99,27 +118,23 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
     // Progress of the image in flight.
     private bool _imageInFlight;
     private TimeSpan _imageStartedAt;
+    private TimeSpan? _samplingStartedAt;
+    private int _firstStep;
     private int _step;
     private int _totalSteps;
+
+    // The pace, valid for _paceKey only.
+    private string? _paceKey;
     private double _iterationsPerSecond;
+    private double? _secondsPerStep;
+    private double? _secondsPerImage;
 
-    // Measured over the images finished since the queue last went idle.
-    private double _measuredSeconds;
-    private int _measuredSteps;
-    private int _measuredImages;
-
-    /// <param name="runBatch">Runs one batch to its end. It should handle its own failures; one that throws is logged and the queue carries on.</param>
     /// <param name="trace">Unified Console sink (standing rule: every step is traced).</param>
     /// <param name="clock">Monotonic time source; a test seam for the ETA.</param>
-    public CanvasGenerationQueue(
-        Func<CanvasQueuedBatchViewModel, CancellationToken, Task> runBatch,
-        Action<string> trace,
-        Func<TimeSpan>? clock = null)
+    public CanvasGenerationQueue(Action<string> trace, Func<TimeSpan>? clock = null)
     {
-        ArgumentNullException.ThrowIfNull(runBatch);
         ArgumentNullException.ThrowIfNull(trace);
 
-        _runBatch = runBatch;
         _trace = trace;
         _clock = clock ?? (static () => Stopwatch.GetElapsedTime(0));
         ClearQueuedCommand = new RelayCommand(ClearQueued, () => QueuedCount > 0);
@@ -136,32 +151,27 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
     public CanvasQueuedBatchViewModel? Running => _running;
 
     /// <summary>Batches waiting behind the running one.</summary>
-    public int QueuedCount => Batches.Count(b => !b.IsRunning);
+    public int QueuedCount => Batches.Count(b => !ReferenceEquals(b, _running));
 
     /// <summary>Removes every queued batch; the running one carries on.</summary>
     public IRelayCommand ClearQueuedCommand { get; }
 
-    /// <summary>Raised for a batch that left the queue without running. The owner removes its staging slots.</summary>
-    public event EventHandler<CanvasQueuedBatchViewModel>? BatchDropped;
-
     /// <summary>
     /// Adds a batch. The returned task completes when the batch is over: finished, cancelled or removed.
     /// </summary>
-    public Task Enqueue(CanvasQueuedBatchViewModel batch)
+    public Task Enqueue(CanvasQueuedBatchViewModel batch, CanvasBatchWork work)
     {
         ArgumentNullException.ThrowIfNull(batch);
+        ArgumentNullException.ThrowIfNull(work);
 
+        batch.Work = work;
         batch.RemoveCommand = new RelayCommand(() => Remove(batch));
+        Batches.Add(batch);
 
-        bool start;
-        lock (_gate)
-        {
-            Batches.Add(batch);
-            start = !_pumping;
-            _pumping = true;
-        }
+        var start = !_pumping;
+        _pumping = true;
 
-        _trace(start
+        Trace(start
             ? $"Batch #{batch.Number} enqueued ({batch.ImageCount} image(s)); the queue was idle, starting it."
             : $"Batch #{batch.Number} enqueued ({batch.ImageCount} image(s)); {QueuedCount} waiting.");
         RaiseReadout();
@@ -172,74 +182,75 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
         return batch.Completion.Task;
     }
 
+    /// <summary>
+    /// The worker. It is fire-and-forget, so nothing here may leave <see cref="_pumping"/> set with no
+    /// worker behind it: every later Generate would then stage slots that never run. Each batch is run
+    /// and tidied by <see cref="RunOneAsync"/>, which does not throw.
+    /// </summary>
     private async Task PumpAsync()
     {
-        while (true)
+        try
         {
-            CanvasQueuedBatchViewModel batch;
-            CancellationTokenSource cts;
-            lock (_gate)
-            {
-                if (Batches.Count == 0)
-                {
-                    _pumping = false;
-                    return;
-                }
+            // Re-checked after every batch: completing a batch's task can enqueue the next one inline.
+            while (Batches.Count > 0)
+                await RunOneAsync(Batches[0]).ConfigureAwait(true);
+        }
+        finally
+        {
+            _pumping = false;
+        }
+    }
 
-                batch = Batches[0];
-                cts = new CancellationTokenSource();
-                _runCts = cts;
-                _running = batch;
-            }
+    private async Task RunOneAsync(CanvasQueuedBatchViewModel batch)
+    {
+        var cts = new CancellationTokenSource();
+        _runCts = cts;
+        _running = batch;
 
+        try
+        {
+            AdoptPaceOf(batch);
             batch.IsRunning = true;
             ResetImageProgress();
             IsBusy = true;
-            _trace($"Batch #{batch.Number} started.");
+            Trace($"Batch #{batch.Number} started.");
             RaiseReadout();
 
-            try
-            {
-                await _runBatch(batch, cts.Token).ConfigureAwait(true);
-            }
-            catch (Exception ex)
-            {
-                // The runner reports its own failures; this only keeps one broken batch from stranding
-                // every batch queued behind it.
-                _trace($"Batch #{batch.Number} ended with an unhandled error: {ex.Message}");
-            }
-
-            bool cancelled;
-            lock (_gate)
-            {
-                // Cancel nulls the field itself, so a batch that was cancelled no longer owns it.
-                cancelled = !ReferenceEquals(_runCts, cts);
-                if (!cancelled)
-                    _runCts = null;
-            }
-
-            cts.Dispose();
-
-            _running = null;
-            Batches.Remove(batch);
-            ResetImageProgress();
-            _trace(cancelled ? $"Batch #{batch.Number} cancelled." : $"Batch #{batch.Number} finished.");
-
-            if (Batches.Count == 0)
-            {
-                _measuredSeconds = 0;
-                _measuredSteps = 0;
-                _measuredImages = 0;
-                _iterationsPerSecond = 0;
-                IsBusy = false;
-                _trace("The generation queue is empty.");
-            }
-
-            RaiseReadout();
-
-            // Last, so whoever awaits the batch sees the queue's state already settled.
-            batch.Completion.TrySetResult();
+            await batch.Work!.Run(cts.Token).ConfigureAwait(true);
         }
+        catch (Exception ex)
+        {
+            // The runner reports its own failures; this only keeps one broken batch, or one throwing
+            // property-changed handler, from stranding every batch queued behind it.
+            Trace($"Batch #{batch.Number} ended with an unhandled error: {ex.Message}");
+        }
+
+        // Cancel nulls the field itself, so a batch that was cancelled no longer owns it.
+        var cancelled = !ReferenceEquals(_runCts, cts);
+        if (!cancelled)
+            _runCts = null;
+
+        cts.Dispose();
+        _running = null;
+
+        // Each step on its own: a handler that throws on one notification must not skip the rest, and
+        // above all not the completion that whoever awaits this batch is waiting for.
+        Guard(() => Batches.Remove(batch));
+        Guard(ResetImageProgress);
+        Trace(cancelled ? $"Batch #{batch.Number} cancelled." : $"Batch #{batch.Number} finished.");
+
+        if (Batches.Count == 0)
+        {
+            ForgetPace();
+            _paceKey = null;
+            Guard(() => IsBusy = false);
+            Trace("The generation queue is empty.");
+        }
+
+        Guard(RaiseReadout);
+
+        // Last, so whoever awaits the batch sees the queue's state already settled.
+        batch.Completion.TrySetResult();
     }
 
     /// <summary>
@@ -248,19 +259,19 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
     /// </summary>
     public CanvasQueuedBatchViewModel? CancelRunning()
     {
-        CancellationTokenSource? cts;
-        CanvasQueuedBatchViewModel? cancelled;
-        lock (_gate)
-        {
-            cts = _runCts;
-            _runCts = null;
-            // Read before cancelling: the batch can unwind inside Cancel(), and the worker would then
-            // already be on the next one.
-            cancelled = _running;
-        }
-
+        var cts = _runCts;
+        _runCts = null;
         if (cts is null)
             return null;
+
+        // Read before cancelling: the batch can unwind inside Cancel(), and the worker would then
+        // already be on the next one. The owner is told first for the same reason.
+        var cancelled = _running;
+        if (cancelled is not null)
+        {
+            Trace($"Cancel requested for batch #{cancelled.Number}.");
+            Guard(() => cancelled.Work?.OnCancelling?.Invoke());
+        }
 
         try
         {
@@ -283,28 +294,51 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
 
         if (ReferenceEquals(batch, _running))
         {
-            RunningCancelRequested?.Invoke(this, EventArgs.Empty);
+            CancelRunning();
             return;
         }
 
         if (Drop(batch))
-            _trace($"Batch #{batch.Number} removed from the queue.");
+            Trace($"Batch #{batch.Number} removed from the queue.");
     }
-
-    /// <summary>
-    /// Raised when the running batch's own row asks to cancel it. The owner cancels through its usual
-    /// path, which also tidies the staging strip.
-    /// </summary>
-    public event EventHandler? RunningCancelRequested;
 
     private void ClearQueued()
     {
-        var queued = Batches.Where(b => !b.IsRunning).ToList();
+        var queued = Batches.Where(b => !ReferenceEquals(b, _running)).ToList();
         foreach (var batch in queued)
             Drop(batch);
 
         if (queued.Count > 0)
-            _trace($"Cleared the queue: {queued.Count} batch(es) removed.");
+            Trace($"Cleared the queue: {queued.Count} batch(es) removed.");
+    }
+
+    /// <summary>
+    /// The owner's slots changed (one was discarded). A queued batch with nothing left to make leaves
+    /// the queue, and the count and the ETA are read again.
+    /// </summary>
+    public void SlotsChanged()
+    {
+        var empty = Batches
+            .Where(b => !ReferenceEquals(b, _running) && b.Work?.PendingImages is { } pending && pending() == 0)
+            .ToList();
+
+        foreach (var batch in empty)
+        {
+            if (Drop(batch))
+                Trace($"Batch #{batch.Number} left the queue: every one of its slots was discarded.");
+        }
+
+        RaiseReadout();
+    }
+
+    /// <summary>
+    /// Re-reads the ETA against the clock. The image in flight counts down by elapsed time, which no
+    /// progress event announces; the view calls this once a second while the queue is busy.
+    /// </summary>
+    public void Tick()
+    {
+        if (_running is not null)
+            OnPropertyChanged(nameof(EtaText));
     }
 
     /// <summary>Cancels the running batch and drops every queued one. For the owner's teardown.</summary>
@@ -316,17 +350,28 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
 
     private bool Drop(CanvasQueuedBatchViewModel batch)
     {
-        bool removed;
-        lock (_gate)
-            removed = !ReferenceEquals(batch, _running) && Batches.Remove(batch);
-
-        if (!removed)
+        if (ReferenceEquals(batch, _running) || !Batches.Remove(batch))
             return false;
 
-        RaiseReadout();
-        BatchDropped?.Invoke(this, batch);
+        Guard(RaiseReadout);
+        Guard(() => batch.Work?.OnDropped?.Invoke());
         batch.Completion.TrySetResult();
         return true;
+    }
+
+    private void Trace(string message) => Guard(() => _trace(message));
+
+    /// <summary>Runs a notification that must not be able to break the queue's own bookkeeping.</summary>
+    private static void Guard(Action action)
+    {
+        try
+        {
+            action();
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"CanvasGenerationQueue: a notification handler threw: {ex}");
+        }
     }
 
     // ────────────────────────────── Progress intake ──────────────────────────────
@@ -343,6 +388,14 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
     /// <summary>A sampling step of the image in flight. <paramref name="iterationsPerSecond"/> is 0 when the backend does not report it.</summary>
     public void ReportStep(int step, int totalSteps, double iterationsPerSecond)
     {
+        if (_imageInFlight && _samplingStartedAt is null)
+        {
+            // Everything before the first step is loading and encoding. A cold start loads the model
+            // for a minute; counting that into the pace would make every later image look as slow.
+            _samplingStartedAt = _clock();
+            _firstStep = step;
+        }
+
         _step = step;
         _totalSteps = totalSteps;
         if (iterationsPerSecond > 0 && double.IsFinite(iterationsPerSecond))
@@ -350,14 +403,25 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
         RaiseReadout();
     }
 
-    /// <summary>The image in flight is over. Only a successful one feeds the measured pace.</summary>
+    /// <summary>The image in flight is over. Only a successful one sets the measured pace.</summary>
     public void ImageFinished(bool succeeded)
     {
         if (_imageInFlight && succeeded && _running is { } batch)
         {
-            _measuredSeconds += (_clock() - _imageStartedAt).TotalSeconds;
-            _measuredSteps += batch.Steps;
-            _measuredImages++;
+            var now = _clock();
+            if (_samplingStartedAt is { } samplingStarted)
+            {
+                // From the first reported step to the end: sampling plus the decode, without the load.
+                var steps = Math.Max(1, _totalSteps - _firstStep);
+                _secondsPerStep = (now - samplingStarted).TotalSeconds / steps;
+            }
+            else
+            {
+                // A backend that reports no steps: the whole image is all there is to measure. The
+                // latest image replaces the one before, so a cold first image stops counting after it.
+                _secondsPerImage = (now - _imageStartedAt).TotalSeconds;
+                _secondsPerStep = _secondsPerImage / batch.Steps;
+            }
         }
 
         CompleteImage();
@@ -377,18 +441,48 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
     }
 
     /// <summary>
-    /// Forgets the image in flight, but not the step rate. The rate outlives an image and a batch: the
-    /// next one has not reported a step yet, and showing nothing until it does would make the readout
-    /// blink. It is dropped when the queue goes idle.
+    /// Forgets the image in flight, but not the pace. The pace outlives an image: the next one has not
+    /// reported a step yet, and showing nothing until it does would make the readout blink.
     /// </summary>
     private void ResetImageProgress()
     {
         _imageInFlight = false;
+        _samplingStartedAt = null;
+        _firstStep = 0;
         _step = 0;
         _totalSteps = 0;
     }
 
+    /// <summary>
+    /// Keeps the pace for a batch that runs like the one before it and drops it otherwise. Another
+    /// model, size or backend runs at another speed, and a stale rate is worse than none: the bar would
+    /// show it as this batch's.
+    /// </summary>
+    private void AdoptPaceOf(CanvasQueuedBatchViewModel batch)
+    {
+        if (!string.Equals(_paceKey, batch.PaceKey, StringComparison.Ordinal))
+            ForgetPace();
+
+        _paceKey = batch.PaceKey;
+    }
+
+    private void ForgetPace()
+    {
+        _iterationsPerSecond = 0;
+        _secondsPerStep = null;
+        _secondsPerImage = null;
+    }
+
     // ────────────────────────────── Readout ──────────────────────────────
+
+    /// <summary>Images of a waiting batch that will still run.</summary>
+    private static int PendingOf(CanvasQueuedBatchViewModel batch) =>
+        Math.Max(0, batch.Work?.PendingImages?.Invoke() ?? batch.ImageCount);
+
+    /// <summary>Images of the running batch that have not started.</summary>
+    private int NotStartedOfRunning(CanvasQueuedBatchViewModel running) =>
+        Math.Max(0, running.Work?.PendingImages?.Invoke()
+                    ?? running.ImageCount - running.ImagesDone - (_imageInFlight ? 1 : 0));
 
     /// <summary>e.g. <c>Image 2/4 · 2 batches queued (8 images)</c>; empty while idle.</summary>
     public string QueueText
@@ -399,11 +493,11 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
                 return string.Empty;
 
             var text = $"Image {Math.Min(batch.ImagesDone + 1, batch.ImageCount)}/{batch.ImageCount}";
-            var queued = Batches.Where(b => !b.IsRunning).ToList();
+            var queued = Batches.Where(b => !ReferenceEquals(b, batch)).ToList();
             if (queued.Count == 0)
                 return text;
 
-            var images = queued.Sum(b => b.ImageCount);
+            var images = queued.Sum(PendingOf);
             return $"{text} · {queued.Count} {(queued.Count == 1 ? "batch" : "batches")} queued " +
                    $"({images} {(images == 1 ? "image" : "images")})";
         }
@@ -424,8 +518,8 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
                 return string.Create(CultureInfo.InvariantCulture, $"{_iterationsPerSecond:0.0} it/s");
             if (_iterationsPerSecond > 0)
                 return string.Create(CultureInfo.InvariantCulture, $"{1 / _iterationsPerSecond:0.0} s/it");
-            if (_measuredImages > 0)
-                return string.Create(CultureInfo.InvariantCulture, $"{_measuredSeconds / _measuredImages:0.#} s/image");
+            if (_secondsPerImage is { } perImage)
+                return string.Create(CultureInfo.InvariantCulture, $"{perImage:0.#} s/image");
 
             return string.Empty;
         }
@@ -445,27 +539,25 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
 
     /// <summary>
     /// Time until the queue is empty, or null when nothing has been measured yet. Counted in steps, so a
-    /// queued batch with more steps weighs more.
+    /// queued batch with more steps weighs more. Waiting batches are estimated at the running batch's
+    /// pace, which is the only one known; a batch that runs differently corrects it once it starts.
     /// </summary>
     internal TimeSpan? EstimateRemaining()
     {
         if (_running is not { } running)
             return null;
 
-        // Seconds per step over whole images: it carries the load, encode and decode time a bare step
-        // rate leaves out.
-        double? measuredPerStep = _measuredSteps > 0 ? _measuredSeconds / _measuredSteps : null;
+        // The measured time per step carries the decode a bare step rate leaves out.
         double? ratePerStep = _iterationsPerSecond > 0 ? 1 / _iterationsPerSecond : null;
-        var perStep = measuredPerStep ?? ratePerStep;
+        var perStep = _secondsPerStep ?? ratePerStep;
         if (perStep is null)
             return null;
 
-        var notStarted = running.ImageCount - running.ImagesDone - (_imageInFlight ? 1 : 0);
-        double stepsAhead = Math.Max(0, notStarted) * running.Steps;
+        double stepsAhead = (double)NotStartedOfRunning(running) * running.Steps;
         foreach (var batch in Batches)
         {
-            if (!batch.IsRunning)
-                stepsAhead += (double)batch.ImageCount * batch.Steps;
+            if (!ReferenceEquals(batch, running))
+                stepsAhead += (double)PendingOf(batch) * batch.Steps;
         }
 
         double current = 0;

@@ -36,9 +36,20 @@ public partial class DiffusionCanvasView : UserControl
 
     private DiffusionCanvasViewModel? ViewModel => DataContext as DiffusionCanvasViewModel;
 
+    /// <summary>
+    /// Ticks the status bar's ETA once a second. An image in flight counts down by elapsed time, which
+    /// no progress event announces: the engine reports none at all between an image's start and its end.
+    /// Lives here because only a shown view needs it; the queue itself stays free of UI timers.
+    /// </summary>
+    private DispatcherTimer? _etaTimer;
+
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
+
+        _etaTimer ??= new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background,
+            (_, _) => ViewModel?.Queue.Tick());
+        _etaTimer.Start();
 
         if (Surface is not { } surface)
             return;
@@ -54,6 +65,8 @@ public partial class DiffusionCanvasView : UserControl
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
+        _etaTimer?.Stop();
+
         if (Surface is { } surface)
             surface.PropertyChanged -= OnSurfacePropertyChanged;
 

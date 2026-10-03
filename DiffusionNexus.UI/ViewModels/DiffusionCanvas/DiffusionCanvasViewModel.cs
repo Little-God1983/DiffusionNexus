@@ -625,16 +625,15 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         AdoptEngineCapabilities();
         _selectedBackend = AvailableBackends[0];
         Layers = new CanvasLayerStackViewModel(Frames, EmitInfo);
-        Queue = new CanvasGenerationQueue(RunQueuedBatchAsync, EmitInfo);
+        Queue = new CanvasGenerationQueue(EmitInfo);
         Queue.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(CanvasGenerationQueue.IsBusy))
                 IsGenerating = Queue.IsBusy;
         };
-        Queue.BatchDropped += OnQueuedBatchDropped;
-        // The running batch's own row cancels through the same path as the Cancel button, so the strip
-        // is tidied either way.
-        Queue.RunningCancelRequested += (_, _) => Cancel();
+        // A discarded slot is an image the queue no longer has to make: its count and ETA follow, and a
+        // waiting batch with no slot left leaves the queue.
+        Staging.Candidates.CollectionChanged += (_, _) => Queue.SlotsChanged();
         DeleteFrameCommand = new RelayCommand<GenerationFrameViewModel?>(DeleteFrame, CanvasLayerStackViewModel.CanDelete);
         WireCanvasEvents();
     }
@@ -1253,7 +1252,17 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             DenoiseStrength,
             candidates);
 
-        return Queue.Enqueue(new CanvasQueuedBatchViewModel(number, candidates.Count, settings.Steps, settings.Prompt, batch));
+        // The pace depends on these three; a batch that differs in any of them starts with no known pace.
+        var paceKey = $"{batch.BackendKey}|{batch.ModelKey}|{batch.Width}x{batch.Height}";
+        var item = new CanvasQueuedBatchViewModel(number, candidates.Count, settings.Steps, settings.Prompt, paceKey);
+
+        return Queue.Enqueue(item, new CanvasBatchWork(
+            Run: token => RunQueuedBatchAsync(item, batch, token),
+            OnDropped: () => OnQueuedBatchDropped(item, batch),
+            OnCancelling: () => OnBatchCancelling(batch),
+            // Counted in the strip, not from the batch's size: a slot the user discarded will not run.
+            PendingImages: () => batch.Candidates.Count(
+                c => c.State == StagedCandidateState.Pending && Staging.Candidates.Contains(c))));
     }
 
     /// <summary>
@@ -1265,9 +1274,8 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     /// is the longest part of a cold engine run — EnsureRunningAsync spawns python and polls readiness
     /// for up to two minutes — and Cancel is live for all of it.
     /// </remarks>
-    private async Task RunQueuedBatchAsync(CanvasQueuedBatchViewModel item, CancellationToken token)
+    private async Task RunQueuedBatchAsync(CanvasQueuedBatchViewModel item, PendingBatch batch, CancellationToken token)
     {
-        var batch = (PendingBatch)item.Payload!;
         string? regionImagePath = null;
         string? maskImagePath = null;
         CanvasMaskCompositor? keptPixels = null;
@@ -1278,14 +1286,6 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
 
         try
         {
-            if (batch.Candidates.All(c => c.IsDisposed))
-            {
-                reachedTheBackend = true;
-                StatusText = $"Batch #{item.Number} skipped: every one of its slots was discarded.";
-                EmitInfo($"Batch #{item.Number} skipped: every one of its slots was discarded before it ran.");
-                return;
-            }
-
             StatusText = "Resolving backend…";
             BackendUnavailableMessage = null;
 
@@ -1461,33 +1461,29 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     /// image currently sampling finishes and is then discarded.
     /// </remarks>
     [RelayCommand(CanExecute = nameof(CanCancel))]
-    private void Cancel()
-    {
-        var cancelled = Queue.CancelRunning();
-        if (cancelled is null)
-            return;
-
-        EmitInfo($"Cancel requested — dropping the rest of batch #{cancelled.Number}.");
-        StatusText = "Cancelling…";
-
-        if (cancelled.Payload is PendingBatch batch)
-        {
-            var pruned = Staging.PruneAfterCancel(batch.Candidates);
-            if (pruned > 0)
-                EmitInfo($"Removed {pruned} cancelled slot(s) from staging.");
-        }
-    }
+    private void Cancel() => Queue.CancelRunning();
 
     private bool CanCancel() => IsGenerating;
 
-    /// <summary>A batch left the queue without running: its slots leave the strip with it.</summary>
-    private void OnQueuedBatchDropped(object? sender, CanvasQueuedBatchViewModel item)
+    /// <summary>
+    /// The running batch is being cancelled, from the Cancel button or from its own row in the queue
+    /// list: say so and drop its unfinished slots at once, before the backend has unwound.
+    /// </summary>
+    private void OnBatchCancelling(PendingBatch batch)
     {
-        if (item.Payload is not PendingBatch batch)
-            return;
+        StatusText = "Cancelling…";
 
+        var pruned = Staging.PruneAfterCancel(batch.Candidates);
+        if (pruned > 0)
+            EmitInfo($"Removed {pruned} cancelled slot(s) from staging.");
+    }
+
+    /// <summary>A batch left the queue without running: its slots leave the strip with it.</summary>
+    private void OnQueuedBatchDropped(CanvasQueuedBatchViewModel item, PendingBatch batch)
+    {
         var removed = Staging.RemoveBatch(batch.Candidates);
-        EmitInfo($"Batch #{item.Number} left the queue; removed its {removed} slot(s) from staging.");
+        if (removed > 0)
+            EmitInfo($"Batch #{item.Number} left the queue; removed its {removed} slot(s) from staging.");
     }
 
     /// <param name="backendKey">The backend the batch was queued for, not whatever is selected now.</param>

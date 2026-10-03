@@ -48,35 +48,46 @@ several.
 - **ETA** covers the whole queue. With a step rate: the steps left in the running image at that rate,
   plus the images not started at the measured time per step (their own step counts), or at the step
   rate until an image has finished. Without a step rate: the measured time per step times the steps
-  left. Before either is known: `ETA —`, never a guess. It is recomputed on every progress event, so on
-  the Engine it moves once per image.
+  left. Before either is known: `ETA —`, never a guess. It is recomputed on every progress event and
+  once a second by the view, so an image in flight counts down on a backend that reports no steps.
+- **The pace** is measured on the latest finished image, from its first reported step to its end, so a
+  cold start's model load is not counted (a backend without steps can only measure the whole image; a
+  warm image then replaces the cold one). It is kept for the next batch only when that batch runs on
+  the same backend, model and box size, and dropped otherwise and when the queue goes idle.
 - Removing a queued batch removes its slots from the strip. Discarding a queued slot by hand still
-  works: the batch skips it, and a batch with every slot discarded is skipped whole.
+  works: the count and the ETA leave it out at once, the batch skips it, and a waiting batch with
+  every slot discarded leaves the queue.
+- Removing slots that are not the selected one (a removed or cancelled batch's) never moves the
+  selection.
 
 ## Components
 
 ### `CanvasGenerationQueue` (new, `ViewModels/DiffusionCanvas/`)
 
-Owns the batch list, the worker and the numbers. It does not know what a batch does: the canvas view
-model passes a `Func<CanvasQueuedBatchViewModel, CancellationToken, Task>`.
+Owns the batch list, the worker and the numbers. It does not know what a batch does: each batch is
+enqueued with a `CanvasBatchWork` of closures (`Run`, `OnDropped`, `OnCancelling`, `PendingImages`),
+so there is no untyped payload to cast. Single-threaded by contract (the UI thread); it has no lock.
 
 - `Batches` (`ObservableCollection<CanvasQueuedBatchViewModel>`, running first), `IsBusy`.
-- `Enqueue(batch)` returns a task that completes when the batch has finished, was cancelled or was
-  removed. The first enqueue starts the worker; the worker runs batches until the list is empty.
-- `CancelRunning()` cancels the running batch's token. The run epoch moves here from the canvas view
-  model with its invariant: never cancel without nulling.
-- `Remove(batch)` (queued: drop; running: cancel), `ClearQueuedCommand`, `BatchDropped` event so the
-  canvas view model removes the slots.
+- `Enqueue(batch, work)` returns a task that completes when the batch has finished, was cancelled or
+  was removed. The first enqueue starts the worker; the worker runs batches until the list is empty.
+- `CancelRunning()` tells the batch's owner (`OnCancelling`) and cancels the batch's token. The run
+  epoch moves here from the canvas view model with its invariant: never cancel without nulling.
+- `Remove(batch)` (queued: drop and `OnDropped`; running: `CancelRunning`), `ClearQueuedCommand`.
+- `SlotsChanged()`: the owner's slots changed; re-read the counts and drop waiting batches with
+  nothing left. `Tick()`: re-read the ETA against the clock.
 - Progress intake: `ImageStarted`, `ReportStep(step, total, itPerSecond)`, `ImageFinished(succeeded)`,
   `ImageSkipped`.
 - Readout: `QueueText`, `ThroughputText`, `EtaText`, computed from the above and an injectable clock.
-- A batch that throws does not stop the worker.
-- Every transition traces: enqueued, started, finished, cancelled, removed, cleared, queue empty.
+- Neither a batch that throws nor a listener that throws on one of the queue's notifications stops the
+  worker or leaves it marked as running with nothing behind it.
+- Every transition traces: enqueued, started, finished, cancel requested, cancelled, removed, cleared,
+  left for having no slots, queue empty.
 
 ### `CanvasQueuedBatchViewModel` (new)
 
-Number, image count, steps, prompt preview, `IsRunning`, `ImagesDone`, `StateText`, its own
-`RemoveCommand` (so the flyout needs no ancestor binding), and the canvas view model's payload.
+Number, image count, steps, pace key, prompt preview, `IsRunning`, `ImagesDone`, `StateText` and its
+own `RemoveCommand` (so the flyout needs no ancestor binding).
 
 ### `DiffusionCanvasViewModel` (changed)
 
@@ -85,7 +96,9 @@ Number, image count, steps, prompt preview, `IsRunning`, `ImagesDone`, `StateTex
 - The old Generate body becomes `RunQueuedBatchAsync(batch, token)`, reading the captured values
   instead of the live controls. The backend and the descriptor are resolved by the captured keys.
 - `IsGenerating` mirrors `Queue.IsBusy`; `CanGenerate` no longer depends on it.
-- `Cancel` cancels the running batch and prunes that batch's unfinished slots only.
+- `Cancel` is `Queue.CancelRunning()`; the batch's `OnCancelling` sets the status and prunes that
+  batch's unfinished slots only, so the button and the queue list's row take the same path.
+- Changes to `Staging.Candidates` are forwarded to `Queue.SlotsChanged()`.
 - `Dispose` cancels the running batch and drops the queued ones.
 
 ### `CanvasStagingViewModel` (changed)
@@ -98,7 +111,8 @@ Number, image count, steps, prompt preview, `IsRunning`, `ImagesDone`, `StateTex
 ### View
 
 A third row in `DiffusionCanvasView.axaml` holds the status bar. The panel footer keeps the batch
-count and Generate.
+count and Generate. The view runs a one-second `DispatcherTimer` while attached that calls
+`Queue.Tick()`.
 
 ## Testing
 
@@ -114,5 +128,5 @@ count and Generate.
 
 ## Out of scope
 
-Reordering queued batches; pausing; a queue that survives a restart; live ETA countdown between
-progress events; parallel batches.
+Reordering queued batches; pausing; a queue that survives a restart; parallel batches; a pace kept
+per model for batches that have not started (they are estimated at the running batch's pace).

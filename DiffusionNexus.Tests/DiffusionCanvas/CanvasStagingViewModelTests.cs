@@ -154,6 +154,45 @@ public class CanvasStagingViewModelTests
     }
 
     [Fact]
+    public void RemoveBatch_LeavesTheSelectionOnTheCandidateBeingJudged()
+    {
+        // Review finding: every removal re-selected by index, so removing a waiting batch's slots walked
+        // the selection off the candidate the user was looking at.
+        var staging = WithReadyBatch(2);
+        var judged = staging.Candidates[0];
+        staging.Current = judged;
+        var queued = staging.AddBatch(2, Box, select: false);
+
+        staging.RemoveBatch(queued);
+
+        staging.Current.Should().BeSameAs(judged);
+    }
+
+    [Fact]
+    public void PruneAfterCancel_LeavesTheSelectionOnAnEarlierBatchsCandidate()
+    {
+        var staging = WithReadyBatch(1);
+        var judged = staging.Candidates[0];
+        var running = staging.AddBatch(3, Box, select: false);
+
+        staging.PruneAfterCancel(running);
+
+        staging.Current.Should().BeSameAs(judged);
+    }
+
+    [Fact]
+    public void RemovingTheSelectedSlotStillSelectsItsNeighbour()
+    {
+        var staging = WithReadyBatch(1);
+        var queued = staging.AddBatch(2, Box, select: false);
+        staging.Current = queued[0];
+
+        staging.RemoveBatch(queued);
+
+        staging.Current.Should().BeSameAs(staging.Candidates[0], "a removed selection cannot stay; the strip picks what is left");
+    }
+
+    [Fact]
     public void PruneAfterCancel_LeavesAnotherBatchsWaitingSlotsAlone()
     {
         var staging = new CanvasStagingViewModel();
