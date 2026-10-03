@@ -11,17 +11,19 @@ namespace DiffusionNexus.UI.DiffusionCanvas;
 public sealed class CanvasMaskRaster : IDisposable
 {
     /// <summary>
-    /// The strength a pixel needs for the mask to count as repainting anything: half. Erasing with an
-    /// antialiased eraser leaves faint alpha along the old edges, and the feather spreads it; that residue
-    /// is not something the user painted, and running on it is a wasted GPU run with no visible change.
+    /// The strength an <b>unfeathered</b> pixel needs to count as painted: half. Erasing with an
+    /// antialiased eraser leaves faint alpha along the old edges; that residue is not something the user
+    /// painted, and running on it is a wasted GPU run with no visible change. Measured before the feather,
+    /// because the feather lowers a small or thin stroke's peak well below half.
     /// </summary>
     public const byte MeaningfulValue = 128;
 
-    internal CanvasMaskRaster(SKBitmap bitmap, double repaintFraction, byte maxValue)
+    internal CanvasMaskRaster(SKBitmap bitmap, double repaintFraction, byte maxValue, bool isEmpty)
     {
         Bitmap = bitmap;
         RepaintFraction = repaintFraction;
         MaxValue = maxValue;
+        IsEmpty = isEmpty;
     }
 
     /// <summary>The mask, owned by this object.</summary>
@@ -33,14 +35,17 @@ public sealed class CanvasMaskRaster : IDisposable
     /// </summary>
     public double RepaintFraction { get; }
 
-    /// <summary>The strongest repaint value anywhere in the mask, 0 to 255.</summary>
+    /// <summary>The strongest repaint value anywhere in the feathered mask, 0 to 255.</summary>
     public byte MaxValue { get; }
 
     /// <summary>
-    /// True when no pixel is marked at least <see cref="MeaningfulValue"/> for repaint: nothing, or only
-    /// antialiasing residue left by the eraser.
+    /// True when the mask asks for no repaint, judged on the paint <b>before</b> the feather: no pixel
+    /// within the feather's reach of the region is painted at least <see cref="MeaningfulValue"/> (only
+    /// nothing, or eraser residue), or, inverted, the painting covers the whole region. A stroke the
+    /// readout counts, a thin one under a large feather or one just outside the box that feathers in,
+    /// is therefore never refused.
     /// </summary>
-    public bool IsEmpty => MaxValue < MeaningfulValue;
+    public bool IsEmpty { get; }
 
     /// <summary>Encodes the mask as PNG, the form both backends load.</summary>
     public byte[] EncodePng()
@@ -113,6 +118,8 @@ public static class CanvasMaskRasterizer
             DrawStrokes(canvas, strokes, SKColors.White);
         }
 
+        var isEmpty = !HasMeaningfulPaint(painted, margin, width, height, invert);
+
         using var feathered = MaskFeathering.Feather(painted, (float)featherPixels);
 
         var source = feathered.GetPixelSpan();
@@ -144,7 +151,41 @@ public static class CanvasMaskRasterizer
         Marshal.Copy(pixels, 0, output.GetPixels(), pixels.Length);
         output.NotifyPixelsChanged();
 
-        return new CanvasMaskRaster(output, total / (255.0 * width * height), max);
+        return new CanvasMaskRaster(output, total / (255.0 * width * height), max, isEmpty);
+    }
+
+    /// <summary>
+    /// Whether the unfeathered paint asks for any repaint. Not inverted: some pixel of the painted surface
+    /// (the region plus the feather's reach, the same area the readout counts) is at least half painted.
+    /// Inverted: some pixel inside the region is less than half painted, so it will be repainted.
+    /// </summary>
+    private static bool HasMeaningfulPaint(SKBitmap painted, int margin, int width, int height, bool invert)
+    {
+        var span = painted.GetPixelSpan();
+        var stride = painted.RowBytes;
+
+        if (!invert)
+        {
+            for (var i = 3; i < span.Length; i += 4)
+            {
+                if (span[i] >= CanvasMaskRaster.MeaningfulValue)
+                    return true;
+            }
+
+            return false;
+        }
+
+        for (var y = 0; y < height; y++)
+        {
+            var row = (y + margin) * stride;
+            for (var x = 0; x < width; x++)
+            {
+                if (255 - span[row + (x + margin) * 4 + 3] >= CanvasMaskRaster.MeaningfulValue)
+                    return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

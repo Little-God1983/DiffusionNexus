@@ -137,10 +137,11 @@ public class DiffusionCanvasSurface : Control
     /// The mask's finished strokes recorded once as a picture, and the stroke list it was recorded from.
     /// The list is replaced on every change, so a different reference means a re-record; a brush drag then
     /// replays one picture plus the live stroke instead of rebuilding every stroke's path on each move.
-    /// Never disposed by hand: a frame already handed to the render thread may still be replaying it, so
-    /// the finalizer releases it once nothing references it.
+    /// Reference-counted (<see cref="SharedPicture"/>): this field holds one reference and every frame's
+    /// draw operation another, so a replaced picture's native memory is released as soon as the last
+    /// frame replaying it is gone, rather than whenever the finalizer runs.
     /// </summary>
-    private SKPicture? _strokePicture;
+    private SharedPicture? _strokePicture;
     private IReadOnlyList<CanvasMaskStroke>? _strokePictureSource;
 
     /// <summary>The raster under a right-button press, resolved on press and acted on at release.</summary>
@@ -356,6 +357,12 @@ public class DiffusionCanvasSurface : Control
         _hoverScreen = null;
         CommitPaintStroke();
         ReleaseGesture();
+
+        // Recorded again on the next attach; nothing needs the picture while the canvas is not shown.
+        _strokePicture?.Release();
+        _strokePicture = null;
+        _strokePictureSource = null;
+
         base.OnDetachedFromVisualTree(e);
     }
 
@@ -1077,16 +1084,19 @@ public class DiffusionCanvasSurface : Control
         if (mask.Invert && clip is null)
             return null;
 
-        return new MaskDrawOperation(new Rect(Bounds.Size), committed, live, Viewport.Zoom, Viewport.PanX, Viewport.PanY, clip);
+        // The operation takes its own reference, released when Avalonia disposes it with its frame.
+        return new MaskDrawOperation(
+            new Rect(Bounds.Size), committed?.Acquire(), live, Viewport.Zoom, Viewport.PanX, Viewport.PanY, clip);
     }
 
     /// <summary>The picture of <paramref name="strokes"/>, re-recorded only when the list was replaced.</summary>
-    private SKPicture? StrokePicture(IReadOnlyList<CanvasMaskStroke> strokes)
+    private SharedPicture? StrokePicture(IReadOnlyList<CanvasMaskStroke> strokes)
     {
         if (ReferenceEquals(strokes, _strokePictureSource))
             return _strokePicture;
 
         _strokePictureSource = strokes;
+        _strokePicture?.Release();
         _strokePicture = null;
         if (strokes.Count == 0)
             return null;
@@ -1099,8 +1109,37 @@ public class DiffusionCanvasSurface : Control
         var canvas = recorder.BeginRecording(new SKRect(
             (float)bounds.X, (float)bounds.Y, (float)bounds.Right, (float)bounds.Bottom));
         CanvasMaskRasterizer.DrawStrokes(canvas, strokes, MaskOverlayColor);
-        _strokePicture = recorder.EndRecording();
+        _strokePicture = new SharedPicture(recorder.EndRecording());
         return _strokePicture;
+    }
+
+    /// <summary>
+    /// An <see cref="SKPicture"/> shared between the surface and the frames replaying it, disposed when
+    /// the last holder releases it. Thread-safe: frames are released on the render thread.
+    /// </summary>
+    internal sealed class SharedPicture
+    {
+        private int _references = 1;
+
+        public SharedPicture(SKPicture picture) => Picture = picture;
+
+        public SKPicture Picture { get; }
+
+        /// <summary>True once the picture has been disposed.</summary>
+        public bool IsReleased => Volatile.Read(ref _references) == 0;
+
+        /// <summary>Takes another reference. Only called while the caller still holds one.</summary>
+        public SharedPicture Acquire()
+        {
+            Interlocked.Increment(ref _references);
+            return this;
+        }
+
+        public void Release()
+        {
+            if (Interlocked.Decrement(ref _references) == 0)
+                Picture.Dispose();
+        }
     }
 
     private void DrawHandles(DrawingContext context, GenerationBoundingBox box)
@@ -1193,15 +1232,16 @@ public class DiffusionCanvasSurface : Control
     /// </summary>
     private sealed class MaskDrawOperation : ICustomDrawOperation
     {
-        private readonly SKPicture? _committed;
+        private readonly SharedPicture? _committed;
         private readonly CanvasMaskStroke? _live;
+        private int _disposed;
         private readonly double _zoom;
         private readonly double _panX;
         private readonly double _panY;
         private readonly Rect? _invertClip;
 
         public MaskDrawOperation(
-            Rect bounds, SKPicture? committed, CanvasMaskStroke? live, double zoom, double panX, double panY, Rect? invertClip)
+            Rect bounds, SharedPicture? committed, CanvasMaskStroke? live, double zoom, double panX, double panY, Rect? invertClip)
         {
             Bounds = bounds;
             _committed = committed;
@@ -1220,6 +1260,9 @@ public class DiffusionCanvasSurface : Control
 
         public void Dispose()
         {
+            // Once only: the reference this frame took is the one it gives back.
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+                _committed?.Release();
         }
 
         public void Render(ImmediateDrawingContext context)
@@ -1244,7 +1287,7 @@ public class DiffusionCanvasSurface : Control
             canvas.Scale((float)_zoom);
             // The picture replays its erasers' clearing blend into this layer, like drawing the strokes would.
             if (_committed is not null)
-                canvas.DrawPicture(_committed);
+                canvas.DrawPicture(_committed.Picture);
             if (_live is not null)
                 CanvasMaskRasterizer.DrawStrokes(canvas, [_live], MaskOverlayColor);
             canvas.Restore();

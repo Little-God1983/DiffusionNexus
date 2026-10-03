@@ -45,7 +45,8 @@ public class CanvasMaskCompositorTests
         using var generated = Solid(16, SKColors.Blue);
         using var mask = LeftHalfMask(16);
 
-        var png = CanvasMaskCompositor.KeepUnmasked(Png(generated), original, mask);
+        using var compositor = new CanvasMaskCompositor(original, mask);
+        var png = compositor.KeepUnmasked(Png(generated));
 
         using var result = SKBitmap.Decode(png);
         result.GetPixel(2, 2).Should().Be(SKColors.Blue, "painted: the generated pixel");
@@ -59,7 +60,8 @@ public class CanvasMaskCompositorTests
         using var generated = Solid(16, SKColors.Blue);
         using var mask = LeftHalfMask(16);
 
-        using var result = SKBitmap.Decode(CanvasMaskCompositor.KeepUnmasked(Png(generated), original, mask));
+        using var compositor = new CanvasMaskCompositor(original, mask);
+        using var result = SKBitmap.Decode(compositor.KeepUnmasked(Png(generated)));
 
         var edge = result.GetPixel(8, 2);
         edge.Red.Should().BeInRange(120, 135);
@@ -74,7 +76,8 @@ public class CanvasMaskCompositorTests
         using var generated = Solid(32, SKColors.Blue);
         using var mask = LeftHalfMask(16);
 
-        CanvasMaskCompositor.KeepUnmasked(Png(generated), original, mask).Should().BeNull();
+        using var compositor = new CanvasMaskCompositor(original, mask);
+        compositor.KeepUnmasked(Png(generated)).Should().BeNull();
     }
 
     [Fact]
@@ -83,6 +86,36 @@ public class CanvasMaskCompositorTests
         using var original = Solid(16, SKColors.Red);
         using var mask = LeftHalfMask(16);
 
-        CanvasMaskCompositor.KeepUnmasked([1, 2, 3, 4], original, mask).Should().BeNull();
+        using var compositor = new CanvasMaskCompositor(original, mask);
+        compositor.KeepUnmasked([1, 2, 3, 4]).Should().BeNull();
+    }
+
+    [Fact]
+    public void OneCompositorServesEveryCandidateOfABatch()
+    {
+        // The original and the mask are converted once; the compositor does not consume them per call.
+        using var original = Solid(16, SKColors.Red);
+        using var mask = LeftHalfMask(16);
+        using var compositor = new CanvasMaskCompositor(original, mask);
+        using var blue = Solid(16, SKColors.Blue);
+        using var green = Solid(16, SKColors.Lime);
+
+        using var first = SKBitmap.Decode(compositor.KeepUnmasked(Png(blue)));
+        using var second = SKBitmap.Decode(compositor.KeepUnmasked(Png(green)));
+
+        first.GetPixel(2, 2).Should().Be(SKColors.Blue);
+        second.GetPixel(2, 2).Should().Be(SKColors.Lime);
+        second.GetPixel(14, 2).Should().Be(SKColors.Red);
+    }
+
+    [Fact]
+    public void AMaskOfAnotherSizeIsRefusedUpFront()
+    {
+        using var original = Solid(16, SKColors.Red);
+        using var mask = Solid(8, SKColors.White);
+
+        var act = () => new CanvasMaskCompositor(original, mask);
+
+        act.Should().Throw<ArgumentException>();
     }
 }

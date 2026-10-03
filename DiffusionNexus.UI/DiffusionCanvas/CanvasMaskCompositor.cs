@@ -3,7 +3,7 @@ using SkiaSharp;
 namespace DiffusionNexus.UI.DiffusionCanvas;
 
 /// <summary>
-/// Puts the pixels an inpaint mask kept back into a generated result (#595).
+/// Puts the pixels an inpaint mask kept back into each generated result of a batch (#595).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -16,64 +16,84 @@ namespace DiffusionNexus.UI.DiffusionCanvas;
 /// <para>
 /// Done on the canvas rather than in each backend's graph so one rule covers every backend: result =
 /// original × (1 − mask) + generated × mask, per channel, with the feathered mask as the blend weight.
+/// The original and the mask are converted once, when the batch starts; each candidate then costs one
+/// decode, one blend into the output's own pixels, and one encode.
 /// </para>
 /// </remarks>
-public static class CanvasMaskCompositor
+public sealed class CanvasMaskCompositor : IDisposable
 {
-    /// <summary>
-    /// Blends <paramref name="generatedPng"/> over <paramref name="original"/> through <paramref name="mask"/>
-    /// (white = take the generated pixel, black = keep the original) and returns the PNG, or null when the
-    /// sizes disagree or the result cannot be decoded, in which case the caller keeps the result as it is.
-    /// </summary>
-    /// <param name="generatedPng">The backend's result.</param>
-    /// <param name="original">The region the run started from. Not disposed.</param>
-    /// <param name="mask">The mask that was sent, read through its red channel. Not disposed.</param>
-    public static byte[]? KeepUnmasked(byte[] generatedPng, SKBitmap original, SKBitmap mask)
+    private readonly SKBitmap _original;
+    private readonly SKBitmap _mask;
+
+    /// <param name="original">The region the run started from: what the backend received. Copied, not kept.</param>
+    /// <param name="mask">The mask that was sent, read through its red channel. Copied, not kept.</param>
+    public CanvasMaskCompositor(SKBitmap original, SKBitmap mask)
     {
-        ArgumentNullException.ThrowIfNull(generatedPng);
         ArgumentNullException.ThrowIfNull(original);
         ArgumentNullException.ThrowIfNull(mask);
+        if (mask.Width != original.Width || mask.Height != original.Height)
+            throw new ArgumentException("The mask must be the size of the region it was rasterised for.", nameof(mask));
+
+        _original = ToRgba(original);
+        _mask = ToRgba(mask);
+    }
+
+    /// <summary>Width of the region, in pixels.</summary>
+    public int Width => _original.Width;
+
+    /// <summary>Height of the region, in pixels.</summary>
+    public int Height => _original.Height;
+
+    /// <summary>
+    /// Blends <paramref name="generatedPng"/> over the original through the mask (white = take the generated
+    /// pixel, black = keep the original) and returns the PNG, or null when the result cannot be decoded or is
+    /// a different size, in which case the caller keeps the result as it is.
+    /// </summary>
+    public byte[]? KeepUnmasked(byte[] generatedPng)
+    {
+        ArgumentNullException.ThrowIfNull(generatedPng);
 
         // SKBitmap.Decode throws rather than returning null on bytes no codec recognises.
         using var stream = new SKMemoryStream(generatedPng);
         using var codec = SKCodec.Create(stream);
-        if (codec is null)
+        if (codec is null || codec.Info.Width != Width || codec.Info.Height != Height)
             return null;
 
         using var decoded = SKBitmap.Decode(codec);
-        if (decoded is null
-            || decoded.Width != original.Width || decoded.Height != original.Height
-            || mask.Width != original.Width || mask.Height != original.Height)
-        {
+        if (decoded is null)
             return null;
-        }
 
         using var generated = ToRgba(decoded);
-        using var kept = ToRgba(original);
-        using var weights = ToRgba(mask);
-
-        var g = generated.GetPixelSpan();
-        var k = kept.GetPixelSpan();
-        var w = weights.GetPixelSpan();
-        var pixels = new byte[g.Length];
-
-        for (var i = 0; i < pixels.Length; i += 4)
+        using var output = new SKBitmap(Width, Height, SKColorType.Rgba8888, SKAlphaType.Opaque);
+        using (var pixmap = output.PeekPixels())
         {
-            var m = w[i];          // red channel of the opaque grey mask
-            var inv = 255 - m;
-            pixels[i] = (byte)((k[i] * inv + g[i] * m + 127) / 255);
-            pixels[i + 1] = (byte)((k[i + 1] * inv + g[i + 1] * m + 127) / 255);
-            pixels[i + 2] = (byte)((k[i + 2] * inv + g[i + 2] * m + 127) / 255);
-            pixels[i + 3] = 255;
+            var o = pixmap.GetPixelSpan();
+            var g = generated.GetPixelSpan();
+            var k = _original.GetPixelSpan();
+            var w = _mask.GetPixelSpan();
+
+            for (var i = 0; i < o.Length; i += 4)
+            {
+                var m = w[i];          // red channel of the opaque grey mask
+                var inv = 255 - m;
+                o[i] = (byte)((k[i] * inv + g[i] * m + 127) / 255);
+                o[i + 1] = (byte)((k[i + 1] * inv + g[i + 1] * m + 127) / 255);
+                o[i + 2] = (byte)((k[i + 2] * inv + g[i + 2] * m + 127) / 255);
+                o[i + 3] = 255;
+            }
         }
 
-        using var output = new SKBitmap(original.Width, original.Height, SKColorType.Rgba8888, SKAlphaType.Opaque);
-        System.Runtime.InteropServices.Marshal.Copy(pixels, 0, output.GetPixels(), pixels.Length);
         output.NotifyPixelsChanged();
 
         using var image = SKImage.FromBitmap(output);
         using var data = image.Encode(SKEncodedImageFormat.Png, 100);
         return data.ToArray();
+    }
+
+    public void Dispose()
+    {
+        _original.Dispose();
+        _mask.Dispose();
     }
 
     /// <summary>A tightly packed, unpremultiplied RGBA copy, so every bitmap is read with the same layout.</summary>

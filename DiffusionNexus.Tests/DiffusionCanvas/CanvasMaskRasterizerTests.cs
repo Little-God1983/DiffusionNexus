@@ -99,6 +99,56 @@ public class CanvasMaskRasterizerTests
         mask.MaxValue.Should().BeLessThan(CanvasMaskRaster.MeaningfulValue);
     }
 
+    [Theory]
+    [InlineData(64, 64)]   // the default brush, one dab, the largest feather: the feathered peak is ~119
+    [InlineData(16, 32)]   // a small dab under a large feather: ~76
+    public void ASmallStrokeUnderALargeFeatherIsStillPainting(double size, double feather)
+    {
+        // Emptiness is judged before the feather, which lowers a small stroke's peak below half.
+        using var mask = CanvasMaskRasterizer.Rasterize(
+            [Dot(256, 256, size)], new Rect(0, 0, 512, 512), 512, 512, feather, invert: false);
+
+        mask.MaxValue.Should().BeLessThan(CanvasMaskRaster.MeaningfulValue, "the feather really does dilute it");
+        mask.IsEmpty.Should().BeFalse();
+    }
+
+    [Fact]
+    public void AThinLineUnderALargeFeatherIsStillPainting()
+    {
+        using var mask = CanvasMaskRasterizer.Rasterize(
+            [Line(new Point(50, 256), new Point(450, 256), 8)], new Rect(0, 0, 512, 512), 512, 512, feather: 32, invert: false);
+
+        mask.IsEmpty.Should().BeFalse();
+    }
+
+    [Fact]
+    public void AStrokeOutsideTheRegionThatFeathersInIsPainting()
+    {
+        // Ends 2 px left of the region; the feather carries it in, so it counts, as it does in the readout.
+        using var mask = CanvasMaskRasterizer.Rasterize(
+            [Dot(-12, 32, 20)], new Rect(0, 0, 64, 64), 64, 64, feather: 6, invert: false);
+
+        mask.IsEmpty.Should().BeFalse();
+    }
+
+    [Fact]
+    public void AStrokeBeyondTheFeathersReachIsNot()
+    {
+        using var mask = CanvasMaskRasterizer.Rasterize(
+            [Dot(-200, 32, 20)], new Rect(0, 0, 64, 64), 64, 64, feather: 6, invert: false);
+
+        mask.IsEmpty.Should().BeTrue();
+    }
+
+    [Fact]
+    public void AnInvertedMaskWhosePaintingCoversTheRegionIsEmpty()
+    {
+        using var mask = CanvasMaskRasterizer.Rasterize(
+            [Dot(32, 32, 400)], new Rect(0, 0, 64, 64), 64, 64, feather: 6, invert: true);
+
+        mask.IsEmpty.Should().BeTrue();
+    }
+
     [Fact]
     public void FeatherReachIsZeroWithoutFeatherAndGrowsWithIt()
     {

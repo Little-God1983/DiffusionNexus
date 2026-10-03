@@ -143,6 +143,38 @@ public class DiffusionCanvasInpaintTests : IDisposable
     }
 
     [Fact]
+    public async Task AStrokeJustOutsideTheBoxThatFeathersInIsSentNotRefused()
+    {
+        // The readout and Generate share one rule: what the readout counts, Generate runs.
+        var backend = new FakeDiffusionBackend();
+        var vm = CanvasOverAResult(backend);
+        vm.AddMaskCommand.Execute(null);
+        vm.Layers.Mask!.AddStroke(Dot(-20, 256, size: 20));
+        vm.Layers.Mask.Feather = 16;
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+
+        backend.RunCount.Should().Be(1);
+        backend.LastRequest!.MaskImage.Should().NotBeNull();
+        using var mask = SKBitmap.Decode(backend.MaskImageBytesAtCallTime);
+        mask.GetPixel(0, 256).Red.Should().BeGreaterThan(0, "the feathered edge reaches into the box");
+    }
+
+    [Fact]
+    public async Task ASmallDabUnderTheLargestFeatherIsSentNotRefused()
+    {
+        var backend = new FakeDiffusionBackend();
+        var vm = CanvasOverAResult(backend);
+        vm.AddMaskCommand.Execute(null);
+        vm.Layers.Mask!.AddStroke(Dot(256, 256, size: 64));
+        vm.Layers.Mask.Feather = 64;
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+
+        backend.RunCount.Should().Be(1);
+    }
+
+    [Fact]
     public void OverEmptyCanvasTheMaskHasNothingToKeepAndTheReadoutSaysSo()
     {
         var vm = Canvas(new FakeDiffusionBackend());
@@ -269,7 +301,7 @@ public class DiffusionCanvasInpaintTests : IDisposable
         await vm.GenerateCommand.ExecuteAsync(null);
 
         backend.RunCount.Should().Be(0);
-        vm.StatusText.Should().Contain("nothing painted inside the box");
+        vm.StatusText.Should().Contain("everything there was erased");
         vm.Staging.Candidates.Should().BeEmpty();
     }
 
