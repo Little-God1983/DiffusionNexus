@@ -157,7 +157,65 @@ public class DiffusionCanvasInpaintTests : IDisposable
         backend.RunCount.Should().Be(1);
         backend.LastRequest!.MaskImage.Should().NotBeNull();
         using var mask = SKBitmap.Decode(backend.MaskImageBytesAtCallTime);
-        mask.GetPixel(0, 256).Red.Should().BeGreaterThan(0, "the feathered edge reaches into the box");
+        mask.GetPixel(0, 256).Red.Should().BeGreaterThanOrEqualTo(CanvasMaskRaster.MinimumFeatheredValue,
+            "the feathered edge reaches into the box with a strength that changes something");
+    }
+
+    [Fact]
+    public async Task AStrokeAtTheFarEdgeOfTheFeathersReachIsRefusedAsTooFaint()
+    {
+        var backend = new FakeDiffusionBackend();
+        var vm = CanvasOverAResult(backend);
+        vm.AddMaskCommand.Execute(null);
+        vm.Layers.Mask!.AddStroke(Dot(-55, 256, size: 20));
+        vm.Layers.Mask.Feather = 16;
+        vm.IsInpaintRun.Should().BeTrue("the readout counts the stroke's reach");
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+
+        backend.RunCount.Should().Be(0);
+        vm.StatusText.Should().Contain("too faint").And.Contain("lower the feather");
+    }
+
+    [Fact]
+    public async Task AStrokeOutOfReachIsRefusedAsSuchEvenWithAnEraserElsewhere()
+    {
+        // Its bounds clip the box's corner (so the readout counts it), but its path never enters the box.
+        // An eraser used far away must not turn that into "everything there was erased".
+        var backend = new FakeDiffusionBackend();
+        var vm = CanvasOverAResult(backend);
+        vm.AddMaskCommand.Execute(null);
+        vm.Layers.Mask!.AddStroke(new CanvasMaskStroke([new Point(-300, 100), new Point(100, -300)], 10, isErase: false));
+        vm.Layers.Mask.AddStroke(Dot(3000, 3000, size: 50, erase: true));
+        vm.IsInpaintRun.Should().BeTrue();
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+
+        backend.RunCount.Should().Be(0);
+        vm.StatusText.Should().Contain("does not reach the box").And.NotContain("erased");
+    }
+
+    [Fact]
+    public async Task APasteThatThrowsKeepsTheBackendsResultAndTheCandidate()
+    {
+        using var black = new SKBitmap(512, 512, SKColorType.Rgba8888, SKAlphaType.Premul);
+        using (var canvas = new SKCanvas(black))
+            canvas.Clear(SKColors.Black);
+        using var image = SKImage.FromBitmap(black);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+        var backendBytes = data.ToArray();
+
+        var backend = new FakeDiffusionBackend { ResultPng = backendBytes };
+        var vm = CanvasOverAResult(backend);
+        vm.PasteKeptPixels = (_, _) => throw new OutOfMemoryException("simulated");
+        vm.AddMaskCommand.Execute(null);
+        vm.Layers.Mask!.AddStroke(Dot(256, 256));
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+
+        var candidate = vm.Staging.Candidates.Single();
+        candidate.State.Should().Be(StagedCandidateState.Ready, "the GPU result was already paid for");
+        candidate.PngBytes.Should().Equal(backendBytes);
     }
 
     [Fact]

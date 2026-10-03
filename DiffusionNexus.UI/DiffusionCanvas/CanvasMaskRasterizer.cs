@@ -5,6 +5,25 @@ using SkiaSharp;
 
 namespace DiffusionNexus.UI.DiffusionCanvas;
 
+/// <summary>Why a rasterised mask asks for no repaint, so the refusal can name the way out.</summary>
+public enum CanvasMaskEmptyReason
+{
+    /// <summary>The mask repaints something.</summary>
+    None,
+
+    /// <summary>Paint near the box was all erased (it would count with the erasers left out).</summary>
+    Erased,
+
+    /// <summary>No painted stroke is within the feather's reach of the box.</summary>
+    OutOfReach,
+
+    /// <summary>The paint is there, but after the feather it is too faint inside the box to change anything.</summary>
+    TooFaint,
+
+    /// <summary>Inverted, and the painting (once feathered) covers the whole box, so nothing is repainted.</summary>
+    InvertedCoversAll,
+}
+
 /// <summary>
 /// An inpaint mask rasterised for one generation: an opaque grey image, white = repaint, black = keep.
 /// </summary>
@@ -18,12 +37,21 @@ public sealed class CanvasMaskRaster : IDisposable
     /// </summary>
     public const byte MeaningfulValue = 128;
 
-    internal CanvasMaskRaster(SKBitmap bitmap, double repaintFraction, byte maxValue, bool isEmpty)
+    /// <summary>
+    /// The strength the <b>feathered</b> mask must reach somewhere inside the region for a run to be worth
+    /// it: an eighth. Below that a stroke far out at the edge of the feather's reach, or an inverted mask
+    /// whose gaps the feather closed, changes nothing a user could see, and the kept pixels are pasted
+    /// back over the rest. Low enough that a thin stroke under the largest feather (peak about a third to
+    /// a half) still runs.
+    /// </summary>
+    public const byte MinimumFeatheredValue = 32;
+
+    internal CanvasMaskRaster(SKBitmap bitmap, double repaintFraction, byte maxValue, CanvasMaskEmptyReason emptyReason)
     {
         Bitmap = bitmap;
         RepaintFraction = repaintFraction;
         MaxValue = maxValue;
-        IsEmpty = isEmpty;
+        EmptyReason = emptyReason;
     }
 
     /// <summary>The mask, owned by this object.</summary>
@@ -35,17 +63,20 @@ public sealed class CanvasMaskRaster : IDisposable
     /// </summary>
     public double RepaintFraction { get; }
 
-    /// <summary>The strongest repaint value anywhere in the feathered mask, 0 to 255.</summary>
+    /// <summary>The strongest repaint value anywhere in the feathered mask inside the region, 0 to 255.</summary>
     public byte MaxValue { get; }
 
+    /// <summary>Why the mask asks for no repaint, or <see cref="CanvasMaskEmptyReason.None"/>.</summary>
+    public CanvasMaskEmptyReason EmptyReason { get; }
+
     /// <summary>
-    /// True when the mask asks for no repaint, judged on the paint <b>before</b> the feather: no pixel
-    /// within the feather's reach of the region is painted at least <see cref="MeaningfulValue"/> (only
-    /// nothing, or eraser residue), or, inverted, the painting covers the whole region. A stroke the
-    /// readout counts, a thin one under a large feather or one just outside the box that feathers in,
-    /// is therefore never refused.
+    /// True when the mask asks for no repaint. Two tests, both needed: the paint <b>before</b> the feather
+    /// must hold a pixel at least <see cref="MeaningfulValue"/> (so eraser residue is not painting, and a
+    /// thin stroke the feather dilutes still is), and the feathered mask inside the region must reach
+    /// <see cref="MinimumFeatheredValue"/> (so a stroke at the far edge of the feather's reach, or an
+    /// inverted mask whose gaps the feather closes, does not cost a run that changes nothing).
     /// </summary>
-    public bool IsEmpty { get; }
+    public bool IsEmpty => EmptyReason != CanvasMaskEmptyReason.None;
 
     /// <summary>Encodes the mask as PNG, the form both backends load.</summary>
     public byte[] EncodePng()
@@ -108,17 +139,8 @@ public static class CanvasMaskRasterizer
         var featherPixels = double.IsNaN(feather) ? 0 : Math.Max(0, feather) * scaleX;
         var margin = (int)FeatherReachOf(featherPixels);
 
-        using var painted = new SKBitmap(width + 2 * margin, height + 2 * margin, SKColorType.Rgba8888, SKAlphaType.Premul);
-        using (var canvas = new SKCanvas(painted))
-        {
-            canvas.Clear(SKColors.Transparent);
-            canvas.Translate(margin, margin);
-            canvas.Scale((float)scaleX, (float)scaleY);
-            canvas.Translate((float)-region.X, (float)-region.Y);
-            DrawStrokes(canvas, strokes, SKColors.White);
-        }
-
-        var isEmpty = !HasMeaningfulPaint(painted, margin, width, height, invert);
+        using var painted = Paint(strokes, region, width, height, scaleX, scaleY, margin);
+        var meaningful = HasMeaningfulPaint(painted, margin, width, height, invert);
 
         using var feathered = MaskFeathering.Feather(painted, (float)featherPixels);
 
@@ -151,7 +173,45 @@ public static class CanvasMaskRasterizer
         Marshal.Copy(pixels, 0, output.GetPixels(), pixels.Length);
         output.NotifyPixelsChanged();
 
-        return new CanvasMaskRaster(output, total / (255.0 * width * height), max, isEmpty);
+        var reason = (invert, meaningful, faint: max < CanvasMaskRaster.MinimumFeatheredValue) switch
+        {
+            (true, false, _) or (true, _, true) => CanvasMaskEmptyReason.InvertedCoversAll,
+            (false, false, _) => WouldCountWithoutErasers(strokes, region, width, height, scaleX, scaleY, margin)
+                ? CanvasMaskEmptyReason.Erased
+                : CanvasMaskEmptyReason.OutOfReach,
+            (false, true, true) => CanvasMaskEmptyReason.TooFaint,
+            _ => CanvasMaskEmptyReason.None,
+        };
+
+        return new CanvasMaskRaster(output, total / (255.0 * width * height), max, reason);
+    }
+
+    /// <summary>The strokes drawn unfeathered over the region plus <paramref name="margin"/> on every side.</summary>
+    private static SKBitmap Paint(
+        IEnumerable<CanvasMaskStroke> strokes, Rect region, int width, int height, double scaleX, double scaleY, int margin)
+    {
+        var painted = new SKBitmap(width + 2 * margin, height + 2 * margin, SKColorType.Rgba8888, SKAlphaType.Premul);
+        using var canvas = new SKCanvas(painted);
+        canvas.Clear(SKColors.Transparent);
+        canvas.Translate(margin, margin);
+        canvas.Scale((float)scaleX, (float)scaleY);
+        canvas.Translate((float)-region.X, (float)-region.Y);
+        DrawStrokes(canvas, strokes as IReadOnlyList<CanvasMaskStroke> ?? strokes.ToArray(), SKColors.White);
+        return painted;
+    }
+
+    /// <summary>
+    /// Whether the paint near the box would have counted without the erasers: the difference between
+    /// "you erased it" and "it never reached the box". Paid only on the way to a refusal.
+    /// </summary>
+    private static bool WouldCountWithoutErasers(
+        IReadOnlyList<CanvasMaskStroke> strokes, Rect region, int width, int height, double scaleX, double scaleY, int margin)
+    {
+        if (!strokes.Any(s => s.IsErase))
+            return false;
+
+        using var unerased = Paint(strokes.Where(s => !s.IsErase), region, width, height, scaleX, scaleY, margin);
+        return HasMeaningfulPaint(unerased, margin, width, height, invert: false);
     }
 
     /// <summary>

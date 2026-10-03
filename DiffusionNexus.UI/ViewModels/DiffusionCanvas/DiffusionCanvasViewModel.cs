@@ -1266,7 +1266,8 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
                 // A snapshot exists only over results (EvaluateMask), and a region over results that did
                 // not composite returned above as degraded, so the region path is set here.
                 var regionPath = regionImagePath!;
-                (maskImagePath, keptPixels) = await Task
+                CanvasMaskEmptyReason emptyReason;
+                (maskImagePath, keptPixels, emptyReason) = await Task
                     .Run(() => BuildRegionMask(maskSnapshot, regionPath, region, width, height), token)
                     .ConfigureAwait(true);
 
@@ -1274,19 +1275,24 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
 
                 if (maskImagePath is null)
                 {
-                    // The readout promised inpaint from the strokes' bounds, but the paint itself asks for
-                    // no repaint. Running unmasked would repaint the whole box the user meant to protect,
-                    // and running on eraser residue would change nothing. Each cause gets its own way out.
-                    var (status, warning) = maskSnapshot switch
+                    // The readout promised inpaint from the strokes' bounds, but the mask itself asks for no
+                    // repaint. Running unmasked would repaint the whole box the user meant to protect, and
+                    // running on what is left would change nothing. Each cause gets its own way out, judged
+                    // by the rasteriser from the paint near the box.
+                    var (status, warning) = emptyReason switch
                     {
-                        { Invert: true } => (
-                            "The inverted mask leaves nothing to repaint: the painting covers the whole box, and the painting is what is kept. " +
-                            "Paint less, or turn Invert off.",
+                        CanvasMaskEmptyReason.InvertedCoversAll => (
+                            "The inverted mask leaves nothing to repaint: the painting, once feathered, covers the whole box, and the painting is what is kept. " +
+                            "Paint less, lower the feather, or turn Invert off.",
                             "Refused to generate: the inverted mask covers the whole box, so nothing would be repainted."),
-                        _ when maskSnapshot.Strokes.Any(s => s.IsErase) => (
+                        CanvasMaskEmptyReason.Erased => (
                             "The mask has nothing painted near the box: everything there was erased. " +
                             "Paint what to repaint, or hide the mask to run image to image.",
                             "Refused to generate: the mask is erased empty near the box."),
+                        CanvasMaskEmptyReason.TooFaint => (
+                            "Inside the box the feathered painting is too faint to change anything. " +
+                            "Paint closer to or inside the box, use a bigger brush, or lower the feather.",
+                            "Refused to generate: after the feather the mask is too faint inside the box."),
                         _ => (
                             "The painting does not reach the box. Paint inside the box or move the box onto it, " +
                             "or hide the mask to run image to image.",
@@ -1562,15 +1568,18 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     /// <summary>
     /// Rasterises the mask over the box to the mask scratch PNG, and keeps the region and the mask in
     /// memory so each candidate can have the kept pixels put back (<see cref="CanvasMaskCompositor"/>).
-    /// Returns a null path when nothing inside the box is meaningfully marked for repaint. Runs on the
-    /// thread pool, from a snapshot.
+    /// Returns a null path, and the rasteriser's reason, when the mask asks for no repaint
+    /// (<see cref="CanvasMaskRaster.IsEmpty"/>: judged on the paint within the feather's reach of the box
+    /// before the feather, and on the feathered strength inside it). The kept-pixel compositor is
+    /// optional: when it cannot be built the run goes ahead and the results come back as the backend
+    /// returns them. Runs on the thread pool, from a snapshot.
     /// </summary>
-    private (string? Path, CanvasMaskCompositor? Kept) BuildRegionMask(
+    private (string? Path, CanvasMaskCompositor? Kept, CanvasMaskEmptyReason Reason) BuildRegionMask(
         MaskSnapshot mask, string regionImagePath, Rect region, int width, int height)
     {
         using var raster = CanvasMaskRasterizer.Rasterize(mask.Strokes, region, width, height, mask.Feather, mask.Invert);
         if (raster.IsEmpty)
-            return (null, null);
+            return (null, null, raster.EmptyReason);
 
         Directory.CreateDirectory(ScratchDirectory);
         File.WriteAllBytes(MaskScratchPath, raster.EncodePng());
@@ -1580,14 +1589,23 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             $"Mask '{mask.Name}' rasterised: {raster.RepaintFraction * 100:0.#}% of the box repainted, {mask.Strokes.Count} stroke(s), feather {mask.Feather:0} px{(mask.Invert ? ", inverted" : string.Empty)}, denoise {mask.Denoise:0.00} — running inpaint."));
         // Decoded from the region PNG rather than kept from the composite: the PNG is what the backend
         // received (flattened onto the neutral fill), so it is the "original" the result must match.
-        using var original = SKBitmap.Decode(regionImagePath);
-        if (original is null || original.Width != width || original.Height != height)
+        try
         {
-            EmitWarning("The region could not be re-read, so the kept pixels will come back as the backend returns them.");
-            return (MaskScratchPath, null);
-        }
+            using var original = SKBitmap.Decode(regionImagePath);
+            if (original is null || original.Width != width || original.Height != height)
+            {
+                EmitWarning("The region could not be re-read, so the kept pixels will come back as the backend returns them.");
+                return (MaskScratchPath, null, CanvasMaskEmptyReason.None);
+            }
 
-        return (MaskScratchPath, new CanvasMaskCompositor(original, raster.Bitmap));
+            return (MaskScratchPath, new CanvasMaskCompositor(original, raster.Bitmap), CanvasMaskEmptyReason.None);
+        }
+        catch (Exception ex)
+        {
+            // Putting the kept pixels back is a refinement; failing to prepare it must not cost the run.
+            EmitWarning("The kept pixels cannot be put back for this batch, so they will come back as the backend returns them.", ex.ToString());
+            return (MaskScratchPath, null, CanvasMaskEmptyReason.None);
+        }
     }
 
     /// <summary>
@@ -1688,23 +1706,28 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
                         // Both backends VAE-decode the whole latent, so the "kept" area comes back slightly
                         // altered. Put the original pixels back outside the mask, blending on its feather.
                         // A failure here (memory, a Skia encode) must not cost a result the GPU already paid
-                        // for: it is delivered as the backend returned it, with the same warning.
+                        // for: it is delivered as the backend returned it, with one warning that says why.
                         byte[]? pasted;
+                        string? failure = null;
                         try
                         {
                             pasted = await Task
-                                .Run(() => keptPixels.KeepUnmasked(result.PngBytes), token)
+                                .Run(() => PasteKeptPixels(keptPixels, result.PngBytes), token)
                                 .ConfigureAwait(true);
                         }
                         catch (Exception ex) when (ex is not OperationCanceledException)
                         {
-                            EmitError($"Candidate {i + 1}: putting the kept pixels back failed: {ex.Message}", ex);
+                            failure = ex.ToString();
                             pasted = null;
                         }
 
                         if (pasted is null)
                         {
-                            EmitWarning($"Candidate {i + 1}: the kept pixels could not be put back (a result that is not decodable or not the box's size, or the failure above), so the pixels outside the mask are as the backend returned them.");
+                            EmitWarning(
+                                failure is null
+                                    ? $"Candidate {i + 1}: the result is not decodable or not the box's size, so the pixels outside the mask are as the backend returned them."
+                                    : $"Candidate {i + 1}: putting the kept pixels back failed, so the pixels outside the mask are as the backend returned them.",
+                                failure);
                         }
                         else
                         {
@@ -1886,6 +1909,13 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     /// <c>InternalsVisibleTo("DiffusionNexus.Tests")</c>.
     /// </remarks>
     internal Func<byte[], long?, string> OutputsWriter { get; set; } = SaveToOutputs;
+
+    /// <summary>
+    /// Puts the kept pixels back into one masked result (<see cref="CanvasMaskCompositor.KeepUnmasked"/>).
+    /// A test seam like <see cref="OutputsWriter"/>, so a failing paste can be simulated.
+    /// </summary>
+    internal Func<CanvasMaskCompositor, byte[], byte[]?> PasteKeptPixels { get; set; } =
+        static (compositor, png) => compositor.KeepUnmasked(png);
 
     /// <summary>
     /// Writes an accepted result to the outputs folder the Generation Gallery scans, never overwriting an

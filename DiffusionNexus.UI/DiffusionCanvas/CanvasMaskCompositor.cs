@@ -35,7 +35,15 @@ public sealed class CanvasMaskCompositor : IDisposable
             throw new ArgumentException("The mask must be the size of the region it was rasterised for.", nameof(mask));
 
         _original = ToRgba(original);
-        _mask = ToRgba(mask);
+        try
+        {
+            _mask = ToRgba(mask);
+        }
+        catch
+        {
+            _original.Dispose();
+            throw;
+        }
     }
 
     /// <summary>Width of the region, in pixels.</summary>

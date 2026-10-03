@@ -132,12 +132,43 @@ public class CanvasMaskRasterizerTests
     }
 
     [Fact]
-    public void AStrokeBeyondTheFeathersReachIsNot()
+    public void AStrokeBeyondTheFeathersReachIsOutOfReach()
     {
         using var mask = CanvasMaskRasterizer.Rasterize(
             [Dot(-200, 32, 20)], new Rect(0, 0, 64, 64), 64, 64, feather: 6, invert: false);
 
-        mask.IsEmpty.Should().BeTrue();
+        mask.EmptyReason.Should().Be(CanvasMaskEmptyReason.OutOfReach);
+    }
+
+    [Fact]
+    public void AStrokeAtTheFarEdgeOfTheFeathersReachIsTooFaint()
+    {
+        // Feather 16 reaches 57 px; a 20 px dab 45 px left of the box gets ~1% into it. Running on that
+        // changes nothing, and the kept pixels are pasted back over the rest.
+        using var mask = CanvasMaskRasterizer.Rasterize(
+            [Dot(-55, 128, 20)], new Rect(0, 0, 256, 256), 256, 256, feather: 16, invert: false);
+
+        mask.MaxValue.Should().BeLessThan(CanvasMaskRaster.MinimumFeatheredValue);
+        mask.EmptyReason.Should().Be(CanvasMaskEmptyReason.TooFaint);
+    }
+
+    [Fact]
+    public void ErasingThePaintNearTheBoxIsErased()
+    {
+        using var mask = CanvasMaskRasterizer.Rasterize(
+            [Dot(32, 32, 20), Dot(32, 32, 60, erase: true)], new Rect(0, 0, 64, 64), 64, 64, feather: 0, invert: false);
+
+        mask.EmptyReason.Should().Be(CanvasMaskEmptyReason.Erased);
+    }
+
+    [Fact]
+    public void AnEraserFarAwayDoesNotMakeAStrokeOutOfReachErased()
+    {
+        // The reason is judged from the paint near the box, not from whether an eraser exists anywhere.
+        using var mask = CanvasMaskRasterizer.Rasterize(
+            [Dot(-200, 32, 20), Dot(3000, 3000, 50, erase: true)], new Rect(0, 0, 64, 64), 64, 64, feather: 0, invert: false);
+
+        mask.EmptyReason.Should().Be(CanvasMaskEmptyReason.OutOfReach);
     }
 
     [Fact]
@@ -146,7 +177,29 @@ public class CanvasMaskRasterizerTests
         using var mask = CanvasMaskRasterizer.Rasterize(
             [Dot(32, 32, 400)], new Rect(0, 0, 64, 64), 64, 64, feather: 6, invert: true);
 
-        mask.IsEmpty.Should().BeTrue();
+        mask.EmptyReason.Should().Be(CanvasMaskEmptyReason.InvertedCoversAll);
+    }
+
+    [Fact]
+    public void AnInvertedMaskWhoseOnlyGapTheFeatherClosesIsEmpty()
+    {
+        // Two strokes cover the box but for a 4 px seam. Unfeathered the seam is unpainted, but the
+        // feather's dilate closes it, so the inverted mask sent would be about zero everywhere.
+        using var mask = CanvasMaskRasterizer.Rasterize(
+            [Line(new Point(-40, -100), new Point(-40, 400), 156), Line(new Point(200, -100), new Point(200, 400), 316)],
+            new Rect(0, 0, 256, 256), 256, 256, feather: 16, invert: true);
+
+        mask.EmptyReason.Should().Be(CanvasMaskEmptyReason.InvertedCoversAll);
+    }
+
+    [Fact]
+    public void AnInvertedMaskWithARealGapIsNotEmpty()
+    {
+        using var mask = CanvasMaskRasterizer.Rasterize(
+            [Line(new Point(-40, -100), new Point(-40, 400), 156), Line(new Point(240, -100), new Point(240, 400), 156)],
+            new Rect(0, 0, 256, 256), 256, 256, feather: 16, invert: true);
+
+        mask.IsEmpty.Should().BeFalse();
     }
 
     [Fact]
