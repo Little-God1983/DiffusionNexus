@@ -10,10 +10,18 @@ namespace DiffusionNexus.UI.DiffusionCanvas;
 /// </summary>
 public sealed class CanvasMaskRaster : IDisposable
 {
-    internal CanvasMaskRaster(SKBitmap bitmap, double repaintFraction)
+    /// <summary>
+    /// The strength a pixel needs for the mask to count as repainting anything: half. Erasing with an
+    /// antialiased eraser leaves faint alpha along the old edges, and the feather spreads it; that residue
+    /// is not something the user painted, and running on it is a wasted GPU run with no visible change.
+    /// </summary>
+    public const byte MeaningfulValue = 128;
+
+    internal CanvasMaskRaster(SKBitmap bitmap, double repaintFraction, byte maxValue)
     {
         Bitmap = bitmap;
         RepaintFraction = repaintFraction;
+        MaxValue = maxValue;
     }
 
     /// <summary>The mask, owned by this object.</summary>
@@ -25,8 +33,14 @@ public sealed class CanvasMaskRaster : IDisposable
     /// </summary>
     public double RepaintFraction { get; }
 
-    /// <summary>True when nothing in the region would be repainted.</summary>
-    public bool IsEmpty => RepaintFraction <= 0;
+    /// <summary>The strongest repaint value anywhere in the mask, 0 to 255.</summary>
+    public byte MaxValue { get; }
+
+    /// <summary>
+    /// True when no pixel is marked at least <see cref="MeaningfulValue"/> for repaint: nothing, or only
+    /// antialiasing residue left by the eraser.
+    /// </summary>
+    public bool IsEmpty => MaxValue < MeaningfulValue;
 
     /// <summary>Encodes the mask as PNG, the form both backends load.</summary>
     public byte[] EncodePng()
@@ -50,6 +64,14 @@ public static class CanvasMaskRasterizer
     /// adds half, and a Gaussian blur is negligible past three sigma.
     /// </summary>
     private const double FeatherReach = 3.5;
+
+    /// <summary>
+    /// How far, in world pixels, a stroke can reach past its own bounds once feathered: a stroke this close
+    /// to the box still softens the edge inside it. The readout uses the same reach to decide whether the
+    /// mask meets the box.
+    /// </summary>
+    public static double FeatherReachOf(double feather) =>
+        double.IsNaN(feather) || feather < 0.5 ? 0 : Math.Ceiling(feather * FeatherReach) + 1;
 
     /// <summary>
     /// Rasterises <paramref name="strokes"/> over <paramref name="region"/> into a
@@ -79,7 +101,7 @@ public static class CanvasMaskRasterizer
         var scaleX = width / region.Width;
         var scaleY = height / region.Height;
         var featherPixels = double.IsNaN(feather) ? 0 : Math.Max(0, feather) * scaleX;
-        var margin = featherPixels < 0.5 ? 0 : (int)Math.Ceiling(featherPixels * FeatherReach) + 1;
+        var margin = (int)FeatherReachOf(featherPixels);
 
         using var painted = new SKBitmap(width + 2 * margin, height + 2 * margin, SKColorType.Rgba8888, SKAlphaType.Premul);
         using (var canvas = new SKCanvas(painted))
@@ -97,6 +119,7 @@ public static class CanvasMaskRasterizer
         var sourceStride = feathered.RowBytes;
         var pixels = new byte[width * height * 4];
         long total = 0;
+        byte max = 0;
 
         for (var y = 0; y < height; y++)
         {
@@ -106,6 +129,8 @@ public static class CanvasMaskRasterizer
                 var alpha = source[row + (x + margin) * 4 + 3];
                 var value = (byte)(invert ? 255 - alpha : alpha);
                 total += value;
+                if (value > max)
+                    max = value;
 
                 var i = (y * width + x) * 4;
                 pixels[i] = value;
@@ -119,7 +144,7 @@ public static class CanvasMaskRasterizer
         Marshal.Copy(pixels, 0, output.GetPixels(), pixels.Length);
         output.NotifyPixelsChanged();
 
-        return new CanvasMaskRaster(output, total / (255.0 * width * height));
+        return new CanvasMaskRaster(output, total / (255.0 * width * height), max);
     }
 
     /// <summary>

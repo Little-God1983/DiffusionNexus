@@ -87,6 +87,26 @@ public class CanvasMaskRasterizerTests
     }
 
     [Fact]
+    public void ErasingAStrokeWithTheSameBrushLeavesAnEmptyMask()
+    {
+        // The antialiased eraser leaves faint alpha along the old edge, and the feather spreads it. That
+        // residue is not painting: the mask must read as empty so Generate refuses instead of running.
+        using var mask = CanvasMaskRasterizer.Rasterize(
+            [Line(new Point(10, 32), new Point(54, 30), 17), Line(new Point(10, 32), new Point(54, 30), 17, erase: true)],
+            new Rect(0, 0, 64, 64), 64, 64, feather: 6, invert: false);
+
+        mask.IsEmpty.Should().BeTrue();
+        mask.MaxValue.Should().BeLessThan(CanvasMaskRaster.MeaningfulValue);
+    }
+
+    [Fact]
+    public void FeatherReachIsZeroWithoutFeatherAndGrowsWithIt()
+    {
+        CanvasMaskRasterizer.FeatherReachOf(0).Should().Be(0);
+        CanvasMaskRasterizer.FeatherReachOf(16).Should().Be(57);
+    }
+
+    [Fact]
     public void PaintingAfterTheEraserPaintsAgain()
     {
         using var mask = CanvasMaskRasterizer.Rasterize(

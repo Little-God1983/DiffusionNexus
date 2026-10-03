@@ -133,6 +133,16 @@ public class DiffusionCanvasSurface : Control
 
     private ICanvasMask? _observedMask;
 
+    /// <summary>
+    /// The mask's finished strokes recorded once as a picture, and the stroke list it was recorded from.
+    /// The list is replaced on every change, so a different reference means a re-record; a brush drag then
+    /// replays one picture plus the live stroke instead of rebuilding every stroke's path on each move.
+    /// Never disposed by hand: a frame already handed to the render thread may still be replaying it, so
+    /// the finalizer releases it once nothing references it.
+    /// </summary>
+    private SKPicture? _strokePicture;
+    private IReadOnlyList<CanvasMaskStroke>? _strokePictureSource;
+
     /// <summary>The raster under a right-button press, resolved on press and acted on at release.</summary>
     private ICanvasRaster? _contextRaster;
 
@@ -489,6 +499,10 @@ public class DiffusionCanvasSurface : Control
     {
         _boxLayer.InvalidateVisual();
 
+        // An inverted mask is drawn clipped to the box, so its overlay has to follow the box.
+        if (Mask is { Invert: true })
+            _maskLayer.InvalidateVisual();
+
         // Selecting a model re-snaps the box onto that model's lattice, and the grid draws the same
         // lattice, so it has to be re-recorded when that value moves.
         if (Box is { } box && box.Alignment != _gridAlignment)
@@ -750,6 +764,8 @@ public class DiffusionCanvasSurface : Control
         // binds BrushSize two-way and clamps it.
         if (PaintTool != CanvasPaintTool.None && e.KeyModifiers.HasFlag(KeyModifiers.Shift))
         {
+            // Clamped here as well as by the host: at a limit the host's value does not change, so it
+            // raises nothing and the binding would leave this side holding the unclamped size.
             SetCurrentValue(BrushSizeProperty, CanvasBrush.Step(BrushSize, grow: e.Delta.Y > 0));
             e.Handled = true;
             return;
@@ -1048,11 +1064,12 @@ public class DiffusionCanvasSurface : Control
         if (Mask is not { IsVisible: true } mask)
             return null;
 
-        var strokes = mask.Strokes;
-        if (_paintPoints is { Count: > 0 } live)
-            strokes = [.. strokes, new CanvasMaskStroke(live.ToArray(), _paintSize, _paintIsErase)];
+        var committed = StrokePicture(mask.Strokes);
+        var live = _paintPoints is { Count: > 0 } points
+            ? new CanvasMaskStroke(points.ToArray(), _paintSize, _paintIsErase)
+            : null;
 
-        if (strokes.Count == 0 && !mask.Invert)
+        if (committed is null && live is null && !mask.Invert)
             return null;
 
         // Inverted, the repaint area is the box minus the painting, so the overlay is confined to the box.
@@ -1060,7 +1077,30 @@ public class DiffusionCanvasSurface : Control
         if (mask.Invert && clip is null)
             return null;
 
-        return new MaskDrawOperation(new Rect(Bounds.Size), strokes, Viewport.Zoom, Viewport.PanX, Viewport.PanY, clip);
+        return new MaskDrawOperation(new Rect(Bounds.Size), committed, live, Viewport.Zoom, Viewport.PanX, Viewport.PanY, clip);
+    }
+
+    /// <summary>The picture of <paramref name="strokes"/>, re-recorded only when the list was replaced.</summary>
+    private SKPicture? StrokePicture(IReadOnlyList<CanvasMaskStroke> strokes)
+    {
+        if (ReferenceEquals(strokes, _strokePictureSource))
+            return _strokePicture;
+
+        _strokePictureSource = strokes;
+        _strokePicture = null;
+        if (strokes.Count == 0)
+            return null;
+
+        var bounds = strokes[0].Bounds;
+        foreach (var stroke in strokes)
+            bounds = bounds.Union(stroke.Bounds);
+
+        using var recorder = new SKPictureRecorder();
+        var canvas = recorder.BeginRecording(new SKRect(
+            (float)bounds.X, (float)bounds.Y, (float)bounds.Right, (float)bounds.Bottom));
+        CanvasMaskRasterizer.DrawStrokes(canvas, strokes, MaskOverlayColor);
+        _strokePicture = recorder.EndRecording();
+        return _strokePicture;
     }
 
     private void DrawHandles(DrawingContext context, GenerationBoundingBox box)
@@ -1146,24 +1186,26 @@ public class DiffusionCanvasSurface : Control
     }
 
     /// <summary>
-    /// Draws the mask's repaint area through Skia, from an immutable snapshot: the stroke list is replaced,
-    /// never mutated, and the live stroke is copied, so the render thread reads nothing the UI thread can
+    /// Draws the mask's repaint area through Skia, from an immutable snapshot: the finished strokes as a
+    /// recorded picture and the live stroke as a copy, so the render thread reads nothing the UI thread can
     /// change. Strokes are drawn opaque into a layer that is composited translucent, so overlaps do not
     /// darken; erasers clear within that layer; an inverted mask fills the box and clears the painting.
     /// </summary>
     private sealed class MaskDrawOperation : ICustomDrawOperation
     {
-        private readonly IReadOnlyList<CanvasMaskStroke> _strokes;
+        private readonly SKPicture? _committed;
+        private readonly CanvasMaskStroke? _live;
         private readonly double _zoom;
         private readonly double _panX;
         private readonly double _panY;
         private readonly Rect? _invertClip;
 
         public MaskDrawOperation(
-            Rect bounds, IReadOnlyList<CanvasMaskStroke> strokes, double zoom, double panX, double panY, Rect? invertClip)
+            Rect bounds, SKPicture? committed, CanvasMaskStroke? live, double zoom, double panX, double panY, Rect? invertClip)
         {
             Bounds = bounds;
-            _strokes = strokes;
+            _committed = committed;
+            _live = live;
             _zoom = zoom;
             _panX = panX;
             _panY = panY;
@@ -1200,7 +1242,11 @@ public class DiffusionCanvasSurface : Control
             canvas.Save();
             canvas.Translate((float)_panX, (float)_panY);
             canvas.Scale((float)_zoom);
-            CanvasMaskRasterizer.DrawStrokes(canvas, _strokes, MaskOverlayColor);
+            // The picture replays its erasers' clearing blend into this layer, like drawing the strokes would.
+            if (_committed is not null)
+                canvas.DrawPicture(_committed);
+            if (_live is not null)
+                CanvasMaskRasterizer.DrawStrokes(canvas, [_live], MaskOverlayColor);
             canvas.Restore();
 
             if (_invertClip is not null)

@@ -128,6 +128,21 @@ public class DiffusionCanvasInpaintTests : IDisposable
     }
 
     [Fact]
+    public void AStrokeJustOutsideTheBoxCountsOnceItsFeatherReachesIn()
+    {
+        // The rasteriser feathers a stroke this close into the box; the readout must agree, or Generate
+        // drops the mask and repaints the whole box at the panel's denoise.
+        var vm = CanvasOverAResult(new FakeDiffusionBackend());
+        vm.AddMaskCommand.Execute(null);
+        vm.Layers.Mask!.AddStroke(Dot(-20, 256, size: 20));
+        vm.IsInpaintRun.Should().BeFalse("without feather the stroke ends 10 px left of the box");
+
+        vm.Layers.Mask.Feather = 16;
+
+        vm.IsInpaintRun.Should().BeTrue();
+    }
+
+    [Fact]
     public void OverEmptyCanvasTheMaskHasNothingToKeepAndTheReadoutSaysSo()
     {
         var vm = Canvas(new FakeDiffusionBackend());
@@ -191,6 +206,9 @@ public class DiffusionCanvasInpaintTests : IDisposable
         backend.Requests.Should().HaveCount(3);
         backend.Requests.Select(r => r.MaskImage?.FilePath).Distinct().Should().ContainSingle()
             .Which.Should().NotBeNull();
+        // The fake's result is not a PNG, so the kept pixels cannot be put back. That must cost a
+        // warning, not the candidate.
+        vm.Staging.Candidates.Should().OnlyContain(c => c.State == StagedCandidateState.Ready);
     }
 
     [Fact]
@@ -253,6 +271,44 @@ public class DiffusionCanvasInpaintTests : IDisposable
         backend.RunCount.Should().Be(0);
         vm.StatusText.Should().Contain("nothing painted inside the box");
         vm.Staging.Candidates.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AnInvertedMaskCoveringTheBoxRefusesAndSaysToPaintLess()
+    {
+        var backend = new FakeDiffusionBackend();
+        var vm = CanvasOverAResult(backend);
+        vm.AddMaskCommand.Execute(null);
+        vm.Layers.Mask!.AddStroke(Dot(256, 256, size: 2000));
+        vm.Layers.Mask.Invert = true;
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+
+        backend.RunCount.Should().Be(0);
+        vm.StatusText.Should().Contain("turn Invert off").And.NotContain("erased");
+    }
+
+    [Fact]
+    public async Task ThePixelsOutsideTheMaskAreTheOriginalsNotTheBackends()
+    {
+        // Both backends VAE-decode the whole latent, so what they return outside the mask is a slightly
+        // altered copy. Here the "backend" returns solid black: only the painted area may keep it.
+        using var black = new SKBitmap(512, 512, SKColorType.Rgba8888, SKAlphaType.Premul);
+        using (var canvas = new SKCanvas(black))
+            canvas.Clear(SKColors.Black);
+        using var image = SKImage.FromBitmap(black);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+
+        var backend = new FakeDiffusionBackend { ResultPng = data.ToArray() };
+        var vm = CanvasOverAResult(backend);
+        vm.AddMaskCommand.Execute(null);
+        vm.Layers.Mask!.AddStroke(Dot(256, 256));
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+
+        using var result = SKBitmap.Decode(vm.Staging.Candidates.Single().PngBytes);
+        result.GetPixel(256, 256).Red.Should().Be(0, "painted: the generated pixel");
+        result.GetPixel(10, 10).Red.Should().Be(255, "unpainted: the original white, exactly");
     }
 
     [Fact]
@@ -383,6 +439,7 @@ public class DiffusionCanvasInpaintTests : IDisposable
     [InlineData(4, false, 4)]
     [InlineData(5, true, 6)]
     [InlineData(500, true, 512)]
+    [InlineData(512, true, 512)]
     public void StepBrushSizeMovesByAQuarterWithinTheLimits(double start, bool grow, double expected)
     {
         var vm = Canvas(new FakeDiffusionBackend());

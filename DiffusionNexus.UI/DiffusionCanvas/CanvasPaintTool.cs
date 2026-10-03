@@ -13,14 +13,24 @@ public enum CanvasPaintTool
     Eraser,
 }
 
-/// <summary>The brush's sizing rule, shared by the surface's Shift+wheel and the canvas's [ / ] keys.</summary>
+/// <summary>The brush's size rules, shared by the surface's Shift+wheel, the canvas's [ / ] keys and the slider.</summary>
 public static class CanvasBrush
 {
+    /// <summary>Smallest brush, in world pixels.</summary>
+    public const double MinSize = 4;
+
+    /// <summary>Largest brush, in world pixels.</summary>
+    public const double MaxSize = 512;
+
+    /// <summary>A size rounded to a whole pixel and held within <see cref="MinSize"/>..<see cref="MaxSize"/>.</summary>
+    public static double Clamp(double size) => Math.Clamp(Math.Round(size), MinSize, MaxSize);
+
     /// <summary>
-    /// One resize step: a quarter of the size, and at least one pixel so small brushes still move. The
-    /// caller clamps.
+    /// One resize step: a quarter of the size, and at least one pixel so small brushes still move, already
+    /// clamped. Every writer clamps: a two-way binding does not push a host's clamp back when the clamped
+    /// value equals what the host already holds.
     /// </summary>
-    public static double Step(double size, bool grow) => grow
+    public static double Step(double size, bool grow) => Clamp(grow
         ? Math.Max(size + 1, size * 1.25)
-        : Math.Min(size - 1, size / 1.25);
+        : Math.Min(size - 1, size / 1.25));
 }

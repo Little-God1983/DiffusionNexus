@@ -228,4 +228,27 @@ public class DiffusionCanvasSurfacePaintTests
             window.Close();
         }
     }
+
+    [AvaloniaFact]
+    public void ShiftWheelStopsAtTheLargestBrush()
+    {
+        // The host clamps too, but at the limit its value does not change, so it raises nothing and a
+        // two-way binding would leave the surface holding 640 while every label says 512.
+        var (window, surface, _, _) = Host(CanvasPaintTool.Brush);
+        try
+        {
+            surface.BrushSize = CanvasBrush.MaxSize;
+
+            surface.RaiseEvent(new PointerWheelEventArgs(
+                surface, Mouse, window, new Point(100, 100), timestamp: 0,
+                new PointerPointProperties(RawInputModifiers.None, PointerUpdateKind.Other),
+                KeyModifiers.Shift, new Vector(0, 1)));
+
+            surface.BrushSize.Should().Be(CanvasBrush.MaxSize);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
 }

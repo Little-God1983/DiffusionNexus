@@ -93,6 +93,9 @@ internal sealed class FakeDiffusionBackend : IDiffusionBackend
     /// </summary>
     public byte[]? InitImageBytesAtCallTime { get; private set; }
 
+    /// <summary>A real PNG to return as every result; null returns four bytes that are not an image.</summary>
+    public byte[]? ResultPng { get; init; }
+
     /// <summary>The mask file's bytes, read when the backend was called. Same reason as the init image's.</summary>
     public byte[]? MaskImageBytesAtCallTime { get; private set; }
 
@@ -158,7 +161,7 @@ internal sealed class FakeDiffusionBackend : IDiffusionBackend
                 new DiffusionResult(
                     // Not a decodable PNG: the view model must survive a decode failure, and there
                     // is no Avalonia platform here to decode a real one anyway.
-                    [1, 2, 3, 4],
+                    ResultPng ?? [1, 2, 3, 4],
                     request.Width,
                     request.Height,
                     request.Seed ?? 42,

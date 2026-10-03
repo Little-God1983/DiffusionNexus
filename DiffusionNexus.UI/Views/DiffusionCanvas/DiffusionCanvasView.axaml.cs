@@ -159,8 +159,9 @@ public partial class DiffusionCanvasView : UserControl
                 return;
         }
 
-        // [ and ] resize the brush while a paint tool is active. Matched by the typed symbol as well as
-        // the US key: on a German keyboard [ is AltGr+8 and has no key of its own.
+        // [ and ] resize the brush while a paint tool is active. Matched by the typed symbol, and by the
+        // US key only when there is no symbol: on a German keyboard [ is AltGr+8, and the keys the US
+        // layout puts [ and ] on type ß and ´ there.
         if (vm is { PaintTool: not DiffusionNexus.UI.DiffusionCanvas.CanvasPaintTool.None }
             && BrushStep(e) is { } grow)
         {
@@ -170,16 +171,17 @@ public partial class DiffusionCanvasView : UserControl
     }
 
     /// <summary>True for "grow" (]), false for "shrink" ([), null for any other key.</summary>
-    private static bool? BrushStep(KeyEventArgs e) => e.Key switch
+    internal static bool? BrushStep(KeyEventArgs e) => e.KeySymbol switch
     {
-        Key.OemCloseBrackets => true,
-        Key.OemOpenBrackets => false,
-        _ => e.KeySymbol switch
+        "]" => true,
+        "[" => false,
+        null => e.Key switch
         {
-            "]" => true,
-            "[" => false,
+            Key.OemCloseBrackets => true,
+            Key.OemOpenBrackets => false,
             _ => null,
         },
+        _ => null,
     };
 
     private void OnPreviewKeyUp(object? sender, KeyEventArgs e)
