@@ -90,4 +90,14 @@ public class GenerationFrameLayerTests
     {
         LayerStackNaming.Resolve(new string('x', 200), "Old").Should().HaveLength(LayerStackNaming.MaxLength);
     }
+
+    [Fact]
+    public void LayerStackNaming_NeverCutsAnEmojiInHalf()
+    {
+        // 63 characters, then an emoji whose first UTF-16 half would be the 64th unit.
+        var name = LayerStackNaming.Resolve(new string('x', LayerStackNaming.MaxLength - 1) + "\U0001F600tail", "Old");
+
+        name.Should().Be(new string('x', LayerStackNaming.MaxLength - 1));
+        char.IsHighSurrogate(name[^1]).Should().BeFalse();
+    }
 }

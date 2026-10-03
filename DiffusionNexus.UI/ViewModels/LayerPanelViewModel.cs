@@ -37,7 +37,7 @@ public partial class LayerPanelViewModel : ObservableObject
         MoveLayerUpCommand = new RelayCommand(ExecuteMoveLayerUp, () => _hasImage() && SelectedLayer is not null && CanMoveLayerUp);
         MoveLayerDownCommand = new RelayCommand(ExecuteMoveLayerDown, () => _hasImage() && SelectedLayer is not null && CanMoveLayerDown);
         MergeLayerDownCommand = new RelayCommand(ExecuteMergeLayerDown, () => _hasImage() && SelectedLayer is not null && CanMergeDown);
-        MergeVisibleLayersCommand = new RelayCommand(ExecuteMergeVisibleLayers, () => _hasImage() && Layers.Count > 1 && !HasLockedLayers);
+        MergeVisibleLayersCommand = new RelayCommand(ExecuteMergeVisibleLayers, () => _hasImage() && Layers.Count > 1 && !HasLockedPaintLayers);
         FlattenLayersCommand = new RelayCommand(ExecuteFlattenLayers, () => _hasImage() && Layers.Count > 1 && !HasLockedLayers);
         SaveLayeredTiffCommand = new AsyncRelayCommand(ExecuteSaveLayeredTiffAsync, () => _hasImage());
     }
@@ -123,10 +123,16 @@ public partial class LayerPanelViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Whether any layer is locked. Merge Visible and Flatten All replace every layer with one, so they
-    /// are unavailable while a locked layer would be removed by them.
+    /// Whether any layer, the inpaint mask included, is locked. Flatten All replaces the whole stack with
+    /// one layer, so it is unavailable while a locked layer would be removed by it.
     /// </summary>
-    public bool HasLockedLayers => _layers.Any(l => l.IsLocked && !l.Layer.IsInpaintMask);
+    public bool HasLockedLayers => _layers.Any(l => l.IsLocked);
+
+    /// <summary>
+    /// Whether any layer other than the inpaint mask is locked. Merge Visible keeps the mask and replaces
+    /// every other layer with one, so this is what it must refuse on.
+    /// </summary>
+    public bool HasLockedPaintLayers => _layers.Any(l => l.IsLocked && !l.Layer.IsInpaintMask);
 
     #endregion
 
@@ -256,6 +262,7 @@ public partial class LayerPanelViewModel : ObservableObject
         OnPropertyChanged(nameof(CanMoveLayerDown));
         OnPropertyChanged(nameof(CanMergeDown));
         OnPropertyChanged(nameof(HasLockedLayers));
+        OnPropertyChanged(nameof(HasLockedPaintLayers));
     }
 
     #endregion
@@ -277,7 +284,7 @@ public partial class LayerPanelViewModel : ObservableObject
     {
         if (SelectedLayer is null) return;
 
-        // Also reached from a row's own delete callback, which bypasses the command's CanExecute.
+        // RelayCommand.Execute does not consult CanExecute; refuse here too.
         if (SelectedLayer.IsLocked)
         {
             _trace?.Invoke($"Refused to delete layer '{SelectedLayer.Name}': it is locked.");
@@ -313,7 +320,7 @@ public partial class LayerPanelViewModel : ObservableObject
 
     private void ExecuteMergeVisibleLayers()
     {
-        if (HasLockedLayers) return;
+        if (HasLockedPaintLayers) return;
         MergeVisibleLayersRequested?.Invoke(this, EventArgs.Empty);
     }
 
@@ -341,10 +348,21 @@ public partial class LayerPanelViewModel : ObservableObject
         SelectedLayer = vm;
     }
 
+    /// <summary>
+    /// A row's own delete. It deletes that row's layer, not the selected one, under the same rules as
+    /// <see cref="DeleteLayerCommand"/>: never the last layer, the inpaint mask or a locked layer.
+    /// </summary>
     private void OnLayerDeleteRequested(LayerViewModel vm)
     {
-        if (_layers.Count <= 1) return;
-        ExecuteDeleteLayer();
+        if (_layers.Count <= 1 || vm.Layer.IsInpaintMask || !_layers.Contains(vm)) return;
+
+        if (vm.IsLocked)
+        {
+            _trace?.Invoke($"Refused to delete layer '{vm.Name}': it is locked.");
+            return;
+        }
+
+        DeleteLayerRequested?.Invoke(this, vm.Layer);
     }
 
     #endregion

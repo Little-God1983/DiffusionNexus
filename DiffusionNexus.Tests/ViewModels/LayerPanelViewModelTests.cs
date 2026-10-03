@@ -298,24 +298,73 @@ public class LayerPanelViewModelTests
     }
 
     [Fact]
-    public void ARowsOwnDeleteRefusesALockedLayer()
+    public void ARowsOwnDeleteRefusesItsLockedLayerEvenWhenAnotherRowIsSelected()
     {
-        // The row's DeleteCommand calls back into the panel and bypasses DeleteLayerCommand's CanExecute.
         var trace = new List<string>();
         var sut = new LayerPanelViewModel(hasImage: () => true, trace: trace.Add);
         var stack = new LayerStack(10, 10);
         stack.AddLayer("Bottom");
         stack.AddLayer("Top");
         sut.SyncLayers(stack);
-        sut.SelectedLayer = sut.Layers[0];
-        sut.Layers[0].IsLocked = true;
-        var requested = false;
-        sut.DeleteLayerRequested += (_, _) => requested = true;
+        sut.SelectedLayer = sut.Layers[0];          // Top, unlocked
+        sut.Layers[1].IsLocked = true;              // Bottom
+        var requested = new List<Layer>();
+        sut.DeleteLayerRequested += (_, layer) => requested.Add(layer);
 
-        sut.Layers[0].DeleteCommand.Execute(null);
+        sut.Layers[1].DeleteCommand.Execute(null);
+
+        requested.Should().BeEmpty("the row's own layer is locked; the selected one is not the target");
+        trace.Should().Contain("Refused to delete layer 'Bottom': it is locked.");
+    }
+
+    [Fact]
+    public void ARowsOwnDeleteDeletesThatRowsLayerNotTheSelectedOne()
+    {
+        var stack = new LayerStack(10, 10);
+        var bottom = stack.AddLayer("Bottom");
+        stack.AddLayer("Top");
+        _sut.SyncLayers(stack);
+        _sut.SelectedLayer = _sut.Layers[0];        // Top, locked
+        _sut.Layers[0].IsLocked = true;
+        var requested = new List<Layer>();
+        _sut.DeleteLayerRequested += (_, layer) => requested.Add(layer);
+
+        _sut.Layers[1].DeleteCommand.Execute(null);
+
+        requested.Should().Equal(bottom);
+    }
+
+    [Fact]
+    public void ARowsOwnDeleteRefusesTheInpaintMask()
+    {
+        var stack = new LayerStack(10, 10);
+        stack.AddLayer("Bottom");
+        var mask = stack.AddLayer("Mask");
+        mask!.IsInpaintMask = true;
+        _sut.SyncLayers(stack);
+        var requested = false;
+        _sut.DeleteLayerRequested += (_, _) => requested = true;
+
+        _sut.Layers[0].DeleteCommand.Execute(null);
 
         requested.Should().BeFalse();
-        trace.Should().Contain("Refused to delete layer 'Top': it is locked.");
+    }
+
+    [Fact]
+    public void ALockedInpaintMaskDisablesFlattenButNotMergeVisible()
+    {
+        // Flatten All replaces the whole stack, mask included; Merge Visible keeps the mask.
+        var stack = new LayerStack(10, 10);
+        stack.AddLayer("Bottom");
+        stack.AddLayer("Top");
+        var mask = stack.AddLayer("Mask");
+        mask!.IsInpaintMask = true;
+        _sut.SyncLayers(stack);
+
+        _sut.Layers[0].IsLocked = true;
+
+        _sut.FlattenLayersCommand.CanExecute(null).Should().BeFalse();
+        _sut.MergeVisibleLayersCommand.CanExecute(null).Should().BeTrue();
     }
 
     [Fact]

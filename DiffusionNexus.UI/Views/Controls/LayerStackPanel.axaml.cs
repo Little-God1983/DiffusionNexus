@@ -100,16 +100,11 @@ public partial class LayerStackPanel : UserControl
             if (!ReferenceEquals(LayerList.SelectedItem, change.NewValue))
                 LayerList.SelectedItem = change.NewValue;
         }
-        else if (change.Property == ItemsProperty && change.NewValue is not null && SelectedItem is { } selected)
+        else if (change.Property == ItemsProperty && change.NewValue is not null)
         {
             // While the host's list is away (its DataContext cleared on a tab switch) the ListBox is empty
-            // and drops its selection. When the list comes back nothing would re-select the row, so put
-            // the host's selection back once the ListBox has its items again.
-            Dispatcher.UIThread.Post(() =>
-            {
-                if (ReferenceEquals(SelectedItem, selected))
-                    LayerList.SelectedItem = selected;
-            });
+            // and drops its selection. When the list comes back nothing would re-select the row.
+            ReconcileLater();
         }
     }
 
@@ -119,23 +114,54 @@ public partial class LayerStackPanel : UserControl
     /// back on the next turn. When the row has left <see cref="Items"/> the host is removing it and picks
     /// the next selection itself.
     /// </summary>
+    /// <remarks>
+    /// A pick reaches the host on the next dispatcher turn, not from inside this handler. The host may
+    /// answer a pick by rebuilding its rows (the editor does when the pick commits a pending
+    /// Move/Transform), and changing the collection while the ListBox is inside its own selection change
+    /// makes Avalonia throw; the binding swallows the exception and the rows stay half rebuilt.
+    /// </remarks>
     private void OnListSelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         if (LayerList.SelectedItem is { } picked)
         {
-            SelectedItem = picked;
+            Dispatcher.UIThread.Post(() => RelayPick(picked));
             return;
         }
 
-        if (SelectedItem is not { } kept || !IsListed(kept))
+        // Posted: the ListBox is still inside its own selection change and would undo an immediate set.
+        ReconcileLater();
+    }
+
+    private void RelayPick(object picked)
+    {
+        // A later pick, or a deselect, superseded this one.
+        if (!ReferenceEquals(LayerList.SelectedItem, picked))
             return;
 
-        // Posted: the ListBox is still inside its own selection change and would undo an immediate set.
-        Dispatcher.UIThread.Post(() =>
-        {
-            if (LayerList.SelectedItem is null && ReferenceEquals(SelectedItem, kept) && IsListed(kept))
-                LayerList.SelectedItem = kept;
-        });
+        SelectedItem = picked;
+
+        // A host that answers with a different row does so inside this binding write-back, where Avalonia
+        // ignores the source's change notification, so the panel would keep the picked row. Read the host's
+        // value again now that the write-back is over.
+        BindingOperations.GetBindingExpressionBase(this, SelectedItemProperty)?.UpdateTarget();
+        Reconcile();
+    }
+
+    /// <summary>On the next dispatcher turn, <see cref="Reconcile"/>.</summary>
+    private void ReconcileLater() => Dispatcher.UIThread.Post(Reconcile);
+
+    /// <summary>
+    /// Makes the list show <see cref="SelectedItem"/> again if the two have drifted apart, provided the item
+    /// is still listed. The one place the list is put back in step.
+    /// </summary>
+    private void Reconcile()
+    {
+        var wanted = SelectedItem;
+        if (ReferenceEquals(LayerList.SelectedItem, wanted))
+            return;
+
+        if (wanted is null || IsListed(wanted))
+            LayerList.SelectedItem = wanted;
     }
 
     private bool IsListed(object item) => Items is { } items && items.Cast<object>().Contains(item);
@@ -192,8 +218,10 @@ public partial class LayerStackPanel : UserControl
     /// </summary>
     private void OnRenameDataContextChanged(object? sender, EventArgs e)
     {
+        // Hiding a focused TextBox does not move focus off it, so typing would vanish into the hidden box
+        // (and the canvas leaves every key to a focused TextBox). Give the list the keyboard back then.
         if (sender is TextBox { IsVisible: true } editor)
-            EndRename(editor, commit: false, refocusList: false);
+            EndRename(editor, commit: false, refocusList: editor.IsKeyboardFocusWithin);
     }
 
     private void EndRename(TextBox editor, bool commit, bool refocusList = true)

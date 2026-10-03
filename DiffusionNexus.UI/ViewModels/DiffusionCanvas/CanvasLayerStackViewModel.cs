@@ -14,8 +14,8 @@ namespace DiffusionNexus.UI.ViewModels.DiffusionCanvas;
 /// <para>
 /// <c>Frames</c> stays the canonical order, <b>bottom to top</b>, because the surface, the hit test and
 /// the region compositor all iterate it that way. <see cref="DisplayLayers"/> is a top-first mirror for
-/// the layer panel. It is maintained incrementally rather than rebuilt, because clearing a collection a
-/// <c>ListBox</c> is bound to writes null back into the selection.
+/// the layer panel. It is maintained incrementally rather than rebuilt, so a change touches only the rows
+/// it concerns and the panel's rows and selection stay in step with the surface and the hit test.
 /// </para>
 /// <para>
 /// Lock protects a layer from removal only: Delete refuses it and <see cref="ClearUnlocked"/> keeps it.
@@ -181,8 +181,6 @@ public sealed partial class CanvasLayerStackViewModel : ObservableObject
 
         _frames.Move(from, to);
 
-        // A ListBox may treat a move as remove + add and write null back into the selection; restore it.
-        SelectedLayer = layer;
         _trace($"Moved layer '{layer.Name}' {(delta > 0 ? "up" : "down")} (now {_frames.Count - to} of {_frames.Count} from the top).");
         NotifyCommands();
     }

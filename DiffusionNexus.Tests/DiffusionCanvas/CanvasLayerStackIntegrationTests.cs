@@ -97,7 +97,7 @@ public class CanvasLayerStackIntegrationTests
         var frame = new GenerationFrameViewModel { Name = "keep", IsLocked = true };
         vm.Frames.Add(frame);
 
-        vm.DeleteFrameCommand!.CanExecute(frame).Should().BeFalse();
+        vm.DeleteFrameCommand.CanExecute(frame).Should().BeFalse();
         vm.DeleteFrameCommand.Execute(frame);
 
         vm.Frames.Should().Contain(frame);

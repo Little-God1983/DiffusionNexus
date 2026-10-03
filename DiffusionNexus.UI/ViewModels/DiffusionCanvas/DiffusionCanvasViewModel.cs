@@ -604,7 +604,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         {
             RefreshRegionMode();
             ClearCanvasCommand.NotifyCanExecuteChanged();
-            DeleteFrameCommand?.NotifyCanExecuteChanged();
+            DeleteFrameCommand.NotifyCanExecuteChanged();
         };
         Staging.CandidateAccepted += OnCandidateAccepted;
         RefreshRegionMode();
@@ -672,7 +672,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     /// Right-click on a result → Delete. The surface opens the flyout and passes the raster under the
     /// pointer as the parameter. A locked layer is refused; the flyout item is disabled for it.
     /// </summary>
-    public IRelayCommand<GenerationFrameViewModel?>? DeleteFrameCommand { get; }
+    public IRelayCommand<GenerationFrameViewModel?> DeleteFrameCommand { get; }
 
     private void DeleteFrame(GenerationFrameViewModel? frame)
     {

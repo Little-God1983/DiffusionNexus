@@ -50,6 +50,12 @@ public static class LayerStackNaming
         if (cleaned.Length == 0)
             return current;
 
-        return cleaned.Length > MaxLength ? cleaned[..MaxLength].TrimEnd() : cleaned;
+        if (cleaned.Length <= MaxLength)
+            return cleaned;
+
+        // Cut by UTF-16 unit, but never between the halves of a surrogate pair (an emoji): a lone half is
+        // a broken character on screen and invalid UTF-8 in the TIFF layer names and the logs.
+        var length = char.IsHighSurrogate(cleaned[MaxLength - 1]) ? MaxLength - 1 : MaxLength;
+        return cleaned[..length].TrimEnd();
     }
 }

@@ -70,6 +70,7 @@ public class LayerStackPanelSelectionTests
         try
         {
             list.SelectedItem = a;
+            Dispatcher.UIThread.RunJobs();   // the pick reaches the host on the next turn
 
             stack.SelectedLayer.Should().BeSameAs(a);
         }
@@ -188,6 +189,68 @@ public class LayerStackPanelSelectionTests
             raisedNull.Should().BeFalse("a sync is not the user clearing the selection");
             panelVm.SelectedLayer!.Layer.Should().BeSameAs(top);
             list.SelectedItem.Should().BeSameAs(panelVm.SelectedLayer);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void AHostThatAnswersAPickWithAnotherRowGetsThatRowHighlighted()
+    {
+        // Picking a row while a Move/Transform is pending commits it, and the commit rebuilds the editor's
+        // rows: the host answers the pick with a new row object. Rebuilding them inside the ListBox's own
+        // selection change made Avalonia throw (swallowed by the binding, rows half rebuilt).
+        var layers = new LayerStack(10, 10);
+        var bottom = layers.AddLayer("Bottom");
+        var top = layers.AddLayer("Top");
+        layers.ActiveLayer = top;
+        var panelVm = new LayerPanelViewModel(hasImage: () => true);
+        panelVm.SyncLayers(layers);
+        var syncing = false;
+        panelVm.LayerSelectionChanged += (_, layer) =>
+        {
+            if (syncing || layer is null)
+                return;
+            syncing = true;
+            layers.ActiveLayer = layer;
+            panelVm.SyncLayers(layers);
+            syncing = false;
+        };
+        var (window, panel, list) = Host(panelVm, nameof(panelVm.Layers), nameof(panelVm.SelectedLayer));
+        try
+        {
+            list.SelectedItem = panelVm.Layers.Single(l => l.Layer == bottom);
+            Dispatcher.UIThread.RunJobs();
+
+            panelVm.Layers.Select(l => l.Name).Should().Equal("Top", "Bottom");
+            panelVm.SelectedLayer!.Layer.Should().BeSameAs(bottom);
+            panel.SelectedItem.Should().BeSameAs(panelVm.SelectedLayer);
+            list.SelectedItem.Should().BeSameAs(panelVm.SelectedLayer, "the list shows the host's row");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void SwappingTheItemsForAnotherListNeverSelectsARowFromTheOldOne()
+    {
+        var layers = new LayerStack(10, 10);
+        layers.AddLayer("Only");
+        var panelVm = new LayerPanelViewModel(hasImage: () => true);
+        panelVm.SyncLayers(layers);
+        var (window, _, list) = Host(panelVm, nameof(panelVm.Layers), nameof(panelVm.SelectedLayer));
+        try
+        {
+            var stale = panelVm.SelectedLayer;
+            panelVm.Layers = new ObservableCollection<LayerViewModel>();
+            Dispatcher.UIThread.RunJobs();
+
+            panelVm.SelectedLayer.Should().BeSameAs(stale, "the host has not chosen yet");
+            list.SelectedItem.Should().BeNull("the old row is not in the new list");
         }
         finally
         {
