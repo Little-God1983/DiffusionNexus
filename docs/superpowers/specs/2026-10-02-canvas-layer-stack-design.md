@@ -66,7 +66,14 @@ So:
   opacity inspector stay in the editor's XAML.
 - New: rename by double-click, and a lock toggle on each row. Lock keeps its existing meaning there
   (the Move/Transform tool refuses a locked layer, `ImageEditorCore.LayerTransform.cs`) and now also
-  disables delete.
+  protects it from removal: delete and Merge Down refuse it, and Merge Visible / Flatten All are
+  unavailable while any layer is locked, because both replace every layer with one. Merging an
+  unlocked layer into a locked one below is allowed; the locked layer stays. Reordering stays allowed,
+  as on the canvas.
+- The control never writes a null into its `SelectedItem`. A `ListBox` drops its selection on a
+  Ctrl+click of the selected row, when its items are cleared and while its host is away; none of those
+  is the user choosing "no layer", so the host decides when nothing is selected and both view models
+  keep plain setters.
 
 ## Components
 
