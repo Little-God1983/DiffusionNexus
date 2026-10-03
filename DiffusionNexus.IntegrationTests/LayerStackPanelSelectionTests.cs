@@ -314,13 +314,13 @@ public class LayerStackPanelSelectionTests
     public void ARenameWhoseLayerLeavesIsCancelledAndTheListTakesTheKeyboard()
     {
         // A background result (inpaint, outpaint, a drop) syncs the editor while a rename is open, and the
-        // layer being renamed is no longer there. The typed text must not land on another layer, and the
-        // keyboard must not end up nowhere. (It may land on the layer that left: the row's container loses
-        // focus first and commits onto its own layer, which no longer shows.)
+        // layer being renamed is no longer there. The user never pressed Enter: the typed text must land on
+        // no layer, the one that left included, and the keyboard must not end up nowhere.
         var layers = new LayerStack(10, 10);
         layers.AddLayer("Bottom");
         var top = layers.AddLayer("Top");
-        var panelVm = new LayerPanelViewModel(hasImage: () => true);
+        var trace = new List<string>();
+        var panelVm = new LayerPanelViewModel(hasImage: () => true, trace: trace.Add);
         panelVm.SyncLayers(layers);
         var panel = new LayerStackPanel();
         panel.Bind(LayerStackPanel.ItemsProperty, new Binding(nameof(panelVm.Layers)));
@@ -340,7 +340,12 @@ public class LayerStackPanelSelectionTests
 
             editor.IsVisible.Should().BeFalse("the rename is over");
             panelVm.Layers.Select(r => r.Name).Should().Equal("Bottom");
+            top.Name.Should().Be("Top", "the rename was never committed");
+            trace.Should().NotContain(line => line.StartsWith("Renamed", StringComparison.Ordinal));
             list.IsKeyboardFocusWithin.Should().BeTrue("the list takes the keyboard back");
+            ((Control)list.ContainerFromItem(panelVm.SelectedLayer!)!).IsFocused.Should().BeTrue(
+                "the keyboard goes to the selected row, not to the ListBox itself");
+            list.Focusable.Should().BeFalse("the ListBox is not a Tab stop of its own");
         }
         finally
         {

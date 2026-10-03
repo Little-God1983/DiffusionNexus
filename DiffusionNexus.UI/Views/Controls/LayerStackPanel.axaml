@@ -30,10 +30,7 @@
               ToolTip.Tip="Delete the layer. A locked layer cannot be deleted." />
     </StackPanel>
 
-    <!-- Focusable explicitly: a ListBox is not focusable by default, and the panel hands it the keyboard
-         after a rename (Enter, Escape, or the box taken away under the user). -->
     <ListBox x:Name="LayerList"
-             Focusable="True"
              ItemsSource="{Binding #Root.Items}"
              MaxHeight="{Binding #Root.ListMaxHeight}"
              SelectionMode="Single"
@@ -60,7 +57,8 @@
               <TextBlock Classes="layerName" Text="{Binding Name}" FontSize="11" VerticalAlignment="Center"
                          TextTrimming="CharacterEllipsis" />
               <TextBox Classes="layerRename" IsVisible="False" FontSize="11" Padding="2,0" MinHeight="0"
-                       VerticalAlignment="Center" LostFocus="OnRenameLostFocus"
+                       VerticalAlignment="Center" MaxLength="{x:Static vm:LayerStackNaming.EditorMaxLength}"
+                       LostFocus="OnRenameLostFocus"
                        DataContextChanged="OnRenameDataContextChanged" />
             </Panel>
 

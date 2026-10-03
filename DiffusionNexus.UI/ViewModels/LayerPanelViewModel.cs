@@ -216,6 +216,22 @@ public partial class LayerPanelViewModel : ObservableObject
                 desired.Add(layerStack[i]);
         }
 
+        // Rows whose layer has gone go first, each as one Remove. Left in place they would make the
+        // ordering pass below pull every later row forward with a Move, and a ListBox handles a Move as
+        // remove + add: it rebuilds the row's container and deselects a moved selected row.
+        var stillThere = new HashSet<Layer>(desired);
+        for (var i = _layers.Count - 1; i >= 0; i--)
+        {
+            var gone = _layers[i];
+            if (stillThere.Contains(gone.Layer))
+                continue;
+
+            gone.PropertyChanged -= OnRowPropertyChanged;
+            _traced.Remove(gone);
+            _layers.RemoveAt(i);
+            gone.Dispose();
+        }
+
         for (var i = 0; i < desired.Count; i++)
         {
             var existing = IndexOfRow(desired[i], from: i);
@@ -224,7 +240,18 @@ public partial class LayerPanelViewModel : ObservableObject
 
             if (existing > i)
             {
-                _layers.Move(existing, i);
+                if (ReferenceEquals(_layers[existing], _selectedLayer))
+                {
+                    // Move the rows in front of the selected row behind it rather than the selected row
+                    // itself, which the ListBox would deselect. A one-step reorder is still one Move.
+                    for (var k = existing; k > i; k--)
+                        _layers.Move(i, existing);
+                }
+                else
+                {
+                    _layers.Move(existing, i);
+                }
+
                 continue;
             }
 
@@ -234,20 +261,14 @@ public partial class LayerPanelViewModel : ObservableObject
             _layers.Insert(i, row);
         }
 
-        // Every kept row now sits in front; what is left behind belongs to layers that have gone.
-        while (_layers.Count > desired.Count)
-        {
-            var gone = _layers[^1];
-            _layers.RemoveAt(_layers.Count - 1);
-            gone.PropertyChanged -= OnRowPropertyChanged;
-            _traced.Remove(gone);
-            gone.Dispose();
-        }
-
         var active = layerStack?.ActiveLayer;
         SelectedLayer = active is not null
             ? _layers.FirstOrDefault(row => row.Layer == active)
             : _layers.FirstOrDefault();
+
+        // The selected row is often kept, so the setter above changes nothing; but its position, the
+        // count and the mask may have changed, and every command's availability with them.
+        NotifyCommandsCanExecuteChanged();
     }
 
     private int IndexOfRow(Layer layer, int from)

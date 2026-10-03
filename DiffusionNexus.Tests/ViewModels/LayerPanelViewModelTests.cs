@@ -394,6 +394,97 @@ public class LayerPanelViewModelTests
     }
 
     [Fact]
+    public void CommandsFollowAReorderThatKeepsTheSelectedRow()
+    {
+        // The editor's up arrow moves the layer and syncs; the active layer, and so the selected row,
+        // stays the same, so the SelectedLayer setter changes nothing and cannot be what refreshes.
+        var stack = new LayerStack(10, 10);
+        var bottom = stack.AddLayer("Bottom");
+        stack.AddLayer("Top");
+        stack.ActiveLayer = bottom;
+        _sut.SyncLayers(stack);
+        _sut.MoveLayerDownCommand.CanExecute(null).Should().BeFalse();
+        _sut.MergeLayerDownCommand.CanExecute(null).Should().BeFalse();
+        var refreshed = 0;
+        _sut.MoveLayerDownCommand.CanExecuteChanged += (_, _) => refreshed++;
+
+        stack.MoveLayerUp(bottom);
+        _sut.SyncLayers(stack);
+
+        refreshed.Should().BeGreaterThan(0);
+        _sut.MoveLayerDownCommand.CanExecute(null).Should().BeTrue();
+        _sut.MoveLayerUpCommand.CanExecute(null).Should().BeFalse();
+        _sut.MergeLayerDownCommand.CanExecute(null).Should().BeTrue();
+    }
+
+    [Fact]
+    public void CommandsFollowTheCountDroppingToOneLayer()
+    {
+        var stack = new LayerStack(10, 10);
+        var bottom = stack.AddLayer("Bottom");
+        var top = stack.AddLayer("Top");
+        stack.ActiveLayer = bottom;
+        _sut.SyncLayers(stack);
+        _sut.DeleteLayerCommand.CanExecute(null).Should().BeTrue();
+        // CanExecute is evaluated live; only the notification tells the button to look again.
+        var refreshed = 0;
+        _sut.DeleteLayerCommand.CanExecuteChanged += (_, _) => refreshed++;
+
+        stack.RemoveLayer(top);
+        stack.ActiveLayer = bottom;
+        _sut.SyncLayers(stack);
+
+        refreshed.Should().BeGreaterThan(0);
+        _sut.DeleteLayerCommand.CanExecute(null).Should().BeFalse("the last layer stays");
+        _sut.FlattenLayersCommand.CanExecute(null).Should().BeFalse();
+    }
+
+    [Fact]
+    public void ALayerLeavingIsOneRemove()
+    {
+        var stack = new LayerStack(10, 10);
+        stack.AddLayer("D");
+        stack.AddLayer("C");
+        stack.AddLayer("B");
+        var a = stack.AddLayer("A");
+        _sut.SyncLayers(stack);
+        var changes = new List<System.Collections.Specialized.NotifyCollectionChangedAction>();
+        _sut.Layers.CollectionChanged += (_, e) => changes.Add(e.Action);
+
+        stack.RemoveLayer(a);
+        _sut.SyncLayers(stack);
+
+        changes.Should().Equal(System.Collections.Specialized.NotifyCollectionChangedAction.Remove);
+        _sut.Layers.Select(r => r.Name).Should().Equal("B", "C", "D");
+    }
+
+    [Fact]
+    public void MovingTheSelectedLayerUpMovesItsNeighbourInstead()
+    {
+        // A ListBox handles a Move as remove + add and deselects a moved selected row.
+        var stack = new LayerStack(10, 10);
+        var bottom = stack.AddLayer("Bottom");
+        stack.AddLayer("Middle");
+        stack.AddLayer("Top");
+        stack.ActiveLayer = bottom;
+        _sut.SyncLayers(stack);
+        var selected = _sut.SelectedLayer;
+        var moved = new List<object?>();
+        _sut.Layers.CollectionChanged += (_, e) =>
+        {
+            if (e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Move)
+                moved.Add(e.OldItems![0]);
+        };
+
+        stack.MoveLayerUp(bottom);
+        _sut.SyncLayers(stack);
+
+        moved.Should().ContainSingle().Which.Should().NotBeSameAs(selected);
+        _sut.Layers.Select(r => r.Name).Should().Equal("Top", "Bottom", "Middle");
+        _sut.SelectedLayer.Should().BeSameAs(selected);
+    }
+
+    [Fact]
     public void SyncLayersKeepsTheRowOfEveryLayerStillInTheStack()
     {
         // A rebuild would answer a pick that commits a pending transform with a new row object, reset the

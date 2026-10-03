@@ -41,6 +41,13 @@ public static class LayerStackNaming
     /// line break would otherwise land in a single-line row), the result is trimmed and capped, and a
     /// blank result keeps <paramref name="current"/>. A layer always has a name.
     /// </summary>
+    /// <summary>
+    /// The rename box's own limit: far above <see cref="MaxLength"/>, so normal typing and pasting never
+    /// reach it (a box at the cap cut by UTF-16 unit and blocked typing into longer names), yet a wrong
+    /// clipboard of megabytes cannot land in a single-line box. <see cref="Resolve"/> makes the cut.
+    /// </summary>
+    public const int EditorMaxLength = 16 * MaxLength;
+
     public static string Resolve(string? proposed, string current)
     {
         if (proposed is null)

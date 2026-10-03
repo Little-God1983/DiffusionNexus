@@ -194,8 +194,10 @@ public partial class LayerStackPanel : UserControl
     /// </summary>
     private void OnRenameLostFocus(object? sender, RoutedEventArgs e)
     {
+        // A row that has already left the list is not the user committing: its container lost the
+        // keyboard because the layer went away (the collection removes the item before it tells the list).
         if (sender is TextBox { IsVisible: true } editor)
-            EndRename(editor, commit: true, refocusList: false);
+            EndRename(editor, commit: editor.DataContext is { } row && IsListed(row), refocusList: false);
 
         Dispatcher.UIThread.Post(TakeTheKeyboardIfNobodyHasIt);
     }
@@ -225,8 +227,19 @@ public partial class LayerStackPanel : UserControl
             && focus.GetFocusedElement() is null
             && LayerList.IsEffectivelyVisible)
         {
-            LayerList.Focus();
+            FocusTheSelectedRow();
         }
+    }
+
+    /// <summary>
+    /// Gives the keyboard to the selected row, as a click on it would. The ListBox itself is not a focus
+    /// target (and should not be: it would add a Tab stop where Space and Enter do nothing); from the row,
+    /// Up/Down move the selection the usual way.
+    /// </summary>
+    private void FocusTheSelectedRow()
+    {
+        if (LayerList.SelectedItem is { } selected && LayerList.ContainerFromItem(selected) is { } row)
+            row.Focus();
     }
 
     private void EndRename(TextBox editor, bool commit, bool refocusList = true)
@@ -253,6 +266,6 @@ public partial class LayerStackPanel : UserControl
         // Focus is now nowhere. Enter and Escape: the user is still in the panel, so the list takes the
         // keyboard back and Up/Down keep working.
         if (refocusList)
-            LayerList.Focus();
+            FocusTheSelectedRow();
     }
 }
