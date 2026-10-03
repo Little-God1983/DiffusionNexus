@@ -23,7 +23,11 @@ public class DiffusionCanvasInpaintTests : IDisposable
 
     private static DiffusionCanvasViewModel Canvas(FakeDiffusionBackend backend)
     {
-        var vm = new DiffusionCanvasViewModel(backend) { PromptText = "a lighthouse at dusk" };
+        var vm = new DiffusionCanvasViewModel(backend)
+        {
+            PromptText = "a lighthouse at dusk",
+            ScratchDirectory = CanvasScratch.NewDirectory(),
+        };
         vm.BitmapDecoder = _ =>
         {
             var sentinel = (Bitmap)RuntimeHelpers.GetUninitializedObject(typeof(Bitmap));

@@ -17,7 +17,11 @@ public class DiffusionCanvasBatchTests
 {
     private static DiffusionCanvasViewModel Canvas(FakeDiffusionBackend backend)
     {
-        var vm = new DiffusionCanvasViewModel(backend) { PromptText = "a lighthouse at dusk" };
+        var vm = new DiffusionCanvasViewModel(backend)
+        {
+            PromptText = "a lighthouse at dusk",
+            ScratchDirectory = CanvasScratch.NewDirectory(),
+        };
         vm.SelectedModel.Should().NotBeNull("the engine catalog populates the dropdown on selection");
 
         // There is no Avalonia platform in this project, so a real Bitmap cannot be decoded. The view
@@ -626,9 +630,6 @@ public class DiffusionCanvasBatchTests
     {
         var backend = new FakeDiffusionBackend();
         var vm = Canvas(backend);
-        // Dispose deletes the scratch folder. The default one is shared by every view model in this
-        // process, and test classes run in parallel: deleting it would pull files out from under them.
-        vm.ScratchDirectory = Path.Combine(Path.GetTempPath(), "DiffusionNexus", $"canvas-test-{Guid.NewGuid():N}");
         vm.BatchCount = 2;
         await vm.GenerateCommand.ExecuteAsync(null);
         vm.Staging.AcceptCommand.Execute(null);

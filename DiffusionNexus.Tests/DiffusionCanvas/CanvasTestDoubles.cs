@@ -204,6 +204,17 @@ internal sealed class FakeDiffusionBackend : IDiffusionBackend
 /// A real PNG on disk plus the accepted raster that points at it. The compositor reads rasters back
 /// from their saved file, so an image-to-image test needs genuine bytes rather than a stand-in.
 /// </summary>
+/// <summary>
+/// A scratch folder per test view model. The view model's default folder is one per process, and test
+/// classes run in parallel: one class's Generate rewrites the fixed-name files another is asserting on,
+/// and a Dispose deletes the folder under everyone.
+/// </summary>
+internal static class CanvasScratch
+{
+    public static string NewDirectory() =>
+        Path.Combine(Path.GetTempPath(), "DiffusionNexus", "canvas-tests", Guid.NewGuid().ToString("N"));
+}
+
 internal sealed class TempCanvasFile : IDisposable
 {
     public TempCanvasFile(int width, int height, SKColor colour)

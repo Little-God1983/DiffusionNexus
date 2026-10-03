@@ -32,10 +32,13 @@ other; after this slice both honour the mask.
     box, so the box cannot be dragged by accident; space-pan, middle-pan, wheel zoom and right-click
     still work.
   - Brush size is in **world pixels** (the generated image's pixels), 4–512, shown as a circle cursor
-    at its true on-screen size. `[` and `]` shrink and grow it.
+    at its true on-screen size. `[` and `]` shrink and grow it, and so does Shift+wheel (the Image
+    Editor's brush gesture).
   - Escape leaves the tool. Selecting another layer, hiding or deleting the mask leaves it too.
   - The repaint area draws as a translucent red overlay above the rasters and below the box. With
     Invert on, the overlay shows the inverted area, so the screen always shows what will be repainted.
+  - A staged candidate draws **above** the mask, so it is judged without the red tint over the very
+    area it repainted. Holding Space (compare) shows the canvas with its mask.
 - **Inspector** for the mask:
   - **Feather** 0–64 px: dilate-then-blur on the painted edges (the Image Editor's feather, now shared).
   - **Invert**: repaint everything inside the box except what is painted.
@@ -130,7 +133,8 @@ commits what was drawn.
 ## Keyboard
 
 - `[` / `]` resize the brush while a paint tool is active (canvas key handler, same per-key exemption
-  rules; a focused TextBox still gets them).
+  rules; a focused TextBox still gets them). Matched by the typed symbol too: on a German keyboard `[`
+  is AltGr+8. Shift+wheel on the surface does the same.
 - Escape leaves the paint tool (after cancelling any box gesture, as today).
 
 ## Testing

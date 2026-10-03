@@ -16,7 +16,11 @@ public class CanvasGeneratePanelTests
 {
     private static DiffusionCanvasViewModel Canvas(FakeDiffusionBackend backend)
     {
-        var vm = new DiffusionCanvasViewModel(backend) { PromptText = "a lighthouse at dusk" };
+        var vm = new DiffusionCanvasViewModel(backend)
+        {
+            PromptText = "a lighthouse at dusk",
+            ScratchDirectory = CanvasScratch.NewDirectory(),
+        };
         vm.SelectedModel.Should().NotBeNull("the engine catalog populates the dropdown on selection");
 
         vm.BitmapDecoder = _ =>

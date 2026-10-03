@@ -387,10 +387,14 @@ public class DiffusionCanvasSurface : Control
         {
             _boxLayer.InvalidateVisual();
         }
-        else if (change.Property == ShowGridProperty
-              || change.Property == PreviewImageProperty
+        else if (change.Property == PreviewImageProperty
               || change.Property == PreviewRectProperty
-              || change.Property == IsPreviewHiddenProperty
+              || change.Property == IsPreviewHiddenProperty)
+        {
+            // The staged preview is drawn by the mask layer, above the mask.
+            _maskLayer.InvalidateVisual();
+        }
+        else if (change.Property == ShowGridProperty
               || change.Property == SelectedRasterProperty)
         {
             InvalidateVisual();
@@ -899,7 +903,10 @@ public class DiffusionCanvasSurface : Control
 
     // ────────────────────────────────── Render ──────────────────────────────────
 
-    /// <summary>Everything except the box: background, grid, origin, accepted rasters, staged preview.</summary>
+    /// <summary>
+    /// The bottom of the stack: background, grid, origin and accepted rasters. The mask and the staged
+    /// preview are drawn by <see cref="MaskLayer"/>, the box by <see cref="BoxLayer"/>.
+    /// </summary>
     public override void Render(DrawingContext context)
     {
         var bounds = new Rect(Bounds.Size);
@@ -910,7 +917,6 @@ public class DiffusionCanvasSurface : Control
 
         DrawOrigin(context);
         DrawRasters(context, bounds);
-        DrawPreview(context);
     }
 
     private void DrawGrid(DrawingContext context, Rect bounds)
@@ -1115,8 +1121,10 @@ public class DiffusionCanvasSurface : Control
     }
 
     /// <summary>
-    /// The inpaint mask as its own visual, between the rasters and the box. A stroke in progress redraws
-    /// only this. Not hit-testable: every pointer gesture belongs to the surface.
+    /// The inpaint mask and, above it, the staged preview, as one visual between the rasters and the box.
+    /// A stroke in progress redraws only this. The preview sits above the mask so a candidate is judged
+    /// without the red tint over the very area it repainted; holding the compare key hides the preview
+    /// and shows the canvas with its mask. Not hit-testable: every pointer gesture belongs to the surface.
     /// </summary>
     private sealed class MaskLayer : Control
     {
@@ -1132,6 +1140,8 @@ public class DiffusionCanvasSurface : Control
         {
             if (_owner.CreateMaskDrawOperation() is { } operation)
                 context.Custom(operation);
+
+            _owner.DrawPreview(context);
         }
     }
 

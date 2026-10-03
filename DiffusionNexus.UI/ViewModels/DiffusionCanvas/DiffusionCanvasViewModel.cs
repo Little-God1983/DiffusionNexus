@@ -1286,6 +1286,9 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
                 EmitWarning("The mask was left out: the region under the box gave no image to keep.");
             }
 
+            if (regionImagePath is not null && maskImagePath is null)
+                EmitInfo(string.Create(CultureInfo.InvariantCulture, $"Running image to image at denoise {strength:0.00}."));
+
             var initImage = regionImagePath is null
                 ? null
                 : new DiffusionReferenceImage(regionImagePath, (float)strength);
@@ -1518,7 +1521,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             File.WriteAllBytes(RegionScratchPath, png);
 
             var percent = (int)Math.Round(coverage * 100);
-            EmitInfo($"Region composited: {percent}% covered, denoise {DenoiseStrength:0.00} — running image to image.");
+            EmitInfo($"Region composited: {percent}% covered.");
             if (!composite.IsFullyCovered)
             {
                 EmitWarning(
