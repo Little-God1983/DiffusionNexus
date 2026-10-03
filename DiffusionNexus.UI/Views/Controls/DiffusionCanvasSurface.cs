@@ -10,6 +10,7 @@ using Avalonia.Media;
 using Avalonia.Media.Immutable;
 using Avalonia.Threading;
 using DiffusionNexus.UI.DiffusionCanvas;
+using DiffusionNexus.UI.ViewModels;
 
 namespace DiffusionNexus.UI.Views.Controls;
 
@@ -46,6 +47,7 @@ public class DiffusionCanvasSurface : Control
     private static readonly IBrush ReadoutForeground = new SolidColorBrush(Color.Parse("#EDEDED"));
     private static readonly IBrush RasterPlaceholder = new SolidColorBrush(Color.Parse("#1A1A1A"));
     private static readonly IPen RasterOutline = new Pen(new SolidColorBrush(Color.Parse("#4A4A4A")), 1);
+    private static readonly IPen SelectedRasterOutline = new Pen(new SolidColorBrush(Color.Parse("#3D8BFD")), 2);
     private static readonly IPen HandlePen = new Pen(new SolidColorBrush(Color.Parse("#1A1A1A")), 1);
     private static readonly IPen AntsBackPen = new Pen(new SolidColorBrush(Color.Parse("#141414")), 2);
 
@@ -228,6 +230,19 @@ public class DiffusionCanvasSurface : Control
         set => SetValue(DeleteRasterCommandProperty, value);
     }
 
+    public static readonly StyledProperty<object?> SelectedRasterProperty =
+        AvaloniaProperty.Register<DiffusionCanvasSurface, object?>(nameof(SelectedRaster));
+
+    /// <summary>
+    /// The layer selected in the layer panel. It is outlined in solid accent blue, distinct from the
+    /// box's marching ants, so the user can see which raster the inspector is editing.
+    /// </summary>
+    public object? SelectedRaster
+    {
+        get => GetValue(SelectedRasterProperty);
+        set => SetValue(SelectedRasterProperty, value);
+    }
+
     private static readonly DirectProperty<DiffusionCanvasSurface, double> ZoomPropertyInternal =
         AvaloniaProperty.RegisterDirect<DiffusionCanvasSurface, double>(nameof(Zoom), o => o.Zoom);
 
@@ -281,7 +296,8 @@ public class DiffusionCanvasSurface : Control
         else if (change.Property == ShowGridProperty
               || change.Property == PreviewImageProperty
               || change.Property == PreviewRectProperty
-              || change.Property == IsPreviewHiddenProperty)
+              || change.Property == IsPreviewHiddenProperty
+              || change.Property == SelectedRasterProperty)
         {
             InvalidateVisual();
         }
@@ -581,7 +597,11 @@ public class DiffusionCanvasSurface : Control
         var flyout = new MenuFlyout();
         flyout.Items.Add(new MenuItem
         {
-            Header = "Delete result",
+            // The command refuses a locked layer, so the item renders disabled. The reason goes in the
+            // header because Avalonia does not show tooltips on disabled items by default.
+            Header = raster is ILayerStackItem { IsLocked: true }
+                ? "Delete result (locked: unlock it in the layer panel first)"
+                : "Delete result",
             Command = command,
             CommandParameter = raster,
         });
@@ -726,16 +746,33 @@ public class DiffusionCanvasSurface : Control
     {
         foreach (var raster in EnumerateRasters())
         {
+            // Hidden means hidden: no pixels and no outline. A layer too faint to count (below 4 %) is
+            // treated the same, because the hit test and the compositor skip it too: drawing its outline
+            // would invite a right-click that lands on the layer underneath. One rule, IsShown, for all three.
+            if (!CanvasRegionCompositor.IsShown(raster))
+                continue;
+
             var screen = Viewport.WorldToScreen(raster.WorldRect);
             if (!screen.Intersects(bounds))
                 continue;
 
-            if (raster.FrameImage is { } image)
-                context.DrawImage(image, new Rect(image.Size), screen);
-            else
-                context.FillRectangle(RasterPlaceholder, screen);
+            using (context.PushOpacity(Math.Clamp(raster.Opacity, 0.0, 1.0)))
+            {
+                if (raster.FrameImage is { } image)
+                    context.DrawImage(image, new Rect(image.Size), screen);
+                else
+                    context.FillRectangle(RasterPlaceholder, screen);
+            }
 
             context.DrawRectangle(null, RasterOutline, screen);
+        }
+
+        // Outlined even when hidden, so a selected hidden layer can still be found on the canvas.
+        if (SelectedRaster is ICanvasRaster selected)
+        {
+            var screen = Viewport.WorldToScreen(selected.WorldRect);
+            if (screen.Intersects(bounds))
+                context.DrawRectangle(null, SelectedRasterOutline, screen.Inflate(1));
         }
     }
 

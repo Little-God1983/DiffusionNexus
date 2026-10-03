@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.ImageEditor;
@@ -12,24 +13,32 @@ namespace DiffusionNexus.UI.ViewModels;
 public partial class LayerPanelViewModel : ObservableObject
 {
     private readonly Func<bool> _hasImage;
+    private readonly Action<string>? _trace;
+
+    /// <summary>
+    /// Last traced (name, locked) per row. LayerViewModel raises each change twice (its own setter plus
+    /// the forwarded Layer event), so the trace compares against this to log once.
+    /// </summary>
+    private readonly Dictionary<LayerViewModel, (string Name, bool Locked)> _traced = [];
     private bool _isLayerMode;
     private LayerViewModel? _selectedLayer;
     private ObservableCollection<LayerViewModel> _layers = new();
 
-    public LayerPanelViewModel(Func<bool> hasImage)
+    public LayerPanelViewModel(Func<bool> hasImage, Action<string>? trace = null)
     {
         ArgumentNullException.ThrowIfNull(hasImage);
         _hasImage = hasImage;
+        _trace = trace;
 
         ToggleLayerModeCommand = new RelayCommand(ExecuteToggleLayerMode, () => _hasImage());
         AddLayerCommand = new RelayCommand(ExecuteAddLayer, () => _hasImage());
-        DeleteLayerCommand = new RelayCommand(ExecuteDeleteLayer, () => _hasImage() && SelectedLayer is not null && Layers.Count > 1 && !SelectedLayer.Layer.IsInpaintMask);
+        DeleteLayerCommand = new RelayCommand(ExecuteDeleteLayer, () => CanDelete(SelectedLayer));
         DuplicateLayerCommand = new RelayCommand(ExecuteDuplicateLayer, () => _hasImage() && SelectedLayer is not null && !SelectedLayer.Layer.IsInpaintMask);
         MoveLayerUpCommand = new RelayCommand(ExecuteMoveLayerUp, () => _hasImage() && SelectedLayer is not null && CanMoveLayerUp);
         MoveLayerDownCommand = new RelayCommand(ExecuteMoveLayerDown, () => _hasImage() && SelectedLayer is not null && CanMoveLayerDown);
         MergeLayerDownCommand = new RelayCommand(ExecuteMergeLayerDown, () => _hasImage() && SelectedLayer is not null && CanMergeDown);
-        MergeVisibleLayersCommand = new RelayCommand(ExecuteMergeVisibleLayers, () => _hasImage() && Layers.Count > 1);
-        FlattenLayersCommand = new RelayCommand(ExecuteFlattenLayers, () => _hasImage() && Layers.Count > 1);
+        MergeVisibleLayersCommand = new RelayCommand(ExecuteMergeVisibleLayers, () => _hasImage() && Layers.Count > 1 && !HasLockedLayers);
+        FlattenLayersCommand = new RelayCommand(ExecuteFlattenLayers, () => _hasImage() && Layers.Count > 1 && !HasLockedLayers);
         SaveLayeredTiffCommand = new AsyncRelayCommand(ExecuteSaveLayeredTiffAsync, () => _hasImage());
     }
 
@@ -55,7 +64,11 @@ public partial class LayerPanelViewModel : ObservableObject
         set => SetProperty(ref _layers, value);
     }
 
-    /// <summary>Currently selected layer.</summary>
+    /// <summary>
+    /// Currently selected layer. A null clears the editor core's active layer, so strokes go nowhere; the
+    /// layer panel never writes one on its own (a ListBox's Ctrl+click, clear or detach deselect stays
+    /// inside <c>LayerStackPanel</c>), and <see cref="SyncLayers"/> only sets null for an empty stack.
+    /// </summary>
     public LayerViewModel? SelectedLayer
     {
         get => _selectedLayer;
@@ -95,16 +108,38 @@ public partial class LayerPanelViewModel : ObservableObject
         }
     }
 
-    /// <summary>Whether the selected layer can be merged down.</summary>
+    /// <summary>
+    /// Whether the selected layer can be merged down. Not when it is locked: merging removes it, and lock
+    /// protects a layer from removal. Merging into a locked layer below is allowed; that layer stays.
+    /// </summary>
     public bool CanMergeDown
     {
         get
         {
-            if (_selectedLayer is null) return false;
+            if (_selectedLayer is null || _selectedLayer.IsLocked) return false;
             var index = _layers.IndexOf(_selectedLayer);
             return index < _layers.Count - 1;
         }
     }
+
+    /// <summary>
+    /// Whether any layer, the inpaint mask included, is locked. Flatten All and Merge Visible replace the
+    /// stack's layers with one, so they are unavailable while a locked layer could be removed by them.
+    /// (Merge Visible keeps the mask, but it has no button whose tooltip could explain that exception.)
+    /// </summary>
+    public bool HasLockedLayers => _layers.Any(l => l.IsLocked);
+
+    /// <summary>
+    /// The one delete rule, for the toolbar's command and a row's own delete alike: there is an image, the
+    /// row is listed, it is not the last layer, not the inpaint mask and not locked.
+    /// </summary>
+    public bool CanDelete(LayerViewModel? row) =>
+        _hasImage()
+        && row is not null
+        && _layers.Count > 1
+        && _layers.Contains(row)
+        && !row.Layer.IsInpaintMask
+        && !row.IsLocked;
 
     #endregion
 
@@ -163,37 +198,105 @@ public partial class LayerPanelViewModel : ObservableObject
     #region Public Methods
 
     /// <summary>
-    /// Synchronizes the layer view models with the editor core's layer stack.
+    /// Synchronizes the layer view models with the editor core's layer stack, top layer first.
     /// </summary>
+    /// <remarks>
+    /// Incremental: a layer still in the stack keeps its row object, and only the rows that changed are
+    /// inserted, moved or removed (and only removed rows are disposed). The editor syncs after every edit,
+    /// including when a pick commits a pending Move/Transform, so a rebuild would answer that pick with a
+    /// new row object, reset the list while it is changing its selection, and hand an open rename's row
+    /// container to another layer.
+    /// </remarks>
     public void SyncLayers(LayerStack? layerStack)
     {
-        foreach (var vm in _layers)
+        var desired = new List<Layer>();
+        if (layerStack is not null)
         {
-            vm.Dispose();
+            for (var i = layerStack.Count - 1; i >= 0; i--)
+                desired.Add(layerStack[i]);
         }
-        _layers.Clear();
 
-        if (layerStack is null || layerStack.Count == 0)
+        // Rows whose layer has gone go first, each as one Remove. Left in place they would make the
+        // ordering pass below pull every later row forward with a Move, and a ListBox handles a Move as
+        // remove + add: it rebuilds the row's container and deselects a moved selected row.
+        var stillThere = new HashSet<Layer>(desired);
+        for (var i = _layers.Count - 1; i >= 0; i--)
         {
-            SelectedLayer = null;
+            var gone = _layers[i];
+            if (stillThere.Contains(gone.Layer))
+                continue;
+
+            gone.PropertyChanged -= OnRowPropertyChanged;
+            _traced.Remove(gone);
+            _layers.RemoveAt(i);
+            gone.Dispose();
+        }
+
+        for (var i = 0; i < desired.Count; i++)
+        {
+            var existing = IndexOfRow(desired[i], from: i);
+            if (existing == i)
+                continue;
+
+            if (existing > i)
+            {
+                if (ReferenceEquals(_layers[existing], _selectedLayer))
+                {
+                    // Move the rows in front of the selected row behind it rather than the selected row
+                    // itself, which the ListBox would deselect. A one-step reorder is still one Move.
+                    for (var k = existing; k > i; k--)
+                        _layers.Move(i, existing);
+                }
+                else
+                {
+                    _layers.Move(existing, i);
+                }
+
+                continue;
+            }
+
+            var row = new LayerViewModel(desired[i], OnLayerSelectionRequested, OnLayerDeleteRequested);
+            row.PropertyChanged += OnRowPropertyChanged;
+            _traced[row] = (row.Name, row.IsLocked);
+            _layers.Insert(i, row);
+        }
+
+        var active = layerStack?.ActiveLayer;
+        SelectedLayer = active is not null
+            ? _layers.FirstOrDefault(row => row.Layer == active)
+            : _layers.FirstOrDefault();
+
+        // The selected row is often kept, so the setter above changes nothing; but its position, the
+        // count and the mask may have changed, and every command's availability with them.
+        NotifyCommandsCanExecuteChanged();
+    }
+
+    private int IndexOfRow(Layer layer, int from)
+    {
+        for (var i = from; i < _layers.Count; i++)
+        {
+            if (ReferenceEquals(_layers[i].Layer, layer))
+                return i;
+        }
+
+        return -1;
+    }
+
+    private void OnRowPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (sender is not LayerViewModel row || !_traced.TryGetValue(row, out var seen))
             return;
-        }
 
-        for (var i = layerStack.Count - 1; i >= 0; i--)
+        if (e.PropertyName == nameof(LayerViewModel.IsLocked) && row.IsLocked != seen.Locked)
         {
-            var layer = layerStack[i];
-            var vm = new LayerViewModel(layer, OnLayerSelectionRequested, OnLayerDeleteRequested);
-            _layers.Add(vm);
+            _traced[row] = (seen.Name, row.IsLocked);
+            _trace?.Invoke($"Layer '{row.Name}' {(row.IsLocked ? "locked" : "unlocked")}.");
+            NotifyCommandsCanExecuteChanged();
         }
-
-        if (layerStack.ActiveLayer is not null)
+        else if (e.PropertyName == nameof(LayerViewModel.Name) && row.Name != seen.Name)
         {
-            var activeVm = _layers.FirstOrDefault(vm => vm.Layer == layerStack.ActiveLayer);
-            SelectedLayer = activeVm;
-        }
-        else if (_layers.Count > 0)
-        {
-            SelectedLayer = _layers[0];
+            _traced[row] = (row.Name, seen.Locked);
+            _trace?.Invoke($"Renamed a layer to '{row.Name}'.");
         }
     }
 
@@ -216,6 +319,7 @@ public partial class LayerPanelViewModel : ObservableObject
         OnPropertyChanged(nameof(CanMoveLayerUp));
         OnPropertyChanged(nameof(CanMoveLayerDown));
         OnPropertyChanged(nameof(CanMergeDown));
+        OnPropertyChanged(nameof(HasLockedLayers));
     }
 
     #endregion
@@ -233,10 +337,22 @@ public partial class LayerPanelViewModel : ObservableObject
         AddLayerRequested?.Invoke(this, EventArgs.Empty);
     }
 
-    private void ExecuteDeleteLayer()
+    private void ExecuteDeleteLayer() => TryDelete(SelectedLayer);
+
+    /// <summary>
+    /// Deletes <paramref name="row"/>'s layer if <see cref="CanDelete"/> allows it. Every delete goes
+    /// through here: RelayCommand.Execute does not consult CanExecute, and a row's own delete has none.
+    /// </summary>
+    private void TryDelete(LayerViewModel? row)
     {
-        if (SelectedLayer is null) return;
-        DeleteLayerRequested?.Invoke(this, SelectedLayer.Layer);
+        if (!CanDelete(row))
+        {
+            if (row is { IsLocked: true })
+                _trace?.Invoke($"Refused to delete layer '{row.Name}': it is locked.");
+            return;
+        }
+
+        DeleteLayerRequested?.Invoke(this, row!.Layer);
     }
 
     private void ExecuteDuplicateLayer()
@@ -259,17 +375,19 @@ public partial class LayerPanelViewModel : ObservableObject
 
     private void ExecuteMergeLayerDown()
     {
-        if (SelectedLayer is null) return;
+        if (SelectedLayer is null || !CanMergeDown) return;
         MergeLayerDownRequested?.Invoke(this, SelectedLayer.Layer);
     }
 
     private void ExecuteMergeVisibleLayers()
     {
+        if (HasLockedLayers) return;
         MergeVisibleLayersRequested?.Invoke(this, EventArgs.Empty);
     }
 
     private void ExecuteFlattenLayers()
     {
+        if (HasLockedLayers) return;
         FlattenLayersRequested?.Invoke(this, EventArgs.Empty);
     }
 
@@ -291,11 +409,8 @@ public partial class LayerPanelViewModel : ObservableObject
         SelectedLayer = vm;
     }
 
-    private void OnLayerDeleteRequested(LayerViewModel vm)
-    {
-        if (_layers.Count <= 1) return;
-        ExecuteDeleteLayer();
-    }
+    /// <summary>A row's own delete: that row's layer, not the selected one, under <see cref="CanDelete"/>.</summary>
+    private void OnLayerDeleteRequested(LayerViewModel vm) => TryDelete(vm);
 
     #endregion
 

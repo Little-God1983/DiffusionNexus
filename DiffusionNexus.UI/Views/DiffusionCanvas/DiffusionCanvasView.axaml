@@ -37,7 +37,7 @@
       </DockPanel>
     </Border>
 
-    <Grid Grid.Row="1" ColumnDefinitions="340,*">
+    <Grid Grid.Row="1" ColumnDefinitions="340,*,Auto">
 
       <!-- ═══════════════════════ Generate panel (issue #518 region B) ═══════════════════════ -->
       <!-- One scrolling column ordered by how often it is touched: model, prompt, negative, LoRAs,
@@ -250,7 +250,7 @@
               <Border Width="1" Margin="6,2" Background="#3A3A3A" />
 
               <Button Content="Clear canvas" Command="{Binding ClearCanvasCommand}"
-                      ToolTip.Tip="Remove every accepted result from the canvas." />
+                      ToolTip.Tip="Remove every unlocked layer from the canvas. Locked layers stay." />
 
               <Border Width="1" Margin="6,2" Background="#3A3A3A" />
 
@@ -260,8 +260,8 @@
                       ToolTip.Tip="{Binding ControlNetTooltip}" />
               <Button Content="Mask" Command="{Binding ActivateMaskToolCommand}" IsEnabled="False"
                       ToolTip.Tip="{Binding MaskTooltip}" />
-              <Button Content="Layers" Command="{Binding ToggleLayerPanelCommand}" IsEnabled="False"
-                      ToolTip.Tip="The layer stack arrives in issue #518 region D." />
+              <ToggleButton Content="Layers" IsChecked="{Binding IsLayerPanelVisible}"
+                            ToolTip.Tip="Show or hide the layer stack" />
             </StackPanel>
           </ScrollViewer>
         </Border>
@@ -276,7 +276,8 @@
                                          PreviewRect="{Binding Staging.CurrentRect}"
                                          IsPreviewHidden="{Binding Staging.IsComparing}"
                                          SpacePanEnabled="{Binding !Staging.HasCandidates}"
-                                         DeleteRasterCommand="{Binding DeleteFrameCommand}" />
+                                         DeleteRasterCommand="{Binding DeleteFrameCommand}"
+                                         SelectedRaster="{Binding Layers.SelectedLayer}" />
 
         <!-- ── Staging strip ── -->
         <Border Grid.Row="2" Background="#1B1B1B" BorderBrush="#333" BorderThickness="0,1,0,0"
@@ -345,6 +346,50 @@
           </DockPanel>
         </Border>
       </Grid>
+
+      <!-- ═══════════════════════ Layer column (#594) ═══════════════════════ -->
+      <Border Grid.Column="2" Name="LayerColumn" Width="280"
+              Background="#1E1E1E" BorderBrush="#333" BorderThickness="1,0,0,0" Padding="10"
+              IsVisible="{Binding IsLayerPanelVisible}">
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Top" Text="Layers" FontWeight="SemiBold" FontSize="14" Margin="0,0,0,8" />
+
+          <!-- Inspector, docked to the bottom so the list fills the height between. It swaps with the
+               selection rather than opening a dialog, so adjusting opacity never covers the image. -->
+          <Border DockPanel.Dock="Bottom" BorderBrush="#444" BorderThickness="0,1,0,0"
+                  Padding="0,8,0,0" Margin="0,8,0,0"
+                  IsVisible="{Binding Layers.SelectedLayer, Converter={x:Static ObjectConverters.IsNotNull}}">
+            <StackPanel Spacing="6">
+              <TextBlock Text="Opacity" FontSize="11" Opacity="0.7" />
+              <Grid ColumnDefinitions="*,40">
+                <Slider Grid.Column="0" Minimum="0" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True"
+                        Value="{Binding Layers.SelectedLayer.OpacityPercent}" />
+                <TextBlock Grid.Column="1" Text="{Binding Layers.SelectedLayer.OpacityText}" FontSize="10"
+                           VerticalAlignment="Center" HorizontalAlignment="Right" Opacity="0.7" />
+              </Grid>
+              <CheckBox Content="Locked: cannot be deleted or cleared"
+                        IsChecked="{Binding Layers.SelectedLayer.IsLocked}" />
+              <TextBlock Text="Prompt" FontSize="11" Opacity="0.7" Margin="0,4,0,0" />
+              <ScrollViewer MaxHeight="90" HorizontalScrollBarVisibility="Disabled">
+                <SelectableTextBlock Text="{Binding Layers.SelectedLayer.Prompt}" TextWrapping="Wrap" FontSize="11" />
+              </ScrollViewer>
+              <TextBlock Text="{Binding Layers.SelectedLayer.ProvenanceText}" FontSize="10" Opacity="0.7"
+                         TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+
+          <TextBlock DockPanel.Dock="Top" Text="Accepted results appear here as layers."
+                     Foreground="#888" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,6"
+                     IsVisible="{Binding !Layers.HasLayers}" />
+
+          <controls:LayerStackPanel Items="{Binding Layers.DisplayLayers}"
+                                    SelectedItem="{Binding Layers.SelectedLayer, Mode=TwoWay}"
+                                    MoveUpCommand="{Binding Layers.MoveUpCommand}"
+                                    MoveDownCommand="{Binding Layers.MoveDownCommand}"
+                                    DeleteCommand="{Binding Layers.DeleteSelectedCommand}"
+                                    LockToolTip="Lock the layer: it cannot be deleted, and Clear canvas keeps it" />
+        </DockPanel>
+      </Border>
     </Grid>
   </Grid>
 </UserControl>

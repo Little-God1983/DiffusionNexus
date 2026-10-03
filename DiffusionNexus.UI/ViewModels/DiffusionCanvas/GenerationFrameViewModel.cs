@@ -1,7 +1,9 @@
 using Avalonia;
 using Avalonia.Media.Imaging;
+using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DiffusionNexus.UI.DiffusionCanvas;
+using DiffusionNexus.UI.ViewModels;
 
 namespace DiffusionNexus.UI.ViewModels.DiffusionCanvas;
 
@@ -14,22 +16,26 @@ namespace DiffusionNexus.UI.ViewModels.DiffusionCanvas;
 /// simply a committed raster: the record of a candidate the user accepted. It no longer moves or resizes,
 /// because moving a result after the fact would desynchronise it from the pixels it was generated from.
 /// </summary>
-public partial class GenerationFrameViewModel : ObservableObject, ICanvasRaster, IDisposable
+public partial class GenerationFrameViewModel : ObservableObject, ICanvasRaster, ILayerStackItem, IDisposable
 {
     /// <summary>X position on the canvas, in world units.</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ProvenanceText))]
     private double _canvasX;
 
     /// <summary>Y position on the canvas, in world units.</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ProvenanceText))]
     private double _canvasY;
 
     /// <summary>Raster width (matches the diffusion output width).</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ProvenanceText))]
     private int _width = 1024;
 
     /// <summary>Raster height (matches the diffusion output height).</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ProvenanceText))]
     private int _height = 1024;
 
     /// <summary>The prompt that produced this result, kept for provenance.</summary>
@@ -54,6 +60,7 @@ public partial class GenerationFrameViewModel : ObservableObject, ICanvasRaster,
 
     /// <summary>The image the surface draws. The frame owns it once a candidate is accepted.</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Thumbnail))]
     private Bitmap? _frameImage;
 
     /// <summary>
@@ -65,6 +72,7 @@ public partial class GenerationFrameViewModel : ObservableObject, ICanvasRaster,
 
     /// <summary>Seed actually used for the generation (echoed from the backend), or null when unknown.</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ProvenanceText))]
     private long? _seed;
 
     /// <summary>The raster's world rectangle — the one definition every intersection test uses.</summary>
@@ -74,6 +82,61 @@ public partial class GenerationFrameViewModel : ObservableObject, ICanvasRaster,
     public bool IsBusy => State is GenerationFrameState.Loading or GenerationFrameState.Sampling;
 
     partial void OnStateChanged(GenerationFrameState value) => OnPropertyChanged(nameof(IsBusy));
+
+    // ────────────────────────────── Layer (#594) ──────────────────────────────
+
+    /// <summary>What this layer holds. Always <see cref="CanvasLayerKind.Raster"/> until #595–#597.</summary>
+    public CanvasLayerKind Kind => CanvasLayerKind.Raster;
+
+    /// <summary>Layer name shown in the layer stack. Assigned "Layer N" when the candidate is accepted.</summary>
+    [ObservableProperty]
+    private string _name = string.Empty;
+
+    /// <summary>Whether the layer is drawn and fed to the model.</summary>
+    [ObservableProperty]
+    private bool _isVisible = true;
+
+    /// <summary>Protects the layer from Delete and Clear canvas. Reorder, rename and hide stay allowed.</summary>
+    [ObservableProperty]
+    private bool _isLocked;
+
+    private double _opacity = 1.0;
+
+    /// <summary>Opacity from 0 to 1. Out-of-range values clamp; NaN means fully opaque.</summary>
+    public double Opacity
+    {
+        get => _opacity;
+        set
+        {
+            var clamped = double.IsNaN(value) ? 1.0 : Math.Clamp(value, 0.0, 1.0);
+            if (SetProperty(ref _opacity, clamped))
+            {
+                OnPropertyChanged(nameof(OpacityPercent));
+                OnPropertyChanged(nameof(OpacityText));
+            }
+        }
+    }
+
+    /// <summary>Opacity as a whole percentage, for the inspector's 0–100 slider.</summary>
+    public int OpacityPercent
+    {
+        get => (int)Math.Round(Opacity * 100);
+        set => Opacity = value / 100.0;
+    }
+
+    /// <summary>Opacity as display text, formatted invariantly.</summary>
+    public string OpacityText => string.Create(CultureInfo.InvariantCulture, $"{OpacityPercent}%");
+
+    /// <summary>The layer row's thumbnail: the raster itself, scaled by the row.</summary>
+    public Bitmap? Thumbnail => FrameImage;
+
+    /// <summary>
+    /// Seed, size and world position as one line for the inspector. Formatted invariantly in the view
+    /// model: XAML <c>StringFormat</c> follows the current culture and renders "1,0" on a German machine.
+    /// </summary>
+    public string ProvenanceText => string.Create(
+        CultureInfo.InvariantCulture,
+        $"Seed {(Seed is { } seed ? seed.ToString(CultureInfo.InvariantCulture) : "unknown")} · {Width}×{Height} at ({Math.Round(CanvasX, MidpointRounding.AwayFromZero):0}, {Math.Round(CanvasY, MidpointRounding.AwayFromZero):0})");
 
     // TODO(v2-context-menu): the surface's right-click flyout offers Delete only today (bound to the
     // canvas view model's DeleteFrameCommand). Add these there when they ship:

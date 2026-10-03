@@ -9,7 +9,8 @@ namespace DiffusionNexus.UI.DiffusionCanvas;
 public static class CanvasRasterHitTest
 {
     /// <summary>
-    /// The topmost raster containing <paramref name="world"/>, or null when the point is over empty canvas.
+    /// The topmost <b>shown</b> raster containing <paramref name="world"/>, or null when the point is over empty
+    /// canvas. A hidden or fully transparent layer cannot be right-clicked, because the user cannot see it.
     /// Rasters are in z-order (last = top), so the last hit wins — the one the user actually sees there.
     /// </summary>
     public static ICanvasRaster? TopmostAt(IEnumerable<ICanvasRaster> rasters, Point world)
@@ -20,7 +21,7 @@ public static class CanvasRasterHitTest
         foreach (var raster in rasters)
         {
             var rect = raster.WorldRect;
-            if (rect.Width > 0 && rect.Height > 0 && rect.Contains(world))
+            if (CanvasRegionCompositor.IsShown(raster) && rect.Width > 0 && rect.Height > 0 && rect.Contains(world))
                 hit = raster;
         }
 

@@ -120,6 +120,13 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     /// <summary>Candidates awaiting a verdict.</summary>
     public CanvasStagingViewModel Staging { get; } = new();
 
+    /// <summary>The layer stack over <see cref="Frames"/>: order, selection, lock (#594).</summary>
+    public CanvasLayerStackViewModel Layers { get; }
+
+    /// <summary>Whether the right-hand layer column is shown. Toggled by the tool strip's Layers button.</summary>
+    [ObservableProperty]
+    private bool _isLayerPanelVisible = true;
+
     /// <summary>The canvas-level prompt.</summary>
     [ObservableProperty]
     private string _promptText = string.Empty;
@@ -478,10 +485,6 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     [RelayCommand(CanExecute = nameof(AlwaysFalse))]
     private void ActivateMaskTool() { /* placeholder */ }
 
-    // TODO(v2-layers): the layer stack (issue #518 region D) replaces this placeholder.
-    [RelayCommand(CanExecute = nameof(AlwaysFalse))]
-    private void ToggleLayerPanel() { /* placeholder */ }
-
     // TODO(v2-undo): a shallow undo stack over layer operations (issue #518, deliberately not unbounded).
     [RelayCommand(CanExecute = nameof(AlwaysFalse))]
     private void Undo() { /* placeholder */ }
@@ -494,13 +497,34 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
 
     #endregion
 
+    // Design-time ctor: no backend. MUST stay parameterless — CanvasBackendSelectionTests
+    // constructs the view model this way, so a required parameter here breaks the test project's build.
     public DiffusionCanvasViewModel()
+        : this(provider: null, engine: null, logger: null, catalog: null, monitor: null)
     {
-        // Design-time ctor: no backend. MUST stay parameterless — CanvasBackendSelectionTests
-        // constructs the view model this way, so a required parameter here breaks the test project's build.
-        _backendProvider = null;
+    }
+
+    /// <summary>
+    /// The one place every constructor goes through, so the layer stack and the delete command are built
+    /// once. Named parameters differ from the public constructor's, which keeps the chained calls
+    /// unambiguous.
+    /// </summary>
+    private DiffusionCanvasViewModel(
+        LocalDiffusionBackendProvider? provider,
+        IDiffusionBackend? engine,
+        IUnifiedLogger? logger,
+        ILoraCatalog? catalog,
+        ResourceMonitorViewModel? monitor)
+    {
+        _backendProvider = provider;
+        ResourceMonitor = monitor;
+        _engineBackend = engine;
+        _unifiedLogger = logger;
+        _loraCatalog = catalog;
+        AdoptEngineCapabilities();
         _selectedBackend = AvailableBackends[0];
-        DeleteFrameCommand = new RelayCommand<GenerationFrameViewModel?>(DeleteFrame);
+        Layers = new CanvasLayerStackViewModel(Frames, EmitInfo);
+        DeleteFrameCommand = new RelayCommand<GenerationFrameViewModel?>(DeleteFrame, CanvasLayerStackViewModel.CanDelete);
         WireCanvasEvents();
     }
 
@@ -513,17 +537,13 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         IDiffusionBackend? engineBackend = null,
         IUnifiedLogger? unifiedLogger = null,
         ILoraCatalog? loraCatalog = null)
+        : this(
+            provider: backendProvider ?? throw new ArgumentNullException(nameof(backendProvider)),
+            engine: engineBackend,
+            logger: unifiedLogger,
+            catalog: loraCatalog,
+            monitor: resourceMonitor)
     {
-        _backendProvider = backendProvider ?? throw new ArgumentNullException(nameof(backendProvider));
-        ResourceMonitor = resourceMonitor;
-        _engineBackend = engineBackend;
-        _unifiedLogger = unifiedLogger;
-        _loraCatalog = loraCatalog;
-        AdoptEngineCapabilities();
-        _selectedBackend = AvailableBackends[0];
-        DeleteFrameCommand = new RelayCommand<GenerationFrameViewModel?>(DeleteFrame);
-        WireCanvasEvents();
-
         // Populate the model dropdown in the background. Uses a lightweight catalog built directly
         // from the resolved model roots, so it does NOT load the native CUDA library at startup —
         // that happens only on the first Generate.
@@ -540,16 +560,13 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     /// <c>InternalsVisibleTo("DiffusionNexus.Tests")</c>.
     /// </remarks>
     internal DiffusionCanvasViewModel(IDiffusionBackend engineBackend, IUnifiedLogger? unifiedLogger = null)
+        : this(
+            provider: null,
+            engine: engineBackend ?? throw new ArgumentNullException(nameof(engineBackend)),
+            logger: unifiedLogger,
+            catalog: null,
+            monitor: null)
     {
-        ArgumentNullException.ThrowIfNull(engineBackend);
-
-        _backendProvider = null;
-        _engineBackend = engineBackend;
-        _unifiedLogger = unifiedLogger;
-        AdoptEngineCapabilities();
-        DeleteFrameCommand = new RelayCommand<GenerationFrameViewModel?>(DeleteFrame);
-        WireCanvasEvents();
-
         // Assigning through the property runs OnSelectedBackendChanged, which fills AvailableModels
         // from the engine's own catalog — the same path the toolbar takes.
         SelectedBackend = AvailableBackends.First(b => b.Key == CanvasBackendKeys.Engine);
@@ -581,7 +598,14 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     private void WireCanvasEvents()
     {
         Box.Changed += (_, _) => RefreshRegionMode();
-        Frames.CollectionChanged += (_, _) => RefreshRegionMode();
+        // The stack raises LayersChanged for collection changes as well as visibility, opacity and lock,
+        // so the readout and the removal commands follow both.
+        Layers.LayersChanged += (_, _) =>
+        {
+            RefreshRegionMode();
+            ClearCanvasCommand.NotifyCanExecuteChanged();
+            DeleteFrameCommand.NotifyCanExecuteChanged();
+        };
         Staging.CandidateAccepted += OnCandidateAccepted;
         RefreshRegionMode();
     }
@@ -637,39 +661,36 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         };
     }
 
-    /// <summary>True when the raster has a saved file the compositor could read the region back from.</summary>
-    private static bool CanContribute(ICanvasRaster raster) => !string.IsNullOrWhiteSpace(raster.ImagePath);
+    /// <summary>
+    /// True when the raster is shown (visible, not fully transparent) and has a saved file the compositor
+    /// could read the region back from. The same rule decides the readout and what Generate composites.
+    /// </summary>
+    private static bool CanContribute(ICanvasRaster raster) =>
+        CanvasRegionCompositor.IsShown(raster) && !string.IsNullOrWhiteSpace(raster.ImagePath);
 
     /// <summary>
     /// Right-click on a result → Delete. The surface opens the flyout and passes the raster under the
-    /// pointer as the parameter.
+    /// pointer as the parameter. A locked layer is refused; the flyout item is disabled for it.
     /// </summary>
-    public IRelayCommand<GenerationFrameViewModel?>? DeleteFrameCommand { get; }
+    public IRelayCommand<GenerationFrameViewModel?> DeleteFrameCommand { get; }
 
     private void DeleteFrame(GenerationFrameViewModel? frame)
     {
-        if (frame is null)
-            return;
-
-        // Detach before disposing: a bitmap still bound into the visual tree faults the render.
-        Frames.Remove(frame);
-        frame.Dispose();
-        EmitInfo("Removed a result from the canvas.");
+        // The stack detaches before disposing and traces the outcome, including a refused locked layer.
+        Layers.Delete(frame);
     }
 
-    /// <summary>Removes every accepted result from the canvas, releasing their bitmaps.</summary>
-    [RelayCommand]
+    /// <summary>Removes every unlocked layer from the canvas, releasing their bitmaps. Locked layers stay.</summary>
+    [RelayCommand(CanExecute = nameof(CanClearCanvas))]
     private void ClearCanvas()
     {
-        var count = Frames.Count;
-        foreach (var frame in Frames.ToList())
-        {
-            Frames.Remove(frame);
-            frame.Dispose();
-        }
-
-        EmitInfo($"Cleared the canvas ({count} result(s) removed).");
+        var (removed, kept) = Layers.ClearUnlocked();
+        EmitInfo(kept == 0
+            ? $"Cleared the canvas ({removed} result(s) removed)."
+            : $"Cleared the canvas ({removed} result(s) removed, {kept} locked layer(s) kept).");
     }
+
+    private bool CanClearCanvas() => Layers.HasUnlockedLayers;
 
     /// <summary>
     /// Unloads the resident diffusion model, freeing its VRAM. The next Generate reloads on demand.
@@ -1032,8 +1053,10 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             // Snapshot the rasters on the UI thread, then composite off it. The region work decodes a
             // PNG per overlapping result, walks every output pixel to measure coverage, re-encodes at
             // quality 100 and writes a file — seconds of frozen window at 2048x2048 over several
-            // results. Frames is an ObservableCollection, so it must not be enumerated off the UI thread.
-            var rasters = Frames.Cast<ICanvasRaster>().ToArray();
+            // results. Frames is an ObservableCollection, so it must not be enumerated off the UI thread, and
+            // the snapshot copies visibility and opacity, so hiding a layer or dragging its opacity mid-run
+            // cannot change this run's input.
+            var rasters = Frames.Select(f => (ICanvasRaster)CanvasRasterSnapshot.Of(f)).ToArray();
             var composed = await Task
                 .Run(() => BuildRegionInitImage(rasters, region, width, height), token)
                 .ConfigureAwait(true);
@@ -1231,8 +1254,8 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     /// <remarks>
     /// Partial coverage is honest about its limits: with no <c>MaskImage</c> support in either backend,
     /// the uncovered part is flattened onto neutral grey and the whole region is denoised, so the known
-    /// pixels are regenerated rather than preserved. True masked outpainting needs the layer stack
-    /// (issue #518 region D).
+    /// pixels are regenerated rather than preserved. True masked outpainting needs the inpaint mask
+    /// layer (#595).
     /// </remarks>
     /// <param name="rasters">
     /// A snapshot of the accepted results, taken on the UI thread. This method runs on the thread pool,
@@ -1545,7 +1568,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             StatusText = candidate.StatusText,
         };
 
-        Frames.Add(frame);
+        Layers.AddAccepted(frame);
         EmitInfo($"Accepted candidate {candidate.Ordinal} onto the canvas at {Describe(candidate.WorldRect)}"
                  + (path is null ? " (not saved — no PNG bytes)." : $"; saved to {path}."));
     }

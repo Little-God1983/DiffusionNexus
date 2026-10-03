@@ -226,6 +226,85 @@ public class CanvasRegionCompositorTests
         }
     }
 
+    [Fact]
+    public void ASourceAtHalfOpacity_ReachesTheRegionAtHalfAlpha()
+    {
+        using var raster = SolidBitmap(64, 64, new SKColor(255, 0, 0));
+        var region = new Rect(0, 0, 256, 256);
+
+        using var composite = CanvasRegionCompositor.Composite(
+            [new CanvasCompositeSource(raster, region, Opacity: 0.5)], region, 256, 256);
+
+        PixelAt(composite.Bitmap, 128, 128).Alpha.Should().BeCloseTo(128, 2);
+        composite.Coverage.Should().Be(1.0, "a half-transparent layer is still something the model sees");
+    }
+
+    [Fact]
+    public void ASourceAtZeroOpacity_ContributesNothing()
+    {
+        using var raster = SolidBitmap(64, 64, SKColors.White);
+        var region = new Rect(0, 0, 256, 256);
+
+        using var composite = CanvasRegionCompositor.Composite(
+            [new CanvasCompositeSource(raster, region, Opacity: 0)], region, 256, 256);
+
+        composite.IsEmpty.Should().BeTrue();
+    }
+
+    [Fact]
+    public void LoadIntersecting_SkipsHiddenAndFullyTransparentRastersWithoutReportingThem()
+    {
+        var skipped = new List<string>();
+        var rasters = new ICanvasRaster[]
+        {
+            new CanvasRasterSnapshot(0, 0, 512, 512, ImagePath: null, IsVisible: false, Opacity: 1),
+            new CanvasRasterSnapshot(0, 0, 512, 512, ImagePath: null, IsVisible: true, Opacity: 0),
+        };
+
+        CanvasRegionCompositor.LoadIntersecting(rasters, new Rect(0, 0, 512, 512), skipped.Add)
+            .Should().BeEmpty();
+        skipped.Should().BeEmpty("a layer the user hid is a choice, not a failure to read one");
+    }
+
+    [Fact]
+    public void LoadIntersecting_CarriesTheRastersOpacity()
+    {
+        using var file = new TempCanvasFile(16, 16, SKColors.White);
+        var rasters = new ICanvasRaster[] { new CanvasRasterSnapshot(0, 0, 512, 512, file.Path, true, 0.25) };
+
+        var loaded = CanvasRegionCompositor.LoadIntersecting(rasters, new Rect(0, 0, 512, 512));
+        try
+        {
+            loaded.Should().ContainSingle().Which.Opacity.Should().Be(0.25);
+        }
+        finally
+        {
+            foreach (var source in loaded)
+                source.Bitmap.Dispose();
+        }
+    }
+
+    [Theory]
+    [InlineData(0.00, false)]
+    [InlineData(0.02, false)]
+    [InlineData(0.03, false)]
+    [InlineData(0.04, true)]
+    [InlineData(1.00, true)]
+    public void IsShown_AgreesWithWhatTheCompositeCountsAsCoverage(double opacity, bool shown)
+    {
+        // A layer whose drawn alpha cannot rise above OpaqueAlphaThreshold composites to zero coverage.
+        // Counting it as shown would make the readout promise image to image and Generate then refuse
+        // the run as degraded, with a message telling the user to move the box.
+        var raster = new CanvasRasterSnapshot(0, 0, 64, 64, "x.png", IsVisible: true, Opacity: opacity);
+        using var bitmap = SolidBitmap(16, 16, SKColors.White);
+        var region = new Rect(0, 0, 64, 64);
+        using var composite = CanvasRegionCompositor.Composite(
+            [new CanvasCompositeSource(bitmap, region, opacity)], region, 64, 64);
+
+        CanvasRegionCompositor.IsShown(raster).Should().Be(shown);
+        composite.IsEmpty.Should().Be(!shown, "the readout's rule must match what the composite counts");
+    }
+
     /// <summary>Minimal <see cref="ICanvasRaster"/> that needs no Avalonia bitmap.</summary>
     private sealed record StubRaster(
         double CanvasX, double CanvasY, int Width, int Height, string? ImagePath) : ICanvasRaster

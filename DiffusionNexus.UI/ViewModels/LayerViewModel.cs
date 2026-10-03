@@ -9,7 +9,7 @@ namespace DiffusionNexus.UI.ViewModels;
 /// <summary>
 /// ViewModel wrapper for a Layer, providing UI-bindable properties.
 /// </summary>
-public partial class LayerViewModel : ObservableObject
+public partial class LayerViewModel : ObservableObject, ILayerStackItem
 {
     private readonly Layer _layer;
     private readonly Action<LayerViewModel>? _onSelectionRequested;

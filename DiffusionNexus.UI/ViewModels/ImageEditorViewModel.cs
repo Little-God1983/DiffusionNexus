@@ -429,7 +429,9 @@ public partial class ImageEditorViewModel : ObservableObject
         _services = services ?? EditorServiceFactory.Create();
 
         // Initialize sub-ViewModels
-        LayerPanel = new LayerPanelViewModel(() => HasImage);
+        LayerPanel = new LayerPanelViewModel(
+            () => HasImage,
+            message => _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor", message));
         ColorTools = new ColorToolsViewModel(() => HasImage, DeactivateOtherTools);
         DrawingTools = new DrawingToolsViewModel(() => HasImage, DeactivateOtherTools);
         TextTools = new TextToolViewModel(() => HasImage, DeactivateOtherTools);
