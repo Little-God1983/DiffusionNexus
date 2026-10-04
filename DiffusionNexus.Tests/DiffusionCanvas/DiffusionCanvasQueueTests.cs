@@ -438,7 +438,7 @@ public class DiffusionCanvasQueueTests
         probes.Should().Be(1);
         vm.Staging.Candidates.Should().BeEmpty();
         vm.StatusText.Should().Be("Backend unavailable");
-        vm.BatchNotice.Should().StartWith("Batches #1 to #3 did not run:", "the skipped batches' slots vanish too");
+        vm.BatchNotice.Should().StartWith("Batch #1 and the batches queued behind it did not run:", "the skipped batches' slots vanish too");
 
         await vm.GenerateCommand.ExecuteAsync(null);
         probes.Should().Be(2, "a new press asks again: the user may have fixed it");

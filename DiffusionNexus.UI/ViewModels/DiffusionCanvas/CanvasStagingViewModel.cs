@@ -81,14 +81,17 @@ public partial class CanvasStagingViewModel : ObservableObject
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(count, 1);
 
-        // Numbered on from what is staged: the strip holds several batches at once, and a tile number
-        // that repeats cannot be told apart in the strip or in the console.
-        var last = Candidates.Count == 0 ? 0 : Candidates.Max(c => c.Ordinal);
+        // Numbered on from the last slot handed out: the strip holds several batches at once, and a
+        // tile number that repeats cannot be told apart in the strip or in the console. A counter, not
+        // the highest number staged, which would hand a discarded slot's number out again. It starts
+        // over only with an empty strip.
+        if (Candidates.Count == 0)
+            _lastOrdinal = 0;
 
         var created = new List<StagedCandidateViewModel>(count);
         for (var i = 0; i < count; i++)
         {
-            var candidate = new StagedCandidateViewModel(last + i + 1, worldRect);
+            var candidate = new StagedCandidateViewModel(++_lastOrdinal, worldRect);
             Candidates.Add(candidate);
             created.Add(candidate);
         }
@@ -97,6 +100,8 @@ public partial class CanvasStagingViewModel : ObservableObject
             Current = created[0];
         return created;
     }
+
+    private int _lastOrdinal;
 
     /// <summary>The slot the running batch is on, which <see cref="Follow"/> moves the selection along with.</summary>
     private StagedCandidateViewModel? _followed;

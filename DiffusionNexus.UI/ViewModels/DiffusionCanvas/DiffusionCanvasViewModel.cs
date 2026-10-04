@@ -1313,7 +1313,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
                 && gone.BackendKey == batch.BackendKey && (gone.ModelKey is null || gone.ModelKey == batch.ModelKey))
             {
                 skipped = true;
-                BatchNotice = $"Batches #{gone.FailedBatch} to #{item.Number} did not run: {gone.Reason}";
+                BatchNotice = $"Batch #{gone.FailedBatch} and the batches queued behind it did not run: {gone.Reason}";
                 EmitInfo($"Batch #{item.Number} skipped: batch #{gone.FailedBatch} just found its {(gone.ModelKey is null ? "backend" : "model")} unavailable.");
                 return;
             }
@@ -1480,7 +1480,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             if (!cancelled && !skipped && (failed || !reachedTheBackend) && Queue.QueuedCount > 0)
             {
                 BatchNotice = reachedTheBackend
-                    ? $"Batch #{item.Number} failed: {StatusText}"
+                    ? $"Batch #{item.Number}: {StatusText}"
                     : $"Batch #{item.Number} did not run: {(_unavailable?.FailedBatch == item.Number ? _unavailable.Reason : StatusText)}";
             }
 

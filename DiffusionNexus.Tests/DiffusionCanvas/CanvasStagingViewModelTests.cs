@@ -432,6 +432,19 @@ public class CanvasStagingViewModelTests
     }
 
     [Fact]
+    public void ADiscardedSlotsNumberIsNotHandedOutAgain()
+    {
+        var staging = new CanvasStagingViewModel();
+        var slots = staging.AddBatch(3, Box);
+        staging.Current = slots[2];
+        staging.DiscardCommand.Execute(null);
+
+        var added = staging.AddBatch(1, Box, select: false);
+
+        added[0].Ordinal.Should().Be(4, "slot 3 may still be named in the console");
+    }
+
+    [Fact]
     public void DiscardingTheRenderingSlotKeepsTheSelectionFollowingTheRun()
     {
         // Review finding: the neighbour selected in its place was taken for the user's own choice, and
