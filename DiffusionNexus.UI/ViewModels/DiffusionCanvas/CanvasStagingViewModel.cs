@@ -68,25 +68,85 @@ public partial class CanvasStagingViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Starts a batch: discards whatever is still staged and creates one dimmed slot per queued image, so
-    /// the strip shows the shape of the run before any result exists.
+    /// Adds a batch: one dimmed slot per queued image, behind whatever is already staged, so the strip
+    /// shows the shape of the queue before any result exists. Nothing staged is discarded: a candidate
+    /// nobody has judged yet is not this method's to throw away (#598).
     /// </summary>
-    public IReadOnlyList<StagedCandidateViewModel> BeginBatch(int count, Rect worldRect)
+    /// <param name="select">
+    /// Whether the batch's first slot becomes the selection. True for a batch that starts at once (the
+    /// user just pressed Generate); false for one queued behind a running batch, which must not move
+    /// the selection. With nothing selected the first slot is selected either way.
+    /// </param>
+    public IReadOnlyList<StagedCandidateViewModel> AddBatch(int count, Rect worldRect, bool select = true)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(count, 1);
 
-        DiscardAll();
+        // Numbered on from the last slot handed out: the strip holds several batches at once, and a
+        // tile number that repeats cannot be told apart in the strip or in the console. A counter, not
+        // the highest number staged, which would hand a discarded slot's number out again. It starts
+        // over only with an empty strip.
+        if (Candidates.Count == 0)
+            _lastOrdinal = 0;
 
         var created = new List<StagedCandidateViewModel>(count);
         for (var i = 0; i < count; i++)
         {
-            var candidate = new StagedCandidateViewModel(i + 1, worldRect);
+            var candidate = new StagedCandidateViewModel(++_lastOrdinal, worldRect);
             Candidates.Add(candidate);
             created.Add(candidate);
         }
 
-        Current = Candidates[0];
+        if (select || Current is null)
+            Current = created[0];
         return created;
+    }
+
+    private int _lastOrdinal;
+
+    /// <summary>The slot the running batch is on, which <see cref="Follow"/> moves the selection along with.</summary>
+    private StagedCandidateViewModel? _followed;
+
+    /// <summary>
+    /// Tells the strip which slot is now rendering. The selection moves to it only while the user is on
+    /// the slot that was rendering before (or on this one, or on nothing): stepping back to compare an
+    /// earlier candidate is a choice, and the next image starting must not undo it.
+    /// </summary>
+    public void Follow(StagedCandidateViewModel candidate)
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+
+        var onTheRunningSlot = Current is null
+            || ReferenceEquals(Current, _followed)
+            || ReferenceEquals(Current, candidate);
+
+        _followed = candidate;
+        if (onTheRunningSlot)
+            Current = candidate;
+    }
+
+    /// <summary>
+    /// The batch is over. Its last slot stops being "the running slot", so a later batch starting does
+    /// not pull the selection off a finished candidate the user is judging.
+    /// </summary>
+    public void EndFollow() => _followed = null;
+
+    /// <summary>Removes a batch's slots that are still in the strip, e.g. when it leaves the queue unrun.</summary>
+    /// <returns>How many slots were removed.</returns>
+    public int RemoveBatch(IEnumerable<StagedCandidateViewModel> batch)
+    {
+        ArgumentNullException.ThrowIfNull(batch);
+
+        var removed = 0;
+        foreach (var candidate in batch.ToList())
+        {
+            if (Candidates.Contains(candidate))
+            {
+                Remove(candidate);
+                removed++;
+            }
+        }
+
+        return removed;
     }
 
     partial void OnCurrentChanging(StagedCandidateViewModel? value)
@@ -150,7 +210,7 @@ public partial class CanvasStagingViewModel : ObservableObject
 
         var index = Candidates.IndexOf(candidate);
         Candidates.Remove(candidate);
-        SelectAfterRemoval(index);
+        SelectAfterRemoval(index, candidate);
 
         CandidateAccepted?.Invoke(this, candidate);
     }
@@ -197,27 +257,35 @@ public partial class CanvasStagingViewModel : ObservableObject
         if (index < 0)
             return;
 
+        // Only the selected slot's removal picks a new selection. Removing another one, e.g. a waiting
+        // batch's slots or a cancelled batch's, must leave the candidate the user is judging selected.
+        var wasCurrent = ReferenceEquals(candidate, Current);
+        candidate.IsDiscarded = true;
         Candidates.Remove(candidate);
-        SelectAfterRemoval(index);
+        if (wasCurrent)
+            SelectAfterRemoval(index, candidate);
 
         // Detach first, dispose second — disposing a bitmap that is still bound faults the render.
         candidate.Dispose();
     }
 
-    private void SelectAfterRemoval(int removedIndex)
+    private void SelectAfterRemoval(int removedIndex, StagedCandidateViewModel removed)
     {
-        if (Candidates.Count == 0)
-        {
-            Current = null;
-            return;
-        }
+        Current = Candidates.Count == 0
+            ? null
+            : Candidates[Math.Clamp(removedIndex, 0, Candidates.Count - 1)];
 
-        Current = Candidates[Math.Clamp(removedIndex, 0, Candidates.Count - 1)];
+        // Accepting or discarding the slot the run is on is not stepping away from the run: the
+        // neighbour was selected for the user, so the next image still takes the selection.
+        if (ReferenceEquals(removed, _followed))
+            _followed = Current;
     }
 
     /// <summary>
-    /// Removes every slot the cancel made pointless: the ones that never started and the one that was
-    /// in flight. Ready results stay, so a batch cancelled after two good images keeps both.
+    /// Removes every slot of the cancelled batch that the cancel made pointless: the ones that never
+    /// started and the one that was in flight. Ready results stay, so a batch cancelled after two good
+    /// images keeps both. Only <paramref name="batch"/>'s slots are looked at: the pending slots of a
+    /// batch still waiting in the queue are not this cancel's.
     /// </summary>
     /// <remarks>
     /// These used to be kept and merely marked Cancelled. That left an empty dark tile in the strip —
@@ -226,10 +294,12 @@ public partial class CanvasStagingViewModel : ObservableObject
     /// can never hold an image has no business in a strip whose whole point is judging images.
     /// </remarks>
     /// <returns>How many slots were removed, for the log line.</returns>
-    public int PruneAfterCancel()
+    public int PruneAfterCancel(IEnumerable<StagedCandidateViewModel> batch)
     {
-        var doomed = Candidates
-            .Where(c => c.IsPending || c.State == StagedCandidateState.Cancelled)
+        ArgumentNullException.ThrowIfNull(batch);
+
+        var doomed = batch
+            .Where(c => Candidates.Contains(c) && (c.IsPending || c.State == StagedCandidateState.Cancelled))
             .ToList();
 
         foreach (var candidate in doomed)

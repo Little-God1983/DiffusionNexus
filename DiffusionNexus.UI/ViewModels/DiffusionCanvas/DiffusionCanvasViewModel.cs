@@ -74,19 +74,6 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     /// </summary>
     private int _loraLoadGeneration;
 
-    /// <summary>
-    /// Guards <see cref="_runCts"/>. Generate joins the epoch and Cancel cancels-and-nulls it; without a
-    /// lock those two can interleave and leave a cancelled token installed for the next batch.
-    /// </summary>
-    private readonly object _runLock = new();
-
-    /// <summary>
-    /// The batch epoch. The invariant, copied from <c>CivitaiDownloadQueue</c>: <b>never cancel without
-    /// nulling</b>. Cancelling and leaving the field in place makes the next Generate join a dead token
-    /// and abort instantly.
-    /// </summary>
-    private CancellationTokenSource? _runCts;
-
     private bool _disposed;
 
     /// <summary>
@@ -145,19 +132,25 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     private string _promptText = string.Empty;
 
     /// <summary>
-    /// True while a batch is running. Carries <c>NotifyCanExecuteChangedFor</c> deliberately: once
-    /// Generate stops awaiting the whole run, the toolkit's own "no concurrent execution" protection on
-    /// an async RelayCommand no longer covers a second click, and a second click would clobber the shared
-    /// run token and silently break Cancel.
+    /// True while the queue has a batch running or waiting; mirrors <see cref="CanvasGenerationQueue.IsBusy"/>.
+    /// Cancel is live for exactly that long. Generate does not depend on it: a press while a batch runs
+    /// queues another (#598).
     /// </summary>
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(GenerateCommand))]
     [NotifyCanExecuteChangedFor(nameof(CancelCommand))]
     private bool _isGenerating;
 
-    /// <summary>Toolbar status text ("Idle", "Loading Z-Image-Turbo…", "Sampling 5/9", "Done", "Error: …").</summary>
+    /// <summary>Status bar text ("Idle", "Loading Z-Image-Turbo…", "Sampling 5/9", "Done", "Error: …").</summary>
     [ObservableProperty]
     private string _statusText = "Idle";
+
+    /// <summary>
+    /// Why a batch did not run or a press was refused while the queue carried on. The status line
+    /// belongs to the running batch and is overwritten within a second, so the reason is kept here
+    /// until the next Generate press that is accepted.
+    /// </summary>
+    [ObservableProperty]
+    private string? _batchNotice;
 
     /// <summary>Backend availability message; non-null when the backend cannot be initialized.</summary>
     [ObservableProperty]
@@ -640,6 +633,19 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         AdoptEngineCapabilities();
         _selectedBackend = AvailableBackends[0];
         Layers = new CanvasLayerStackViewModel(Frames, EmitInfo);
+        Queue = new CanvasGenerationQueue(EmitInfo);
+        Queue.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(CanvasGenerationQueue.IsBusy))
+                IsGenerating = Queue.IsBusy;
+        };
+        // A discarded slot is an image the queue no longer has to make: its count and ETA follow, and a
+        // waiting batch with no slot left leaves the queue.
+        Staging.Candidates.CollectionChanged += (_, _) =>
+        {
+            Queue.SlotsChanged();
+            StopAPreflightWithNothingLeftToMake();
+        };
         DeleteFrameCommand = new RelayCommand<GenerationFrameViewModel?>(DeleteFrame, CanvasLayerStackViewModel.CanDelete);
         WireCanvasEvents();
     }
@@ -1104,13 +1110,13 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     /// mandatory 4-step Lightning LoRA arrives that way), so a user who picks the same file by hand would
     /// otherwise apply it twice at double strength.
     /// </remarks>
-    private IReadOnlyList<LoraReference> ResolveLoraReferences(ModelDescriptor descriptor)
+    private IReadOnlyList<LoraReference> ResolveLoraReferences(ModelDescriptor? descriptor)
     {
         if (Loras.Count == 0)
             return [];
 
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var already in descriptor.DefaultLoras)
+        foreach (var already in descriptor?.DefaultLoras ?? [])
         {
             if (!string.IsNullOrWhiteSpace(already.FilePath))
                 seen.Add(already.FilePath);
@@ -1143,107 +1149,230 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
 
     // ────────────────────────────── Generate ──────────────────────────────
 
+    /// <summary>The generation queue: Generate adds a batch, the status bar reads its count, pace and ETA (#598).</summary>
+    public CanvasGenerationQueue Queue { get; }
+
+    /// <summary>Session-wide batch counter, for the queue list and the console.</summary>
+    private int _batchNumber;
+
     /// <summary>
-    /// Enqueues a batch for the current bounding box and runs it.
+    /// Everything one Generate press needs to run later, frozen on the UI thread at the press. The user
+    /// keeps working while batches wait, so a queued batch must not read a live control, the live box or
+    /// the live layers when its turn comes: it would run something other than what was on screen when it
+    /// was asked for.
+    /// </summary>
+    private sealed record PendingBatch(
+        string? BackendKey,
+        bool LorasSupported,
+        string? LoraLimitation,
+        string ModelKey,
+        string ModelDisplayName,
+        BatchSettings Settings,
+        IReadOnlyList<ICanvasRaster> Rasters,
+        MaskSnapshot? Mask,
+        Rect Region,
+        int Width,
+        int Height,
+        double Denoise,
+        IReadOnlyList<StagedCandidateViewModel> Candidates);
+
+    /// <summary>
+    /// Enqueues a batch for the current bounding box. The returned task completes when that batch is
+    /// over, so awaiting the command still means "this batch has run".
     /// </summary>
     /// <remarks>
-    /// The batch runs <b>sequentially</b> on purpose. <c>DiffusionContextHost</c> holds a per-model
-    /// <c>SemaphoreSlim(1,1)</c> with a single-resident policy, so parallel canvas generations would
-    /// either serialise behind that lock anyway or thrash VRAM by loading a second model.
+    /// Concurrent executions are allowed on purpose: the command's task lives as long as its batch, and
+    /// the toolkit would otherwise disable Generate for exactly that long, which is the blocking this
+    /// queue removes. Batches still run <b>sequentially</b> (see <see cref="CanvasGenerationQueue"/>).
     /// </remarks>
-    [RelayCommand(CanExecute = nameof(CanGenerate))]
-    private async Task GenerateAsync()
+    [RelayCommand(CanExecute = nameof(CanGenerate), AllowConcurrentExecutions = true)]
+    private Task GenerateAsync()
     {
         if (string.IsNullOrWhiteSpace(PromptText))
         {
-            StatusText = "Please enter a prompt before generating.";
-            return;
+            RefusePress("Please enter a prompt before generating.");
+            return Task.CompletedTask;
         }
 
-        IsGenerating = true;
-        StatusText = "Resolving backend…";
-        BackendUnavailableMessage = null;
+        if (SelectedModel is not { } model || string.IsNullOrEmpty(model.Key))
+        {
+            RefusePress("Select a model before generating.");
+            return Task.CompletedTask;
+        }
+
         EmitInfo($"Generate requested: batch={BatchCount}, box={Describe(Box.WorldRect)}.");
 
-        // Open the epoch BEFORE the first await. Cancel goes live the moment IsGenerating flips, and
-        // pre-flight is the longest part of a cold engine run — EnsureRunningAsync spawns python and
-        // polls readiness for up to two minutes. An epoch created after the resolve left every Cancel in
-        // that window a silent no-op, which the next line then papered over with a fresh token.
-        var cts = new CancellationTokenSource();
-        lock (_runLock)
+        // Adopt the model's alignment before freezing the region: the backend's own ValidateRequest
+        // throws lazily, on the first MoveNextAsync inside the caller's await foreach, which is long after
+        // the candidate slots already exist. Read the value back from the box rather than reusing the
+        // descriptor's raw field — the box sanitises it, and a catalog entry with alignment 0 would
+        // otherwise divide by zero on the very next line. Done here, at the press, so a queued batch
+        // never re-snaps the box under the user later.
+        if (model.Descriptor is { } selected)
         {
-            _runCts?.Dispose();
-            _runCts = cts;
+            Box.Alignment = selected.DimensionAlignment;
+            var alignment = Box.Alignment;
+            if (Box.Width % alignment != 0 || Box.Height % alignment != 0)
+            {
+                RefusePress($"The box must be a multiple of {alignment} px for {selected.DisplayName}.");
+                EmitWarning($"Refused to generate: box {Box.Width}x{Box.Height} is not aligned to {alignment}.");
+                return Task.CompletedTask;
+            }
         }
 
-        var token = cts.Token;
+        BatchNotice = null;
+        var region = Box.WorldRect;
+
+        // Snapshot the whole panel once for the whole batch. The user is free to keep editing while a
+        // batch runs or waits, and reading the controls per candidate would let a half-typed change land
+        // on image three of four — a batch that is not one batch.
+        var settings = CaptureBatchSettings(model.Descriptor);
+
+        // Snapshot the rasters on the UI thread; the batch composites them off it when its turn comes.
+        // Frames is an ObservableCollection, so it must not be enumerated off the UI thread, and the
+        // snapshot copies visibility and opacity, so hiding a layer or dragging its opacity afterwards
+        // cannot change this batch's input.
+        var rasters = Frames.Select(f => (ICanvasRaster)CanvasRasterSnapshot.Of(f)).ToArray();
+
+        // The mask is frozen on the same terms. Its strokes list is replaced on every change, never
+        // mutated, so holding the reference is a snapshot.
+        var overlapping = rasters.Count(r => CanContribute(r) && r.WorldRect.Intersects(region));
+        var maskSnapshot = Layers.Mask is { } liveMask && EvaluateMask(liveMask, region, overlapping) == MaskUse.Applies
+            ? new MaskSnapshot(liveMask.Name, liveMask.Strokes, liveMask.Feather, liveMask.Invert, liveMask.Denoise)
+            : null;
+
+        // The slots appear at the press, so the strip shows the queue's shape. A batch that starts at
+        // once takes the selection, as Generate always did; one that waits must not move it.
+        var candidates = Staging.AddBatch(BatchCount, region, select: !Queue.IsBusy);
+        foreach (var candidate in candidates)
+            candidate.Prompt = settings.Prompt;
+
+        var number = ++_batchNumber;
+        EmitInfo($"Staged {candidates.Count} candidate slot(s) for batch #{number}.");
+
+        var batch = new PendingBatch(
+            SelectedBackend?.Key,
+            IsLoraSupported,
+            LoraLimitation,
+            model.Key,
+            model.DisplayName,
+            settings,
+            rasters,
+            maskSnapshot,
+            region,
+            Box.Width,
+            Box.Height,
+            DenoiseStrength,
+            candidates);
+
+        // The pace depends on these three; a batch that differs in any of them starts with no known pace.
+        var paceKey = $"{batch.BackendKey}|{batch.ModelKey}|{batch.Width}x{batch.Height}";
+        var item = new CanvasQueuedBatchViewModel(number, candidates.Count, settings.Steps, settings.Prompt, paceKey);
+
+        return Queue.Enqueue(item, new CanvasBatchWork(
+            Run: token => RunQueuedBatchAsync(item, batch, token),
+            OnDropped: () => OnQueuedBatchDropped(item, batch),
+            OnCancelling: () => OnBatchCancelling(batch),
+            // Counted from the slots, not from the batch's size: a slot the user discarded will not run.
+            // The slot's own flag is cheaper to ask than searching the strip: this runs for every batch
+            // on every sampling step. Not IsDisposed, which is still false while the strip announces
+            // the removal.
+            PendingImages: () => batch.Candidates.Count(
+                c => c.State == StagedCandidateState.Pending && !c.IsDiscarded)));
+    }
+
+    /// <summary>
+    /// Runs one queued batch from its frozen inputs: resolves the backend, composites the region, rasterises
+    /// the mask, then generates each candidate. Called by <see cref="Queue"/>, one batch at a time.
+    /// </summary>
+    /// <remarks>
+    /// The token is the queue's epoch for this batch and exists before the first await here. Pre-flight
+    /// is the longest part of a cold engine run — EnsureRunningAsync spawns python and polls readiness
+    /// for up to two minutes — and Cancel is live for all of it.
+    /// </remarks>
+    private async Task RunQueuedBatchAsync(CanvasQueuedBatchViewModel item, PendingBatch batch, CancellationToken token)
+    {
         string? regionImagePath = null;
         string? maskImagePath = null;
         CanvasMaskCompositor? keptPixels = null;
 
+        // False until the candidates start running. A batch refused or failed before that has produced
+        // nothing, so its slots leave the strip with it.
+        var reachedTheBackend = false;
+        var cancelled = false;
+        var failed = false;
+        var skipped = false;
+        _preflightBatch = batch;
+
         try
         {
-            var backend = await ResolveBackendAsync(token).ConfigureAwait(true);
-            if (backend is null)
-                return;
-
-            EmitInfo($"Backend resolved: {backend.DisplayName}.");
-
-            var descriptor = ResolveDescriptor(backend);
-            if (descriptor is null)
-                return;
-
-            EmitInfo($"Model resolved: {descriptor.DisplayName} (alignment {descriptor.DimensionAlignment}).");
-
-            // Adopt the model's alignment before validating: the backend's own ValidateRequest throws
-            // lazily, on the first MoveNextAsync inside the caller's await foreach, which is long after
-            // the candidate slots already exist. Read the value back from the box rather than reusing the
-            // descriptor's raw field — the box sanitises it, and a catalog entry with alignment 0 would
-            // otherwise divide by zero on the very next line.
-            Box.Alignment = descriptor.DimensionAlignment;
-            var alignment = Box.Alignment;
-            if (Box.Width % alignment != 0 || Box.Height % alignment != 0)
+            // The backend or the model was just found unavailable for a batch queued before this one.
+            // Asking again per waiting batch costs a full engine start each (up to two minutes), for
+            // the same answer. A new press asks again.
+            if (_unavailable is { } gone && item.Number <= gone.UpToBatch
+                && gone.BackendKey == batch.BackendKey && (gone.ModelKey is null || gone.ModelKey == batch.ModelKey))
             {
-                StatusText = $"The box must be a multiple of {alignment} px for {descriptor.DisplayName}.";
-                EmitWarning($"Refused to generate: box {Box.Width}x{Box.Height} is not aligned to {alignment}.");
+                skipped = true;
+                BatchNotice = $"Batch #{gone.FailedBatch} and the batches queued behind it did not run: {gone.Reason}";
+                EmitInfo($"Batch #{item.Number} skipped: batch #{gone.FailedBatch} just found its {(gone.ModelKey is null ? "backend" : "model")} unavailable.");
                 return;
             }
 
-            var region = Box.WorldRect;
-            var width = Box.Width;
-            var height = Box.Height;
+            // Only the batches directly behind the failure skip. Once another batch has run in
+            // between, time has passed and the answer may have changed.
+            _unavailable = null;
 
-            // Snapshot the whole panel once for the whole batch. The user is free to keep editing while a
-            // batch runs, and reading the controls per candidate would let a half-typed change land on
-            // image three of four — a batch that is not one batch.
-            var settings = CaptureBatchSettings(descriptor);
+            StatusText = "Resolving backend…";
+            BackendUnavailableMessage = null;
 
-            if (settings.Loras.Count > 0 && !IsLoraSupported)
+            var backend = await ResolveBackendAsync(batch.BackendKey, token).ConfigureAwait(true);
+            if (backend is null)
+            {
+                _unavailable = new Unavailable(batch.BackendKey, null, item.Number, _batchNumber, BackendUnavailableMessage ?? StatusText);
+                return;
+            }
+
+            EmitInfo($"Backend resolved: {backend.DisplayName}.");
+
+            var descriptor = ResolveDescriptor(backend, batch.ModelKey, batch.ModelDisplayName);
+            if (descriptor is null)
+            {
+                _unavailable = new Unavailable(batch.BackendKey, batch.ModelKey, item.Number, _batchNumber, BackendUnavailableMessage ?? StatusText);
+                return;
+            }
+
+            EmitInfo($"Model resolved: {descriptor.DisplayName} (alignment {descriptor.DimensionAlignment}).");
+
+            var region = batch.Region;
+            var width = batch.Width;
+            var height = batch.Height;
+            var settings = batch.Settings;
+
+            // The box was snapped to the selected model's lattice at the press. The backend's own
+            // descriptor is the authority, though, and if it disagrees the request would only fail later,
+            // per candidate, inside the backend.
+            var alignment = Math.Max(1, descriptor.DimensionAlignment);
+            if (width % alignment != 0 || height % alignment != 0)
+            {
+                StatusText = $"The box must be a multiple of {alignment} px for {descriptor.DisplayName}.";
+                EmitWarning($"Refused batch #{item.Number}: box {width}x{height} is not aligned to {alignment}.");
+                return;
+            }
+
+            if (settings.Loras.Count > 0 && !batch.LorasSupported)
             {
                 // The picker is disabled on this backend and says why, but rows picked before switching
                 // survive in the list. Dropping them silently would be exactly the failure the capability
                 // gating exists to prevent.
                 EmitWarning(
-                    $"{settings.Loras.Count} selected LoRA(s) will not be applied: {LoraLimitation}");
+                    $"{settings.Loras.Count} selected LoRA(s) will not be applied: {batch.LoraLimitation}");
             }
 
-            // Snapshot the rasters on the UI thread, then composite off it. The region work decodes a
-            // PNG per overlapping result, walks every output pixel to measure coverage, re-encodes at
-            // quality 100 and writes a file — seconds of frozen window at 2048x2048 over several
-            // results. Frames is an ObservableCollection, so it must not be enumerated off the UI thread, and
-            // the snapshot copies visibility and opacity, so hiding a layer or dragging its opacity mid-run
-            // cannot change this run's input.
-            var rasters = Frames.Select(f => (ICanvasRaster)CanvasRasterSnapshot.Of(f)).ToArray();
-
-            // The mask is frozen on the same terms. Its strokes list is replaced on every change, never
-            // mutated, so holding the reference is a snapshot.
-            var overlapping = rasters.Count(r => CanContribute(r) && r.WorldRect.Intersects(region));
-            var maskSnapshot = Layers.Mask is { } liveMask && EvaluateMask(liveMask, region, overlapping) == MaskUse.Applies
-                ? new MaskSnapshot(liveMask.Name, liveMask.Strokes, liveMask.Feather, liveMask.Invert, liveMask.Denoise)
-                : null;
-
+            // Composite off the UI thread. The region work decodes a PNG per overlapping result, walks
+            // every output pixel to measure coverage, re-encodes at quality 100 and writes a file —
+            // seconds of frozen window at 2048x2048 over several results.
             var composed = await Task
-                .Run(() => BuildRegionInitImage(rasters, region, width, height), token)
+                .Run(() => BuildRegionInitImage(batch.Rasters, region, width, height), token)
                 .ConfigureAwait(true);
 
             regionImagePath = composed.Path;
@@ -1260,8 +1389,8 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
                 return;
             }
 
-            var strength = DenoiseStrength;
-            if (maskSnapshot is not null)
+            var strength = batch.Denoise;
+            if (batch.Mask is { } maskSnapshot)
             {
                 // A snapshot exists only over results (EvaluateMask), and a region over results that did
                 // not composite returned above as degraded, so the region path is set here.
@@ -1305,7 +1434,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
                 }
 
                 strength = maskSnapshot.Denoise;
-                if (SelectedBackend?.Key == CanvasBackendKeys.Local && strength > StableDiffusionCppBackend.MaxMaskedStrength)
+                if (batch.BackendKey == CanvasBackendKeys.Local && strength > StableDiffusionCppBackend.MaxMaskedStrength)
                 {
                     EmitInfo(string.Create(
                         CultureInfo.InvariantCulture,
@@ -1320,10 +1449,9 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
                 : new DiffusionReferenceImage(regionImagePath, (float)strength);
             var maskImage = maskImagePath is null ? null : new DiffusionReferenceImage(maskImagePath);
 
-            var candidates = Staging.BeginBatch(BatchCount, region);
-            EmitInfo($"Staged {candidates.Count} candidate slot(s).");
-
-            await RunBatchAsync(backend, descriptor, candidates, settings, initImage, maskImage, keptPixels, width, height, composed.Coverage, token)
+            reachedTheBackend = true;
+            _preflightBatch = null;
+            await RunBatchAsync(item, backend, descriptor, batch.Candidates, settings, initImage, maskImage, keptPixels, width, height, composed.Coverage, token)
                 .ConfigureAwait(true);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
@@ -1331,35 +1459,58 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             // Caught before the generic handler so a user cancel is never reported as a failure. The
             // filter matters: HttpClient signals its own timeout as a TaskCanceledException, and an engine
             // that is alive but wedged would otherwise be reported as "Cancelled." with no diagnostic.
+            cancelled = true;
             StatusText = "Cancelled.";
-            EmitInfo("Batch cancelled by the user.");
-            var pruned = Staging.PruneAfterCancel();
+            EmitInfo($"Batch #{item.Number} cancelled by the user.");
+            var pruned = Staging.PruneAfterCancel(batch.Candidates);
             if (pruned > 0)
                 EmitInfo($"Removed {pruned} cancelled slot(s) from staging.");
         }
         catch (Exception ex)
         {
+            failed = true;
             EmitError($"Generation failed: {ex.Message}", ex);
             StatusText = $"Error: {ex.Message}";
         }
         finally
         {
+            // The next batch starts in this same turn and takes the status line, so the reason this
+            // one made nothing is kept where it stays readable.
+            // The banner text is this batch's only when this batch found the backend or model missing.
+            if (!cancelled && !skipped && (failed || !reachedTheBackend) && Queue.QueuedCount > 0)
+            {
+                BatchNotice = reachedTheBackend
+                    ? $"Batch #{item.Number}: {StatusText}"
+                    : $"Batch #{item.Number} did not run: {(_unavailable?.FailedBatch == item.Number ? _unavailable.Reason : StatusText)}";
+            }
+
+            // Before the slots of a batch that did not run are removed below: that removal is the
+            // batch's own, not the user discarding it.
+            _preflightBatch = null;
             DeleteScratchFile(regionImagePath);
             DeleteScratchFile(maskImagePath);
             keptPixels?.Dispose();
-            EndRunEpoch(cts);
-            IsGenerating = false;
+            Staging.EndFollow();
+
+            if (!reachedTheBackend)
+            {
+                var removed = Staging.RemoveBatch(batch.Candidates);
+                if (removed > 0)
+                    EmitInfo($"Batch #{item.Number} did not run; removed its {removed} slot(s) from staging.");
+            }
+
             Staging.RefreshCommands();
         }
     }
 
     // The engine backend does not need the local provider, so requiring both would disable Generate on
-    // an engine-only view model.
+    // an engine-only view model. Not gated on IsGenerating: a press while a batch runs queues another.
     private bool CanGenerate() =>
-        !IsGenerating && SelectedModel is not null && (_backendProvider is not null || _engineBackend is not null);
+        SelectedModel is not null && (_backendProvider is not null || _engineBackend is not null);
 
     /// <summary>
-    /// Stops the batch. Pending candidates are dropped immediately.
+    /// Stops the running batch; its pending candidates are dropped immediately and the next queued batch
+    /// starts. Queued batches are removed from the queue list, not here.
     /// </summary>
     /// <remarks>
     /// What this can and cannot interrupt differs per backend, and the tooltip says so: the engine
@@ -1368,63 +1519,73 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     /// image currently sampling finishes and is then discarded.
     /// </remarks>
     [RelayCommand(CanExecute = nameof(CanCancel))]
-    private void Cancel()
-    {
-        CancellationTokenSource? cts;
-        lock (_runLock)
-        {
-            // Both halves are the invariant — never cancel without nulling. Leaving a cancelled source
-            // installed would make the next Generate join a dead epoch and abort instantly.
-            cts = _runCts;
-            _runCts = null;
-        }
-
-        if (cts is null)
-            return;
-
-        EmitInfo("Cancel requested — dropping the rest of the batch.");
-        StatusText = "Cancelling…";
-
-        try
-        {
-            // Cancelled but deliberately NOT disposed here: the running batch still holds this token and
-            // both backends register callbacks on it, and registering on a disposed source throws. The
-            // batch that opened the epoch disposes it in its own finally, once nothing can use it.
-            cts.Cancel();
-        }
-        catch (ObjectDisposedException)
-        {
-            // The owning batch finished and disposed it as we cancelled; nothing left to stop.
-        }
-
-        var pruned = Staging.PruneAfterCancel();
-        if (pruned > 0)
-            EmitInfo($"Removed {pruned} cancelled slot(s) from staging.");
-    }
+    private void Cancel() => Queue.CancelRunning();
 
     private bool CanCancel() => IsGenerating;
 
     /// <summary>
-    /// Closes the epoch this batch opened: clears the field if it is still ours, then disposes.
+    /// A backend (ModelKey null) or one of its models that a batch found unavailable, and the batches
+    /// that were already queued then: those skip instead of asking again.
     /// </summary>
-    /// <remarks>
-    /// The reference check matters because <see cref="Cancel"/> nulls the field itself. Without it, a
-    /// cancelled batch's teardown could null out an epoch a later batch had already installed.
-    /// </remarks>
-    private void EndRunEpoch(CancellationTokenSource cts)
-    {
-        lock (_runLock)
-        {
-            if (ReferenceEquals(_runCts, cts))
-                _runCts = null;
-        }
+    private sealed record Unavailable(string? BackendKey, string? ModelKey, int FailedBatch, int UpToBatch, string Reason);
 
-        cts.Dispose();
+    private Unavailable? _unavailable;
+
+    /// <summary>Refuses a Generate press. While a batch runs its progress overwrites the status line at once, so the reason is also kept as the notice.</summary>
+    private void RefusePress(string reason)
+    {
+        StatusText = reason;
+
+        // Idle, the status line keeps the reason, and an older notice would only contradict it.
+        BatchNotice = Queue.IsBusy ? reason : null;
     }
 
-    private async Task<IDiffusionBackend?> ResolveBackendAsync(CancellationToken token)
+    /// <summary>The running batch while it is still before its first image, otherwise null.</summary>
+    private PendingBatch? _preflightBatch;
+
+    /// <summary>
+    /// The user discarded every slot of the batch that is still starting up. Nothing is left to make, so
+    /// it is stopped here instead of waking the backend (up to two minutes on a cold engine) and
+    /// compositing a region for images nobody will see, with later batches waiting behind it. Once the
+    /// images run, each discarded slot is skipped at no cost, so only the start-up needs this.
+    /// </summary>
+    private void StopAPreflightWithNothingLeftToMake()
     {
-        if (SelectedBackend?.Key == CanvasBackendKeys.Engine)
+        if (_preflightBatch is not { } batch || !batch.Candidates.All(c => c.IsDiscarded))
+            return;
+
+        _preflightBatch = null;
+        EmitInfo("Every slot of the batch that was starting up was discarded; stopping it.");
+        Queue.CancelRunning();
+    }
+
+    /// <summary>
+    /// The running batch is being cancelled, from the Cancel button or from its own row in the queue
+    /// list: say so and drop its unfinished slots at once, before the backend has unwound.
+    /// </summary>
+    private void OnBatchCancelling(PendingBatch batch)
+    {
+        // First: the pruning below empties the batch's slots, which is not the user discarding them.
+        _preflightBatch = null;
+        StatusText = "Cancelling…";
+
+        var pruned = Staging.PruneAfterCancel(batch.Candidates);
+        if (pruned > 0)
+            EmitInfo($"Removed {pruned} cancelled slot(s) from staging.");
+    }
+
+    /// <summary>A batch left the queue without running: its slots leave the strip with it.</summary>
+    private void OnQueuedBatchDropped(CanvasQueuedBatchViewModel item, PendingBatch batch)
+    {
+        var removed = Staging.RemoveBatch(batch.Candidates);
+        if (removed > 0)
+            EmitInfo($"Batch #{item.Number} left the queue; removed its {removed} slot(s) from staging.");
+    }
+
+    /// <param name="backendKey">The backend the batch was queued for, not whatever is selected now.</param>
+    private async Task<IDiffusionBackend?> ResolveBackendAsync(string? backendKey, CancellationToken token)
+    {
+        if (backendKey == CanvasBackendKeys.Engine)
         {
             var engine = _engineBackend;
             if (engine is null)
@@ -1466,15 +1627,9 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         return local;
     }
 
-    private ModelDescriptor? ResolveDescriptor(IDiffusionBackend backend)
+    /// <param name="modelKey">The model the batch was queued with, not whatever is selected now.</param>
+    private ModelDescriptor? ResolveDescriptor(IDiffusionBackend backend, string modelKey, string modelDisplayName)
     {
-        var modelKey = SelectedModel?.Key;
-        if (string.IsNullOrEmpty(modelKey))
-        {
-            StatusText = "Select a model before generating.";
-            return null;
-        }
-
         var descriptor = backend.Catalog.TryGet(modelKey);
         if (descriptor is not null)
             return descriptor;
@@ -1483,7 +1638,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         var rootsText = roots.Count == 0 ? "(unknown)" : string.Join(" | ", roots);
         var searched = (backend.Catalog as ComfyUiModelCatalog)?.SearchedLocationCount ?? 0;
         BackendUnavailableMessage =
-            $"'{SelectedModel?.DisplayName}' files were not found under the configured model roots. " +
+            $"'{modelDisplayName}' files were not found under the configured model roots. " +
             $"Searched {searched} location(s) recursively across {roots.Count} root(s): {rootsText}";
         StatusText = "Model unavailable";
         EmitWarning($"Model '{modelKey}' is not resolvable.", BackendUnavailableMessage);
@@ -1633,7 +1788,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     /// (seeded in <see cref="OnSelectedModelChanged"/>) and therefore has to send them, or what the user
     /// reads and what runs would differ.
     /// </remarks>
-    private BatchSettings CaptureBatchSettings(ModelDescriptor descriptor) => new(
+    private BatchSettings CaptureBatchSettings(ModelDescriptor? descriptor) => new(
         Prompt: PromptText,
         NegativePrompt: string.IsNullOrWhiteSpace(NegativePromptText) ? null : NegativePromptText,
         Steps: Steps,
@@ -1644,6 +1799,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         Loras: ResolveLoraReferences(descriptor));
 
     private async Task RunBatchAsync(
+        CanvasQueuedBatchViewModel queued,
         IDiffusionBackend backend,
         ModelDescriptor descriptor,
         IReadOnlyList<StagedCandidateViewModel> candidates,
@@ -1667,16 +1823,20 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             // canvas preview and strand the strip showing a candidate it no longer contains.
             if (candidate.IsDisposed)
             {
-                EmitInfo($"Skipping candidate {i + 1}/{candidates.Count} — it was discarded before it ran.");
+                EmitInfo($"Batch #{queued.Number}: skipping candidate {candidate.Ordinal} ({i + 1}/{candidates.Count}) — it was discarded before it ran.");
+                Queue.ImageSkipped();
                 continue;
             }
 
-            Staging.Current = candidate;
+            // Follow, not assign: the user may have stepped back to compare an earlier candidate, and
+            // the next image starting must not pull the selection forward again.
+            Staging.Follow(candidate);
             candidate.Prompt = settings.Prompt;
             candidate.State = StagedCandidateState.Loading;
             candidate.StatusText = "Preparing…";
             StatusText = $"Generating {i + 1}/{candidates.Count}…";
-            EmitInfo($"Starting candidate {i + 1}/{candidates.Count} at {Describe(candidate.WorldRect)}.");
+            EmitInfo($"Batch #{queued.Number}: starting candidate {candidate.Ordinal} ({i + 1}/{candidates.Count}) at {Describe(candidate.WorldRect)}.");
+            Queue.ImageStarted();
 
             var request = new DiffusionRequest
             {
@@ -1725,14 +1885,14 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
                         {
                             EmitWarning(
                                 failure is null
-                                    ? $"Candidate {i + 1}: the result is not decodable or not the box's size, so the pixels outside the mask are as the backend returned them."
-                                    : $"Candidate {i + 1}: putting the kept pixels back failed, so the pixels outside the mask are as the backend returned them.",
+                                    ? $"Candidate {candidate.Ordinal}: the result is not decodable or not the box's size, so the pixels outside the mask are as the backend returned them."
+                                    : $"Candidate {candidate.Ordinal}: putting the kept pixels back failed, so the pixels outside the mask are as the backend returned them.",
                                 failure);
                         }
                         else
                         {
                             delivered = item with { Result = result with { PngBytes = pasted } };
-                            EmitInfo($"Candidate {i + 1}: the original pixels outside the mask were put back.");
+                            EmitInfo($"Candidate {candidate.Ordinal}: the original pixels outside the mask were put back.");
                         }
                     }
 
@@ -1746,15 +1906,19 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
                 // as a user cancel that aborts everything.
                 candidate.State = StagedCandidateState.Cancelled;
                 candidate.StatusText = "Cancelled";
+                Queue.ImageFinished(succeeded: false);
                 throw;
             }
             catch (Exception ex)
             {
                 candidate.State = StagedCandidateState.Failed;
                 candidate.StatusText = ex.Message;
-                EmitError($"Candidate {i + 1} failed: {ex.Message}", ex);
+                EmitError($"Candidate {candidate.Ordinal} failed: {ex.Message}", ex);
             }
 
+            // Only a finished image feeds the measured pace: a failure usually dies early and would make
+            // the ETA optimistic.
+            Queue.ImageFinished(candidate.IsReady);
             Staging.RefreshCommands();
         }
 
@@ -1762,7 +1926,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         StatusText = ready == candidates.Count
             ? $"{ready} candidate(s) ready — Enter accepts, Del discards."
             : $"{ready}/{candidates.Count} candidate(s) ready — see the Unified Console for the rest.";
-        EmitInfo($"Batch finished: {ready}/{candidates.Count} ready (region coverage {(int)Math.Round(coverage * 100)}%).");
+        EmitInfo($"Batch #{queued.Number} finished: {ready}/{candidates.Count} ready (region coverage {(int)Math.Round(coverage * 100)}%).");
     }
 
     private void ApplyProgress(StagedCandidateViewModel candidate, DiffusionStreamItem item)
@@ -1800,6 +1964,8 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
                 candidate.StepTotal = item.Progress.TotalSteps;
                 candidate.StatusText = $"Sampling {item.Progress.Step}/{item.Progress.TotalSteps}";
                 StatusText = candidate.StatusText;
+                // The local backend computes the step rate; the status bar's it/s and ETA read it here.
+                Queue.ReportStep(item.Progress.Step, item.Progress.TotalSteps, item.Progress.IterationsPerSecond);
                 break;
 
             case DiffusionPhase.Decoding:
@@ -1997,23 +2163,10 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
 
         _disposed = true;
 
-        // Cancel whatever is in flight, then let the owning batch's own finally dispose the source —
-        // it is still holding the token and its backends still have callbacks registered on it.
-        CancellationTokenSource? inFlight;
-        lock (_runLock)
-        {
-            inFlight = _runCts;
-            _runCts = null;
-        }
-
-        try
-        {
-            inFlight?.Cancel();
-        }
-        catch (ObjectDisposedException)
-        {
-            // Already torn down by the batch that opened it.
-        }
+        // Drop what is queued and cancel whatever is in flight. The queue's worker disposes the running
+        // batch's token once that batch has unwound — it still holds it and its backend still has
+        // callbacks registered on it.
+        Queue.Shutdown();
 
         Staging.DiscardAllCommand.Execute(null);
 

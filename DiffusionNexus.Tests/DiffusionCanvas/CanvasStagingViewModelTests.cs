@@ -17,7 +17,7 @@ public class CanvasStagingViewModelTests
     private static CanvasStagingViewModel WithReadyBatch(int count)
     {
         var staging = new CanvasStagingViewModel();
-        foreach (var candidate in staging.BeginBatch(count, Box))
+        foreach (var candidate in staging.AddBatch(count, Box))
         {
             candidate.State = StagedCandidateState.Ready;
             candidate.StatusText = "Ready";
@@ -28,11 +28,11 @@ public class CanvasStagingViewModelTests
     }
 
     [Fact]
-    public void BeginBatch_CreatesOneDimmedSlotPerQueuedImage()
+    public void AddBatch_CreatesOneDimmedSlotPerQueuedImage()
     {
         var staging = new CanvasStagingViewModel();
 
-        var created = staging.BeginBatch(4, Box);
+        var created = staging.AddBatch(4, Box);
 
         created.Should().HaveCount(4);
         staging.Candidates.Should().HaveCount(4);
@@ -44,23 +44,173 @@ public class CanvasStagingViewModelTests
     }
 
     [Fact]
-    public void BeginBatch_ClearsTheStripFromThePreviousRun()
+    public void AddBatch_AppendsBehindWhatIsStagedAndDiscardsNothing()
     {
+        // #598: a queued batch must not throw away candidates nobody has judged yet.
         var staging = WithReadyBatch(3);
-        var stale = staging.Candidates.ToList();
+        var earlier = staging.Candidates.ToList();
 
-        staging.BeginBatch(2, Box);
+        var added = staging.AddBatch(2, Box);
 
-        staging.Candidates.Should().HaveCount(2);
-        stale.Should().OnlyContain(c => c.IsDisposed);
+        staging.Candidates.Should().HaveCount(5);
+        staging.Candidates.Take(3).Should().Equal(earlier);
+        staging.Candidates.Skip(3).Should().Equal(added);
+        earlier.Should().NotContain(c => c.IsDisposed);
     }
 
     [Fact]
-    public void BeginBatch_RejectsAnEmptyBatch()
+    public void AddBatch_ForAWaitingBatchLeavesTheSelectionAlone()
+    {
+        var staging = WithReadyBatch(2);
+        var judged = staging.Current;
+
+        staging.AddBatch(2, Box, select: false);
+
+        staging.Current.Should().BeSameAs(judged, "a batch that only waits in the queue must not move the selection");
+    }
+
+    [Fact]
+    public void AddBatch_WithNothingSelectedSelectsItsFirstSlotEvenWhenWaiting()
     {
         var staging = new CanvasStagingViewModel();
 
-        var act = () => staging.BeginBatch(0, Box);
+        var added = staging.AddBatch(2, Box, select: false);
+
+        staging.Current.Should().BeSameAs(added[0]);
+    }
+
+    [Fact]
+    public void Follow_MovesTheSelectionWhileTheUserIsOnTheRunningSlot()
+    {
+        var staging = new CanvasStagingViewModel();
+        var batch = staging.AddBatch(3, Box);
+
+        staging.Follow(batch[0]);
+        staging.Follow(batch[1]);
+
+        staging.Current.Should().BeSameAs(batch[1]);
+    }
+
+    [Fact]
+    public void Follow_LeavesTheSelectionWhereTheUserPutIt()
+    {
+        // The bug #598 fixes: stepping back to compare an earlier candidate mid-batch used to be undone
+        // by the next image starting.
+        var staging = new CanvasStagingViewModel();
+        var batch = staging.AddBatch(3, Box);
+        staging.Follow(batch[0]);
+        staging.Follow(batch[1]);
+
+        staging.Current = batch[0];
+        staging.Follow(batch[2]);
+
+        staging.Current.Should().BeSameAs(batch[0]);
+    }
+
+    [Fact]
+    public void Follow_ResumesOnceTheUserStepsBackOntoTheRunningSlot()
+    {
+        var staging = new CanvasStagingViewModel();
+        var batch = staging.AddBatch(4, Box);
+        staging.Follow(batch[0]);
+        staging.Current = batch[0];
+        staging.Follow(batch[1]);
+        staging.Current = batch[0];
+        staging.Follow(batch[2]);
+        staging.Current.Should().BeSameAs(batch[0]);
+
+        staging.Current = batch[2];
+        staging.Follow(batch[3]);
+
+        staging.Current.Should().BeSameAs(batch[3]);
+    }
+
+    [Fact]
+    public void EndFollow_KeepsALaterBatchFromPullingTheSelectionOffAFinishedCandidate()
+    {
+        var staging = new CanvasStagingViewModel();
+        var first = staging.AddBatch(1, Box);
+        staging.Follow(first[0]);
+        staging.EndFollow();
+        var second = staging.AddBatch(1, Box, select: false);
+
+        staging.Follow(second[0]);
+
+        staging.Current.Should().BeSameAs(first[0], "the user is still judging the first batch's result");
+    }
+
+    [Fact]
+    public void RemoveBatch_RemovesOnlyThatBatchsSlots()
+    {
+        var staging = WithReadyBatch(2);
+        var kept = staging.Candidates.ToList();
+        var queued = staging.AddBatch(3, Box, select: false);
+
+        var removed = staging.RemoveBatch(queued);
+
+        removed.Should().Be(3);
+        staging.Candidates.Should().Equal(kept);
+        queued.Should().OnlyContain(c => c.IsDisposed);
+    }
+
+    [Fact]
+    public void RemoveBatch_LeavesTheSelectionOnTheCandidateBeingJudged()
+    {
+        // Review finding: every removal re-selected by index, so removing a waiting batch's slots walked
+        // the selection off the candidate the user was looking at.
+        var staging = WithReadyBatch(2);
+        var judged = staging.Candidates[0];
+        staging.Current = judged;
+        var queued = staging.AddBatch(2, Box, select: false);
+
+        staging.RemoveBatch(queued);
+
+        staging.Current.Should().BeSameAs(judged);
+    }
+
+    [Fact]
+    public void PruneAfterCancel_LeavesTheSelectionOnAnEarlierBatchsCandidate()
+    {
+        var staging = WithReadyBatch(1);
+        var judged = staging.Candidates[0];
+        var running = staging.AddBatch(3, Box, select: false);
+
+        staging.PruneAfterCancel(running);
+
+        staging.Current.Should().BeSameAs(judged);
+    }
+
+    [Fact]
+    public void RemovingTheSelectedSlotStillSelectsItsNeighbour()
+    {
+        var staging = WithReadyBatch(1);
+        var queued = staging.AddBatch(2, Box, select: false);
+        staging.Current = queued[0];
+
+        staging.RemoveBatch(queued);
+
+        staging.Current.Should().BeSameAs(staging.Candidates[0], "a removed selection cannot stay; the strip picks what is left");
+    }
+
+    [Fact]
+    public void PruneAfterCancel_LeavesAnotherBatchsWaitingSlotsAlone()
+    {
+        var staging = new CanvasStagingViewModel();
+        var running = staging.AddBatch(2, Box);
+        var waiting = staging.AddBatch(2, Box, select: false);
+
+        var removed = staging.PruneAfterCancel(running);
+
+        removed.Should().Be(2);
+        staging.Candidates.Should().Equal(waiting);
+    }
+
+    [Fact]
+    public void AddBatch_RejectsAnEmptyBatch()
+    {
+        var staging = new CanvasStagingViewModel();
+
+        var act = () => staging.AddBatch(0, Box);
 
         act.Should().Throw<ArgumentOutOfRangeException>();
     }
@@ -123,7 +273,7 @@ public class CanvasStagingViewModelTests
     public void Accept_IsRefusedWhileTheCandidateIsStillRendering()
     {
         var staging = new CanvasStagingViewModel();
-        staging.BeginBatch(1, Box);
+        staging.AddBatch(1, Box);
 
         staging.AcceptCommand.CanExecute(null).Should().BeFalse();
 
@@ -177,7 +327,7 @@ public class CanvasStagingViewModelTests
     public void AcceptAll_AcceptsEveryReadyCandidateAndLeavesPendingSlotsAlone()
     {
         var staging = new CanvasStagingViewModel();
-        var candidates = staging.BeginBatch(3, Box);
+        var candidates = staging.AddBatch(3, Box);
         candidates[0].State = StagedCandidateState.Ready;
         candidates[2].State = StagedCandidateState.Ready;
         var accepted = new List<int>();
@@ -193,12 +343,12 @@ public class CanvasStagingViewModelTests
     public void PruneAfterCancel_RemovesEverySlotThatCanNeverHoldAnImage()
     {
         var staging = new CanvasStagingViewModel();
-        var candidates = staging.BeginBatch(4, Box);
+        var candidates = staging.AddBatch(4, Box);
         candidates[0].State = StagedCandidateState.Ready;
         candidates[1].State = StagedCandidateState.Cancelled;   // the one that was in flight
         // [2] and [3] never started.
 
-        var removed = staging.PruneAfterCancel();
+        var removed = staging.PruneAfterCancel(candidates);
 
         removed.Should().Be(3);
         staging.Candidates.Should().ContainSingle().Which.Should().BeSameAs(candidates[0],
@@ -213,11 +363,11 @@ public class CanvasStagingViewModelTests
     public void PruneAfterCancel_KeepsFailedSlotsBecauseTheirErrorIsWorthReading()
     {
         var staging = new CanvasStagingViewModel();
-        var candidates = staging.BeginBatch(2, Box);
+        var candidates = staging.AddBatch(2, Box);
         candidates[0].State = StagedCandidateState.Failed;
         candidates[0].StatusText = "the engine said no";
 
-        staging.PruneAfterCancel();
+        staging.PruneAfterCancel(candidates);
 
         staging.Candidates.Should().ContainSingle().Which.State.Should().Be(StagedCandidateState.Failed);
     }
@@ -226,7 +376,7 @@ public class CanvasStagingViewModelTests
     public void CurrentRectFollowsTheSelection()
     {
         var staging = new CanvasStagingViewModel();
-        staging.BeginBatch(2, Box);
+        staging.AddBatch(2, Box);
 
         staging.CurrentRect.Should().Be(Box);
 
@@ -238,7 +388,7 @@ public class CanvasStagingViewModelTests
     public void CurrentImageIsRaisedWhenTheSelectedCandidatesImageArrives()
     {
         var staging = new CanvasStagingViewModel();
-        staging.BeginBatch(1, Box);
+        staging.AddBatch(1, Box);
         var raised = new List<string?>();
         staging.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
 
@@ -267,5 +417,79 @@ public class CanvasStagingViewModelTests
 
         raised.Should().Contain(nameof(CanvasStagingViewModel.IsComparing));
         staging.IsComparing.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ALaterBatchIsNumberedOnFromWhatIsStaged()
+    {
+        // Review finding: every batch numbered its slots from 1, and the strip now holds several.
+        var staging = new CanvasStagingViewModel();
+        staging.AddBatch(2, Box);
+
+        staging.AddBatch(2, Box, select: false);
+
+        staging.Candidates.Select(c => c.Ordinal).Should().Equal(1, 2, 3, 4);
+    }
+
+    [Fact]
+    public void ADiscardedSlotsNumberIsNotHandedOutAgain()
+    {
+        var staging = new CanvasStagingViewModel();
+        var slots = staging.AddBatch(3, Box);
+        staging.Current = slots[2];
+        staging.DiscardCommand.Execute(null);
+
+        var added = staging.AddBatch(1, Box, select: false);
+
+        added[0].Ordinal.Should().Be(4, "slot 3 may still be named in the console");
+    }
+
+    [Fact]
+    public void DiscardingTheRenderingSlotKeepsTheSelectionFollowingTheRun()
+    {
+        // Review finding: the neighbour selected in its place was taken for the user's own choice, and
+        // the canvas preview stayed on it for the rest of the batch.
+        var staging = new CanvasStagingViewModel();
+        var slots = staging.AddBatch(4, Box);
+        staging.Follow(slots[0]);
+        staging.Follow(slots[1]);
+
+        staging.DiscardCommand.Execute(null);
+        staging.Follow(slots[2]);
+        staging.Follow(slots[3]);
+
+        staging.Current.Should().BeSameAs(slots[3]);
+    }
+
+    [Fact]
+    public void AcceptingTheSlotTheRunIsOnKeepsTheSelectionFollowingTheRun()
+    {
+        var staging = new CanvasStagingViewModel();
+        var slots = staging.AddBatch(3, Box);
+        staging.Follow(slots[0]);
+        slots[0].State = StagedCandidateState.Ready;
+        staging.RefreshCommands();
+
+        staging.AcceptCommand.Execute(null);
+        staging.Follow(slots[1]);
+        staging.Follow(slots[2]);
+
+        staging.Current.Should().BeSameAs(slots[2]);
+    }
+
+    [Fact]
+    public void ADiscardedSlotIsMarkedBeforeTheStripAnnouncesItsRemoval()
+    {
+        // The queue recounts its images when the strip changes. IsDisposed is still false at that
+        // moment (detach first, dispose second), so the count needs a flag that is already set.
+        var staging = new CanvasStagingViewModel();
+        staging.AddBatch(2, Box);
+        bool? markedWhenAnnounced = null;
+        staging.Candidates.CollectionChanged += (_, e) =>
+            markedWhenAnnounced = ((StagedCandidateViewModel)e.OldItems![0]!).IsDiscarded;
+
+        staging.DiscardCommand.Execute(null);
+
+        markedWhenAnnounced.Should().BeTrue();
     }
 }

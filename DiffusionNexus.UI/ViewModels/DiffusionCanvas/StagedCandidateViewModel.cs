@@ -86,6 +86,13 @@ public partial class StagedCandidateViewModel : ObservableObject, IDisposable
     public bool IsDisposed { get; private set; }
 
     /// <summary>
+    /// True from the moment the strip starts removing this candidate. Set before it is detached, so
+    /// whoever hears the strip change already sees it; <see cref="IsDisposed"/> only follows after the
+    /// detach, which is the order the bitmap needs.
+    /// </summary>
+    public bool IsDiscarded { get; internal set; }
+
+    /// <summary>
     /// Raised as the candidate is disposed. Exists so the staging view model's ordering contract —
     /// detach from the collection first, dispose second — is observable from a test.
     /// </summary>

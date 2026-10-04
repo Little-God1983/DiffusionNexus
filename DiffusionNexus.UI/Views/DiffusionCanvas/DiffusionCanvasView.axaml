@@ -8,7 +8,7 @@
     <vm:DiffusionCanvasViewModel/>
   </Design.DataContext>
 
-  <Grid RowDefinitions="Auto,*">
+  <Grid RowDefinitions="Auto,*,Auto">
 
     <!-- ─────────────────────────── Title bar (issue #518 region A) ─────────────────────────── -->
     <!-- Backend beside the VRAM gauges, because picking a model is a VRAM decision and the backend
@@ -209,11 +209,9 @@
                            FontSize="10" TextWrapping="Wrap" IsVisible="{Binding IsInpaintRun}" />
               </StackPanel>
 
-              <TextBlock Text="{Binding StatusText}" Foreground="#CCC" FontSize="11" TextWrapping="Wrap"
-                         MaxHeight="48" TextTrimming="CharacterEllipsis"
-                         ToolTip.Tip="{Binding StatusText}" />
-
-              <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="6">
+              <!-- The status line and Cancel live in the status bar at the bottom of the view (#598).
+                   Generate stays enabled while a batch runs: each press queues another. -->
+              <Grid ColumnDefinitions="Auto,*" ColumnSpacing="6">
                 <NumericUpDown Grid.Column="0" Value="{Binding BatchCount}" Minimum="1" Maximum="8"
                                Increment="1" Width="92" FormatString="0" ShowButtonSpinner="True"
                                ToolTip.Tip="How many candidates one Generate produces. They run one after another, because the engine keeps a single model resident." />
@@ -221,9 +219,8 @@
                         Command="{Binding GenerateCommand}"
                         Padding="12,7" FontWeight="SemiBold"
                         Background="#0E639C" Foreground="White"
-                        Content="{Binding BatchCount, StringFormat='Generate  ×{0}'}" />
-                <Button Grid.Column="2" Content="Cancel" Command="{Binding CancelCommand}" Padding="12,7"
-                        ToolTip.Tip="{Binding CancelTooltip}" />
+                        Content="{Binding BatchCount, StringFormat='Generate  ×{0}'}"
+                        ToolTip.Tip="Add a batch to the queue. While one is running, the new batch waits its turn with everything as it is on screen now." />
               </Grid>
             </StackPanel>
           </Border>
@@ -445,5 +442,72 @@
         </DockPanel>
       </Border>
     </Grid>
+
+    <!-- ─────────────────────────── Status bar (issue #518 region F, #598) ─────────────────────────── -->
+    <!-- Owns the queue: what is running, how much waits, how fast, and when it is done. Cancel sits
+         here, beside the progress it stops. -->
+    <Border Grid.Row="2" Name="StatusBar" Background="#1A1A1A" Padding="8,4"
+            BorderBrush="#333" BorderThickness="0,1,0,0">
+      <DockPanel LastChildFill="True">
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center"
+                    Margin="10,0,0,0">
+          <TextBlock Text="{Binding Queue.QueueText}" Foreground="#CCC" FontSize="11" VerticalAlignment="Center"
+                     IsVisible="{Binding Queue.IsBusy}"
+                     ToolTip.Tip="The image the running batch is on, and what waits behind it." />
+          <TextBlock Text="{Binding Queue.ThroughputText}" Foreground="#9AC" FontSize="11" VerticalAlignment="Center"
+                     IsVisible="{Binding Queue.IsBusy}"
+                     ToolTip.Tip="Sampling steps per second. A backend that reports no steps shows seconds per image once one has finished." />
+          <TextBlock Text="{Binding Queue.EtaText}" Foreground="#9AC" FontSize="11" VerticalAlignment="Center"
+                     IsVisible="{Binding Queue.IsBusy}"
+                     ToolTip.Tip="Estimated time until the whole queue is done. It is recomputed on every progress report." />
+
+          <Button Name="QueueButton" Content="Queue" Padding="10,3" IsEnabled="{Binding Queue.IsBusy}"
+                  ToolTip.Tip="The running batch and the batches waiting behind it. Remove one, or clear them all.">
+            <Button.Flyout>
+              <Flyout Placement="TopEdgeAlignedRight">
+                <StackPanel Spacing="6" MinWidth="320" MaxWidth="460">
+                  <TextBlock Text="Generation queue" FontWeight="SemiBold" />
+                  <!-- Generate is never disabled, so the list can outgrow the window; it scrolls and
+                       Clear queue stays reachable below it. -->
+                  <ScrollViewer MaxHeight="320" VerticalScrollBarVisibility="Auto">
+                  <ItemsControl ItemsSource="{Binding Queue.Batches}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:CanvasQueuedBatchViewModel">
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8" Margin="0,2">
+                          <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding Label}" FontSize="12" TextTrimming="CharacterEllipsis"
+                                       ToolTip.Tip="{Binding Label}" />
+                            <TextBlock Text="{Binding StateText}" FontSize="10" Opacity="0.7" />
+                          </StackPanel>
+                          <Button Grid.Column="1" Content="{Binding RemoveText}" Command="{Binding RemoveCommand}"
+                                  Padding="8,2" VerticalAlignment="Center" />
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                  </ScrollViewer>
+                  <Button Content="Clear queue" Command="{Binding Queue.ClearQueuedCommand}"
+                          HorizontalAlignment="Right"
+                          ToolTip.Tip="Remove every waiting batch. The running one carries on." />
+                </StackPanel>
+              </Flyout>
+            </Button.Flyout>
+          </Button>
+
+          <Button Content="Cancel" Command="{Binding CancelCommand}" Padding="10,3"
+                  ToolTip.Tip="{Binding CancelTooltip}" />
+        </StackPanel>
+
+        <!-- Why an earlier batch did not run, or a press was refused, while the queue carried on: the
+             status line is the running batch's and would have overwritten it within a second. -->
+        <TextBlock DockPanel.Dock="Right" Name="BatchNotice" Text="{Binding BatchNotice}" Foreground="#E0B050"
+                   FontSize="11" VerticalAlignment="Center" MaxWidth="300" Margin="10,0,0,0"
+                   TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding BatchNotice}"
+                   IsVisible="{Binding BatchNotice, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+        <TextBlock Text="{Binding StatusText}" Foreground="#CCC" FontSize="11" VerticalAlignment="Center"
+                   TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding StatusText}" />
+      </DockPanel>
+    </Border>
   </Grid>
 </UserControl>
