@@ -205,7 +205,7 @@ public partial class CanvasStagingViewModel : ObservableObject
 
         var index = Candidates.IndexOf(candidate);
         Candidates.Remove(candidate);
-        SelectAfterRemoval(index);
+        SelectAfterRemoval(index, candidate);
 
         CandidateAccepted?.Invoke(this, candidate);
     }
@@ -258,28 +258,22 @@ public partial class CanvasStagingViewModel : ObservableObject
         candidate.IsDiscarded = true;
         Candidates.Remove(candidate);
         if (wasCurrent)
-        {
-            SelectAfterRemoval(index);
-
-            // Discarding the slot that is rendering is not stepping away from the run: the neighbour
-            // was selected for the user, so the next image still takes the selection.
-            if (ReferenceEquals(candidate, _followed))
-                _followed = Current;
-        }
+            SelectAfterRemoval(index, candidate);
 
         // Detach first, dispose second — disposing a bitmap that is still bound faults the render.
         candidate.Dispose();
     }
 
-    private void SelectAfterRemoval(int removedIndex)
+    private void SelectAfterRemoval(int removedIndex, StagedCandidateViewModel removed)
     {
-        if (Candidates.Count == 0)
-        {
-            Current = null;
-            return;
-        }
+        Current = Candidates.Count == 0
+            ? null
+            : Candidates[Math.Clamp(removedIndex, 0, Candidates.Count - 1)];
 
-        Current = Candidates[Math.Clamp(removedIndex, 0, Candidates.Count - 1)];
+        // Accepting or discarding the slot the run is on is not stepping away from the run: the
+        // neighbour was selected for the user, so the next image still takes the selection.
+        if (ReferenceEquals(removed, _followed))
+            _followed = Current;
     }
 
     /// <summary>

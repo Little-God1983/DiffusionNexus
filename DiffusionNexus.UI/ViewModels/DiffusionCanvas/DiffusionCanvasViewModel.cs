@@ -1313,9 +1313,14 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
                 && gone.BackendKey == batch.BackendKey && (gone.ModelKey is null || gone.ModelKey == batch.ModelKey))
             {
                 skipped = true;
+                BatchNotice = $"Batches #{gone.FailedBatch} to #{item.Number} did not run: {gone.Reason}";
                 EmitInfo($"Batch #{item.Number} skipped: batch #{gone.FailedBatch} just found its {(gone.ModelKey is null ? "backend" : "model")} unavailable.");
                 return;
             }
+
+            // Only the batches directly behind the failure skip. Once another batch has run in
+            // between, time has passed and the answer may have changed.
+            _unavailable = null;
 
             StatusText = "Resolving backend…";
             BackendUnavailableMessage = null;
@@ -1323,7 +1328,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             var backend = await ResolveBackendAsync(batch.BackendKey, token).ConfigureAwait(true);
             if (backend is null)
             {
-                _unavailable = new Unavailable(batch.BackendKey, null, item.Number, _batchNumber);
+                _unavailable = new Unavailable(batch.BackendKey, null, item.Number, _batchNumber, BackendUnavailableMessage ?? StatusText);
                 return;
             }
 
@@ -1332,7 +1337,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             var descriptor = ResolveDescriptor(backend, batch.ModelKey, batch.ModelDisplayName);
             if (descriptor is null)
             {
-                _unavailable = new Unavailable(batch.BackendKey, batch.ModelKey, item.Number, _batchNumber);
+                _unavailable = new Unavailable(batch.BackendKey, batch.ModelKey, item.Number, _batchNumber, BackendUnavailableMessage ?? StatusText);
                 return;
             }
 
@@ -1471,8 +1476,13 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         {
             // The next batch starts in this same turn and takes the status line, so the reason this
             // one made nothing is kept where it stays readable.
+            // The banner text is this batch's only when this batch found the backend or model missing.
             if (!cancelled && !skipped && (failed || !reachedTheBackend) && Queue.QueuedCount > 0)
-                BatchNotice = $"Batch #{item.Number} did not run: {BackendUnavailableMessage ?? StatusText}";
+            {
+                BatchNotice = reachedTheBackend
+                    ? $"Batch #{item.Number} failed: {StatusText}"
+                    : $"Batch #{item.Number} did not run: {(_unavailable?.FailedBatch == item.Number ? _unavailable.Reason : StatusText)}";
+            }
 
             // Before the slots of a batch that did not run are removed below: that removal is the
             // batch's own, not the user discarding it.
@@ -1517,7 +1527,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     /// A backend (ModelKey null) or one of its models that a batch found unavailable, and the batches
     /// that were already queued then: those skip instead of asking again.
     /// </summary>
-    private sealed record Unavailable(string? BackendKey, string? ModelKey, int FailedBatch, int UpToBatch);
+    private sealed record Unavailable(string? BackendKey, string? ModelKey, int FailedBatch, int UpToBatch, string Reason);
 
     private Unavailable? _unavailable;
 
@@ -1525,8 +1535,9 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     private void RefusePress(string reason)
     {
         StatusText = reason;
-        if (Queue.IsBusy)
-            BatchNotice = reason;
+
+        // Idle, the status line keeps the reason, and an older notice would only contradict it.
+        BatchNotice = Queue.IsBusy ? reason : null;
     }
 
     /// <summary>The running batch while it is still before its first image, otherwise null.</summary>
@@ -1812,7 +1823,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             // canvas preview and strand the strip showing a candidate it no longer contains.
             if (candidate.IsDisposed)
             {
-                EmitInfo($"Batch #{queued.Number}: skipping candidate {i + 1}/{candidates.Count} — it was discarded before it ran.");
+                EmitInfo($"Batch #{queued.Number}: skipping candidate {candidate.Ordinal} ({i + 1}/{candidates.Count}) — it was discarded before it ran.");
                 Queue.ImageSkipped();
                 continue;
             }
@@ -1824,7 +1835,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             candidate.State = StagedCandidateState.Loading;
             candidate.StatusText = "Preparing…";
             StatusText = $"Generating {i + 1}/{candidates.Count}…";
-            EmitInfo($"Batch #{queued.Number}: starting candidate {i + 1}/{candidates.Count} at {Describe(candidate.WorldRect)}.");
+            EmitInfo($"Batch #{queued.Number}: starting candidate {candidate.Ordinal} ({i + 1}/{candidates.Count}) at {Describe(candidate.WorldRect)}.");
             Queue.ImageStarted();
 
             var request = new DiffusionRequest
@@ -1874,14 +1885,14 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
                         {
                             EmitWarning(
                                 failure is null
-                                    ? $"Candidate {i + 1}: the result is not decodable or not the box's size, so the pixels outside the mask are as the backend returned them."
-                                    : $"Candidate {i + 1}: putting the kept pixels back failed, so the pixels outside the mask are as the backend returned them.",
+                                    ? $"Candidate {candidate.Ordinal}: the result is not decodable or not the box's size, so the pixels outside the mask are as the backend returned them."
+                                    : $"Candidate {candidate.Ordinal}: putting the kept pixels back failed, so the pixels outside the mask are as the backend returned them.",
                                 failure);
                         }
                         else
                         {
                             delivered = item with { Result = result with { PngBytes = pasted } };
-                            EmitInfo($"Candidate {i + 1}: the original pixels outside the mask were put back.");
+                            EmitInfo($"Candidate {candidate.Ordinal}: the original pixels outside the mask were put back.");
                         }
                     }
 
@@ -1902,7 +1913,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             {
                 candidate.State = StagedCandidateState.Failed;
                 candidate.StatusText = ex.Message;
-                EmitError($"Candidate {i + 1} failed: {ex.Message}", ex);
+                EmitError($"Candidate {candidate.Ordinal} failed: {ex.Message}", ex);
             }
 
             // Only a finished image feeds the measured pace: a failure usually dies early and would make

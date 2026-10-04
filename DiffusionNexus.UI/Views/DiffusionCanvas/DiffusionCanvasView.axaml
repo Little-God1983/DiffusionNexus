@@ -501,7 +501,7 @@
         <!-- Why an earlier batch did not run, or a press was refused, while the queue carried on: the
              status line is the running batch's and would have overwritten it within a second. -->
         <TextBlock DockPanel.Dock="Right" Name="BatchNotice" Text="{Binding BatchNotice}" Foreground="#E0B050"
-                   FontSize="11" VerticalAlignment="Center" MaxWidth="520" Margin="10,0,0,0"
+                   FontSize="11" VerticalAlignment="Center" MaxWidth="300" Margin="10,0,0,0"
                    TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding BatchNotice}"
                    IsVisible="{Binding BatchNotice, Converter={x:Static ObjectConverters.IsNotNull}}" />
 

@@ -449,6 +449,22 @@ public class CanvasStagingViewModelTests
     }
 
     [Fact]
+    public void AcceptingTheSlotTheRunIsOnKeepsTheSelectionFollowingTheRun()
+    {
+        var staging = new CanvasStagingViewModel();
+        var slots = staging.AddBatch(3, Box);
+        staging.Follow(slots[0]);
+        slots[0].State = StagedCandidateState.Ready;
+        staging.RefreshCommands();
+
+        staging.AcceptCommand.Execute(null);
+        staging.Follow(slots[1]);
+        staging.Follow(slots[2]);
+
+        staging.Current.Should().BeSameAs(slots[2]);
+    }
+
+    [Fact]
     public void ADiscardedSlotIsMarkedBeforeTheStripAnnouncesItsRemoval()
     {
         // The queue recounts its images when the strip changes. IsDisposed is still false at that

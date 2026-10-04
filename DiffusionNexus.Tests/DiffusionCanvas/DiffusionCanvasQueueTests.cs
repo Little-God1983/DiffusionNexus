@@ -438,6 +438,7 @@ public class DiffusionCanvasQueueTests
         probes.Should().Be(1);
         vm.Staging.Candidates.Should().BeEmpty();
         vm.StatusText.Should().Be("Backend unavailable");
+        vm.BatchNotice.Should().StartWith("Batches #1 to #3 did not run:", "the skipped batches' slots vanish too");
 
         await vm.GenerateCommand.ExecuteAsync(null);
         probes.Should().Be(2, "a new press asks again: the user may have fixed it");
@@ -467,6 +468,25 @@ public class DiffusionCanvasQueueTests
 
         await vm.GenerateCommand.ExecuteAsync(null);
         vm.BatchNotice.Should().BeNull("an accepted press clears it");
+    }
+
+    [Fact]
+    public async Task APressRefusedWhileIdleClearsAnOlderNotice()
+    {
+        var backend = new FakeDiffusionBackend();
+        var vm = Canvas(backend);
+        backend.BeforeRun = run =>
+        {
+            vm.PromptText = " ";
+            vm.GenerateCommand.Execute(null);
+        };
+        await vm.GenerateCommand.ExecuteAsync(null);
+        vm.BatchNotice.Should().NotBeNull();
+
+        vm.GenerateCommand.Execute(null);
+
+        vm.StatusText.Should().Be("Please enter a prompt before generating.");
+        vm.BatchNotice.Should().BeNull("idle, the status line carries the reason and keeps it");
     }
 
     [Fact]
