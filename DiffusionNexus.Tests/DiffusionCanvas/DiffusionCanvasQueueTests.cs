@@ -382,6 +382,38 @@ public class DiffusionCanvasQueueTests
     }
 
     [Fact]
+    public async Task DiscardingEverySlotOfABatchThatIsStartingUpStopsIt()
+    {
+        // Review finding: only waiting batches were dropped for having no slot left. The running one
+        // carried on through a start-up that can take two minutes on a cold engine, for no image.
+        var backend = new FakeDiffusionBackend();
+        var vm = Canvas(backend);
+        vm.BatchCount = 2;
+        backend.BeforeAvailabilityCheck = () => vm.Staging.DiscardAllCommand.Execute(null);
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+
+        backend.RunCount.Should().Be(0, "nothing was left to make");
+        vm.StatusText.Should().Be("Cancelled.");
+        vm.IsGenerating.Should().BeFalse();
+        vm.Staging.Candidates.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ARefusedBatchIsNotReportedAsCancelled()
+    {
+        // The batch removes its own slots when it is refused; that must not read as the user
+        // discarding them, or the reason for the refusal would be replaced by "Cancelled.".
+        var backend = new FakeDiffusionBackend { IsAvailable = false };
+        var vm = Canvas(backend);
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+
+        vm.StatusText.Should().Be("Backend unavailable");
+        vm.Staging.Candidates.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task DiscardingAWaitingBatchsSlotsTakesItOutOfTheQueueAtOnce()
     {
         // Review finding: the bar kept saying "1 batch queued (8 images)" and the list kept the batch

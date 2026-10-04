@@ -270,11 +270,73 @@ public class CanvasGenerationQueueTests
 
         var first = h.Enqueue(h.Batch(1));
         var second = h.Enqueue(h.Batch(2));
-        await first;
 
-        h.Started.Should().Equal([2], "batch 1 was lost to the fault, but batch 2 must still run");
+        // Review finding: the fault used to skip batch 1's run, and with it the runner's clean-up of
+        // the batch's slots, which then stayed in the strip for good.
+        h.Started.Should().Equal([1], "a listener's fault must not cost the batch its run");
+        h.Finish(1);
+        await first;
+        h.Started.Should().Equal(1, 2);
         h.Finish(2);
         await second;
+        h.Queue.Batches.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AThrowingListenerAtEnqueueStillStartsTheWorker()
+    {
+        // Review finding: the readout was raised between setting the worker flag and starting the
+        // worker. A listener that threw there left the flag set with nothing running.
+        var h = new Harness();
+        var armed = true;
+        h.Queue.PropertyChanged += (_, e) =>
+        {
+            if (armed && e.PropertyName == nameof(CanvasGenerationQueue.QueueText))
+                throw new InvalidOperationException("a view handler blew up");
+        };
+
+        var first = h.Enqueue(h.Batch(1));
+        armed = false;
+
+        h.Started.Should().Equal(1);
+        h.Finish(1);
+        await first;
+        h.Queue.IsBusy.Should().BeFalse();
+    }
+
+    [Fact]
+    public void AThrowingListenerDoesNotBreakOutOfSlotsChanged()
+    {
+        // It is called from the strip's own change event; a throw would stop a Discard all part-way.
+        var h = new Harness();
+        h.Enqueue(h.Batch(1));
+        h.Queue.PropertyChanged += (_, _) => throw new InvalidOperationException("a view handler blew up");
+
+        var act = h.Queue.SlotsChanged;
+
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public async Task ACancelledBatchSaysSoUntilItHasUnwound()
+    {
+        // Review finding: the local backend cannot stop a sampling call, so a cancelled batch stays the
+        // running one for a while. Its row kept saying Running with a live Cancel that did nothing.
+        var h = new Harness();
+        var batch = h.Batch(1);
+        var gate = new TaskCompletionSource();
+        var task = h.Queue.Enqueue(batch, new CanvasBatchWork(Run: _ => gate.Task));
+        batch.RemoveCommand!.CanExecute(null).Should().BeTrue();
+
+        h.Queue.CancelRunning();
+
+        batch.IsCancelling.Should().BeTrue();
+        batch.StateText.Should().Be("Cancelling…");
+        batch.RemoveCommand.CanExecute(null).Should().BeFalse("a second Cancel has nothing left to stop");
+        h.Queue.Running.Should().BeSameAs(batch, "the backend has not unwound yet");
+
+        gate.SetResult();
+        await task;
         h.Queue.Batches.Should().BeEmpty();
     }
 
@@ -479,6 +541,67 @@ public class CanvasGenerationQueueTests
         // Counting the load would have made that image 69 s.
         h.Queue.EstimateRemaining().Should().Be(TimeSpan.FromSeconds(12.5));
         h.Queue.EtaText.Should().Be("ETA 0:13");
+    }
+
+    [Fact]
+    public void Eta_ForImageToImageCountsTheStepsTheBackendReallySamples()
+    {
+        // Review finding: with an init image the local backend samples only steps × denoise and reports
+        // that smaller total. The pace was per reported step but the ETA multiplied it by the steps
+        // asked for, so 20 steps at denoise 0.4 came out 2.5 times too long.
+        var h = new Harness();
+        h.Enqueue(h.Batch(1, images: 3, steps: 20));
+        h.Enqueue(h.Batch(2, images: 1, steps: 20));
+        h.Queue.ImageStarted();
+        h.Queue.ReportStep(1, 8, 2.0);
+        h.At(7);                                           // seven more steps and the decode: 1 s each
+        h.Queue.ReportStep(8, 8, 2.0);
+        h.Queue.ImageFinished(succeeded: true);
+        h.Queue.ImageStarted();
+
+        // Three images to go (this one, one not started, one queued), 8 sampled steps each at 1 s.
+        h.Queue.EstimateRemaining().Should().Be(TimeSpan.FromSeconds(24));
+
+        h.Queue.ReportStep(4, 8, 2.0);
+
+        // 4 steps left at 2 it/s = 2 s, plus two images of 8 sampled steps at the measured 1 s.
+        h.Queue.EstimateRemaining().Should().Be(TimeSpan.FromSeconds(18));
+    }
+
+    [Fact]
+    public async Task TheSampledShareIsNotCarriedIntoTheNextBatch()
+    {
+        // Text to image after image to image samples every step again.
+        var h = new Harness();
+        var first = h.Enqueue(h.Batch(1, images: 1, steps: 20));
+        h.Enqueue(h.Batch(2, images: 1, steps: 20));
+        h.Queue.ImageStarted();
+        h.Queue.ReportStep(1, 8, 2.0);
+        h.At(7);
+        h.Queue.ImageFinished(succeeded: true);
+        h.Finish(1);
+        await first;
+
+        h.Queue.EstimateRemaining().Should().Be(TimeSpan.FromSeconds(20));
+    }
+
+    [Fact]
+    public async Task SecondsPerImageFollowTheRunningBatchsSteps()
+    {
+        // Review finding: the s/image figure carried into a batch with twice the steps while the ETA
+        // already counted per step, so the two readouts contradicted each other.
+        var h = new Harness();
+        var first = h.Enqueue(h.Batch(1, images: 1, steps: 20));
+        h.Enqueue(h.Batch(2, images: 2, steps: 40));
+        h.Queue.ImageStarted();
+        h.At(10);
+        h.Queue.ImageFinished(succeeded: true);
+        h.Queue.ThroughputText.Should().Be("10 s/image");
+        h.Finish(1);
+        await first;
+
+        h.Queue.ThroughputText.Should().Be("20 s/image");
+        h.Queue.EstimateRemaining().Should().Be(TimeSpan.FromSeconds(40));
     }
 
     [Fact]

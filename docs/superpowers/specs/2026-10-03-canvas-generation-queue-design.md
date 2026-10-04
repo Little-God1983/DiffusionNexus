@@ -54,6 +54,16 @@ several.
   cold start's model load is not counted (a backend without steps can only measure the whole image; a
   warm image then replaces the cold one). It is kept for the next batch only when that batch runs on
   the same backend, model and box size, and dropped otherwise and when the queue goes idle.
+  It is counted in the steps the backend really samples: image to image on Core samples only
+  steps × denoise and reports that smaller total, so the ETA scales each image's asked-for steps by
+  the running batch's share (reported total / asked-for steps; 1 until the batch reports one, and for
+  a backend without steps). Waiting batches are estimated with the running batch's pace and share.
+  `s/image` is the per-step pace times the running batch's steps, so it agrees with the ETA.
+- A cancelled batch stays the running one until its backend has unwound; its row reads
+  `Cancelling…` and its Cancel is disabled meanwhile.
+- Discarding every slot of the running batch while it is still starting up (before its first image)
+  cancels it; after that each discarded slot is skipped.
+- The view's 1 s ETA timer runs only while the queue is busy.
 - Removing a queued batch removes its slots from the strip. Discarding a queued slot by hand still
   works: the count and the ETA leave it out at once, the batch skips it, and a waiting batch with
   every slot discarded leaves the queue.

@@ -39,17 +39,66 @@ public partial class DiffusionCanvasView : UserControl
     /// <summary>
     /// Ticks the status bar's ETA once a second. An image in flight counts down by elapsed time, which
     /// no progress event announces: the engine reports none at all between an image's start and its end.
-    /// Lives here because only a shown view needs it; the queue itself stays free of UI timers.
+    /// Lives here because only a shown view needs it; the queue itself stays free of UI timers. It runs
+    /// only while the shown view's queue is busy, which is a small part of a session.
     /// </summary>
     private DispatcherTimer? _etaTimer;
+
+    private CanvasGenerationQueue? _watchedQueue;
+    private bool _isAttached;
+
+    /// <summary>Follows <paramref name="queue"/>'s busy state with the ETA timer; null stops it.</summary>
+    private void WatchQueue(CanvasGenerationQueue? queue)
+    {
+        if (!ReferenceEquals(_watchedQueue, queue))
+        {
+            if (_watchedQueue is not null)
+                _watchedQueue.PropertyChanged -= OnQueuePropertyChanged;
+
+            _watchedQueue = queue;
+            if (queue is not null)
+                queue.PropertyChanged += OnQueuePropertyChanged;
+        }
+
+        SyncEtaTimer();
+    }
+
+    private void OnQueuePropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(CanvasGenerationQueue.IsBusy))
+            SyncEtaTimer();
+    }
+
+    private void SyncEtaTimer()
+    {
+        if (_watchedQueue is not { IsBusy: true })
+        {
+            _etaTimer?.Stop();
+            return;
+        }
+
+        _etaTimer ??= new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1) };
+        _etaTimer.Tick -= OnEtaTick;
+        _etaTimer.Tick += OnEtaTick;
+        _etaTimer.Start();
+    }
+
+    private void OnEtaTick(object? sender, EventArgs e) => _watchedQueue?.Tick();
+
+    protected override void OnDataContextChanged(EventArgs e)
+    {
+        base.OnDataContextChanged(e);
+
+        if (_isAttached)
+            WatchQueue(ViewModel?.Queue);
+    }
 
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
 
-        _etaTimer ??= new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background,
-            (_, _) => ViewModel?.Queue.Tick());
-        _etaTimer.Start();
+        _isAttached = true;
+        WatchQueue(ViewModel?.Queue);
 
         if (Surface is not { } surface)
             return;
@@ -65,7 +114,8 @@ public partial class DiffusionCanvasView : UserControl
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
-        _etaTimer?.Stop();
+        _isAttached = false;
+        WatchQueue(null);
 
         if (Surface is { } surface)
             surface.PropertyChanged -= OnSurfacePropertyChanged;

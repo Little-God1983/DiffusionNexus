@@ -67,12 +67,24 @@ public sealed partial class CanvasQueuedBatchViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(StateText), nameof(RemoveText))]
     private bool _isRunning;
 
+    /// <summary>
+    /// The batch was cancelled and its backend is still unwinding. The local backend cannot stop a
+    /// native sampling call, so this can last tens of seconds; the row says so instead of offering a
+    /// Cancel that would do nothing.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(StateText))]
+    private bool _isCancelling;
+
+    partial void OnIsCancellingChanged(bool value) => RemoveCommand?.NotifyCanExecuteChanged();
+
     /// <summary>Images of this batch that are over: finished, failed or skipped.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(StateText))]
     private int _imagesDone;
 
-    public string StateText => IsRunning ? $"Running · {Math.Min(ImagesDone + 1, ImageCount)}/{ImageCount}" : "Queued";
+    public string StateText => IsCancelling ? "Cancelling…"
+        : IsRunning ? $"Running · {Math.Min(ImagesDone + 1, ImageCount)}/{ImageCount}" : "Queued";
 
     /// <summary>The row button's caption: a running batch is cancelled, a queued one removed.</summary>
     public string RemoveText => IsRunning ? "Cancel" : "Remove";
@@ -126,8 +138,18 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
     // The pace, valid for _paceKey only.
     private string? _paceKey;
     private double _iterationsPerSecond;
+    /// <summary>Seconds per step the backend really sampled, the decode spread over them.</summary>
     private double? _secondsPerStep;
-    private double? _secondsPerImage;
+
+    /// <summary>The backend reported no steps, so the pace was measured on a whole image.</summary>
+    private bool _paceIsPerImage;
+
+    /// <summary>
+    /// How many steps the running batch samples per step it asked for. Image to image on the local
+    /// backend samples only steps × denoise of them and reports that smaller total, so an estimate in
+    /// asked-for steps would be several times too long. 1 until the batch reports a total.
+    /// </summary>
+    private double _stepShare = 1;
 
     /// <param name="trace">Unified Console sink (standing rule: every step is traced).</param>
     /// <param name="clock">Monotonic time source; a test seam for the ETA.</param>
@@ -165,7 +187,7 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
         ArgumentNullException.ThrowIfNull(work);
 
         batch.Work = work;
-        batch.RemoveCommand = new RelayCommand(() => Remove(batch));
+        batch.RemoveCommand = new RelayCommand(() => Remove(batch), () => !batch.IsCancelling);
         Batches.Add(batch);
 
         var start = !_pumping;
@@ -174,6 +196,9 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
         Trace(start
             ? $"Batch #{batch.Number} enqueued ({batch.ImageCount} image(s)); the queue was idle, starting it."
             : $"Batch #{batch.Number} enqueued ({batch.ImageCount} image(s)); {QueuedCount} waiting.");
+
+        // Guarded like every notification here: a listener that threw at this point would leave the
+        // worker flag set with no worker behind it.
         RaiseReadout();
 
         if (start)
@@ -209,10 +234,13 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
 
         try
         {
+            // Each notification guarded: a listener that threw here would skip the run, and with it
+            // the runner's own clean-up of the batch's slots.
             AdoptPaceOf(batch);
-            batch.IsRunning = true;
+            _stepShare = 1;
             ResetImageProgress();
-            IsBusy = true;
+            Guard(() => batch.IsRunning = true);
+            Guard(() => IsBusy = true);
             Trace($"Batch #{batch.Number} started.");
             RaiseReadout();
 
@@ -220,8 +248,8 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
         }
         catch (Exception ex)
         {
-            // The runner reports its own failures; this only keeps one broken batch, or one throwing
-            // property-changed handler, from stranding every batch queued behind it.
+            // The runner reports its own failures; this only keeps one broken batch from stranding
+            // every batch queued behind it.
             Trace($"Batch #{batch.Number} ended with an unhandled error: {ex.Message}");
         }
 
@@ -236,7 +264,7 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
         // Each step on its own: a handler that throws on one notification must not skip the rest, and
         // above all not the completion that whoever awaits this batch is waiting for.
         Guard(() => Batches.Remove(batch));
-        Guard(ResetImageProgress);
+        ResetImageProgress();
         Trace(cancelled ? $"Batch #{batch.Number} cancelled." : $"Batch #{batch.Number} finished.");
 
         if (Batches.Count == 0)
@@ -247,7 +275,7 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
             Trace("The generation queue is empty.");
         }
 
-        Guard(RaiseReadout);
+        RaiseReadout();
 
         // Last, so whoever awaits the batch sees the queue's state already settled.
         batch.Completion.TrySetResult();
@@ -270,6 +298,7 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
         if (cancelled is not null)
         {
             Trace($"Cancel requested for batch #{cancelled.Number}.");
+            Guard(() => cancelled.IsCancelling = true);
             Guard(() => cancelled.Work?.OnCancelling?.Invoke());
         }
 
@@ -338,7 +367,7 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
     public void Tick()
     {
         if (_running is not null)
-            OnPropertyChanged(nameof(EtaText));
+            Raise(nameof(EtaText));
     }
 
     /// <summary>Cancels the running batch and drops every queued one. For the owner's teardown.</summary>
@@ -353,7 +382,7 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
         if (ReferenceEquals(batch, _running) || !Batches.Remove(batch))
             return false;
 
-        Guard(RaiseReadout);
+        RaiseReadout();
         Guard(() => batch.Work?.OnDropped?.Invoke());
         batch.Completion.TrySetResult();
         return true;
@@ -398,6 +427,8 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
 
         _step = step;
         _totalSteps = totalSteps;
+        if (totalSteps > 0 && _running is { } running)
+            _stepShare = (double)totalSteps / running.Steps;
         if (iterationsPerSecond > 0 && double.IsFinite(iterationsPerSecond))
             _iterationsPerSecond = iterationsPerSecond;
         RaiseReadout();
@@ -412,15 +443,17 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
             if (_samplingStartedAt is { } samplingStarted)
             {
                 // From the first reported step to the end: sampling plus the decode, without the load.
+                // Counted in the steps the backend reported, which is what _stepShare converts to.
                 var steps = Math.Max(1, _totalSteps - _firstStep);
                 _secondsPerStep = (now - samplingStarted).TotalSeconds / steps;
+                _paceIsPerImage = false;
             }
             else
             {
                 // A backend that reports no steps: the whole image is all there is to measure. The
                 // latest image replaces the one before, so a cold first image stops counting after it.
-                _secondsPerImage = (now - _imageStartedAt).TotalSeconds;
-                _secondsPerStep = _secondsPerImage / batch.Steps;
+                _secondsPerStep = (now - _imageStartedAt).TotalSeconds / batch.Steps;
+                _paceIsPerImage = true;
             }
         }
 
@@ -470,7 +503,7 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
     {
         _iterationsPerSecond = 0;
         _secondsPerStep = null;
-        _secondsPerImage = null;
+        _paceIsPerImage = false;
     }
 
     // ────────────────────────────── Readout ──────────────────────────────
@@ -511,15 +544,17 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
     {
         get
         {
-            if (_running is null)
+            if (_running is not { } running)
                 return string.Empty;
 
             if (_iterationsPerSecond >= 1)
                 return string.Create(CultureInfo.InvariantCulture, $"{_iterationsPerSecond:0.0} it/s");
             if (_iterationsPerSecond > 0)
                 return string.Create(CultureInfo.InvariantCulture, $"{1 / _iterationsPerSecond:0.0} s/it");
-            if (_secondsPerImage is { } perImage)
-                return string.Create(CultureInfo.InvariantCulture, $"{perImage:0.#} s/image");
+            // From the per-step pace and this batch's steps, so it agrees with the ETA when the pace was
+            // measured on a batch with another step count.
+            if (_paceIsPerImage && _secondsPerStep is { } perStep)
+                return string.Create(CultureInfo.InvariantCulture, $"{perStep * running.Steps:0.#} s/image");
 
             return string.Empty;
         }
@@ -540,7 +575,8 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
     /// <summary>
     /// Time until the queue is empty, or null when nothing has been measured yet. Counted in steps, so a
     /// queued batch with more steps weighs more. Waiting batches are estimated at the running batch's
-    /// pace, which is the only one known; a batch that runs differently corrects it once it starts.
+    /// pace and its share of sampled steps, which are the only ones known; a batch that runs differently
+    /// corrects it once it starts.
     /// </summary>
     internal TimeSpan? EstimateRemaining()
     {
@@ -560,6 +596,9 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
                 stepsAhead += (double)PendingOf(batch) * batch.Steps;
         }
 
+        // Asked-for steps into the steps the backend samples, the unit the pace is in.
+        stepsAhead *= _stepShare;
+
         double current = 0;
         if (_imageInFlight)
         {
@@ -570,7 +609,7 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
             else
             {
                 var elapsed = (_clock() - _imageStartedAt).TotalSeconds;
-                current = Math.Max(0, running.Steps * perStep.Value - elapsed);
+                current = Math.Max(0, running.Steps * _stepShare * perStep.Value - elapsed);
             }
         }
 
@@ -588,12 +627,15 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
             : string.Create(CultureInfo.InvariantCulture, $"{minutes}:{seconds:00}");
     }
 
+    /// <summary>Each notification on its own guard, so one throwing listener cannot skip the rest or its caller.</summary>
     private void RaiseReadout()
     {
-        OnPropertyChanged(nameof(QueueText));
-        OnPropertyChanged(nameof(ThroughputText));
-        OnPropertyChanged(nameof(EtaText));
-        OnPropertyChanged(nameof(QueuedCount));
-        ClearQueuedCommand.NotifyCanExecuteChanged();
+        Raise(nameof(QueueText));
+        Raise(nameof(ThroughputText));
+        Raise(nameof(EtaText));
+        Raise(nameof(QueuedCount));
+        Guard(ClearQueuedCommand.NotifyCanExecuteChanged);
     }
+
+    private void Raise(string propertyName) => Guard(() => OnPropertyChanged(propertyName));
 }

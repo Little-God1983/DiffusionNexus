@@ -251,6 +251,7 @@ public partial class CanvasStagingViewModel : ObservableObject
         // Only the selected slot's removal picks a new selection. Removing another one, e.g. a waiting
         // batch's slots or a cancelled batch's, must leave the candidate the user is judging selected.
         var wasCurrent = ReferenceEquals(candidate, Current);
+        candidate.IsDiscarded = true;
         Candidates.Remove(candidate);
         if (wasCurrent)
             SelectAfterRemoval(index);

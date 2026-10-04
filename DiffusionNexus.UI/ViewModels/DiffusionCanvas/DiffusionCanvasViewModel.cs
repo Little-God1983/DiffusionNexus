@@ -633,7 +633,11 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         };
         // A discarded slot is an image the queue no longer has to make: its count and ETA follow, and a
         // waiting batch with no slot left leaves the queue.
-        Staging.Candidates.CollectionChanged += (_, _) => Queue.SlotsChanged();
+        Staging.Candidates.CollectionChanged += (_, _) =>
+        {
+            Queue.SlotsChanged();
+            StopAPreflightWithNothingLeftToMake();
+        };
         DeleteFrameCommand = new RelayCommand<GenerationFrameViewModel?>(DeleteFrame, CanvasLayerStackViewModel.CanDelete);
         WireCanvasEvents();
     }
@@ -1260,9 +1264,12 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             Run: token => RunQueuedBatchAsync(item, batch, token),
             OnDropped: () => OnQueuedBatchDropped(item, batch),
             OnCancelling: () => OnBatchCancelling(batch),
-            // Counted in the strip, not from the batch's size: a slot the user discarded will not run.
+            // Counted from the slots, not from the batch's size: a slot the user discarded will not run.
+            // The slot's own flag is cheaper to ask than searching the strip: this runs for every batch
+            // on every sampling step. Not IsDisposed, which is still false while the strip announces
+            // the removal.
             PendingImages: () => batch.Candidates.Count(
-                c => c.State == StagedCandidateState.Pending && Staging.Candidates.Contains(c))));
+                c => c.State == StagedCandidateState.Pending && !c.IsDiscarded)));
     }
 
     /// <summary>
@@ -1283,6 +1290,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         // False until the candidates start running. A batch refused or failed before that has produced
         // nothing, so its slots leave the strip with it.
         var reachedTheBackend = false;
+        _preflightBatch = batch;
 
         try
         {
@@ -1408,6 +1416,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             var maskImage = maskImagePath is null ? null : new DiffusionReferenceImage(maskImagePath);
 
             reachedTheBackend = true;
+            _preflightBatch = null;
             await RunBatchAsync(item, backend, descriptor, batch.Candidates, settings, initImage, maskImage, keptPixels, width, height, composed.Coverage, token)
                 .ConfigureAwait(true);
         }
@@ -1429,6 +1438,9 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         }
         finally
         {
+            // Before the slots of a batch that did not run are removed below: that removal is the
+            // batch's own, not the user discarding it.
+            _preflightBatch = null;
             DeleteScratchFile(regionImagePath);
             DeleteScratchFile(maskImagePath);
             keptPixels?.Dispose();
@@ -1465,12 +1477,33 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
 
     private bool CanCancel() => IsGenerating;
 
+    /// <summary>The running batch while it is still before its first image, otherwise null.</summary>
+    private PendingBatch? _preflightBatch;
+
+    /// <summary>
+    /// The user discarded every slot of the batch that is still starting up. Nothing is left to make, so
+    /// it is stopped here instead of waking the backend (up to two minutes on a cold engine) and
+    /// compositing a region for images nobody will see, with later batches waiting behind it. Once the
+    /// images run, each discarded slot is skipped at no cost, so only the start-up needs this.
+    /// </summary>
+    private void StopAPreflightWithNothingLeftToMake()
+    {
+        if (_preflightBatch is not { } batch || !batch.Candidates.All(c => c.IsDiscarded))
+            return;
+
+        _preflightBatch = null;
+        EmitInfo("Every slot of the batch that was starting up was discarded; stopping it.");
+        Queue.CancelRunning();
+    }
+
     /// <summary>
     /// The running batch is being cancelled, from the Cancel button or from its own row in the queue
     /// list: say so and drop its unfinished slots at once, before the backend has unwound.
     /// </summary>
     private void OnBatchCancelling(PendingBatch batch)
     {
+        // First: the pruning below empties the batch's slots, which is not the user discarding them.
+        _preflightBatch = null;
         StatusText = "Cancelling…";
 
         var pruned = Staging.PruneAfterCancel(batch.Candidates);

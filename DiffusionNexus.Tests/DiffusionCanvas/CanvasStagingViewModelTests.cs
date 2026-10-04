@@ -418,4 +418,20 @@ public class CanvasStagingViewModelTests
         raised.Should().Contain(nameof(CanvasStagingViewModel.IsComparing));
         staging.IsComparing.Should().BeTrue();
     }
+
+    [Fact]
+    public void ADiscardedSlotIsMarkedBeforeTheStripAnnouncesItsRemoval()
+    {
+        // The queue recounts its images when the strip changes. IsDisposed is still false at that
+        // moment (detach first, dispose second), so the count needs a flag that is already set.
+        var staging = new CanvasStagingViewModel();
+        staging.AddBatch(2, Box);
+        bool? markedWhenAnnounced = null;
+        staging.Candidates.CollectionChanged += (_, e) =>
+            markedWhenAnnounced = ((StagedCandidateViewModel)e.OldItems![0]!).IsDiscarded;
+
+        staging.DiscardCommand.Execute(null);
+
+        markedWhenAnnounced.Should().BeTrue();
+    }
 }
