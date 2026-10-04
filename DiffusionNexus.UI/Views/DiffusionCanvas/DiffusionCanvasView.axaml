@@ -467,6 +467,9 @@
               <Flyout Placement="TopEdgeAlignedRight">
                 <StackPanel Spacing="6" MinWidth="320" MaxWidth="460">
                   <TextBlock Text="Generation queue" FontWeight="SemiBold" />
+                  <!-- Generate is never disabled, so the list can outgrow the window; it scrolls and
+                       Clear queue stays reachable below it. -->
+                  <ScrollViewer MaxHeight="320" VerticalScrollBarVisibility="Auto">
                   <ItemsControl ItemsSource="{Binding Queue.Batches}">
                     <ItemsControl.ItemTemplate>
                       <DataTemplate x:DataType="vm:CanvasQueuedBatchViewModel">
@@ -482,6 +485,7 @@
                       </DataTemplate>
                     </ItemsControl.ItemTemplate>
                   </ItemsControl>
+                  </ScrollViewer>
                   <Button Content="Clear queue" Command="{Binding Queue.ClearQueuedCommand}"
                           HorizontalAlignment="Right"
                           ToolTip.Tip="Remove every waiting batch. The running one carries on." />
@@ -493,6 +497,13 @@
           <Button Content="Cancel" Command="{Binding CancelCommand}" Padding="10,3"
                   ToolTip.Tip="{Binding CancelTooltip}" />
         </StackPanel>
+
+        <!-- Why an earlier batch did not run, or a press was refused, while the queue carried on: the
+             status line is the running batch's and would have overwritten it within a second. -->
+        <TextBlock DockPanel.Dock="Right" Name="BatchNotice" Text="{Binding BatchNotice}" Foreground="#E0B050"
+                   FontSize="11" VerticalAlignment="Center" MaxWidth="520" Margin="10,0,0,0"
+                   TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding BatchNotice}"
+                   IsVisible="{Binding BatchNotice, Converter={x:Static ObjectConverters.IsNotNull}}" />
 
         <TextBlock Text="{Binding StatusText}" Foreground="#CCC" FontSize="11" VerticalAlignment="Center"
                    TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding StatusText}" />

@@ -537,10 +537,11 @@ public class CanvasGenerationQueueTests
 
         h.Queue.ReportStep(step: 5, totalSteps: 10, iterationsPerSecond: 2.0);
 
-        // 5 steps left at 2 it/s = 2.5 s, plus one image not started at the measured 1 s per step = 10 s.
-        // Counting the load would have made that image 69 s.
-        h.Queue.EstimateRemaining().Should().Be(TimeSpan.FromSeconds(12.5));
-        h.Queue.EtaText.Should().Be("ETA 0:13");
+        // 5 steps left at 2 it/s = 2.5 s, plus one image not started: the 9 s measured and half a
+        // second for the first step, which ran before its report = 9.5 s. Counting the load would have
+        // made that image 69 s.
+        h.Queue.EstimateRemaining().Should().Be(TimeSpan.FromSeconds(12));
+        h.Queue.EtaText.Should().Be("ETA 0:12");
     }
 
     [Fact]
@@ -554,7 +555,7 @@ public class CanvasGenerationQueueTests
         h.Enqueue(h.Batch(2, images: 1, steps: 20));
         h.Queue.ImageStarted();
         h.Queue.ReportStep(1, 8, 2.0);
-        h.At(7);                                           // seven more steps and the decode: 1 s each
+        h.At(7.5);                                         // with the first step's 0.5 s: 8 s an image
         h.Queue.ReportStep(8, 8, 2.0);
         h.Queue.ImageFinished(succeeded: true);
         h.Queue.ImageStarted();
@@ -577,7 +578,7 @@ public class CanvasGenerationQueueTests
         h.Enqueue(h.Batch(2, images: 1, steps: 20));
         h.Queue.ImageStarted();
         h.Queue.ReportStep(1, 8, 2.0);
-        h.At(7);
+        h.At(7.5);
         h.Queue.ImageFinished(succeeded: true);
         h.Finish(1);
         await first;
@@ -602,6 +603,23 @@ public class CanvasGenerationQueueTests
 
         h.Queue.ThroughputText.Should().Be("20 s/image");
         h.Queue.EstimateRemaining().Should().Be(TimeSpan.FromSeconds(40));
+    }
+
+    [Fact]
+    public void TheMeasuredPaceCountsTheStepThatRanBeforeItsReport()
+    {
+        // Review finding: a step is reported after it has run. Measuring from the first report left
+        // that step out, which for a one-step model is the whole sampling: only the decode was counted.
+        var h = new Harness();
+        h.Enqueue(h.Batch(1, images: 2, steps: 1));
+        h.Queue.ImageStarted();
+        h.At(2);                                           // the one step: 2 s
+        h.Queue.ReportStep(1, 1, 0.5);
+        h.At(3);                                           // the decode: 1 s
+        h.Queue.ImageFinished(succeeded: true);
+        h.Queue.ImageStarted();
+
+        h.Queue.EstimateRemaining().Should().Be(TimeSpan.FromSeconds(3));
     }
 
     [Fact]

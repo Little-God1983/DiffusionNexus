@@ -81,10 +81,14 @@ public partial class CanvasStagingViewModel : ObservableObject
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(count, 1);
 
+        // Numbered on from what is staged: the strip holds several batches at once, and a tile number
+        // that repeats cannot be told apart in the strip or in the console.
+        var last = Candidates.Count == 0 ? 0 : Candidates.Max(c => c.Ordinal);
+
         var created = new List<StagedCandidateViewModel>(count);
         for (var i = 0; i < count; i++)
         {
-            var candidate = new StagedCandidateViewModel(i + 1, worldRect);
+            var candidate = new StagedCandidateViewModel(last + i + 1, worldRect);
             Candidates.Add(candidate);
             created.Add(candidate);
         }
@@ -254,7 +258,14 @@ public partial class CanvasStagingViewModel : ObservableObject
         candidate.IsDiscarded = true;
         Candidates.Remove(candidate);
         if (wasCurrent)
+        {
             SelectAfterRemoval(index);
+
+            // Discarding the slot that is rendering is not stepping away from the run: the neighbour
+            // was selected for the user, so the next image still takes the selection.
+            if (ReferenceEquals(candidate, _followed))
+                _followed = Current;
+        }
 
         // Detach first, dispose second — disposing a bitmap that is still bound faults the render.
         candidate.Dispose();

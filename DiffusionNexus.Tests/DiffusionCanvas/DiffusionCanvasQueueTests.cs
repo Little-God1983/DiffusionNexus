@@ -414,6 +414,62 @@ public class DiffusionCanvasQueueTests
     }
 
     [Fact]
+    public async Task BatchesQueuedBehindAnUnavailableBackendDoNotEachAskAgain()
+    {
+        // Review finding: every waiting batch repeated the availability probe, which on a dead engine
+        // is a start attempt of up to two minutes each, for the same answer.
+        var backend = new FakeDiffusionBackend { IsAvailable = false };
+        var vm = Canvas(backend);
+        var probes = 0;
+        Task? second = null, third = null;
+        backend.BeforeAvailabilityCheck = () =>
+        {
+            if (++probes != 1)
+                return;
+
+            second = vm.GenerateCommand.ExecuteAsync(null);
+            third = vm.GenerateCommand.ExecuteAsync(null);
+        };
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+        await second!;
+        await third!;
+
+        probes.Should().Be(1);
+        vm.Staging.Candidates.Should().BeEmpty();
+        vm.StatusText.Should().Be("Backend unavailable");
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+        probes.Should().Be(2, "a new press asks again: the user may have fixed it");
+    }
+
+    [Fact]
+    public async Task APressRefusedWhileABatchRunsKeepsItsReasonReadable()
+    {
+        // Review finding: the reason went to the status line, which the running batch's progress
+        // overwrites within a second.
+        var backend = new FakeDiffusionBackend();
+        var vm = Canvas(backend);
+        backend.BeforeRun = run =>
+        {
+            if (run != 1)
+                return;
+
+            vm.PromptText = " ";
+            vm.GenerateCommand.Execute(null);
+            vm.PromptText = "first prompt";
+        };
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+
+        vm.BatchNotice.Should().Be("Please enter a prompt before generating.");
+        vm.StatusText.Should().NotContain("enter a prompt", "the batch's own progress took the status line");
+
+        await vm.GenerateCommand.ExecuteAsync(null);
+        vm.BatchNotice.Should().BeNull("an accepted press clears it");
+    }
+
+    [Fact]
     public async Task DiscardingAWaitingBatchsSlotsTakesItOutOfTheQueueAtOnce()
     {
         // Review finding: the bar kept saying "1 batch queued (8 images)" and the list kept the batch

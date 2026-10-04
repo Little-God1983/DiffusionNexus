@@ -420,6 +420,35 @@ public class CanvasStagingViewModelTests
     }
 
     [Fact]
+    public void ALaterBatchIsNumberedOnFromWhatIsStaged()
+    {
+        // Review finding: every batch numbered its slots from 1, and the strip now holds several.
+        var staging = new CanvasStagingViewModel();
+        staging.AddBatch(2, Box);
+
+        staging.AddBatch(2, Box, select: false);
+
+        staging.Candidates.Select(c => c.Ordinal).Should().Equal(1, 2, 3, 4);
+    }
+
+    [Fact]
+    public void DiscardingTheRenderingSlotKeepsTheSelectionFollowingTheRun()
+    {
+        // Review finding: the neighbour selected in its place was taken for the user's own choice, and
+        // the canvas preview stayed on it for the rest of the batch.
+        var staging = new CanvasStagingViewModel();
+        var slots = staging.AddBatch(4, Box);
+        staging.Follow(slots[0]);
+        staging.Follow(slots[1]);
+
+        staging.DiscardCommand.Execute(null);
+        staging.Follow(slots[2]);
+        staging.Follow(slots[3]);
+
+        staging.Current.Should().BeSameAs(slots[3]);
+    }
+
+    [Fact]
     public void ADiscardedSlotIsMarkedBeforeTheStripAnnouncesItsRemoval()
     {
         // The queue recounts its images when the strip changes. IsDisposed is still false at that

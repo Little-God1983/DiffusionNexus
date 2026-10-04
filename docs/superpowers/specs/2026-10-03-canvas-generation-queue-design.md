@@ -64,6 +64,15 @@ several.
 - Discarding every slot of the running batch while it is still starting up (before its first image)
   cancels it; after that each discarded slot is skipped.
 - The view's 1 s ETA timer runs only while the queue is busy.
+- Slots are numbered on from what is staged, so two batches in the strip never share a number.
+- The step that ran before its first report is added to the measured pace at the reported rate
+  (it matters for 1- to 8-step models).
+- A batch that did not run, or a press refused while a batch runs, leaves its reason in the status
+  bar's notice (`BatchNotice`) until the next accepted press; the status line itself belongs to the
+  running batch.
+- When a batch finds its backend or model unavailable, the batches already queued for the same one
+  skip without asking again. A new press asks again.
+- The queue list scrolls (max height 320).
 - Removing a queued batch removes its slots from the strip. Discarding a queued slot by hand still
   works: the count and the ETA leave it out at once, the batch skips it, and a waiting batch with
   every slot discarded leaves the queue.

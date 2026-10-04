@@ -444,8 +444,15 @@ public sealed partial class CanvasGenerationQueue : ObservableObject
             {
                 // From the first reported step to the end: sampling plus the decode, without the load.
                 // Counted in the steps the backend reported, which is what _stepShare converts to.
-                var steps = Math.Max(1, _totalSteps - _firstStep);
-                _secondsPerStep = (now - samplingStarted).TotalSeconds / steps;
+                // The first report comes after its step has run, so that step is not in the elapsed
+                // time. With 20 steps that is noise; with a 4-step model it is a quarter of the image,
+                // and with one step all of it. It is added at the reported rate; without a rate the
+                // measured time is spread over the steps it covers.
+                var elapsed = (now - samplingStarted).TotalSeconds;
+                var total = Math.Max(1, _totalSteps);
+                _secondsPerStep = _iterationsPerSecond > 0
+                    ? (elapsed + _firstStep / _iterationsPerSecond) / total
+                    : elapsed / Math.Max(1, total - _firstStep);
                 _paceIsPerImage = false;
             }
             else

@@ -144,6 +144,14 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private string _statusText = "Idle";
 
+    /// <summary>
+    /// Why a batch did not run or a press was refused while the queue carried on. The status line
+    /// belongs to the running batch and is overwritten within a second, so the reason is kept here
+    /// until the next Generate press that is accepted.
+    /// </summary>
+    [ObservableProperty]
+    private string? _batchNotice;
+
     /// <summary>Backend availability message; non-null when the backend cannot be initialized.</summary>
     [ObservableProperty]
     private string? _backendUnavailableMessage;
@@ -1182,13 +1190,13 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     {
         if (string.IsNullOrWhiteSpace(PromptText))
         {
-            StatusText = "Please enter a prompt before generating.";
+            RefusePress("Please enter a prompt before generating.");
             return Task.CompletedTask;
         }
 
         if (SelectedModel is not { } model || string.IsNullOrEmpty(model.Key))
         {
-            StatusText = "Select a model before generating.";
+            RefusePress("Select a model before generating.");
             return Task.CompletedTask;
         }
 
@@ -1206,12 +1214,13 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             var alignment = Box.Alignment;
             if (Box.Width % alignment != 0 || Box.Height % alignment != 0)
             {
-                StatusText = $"The box must be a multiple of {alignment} px for {selected.DisplayName}.";
+                RefusePress($"The box must be a multiple of {alignment} px for {selected.DisplayName}.");
                 EmitWarning($"Refused to generate: box {Box.Width}x{Box.Height} is not aligned to {alignment}.");
                 return Task.CompletedTask;
             }
         }
 
+        BatchNotice = null;
         var region = Box.WorldRect;
 
         // Snapshot the whole panel once for the whole batch. The user is free to keep editing while a
@@ -1290,22 +1299,42 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         // False until the candidates start running. A batch refused or failed before that has produced
         // nothing, so its slots leave the strip with it.
         var reachedTheBackend = false;
+        var cancelled = false;
+        var failed = false;
+        var skipped = false;
         _preflightBatch = batch;
 
         try
         {
+            // The backend or the model was just found unavailable for a batch queued before this one.
+            // Asking again per waiting batch costs a full engine start each (up to two minutes), for
+            // the same answer. A new press asks again.
+            if (_unavailable is { } gone && item.Number <= gone.UpToBatch
+                && gone.BackendKey == batch.BackendKey && (gone.ModelKey is null || gone.ModelKey == batch.ModelKey))
+            {
+                skipped = true;
+                EmitInfo($"Batch #{item.Number} skipped: batch #{gone.FailedBatch} just found its {(gone.ModelKey is null ? "backend" : "model")} unavailable.");
+                return;
+            }
+
             StatusText = "Resolving backend…";
             BackendUnavailableMessage = null;
 
             var backend = await ResolveBackendAsync(batch.BackendKey, token).ConfigureAwait(true);
             if (backend is null)
+            {
+                _unavailable = new Unavailable(batch.BackendKey, null, item.Number, _batchNumber);
                 return;
+            }
 
             EmitInfo($"Backend resolved: {backend.DisplayName}.");
 
             var descriptor = ResolveDescriptor(backend, batch.ModelKey, batch.ModelDisplayName);
             if (descriptor is null)
+            {
+                _unavailable = new Unavailable(batch.BackendKey, batch.ModelKey, item.Number, _batchNumber);
                 return;
+            }
 
             EmitInfo($"Model resolved: {descriptor.DisplayName} (alignment {descriptor.DimensionAlignment}).");
 
@@ -1425,6 +1454,7 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
             // Caught before the generic handler so a user cancel is never reported as a failure. The
             // filter matters: HttpClient signals its own timeout as a TaskCanceledException, and an engine
             // that is alive but wedged would otherwise be reported as "Cancelled." with no diagnostic.
+            cancelled = true;
             StatusText = "Cancelled.";
             EmitInfo($"Batch #{item.Number} cancelled by the user.");
             var pruned = Staging.PruneAfterCancel(batch.Candidates);
@@ -1433,11 +1463,17 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
+            failed = true;
             EmitError($"Generation failed: {ex.Message}", ex);
             StatusText = $"Error: {ex.Message}";
         }
         finally
         {
+            // The next batch starts in this same turn and takes the status line, so the reason this
+            // one made nothing is kept where it stays readable.
+            if (!cancelled && !skipped && (failed || !reachedTheBackend) && Queue.QueuedCount > 0)
+                BatchNotice = $"Batch #{item.Number} did not run: {BackendUnavailableMessage ?? StatusText}";
+
             // Before the slots of a batch that did not run are removed below: that removal is the
             // batch's own, not the user discarding it.
             _preflightBatch = null;
@@ -1476,6 +1512,22 @@ public partial class DiffusionCanvasViewModel : ObservableObject, IDisposable
     private void Cancel() => Queue.CancelRunning();
 
     private bool CanCancel() => IsGenerating;
+
+    /// <summary>
+    /// A backend (ModelKey null) or one of its models that a batch found unavailable, and the batches
+    /// that were already queued then: those skip instead of asking again.
+    /// </summary>
+    private sealed record Unavailable(string? BackendKey, string? ModelKey, int FailedBatch, int UpToBatch);
+
+    private Unavailable? _unavailable;
+
+    /// <summary>Refuses a Generate press. While a batch runs its progress overwrites the status line at once, so the reason is also kept as the notice.</summary>
+    private void RefusePress(string reason)
+    {
+        StatusText = reason;
+        if (Queue.IsBusy)
+            BatchNotice = reason;
+    }
 
     /// <summary>The running batch while it is still before its first image, otherwise null.</summary>
     private PendingBatch? _preflightBatch;
