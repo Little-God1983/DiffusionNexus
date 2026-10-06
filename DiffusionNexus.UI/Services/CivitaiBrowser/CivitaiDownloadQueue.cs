@@ -674,14 +674,10 @@ public sealed class CivitaiDownloadQueue : ObservableObject
 
     public void Remove(CivitaiDownloadJob job)
     {
-        // If the tile is removed mid-download, cancel the in-flight transfer first
-        // so we don't keep streaming bytes for a job no one is watching. A claimed job still
-        // waiting for a worker slot reads Queued but already has a runner, which would start
-        // the transfer once a slot frees — so the claim decides, not the status.
-        if (job.Status == JobStatus.Downloading || IsClaimed(job))
-        {
-            job.CancelByUser();
-        }
+        // Cancel before removing, whatever the status, so no runner keeps working for a job no one
+        // is watching: a mid-download transfer stops, and a job still waiting for a worker slot —
+        // Queued, but already owned by a runner — never starts. Harmless for a job with no runner.
+        job.CancelByUser();
         Jobs.Remove(job);
         Persist();
         RaiseCountsChanged();
@@ -883,49 +879,22 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             batch = _liveBatch;
         }
 
-        try
-        {
-            var tasks = pending.Select(job => RunGatedAsync(job, ct)).ToList();
-            lock (_batchLock) batch.Tasks.AddRange(tasks);
+        var tasks = pending.Select(job => RunGatedAsync(job, ct)).ToList();
+        lock (_batchLock) batch.Tasks.AddRange(tasks);
 
-            // Drain until no job joined while we were waiting.
-            while (true)
-            {
-                Task[] snapshot;
-                lock (_batchLock) snapshot = batch.Tasks.ToArray();
-                try
-                {
-                    await Task.WhenAll(snapshot);
-                }
-                catch (Exception ex)
-                {
-                    // A runner can throw from the part of RunJobAsync outside its try — e.g. a
-                    // removed job cancelled during its destination lookup. Leaving here would end
-                    // the batch while the other runners still download, and every job queued
-                    // after that would wait for a Start again. Every task in the snapshot has
-                    // finished either way; keep draining. A cancellation is the user's Abort or
-                    // Remove landing, not a fault.
-                    if (ex is OperationCanceledException)
-                        _logger?.Debug(LogCategory.Download, "CivitaiQueue",
-                            $"A download worker was cancelled before its transfer began: {ex.Message}");
-                    else
-                        _logger?.Warn(LogCategory.Download, "CivitaiQueue",
-                            $"A download worker stopped with an error: {ex.Message}");
-                }
-                lock (_batchLock)
-                {
-                    if (batch.Tasks.Count != snapshot.Length) continue;
-                    if (_liveBatch == batch) _liveBatch = null;
-                    break;
-                }
-            }
-        }
-        finally
+        // Drain until no job joined while we were waiting. Runners never throw (see
+        // RunGatedCoreAsync), so the only way out is the clean exit below — a fault would
+        // otherwise end the batch while other runners still download.
+        while (true)
         {
-            // A runner that threw skips the clean exit above; never leave a dead batch live.
+            Task[] snapshot;
+            lock (_batchLock) snapshot = batch.Tasks.ToArray();
+            await Task.WhenAll(snapshot);
             lock (_batchLock)
             {
+                if (batch.Tasks.Count != snapshot.Length) continue;
                 if (_liveBatch == batch) _liveBatch = null;
+                break;
             }
         }
         RaiseCountsChanged();
@@ -998,12 +967,6 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     {
         lock (_scheduledLock) _scheduled.Remove(job);
     }
-
-    private bool IsClaimed(CivitaiDownloadJob job)
-    {
-        lock (_scheduledLock) return _scheduled.Contains(job);
-    }
-
     private async Task RunGatedCoreAsync(CivitaiDownloadJob job, CancellationToken runCt)
     {
         // Link the run-wide cancel (queue Start cycle / Clear all) with the per-job
@@ -1029,6 +992,27 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         try
         {
             await RunJobAsync(job, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Cancelled in the part of RunJobAsync before its own try (destination lookup, space
+            // check) — the same moment as cancelling while waiting for a slot, so the same outcome:
+            // Cancelled for the user's Cancel/Remove, untouched (Queued, re-run by Start) for Abort.
+            if (job.WasCancelledByUser)
+            {
+                job.Status = JobStatus.Cancelled;
+                job.StatusMessage = "Cancelled";
+            }
+        }
+        catch (Exception ex)
+        {
+            // Anything else from that part (a settings or path failure). Escaping here used to end
+            // Start's whole batch, or surface from Retry as an unhandled command exception, while
+            // the tile sat at Queued with no reason shown.
+            job.Status = JobStatus.Failed;
+            job.StatusMessage = ex.Message;
+            _logger?.Warn(LogCategory.Download, "CivitaiQueue",
+                $"{job.ModelName} — {job.VersionName} failed before its transfer began: {ex.Message}");
         }
         finally
         {
