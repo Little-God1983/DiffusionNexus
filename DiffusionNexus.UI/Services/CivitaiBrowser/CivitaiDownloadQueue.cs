@@ -675,8 +675,10 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     public void Remove(CivitaiDownloadJob job)
     {
         // If the tile is removed mid-download, cancel the in-flight transfer first
-        // so we don't keep streaming bytes for a job no one is watching.
-        if (job.Status == JobStatus.Downloading)
+        // so we don't keep streaming bytes for a job no one is watching. A claimed job still
+        // waiting for a worker slot reads Queued but already has a runner, which would start
+        // the transfer once a slot frees — so the claim decides, not the status.
+        if (job.Status == JobStatus.Downloading || IsClaimed(job))
         {
             job.CancelByUser();
         }
@@ -891,7 +893,25 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             {
                 Task[] snapshot;
                 lock (_batchLock) snapshot = batch.Tasks.ToArray();
-                await Task.WhenAll(snapshot);
+                try
+                {
+                    await Task.WhenAll(snapshot);
+                }
+                catch (Exception ex)
+                {
+                    // A runner can throw from the part of RunJobAsync outside its try — e.g. a
+                    // removed job cancelled during its destination lookup. Leaving here would end
+                    // the batch while the other runners still download, and every job queued
+                    // after that would wait for a Start again. Every task in the snapshot has
+                    // finished either way; keep draining. A cancellation is the user's Abort or
+                    // Remove landing, not a fault.
+                    if (ex is OperationCanceledException)
+                        _logger?.Debug(LogCategory.Download, "CivitaiQueue",
+                            $"A download worker was cancelled before its transfer began: {ex.Message}");
+                    else
+                        _logger?.Warn(LogCategory.Download, "CivitaiQueue",
+                            $"A download worker stopped with an error: {ex.Message}");
+                }
                 lock (_batchLock)
                 {
                     if (batch.Tasks.Count != snapshot.Length) continue;
@@ -977,6 +997,11 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     private void Unclaim(CivitaiDownloadJob job)
     {
         lock (_scheduledLock) _scheduled.Remove(job);
+    }
+
+    private bool IsClaimed(CivitaiDownloadJob job)
+    {
+        lock (_scheduledLock) return _scheduled.Contains(job);
     }
 
     private async Task RunGatedCoreAsync(CivitaiDownloadJob job, CancellationToken runCt)

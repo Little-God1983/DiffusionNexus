@@ -263,6 +263,31 @@ public sealed class CivitaiDownloadQueueStartResumeTests : IDisposable
     }
 
     [Fact]
+    public async Task Remove_StopsAJobWaitingForAWorkerSlot()
+    {
+        // A job waiting for a slot is Queued but already owned by a runner. Remove used to stop
+        // only Downloading jobs, so a late job the user removed still downloaded once a slot
+        // freed — with no tile left to show it.
+        var downloader = new BlockingDownloader();
+        var queue = Queue(downloader);
+        queue.Jobs.Add(NewJob(versionId: 1));
+        queue.Jobs.Add(NewJob(versionId: 2));
+
+        var start = queue.StartAllAsync();
+        await WaitForCallsAsync(() => downloader.CallCount, 2);
+
+        var late = NewJob(versionId: 3);
+        queue.Jobs.Add(late);
+        queue.Remove(late);
+
+        downloader.Release(3);
+        await start;
+
+        downloader.CallsByVersion.GetValueOrDefault(3).Should().Be(0,
+            "a removed job must not download");
+    }
+
+    [Fact]
     public async Task AbortAllActive_StopsLateJobsFromJoiningTheBatch()
     {
         // Abort ends the run. A model queued afterwards waits for the next Start, even though
