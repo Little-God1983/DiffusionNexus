@@ -109,7 +109,6 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         OnPropertyChanged(nameof(TotalQueuedBytes));
         OnPropertyChanged(nameof(TotalQueuedBytesDisplay));
 
-        // After the recompute, so the verdict the join consults already counts the new bytes.
         // Add only: a Move also carries NewItems, and moving a tile is not queueing it.
         if (e.Action == NotifyCollectionChangedAction.Add && e.NewItems is not null)
             JoinLiveBatch(e.NewItems.Cast<CivitaiDownloadJob>());
@@ -119,7 +118,14 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     /// Schedules jobs added while a Start batch is running into that batch, so the queue keeps
     /// going instead of stopping after the jobs Start saw. Nothing joins once the batch's epoch
     /// is cancelled (Abort, Clear all): those jobs wait for the next Start, as they would have
-    /// before it ran. The free-space verdict gates a join the way it gates Start.
+    /// before it ran.
+    /// <para>
+    /// Not gated on <see cref="SpaceWarning"/>: a late job that does not fit would stay Queued,
+    /// keep that queue-wide verdict up and turn away every job added after it, the stop this
+    /// exists to remove. Each joined job meets <see cref="RefuseForSpace"/> when it gets its
+    /// slot instead, as a Retry does, with a full reading taken after the jobs ahead of it
+    /// have landed.
+    /// </para>
     /// </summary>
     private void JoinLiveBatch(IEnumerable<CivitaiDownloadJob> added)
     {
@@ -129,17 +135,6 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         RunBatch? batch;
         lock (_batchLock) batch = _liveBatch;
         if (batch is null || batch.Token.IsCancellationRequested) return;
-
-        if (HasSpaceWarning)
-        {
-            foreach (var job in jobs)
-            {
-                job.StatusMessage = "Not started — not enough free space on the destination drive.";
-            }
-            _logger?.Warn(LogCategory.Download, "CivitaiQueue",
-                $"{jobs.Count} job(s) added during the run were not started — {SpaceWarning}");
-            return;
-        }
 
         _logger?.Info(LogCategory.Download, "CivitaiQueue",
             $"Adding {jobs.Count} newly queued download(s) to the running batch.");

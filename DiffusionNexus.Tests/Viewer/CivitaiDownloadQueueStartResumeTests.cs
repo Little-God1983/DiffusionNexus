@@ -21,6 +21,7 @@ namespace DiffusionNexus.Tests.Viewer;
 /// picked up they would instantly land back at Cancelled without a <c>ResetForRetry</c>.</item>
 /// </list>
 /// </summary>
+[Collection(DispatcherDrainCollection.Name)]
 public sealed class CivitaiDownloadQueueStartResumeTests : IDisposable
 {
     private readonly string _tempDir = Directory.CreateTempSubdirectory("dn-queue-start-resume-tests").FullName;
@@ -282,11 +283,25 @@ public sealed class CivitaiDownloadQueueStartResumeTests : IDisposable
         late.Status.Should().Be(JobStatus.Queued);
     }
 
-    [Fact]
-    public async Task ALateJobThatDoesNotFit_IsNotJoined()
+    private CivitaiDownloadJob SizedJob(int versionId, long sizeBytes) => new()
     {
-        // The free-space verdict gates a join the way it gates Start: a late 50 GB job aimed at
-        // a drive with 10 GB free stays Queued and says why.
+        ModelId = 100,
+        VersionId = versionId,
+        ModelName = "Test Model",
+        VersionName = $"v{versionId}",
+        FileName = $"test{versionId}.safetensors",
+        DownloadUrl = $"https://civitai.test/api/download/models/{versionId}",
+        SizeBytes = sizeBytes,
+        CustomTargetDirectory = _tempDir,
+        CivitaiVersion = new CivitaiModelVersion { Id = versionId, Name = $"v{versionId}" },
+    };
+
+    [Fact]
+    public async Task ALateJobThatDoesNotFit_FailsAlone_AndDoesNotBlockLaterJobs()
+    {
+        // A late 50 GB job aimed at a drive with 10 GB free is refused by the per-job check at
+        // commit time. It must not hold the queue-wide warning up and turn away the 100 MB LoRA
+        // queued after it — that stopped the queue after the old jobs again, which is #604.
         var downloader = new BlockingDownloader();
         var queue = Queue(downloader);
         queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Known(10L << 30);
@@ -295,26 +310,18 @@ public sealed class CivitaiDownloadQueueStartResumeTests : IDisposable
         var start = queue.StartAllAsync();
         await downloader.FirstCallStarted.Task;
 
-        var huge = new CivitaiDownloadJob
-        {
-            ModelId = 100,
-            VersionId = 2,
-            ModelName = "Huge",
-            VersionName = "v2",
-            FileName = "huge.safetensors",
-            DownloadUrl = "https://civitai.test/api/download/models/2",
-            SizeBytes = 50L << 30,
-            CustomTargetDirectory = _tempDir,
-            CivitaiVersion = new CivitaiModelVersion { Id = 2, Name = "v2" },
-        };
+        var huge = SizedJob(versionId: 2, sizeBytes: 50L << 30);
         queue.Jobs.Add(huge);
+        queue.Jobs.Add(SizedJob(versionId: 3, sizeBytes: 100L << 20));
 
-        downloader.Release(1);
+        downloader.Release(2);
         await start;
 
         downloader.CallsByVersion.GetValueOrDefault(2).Should().Be(0);
-        huge.Status.Should().Be(JobStatus.Queued);
-        huge.StatusMessage.Should().Contain("not enough free space");
+        huge.Status.Should().Be(JobStatus.Failed);
+        huge.StatusMessage.Should().StartWith("Not enough free space");
+        downloader.CallsByVersion.GetValueOrDefault(3).Should().Be(1,
+            "a job that fits runs even though an earlier late job did not");
     }
 
     [Fact]

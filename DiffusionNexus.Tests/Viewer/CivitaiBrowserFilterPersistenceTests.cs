@@ -20,6 +20,7 @@ namespace DiffusionNexus.Tests.Viewer;
 /// <c>LoraViewerFilterPersistenceTests.BrowserMirror_SelectionSurvivesSourceClearAndRefill</c>), and
 /// the full Save-button-to-AppSettings-to-restore round trip via <see cref="CivitaiBrowserViewModel.EnsureLoadedAsync"/>.
 /// </summary>
+[Collection(DispatcherDrainCollection.Name)]
 public sealed class CivitaiBrowserFilterPersistenceTests
 {
     private static CivitaiBrowserViewModel CreateVm(

@@ -18,6 +18,7 @@ namespace DiffusionNexus.Tests.Viewer;
 /// disabled, and no way to re-run the check. Covers the on-demand recheck and the
 /// gate's job set, margin, unreachable/unknown split and Start-time re-verification.
 /// </summary>
+[Collection(DispatcherDrainCollection.Name)]
 public sealed class CivitaiDownloadQueueSpaceRecheckTests : IDisposable
 {
     private const long Gb = 1L << 30;

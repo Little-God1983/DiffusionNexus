@@ -20,6 +20,7 @@ namespace DiffusionNexus.Tests.Viewer;
 /// job state after the awaited call drains it once with <c>Dispatcher.UIThread.RunJobs()</c>.
 /// </para>
 /// </summary>
+[Collection(DispatcherDrainCollection.Name)]
 public sealed class CivitaiDownloadQueueOutcomeMappingTests : IDisposable
 {
     private readonly string _tempDir = Directory.CreateTempSubdirectory("dn-queue-outcome-tests").FullName;
