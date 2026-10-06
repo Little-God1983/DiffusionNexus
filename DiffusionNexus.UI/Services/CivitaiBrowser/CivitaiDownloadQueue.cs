@@ -51,6 +51,21 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     private readonly HashSet<CivitaiDownloadJob> _scheduled = new();
     private readonly object _scheduledLock = new();
 
+    /// <summary>
+    /// The Start batch currently draining, or null when no Start is running. A job added while
+    /// it runs joins it (issue #604) — Start used to snapshot its jobs once, so anything queued
+    /// mid-run sat at Queued and the queue stopped after the last "old" job.
+    /// </summary>
+    private RunBatch? _liveBatch;
+    private readonly object _batchLock = new();
+
+    /// <summary>One Start's runners, on one run epoch. The list only grows.</summary>
+    private sealed class RunBatch(CancellationToken token)
+    {
+        public CancellationToken Token { get; } = token;
+        public List<Task> Tasks { get; } = [];
+    }
+
     public CivitaiDownloadQueue(ICivitaiModelDownloader? downloader)
         : this(downloader, null, null, null)
     {
@@ -93,6 +108,46 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         RecomputeSpaceWarning();
         OnPropertyChanged(nameof(TotalQueuedBytes));
         OnPropertyChanged(nameof(TotalQueuedBytesDisplay));
+
+        // After the recompute, so the verdict the join consults already counts the new bytes.
+        // Add only: a Move also carries NewItems, and moving a tile is not queueing it.
+        if (e.Action == NotifyCollectionChangedAction.Add && e.NewItems is not null)
+            JoinLiveBatch(e.NewItems.Cast<CivitaiDownloadJob>());
+    }
+
+    /// <summary>
+    /// Schedules jobs added while a Start batch is running into that batch, so the queue keeps
+    /// going instead of stopping after the jobs Start saw. Nothing joins once the batch's epoch
+    /// is cancelled (Abort, Clear all): those jobs wait for the next Start, as they would have
+    /// before it ran. The free-space verdict gates a join the way it gates Start.
+    /// </summary>
+    private void JoinLiveBatch(IEnumerable<CivitaiDownloadJob> added)
+    {
+        var jobs = added.Where(j => j.Status == JobStatus.Queued).ToList();
+        if (jobs.Count == 0) return;
+
+        RunBatch? batch;
+        lock (_batchLock) batch = _liveBatch;
+        if (batch is null || batch.Token.IsCancellationRequested) return;
+
+        if (HasSpaceWarning)
+        {
+            foreach (var job in jobs)
+            {
+                job.StatusMessage = "Not started — not enough free space on the destination drive.";
+            }
+            _logger?.Warn(LogCategory.Download, "CivitaiQueue",
+                $"{jobs.Count} job(s) added during the run were not started — {SpaceWarning}");
+            return;
+        }
+
+        _logger?.Info(LogCategory.Download, "CivitaiQueue",
+            $"Adding {jobs.Count} newly queued download(s) to the running batch.");
+        foreach (var job in jobs)
+        {
+            var task = RunGatedAsync(job, batch.Token);
+            lock (_batchLock) batch.Tasks.Add(task);
+        }
     }
 
     private void HookJob(CivitaiDownloadJob j) => j.PropertyChanged += OnJobPropertyChanged;
@@ -820,8 +875,44 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         var pending = Jobs.Where(j => j.Status is JobStatus.Queued or JobStatus.Cancelled).ToList();
         _logger?.Info(LogCategory.Download, "CivitaiQueue",
             $"Starting {pending.Count} download(s) (max concurrency: {_maxConcurrency})");
-        var tasks = pending.Select(job => RunGatedAsync(job, ct)).ToList();
-        await Task.WhenAll(tasks);
+
+        // Publish the batch before scheduling, so a job added from here on joins it. A second
+        // Start on the same epoch shares the batch; one on a fresh epoch (after an Abort)
+        // replaces it and leaves the old one to drain on its own.
+        RunBatch batch;
+        lock (_batchLock)
+        {
+            if (_liveBatch is null || _liveBatch.Token != ct) _liveBatch = new RunBatch(ct);
+            batch = _liveBatch;
+        }
+
+        try
+        {
+            var tasks = pending.Select(job => RunGatedAsync(job, ct)).ToList();
+            lock (_batchLock) batch.Tasks.AddRange(tasks);
+
+            // Drain until no job joined while we were waiting.
+            while (true)
+            {
+                Task[] snapshot;
+                lock (_batchLock) snapshot = batch.Tasks.ToArray();
+                await Task.WhenAll(snapshot);
+                lock (_batchLock)
+                {
+                    if (batch.Tasks.Count != snapshot.Length) continue;
+                    if (_liveBatch == batch) _liveBatch = null;
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            // A runner that threw skips the clean exit above; never leave a dead batch live.
+            lock (_batchLock)
+            {
+                if (_liveBatch == batch) _liveBatch = null;
+            }
+        }
         RaiseCountsChanged();
         Persist();
         var failedCount = ErrorCount;

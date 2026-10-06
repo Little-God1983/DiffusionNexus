@@ -2,6 +2,7 @@ using Avalonia.Threading;
 using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Utilities;
 using DiffusionNexus.UI.Services.CivitaiBrowser;
 using DiffusionNexus.UI.Services.Download;
 using FluentAssertions;
@@ -209,6 +210,127 @@ public sealed class CivitaiDownloadQueueStartResumeTests : IDisposable
 
         downloader.CallsByVersion.GetValueOrDefault(3).Should().Be(1,
             "the gate-waiting job must not be scheduled a second time by a coalescing Start");
+    }
+
+    [Fact]
+    public async Task StartAllAsync_RunsAJobAddedWhileTheBatchIsRunning()
+    {
+        // Issue #604: Start snapshotted the Queued jobs once, so a model the user queued while
+        // the batch was downloading sat at Queued forever and the queue stopped after the last
+        // "old" job.
+        var downloader = new BlockingDownloader();
+        var queue = Queue(downloader);
+        queue.Jobs.Add(NewJob(versionId: 1));
+
+        var start = queue.StartAllAsync();
+        await downloader.FirstCallStarted.Task;
+
+        queue.Jobs.Add(NewJob(versionId: 2));
+        await WaitForCallsAsync(() => downloader.CallCount, 2);
+
+        // The batch is not over while the late job still runs.
+        downloader.Release(1);
+        await Task.Delay(50);
+        start.IsCompleted.Should().BeFalse("Start's batch includes the job added while it ran");
+
+        downloader.Release(1);
+        await start;
+
+        downloader.CallsByVersion.GetValueOrDefault(2).Should().Be(1,
+            "a job queued while the batch is running joins it");
+    }
+
+    [Fact]
+    public async Task StartAllAsync_LateJobsWaitForAFreeWorkerSlot()
+    {
+        var downloader = new BlockingDownloader();
+        var queue = Queue(downloader);
+        queue.Jobs.Add(NewJob(versionId: 1));
+        queue.Jobs.Add(NewJob(versionId: 2));
+
+        var start = queue.StartAllAsync();
+        await WaitForCallsAsync(() => downloader.CallCount, 2);
+
+        queue.Jobs.Add(NewJob(versionId: 3));
+        await Task.Delay(50);
+        downloader.CallCount.Should().Be(2, "the pool is two wide; the late job waits behind the gate");
+
+        downloader.Release(3);
+        await start;
+
+        downloader.CallsByVersion.GetValueOrDefault(3).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task AbortAllActive_StopsLateJobsFromJoiningTheBatch()
+    {
+        // Abort ends the run. A model queued afterwards waits for the next Start, even though
+        // the aborted batch has not finished draining yet.
+        var downloader = new BlockingDownloader();
+        var queue = Queue(downloader);
+        queue.Jobs.Add(NewJob(versionId: 1));
+
+        var start = queue.StartAllAsync();
+        await downloader.FirstCallStarted.Task;
+
+        queue.AbortAllActive();
+        var late = NewJob(versionId: 2);
+        queue.Jobs.Add(late);
+        await start;
+
+        downloader.CallsByVersion.GetValueOrDefault(2).Should().Be(0);
+        late.Status.Should().Be(JobStatus.Queued);
+    }
+
+    [Fact]
+    public async Task ALateJobThatDoesNotFit_IsNotJoined()
+    {
+        // The free-space verdict gates a join the way it gates Start: a late 50 GB job aimed at
+        // a drive with 10 GB free stays Queued and says why.
+        var downloader = new BlockingDownloader();
+        var queue = Queue(downloader);
+        queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Known(10L << 30);
+        queue.Jobs.Add(NewJob(versionId: 1));
+
+        var start = queue.StartAllAsync();
+        await downloader.FirstCallStarted.Task;
+
+        var huge = new CivitaiDownloadJob
+        {
+            ModelId = 100,
+            VersionId = 2,
+            ModelName = "Huge",
+            VersionName = "v2",
+            FileName = "huge.safetensors",
+            DownloadUrl = "https://civitai.test/api/download/models/2",
+            SizeBytes = 50L << 30,
+            CustomTargetDirectory = _tempDir,
+            CivitaiVersion = new CivitaiModelVersion { Id = 2, Name = "v2" },
+        };
+        queue.Jobs.Add(huge);
+
+        downloader.Release(1);
+        await start;
+
+        downloader.CallsByVersion.GetValueOrDefault(2).Should().Be(0);
+        huge.Status.Should().Be(JobStatus.Queued);
+        huge.StatusMessage.Should().Contain("not enough free space");
+    }
+
+    [Fact]
+    public async Task AJobAddedWithNoBatchRunning_WaitsForStart()
+    {
+        var downloader = new InstantDownloader();
+        var queue = Queue(downloader);
+        queue.Jobs.Add(NewJob(versionId: 1));
+        await queue.StartAllAsync();
+
+        var late = NewJob(versionId: 2);
+        queue.Jobs.Add(late);
+        await Task.Delay(50);
+
+        downloader.CallCount.Should().Be(1, "the batch is over; nothing runs without a Start");
+        late.Status.Should().Be(JobStatus.Queued);
     }
 
     [Fact]
