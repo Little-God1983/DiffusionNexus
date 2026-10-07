@@ -2,6 +2,7 @@ using Avalonia.Threading;
 using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Utilities;
 using DiffusionNexus.UI.Services.CivitaiBrowser;
 using DiffusionNexus.UI.Services.Download;
 using FluentAssertions;
@@ -20,6 +21,7 @@ namespace DiffusionNexus.Tests.Viewer;
 /// picked up they would instantly land back at Cancelled without a <c>ResetForRetry</c>.</item>
 /// </list>
 /// </summary>
+[Collection(DispatcherDrainCollection.Name)]
 public sealed class CivitaiDownloadQueueStartResumeTests : IDisposable
 {
     private readonly string _tempDir = Directory.CreateTempSubdirectory("dn-queue-start-resume-tests").FullName;
@@ -86,7 +88,7 @@ public sealed class CivitaiDownloadQueueStartResumeTests : IDisposable
         downloader, logger: null, civitaiClient: null, destination: null,
         persistPathOverride: Path.Combine(_tempDir, $"q-{Guid.NewGuid():N}.json"));
 
-    private CivitaiDownloadJob NewJob(int versionId = 1) => new()
+    private CivitaiDownloadJob NewJob(int versionId = 1, long sizeBytes = 0) => new()
     {
         ModelId = 100,
         VersionId = versionId,
@@ -96,6 +98,7 @@ public sealed class CivitaiDownloadQueueStartResumeTests : IDisposable
         Category = "LORA",
         FileName = "test.safetensors",
         DownloadUrl = "https://civitai.test/api/download/models/1",
+        SizeBytes = sizeBytes,
         CustomTargetDirectory = _tempDir,
         CivitaiVersion = new CivitaiModelVersion { Id = versionId, Name = $"v{versionId}" },
         Status = JobStatus.Queued,
@@ -209,6 +212,279 @@ public sealed class CivitaiDownloadQueueStartResumeTests : IDisposable
 
         downloader.CallsByVersion.GetValueOrDefault(3).Should().Be(1,
             "the gate-waiting job must not be scheduled a second time by a coalescing Start");
+    }
+
+    [Fact]
+    public async Task StartAllAsync_RunsAJobAddedWhileTheBatchIsRunning()
+    {
+        // Issue #604: Start snapshotted the Queued jobs once, so a model the user queued while
+        // the batch was downloading sat at Queued forever and the queue stopped after the last
+        // "old" job.
+        var downloader = new BlockingDownloader();
+        var queue = Queue(downloader);
+        queue.Jobs.Add(NewJob(versionId: 1));
+
+        var start = queue.StartAllAsync();
+        await downloader.FirstCallStarted.Task;
+
+        queue.Jobs.Add(NewJob(versionId: 2));
+        await WaitForCallsAsync(() => downloader.CallCount, 2);
+
+        // The batch is not over while the late job still runs.
+        downloader.Release(1);
+        await Task.Delay(50);
+        start.IsCompleted.Should().BeFalse("Start's batch includes the job added while it ran");
+
+        downloader.Release(1);
+        await start;
+
+        downloader.CallsByVersion.GetValueOrDefault(2).Should().Be(1,
+            "a job queued while the batch is running joins it");
+    }
+
+    [Fact]
+    public async Task StartAllAsync_LateJobsWaitForAFreeWorkerSlot()
+    {
+        var downloader = new BlockingDownloader();
+        var queue = Queue(downloader);
+        queue.Jobs.Add(NewJob(versionId: 1));
+        queue.Jobs.Add(NewJob(versionId: 2));
+
+        var start = queue.StartAllAsync();
+        await WaitForCallsAsync(() => downloader.CallCount, 2);
+
+        queue.Jobs.Add(NewJob(versionId: 3));
+        await Task.Delay(50);
+        downloader.CallCount.Should().Be(2, "the pool is two wide; the late job waits behind the gate");
+
+        downloader.Release(3);
+        await start;
+
+        downloader.CallsByVersion.GetValueOrDefault(3).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Remove_StopsAJobWaitingForAWorkerSlot()
+    {
+        // A job waiting for a slot is Queued but already owned by a runner. Remove used to stop
+        // only Downloading jobs, so a late job the user removed still downloaded once a slot
+        // freed — with no tile left to show it.
+        var downloader = new BlockingDownloader();
+        var queue = Queue(downloader);
+        queue.Jobs.Add(NewJob(versionId: 1));
+        queue.Jobs.Add(NewJob(versionId: 2));
+
+        var start = queue.StartAllAsync();
+        await WaitForCallsAsync(() => downloader.CallCount, 2);
+
+        var late = NewJob(versionId: 3);
+        queue.Jobs.Add(late);
+        queue.Remove(late);
+
+        downloader.Release(3);
+        await start;
+
+        downloader.CallsByVersion.GetValueOrDefault(3).Should().Be(0,
+            "a removed job must not download");
+    }
+
+    [Fact]
+    public async Task AbortAllActive_StopsLateJobsFromJoiningTheBatch()
+    {
+        // Abort ends the run. A model queued afterwards waits for the next Start, even though
+        // the aborted batch has not finished draining yet.
+        var downloader = new BlockingDownloader();
+        var queue = Queue(downloader);
+        queue.Jobs.Add(NewJob(versionId: 1));
+
+        var start = queue.StartAllAsync();
+        await downloader.FirstCallStarted.Task;
+
+        queue.AbortAllActive();
+        var late = NewJob(versionId: 2);
+        queue.Jobs.Add(late);
+        await start;
+
+        downloader.CallsByVersion.GetValueOrDefault(2).Should().Be(0);
+        late.Status.Should().Be(JobStatus.Queued);
+    }
+
+    [Fact]
+    public async Task ALateJobThatDoesNotFit_FailsAlone_AndDoesNotBlockLaterJobs()
+    {
+        // A late 50 GB job aimed at a drive with 10 GB free is refused by the per-job check at
+        // commit time. It must not hold the queue-wide warning up and turn away the 100 MB LoRA
+        // queued after it — that stopped the queue after the old jobs again, which is #604.
+        var downloader = new BlockingDownloader();
+        var queue = Queue(downloader);
+        queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Known(10L << 30);
+        queue.Jobs.Add(NewJob(versionId: 1));
+
+        var start = queue.StartAllAsync();
+        await downloader.FirstCallStarted.Task;
+
+        var huge = NewJob(versionId: 2, sizeBytes: 50L << 30);
+        queue.Jobs.Add(huge);
+        queue.Jobs.Add(NewJob(versionId: 3, sizeBytes: 100L << 20));
+
+        downloader.Release(2);
+        await start;
+
+        downloader.CallsByVersion.GetValueOrDefault(2).Should().Be(0);
+        huge.Status.Should().Be(JobStatus.Failed);
+        huge.StatusMessage.Should().StartWith("Not enough free space");
+        downloader.CallsByVersion.GetValueOrDefault(3).Should().Be(1,
+            "a job that fits runs even though an earlier late job did not");
+    }
+
+    [Fact]
+    public async Task ARefusedJob_HandsItsFailureToTheUiThread_InsteadOfWritingItInPlace()
+    {
+        // RefuseForSpace runs after ConfigureAwait(false). Status and StatusMessage are bound on
+        // the tile, so a write in place raises PropertyChanged on a pool thread and Avalonia
+        // throws "Call from invalid thread" — the hazard ApplySpaceState already marshals around.
+        // The headless host answers CheckAccess() true from every thread, so the routing is
+        // asserted through the UiInvoke seam: the Failed write must happen inside it.
+        var downloader = new BlockingDownloader();
+        var queue = Queue(downloader);
+        queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Known(10L << 30);
+        var marshalDepth = new ThreadLocal<int>();
+        queue.UiInvoke = action =>
+        {
+            marshalDepth.Value++;
+            try { action(); }
+            finally { marshalDepth.Value--; }
+        };
+        queue.Jobs.Add(NewJob(versionId: 1));
+
+        var start = queue.StartAllAsync();
+        await downloader.FirstCallStarted.Task;
+
+        var huge = NewJob(versionId: 2, sizeBytes: 50L << 30);
+        bool? failedInsideMarshal = null;
+        huge.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(CivitaiDownloadJob.Status) && huge.Status == JobStatus.Failed)
+                failedInsideMarshal = marshalDepth.Value > 0;
+        };
+        queue.Jobs.Add(huge);
+
+        downloader.Release(1);
+        await start;
+
+        huge.Status.Should().Be(JobStatus.Failed);
+        failedInsideMarshal.Should().BeTrue("the terminal tile write has to be handed to the UI thread");
+    }
+
+    [Fact]
+    public async Task AStartedJob_FlipsToDownloadingThroughTheUiMarshal_NotInPlace()
+    {
+        // The Downloading flip follows the ConfigureAwait(false) on the space check, so in place
+        // it lands on a pool thread: the bound tile sees it off the dispatcher, and the status
+        // hook's RecomputeSpaceWarning enumerates Jobs while the UI thread may be adding a late
+        // job to it ("Collection was modified", swallowed, stale verdict).
+        var downloader = new BlockingDownloader();
+        var queue = Queue(downloader);
+        var marshalDepth = new ThreadLocal<int>();
+        queue.UiInvoke = action =>
+        {
+            marshalDepth.Value++;
+            try { action(); }
+            finally { marshalDepth.Value--; }
+        };
+        var job = NewJob(versionId: 1);
+        bool? downloadingInsideMarshal = null;
+        job.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(CivitaiDownloadJob.Status) && job.Status == JobStatus.Downloading)
+                downloadingInsideMarshal = marshalDepth.Value > 0;
+        };
+        queue.Jobs.Add(job);
+
+        var start = queue.StartAllAsync();
+        await downloader.FirstCallStarted.Task;
+        downloader.Release(1);
+        await start;
+
+        downloadingInsideMarshal.Should().BeTrue("every bound tile write from a worker goes through the UI marshal");
+    }
+
+    [Fact]
+    public async Task AFinishedWorker_RaisesTheCountsThroughTheUiMarshal()
+    {
+        // The worker's finally used to raise ActiveCount/CompletedCount/ErrorCount and persist on
+        // the pool thread: the counts are bound, and Persist enumerates Jobs while the UI thread
+        // may be adding a late job to it.
+        var downloader = new BlockingDownloader();
+        var queue = Queue(downloader);
+        var marshalDepth = new ThreadLocal<int>();
+        queue.UiInvoke = action =>
+        {
+            marshalDepth.Value++;
+            try { action(); }
+            finally { marshalDepth.Value--; }
+        };
+        queue.Jobs.Add(NewJob(versionId: 1));
+
+        var start = queue.StartAllAsync();
+        await downloader.FirstCallStarted.Task;
+        var raisedInsideMarshal = 0;
+        queue.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(CivitaiDownloadQueue.ActiveCount) && marshalDepth.Value > 0)
+                raisedInsideMarshal++;
+        };
+        downloader.Release(1);
+        await start;
+
+        raisedInsideMarshal.Should().BeGreaterThanOrEqualTo(1,
+            "the worker's finally hands the counts and the persist to the UI thread");
+    }
+
+    [Fact]
+    public async Task AJobWithNoDestination_FailsThroughTheUiMarshal()
+    {
+        // No per-job override, no Destination folder picked and no enabled source: the worker
+        // fails the job before the transfer. That write happens off the dispatcher too.
+        var queue = Queue(new InstantDownloader());
+        var marshalDepth = new ThreadLocal<int>();
+        queue.UiInvoke = action =>
+        {
+            marshalDepth.Value++;
+            try { action(); }
+            finally { marshalDepth.Value--; }
+        };
+        var job = NewJob(versionId: 1);
+        job.CustomTargetDirectory = null;
+        bool? failedInsideMarshal = null;
+        job.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(CivitaiDownloadJob.Status) && job.Status == JobStatus.Failed)
+                failedInsideMarshal = marshalDepth.Value > 0;
+        };
+        queue.Jobs.Add(job);
+
+        await queue.StartAllAsync();
+
+        job.Status.Should().Be(JobStatus.Failed);
+        job.StatusMessage.Should().StartWith("No download destination set");
+        failedInsideMarshal.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task AJobAddedWithNoBatchRunning_WaitsForStart()
+    {
+        var downloader = new InstantDownloader();
+        var queue = Queue(downloader);
+        queue.Jobs.Add(NewJob(versionId: 1));
+        await queue.StartAllAsync();
+
+        var late = NewJob(versionId: 2);
+        queue.Jobs.Add(late);
+        await Task.Delay(50);
+
+        downloader.CallCount.Should().Be(1, "the batch is over; nothing runs without a Start");
+        late.Status.Should().Be(JobStatus.Queued);
     }
 
     [Fact]

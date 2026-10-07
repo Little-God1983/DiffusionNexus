@@ -51,6 +51,21 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     private readonly HashSet<CivitaiDownloadJob> _scheduled = new();
     private readonly object _scheduledLock = new();
 
+    /// <summary>
+    /// The Start batch currently draining, or null when no Start is running. A job added while
+    /// it runs joins it (issue #604) — Start used to snapshot its jobs once, so anything queued
+    /// mid-run sat at Queued and the queue stopped after the last "old" job.
+    /// </summary>
+    private RunBatch? _liveBatch;
+    private readonly object _batchLock = new();
+
+    /// <summary>One Start's runners, on one run epoch. The list only grows.</summary>
+    private sealed class RunBatch(CancellationToken token)
+    {
+        public CancellationToken Token { get; } = token;
+        public List<Task> Tasks { get; } = [];
+    }
+
     public CivitaiDownloadQueue(ICivitaiModelDownloader? downloader)
         : this(downloader, null, null, null)
     {
@@ -93,6 +108,43 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         RecomputeSpaceWarning();
         OnPropertyChanged(nameof(TotalQueuedBytes));
         OnPropertyChanged(nameof(TotalQueuedBytesDisplay));
+
+        // Add only: a Move also carries NewItems, and moving a tile is not queueing it.
+        if (e.Action == NotifyCollectionChangedAction.Add && e.NewItems is not null)
+            JoinLiveBatch(e.NewItems.Cast<CivitaiDownloadJob>());
+    }
+
+    /// <summary>
+    /// Schedules jobs added while a Start batch is running into that batch, so the queue keeps
+    /// going instead of stopping after the jobs Start saw. Nothing joins once the batch's epoch
+    /// is cancelled (Abort, Clear all): those jobs wait for the next Start, as they would have
+    /// before it ran.
+    /// <para>
+    /// Not gated on <see cref="SpaceWarning"/>: a late job that does not fit would stay Queued,
+    /// keep that queue-wide verdict up and turn away every job added after it, the stop this
+    /// exists to remove. Each joined job meets <see cref="RefuseForSpace"/> when it gets its
+    /// slot instead, as a Retry does, with a full reading taken at that moment. That check is
+    /// per job: two late jobs that each fit but not together both pass, as they would through
+    /// a Retry or a second Start while a transfer runs, because bytes still in flight are not
+    /// reserved anywhere.
+    /// </para>
+    /// </summary>
+    private void JoinLiveBatch(IEnumerable<CivitaiDownloadJob> added)
+    {
+        var jobs = added.Where(j => j.Status == JobStatus.Queued).ToList();
+        if (jobs.Count == 0) return;
+
+        RunBatch? batch;
+        lock (_batchLock) batch = _liveBatch;
+        if (batch is null || batch.Token.IsCancellationRequested) return;
+
+        _logger?.Info(LogCategory.Download, "CivitaiQueue",
+            $"Adding {jobs.Count} newly queued download(s) to the running batch.");
+        foreach (var job in jobs)
+        {
+            var task = RunGatedAsync(job, batch.Token);
+            lock (_batchLock) batch.Tasks.Add(task);
+        }
     }
 
     private void HookJob(CivitaiDownloadJob j) => j.PropertyChanged += OnJobPropertyChanged;
@@ -459,6 +511,20 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         Dispatcher.UIThread.Post(action);
     };
 
+    /// <summary>
+    /// A worker's tile write. Workers run after <c>ConfigureAwait(false)</c>, and Status and
+    /// StatusMessage are bound, so writing them in place raises PropertyChanged on a pool thread
+    /// — "Call from invalid thread", the hazard <see cref="ApplySpaceState"/> marshals around —
+    /// and the Status hook then enumerates <see cref="Jobs"/> on that thread while the UI thread
+    /// may be adding a late job to it. The download outcome itself is posted by
+    /// <c>RunJobAsync</c> for the same reason.
+    /// </summary>
+    private void SetStatus(CivitaiDownloadJob job, JobStatus status, string? message) => UiInvoke(() =>
+    {
+        job.Status = status;
+        job.StatusMessage = message;
+    });
+
     private void ApplySpaceStateCore(SpaceState state)
     {
         SpaceWarning = state.Warning;
@@ -624,12 +690,10 @@ public sealed class CivitaiDownloadQueue : ObservableObject
 
     public void Remove(CivitaiDownloadJob job)
     {
-        // If the tile is removed mid-download, cancel the in-flight transfer first
-        // so we don't keep streaming bytes for a job no one is watching.
-        if (job.Status == JobStatus.Downloading)
-        {
-            job.CancelByUser();
-        }
+        // Cancel before removing, whatever the status, so no runner keeps working for a job no one
+        // is watching: a mid-download transfer stops, and a job still waiting for a worker slot —
+        // Queued, but already owned by a runner — never starts. Harmless for a job with no runner.
+        job.CancelByUser();
         Jobs.Remove(job);
         Persist();
         RaiseCountsChanged();
@@ -820,8 +884,35 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         var pending = Jobs.Where(j => j.Status is JobStatus.Queued or JobStatus.Cancelled).ToList();
         _logger?.Info(LogCategory.Download, "CivitaiQueue",
             $"Starting {pending.Count} download(s) (max concurrency: {_maxConcurrency})");
+
+        // Publish the batch before scheduling, so a job added from here on joins it. A second
+        // Start on the same epoch shares the batch; one on a fresh epoch (after an Abort)
+        // replaces it and leaves the old one to drain on its own.
+        RunBatch batch;
+        lock (_batchLock)
+        {
+            if (_liveBatch is null || _liveBatch.Token != ct) _liveBatch = new RunBatch(ct);
+            batch = _liveBatch;
+        }
+
         var tasks = pending.Select(job => RunGatedAsync(job, ct)).ToList();
-        await Task.WhenAll(tasks);
+        lock (_batchLock) batch.Tasks.AddRange(tasks);
+
+        // Drain until no job joined while we were waiting. Runners never throw (see
+        // RunGatedCoreAsync), so the only way out is the clean exit below — a fault would
+        // otherwise end the batch while other runners still download.
+        while (true)
+        {
+            Task[] snapshot;
+            lock (_batchLock) snapshot = batch.Tasks.ToArray();
+            await Task.WhenAll(snapshot);
+            lock (_batchLock)
+            {
+                if (batch.Tasks.Count != snapshot.Length) continue;
+                if (_liveBatch == batch) _liveBatch = null;
+                break;
+            }
+        }
         RaiseCountsChanged();
         Persist();
         var failedCount = ErrorCount;
@@ -907,11 +998,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         catch (OperationCanceledException)
         {
             // Cancelled while waiting for a slot. Don't release the gate (we never took it).
-            if (job.WasCancelledByUser)
-            {
-                job.Status = JobStatus.Cancelled;
-                job.StatusMessage = "Cancelled";
-            }
+            if (job.WasCancelledByUser) SetStatus(job, JobStatus.Cancelled, "Cancelled");
             return;
         }
 
@@ -919,11 +1006,34 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         {
             await RunJobAsync(job, ct).ConfigureAwait(false);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Cancelled in the part of RunJobAsync before its own try (destination lookup, space
+            // check) — the same moment as cancelling while waiting for a slot, so the same outcome:
+            // Cancelled for the user's Cancel/Remove, untouched (Queued, re-run by Start) for Abort.
+            if (job.WasCancelledByUser) SetStatus(job, JobStatus.Cancelled, "Cancelled");
+        }
+        catch (Exception ex)
+        {
+            // Anything else from that part (a settings or path failure). Escaping here used to end
+            // Start's whole batch, or surface from Retry as an unhandled command exception, while
+            // the tile sat at Queued with no reason shown.
+            SetStatus(job, JobStatus.Failed, ex.Message);
+            _logger?.Warn(LogCategory.Download, "CivitaiQueue",
+                $"{job.ModelName} — {job.VersionName} failed before its transfer began: {ex.Message}",
+                ex.ToString());
+        }
         finally
         {
             _gate.Release();
-            RaiseCountsChanged();
-            Persist();
+            // The counts are bound, and Persist enumerates Jobs while the UI thread may be adding
+            // to it (a late join is exactly that), so both go through the marshal too. Queued
+            // behind the terminal write above, so the file carries the final state as well.
+            UiInvoke(() =>
+            {
+                RaiseCountsChanged();
+                Persist();
+            });
         }
     }
 
@@ -946,8 +1056,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                 : (await settings.GetEnabledLoraSourcesAsync(ct)).ToList();
             if (folders.Count == 0)
             {
-                job.Status = JobStatus.Failed;
-                job.StatusMessage = "No download destination set. Configure one in the Destination panel.";
+                SetStatus(job, JobStatus.Failed, "No download destination set. Configure one in the Destination panel.");
                 return;
             }
             // The last hand-rolled path build in the download stack, now routed through the one
@@ -972,8 +1081,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         var refusal = await Task.Run(() => RefuseForSpace(job, targetDir!), ct).ConfigureAwait(false);
         if (refusal is not null)
         {
-            job.Status = JobStatus.Failed;
-            job.StatusMessage = refusal;
+            SetStatus(job, JobStatus.Failed, refusal);
             _logger?.Warn(LogCategory.Download, "CivitaiQueue",
                 $"{job.ModelName} — {job.VersionName} not started: {refusal}");
             return;
@@ -987,8 +1095,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
 
         try
         {
-            job.Status = JobStatus.Downloading;
-            job.StatusMessage = "Connecting...";
+            SetStatus(job, JobStatus.Downloading, "Connecting...");
 
             var civVersion = job.CivitaiVersion;
             if (civVersion is null && _civitaiClient is not null)
@@ -1001,8 +1108,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             }
             if (civVersion is null)
             {
-                job.Status = JobStatus.Failed;
-                job.StatusMessage = "Could not resolve Civitai version metadata.";
+                SetStatus(job, JobStatus.Failed, "Could not resolve Civitai version metadata.");
                 return;
             }
 
@@ -1045,12 +1151,13 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             // DownloadAsync is awaited with ConfigureAwait(false), so everything from here runs on a
             // thread-pool thread — and TargetPath/Status/StatusMessage/ProgressPercent are all
             // [ObservableProperty] behind live Avalonia bindings. Every one of those writes goes
-            // through the dispatcher, TargetPath included (it drives the bound DisplayPath, so
-            // raising its PropertyChanged off-thread was the same hazard the rest of this block was
-            // already avoiding). The adapter above posts onto this same queue in one hop, so a
-            // progress update still in flight cannot be processed after — and clobber — this
-            // terminal state.
-            Dispatcher.UIThread.Post(() =>
+            // through the marshal (a post from here), TargetPath included (it drives the bound
+            // DisplayPath, so raising its PropertyChanged off-thread was the same hazard the rest
+            // of this block was already avoiding). The adapter above posts onto this same queue in
+            // one hop, so a progress update still in flight cannot be processed after — and
+            // clobber — this terminal state. UiInvoke rather than a bare Post so the tests' seam
+            // sees this write too, and so the finally's persist is queued behind it everywhere.
+            UiInvoke(() =>
             {
                 job.TargetPath = outcome.FinalPath;
 
@@ -1118,21 +1225,21 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                 }
             });
         }
-        // These two catches write terminal state synchronously, unlike the happy path above which
-        // posts through the dispatcher — that's fine here because an exception this far out means
-        // `_downloader.DownloadAsync` itself threw, which happens before any progress report could
-        // still be in flight on the dispatcher queue (OperationCanceledException in particular is
-        // swallowed inside the downloader itself and surfaces as a Cancelled/Failed outcome, not a
-        // throw, in the ordinary case), so there is nothing racing this write to clobber.
+        // These two catches reach the tile through the same marshal as every other worker write.
+        // Nothing races them: an exception this far out means `_downloader.DownloadAsync` itself
+        // threw, which happens before any progress report could still be in flight on the
+        // dispatcher queue (OperationCanceledException in particular is swallowed inside the
+        // downloader itself and surfaces as a Cancelled/Failed outcome, not a throw, in the
+        // ordinary case).
         catch (OperationCanceledException)
         {
-            job.Status = job.WasCancelledByUser ? JobStatus.Cancelled : JobStatus.Failed;
-            job.StatusMessage = job.WasCancelledByUser ? "Cancelled" : "Stopped";
+            SetStatus(job,
+                job.WasCancelledByUser ? JobStatus.Cancelled : JobStatus.Failed,
+                job.WasCancelledByUser ? "Cancelled" : "Stopped");
         }
         catch (Exception ex)
         {
-            job.Status = JobStatus.Failed;
-            job.StatusMessage = ex.Message;
+            SetStatus(job, JobStatus.Failed, ex.Message);
         }
     }
 
