@@ -88,7 +88,7 @@ public sealed class CivitaiDownloadQueueStartResumeTests : IDisposable
         downloader, logger: null, civitaiClient: null, destination: null,
         persistPathOverride: Path.Combine(_tempDir, $"q-{Guid.NewGuid():N}.json"));
 
-    private CivitaiDownloadJob NewJob(int versionId = 1) => new()
+    private CivitaiDownloadJob NewJob(int versionId = 1, long sizeBytes = 0) => new()
     {
         ModelId = 100,
         VersionId = versionId,
@@ -98,6 +98,7 @@ public sealed class CivitaiDownloadQueueStartResumeTests : IDisposable
         Category = "LORA",
         FileName = "test.safetensors",
         DownloadUrl = "https://civitai.test/api/download/models/1",
+        SizeBytes = sizeBytes,
         CustomTargetDirectory = _tempDir,
         CivitaiVersion = new CivitaiModelVersion { Id = versionId, Name = $"v{versionId}" },
         Status = JobStatus.Queued,
@@ -308,19 +309,6 @@ public sealed class CivitaiDownloadQueueStartResumeTests : IDisposable
         late.Status.Should().Be(JobStatus.Queued);
     }
 
-    private CivitaiDownloadJob SizedJob(int versionId, long sizeBytes) => new()
-    {
-        ModelId = 100,
-        VersionId = versionId,
-        ModelName = "Test Model",
-        VersionName = $"v{versionId}",
-        FileName = $"test{versionId}.safetensors",
-        DownloadUrl = $"https://civitai.test/api/download/models/{versionId}",
-        SizeBytes = sizeBytes,
-        CustomTargetDirectory = _tempDir,
-        CivitaiVersion = new CivitaiModelVersion { Id = versionId, Name = $"v{versionId}" },
-    };
-
     [Fact]
     public async Task ALateJobThatDoesNotFit_FailsAlone_AndDoesNotBlockLaterJobs()
     {
@@ -335,9 +323,9 @@ public sealed class CivitaiDownloadQueueStartResumeTests : IDisposable
         var start = queue.StartAllAsync();
         await downloader.FirstCallStarted.Task;
 
-        var huge = SizedJob(versionId: 2, sizeBytes: 50L << 30);
+        var huge = NewJob(versionId: 2, sizeBytes: 50L << 30);
         queue.Jobs.Add(huge);
-        queue.Jobs.Add(SizedJob(versionId: 3, sizeBytes: 100L << 20));
+        queue.Jobs.Add(NewJob(versionId: 3, sizeBytes: 100L << 20));
 
         downloader.Release(2);
         await start;
@@ -347,6 +335,45 @@ public sealed class CivitaiDownloadQueueStartResumeTests : IDisposable
         huge.StatusMessage.Should().StartWith("Not enough free space");
         downloader.CallsByVersion.GetValueOrDefault(3).Should().Be(1,
             "a job that fits runs even though an earlier late job did not");
+    }
+
+    [Fact]
+    public async Task ARefusedJob_HandsItsFailureToTheUiThread_InsteadOfWritingItInPlace()
+    {
+        // RefuseForSpace runs after ConfigureAwait(false). Status and StatusMessage are bound on
+        // the tile, so a write in place raises PropertyChanged on a pool thread and Avalonia
+        // throws "Call from invalid thread" — the hazard ApplySpaceState already marshals around.
+        // The headless host answers CheckAccess() true from every thread, so the routing is
+        // asserted through the UiInvoke seam: the Failed write must happen inside it.
+        var downloader = new BlockingDownloader();
+        var queue = Queue(downloader);
+        queue.FreeSpaceProbe = (_, _) => FreeSpaceResult.Known(10L << 30);
+        var marshalDepth = new ThreadLocal<int>();
+        queue.UiInvoke = action =>
+        {
+            marshalDepth.Value++;
+            try { action(); }
+            finally { marshalDepth.Value--; }
+        };
+        queue.Jobs.Add(NewJob(versionId: 1));
+
+        var start = queue.StartAllAsync();
+        await downloader.FirstCallStarted.Task;
+
+        var huge = NewJob(versionId: 2, sizeBytes: 50L << 30);
+        bool? failedInsideMarshal = null;
+        huge.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(CivitaiDownloadJob.Status) && huge.Status == JobStatus.Failed)
+                failedInsideMarshal = marshalDepth.Value > 0;
+        };
+        queue.Jobs.Add(huge);
+
+        downloader.Release(1);
+        await start;
+
+        huge.Status.Should().Be(JobStatus.Failed);
+        failedInsideMarshal.Should().BeTrue("the terminal tile write has to be handed to the UI thread");
     }
 
     [Fact]

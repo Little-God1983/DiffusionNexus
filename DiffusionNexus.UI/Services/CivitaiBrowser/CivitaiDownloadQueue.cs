@@ -123,8 +123,10 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     /// Not gated on <see cref="SpaceWarning"/>: a late job that does not fit would stay Queued,
     /// keep that queue-wide verdict up and turn away every job added after it, the stop this
     /// exists to remove. Each joined job meets <see cref="RefuseForSpace"/> when it gets its
-    /// slot instead, as a Retry does, with a full reading taken after the jobs ahead of it
-    /// have landed.
+    /// slot instead, as a Retry does, with a full reading taken at that moment. That check is
+    /// per job: two late jobs that each fit but not together both pass, as they would through
+    /// a Retry or a second Start while a transfer runs, because bytes still in flight are not
+    /// reserved anywhere.
     /// </para>
     /// </summary>
     private void JoinLiveBatch(IEnumerable<CivitaiDownloadJob> added)
@@ -508,6 +510,18 @@ public sealed class CivitaiDownloadQueue : ObservableObject
 
         Dispatcher.UIThread.Post(action);
     };
+
+    /// <summary>
+    /// A worker's terminal tile write. Workers run after <c>ConfigureAwait(false)</c>, and Status
+    /// and StatusMessage are bound, so writing them in place raises PropertyChanged on a pool
+    /// thread — "Call from invalid thread", the hazard <see cref="ApplySpaceState"/> marshals
+    /// around. The download outcome itself is posted by <c>RunJobAsync</c> for the same reason.
+    /// </summary>
+    private void SetTerminal(CivitaiDownloadJob job, JobStatus status, string? message) => UiInvoke(() =>
+    {
+        job.Status = status;
+        job.StatusMessage = message;
+    });
 
     private void ApplySpaceStateCore(SpaceState state)
     {
@@ -967,6 +981,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     {
         lock (_scheduledLock) _scheduled.Remove(job);
     }
+
     private async Task RunGatedCoreAsync(CivitaiDownloadJob job, CancellationToken runCt)
     {
         // Link the run-wide cancel (queue Start cycle / Clear all) with the per-job
@@ -981,11 +996,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         catch (OperationCanceledException)
         {
             // Cancelled while waiting for a slot. Don't release the gate (we never took it).
-            if (job.WasCancelledByUser)
-            {
-                job.Status = JobStatus.Cancelled;
-                job.StatusMessage = "Cancelled";
-            }
+            if (job.WasCancelledByUser) SetTerminal(job, JobStatus.Cancelled, "Cancelled");
             return;
         }
 
@@ -998,27 +1009,28 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             // Cancelled in the part of RunJobAsync before its own try (destination lookup, space
             // check) — the same moment as cancelling while waiting for a slot, so the same outcome:
             // Cancelled for the user's Cancel/Remove, untouched (Queued, re-run by Start) for Abort.
-            if (job.WasCancelledByUser)
-            {
-                job.Status = JobStatus.Cancelled;
-                job.StatusMessage = "Cancelled";
-            }
+            if (job.WasCancelledByUser) SetTerminal(job, JobStatus.Cancelled, "Cancelled");
         }
         catch (Exception ex)
         {
             // Anything else from that part (a settings or path failure). Escaping here used to end
             // Start's whole batch, or surface from Retry as an unhandled command exception, while
             // the tile sat at Queued with no reason shown.
-            job.Status = JobStatus.Failed;
-            job.StatusMessage = ex.Message;
+            SetTerminal(job, JobStatus.Failed, ex.Message);
             _logger?.Warn(LogCategory.Download, "CivitaiQueue",
                 $"{job.ModelName} — {job.VersionName} failed before its transfer began: {ex.Message}");
         }
         finally
         {
             _gate.Release();
-            RaiseCountsChanged();
-            Persist();
+            // The counts are bound, and Persist enumerates Jobs while the UI thread may be adding
+            // to it (a late join is exactly that), so both go through the marshal too. Queued
+            // behind the terminal write above, so the file carries the final state as well.
+            UiInvoke(() =>
+            {
+                RaiseCountsChanged();
+                Persist();
+            });
         }
     }
 
@@ -1041,8 +1053,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                 : (await settings.GetEnabledLoraSourcesAsync(ct)).ToList();
             if (folders.Count == 0)
             {
-                job.Status = JobStatus.Failed;
-                job.StatusMessage = "No download destination set. Configure one in the Destination panel.";
+                SetTerminal(job, JobStatus.Failed, "No download destination set. Configure one in the Destination panel.");
                 return;
             }
             // The last hand-rolled path build in the download stack, now routed through the one
@@ -1067,8 +1078,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         var refusal = await Task.Run(() => RefuseForSpace(job, targetDir!), ct).ConfigureAwait(false);
         if (refusal is not null)
         {
-            job.Status = JobStatus.Failed;
-            job.StatusMessage = refusal;
+            SetTerminal(job, JobStatus.Failed, refusal);
             _logger?.Warn(LogCategory.Download, "CivitaiQueue",
                 $"{job.ModelName} — {job.VersionName} not started: {refusal}");
             return;
