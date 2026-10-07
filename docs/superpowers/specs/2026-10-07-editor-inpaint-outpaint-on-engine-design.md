@@ -76,11 +76,17 @@ the Image Editor. Both produce a result.
 - `AppSettings.ComfyUiServerMode` of new enum `ComfyUiServerMode { Engine, CustomUrl }`, default `Engine`.
   Stored as a string (`HasConversion<string>().HasMaxLength(32)`), matching how other enums in the
   repo are stored. `ComfyUiServerUrl` is unchanged and keeps its value regardless of mode.
+- **Upgrades keep today's behaviour.** A database that already has a settings row when the migration
+  runs belongs to someone whose Inpaint and Outpaint ran on their own ComfyUI. The migration sets that
+  row to `CustomUrl`, so their editor keeps working after the update. Only a fresh database, whose row
+  is created later, gets `Engine`. The same rule applies to the recovery column (`DEFAULT 'CustomUrl'`,
+  it only ever patches existing databases) and to importing a settings file without the field (an old
+  file came from a user of their own ComfyUI → `CustomUrl`).
 - Persistence touches every place a settings column lives: entity, `AppSettingsConfiguration`, an EF
   migration generated with `dotnet ef migrations add AddComfyUiServerMode --context DiffusionNexusCoreDbContext --output-dir Migrations/Core`
   (never hand-written; CI fails on model drift), `DatabaseRecoveryService.requiredColumns`
-  (`TEXT NOT NULL DEFAULT 'Engine'`), the `AppSettingsService` save whitelist, `SettingsExportData`
-  (schema version 4 → 5, missing field on import = `Engine`), `SettingsExportService` export and import,
+  (`TEXT NOT NULL DEFAULT 'CustomUrl'`), the `AppSettingsService` save whitelist, `SettingsExportData`
+  (schema version 4 → 5, missing field on import = `CustomUrl`), `SettingsExportService` export and import,
   and the raw INSERT in `publish.ps1`.
 - **Settings UI.** The "ComfyUI Server" expander keeps its name and position. Above the URL row a
   "Server" ComboBox offers *Diffusion Nexus Engine* and *Custom URL*. The URL TextBox and
@@ -132,7 +138,8 @@ passes the provider through. Nothing else about the two view models changes.
 
 **Not consumers yet:** `BatchUpscaleTabViewModel`, `ComfyUICaptioningBackend` and `ComfyUIFeatureBackend`
 keep the singleton. The singleton registration is changed to `new ComfyUIWrapperService(settings.ComfyUiServerUrl)`
-read once at startup, so the Settings URL finally reaches the jobs that still use it. #608 moves Batch
+read once at startup, so the Settings URL finally reaches the jobs that still use it. A URL change
+reaches them after a restart; that interim limit ends with #608. #608 moves Batch
 Upscale onto the provider and removes the singleton for image features.
 
 ### 4.3 Readiness
@@ -147,9 +154,13 @@ Upscale onto the provider and removes the singleton for image features.
      missing requirement. Neither `FeatureRegistry` nor the adapter that walks all ComfyUI installs is used here.
   3. It never starts the Engine. "Not running" is not a requirement; Generate starts it.
   4. Reports `IsBackendOnline = true` when installed, since "online" for the Engine means installable-and-startable.
-- `IFeatureBackendRouter.Resolve(feature)` becomes mode-aware: for `Inpainting` and `Outpaint` it returns
-  the Engine backend when `ComfyUiServerMode == Engine`, else the ComfyUI backend. All other features keep
-  the static default (ComfyUI) until their issues. The router takes `IAppSettingsService` and reads the
+- `IFeatureBackendRouter.Resolve(feature)` becomes mode-aware for the features the Outpaint and Inpaint
+  panels run: `Inpainting`, `Outpaint` and `OutpaintVision` (`FeatureBackendRouter.ServerModeFeatures`).
+  It returns the Engine backend when `ComfyUiServerMode == Engine`, else the ComfyUI backend. All other
+  features keep the static default (ComfyUI) until their issues. `OutpaintVision` is included because the
+  Outpaint panel's *Generate (Vision)* button uses the same client as *Generate*: in Engine mode the Engine
+  backend reports "Outpaint Vision is not available on the Diffusion Nexus Engine yet" as a missing
+  requirement, so the button greys out honestly instead of failing at run time. #607 lifts that. The router takes `IAppSettingsService` and reads the
   mode on every call. `FeatureReadinessResult.Backend` carries the kind so the panel can label it.
 - **Readiness panel.** Below the status row a new line binds `ActiveBackendName`:
   *Running on **Diffusion Nexus Engine*** · [change]. The *change* link publishes
@@ -157,7 +168,9 @@ Upscale onto the provider and removes the singleton for image features.
   the line reads *Not installed on the Engine* · [Install Inpaint & Outpaint], and the link publishes
   `NavigateToEngineFeatures(preselect: EngineFeature.InpaintOutpaint)`. Existing Missing Requirements and
   Warnings boxes stay for the detail. The panel is shared by Captioning and Batch Upscale; for them the
-  line simply shows their ComfyUI backend name with the same *change* link.
+  line shows their backend name **without** the *change* link, because the Settings dropdown does not
+  govern them yet and a link there would promise a switch that does nothing. #608 adds the link for
+  Batch Upscale.
 - Generate's `CanExecute` (`!HasChecked || IsReady`) is unchanged.
 
 ### 4.4 Engine Features dialog
@@ -195,9 +208,12 @@ Upscale onto the provider and removes the singleton for image features.
 - The dialog opens with an optional preselected feature (from the readiness link).
 - **Engine tile.** Button text "Workloads" → "Features"; `WorkloadsRequested` for an Engine card opens the
   new dialog. Non-Engine ComfyUI cards keep `WorkloadsDialog` unchanged. The tile is visible whenever
-  `DiffusionFeatureFlags.UseLocalDiffusionBackend` is on (hard-coded `true` today); the coupling to
-  `IsDiffusionCanvasEnabled` in `App.axaml.cs:1252-1264` and `InstallerManagerViewModel.IsEngineTileVisible`
-  is removed. The Canvas module itself stays behind its switch.
+  `DiffusionFeatureFlags.UseLocalDiffusionBackend` is on (hard-coded `true` today):
+  `InstallerManagerViewModel.IsEngineTileVisible` now defaults to that flag, and the coupling to
+  `IsDiffusionCanvasEnabled` in `App.axaml.cs:1252-1264` is removed. The property itself stays, so the
+  existing tests that toggle it keep working. The Canvas module itself stays behind its switch.
+- The Features footer shows the selected count and the free space on the Engine's drive. The catalog
+  carries no file sizes, so no download-size estimate is shown.
 
 ### 4.5 Generate flow (Engine mode)
 
@@ -266,7 +282,8 @@ Unit tests (`DiffusionNexus.Tests`):
 - `EngineFeatureCatalog`: every shipped row maps to workload ids that exist in the embedded catalog manifest.
 - `EngineFeaturesViewModel`: status derivation (Installed / Partial / Not installed), selection and
   footer totals, install passes only the missing items, preselect.
-- Settings: `ComfyUiServerMode` round-trips through save, export and import; import of a v4 file yields `Engine`.
+- Settings: `ComfyUiServerMode` round-trips through save, export and import; import of a v4 file yields
+  `CustomUrl`; a database migrated with an existing settings row reads `CustomUrl`, a fresh one `Engine`.
 - `SettingsViewModel`: mode change sets `HasChanges`; URL controls enabled only in Custom mode.
 
 Manual verification on the BenQ monitor (BNQ7F05), the issue's "Done when":
