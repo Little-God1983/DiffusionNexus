@@ -410,6 +410,68 @@ public sealed class CivitaiDownloadQueueStartResumeTests : IDisposable
     }
 
     [Fact]
+    public async Task AFinishedWorker_RaisesTheCountsThroughTheUiMarshal()
+    {
+        // The worker's finally used to raise ActiveCount/CompletedCount/ErrorCount and persist on
+        // the pool thread: the counts are bound, and Persist enumerates Jobs while the UI thread
+        // may be adding a late job to it.
+        var downloader = new BlockingDownloader();
+        var queue = Queue(downloader);
+        var marshalDepth = new ThreadLocal<int>();
+        queue.UiInvoke = action =>
+        {
+            marshalDepth.Value++;
+            try { action(); }
+            finally { marshalDepth.Value--; }
+        };
+        queue.Jobs.Add(NewJob(versionId: 1));
+
+        var start = queue.StartAllAsync();
+        await downloader.FirstCallStarted.Task;
+        var raisedInsideMarshal = 0;
+        queue.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(CivitaiDownloadQueue.ActiveCount) && marshalDepth.Value > 0)
+                raisedInsideMarshal++;
+        };
+        downloader.Release(1);
+        await start;
+
+        raisedInsideMarshal.Should().BeGreaterThanOrEqualTo(1,
+            "the worker's finally hands the counts and the persist to the UI thread");
+    }
+
+    [Fact]
+    public async Task AJobWithNoDestination_FailsThroughTheUiMarshal()
+    {
+        // No per-job override, no Destination folder picked and no enabled source: the worker
+        // fails the job before the transfer. That write happens off the dispatcher too.
+        var queue = Queue(new InstantDownloader());
+        var marshalDepth = new ThreadLocal<int>();
+        queue.UiInvoke = action =>
+        {
+            marshalDepth.Value++;
+            try { action(); }
+            finally { marshalDepth.Value--; }
+        };
+        var job = NewJob(versionId: 1);
+        job.CustomTargetDirectory = null;
+        bool? failedInsideMarshal = null;
+        job.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(CivitaiDownloadJob.Status) && job.Status == JobStatus.Failed)
+                failedInsideMarshal = marshalDepth.Value > 0;
+        };
+        queue.Jobs.Add(job);
+
+        await queue.StartAllAsync();
+
+        job.Status.Should().Be(JobStatus.Failed);
+        job.StatusMessage.Should().StartWith("No download destination set");
+        failedInsideMarshal.Should().BeTrue();
+    }
+
+    [Fact]
     public async Task AJobAddedWithNoBatchRunning_WaitsForStart()
     {
         var downloader = new InstantDownloader();

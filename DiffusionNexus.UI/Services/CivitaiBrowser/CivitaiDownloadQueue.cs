@@ -1151,12 +1151,13 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             // DownloadAsync is awaited with ConfigureAwait(false), so everything from here runs on a
             // thread-pool thread — and TargetPath/Status/StatusMessage/ProgressPercent are all
             // [ObservableProperty] behind live Avalonia bindings. Every one of those writes goes
-            // through the dispatcher, TargetPath included (it drives the bound DisplayPath, so
-            // raising its PropertyChanged off-thread was the same hazard the rest of this block was
-            // already avoiding). The adapter above posts onto this same queue in one hop, so a
-            // progress update still in flight cannot be processed after — and clobber — this
-            // terminal state.
-            Dispatcher.UIThread.Post(() =>
+            // through the marshal (a post from here), TargetPath included (it drives the bound
+            // DisplayPath, so raising its PropertyChanged off-thread was the same hazard the rest
+            // of this block was already avoiding). The adapter above posts onto this same queue in
+            // one hop, so a progress update still in flight cannot be processed after — and
+            // clobber — this terminal state. UiInvoke rather than a bare Post so the tests' seam
+            // sees this write too, and so the finally's persist is queued behind it everywhere.
+            UiInvoke(() =>
             {
                 job.TargetPath = outcome.FinalPath;
 
