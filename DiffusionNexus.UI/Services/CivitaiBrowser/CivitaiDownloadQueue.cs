@@ -512,12 +512,14 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     };
 
     /// <summary>
-    /// A worker's terminal tile write. Workers run after <c>ConfigureAwait(false)</c>, and Status
-    /// and StatusMessage are bound, so writing them in place raises PropertyChanged on a pool
-    /// thread — "Call from invalid thread", the hazard <see cref="ApplySpaceState"/> marshals
-    /// around. The download outcome itself is posted by <c>RunJobAsync</c> for the same reason.
+    /// A worker's tile write. Workers run after <c>ConfigureAwait(false)</c>, and Status and
+    /// StatusMessage are bound, so writing them in place raises PropertyChanged on a pool thread
+    /// — "Call from invalid thread", the hazard <see cref="ApplySpaceState"/> marshals around —
+    /// and the Status hook then enumerates <see cref="Jobs"/> on that thread while the UI thread
+    /// may be adding a late job to it. The download outcome itself is posted by
+    /// <c>RunJobAsync</c> for the same reason.
     /// </summary>
-    private void SetTerminal(CivitaiDownloadJob job, JobStatus status, string? message) => UiInvoke(() =>
+    private void SetStatus(CivitaiDownloadJob job, JobStatus status, string? message) => UiInvoke(() =>
     {
         job.Status = status;
         job.StatusMessage = message;
@@ -996,7 +998,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         catch (OperationCanceledException)
         {
             // Cancelled while waiting for a slot. Don't release the gate (we never took it).
-            if (job.WasCancelledByUser) SetTerminal(job, JobStatus.Cancelled, "Cancelled");
+            if (job.WasCancelledByUser) SetStatus(job, JobStatus.Cancelled, "Cancelled");
             return;
         }
 
@@ -1009,16 +1011,17 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             // Cancelled in the part of RunJobAsync before its own try (destination lookup, space
             // check) — the same moment as cancelling while waiting for a slot, so the same outcome:
             // Cancelled for the user's Cancel/Remove, untouched (Queued, re-run by Start) for Abort.
-            if (job.WasCancelledByUser) SetTerminal(job, JobStatus.Cancelled, "Cancelled");
+            if (job.WasCancelledByUser) SetStatus(job, JobStatus.Cancelled, "Cancelled");
         }
         catch (Exception ex)
         {
             // Anything else from that part (a settings or path failure). Escaping here used to end
             // Start's whole batch, or surface from Retry as an unhandled command exception, while
             // the tile sat at Queued with no reason shown.
-            SetTerminal(job, JobStatus.Failed, ex.Message);
+            SetStatus(job, JobStatus.Failed, ex.Message);
             _logger?.Warn(LogCategory.Download, "CivitaiQueue",
-                $"{job.ModelName} — {job.VersionName} failed before its transfer began: {ex.Message}");
+                $"{job.ModelName} — {job.VersionName} failed before its transfer began: {ex.Message}",
+                ex.ToString());
         }
         finally
         {
@@ -1053,7 +1056,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                 : (await settings.GetEnabledLoraSourcesAsync(ct)).ToList();
             if (folders.Count == 0)
             {
-                SetTerminal(job, JobStatus.Failed, "No download destination set. Configure one in the Destination panel.");
+                SetStatus(job, JobStatus.Failed, "No download destination set. Configure one in the Destination panel.");
                 return;
             }
             // The last hand-rolled path build in the download stack, now routed through the one
@@ -1078,7 +1081,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         var refusal = await Task.Run(() => RefuseForSpace(job, targetDir!), ct).ConfigureAwait(false);
         if (refusal is not null)
         {
-            SetTerminal(job, JobStatus.Failed, refusal);
+            SetStatus(job, JobStatus.Failed, refusal);
             _logger?.Warn(LogCategory.Download, "CivitaiQueue",
                 $"{job.ModelName} — {job.VersionName} not started: {refusal}");
             return;
@@ -1092,8 +1095,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
 
         try
         {
-            job.Status = JobStatus.Downloading;
-            job.StatusMessage = "Connecting...";
+            SetStatus(job, JobStatus.Downloading, "Connecting...");
 
             var civVersion = job.CivitaiVersion;
             if (civVersion is null && _civitaiClient is not null)
@@ -1106,8 +1108,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             }
             if (civVersion is null)
             {
-                job.Status = JobStatus.Failed;
-                job.StatusMessage = "Could not resolve Civitai version metadata.";
+                SetStatus(job, JobStatus.Failed, "Could not resolve Civitai version metadata.");
                 return;
             }
 
@@ -1223,21 +1224,21 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                 }
             });
         }
-        // These two catches write terminal state synchronously, unlike the happy path above which
-        // posts through the dispatcher — that's fine here because an exception this far out means
-        // `_downloader.DownloadAsync` itself threw, which happens before any progress report could
-        // still be in flight on the dispatcher queue (OperationCanceledException in particular is
-        // swallowed inside the downloader itself and surfaces as a Cancelled/Failed outcome, not a
-        // throw, in the ordinary case), so there is nothing racing this write to clobber.
+        // These two catches reach the tile through the same marshal as every other worker write.
+        // Nothing races them: an exception this far out means `_downloader.DownloadAsync` itself
+        // threw, which happens before any progress report could still be in flight on the
+        // dispatcher queue (OperationCanceledException in particular is swallowed inside the
+        // downloader itself and surfaces as a Cancelled/Failed outcome, not a throw, in the
+        // ordinary case).
         catch (OperationCanceledException)
         {
-            job.Status = job.WasCancelledByUser ? JobStatus.Cancelled : JobStatus.Failed;
-            job.StatusMessage = job.WasCancelledByUser ? "Cancelled" : "Stopped";
+            SetStatus(job,
+                job.WasCancelledByUser ? JobStatus.Cancelled : JobStatus.Failed,
+                job.WasCancelledByUser ? "Cancelled" : "Stopped");
         }
         catch (Exception ex)
         {
-            job.Status = JobStatus.Failed;
-            job.StatusMessage = ex.Message;
+            SetStatus(job, JobStatus.Failed, ex.Message);
         }
     }
 

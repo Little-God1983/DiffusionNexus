@@ -377,6 +377,39 @@ public sealed class CivitaiDownloadQueueStartResumeTests : IDisposable
     }
 
     [Fact]
+    public async Task AStartedJob_FlipsToDownloadingThroughTheUiMarshal_NotInPlace()
+    {
+        // The Downloading flip follows the ConfigureAwait(false) on the space check, so in place
+        // it lands on a pool thread: the bound tile sees it off the dispatcher, and the status
+        // hook's RecomputeSpaceWarning enumerates Jobs while the UI thread may be adding a late
+        // job to it ("Collection was modified", swallowed, stale verdict).
+        var downloader = new BlockingDownloader();
+        var queue = Queue(downloader);
+        var marshalDepth = new ThreadLocal<int>();
+        queue.UiInvoke = action =>
+        {
+            marshalDepth.Value++;
+            try { action(); }
+            finally { marshalDepth.Value--; }
+        };
+        var job = NewJob(versionId: 1);
+        bool? downloadingInsideMarshal = null;
+        job.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(CivitaiDownloadJob.Status) && job.Status == JobStatus.Downloading)
+                downloadingInsideMarshal = marshalDepth.Value > 0;
+        };
+        queue.Jobs.Add(job);
+
+        var start = queue.StartAllAsync();
+        await downloader.FirstCallStarted.Task;
+        downloader.Release(1);
+        await start;
+
+        downloadingInsideMarshal.Should().BeTrue("every bound tile write from a worker goes through the UI marshal");
+    }
+
+    [Fact]
     public async Task AJobAddedWithNoBatchRunning_WaitsForStart()
     {
         var downloader = new InstantDownloader();
