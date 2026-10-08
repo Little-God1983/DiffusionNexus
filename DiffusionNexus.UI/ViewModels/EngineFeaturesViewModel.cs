@@ -145,7 +145,8 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
                         new Progress<WorkloadInstallProgress>(p =>
                         {
                             ProgressText = $"{row.DisplayName}: {p.ItemName} — {p.Message}";
-                            if (p.IsFailed) _unifiedLogger?.Warn(LogCategory.Installation, LogSource, ProgressText);
+                            if (p.IsFailed) Warn(ProgressText);
+                            else Info(ProgressText);
                         }),
                         new Progress<DownloadProgress>(d =>
                         {
@@ -175,10 +176,22 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
         }
         finally
         {
-            await CheckAllAsync(CancellationToken.None);
-            _installCts.Dispose();
-            _installCts = null;
-            IsInstalling = false;
+            try
+            {
+                await CheckAllAsync(CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                // The re-check must never keep the dialog locked: IsInstalling is reset below regardless.
+                Logger.Warning(ex, "Engine feature re-check after install failed");
+                _unifiedLogger?.Warn(LogCategory.Installation, LogSource, $"Re-check after install failed — {ex.Message}");
+            }
+            finally
+            {
+                _installCts?.Dispose();
+                _installCts = null;
+                IsInstalling = false;
+            }
         }
     }
 
@@ -204,7 +217,7 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                Logger.Warning(ex, "Engine feature check failed for {Row}", row.DisplayName);
+                Warn($"{row.DisplayName}: check failed — {ex.Message}", ex);
                 row.Status = EngineFeatureStatus.Error;
                 row.StatusText = "Check failed";
             }
@@ -231,6 +244,12 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
     {
         try { return new DriveInfo(Path.GetPathRoot(path)!).AvailableFreeSpace; }
         catch { return null; }
+    }
+
+    private void Warn(string message, Exception? ex = null)
+    {
+        Logger.Warning(ex, "Engine features: {Message}", message);
+        _unifiedLogger?.Warn(LogCategory.Installation, LogSource, message);
     }
 
     private void Info(string message)

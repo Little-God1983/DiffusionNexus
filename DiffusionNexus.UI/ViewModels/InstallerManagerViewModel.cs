@@ -785,6 +785,9 @@ public partial class InstallerManagerViewModel : ViewModelBase
         var card = InstallerCards.FirstOrDefault(c => c.IsEngine);
         if (card is null || !card.IsEngineInstalled || string.IsNullOrWhiteSpace(card.InstallationPath))
         {
+            Serilog.Log.Information("Engine Features dialog refused: the Diffusion Nexus Engine is not installed");
+            _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
+                "Features dialog not opened: the engine is not installed.");
             await _dialogService.ShowMessageAsync("Diffusion Nexus Engine",
                 "Install the engine first — features are installed into it.");
             return;
@@ -802,6 +805,9 @@ public partial class InstallerManagerViewModel : ViewModelBase
                 _resourceMonitor, _unifiedLogger, preselect);
             await vm.LoadCommand.ExecuteAsync(null);
 
+            Serilog.Log.Information("Opening the Engine Features dialog for {Path}", card.InstallationPath);
+            _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
+                $"Opening the Features dialog for {card.InstallationPath}.");
             if (EngineFeaturesDialogPresenter is not null)
             {
                 await EngineFeaturesDialogPresenter(vm);
@@ -821,6 +827,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         catch (Exception ex)
         {
             Serilog.Log.Error(ex, "Failed to open the Engine Features dialog for {Path}", card.InstallationPath);
+            _unifiedLogger.Error(LogCategory.Installation, "Diffusion Nexus Engine",
+                "Failed to open the Features dialog", ex);
             await _dialogService.ShowMessageAsync("Error", $"Failed to load Engine features: {ex.Message}");
         }
     }

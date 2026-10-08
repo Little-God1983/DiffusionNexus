@@ -180,4 +180,25 @@ public class EngineFeaturesViewModelTests
         Row(vm, EngineFeature.InpaintOutpaint).Status.Should().Be(EngineFeatureStatus.NotInstalled,
             "the re-check after a failed install shows what is really on disk");
     }
+
+    [Fact]
+    public async Task InstallEnds_EvenWhenTheRecheckThrows()
+    {
+        _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(1, 0, 5, 0);
+        _state[EngineFeatureCatalog.Krea2Turbo] = Result(0, 2, 0, 3);
+        var vm = Sut(EngineFeature.InpaintOutpaint);
+        await vm.LoadCommand.ExecuteAsync(null);
+        _installer.Setup(i => i.InstallSelectedAsync(It.IsAny<InstallationConfiguration>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
+                It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
+                It.IsAny<Func<CancellationToken>?>(), It.IsAny<CancellationToken>()))
+            .Callback(() => _checker.Setup(c => c.CheckConfigurationAsync(It.IsAny<InstallationConfiguration>(), Root,
+                    It.IsAny<ConfigurationCheckOptions?>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new OperationCanceledException()))
+            .ReturnsAsync("done");
+
+        await vm.InstallSelectedCommand.ExecuteAsync(null);
+
+        vm.IsInstalling.Should().BeFalse("a failing re-check must not leave the dialog locked");
+    }
 }
