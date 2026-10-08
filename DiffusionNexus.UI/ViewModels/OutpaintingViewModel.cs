@@ -4,6 +4,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.ImageEditor.Services;
+using DiffusionNexus.UI.Services;
 using Serilog;
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -36,7 +37,8 @@ public partial class OutpaintingViewModel : ObservableObject
     private readonly Func<int> _getImageWidth;
     private readonly Func<int> _getImageHeight;
     private readonly Action<string> _deactivateOtherTools;
-    private readonly IComfyUIWrapperService? _comfyUiService;
+    private readonly IComfyUiClientProvider? _clientProvider;
+    private readonly IDatasetEventAggregator? _eventAggregator;
 
     private const string OutpaintNonVisionWorkflowPath = "Assets/Workflows/Qwen-Image-2512-outpaint-nonVision.json";
     private const string OutpaintVisionWorkflowPath = "Assets/Workflows/Qwen-Image-2512-outpaint-Vision.json";
@@ -103,9 +105,10 @@ public partial class OutpaintingViewModel : ObservableObject
         Func<int> getImageWidth,
         Func<int> getImageHeight,
         Action<string> deactivateOtherTools,
-        IComfyUIWrapperService? comfyUiService = null,
+        IComfyUiClientProvider? comfyUiClientProvider = null,
         IFeatureReadinessService? readinessService = null,
-        IUnifiedLogger? unifiedLogger = null)
+        IUnifiedLogger? unifiedLogger = null,
+        IDatasetEventAggregator? eventAggregator = null)
     {
         ArgumentNullException.ThrowIfNull(hasImage);
         ArgumentNullException.ThrowIfNull(getImageWidth);
@@ -116,11 +119,12 @@ public partial class OutpaintingViewModel : ObservableObject
         _getImageWidth = getImageWidth;
         _getImageHeight = getImageHeight;
         _deactivateOtherTools = deactivateOtherTools;
-        _comfyUiService = comfyUiService;
+        _clientProvider = comfyUiClientProvider;
         _unifiedLogger = unifiedLogger;
+        _eventAggregator = eventAggregator;
 
-        Readiness = new FeatureReadinessViewModel(readinessService, Feature.Outpaint);
-        VisionReadiness = new FeatureReadinessViewModel(readinessService, Feature.OutpaintVision);
+        Readiness = new FeatureReadinessViewModel(readinessService, Feature.Outpaint, eventAggregator);
+        VisionReadiness = new FeatureReadinessViewModel(readinessService, Feature.OutpaintVision, eventAggregator);
 
         ToggleCommand = new RelayCommand(ExecuteToggle, () => _hasImage());
         ResetCommand = new RelayCommand(ExecuteReset, () => _hasImage() && IsPanelOpen);
@@ -165,6 +169,18 @@ public partial class OutpaintingViewModel : ObservableObject
                 LogCanExecuteState($"after VisionReadiness.{args.PropertyName}");
             }
         };
+
+        // The Settings dropdown decides which ComfyUI this tool runs on. Re-check when it is saved so
+        // the "Running on ..." line follows a switch without reopening the tool.
+        // Lifetime: this view model has no teardown path, so the handler stays attached to the
+        // app-wide aggregator for the life of the tab; it only does work while the panel is open.
+        if (_eventAggregator is not null)
+        {
+            _eventAggregator.SettingsSaved += (_, _) =>
+            {
+                if (IsPanelOpen) _ = RunReadinessChecksAsync();
+            };
+        }
     }
 
     /// <summary>
@@ -609,7 +625,7 @@ public partial class OutpaintingViewModel : ObservableObject
             return;
         }
 
-        if (_comfyUiService is null)
+        if (_clientProvider is null)
         {
             ReportValidationError("ComfyUI service not available. Check ComfyUI server settings.");
             return;
@@ -641,20 +657,27 @@ public partial class OutpaintingViewModel : ObservableObject
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(imagePath);
 
-        if (_comfyUiService is null)
+        if (_clientProvider is null)
         {
             StatusMessageChanged?.Invoke(this, "ComfyUI service not available.");
             OnFinished();
             return;
         }
 
+        ComfyUiClientLease? lease = null;
         try
         {
+            EmitInfo("Generate requested.");
+            lease = await _clientProvider.AcquireAsync(new Progress<string>(msg => Status = msg));
+            var comfy = lease.Client;
+            EmitInfo($"Running on {(lease.Mode == ComfyUiServerMode.Engine ? "the Diffusion Nexus Engine" : "your own ComfyUI")} at {lease.BaseUrl}.");
+
             Status = "Uploading image to ComfyUI...";
-            var uploadedFilename = await _comfyUiService.UploadImageAsync(imagePath);
+            var uploadedFilename = await comfy.UploadImageAsync(imagePath);
+            EmitInfo($"Image uploaded as {uploadedFilename}.");
 
             Status = "Checking available models...";
-            var resolvedUnetName = await ResolveQwenImageGGUFModelAsync();
+            var resolvedUnetName = await ResolveQwenImageGGUFModelAsync(comfy);
             if (resolvedUnetName is null)
             {
                 HasError = true;
@@ -663,7 +686,6 @@ public partial class OutpaintingViewModel : ObservableObject
                     "No Qwen Image 2512 GGUF model found in ComfyUI. " +
                     "Please download a qwen-image-2512 GGUF variant (e.g. Q8_0, Q4_K_M) " +
                     "and place it in your ComfyUI diffusion_models folder.");
-                OnFinished();
                 return;
             }
 
@@ -682,7 +704,6 @@ public partial class OutpaintingViewModel : ObservableObject
                 HasError = true;
                 ProgressDisplayText = "Outpainting workflow file missing";
                 StatusMessageChanged?.Invoke(this, $"Outpainting workflow not found: {workflowPath}");
-                OnFinished();
                 return;
             }
 
@@ -734,18 +755,20 @@ public partial class OutpaintingViewModel : ObservableObject
                 };
             }
 
-            var promptId = await _comfyUiService.QueueWorkflowAsync(workflowPath, overrides);
+            var promptId = await comfy.QueueWorkflowAsync(workflowPath, overrides);
+            EmitInfo($"Prompt queued ({promptId}).");
 
             Status = "Generating (this may take a while)...";
             var progress = new Progress<string>(msg => Status = msg);
-            await _comfyUiService.WaitForCompletionAsync(promptId, progress);
+            await comfy.WaitForCompletionAsync(promptId, progress);
 
             Status = "Downloading result...";
-            var result = await _comfyUiService.GetResultAsync(promptId);
+            var result = await comfy.GetResultAsync(promptId);
 
             if (result.Images.Count > 0)
             {
-                var imageBytes = await _comfyUiService.DownloadImageAsync(result.Images[0]);
+                var imageBytes = await comfy.DownloadImageAsync(result.Images[0]);
+                EmitInfo("Result received.");
                 ResultReady?.Invoke(this, imageBytes);
                 StatusMessageChanged?.Invoke(this, "Outpainting completed successfully.");
             }
@@ -754,6 +777,13 @@ public partial class OutpaintingViewModel : ObservableObject
                 StatusMessageChanged?.Invoke(this, "Outpainting completed but no output image was returned.");
             }
         }
+        catch (ComfyUiUnavailableException ex)
+        {
+            HasError = true;
+            ProgressDisplayText = ex.Message;
+            StatusMessageChanged?.Invoke(this, ex.Message);
+            _unifiedLogger?.Warn(LogCategory.Configuration, LogSource, ex.Message);
+        }
         catch (OperationCanceledException)
         {
             StatusMessageChanged?.Invoke(this, "Outpainting was cancelled.");
@@ -761,12 +791,16 @@ public partial class OutpaintingViewModel : ObservableObject
         catch (Exception ex)
         {
             Logger.Error(ex, "Outpainting failed");
+            _unifiedLogger?.Error(LogCategory.Configuration, LogSource, "Outpainting failed", ex);
             HasError = true;
-            ProgressDisplayText = "Generation failed – is ComfyUI running?";
+            ProgressDisplayText = lease?.Mode == ComfyUiServerMode.Engine
+                ? "Generation failed – is the Diffusion Nexus Engine running?"
+                : "Generation failed – is ComfyUI running?";
             StatusMessageChanged?.Invoke(this, $"Outpainting failed: {ex.Message}");
         }
         finally
         {
+            lease?.Dispose();
             OnFinished();
         }
     }
@@ -853,14 +887,11 @@ public partial class OutpaintingViewModel : ObservableObject
         ProgressDisplayText = FunProgressMessages[index];
     }
 
-    private async Task<string?> ResolveQwenImageGGUFModelAsync()
+    private async Task<string?> ResolveQwenImageGGUFModelAsync(IComfyUIWrapperService comfy)
     {
-        if (_comfyUiService is null)
-            return null;
-
         try
         {
-            var availableModels = await _comfyUiService.GetNodeInputOptionsAsync(
+            var availableModels = await comfy.GetNodeInputOptionsAsync(
                 UnetLoaderGGUFNodeType, "unet_name");
 
             var qwenModels = availableModels

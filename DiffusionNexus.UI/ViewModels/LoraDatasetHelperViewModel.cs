@@ -213,6 +213,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// <param name="activityLog">Optional activity log service for logging actions.</param>
     /// <param name="comfyUiService">Optional ComfyUI wrapper service for inpainting.</param>
     /// <param name="readinessService">Optional unified ComfyUI readiness service for prerequisite checks.</param>
+    /// <param name="comfyUiClientProvider">Optional provider of the ComfyUI client chosen in Settings (Engine or own server), used by Inpaint and Outpaint.</param>
     public LoraDatasetHelperViewModel(
         IAppSettingsService settingsService,
         IDatasetStorageService datasetStorageService,
@@ -235,7 +236,8 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         ColorDistributionAnalyzer? colorDistributionAnalyzer = null,
         IDownloadCoordinator? downloadCoordinator = null,
         Domain.Services.UnifiedLogging.IUnifiedLogger? unifiedLogger = null,
-        ICivitaiBaseModelCatalog? baseModelCatalog = null)
+        ICivitaiBaseModelCatalog? baseModelCatalog = null,
+        IComfyUiClientProvider? comfyUiClientProvider = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
@@ -263,7 +265,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             duplicateDetector,
             colorDistributionAnalyzer,
             baseModelCatalog);
-        ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, comfyUiService, thumbnailOrchestrator, readinessService, unifiedLogger, settingsService, videoThumbnailService, downloadCoordinator);
+        ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, comfyUiClientProvider, thumbnailOrchestrator, readinessService, unifiedLogger, settingsService, videoThumbnailService, downloadCoordinator);
         BatchCropScale = new BatchCropScaleTabViewModel(state, eventAggregator, settingsService);
         Captioning = new CaptioningTabViewModel(eventAggregator, state, captioningService, captioningBackends, settingsService, readinessService, downloadCoordinator);
         BatchUpscale = new BatchUpscaleTabViewModel(eventAggregator, state, comfyUiService, settingsService, readinessService);

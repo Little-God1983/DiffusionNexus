@@ -47,7 +47,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
     private readonly IDatasetEventAggregator _eventAggregator;
     private readonly IDatasetState _state;
     private readonly IBackgroundRemovalService? _backgroundRemovalService;
-    private readonly IComfyUIWrapperService? _comfyUiService;
+    private readonly IComfyUiClientProvider? _comfyUiClientProvider;
     private readonly IThumbnailOrchestrator? _thumbnailOrchestrator;
     private readonly IFeatureReadinessService? _readinessService;
     private readonly IAppSettingsService? _settingsService;
@@ -289,7 +289,7 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         IDatasetEventAggregator eventAggregator,
         IDatasetState state,
         IBackgroundRemovalService? backgroundRemovalService = null,
-        IComfyUIWrapperService? comfyUiService = null,
+        IComfyUiClientProvider? comfyUiClientProvider = null,
         IThumbnailOrchestrator? thumbnailOrchestrator = null,
         IFeatureReadinessService? readinessService = null,
         Domain.Services.UnifiedLogging.IUnifiedLogger? unifiedLogger = null,
@@ -300,14 +300,14 @@ public partial class ImageEditTabViewModel : ObservableObject, IDialogServiceAwa
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
         _backgroundRemovalService = backgroundRemovalService;
-        _comfyUiService = comfyUiService;
+        _comfyUiClientProvider = comfyUiClientProvider;
         _thumbnailOrchestrator = thumbnailOrchestrator;
         _readinessService = readinessService;
         _settingsService = settingsService;
         _videoThumbnailService = videoThumbnailService;
 
         // Create the image editor with background removal service
-        ImageEditor = new ImageEditorViewModel(_eventAggregator, _backgroundRemovalService, _comfyUiService, readinessService: _readinessService, unifiedLogger: unifiedLogger, downloadCoordinator: downloadCoordinator);
+        ImageEditor = new ImageEditorViewModel(_eventAggregator, _backgroundRemovalService, _comfyUiClientProvider, readinessService: _readinessService, unifiedLogger: unifiedLogger, downloadCoordinator: downloadCoordinator);
 
         // Reusable Add/Send actions over the current edited image. "Image Editor" + "Comparer" are
         // hidden; enablement tracks whether an image is loaded. The Batch Metadata Distiller shows

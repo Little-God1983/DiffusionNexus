@@ -1056,7 +1056,8 @@ public partial class App : Application
             sp.GetService<ColorDistributionAnalyzer>(),
             sp.GetService<IDownloadCoordinator>(),
             sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>(),
-            sp.GetService<Civitai.ICivitaiBaseModelCatalog>()));
+            sp.GetService<Civitai.ICivitaiBaseModelCatalog>(),
+            sp.GetService<IComfyUiClientProvider>()));
     }
 
     /// <summary>
