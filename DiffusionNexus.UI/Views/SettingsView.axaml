@@ -636,12 +636,40 @@
           <Border Padding="16">
             <StackPanel Spacing="12">
 
-              <TextBlock Text="Configure the URL of your ComfyUI server instance."
-                         FontSize="12"
-                         Opacity="0.7"/>
+              <TextBlock Text="Which ComfyUI runs Inpaint and Outpaint in the Image Editor."
+                         FontSize="12" Opacity="0.7"/>
+
+              <!-- Server -->
+              <StackPanel Spacing="4">
+                <TextBlock Text="Server" FontWeight="SemiBold"/>
+                <ComboBox ItemsSource="{Binding ServerModeOptions}"
+                          SelectedItem="{Binding SelectedServerModeOption, Mode=TwoWay}"
+                          HorizontalAlignment="Stretch">
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:SettingsViewModel+ServerModeOption">
+                      <TextBlock Text="{Binding DisplayName}"/>
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                </ComboBox>
+
+                <!-- Engine selected -->
+                <StackPanel Spacing="6" IsVisible="{Binding !IsCustomUrlMode}">
+                  <TextBlock Text="The app installs and starts this ComfyUI itself. Choose what it can do in the Installation Manager → Diffusion Nexus Engine → Features."
+                             FontSize="12" Opacity="0.7" TextWrapping="Wrap"/>
+                  <StackPanel Orientation="Horizontal" Spacing="12">
+                    <TextBlock Text="{Binding EngineStatusText}" FontSize="12" VerticalAlignment="Center"/>
+                    <Button Content="Open Engine Features" Command="{Binding OpenEngineFeaturesCommand}"/>
+                  </StackPanel>
+                </StackPanel>
+
+                <!-- Custom URL selected -->
+                <TextBlock Text="A ComfyUI you run yourself. You install the required custom nodes and models."
+                           FontSize="12" Opacity="0.7" TextWrapping="Wrap"
+                           IsVisible="{Binding IsCustomUrlMode}"/>
+              </StackPanel>
 
               <!-- Server URL -->
-              <StackPanel Spacing="4">
+              <StackPanel Spacing="4" IsEnabled="{Binding IsCustomUrlMode}">
                 <TextBlock Text="Server URL" FontWeight="SemiBold"/>
                 <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto">
 

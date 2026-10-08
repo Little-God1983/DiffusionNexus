@@ -5,8 +5,10 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.Engine;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using DiffusionNexus.Civitai;
@@ -23,6 +25,9 @@ public partial class SettingsViewModel : BusyViewModelBase
     private readonly IDatasetBackupService? _backupService;
     private readonly IBackupScheduler? _backupScheduler;
     private readonly IDatasetEventAggregator? _eventAggregator;
+    private readonly IEngineRootResolver? _engineRootResolver;
+    private readonly IManagedComfyUiEngine? _engine;
+    private readonly Func<string?, bool> _looksInstalled;
     private readonly IActivityLogService? _activityLogService;
     private readonly ISettingsExportService? _exportService;
     private readonly ICivitaiBaseModelCatalog? _baseModelCatalog;
@@ -299,8 +304,14 @@ public partial class SettingsViewModel : BusyViewModelBase
         ISettingsExportService? exportService = null,
         ICivitaiBaseModelCatalog? baseModelCatalog = null,
         IBackupScheduler? backupScheduler = null,
-        IUiScheduler? uiScheduler = null)
+        IUiScheduler? uiScheduler = null,
+        IEngineRootResolver? engineRootResolver = null,
+        IManagedComfyUiEngine? engine = null,
+        Func<string?, bool>? looksInstalled = null)
     {
+        _engineRootResolver = engineRootResolver;
+        _engine = engine;
+        _looksInstalled = looksInstalled ?? ManagedEngineLocator.LooksInstalled;
         _settingsService = settingsService;
         _secureStorage = secureStorage;
         _backupService = backupService;
@@ -323,6 +334,7 @@ public partial class SettingsViewModel : BusyViewModelBase
     /// </summary>
     public SettingsViewModel()
     {
+        _looksInstalled = ManagedEngineLocator.LooksInstalled;
         _settingsService = null!;
         _secureStorage = null!;
         _backupService = null;
@@ -363,6 +375,8 @@ public partial class SettingsViewModel : BusyViewModelBase
 
             // Map settings to view model
             ComfyUiServerUrl = settings.ComfyUiServerUrl;
+            ComfyUiServerMode = settings.ComfyUiServerMode;
+            OnPropertyChanged(nameof(SelectedServerModeOption));
             ShowNsfw = settings.ShowNsfw;
             GenerateVideoThumbnails = settings.GenerateVideoThumbnails;
             ShowVideoPreview = settings.ShowVideoPreview;
@@ -452,6 +466,8 @@ public partial class SettingsViewModel : BusyViewModelBase
             HasChanges = false;
             StatusMessage = null;
         }, "Loading settings...");
+
+        await RefreshEngineStatusAsync();
 
         // Check ComfyUI server connectivity in the background
         _ = TestComfyUiConnectionAsync();
@@ -680,6 +696,7 @@ public partial class SettingsViewModel : BusyViewModelBase
                     ? null
                     : _secureStorage.Encrypt(HuggingfaceApiKey),
                 ComfyUiServerUrl = ComfyUiServerUrl,
+                ComfyUiServerMode = ComfyUiServerMode,
                 ShowNsfw = ShowNsfw,
                 GenerateVideoThumbnails = GenerateVideoThumbnails,
                 ShowVideoPreview = ShowVideoPreview,
@@ -1543,10 +1560,77 @@ public partial class SettingsViewModel : BusyViewModelBase
     partial void OnMaxBackupsChanged(int value) => HasChanges = true;
     partial void OnComfyUiServerUrlChanged(string value) => HasChanges = true;
 
+    /// <summary>One entry of the ComfyUI Server dropdown.</summary>
+    public sealed record ServerModeOption(ComfyUiServerMode Mode, string DisplayName);
+
+    /// <summary>Dropdown entries, in display order.</summary>
+    public IReadOnlyList<ServerModeOption> ServerModeOptions { get; } =
+    [
+        new(ComfyUiServerMode.Engine, "Diffusion Nexus Engine"),
+        new(ComfyUiServerMode.CustomUrl, "Custom URL"),
+    ];
+
+    /// <summary>Which ComfyUI runs Inpaint and Outpaint.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsCustomUrlMode))]
+    [NotifyCanExecuteChangedFor(nameof(TestComfyUiConnectionCommand))]
+    private ComfyUiServerMode _comfyUiServerMode = ComfyUiServerMode.Engine;
+
+    /// <summary>The URL row and Test Connection are only active for a custom URL.</summary>
+    public bool IsCustomUrlMode => ComfyUiServerMode == ComfyUiServerMode.CustomUrl;
+
+    /// <summary>Bound to the dropdown.</summary>
+    public ServerModeOption? SelectedServerModeOption
+    {
+        get => ServerModeOptions.FirstOrDefault(o => o.Mode == ComfyUiServerMode);
+        set
+        {
+            if (value is not null && value.Mode != ComfyUiServerMode)
+            {
+                ComfyUiServerMode = value.Mode;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    /// <summary>One line under the Engine option: installed / not installed / running.</summary>
+    [ObservableProperty]
+    private string _engineStatusText = string.Empty;
+
+    partial void OnComfyUiServerModeChanged(ComfyUiServerMode value) => HasChanges = true;
+
+    [RelayCommand]
+    private void OpenEngineFeatures() =>
+        _eventAggregator?.PublishNavigateToEngineFeatures(new NavigateToEngineFeaturesEventArgs());
+
+    private async Task RefreshEngineStatusAsync()
+    {
+        if (_engineRootResolver is null)
+        {
+            EngineStatusText = string.Empty;
+            return;
+        }
+
+        try
+        {
+            var root = await _engineRootResolver.ResolveAsync();
+            EngineStatusText = !_looksInstalled(root)
+                ? "Not installed — install it in the Installation Manager"
+                : _engine?.BaseUrl is not null
+                    ? "Installed · running"
+                    : "Installed · not running (starts on first use)";
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Could not determine the Diffusion Nexus Engine status for Settings");
+            EngineStatusText = string.Empty;
+        }
+    }
+
     /// <summary>
     /// Tests whether the ComfyUI server is reachable at the configured URL.
     /// </summary>
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(IsCustomUrlMode))]
     private async Task TestComfyUiConnectionAsync()
     {
         IsTestingComfyUiConnection = true;
