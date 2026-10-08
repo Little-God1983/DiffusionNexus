@@ -28,6 +28,7 @@ using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using ComfyUiUrl = DiffusionNexus.UI.Services.Diffusion.ComfyUiUrl;
 
 namespace DiffusionNexus.UI;
 
@@ -754,12 +755,35 @@ public partial class App : Application
         // ComfyUI captioning, the ComfyUI readiness backend). Built from the Settings URL — it used
         // to ignore it and always talk to 8188. A URL change reaches these after a restart; #608
         // moves Batch Upscale onto the provider.
+        // A bad Settings URL must not throw here: this singleton feeds the readiness backend,
+        // captioning and the LoRA Dataset Helper, and a throw would keep the user out of Settings.
         services.AddSingleton<IComfyUIWrapperService>(sp =>
         {
-            using var scope = sp.CreateScope();
-            var url = scope.ServiceProvider.GetRequiredService<IAppSettingsService>()
-                .GetSettingsAsync().GetAwaiter().GetResult().ComfyUiServerUrl;
-            return new ComfyUIWrapperService(string.IsNullOrWhiteSpace(url) ? "http://127.0.0.1:8188" : url);
+            string? url;
+            try
+            {
+                using var scope = sp.CreateScope();
+                url = scope.ServiceProvider.GetRequiredService<IAppSettingsService>()
+                    .GetSettingsAsync().GetAwaiter().GetResult().ComfyUiServerUrl;
+            }
+            catch (Exception ex)
+            {
+                Serilog.Log.Warning(ex, "Could not read the ComfyUI server URL from Settings; using {Default}", ComfyUiUrl.Default);
+                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()?.Warn(
+                    Domain.Services.UnifiedLogging.LogCategory.Configuration, "ComfyUI",
+                    $"Could not read the ComfyUI server URL from Settings; using {ComfyUiUrl.Default}.");
+                return new ComfyUIWrapperService(ComfyUiUrl.Default);
+            }
+
+            if (!string.IsNullOrWhiteSpace(url) && !ComfyUiUrl.IsValid(url))
+            {
+                Serilog.Log.Warning("The ComfyUI server URL in Settings is not valid: '{Url}'; using {Default}", url, ComfyUiUrl.Default);
+                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()?.Warn(
+                    Domain.Services.UnifiedLogging.LogCategory.Configuration, "ComfyUI",
+                    $"The ComfyUI server URL in Settings is not valid: '{url}'. Using {ComfyUiUrl.Default}; fix it in Settings → ComfyUI Server.");
+            }
+
+            return new ComfyUIWrapperService(ComfyUiUrl.OrDefault(url));
         });
 
         // The ComfyUI that Inpaint and Outpaint run on: the Engine or the user's own, per Settings.
@@ -1022,7 +1046,8 @@ public partial class App : Application
             unitOfWorkFactory: () => sp.GetRequiredService<IUnitOfWork>(),
             engineInstaller: sp.GetRequiredService<Services.Engine.IManagedEngineInstaller>(),
             resourceMonitor: sp.GetRequiredService<IResourceMonitorService>(),
-            engineModelPaths: sp.GetRequiredService<Services.Engine.EngineModelPathsSynchronizer>()));
+            engineModelPaths: sp.GetRequiredService<Services.Engine.EngineModelPathsSynchronizer>(),
+            engine: sp.GetRequiredService<Services.Engine.IManagedComfyUiEngine>()));
         services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),

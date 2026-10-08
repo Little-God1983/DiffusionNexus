@@ -176,11 +176,22 @@ public partial class OutpaintingViewModel : ObservableObject
         // app-wide aggregator for the life of the tab; it only does work while the panel is open.
         if (_eventAggregator is not null)
         {
+            // SettingsSaved can arrive on a thread-pool thread (the startup backfill publishes inside
+            // Task.Run); the re-check writes bound properties, so it runs on the UI thread. With no
+            // Avalonia application (unit tests) the dispatcher has no pump, so run inline.
             _eventAggregator.SettingsSaved += (_, _) =>
             {
-                if (IsPanelOpen) _ = RunReadinessChecksAsync();
+                if (Avalonia.Application.Current is null || Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+                    RecheckReadinessIfOpen();
+                else
+                    Avalonia.Threading.Dispatcher.UIThread.Post(RecheckReadinessIfOpen);
             };
         }
+    }
+
+    private void RecheckReadinessIfOpen()
+    {
+        if (IsPanelOpen) _ = RunReadinessChecksAsync();
     }
 
     /// <summary>
@@ -682,10 +693,12 @@ public partial class OutpaintingViewModel : ObservableObject
             {
                 HasError = true;
                 ProgressDisplayText = "No Qwen Image GGUF model found";
-                StatusMessageChanged?.Invoke(this,
-                    "No Qwen Image 2512 GGUF model found in ComfyUI. " +
-                    "Please download a qwen-image-2512 GGUF variant (e.g. Q8_0, Q4_K_M) " +
-                    "and place it in your ComfyUI diffusion_models folder.");
+                StatusMessageChanged?.Invoke(this, lease.Mode == ComfyUiServerMode.Engine
+                    ? "No Qwen Image 2512 GGUF model found on the Diffusion Nexus Engine. " +
+                      "Install Inpaint & Outpaint in Installation Manager → Diffusion Nexus Engine → Features."
+                    : "No Qwen Image 2512 GGUF model found in ComfyUI. " +
+                      "Please download a qwen-image-2512 GGUF variant (e.g. Q8_0, Q4_K_M) " +
+                      "and place it in your ComfyUI diffusion_models folder.");
                 return;
             }
 

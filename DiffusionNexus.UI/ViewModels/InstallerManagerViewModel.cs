@@ -59,6 +59,12 @@ public partial class InstallerManagerViewModel : ViewModelBase
     private readonly Services.Engine.EngineModelPathsSynchronizer? _engineModelPaths;
 
     /// <summary>
+    /// The running Diffusion Nexus Engine. ComfyUI loads custom nodes only at process start, so a
+    /// Features install stops a running engine and the next use starts it with the new node packs.
+    /// </summary>
+    private readonly Services.Engine.IManagedComfyUiEngine? _engine;
+
+    /// <summary>
     /// Raised when the unified console panel should be opened (e.g., during an update).
     /// </summary>
     public event EventHandler? UnifiedConsolePanelRequested;
@@ -132,7 +138,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         Func<IUnitOfWork>? unitOfWorkFactory = null,
         Services.Engine.IManagedEngineInstaller? engineInstaller = null,
         IResourceMonitorService? resourceMonitor = null,
-        Services.Engine.EngineModelPathsSynchronizer? engineModelPaths = null)
+        Services.Engine.EngineModelPathsSynchronizer? engineModelPaths = null,
+        Services.Engine.IManagedComfyUiEngine? engine = null)
     {
         _dialogService = dialogService;
         _unitOfWork = unitOfWork;
@@ -152,6 +159,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         _engineInstaller = engineInstaller;
         _resourceMonitor = resourceMonitor;
         _engineModelPaths = engineModelPaths;
+        _engine = engine;
 
         InstallerCards.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
 
@@ -821,8 +829,16 @@ public partial class InstallerManagerViewModel : ViewModelBase
                     await dialog.ShowDialog(parentWindow);
             }
 
-            if (vm.DidInstall && _engineModelPaths is not null)
-                await _engineModelPaths.SyncAsync(card.InstallationPath);
+            if (vm.DidInstall)
+            {
+                if (_engineModelPaths is not null)
+                    await _engineModelPaths.SyncAsync(card.InstallationPath);
+
+                await StopEngineForNewNodePacksAsync();
+
+                // Lets an open Inpaint/Outpaint panel re-check its readiness line.
+                _eventAggregator.PublishSettingsSaved(new SettingsSavedEventArgs());
+            }
         }
         catch (Exception ex)
         {
@@ -830,6 +846,33 @@ public partial class InstallerManagerViewModel : ViewModelBase
             _unifiedLogger.Error(LogCategory.Installation, "Diffusion Nexus Engine",
                 "Failed to open the Features dialog", ex);
             await _dialogService.ShowMessageAsync("Error", $"Failed to load Engine features: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// ComfyUI loads custom nodes only at process start, so an Engine that was already running
+    /// during a Features install would never see the new node packs. Stop it; the next Generate
+    /// or Canvas use starts it fresh. A failed stop is logged, not shown: the old process keeps
+    /// working for what it already had.
+    /// </summary>
+    private async Task StopEngineForNewNodePacksAsync()
+    {
+        if (_engine?.BaseUrl is null)
+            return;
+
+        const string message =
+            "Restarting the Diffusion Nexus Engine on next use so it loads the newly installed node packs.";
+        Serilog.Log.Information(message);
+        _unifiedLogger.Info(LogCategory.InstanceManagement, "Diffusion Nexus Engine", message);
+        try
+        {
+            await _engine.StopAsync();
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Could not stop the Diffusion Nexus Engine after a Features install");
+            _unifiedLogger.Warn(LogCategory.InstanceManagement, "Diffusion Nexus Engine",
+                $"Could not stop the engine after the install; restart the app to load the new node packs. {ex.Message}");
         }
     }
 

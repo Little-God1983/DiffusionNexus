@@ -2,6 +2,7 @@ using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Installer.SDK.Catalog;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.Engine;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
 using Moq;
@@ -116,6 +117,47 @@ public class EngineWorkloadsRequestTests
 
             shown.Should().NotBeNull();
             shown!.Rows.Select(r => r.DisplayName).Should().Equal("Inpaint & Outpaint", "Canvas · Krea 2 Turbo");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(true, "http://127.0.0.1:51234", 1)]
+    [InlineData(true, null, 0)]
+    [InlineData(false, "http://127.0.0.1:51234", 0)]
+    public async Task FeaturesDialog_AfterAnInstall_StopsARunningEngine_AndPublishesSettingsSaved(
+        bool didInstall, string? engineBaseUrl, int expectedStops)
+    {
+        var root = Directory.CreateTempSubdirectory().FullName;
+        File.WriteAllText(Path.Combine(root, "main.py"), "");
+        try
+        {
+            var packages = new List<InstallerPackage>
+            {
+                new() { Id = 1, Name = "Diffusion Nexus Engine", InstallationPath = root, ExecutablePath = Path.Combine(root, "main.py"), Type = InstallerType.ComfyUI, IsAppManaged = true }
+            };
+            var aggregator = new Mock<IDatasetEventAggregator>();
+            var engine = new Mock<IManagedComfyUiEngine>();
+            engine.Setup(e => e.BaseUrl).Returns(engineBaseUrl);
+            engine.Setup(e => e.StopAsync()).Returns(Task.CompletedTask);
+            var vm = EngineTestHarness.CreateInstallerManagerViewModel(
+                packages: packages, eventAggregatorMock: aggregator, engine: engine.Object);
+            vm.EngineFeaturesDialogPresenter = features =>
+            {
+                features.DidInstall = didInstall;
+                return Task.CompletedTask;
+            };
+            await vm.LoadInstallationsCommand.ExecuteAsync(null);
+            aggregator.Invocations.Clear();
+
+            await vm.OpenEngineFeaturesAsync();
+
+            engine.Verify(e => e.StopAsync(), Times.Exactly(expectedStops));
+            aggregator.Verify(a => a.PublishSettingsSaved(It.IsAny<SettingsSavedEventArgs>()),
+                didInstall ? Times.Once() : Times.Never());
         }
         finally
         {

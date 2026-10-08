@@ -26,7 +26,9 @@ internal static class EngineTestHarness
         Mock<IDialogService>? dialogMock = null,
         Mock<ICatalog>? catalogMock = null,
         Action<InstallerPackage>? onPackageUpdated = null,
-        Action<InstallerPackage>? onPackageRemoved = null)
+        Action<InstallerPackage>? onPackageRemoved = null,
+        Mock<IDatasetEventAggregator>? eventAggregatorMock = null,
+        IManagedComfyUiEngine? engine = null)
     {
         var repo = new Mock<IInstallerPackageRepository>();
         repo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>()))
@@ -64,11 +66,12 @@ internal static class EngineTestHarness
 
         return new InstallerManagerViewModel(
             dialog.Object, uow.Object, new PackageProcessManager(),
-            new Mock<IDatasetEventAggregator>().Object,
+            (eventAggregatorMock ?? new Mock<IDatasetEventAggregator>()).Object,
             (catalogMock ?? new Mock<ICatalog>()).Object,
             new Mock<IConfigurationCheckerService>().Object,
             new Mock<IWorkloadInstallService>().Object,
             [], new Mock<IUnifiedLogger>().Object,
-            engineInstaller: engineInstaller);
+            engineInstaller: engineInstaller,
+            engine: engine);
     }
 }

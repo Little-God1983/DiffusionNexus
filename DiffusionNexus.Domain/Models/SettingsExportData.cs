@@ -107,7 +107,11 @@ public sealed record SettingsExportData
 
     public string ComfyUiServerUrl { get; init; } = "http://127.0.0.1:8188/";
 
-    /// <summary>Null in files written before schema v5; import treats null as CustomUrl.</summary>
+    /// <summary>
+    /// Null in files written before schema v5; import treats null as CustomUrl. Written by name
+    /// ("Engine" / "CustomUrl"); a numeric value is still read.
+    /// </summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<ComfyUiServerMode>))]
     public ComfyUiServerMode? ComfyUiServerMode { get; init; }
 }
 

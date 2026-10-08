@@ -469,8 +469,10 @@ public partial class SettingsViewModel : BusyViewModelBase
 
         await RefreshEngineStatusAsync();
 
-        // Check ComfyUI server connectivity in the background
-        _ = TestComfyUiConnectionAsync();
+        // Check ComfyUI server connectivity in the background — only the custom URL; in Engine
+        // mode the stored URL is stale and pinging it would show a meaningless status.
+        if (IsCustomUrlMode)
+            _ = TestComfyUiConnectionAsync();
 
         // Compute the ⚠ folder-presence badges off-thread; never gates startup.
         _ = RefreshFolderPresenceAsync();

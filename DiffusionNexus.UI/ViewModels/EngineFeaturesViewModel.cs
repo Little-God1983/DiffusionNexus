@@ -79,8 +79,12 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
     [ObservableProperty] private string? _progressText;
     [ObservableProperty] private string _footerText = string.Empty;
 
-    /// <summary>True once an install ran, so the caller can re-sync model paths and refresh readiness.</summary>
-    public bool DidInstall { get; private set; }
+    /// <summary>
+    /// True once an install started, so the caller can re-sync model paths, restart the Engine and
+    /// refresh readiness. Set before the install call, because one that throws after a partial
+    /// download has still changed the disk. Internal setter is a test seam.
+    /// </summary>
+    public bool DidInstall { get; internal set; }
 
     private IEnumerable<EngineFeatureRowViewModel> RowsToInstall =>
         Rows.Where(r => r.IsSelected && r.IsSelectable);
@@ -140,6 +144,7 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
                     ProgressText = $"{row.DisplayName}: installing {nodes.Count} node pack(s) and {models.Count} model(s)…";
                     Info(ProgressText);
 
+                    DidInstall = true;
                     var summary = await _installer.InstallSelectedAsync(
                         config, _engineRoot, nodes, models, vramGb,
                         new Progress<WorkloadInstallProgress>(p =>
@@ -156,7 +161,6 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
                         skipDownloadTokenProvider: null,
                         ct);
 
-                    DidInstall = true;
                     Info($"{row.DisplayName}: {summary}");
                 }
             }

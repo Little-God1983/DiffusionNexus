@@ -45,6 +45,40 @@ public class ComfyUiClientProviderTests
         _root.Verify(r => r.ResolveAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Theory]
+    [InlineData("", "(empty)")]
+    [InlineData("   ", "(empty)")]
+    [InlineData("127.0.0.1:8188", "127.0.0.1:8188")]
+    [InlineData("192.168.1.5:8188/", "192.168.1.5:8188/")]
+    public async Task CustomUrl_InvalidUrl_Throws_WithoutCreatingAClient(string url, string shown)
+    {
+        Mode(ComfyUiServerMode.CustomUrl, url);
+
+        var act = () => Sut().AcquireAsync();
+
+        await act.Should().ThrowAsync<ComfyUiUnavailableException>()
+            .WithMessage($"The ComfyUI server URL in Settings is not valid: '{shown}'. Fix it in Settings → ComfyUI Server.");
+        _clientUrls.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("http://127.0.0.1:8188", true)]
+    [InlineData("https://comfy.example.com/", true)]
+    [InlineData("127.0.0.1:8188", false)]
+    [InlineData("192.168.1.5:8188/", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    [InlineData("ftp://127.0.0.1:8188", false)]
+    public void ComfyUiUrl_IsValid_AcceptsOnlyAbsoluteHttpOrHttps(string? url, bool expected) =>
+        ComfyUiUrl.IsValid(url).Should().Be(expected);
+
+    [Theory]
+    [InlineData("http://192.168.1.20:8188/", "http://192.168.1.20:8188/")]
+    [InlineData("127.0.0.1:8188", "http://127.0.0.1:8188")]
+    [InlineData(null, "http://127.0.0.1:8188")]
+    public void ComfyUiUrl_OrDefault_FallsBackToLocal8188(string? url, string expected) =>
+        ComfyUiUrl.OrDefault(url).Should().Be(expected);
+
     [Fact]
     public async Task Engine_StartsTheEngine_ReportsProgress_AndReturnsClientOnItsPort()
     {

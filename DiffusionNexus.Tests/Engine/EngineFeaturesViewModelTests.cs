@@ -179,6 +179,8 @@ public class EngineFeaturesViewModelTests
         vm.ProgressText.Should().Contain("HF returned 503");
         Row(vm, EngineFeature.InpaintOutpaint).Status.Should().Be(EngineFeatureStatus.NotInstalled,
             "the re-check after a failed install shows what is really on disk");
+        vm.DidInstall.Should().BeTrue(
+            "an install that threw may have left files behind, so the caller must still re-sync and refresh");
     }
 
     [Fact]

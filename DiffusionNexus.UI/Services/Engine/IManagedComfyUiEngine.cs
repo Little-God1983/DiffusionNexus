@@ -12,4 +12,7 @@ public interface IManagedComfyUiEngine
 
     /// <summary>Starts the engine if needed. Never throws for ordinary failures; see <see cref="EngineStartResult"/>.</summary>
     Task<EngineStartResult> EnsureRunningAsync(string installRoot, CancellationToken ct);
+
+    /// <summary>Stops the engine if it is running; the next <see cref="EnsureRunningAsync"/> starts it fresh.</summary>
+    Task StopAsync();
 }

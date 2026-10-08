@@ -301,6 +301,32 @@ public class SettingsExportServiceTests : IDisposable
             .Should().Be(SettingsExportSchema.CurrentVersion);
     }
 
+    [Fact]
+    public async Task WhenExportingThenTheServerModeIsWrittenByName()
+    {
+        GivenCurrentSettings(FullyPopulatedSettings());
+        var sut = CreateSut();
+        var path = PathFor("server-mode.json");
+
+        await sut.ExportAsync(path);
+
+        (await File.ReadAllTextAsync(path)).Should().Contain("\"comfyUiServerMode\": \"CustomUrl\"");
+    }
+
+    [Fact]
+    public async Task WhenImportingANumericServerModeThenItIsStillAccepted()
+    {
+        var captured = GivenSaveIsCaptured();
+        var path = await WriteJsonAsync("v5-numeric-server-mode.json", """
+        { "schemaVersion": 5, "comfyUiServerMode": 1 }
+        """);
+        var sut = CreateSut();
+
+        await sut.ImportAsync(path);
+
+        captured()!.ComfyUiServerMode.Should().Be(ComfyUiServerMode.CustomUrl);
+    }
+
     /// <summary>
     /// The file's own rule: bump <c>CurrentVersion</c> whenever fields are added to
     /// <c>SettingsExportData</c>. v3 is the metadata-sync retry windows and thumbnail concurrency;

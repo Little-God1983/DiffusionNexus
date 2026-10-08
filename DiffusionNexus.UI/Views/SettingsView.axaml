@@ -673,8 +673,10 @@
                 <TextBlock Text="Server URL" FontWeight="SemiBold"/>
                 <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto">
 
-                  <!-- Status indicator: green when online, red when offline -->
+                  <!-- Status indicator: green when online, red when offline. Custom URL only:
+                       in Engine mode the stored URL is not tested, so there is no status. -->
                   <Panel Grid.Column="0"
+                         IsVisible="{Binding IsCustomUrlMode}"
                          Width="12" Height="12"
                          VerticalAlignment="Center"
                          Margin="0,0,8,0">

@@ -16,7 +16,8 @@ public class SettingsViewModelServerModeTests
     private readonly Mock<IManagedComfyUiEngine> _engine = new();
     private readonly Mock<IDatasetEventAggregator> _events = new();
 
-    private async Task<SettingsViewModel> LoadedAsync(ComfyUiServerMode mode, string? engineRoot = null)
+    private async Task<SettingsViewModel> LoadedAsync(ComfyUiServerMode mode, string? engineRoot = null,
+        Action<SettingsViewModel>? beforeLoad = null)
     {
         _settings.Setup(s => s.GetSettingsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AppSettings { Id = 1, ComfyUiServerMode = mode });
@@ -25,6 +26,7 @@ public class SettingsViewModelServerModeTests
         var vm = new SettingsViewModel(_settings.Object, new Mock<ISecureStorage>().Object,
             eventAggregator: _events.Object, engineRootResolver: _root.Object, engine: _engine.Object,
             looksInstalled: r => r is not null);
+        beforeLoad?.Invoke(vm);
         await vm.LoadCommand.ExecuteAsync(null);
         return vm;
     }
@@ -62,6 +64,23 @@ public class SettingsViewModelServerModeTests
         vm.SelectedServerModeOption = vm.ServerModeOptions.Single(o => o.Mode == ComfyUiServerMode.CustomUrl);
 
         vm.TestComfyUiConnectionCommand.CanExecute(null).Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData(ComfyUiServerMode.Engine, false)]
+    [InlineData(ComfyUiServerMode.CustomUrl, true)]
+    public async Task Load_PingsTheCustomUrl_OnlyInCustomUrlMode(ComfyUiServerMode mode, bool expectPing)
+    {
+        // The connection test sets IsTestingComfyUiConnection before its first await, so a ping
+        // started by Load is seen synchronously.
+        var pinged = false;
+        await LoadedAsync(mode, beforeLoad: vm => vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(SettingsViewModel.IsTestingComfyUiConnection) && vm.IsTestingComfyUiConnection)
+                pinged = true;
+        });
+
+        pinged.Should().Be(expectPing);
     }
 
     [Theory]

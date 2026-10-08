@@ -68,6 +68,57 @@ public class EditorEngineGenerateTests
         vm.ProgressDisplayText.Should().Be("Generation failed – is the Diffusion Nexus Engine running?");
     }
 
+    private const string EngineNoGguf =
+        "No Qwen Image 2512 GGUF model found on the Diffusion Nexus Engine. " +
+        "Install Inpaint & Outpaint in Installation Manager → Diffusion Nexus Engine → Features.";
+
+    private const string CustomNoGguf =
+        "No Qwen Image 2512 GGUF model found in ComfyUI. " +
+        "Please download a qwen-image-2512 GGUF variant (e.g. Q8_0, Q4_K_M) " +
+        "and place it in your ComfyUI diffusion_models folder.";
+
+    private static Mock<IComfyUIWrapperService> ClientWithoutQwenGguf()
+    {
+        var client = new Mock<IComfyUIWrapperService>();
+        client.Setup(c => c.UploadImageAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("uploaded.png");
+        client.Setup(c => c.GetNodeInputOptionsAsync("UnetLoaderGGUF", "unet_name", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<string> { "flux1-dev-Q8_0.gguf" });
+        return client;
+    }
+
+    [Theory]
+    [InlineData(ComfyUiServerMode.Engine, EngineNoGguf)]
+    [InlineData(ComfyUiServerMode.CustomUrl, CustomNoGguf)]
+    public async Task Inpaint_NoQwenGguf_WordsTheFixForTheServerInUse(ComfyUiServerMode mode, string expected)
+    {
+        var messages = new List<string?>();
+        var vm = new InpaintingViewModel(() => true, _ => { },
+            InpaintingViewModelGGUFResolutionTests.Provider(ClientWithoutQwenGguf().Object, mode), eventAggregator: null);
+        vm.StatusMessageChanged += (_, m) => messages.Add(m);
+
+        await vm.ProcessInpaintAsync(TempImage());
+
+        vm.HasError.Should().BeTrue();
+        messages.Should().Contain(expected);
+    }
+
+    [Theory]
+    [InlineData(ComfyUiServerMode.Engine, EngineNoGguf)]
+    [InlineData(ComfyUiServerMode.CustomUrl, CustomNoGguf)]
+    public async Task Outpaint_NoQwenGguf_WordsTheFixForTheServerInUse(ComfyUiServerMode mode, string expected)
+    {
+        var messages = new List<string?>();
+        var vm = new OutpaintingViewModel(() => true, () => 512, () => 512, _ => { },
+            InpaintingViewModelGGUFResolutionTests.Provider(ClientWithoutQwenGguf().Object, mode));
+        vm.StatusMessageChanged += (_, m) => messages.Add(m);
+
+        await vm.ProcessOutpaintAsync(TempImage(), useVision: false, 64, 0, 64, 0);
+
+        vm.HasError.Should().BeTrue();
+        messages.Should().Contain(expected);
+    }
+
     [Fact]
     public async Task SwitchingTheServerInSettings_WhileThePanelIsOpen_RechecksReadiness()
     {

@@ -52,6 +52,15 @@ public sealed class ComfyUiClientProvider : IComfyUiClientProvider
         if (settings.ComfyUiServerMode == ComfyUiServerMode.CustomUrl)
         {
             var url = settings.ComfyUiServerUrl;
+            if (!ComfyUiUrl.IsValid(url))
+            {
+                // Checked before the client factory: an invalid URL throws inside new Uri(...).
+                var invalid = $"The ComfyUI server URL in Settings is not valid: '{ComfyUiUrl.Describe(url)}'. " +
+                              "Fix it in Settings → ComfyUI Server.";
+                Warn(ComfySource, invalid);
+                throw new ComfyUiUnavailableException(invalid);
+            }
+
             Info(LogCategory.Configuration, ComfySource, $"Using your own ComfyUI at {url}.");
             return new ComfyUiClientLease(_clientFactory(url), ComfyUiServerMode.CustomUrl, url, ownsClient: true);
         }
