@@ -173,6 +173,46 @@ public class EngineWorkloadsRequestTests
         }
     }
 
+    [Theory]
+    [InlineData(false, 1)] // the file did not match the folder list: rewritten -> restart requested
+    [InlineData(true, 0)]  // already up to date: nothing changed for a running Engine
+    public async Task FeaturesDialog_PreDialogModelPathSync_AsksTheEngineToRestart_OnlyWhenItRewroteTheFile(
+        bool fileAlreadyUpToDate, int expectedRestarts)
+    {
+        var root = Directory.CreateTempSubdirectory().FullName;
+        var library = Directory.CreateTempSubdirectory().FullName;
+        File.WriteAllText(Path.Combine(root, "main.py"), "");
+        try
+        {
+            var packages = new List<InstallerPackage>
+            {
+                new() { Id = 1, Name = "Diffusion Nexus Engine", InstallationPath = root, ExecutablePath = Path.Combine(root, "main.py"), Type = InstallerType.ComfyUI, IsAppManaged = true }
+            };
+            var engine = new Mock<IManagedComfyUiEngine>();
+            engine.Setup(e => e.BaseUrl).Returns("http://127.0.0.1:51234");
+            var vm = EngineTestHarness.CreateInstallerManagerViewModel(
+                packages: packages, engine: engine.Object, modelSearchRoots: [library]);
+            vm.EngineFeaturesDialogPresenter = _ => Task.CompletedTask;
+            await vm.LoadInstallationsCommand.ExecuteAsync(null);
+
+            if (fileAlreadyUpToDate)
+            {
+                // A first open writes the file (and so requests a restart); only the second is the case under test.
+                await vm.OpenEngineFeaturesAsync();
+                engine.Invocations.Clear();
+            }
+
+            await vm.OpenEngineFeaturesAsync();
+
+            engine.Verify(e => e.RequestRestart(), Times.Exactly(expectedRestarts));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+            Directory.Delete(library, recursive: true);
+        }
+    }
+
     [Fact]
     public void EngineTile_IsVisibleByDefault_WithoutTheCanvasSwitch()
     {

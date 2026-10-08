@@ -804,7 +804,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         // The disk check behind this dialog resolves its search paths from the engine's own
         // extra_model_paths.yaml, so sync it before checking and again after installing.
         if (_engineModelPaths is not null)
-            await _engineModelPaths.SyncAsync(card.InstallationPath);
+            DiffusionNexus.UI.Services.Engine.EngineModelFoldersChanged.RequestRestartIfWritten(await _engineModelPaths.SyncAsync(card.InstallationPath), _engine, _unifiedLogger);
 
         try
         {
@@ -832,7 +832,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
             if (vm.DidInstall)
             {
                 if (_engineModelPaths is not null)
-                    await _engineModelPaths.SyncAsync(card.InstallationPath);
+                    DiffusionNexus.UI.Services.Engine.EngineModelFoldersChanged.RequestRestartIfWritten(await _engineModelPaths.SyncAsync(card.InstallationPath), _engine, _unifiedLogger);
 
                 if (vm.DidInstallNodePacks)
                 {
@@ -1165,6 +1165,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
                     if (_engineModelPaths is not null)
                     {
                         var sync = await _engineModelPaths.SyncAsync(package.InstallationPath);
+                        DiffusionNexus.UI.Services.Engine.EngineModelFoldersChanged.RequestRestartIfWritten(sync, _engine, _unifiedLogger);
                         _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
                             sync.Roots.Count > 0
                                 ? $"Engine reads {sync.Roots.Count} model folder(s): {string.Join(" | ", sync.Roots)}"

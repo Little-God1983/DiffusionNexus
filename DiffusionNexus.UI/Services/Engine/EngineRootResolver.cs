@@ -71,7 +71,7 @@ public sealed class EngineRootResolver : IEngineRootResolver
             // restarts. The restart waits until no job is running on the Engine.
             if (changed && _onModelPathsChanged is not null)
             {
-                const string message = "Model folders changed; the Diffusion Nexus Engine restarts on its next use.";
+                const string message = EngineModelFoldersChanged.Message;
                 Log.ForContext<EngineRootResolver>().Information(message);
                 _unifiedLogger?.Info(LogCategory.InstanceManagement, "Diffusion Nexus Engine", message);
                 _onModelPathsChanged();

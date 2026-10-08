@@ -310,9 +310,13 @@ public partial class App : Application
                         // engine. Runs here as well as before each engine start so an engine
                         // installed by an older build — which could only ever see the first folder
                         // — is corrected without the user reinstalling it.
-                        await scope.ServiceProvider
+                        var modelPathsSync = await scope.ServiceProvider
                             .GetRequiredService<Services.Engine.EngineModelPathsSynchronizer>()
                             .SyncAsync();
+                        DiffusionNexus.UI.Services.Engine.EngineModelFoldersChanged.RequestRestartIfWritten(
+                            modelPathsSync,
+                            Services!.GetService<Services.Engine.IManagedComfyUiEngine>(),
+                            Services!.GetService<DiffusionNexus.Domain.Services.UnifiedLogging.IUnifiedLogger>());
                     }
                     catch (Exception ex)
                     {
