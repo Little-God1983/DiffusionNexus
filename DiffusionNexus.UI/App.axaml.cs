@@ -750,12 +750,33 @@ public partial class App : Application
         services.AddSingleton<Services.Engine.IEngineRootResolver>(sp =>
             new Services.Engine.EngineRootResolver(sp.GetRequiredService<IServiceScopeFactory>()));
 
-        // ComfyUI workflow execution service (singleton - maintains HttpClient)
+        // ComfyUI client for the features not yet on IComfyUiClientProvider (Batch Upscale,
+        // ComfyUI captioning, the ComfyUI readiness backend). Built from the Settings URL — it used
+        // to ignore it and always talk to 8188. A URL change reaches these after a restart; #608
+        // moves Batch Upscale onto the provider.
         services.AddSingleton<IComfyUIWrapperService>(sp =>
         {
-            var settings = sp.GetRequiredService<IAppSettingsService>();
-            // Default URL; callers can reconfigure later if settings change
-            return new ComfyUIWrapperService();
+            using var scope = sp.CreateScope();
+            var url = scope.ServiceProvider.GetRequiredService<IAppSettingsService>()
+                .GetSettingsAsync().GetAwaiter().GetResult().ComfyUiServerUrl;
+            return new ComfyUIWrapperService(string.IsNullOrWhiteSpace(url) ? "http://127.0.0.1:8188" : url);
+        });
+
+        // The ComfyUI that Inpaint and Outpaint run on: the Engine or the user's own, per Settings.
+        // Settings are read through a fresh scope per call: IAppSettingsService is transient over a
+        // scoped DbContext, and parallel readiness checks must not share one context.
+        services.AddSingleton<IComfyUiClientProvider>(sp =>
+        {
+            var scopes = sp.GetRequiredService<IServiceScopeFactory>();
+            return new Services.Diffusion.ComfyUiClientProvider(
+                async ct =>
+                {
+                    using var scope = scopes.CreateScope();
+                    return await scope.ServiceProvider.GetRequiredService<IAppSettingsService>().GetSettingsAsync(ct);
+                },
+                sp.GetRequiredService<Services.Engine.IEngineRootResolver>(),
+                sp.GetRequiredService<Services.Engine.IManagedComfyUiEngine>(),
+                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>());
         });
 
         // Backend-agnostic feature readiness pipeline.
