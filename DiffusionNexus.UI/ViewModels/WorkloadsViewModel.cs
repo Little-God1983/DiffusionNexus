@@ -110,7 +110,7 @@ public partial class WorkloadsViewModel : ViewModelBase
                     config.ConfigurationVersion,
                     config.ConfigurationSubVersion)
                 {
-                    ConfiguredVramProfiles = ParseVramProfiles(config.Vram.VramProfiles)
+                    ConfiguredVramProfiles = EngineFeatureCatalog.ParseVramProfiles(config.Vram.VramProfiles)
                 };
 
                 if (config.WorkloadTarget == WorkloadTargetType.DiffusionNexusCore)
@@ -189,7 +189,7 @@ public partial class WorkloadsViewModel : ViewModelBase
         }
 
         var snapshot = await _resourceMonitor.GetSnapshotAsync();
-        return EngineWorkloadCatalog.SuggestVramTier(snapshot.VramTotalMB, configuredVramProfiles);
+        return EngineFeatureCatalog.SuggestVramTier(snapshot.VramTotalMB, configuredVramProfiles);
     }
 
     /// <summary>
@@ -329,23 +329,5 @@ public partial class WorkloadsViewModel : ViewModelBase
         {
             Serilog.Log.Error(ex, "Failed to re-check workload {Name}", item.Name);
         }
-    }
-
-    /// <summary>
-    /// Parses the comma-separated VRAM profiles string (e.g. "8,16,24,24+")
-    /// into an array of integer GB values, matching the installer behaviour.
-    /// </summary>
-    private static int[] ParseVramProfiles(string? vramProfiles)
-    {
-        if (string.IsNullOrWhiteSpace(vramProfiles))
-        {
-            return [];
-        }
-
-        return vramProfiles
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(p => int.TryParse(p.Replace("GB", "").Replace("+", ""), out var val) ? val : 0)
-            .Where(v => v > 0)
-            .ToArray();
     }
 }

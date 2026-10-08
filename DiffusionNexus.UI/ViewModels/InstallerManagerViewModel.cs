@@ -781,7 +781,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
             }
 
             await ShowWorkloadsDialogAsync(card.InstallationPath,
-                Services.Engine.EngineWorkloadCatalog.WorkloadIds);
+                Services.Engine.EngineFeatureCatalog.AllWorkloadIds);
             return;
         }
 

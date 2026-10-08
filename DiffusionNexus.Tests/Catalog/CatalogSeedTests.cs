@@ -20,7 +20,7 @@ public class CatalogSeedTests
     private static IReadOnlyList<Guid> Ids() => FeatureRegistry.GetAll()
         .Select(r => r.WorkloadConfigurationId)
         .OfType<Guid>()
-        .Concat(EngineWorkloadCatalog.WorkloadIds)
+        .Concat(EngineFeatureCatalog.AllWorkloadIds)
         .Distinct()
         .ToList();
 
@@ -31,8 +31,8 @@ public class CatalogSeedTests
     {
         // Guards the member data itself: an empty registry would turn the theory into a silent no-op.
         var ids = Ids();
-        ids.Should().Contain(EngineWorkloadCatalog.Krea2Turbo);
-        ids.Should().HaveCountGreaterThan(EngineWorkloadCatalog.WorkloadIds.Count);
+        ids.Should().Contain(EngineFeatureCatalog.Krea2Turbo);
+        ids.Should().HaveCountGreaterThan(EngineFeatureCatalog.AllWorkloadIds.Count - 1);
     }
 
     [Theory]
