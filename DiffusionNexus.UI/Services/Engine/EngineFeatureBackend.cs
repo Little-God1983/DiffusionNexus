@@ -63,20 +63,32 @@ public sealed class EngineFeatureBackend : IFeatureBackend
         }
 
         var missing = new List<string>();
-        foreach (var workloadId in EngineFeatureCatalog.Get(row.Value).WorkloadIds)
+        try
         {
-            var configuration = await _catalog.GetWorkloadAsync(workloadId, ct);
-            if (configuration is null)
+            foreach (var workloadId in EngineFeatureCatalog.Get(row.Value).WorkloadIds)
             {
-                missing.Add($"Workload {workloadId} is missing from the catalog. Update the catalog and try again.");
-                continue;
-            }
+                var configuration = await _catalog.GetWorkloadAsync(workloadId, ct);
+                if (configuration is null)
+                {
+                    missing.Add($"Workload {workloadId} is missing from the catalog. Update the catalog and try again.");
+                    continue;
+                }
 
-            var check = await _checker.CheckConfigurationAsync(configuration, root!, options: null, ct);
-            missing.AddRange(check.CustomNodeResults.Where(n => !n.IsInstalled)
-                .Select(n => $"Custom node missing on the Engine: {n.Name}"));
-            missing.AddRange(check.ModelResults.Where(m => !m.IsInstalled)
-                .Select(m => $"Model missing on the Engine: {m.Name}"));
+                var check = await _checker.CheckConfigurationAsync(configuration, root!, options: null, ct);
+                missing.AddRange(check.CustomNodeResults.Where(n => !n.IsInstalled)
+                    .Select(n => $"Custom node missing on the Engine: {n.Name}"));
+                missing.AddRange(check.ModelResults.Where(m => !m.IsInstalled)
+                    .Select(m => $"Model missing on the Engine: {m.Name}"));
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Returned as a result, not thrown: a throw makes the readiness line drop the backend
+            // name and its "change" link, the one way out to Custom URL.
+            var reason = $"Engine readiness check failed: {ex.Message}";
+            Logger.Warning(ex, "Engine readiness: {Feature}: {Reason}", feature, reason);
+            _unifiedLogger?.Warn(LogCategory.Configuration, LogSource, $"{feature}: {reason}", ex.ToString());
+            return NotReady(feature, isOnline: true, [reason]);
         }
 
         Emit(missing.Count == 0

@@ -19,4 +19,13 @@ public interface IManagedComfyUiEngine
     /// newly installed node packs. Never stops the engine now, so a job running on it is not killed.
     /// </summary>
     void RequestRestart();
+
+    /// <summary>True while a <see cref="RequestRestart"/> has not been carried out yet.</summary>
+    bool IsRestartPending { get; }
+
+    /// <summary>
+    /// Marks a job as running on the engine until the returned token is disposed. A pending restart
+    /// waits until no job is running. Disposing the token more than once is harmless.
+    /// </summary>
+    IDisposable BeginJob();
 }

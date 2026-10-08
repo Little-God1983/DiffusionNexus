@@ -24,8 +24,11 @@ public interface IComfyUiClientProvider
 public sealed class ComfyUiClientLease : IDisposable
 {
     private readonly bool _ownsClient;
+    private readonly IDisposable? _job;
 
-    public ComfyUiClientLease(IComfyUIWrapperService client, ComfyUiServerMode mode, string baseUrl, bool ownsClient)
+    /// <param name="job">Ended on <see cref="Dispose"/>, after the client: marks the operation as running on the Engine.</param>
+    public ComfyUiClientLease(IComfyUIWrapperService client, ComfyUiServerMode mode, string baseUrl, bool ownsClient,
+        IDisposable? job = null)
     {
         ArgumentNullException.ThrowIfNull(client);
         ArgumentException.ThrowIfNullOrWhiteSpace(baseUrl);
@@ -33,6 +36,7 @@ public sealed class ComfyUiClientLease : IDisposable
         Mode = mode;
         BaseUrl = baseUrl;
         _ownsClient = ownsClient;
+        _job = job;
     }
 
     public IComfyUIWrapperService Client { get; }
@@ -41,8 +45,15 @@ public sealed class ComfyUiClientLease : IDisposable
 
     public void Dispose()
     {
-        if (_ownsClient)
-            Client.Dispose();
+        try
+        {
+            if (_ownsClient)
+                Client.Dispose();
+        }
+        finally
+        {
+            _job?.Dispose();
+        }
     }
 }
 

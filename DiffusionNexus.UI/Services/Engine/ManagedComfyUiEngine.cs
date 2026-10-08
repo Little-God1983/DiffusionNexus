@@ -43,8 +43,16 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposab
 
     // Set by RequestRestart (e.g. after node packs were installed) and used up by the next
     // EnsureRunningAsync, under _startLock: a running engine is stopped there and started fresh,
-    // never at request time, so a job running on the engine is not killed by the install.
+    // never at request time, so a job running on the engine is not killed by the install. Cleared
+    // only just before a fresh process is spawned, so a request made during a start survives it.
     private volatile bool _restartRequested;
+
+    // Jobs running on the engine (BeginJob tokens not yet disposed). A pending restart waits for 0.
+    private int _activeJobs;
+
+    // Under _startLock: the current postponement was already logged, so a frequent caller (the
+    // Canvas availability check) does not repeat it. Reset when the request is used up.
+    private bool _postponementLogged;
 
     public ManagedComfyUiEngine(IUnifiedLogger? unifiedLogger)
     {
@@ -60,6 +68,35 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposab
     /// call's ordinary cold start already loads everything and uses the request up.
     /// </summary>
     public void RequestRestart() => _restartRequested = true;
+
+    /// <inheritdoc />
+    public bool IsRestartPending => _restartRequested;
+
+    /// <inheritdoc />
+    public IDisposable BeginJob()
+    {
+        Interlocked.Increment(ref _activeJobs);
+        return new JobToken(this);
+    }
+
+    /// <summary>
+    /// Whether <see cref="EnsureRunningAsync"/> stops the running engine now: only when a restart is
+    /// pending and no job is running on it. Internal for tests.
+    /// </summary>
+    internal static bool ShouldRestartNow(bool isRunning, bool restartPending, int activeJobs) =>
+        isRunning && restartPending && activeJobs == 0;
+
+    /// <summary>Ends one job exactly once, however often it is disposed.</summary>
+    private sealed class JobToken(ManagedComfyUiEngine engine) : IDisposable
+    {
+        private int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+                Interlocked.Decrement(ref engine._activeJobs);
+        }
+    }
 
     /// <summary>
     /// Starts the engine if it is not already running and waits until it answers /system_stats.
@@ -77,15 +114,27 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposab
             var current = _process;
             if (current is { HasExited: false } && _baseUrl is not null)
             {
-                if (!_restartRequested)
+                var restartPending = _restartRequested;
+                if (!ShouldRestartNow(isRunning: true, restartPending, Volatile.Read(ref _activeJobs)))
+                {
+                    // A job running on the engine (another consumer's Generate) must not be killed:
+                    // the restart waits, still pending, for a call made while the engine is idle.
+                    if (restartPending && !_postponementLogged)
+                    {
+                        _postponementLogged = true;
+                        Log("Engine restart postponed: a job is still running.");
+                    }
                     return new EngineStartResult(true, _baseUrl, null);
+                }
 
-                Log("Restarting the engine so it loads the newly installed node packs...");
+                Log("Restarting the engine so it loads the newly installed node packs or model folders...");
                 await StopCoreAsync().ConfigureAwait(false);
             }
 
-            // Whatever starts below is a fresh process, so a pending restart request is used up.
+            // Whatever starts below is a fresh process, so a pending restart request is used up. A
+            // request that arrives from here on (during the up-to-2-minute start) stays set.
             _restartRequested = false;
+            _postponementLogged = false;
 
             var mainPy = ManagedEngineLocator.ResolveMainPy(installRoot);
             if (mainPy is null)

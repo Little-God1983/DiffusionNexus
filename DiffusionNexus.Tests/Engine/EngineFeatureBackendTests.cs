@@ -96,6 +96,49 @@ public class EngineFeatureBackendTests
         _checker.VerifyNoOtherCalls();
     }
 
+    // #606 code review 3 (H6): a throw used to reach FeatureReadinessViewModel's catch, which drops
+    // the whole backend line, "change" link included.
+    [Fact]
+    public async Task CheckerThrows_ReportsNotReady_OnTheEngine_WithTheReason()
+    {
+        _checker.Setup(c => c.CheckConfigurationAsync(It.IsAny<InstallationConfiguration>(), Root,
+                It.IsAny<ConfigurationCheckOptions?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("disk not ready"));
+
+        var result = await Sut().CheckFeatureAsync(Feature.Inpainting);
+
+        result.Backend.Should().Be(BackendKind.Engine);
+        result.ActiveBackendName.Should().Be("Diffusion Nexus Engine");
+        result.IsBackendOnline.Should().BeTrue();
+        result.IsReady.Should().BeFalse();
+        result.MissingRequirements.Should().Equal("Engine readiness check failed: disk not ready");
+    }
+
+    [Fact]
+    public async Task CatalogThrows_ReportsNotReady_OnTheEngine_WithTheReason()
+    {
+        _catalog.Setup(c => c.GetWorkloadAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("catalog is corrupt"));
+
+        var result = await Sut().CheckFeatureAsync(Feature.Outpaint);
+
+        result.ActiveBackendName.Should().Be("Diffusion Nexus Engine");
+        result.IsReady.Should().BeFalse();
+        result.MissingRequirements.Should().Equal("Engine readiness check failed: catalog is corrupt");
+    }
+
+    [Fact]
+    public async Task CheckerCancellation_Propagates()
+    {
+        _checker.Setup(c => c.CheckConfigurationAsync(It.IsAny<InstallationConfiguration>(), Root,
+                It.IsAny<ConfigurationCheckOptions?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        var act = () => Sut().CheckFeatureAsync(Feature.Inpainting);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
     [Fact]
     public async Task CallerCancellation_Propagates()
     {

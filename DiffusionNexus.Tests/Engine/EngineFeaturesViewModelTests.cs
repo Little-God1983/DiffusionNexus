@@ -102,6 +102,40 @@ public class EngineFeaturesViewModelTests
         Row(vm, EngineFeature.InpaintOutpaint).StatusText.Should().Be("Not installed");
     }
 
+    // #606 code review 3 (H8): an Installed row is ticked and locked; when a re-check finds it
+    // incomplete it became selectable while still ticked, and slipped into the next install.
+    [Fact]
+    public async Task InstalledRow_ThatTurnsPartialOnARecheck_IsUnticked()
+    {
+        _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(1, 0, 5, 0);
+        _state[EngineFeatureCatalog.Krea2Turbo] = Result(0, 2, 0, 3);
+        var vm = Sut();
+        await vm.LoadCommand.ExecuteAsync(null);
+        Row(vm, EngineFeature.Canvas).IsSelected.Should().BeTrue();
+
+        _state[EngineFeatureCatalog.Krea2Turbo] = Result(0, 2, 1, 2); // a model file was deleted
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        Row(vm, EngineFeature.Canvas).Status.Should().Be(EngineFeatureStatus.Partial);
+        Row(vm, EngineFeature.Canvas).IsSelected.Should().BeFalse("the user re-ticks it deliberately");
+        vm.InstallSelectedCommand.CanExecute(null).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task PartialRow_TheUserTicked_StaysTicked_WhenARecheckIsStillPartial()
+    {
+        _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(1, 0, 3, 2);
+        _state[EngineFeatureCatalog.Krea2Turbo] = Result(0, 2, 0, 3);
+        var vm = Sut();
+        await vm.LoadCommand.ExecuteAsync(null);
+        Row(vm, EngineFeature.InpaintOutpaint).IsSelected = true;
+
+        _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(1, 0, 2, 3);
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        Row(vm, EngineFeature.InpaintOutpaint).IsSelected.Should().BeTrue();
+    }
+
     [Fact]
     public async Task Preselect_TicksThatRow_AndTheFooterCountsIt()
     {

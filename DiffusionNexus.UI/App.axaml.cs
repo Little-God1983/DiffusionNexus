@@ -748,8 +748,13 @@ public partial class App : Application
                 sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
         services.AddSingleton<Services.Engine.IManagedComfyUiEngine>(sp =>
             sp.GetRequiredService<Services.Engine.ManagedComfyUiEngine>());
+        // A changed extra_model_paths.yaml needs an Engine restart: it is read only at start-up. The
+        // engine is resolved inside the callback, when it fires, not while building the resolver.
         services.AddSingleton<Services.Engine.IEngineRootResolver>(sp =>
-            new Services.Engine.EngineRootResolver(sp.GetRequiredService<IServiceScopeFactory>()));
+            new Services.Engine.EngineRootResolver(
+                sp.GetRequiredService<IServiceScopeFactory>(),
+                onModelPathsChanged: () => sp.GetRequiredService<Services.Engine.IManagedComfyUiEngine>().RequestRestart(),
+                unifiedLogger: sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
 
         // ComfyUI client for the features not yet on IComfyUiClientProvider (Batch Upscale,
         // ComfyUI captioning, the ComfyUI readiness backend). Built from the Settings URL — it used

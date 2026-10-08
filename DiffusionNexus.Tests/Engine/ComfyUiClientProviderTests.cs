@@ -223,6 +223,87 @@ public class ComfyUiClientProviderTests
         borrowed.Verify(c => c.Dispose(), Times.Never);
     }
 
+    [Fact]
+    public void Lease_EndsItsJob_AfterTheClient()
+    {
+        var calls = new List<string>();
+        var client = new Mock<IComfyUIWrapperService>();
+        client.Setup(c => c.Dispose()).Callback(() => calls.Add("client"));
+        var job = new Mock<IDisposable>();
+        job.Setup(j => j.Dispose()).Callback(() => calls.Add("job"));
+
+        new ComfyUiClientLease(client.Object, ComfyUiServerMode.Engine, "http://x", ownsClient: true, job.Object).Dispose();
+
+        calls.Should().Equal("client", "job");
+    }
+
+    // #606 code review 3 (H1): a Generate's lease marks a job on the Engine, so a pending restart
+    // waits for it. The job begins after EnsureRunningAsync: the acquiring Generate may itself
+    // trigger the restart when it is the only job.
+    [Fact]
+    public async Task Engine_LeaseHoldsAJob_BegunAfterTheStart_AndEndedOnDispose()
+    {
+        Mode(ComfyUiServerMode.Engine);
+        var calls = new List<string>();
+        var job = new Mock<IDisposable>();
+        job.Setup(j => j.Dispose()).Callback(() => calls.Add("job ended"));
+        _root.Setup(r => r.ResolveAsync(It.IsAny<CancellationToken>())).ReturnsAsync(@"C:\Engine\ComfyUI");
+        _engine.Setup(e => e.EnsureRunningAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback(() => calls.Add("ensure running"))
+            .ReturnsAsync(new EngineStartResult(true, "http://127.0.0.1:51234", null));
+        _engine.Setup(e => e.BeginJob()).Callback(() => calls.Add("job begun")).Returns(job.Object);
+
+        var lease = await Sut().AcquireAsync();
+        calls.Should().Equal("ensure running", "job begun");
+
+        lease.Dispose();
+
+        calls.Should().Equal("ensure running", "job begun", "job ended");
+        _clients.Single().Verify(c => c.Dispose(), Times.Once);
+    }
+
+    [Fact]
+    public async Task CustomUrl_BeginsNoJobOnTheEngine()
+    {
+        Mode(ComfyUiServerMode.CustomUrl, "http://192.168.1.20:8188/");
+
+        using var lease = await Sut().AcquireAsync();
+
+        _engine.Verify(e => e.BeginJob(), Times.Never);
+    }
+
+    // #606 code review 3 (H5): a pending restart cold-starts the Engine for up to ~2 min.
+    [Fact]
+    public async Task Engine_RunningWithARestartPending_ReportsRestarting()
+    {
+        Mode(ComfyUiServerMode.Engine);
+        _root.Setup(r => r.ResolveAsync(It.IsAny<CancellationToken>())).ReturnsAsync(@"C:\Engine\ComfyUI");
+        _engine.Setup(e => e.BaseUrl).Returns("http://127.0.0.1:51234");
+        _engine.Setup(e => e.IsRestartPending).Returns(true);
+        _engine.Setup(e => e.EnsureRunningAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new EngineStartResult(true, "http://127.0.0.1:51235", null));
+        var reported = new List<string>();
+
+        using var lease = await Sut().AcquireAsync(new SyncProgress(reported.Add));
+
+        reported.Should().Equal("Restarting Diffusion Nexus Engine…");
+    }
+
+    [Fact]
+    public async Task Engine_RunningWithNoRestartPending_ReportsNothing()
+    {
+        Mode(ComfyUiServerMode.Engine);
+        _root.Setup(r => r.ResolveAsync(It.IsAny<CancellationToken>())).ReturnsAsync(@"C:\Engine\ComfyUI");
+        _engine.Setup(e => e.BaseUrl).Returns("http://127.0.0.1:51234");
+        _engine.Setup(e => e.EnsureRunningAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new EngineStartResult(true, "http://127.0.0.1:51234", null));
+        var reported = new List<string>();
+
+        using var lease = await Sut().AcquireAsync(new SyncProgress(reported.Add));
+
+        reported.Should().BeEmpty();
+    }
+
     /// <summary>Synchronous IProgress — Progress&lt;T&gt; posts to a sync context and races the assertion.</summary>
     private sealed class SyncProgress(Action<string> report) : IProgress<string>
     {

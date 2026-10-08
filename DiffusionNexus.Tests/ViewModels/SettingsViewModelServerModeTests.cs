@@ -85,6 +85,40 @@ public class SettingsViewModelServerModeTests
         pinged.Should().Be(expectPing);
     }
 
+    // #606 code review 3 (H7): load skips the test in Engine mode, so the dot shown on switching to
+    // Custom URL stayed "offline" until the user pressed Test.
+    [Fact]
+    public async Task PickingCustomUrl_AfterAnEngineLoad_TestsTheConnection()
+    {
+        var pinged = false;
+        var vm = await LoadedAsync(ComfyUiServerMode.Engine, beforeLoad: vm => vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(SettingsViewModel.IsTestingComfyUiConnection) && vm.IsTestingComfyUiConnection)
+                pinged = true;
+        });
+        pinged.Should().BeFalse();
+
+        vm.SelectedServerModeOption = vm.ServerModeOptions.Single(o => o.Mode == ComfyUiServerMode.CustomUrl);
+
+        pinged.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task PickingTheEngine_DoesNotTestTheConnection()
+    {
+        var pinged = false;
+        var vm = await LoadedAsync(ComfyUiServerMode.CustomUrl);
+        vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(SettingsViewModel.IsTestingComfyUiConnection) && vm.IsTestingComfyUiConnection)
+                pinged = true;
+        };
+
+        vm.SelectedServerModeOption = vm.ServerModeOptions.Single(o => o.Mode == ComfyUiServerMode.Engine);
+
+        pinged.Should().BeFalse();
+    }
+
     [Theory]
     [InlineData(null, false, "Not installed — install it in the Installation Manager")]
     [InlineData(@"C:\Engine\ComfyUI", false, "Installed · not running (starts on first use)")]

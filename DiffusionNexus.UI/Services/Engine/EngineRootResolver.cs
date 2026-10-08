@@ -1,5 +1,7 @@
 using DiffusionNexus.DataAccess.UnitOfWork;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using Microsoft.Extensions.DependencyInjection;
+using Serilog;
 
 namespace DiffusionNexus.UI.Services.Engine;
 
@@ -21,17 +23,30 @@ public interface IEngineRootResolver
 public sealed class EngineRootResolver : IEngineRootResolver
 {
     private readonly IServiceScopeFactory _scopes;
-    private readonly Func<string, CancellationToken, Task>? _syncModelPaths;
+    private readonly Func<string, CancellationToken, Task<bool>>? _syncModelPaths;
+    private readonly Action? _onModelPathsChanged;
+    private readonly IUnifiedLogger? _unifiedLogger;
 
     /// <param name="scopes">Creates the scope that owns the IUnitOfWork for one resolve.</param>
     /// <param name="syncModelPaths">
-    /// Test seam. When null, <see cref="EngineModelPathsSynchronizer"/> is resolved from the same scope.
+    /// Test seam; returns true when the file changed. When null, <see cref="EngineModelPathsSynchronizer"/>
+    /// is resolved from the same scope.
     /// </param>
-    public EngineRootResolver(IServiceScopeFactory scopes, Func<string, CancellationToken, Task>? syncModelPaths = null)
+    /// <param name="onModelPathsChanged">
+    /// Called when the sync rewrote extra_model_paths.yaml. A running Engine reads that file only at
+    /// start-up, so DI asks the Engine to restart here.
+    /// </param>
+    public EngineRootResolver(
+        IServiceScopeFactory scopes,
+        Func<string, CancellationToken, Task<bool>>? syncModelPaths = null,
+        Action? onModelPathsChanged = null,
+        IUnifiedLogger? unifiedLogger = null)
     {
         ArgumentNullException.ThrowIfNull(scopes);
         _scopes = scopes;
         _syncModelPaths = syncModelPaths;
+        _onModelPathsChanged = onModelPathsChanged;
+        _unifiedLogger = unifiedLogger;
     }
 
     public async Task<string?> ResolveAsync(CancellationToken ct = default)
@@ -47,11 +62,20 @@ public sealed class EngineRootResolver : IEngineRootResolver
         // fails the resolve: the synchronizer swallows its own errors.
         if (!string.IsNullOrWhiteSpace(installRoot))
         {
-            if (_syncModelPaths is not null)
-                await _syncModelPaths(installRoot, ct);
-            else
-                await scope.ServiceProvider.GetRequiredService<EngineModelPathsSynchronizer>()
-                    .SyncAsync(installRoot, ct);
+            var changed = _syncModelPaths is not null
+                ? await _syncModelPaths(installRoot, ct)
+                : (await scope.ServiceProvider.GetRequiredService<EngineModelPathsSynchronizer>()
+                    .SyncAsync(installRoot, ct)).Written;
+
+            // A running Engine read the old file at start-up and cannot see the new folders until it
+            // restarts. The restart waits until no job is running on the Engine.
+            if (changed && _onModelPathsChanged is not null)
+            {
+                const string message = "Model folders changed; the Diffusion Nexus Engine restarts on its next use.";
+                Log.ForContext<EngineRootResolver>().Information(message);
+                _unifiedLogger?.Info(LogCategory.InstanceManagement, "Diffusion Nexus Engine", message);
+                _onModelPathsChanged();
+            }
         }
 
         return string.IsNullOrWhiteSpace(installRoot) ? null : installRoot;

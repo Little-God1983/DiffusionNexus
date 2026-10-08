@@ -258,6 +258,11 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
             yield break;
         }
 
+        // From here until the result is downloaded (or the run fails) this is a job on the engine, so a
+        // pending restart (new node packs or model folders) waits for it. Availability checks alone
+        // begin no job.
+        using var job = _engine.BeginJob();
+
         var seed = request.Seed ?? Random.Shared.NextInt64(0, int.MaxValue);
         var startedAt = Stopwatch.GetTimestamp();
 

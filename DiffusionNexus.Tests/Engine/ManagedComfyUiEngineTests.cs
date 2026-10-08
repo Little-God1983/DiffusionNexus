@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.Reflection;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.Services.Engine;
 using FluentAssertions;
+using Moq;
 
 namespace DiffusionNexus.Tests.Engine;
 
@@ -225,6 +227,84 @@ public class ManagedComfyUiEngineTests
             reused.Should().Be(new EngineStartResult(true, "http://127.0.0.1:51234", null),
                 "a cold start already loads every node pack, so the request was cleared by it");
             observer.HasExited.Should().BeFalse();
+        }
+        finally
+        {
+            KillQuietly(observer);
+        }
+    }
+
+    // #606 code review 3 (H1). Any caller's EnsureRunningAsync (the Canvas checks availability often)
+    // used to carry out a pending restart, even with another consumer's job running on the engine.
+
+    [Theory]
+    [InlineData(true, true, 0, true)]
+    [InlineData(true, true, 1, false)] // a job is running: postponed
+    [InlineData(true, true, 2, false)]
+    [InlineData(true, false, 0, false)] // nothing pending
+    [InlineData(false, true, 0, false)] // not running: the cold start loads everything anyway
+    public void ShouldRestartNow_OnlyWhenRunning_Pending_AndIdle(bool isRunning, bool pending, int jobs, bool expected) =>
+        ManagedComfyUiEngine.ShouldRestartNow(isRunning, pending, jobs).Should().Be(expected);
+
+    [Fact]
+    public async Task EnsureRunningAsync_WhileAJobRuns_PostponesThePendingRestart_UntilTheJobEnds()
+    {
+        var unified = new Mock<IUnifiedLogger>();
+        await using var engine = new ManagedComfyUiEngine(unified.Object);
+        var running = StartStandInEngine();
+        using var observer = Process.GetProcessById(running.Id);
+        try
+        {
+            PretendRunning(engine, running, "http://127.0.0.1:51234");
+            var job = engine.BeginJob();
+            engine.RequestRestart();
+
+            // Two availability checks while the job runs: the engine is left alone both times.
+            (await engine.EnsureRunningAsync(NotInstalledRoot, CancellationToken.None))
+                .Should().Be(new EngineStartResult(true, "http://127.0.0.1:51234", null));
+            (await engine.EnsureRunningAsync(NotInstalledRoot, CancellationToken.None))
+                .Should().Be(new EngineStartResult(true, "http://127.0.0.1:51234", null));
+
+            observer.HasExited.Should().BeFalse("a job is still running on the engine");
+            engine.IsRestartPending.Should().BeTrue("the restart is postponed, not dropped");
+            unified.Verify(u => u.Info(It.IsAny<LogCategory>(), It.IsAny<string>(),
+                "Engine restart postponed: a job is still running.", It.IsAny<string?>()), Times.Once,
+                "logged once per deferral, not on every check");
+
+            job.Dispose();
+            job.Dispose(); // idempotent: must not end a second job
+
+            var restarted = await engine.EnsureRunningAsync(NotInstalledRoot, CancellationToken.None);
+
+            observer.WaitForExit(TimeSpan.FromSeconds(10)).Should().BeTrue("the engine is idle now");
+            restarted.IsRunning.Should().BeFalse("the fresh start ran (and found no install here)");
+            engine.IsRestartPending.Should().BeFalse();
+        }
+        finally
+        {
+            KillQuietly(observer);
+        }
+    }
+
+    [Fact]
+    public async Task BeginJob_DisposingOneTokenTwice_DoesNotEndAnotherJob()
+    {
+        await using var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+        var running = StartStandInEngine();
+        using var observer = Process.GetProcessById(running.Id);
+        try
+        {
+            PretendRunning(engine, running, "http://127.0.0.1:51234");
+            var first = engine.BeginJob();
+            using var second = engine.BeginJob();
+            engine.RequestRestart();
+
+            first.Dispose();
+            first.Dispose();
+            await engine.EnsureRunningAsync(NotInstalledRoot, CancellationToken.None);
+
+            observer.HasExited.Should().BeFalse("the second job is still running");
+            engine.IsRestartPending.Should().BeTrue();
         }
         finally
         {

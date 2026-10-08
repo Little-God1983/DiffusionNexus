@@ -127,9 +127,12 @@ public class EngineWorkloadsRequestTests
     [Theory]
     [InlineData(true, true, "http://127.0.0.1:51234", 1)]
     [InlineData(true, false, "http://127.0.0.1:51234", 0)] // models only: a running ComfyUI picks them up
-    [InlineData(true, true, null, 0)]
+    // #606 code review 3 (H3): BaseUrl is also null mid cold-start, when Python may already have
+    // scanned custom_nodes, so the request is made whether or not the Engine reports a URL.
+    [InlineData(true, true, null, 1)]
+    [InlineData(true, false, null, 0)]
     [InlineData(false, false, "http://127.0.0.1:51234", 0)]
-    public async Task FeaturesDialog_AfterAnInstall_AsksARunningEngineToRestart_OnlyForNewNodePacks_AndPublishesEngineChanged(
+    public async Task FeaturesDialog_AfterAnInstall_AsksTheEngineToRestart_OnlyForNewNodePacks_AndPublishesEngineChanged(
         bool didInstall, bool didInstallNodePacks, string? engineBaseUrl, int expectedRestarts)
     {
         var root = Directory.CreateTempSubdirectory().FullName;

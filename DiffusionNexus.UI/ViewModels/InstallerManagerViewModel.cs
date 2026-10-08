@@ -863,11 +863,13 @@ public partial class InstallerManagerViewModel : ViewModelBase
     /// ComfyUI loads custom nodes only at process start, so an Engine that was already running
     /// during a Features install would never see the new node packs. It is not stopped now — an
     /// Inpaint, Outpaint or Canvas job may be running on it — but asked to restart: the next
-    /// Generate or Canvas use starts it fresh.
+    /// Generate or Canvas use starts it fresh. Asked even when the Engine reports no URL: that is also
+    /// the case mid cold-start, when Python may already have scanned custom_nodes. A request made
+    /// while it is not running at all is used up by the next cold start.
     /// </summary>
     private void RestartEngineOnNextUseForNewNodePacks()
     {
-        if (_engine?.BaseUrl is null)
+        if (_engine is null)
             return;
 
         const string message =

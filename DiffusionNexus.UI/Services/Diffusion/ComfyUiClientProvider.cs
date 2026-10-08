@@ -112,6 +112,14 @@ public sealed class ComfyUiClientProvider : IComfyUiClientProvider
             progress?.Report("Starting Diffusion Nexus Engine…");
             Info(LogCategory.InstanceManagement, EngineSource, "Engine not running; starting it for this generate.");
         }
+        else if (_engine.IsRestartPending)
+        {
+            // The Engine restarts here unless another job is still running on it; this provider
+            // cannot know which, so it says what a restart would mean: up to ~2 minutes of waiting.
+            progress?.Report("Restarting Diffusion Nexus Engine…");
+            Info(LogCategory.InstanceManagement, EngineSource,
+                "Engine restart pending; restarting it for this generate unless another job is still running.");
+        }
 
         var started = await _engine.EnsureRunningAsync(root!, ct);
         if (!started.IsRunning || started.BaseUrl is null)
@@ -121,8 +129,20 @@ public sealed class ComfyUiClientProvider : IComfyUiClientProvider
             throw new ComfyUiUnavailableException(reason);
         }
 
-        Info(LogCategory.InstanceManagement, EngineSource, $"Using the Engine at {started.BaseUrl}.");
-        return new ComfyUiClientLease(_clientFactory(started.BaseUrl), ComfyUiServerMode.Engine, started.BaseUrl, ownsClient: true);
+        // Begun after the start, so this generate may itself carry out a pending restart when it is
+        // the only job; from here on a restart waits until the lease is disposed.
+        var job = _engine.BeginJob();
+        try
+        {
+            Info(LogCategory.InstanceManagement, EngineSource, $"Using the Engine at {started.BaseUrl}.");
+            return new ComfyUiClientLease(_clientFactory(started.BaseUrl), ComfyUiServerMode.Engine, started.BaseUrl,
+                ownsClient: true, job);
+        }
+        catch
+        {
+            job?.Dispose();
+            throw;
+        }
     }
 
     private static bool IsUnexpected(Exception ex) =>

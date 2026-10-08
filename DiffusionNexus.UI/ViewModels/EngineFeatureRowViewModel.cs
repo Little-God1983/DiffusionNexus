@@ -28,6 +28,17 @@ public sealed partial class EngineFeatureRowViewModel : ObservableObject
     [ObservableProperty] private string _statusText = "Checking…";
     [ObservableProperty] private string _needsText = string.Empty;
 
+    /// <summary>
+    /// An Installed row is ticked only because it is installed. When it stops being installed (a
+    /// re-check finds it Partial, or the check fails) the tick goes, so the row does not slip into the
+    /// next Install selected: the user re-ticks it deliberately. Ticks on other rows are left alone.
+    /// </summary>
+    partial void OnStatusChanged(EngineFeatureStatus oldValue, EngineFeatureStatus newValue)
+    {
+        if (oldValue == EngineFeatureStatus.Installed && newValue != EngineFeatureStatus.Installed)
+            IsSelected = false;
+    }
+
     /// <summary>Installed rows stay ticked and locked; rows mid-check or mid-install are locked too.</summary>
     public bool IsSelectable => Status is EngineFeatureStatus.Partial or EngineFeatureStatus.NotInstalled or EngineFeatureStatus.Error;
 

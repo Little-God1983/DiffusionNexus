@@ -1604,6 +1604,11 @@ public partial class SettingsViewModel : BusyViewModelBase, IModuleActivationAwa
                 OnPropertyChanged();
                 // The Engine may have been installed or started since the page was loaded.
                 _ = RefreshEngineStatusAsync();
+
+                // Load skips the connection test in Engine mode, so the dot shown now would stay
+                // "offline". Same fire-and-forget test load runs in Custom URL mode.
+                if (IsCustomUrlMode)
+                    _ = TestComfyUiConnectionAsync();
             }
         }
     }
