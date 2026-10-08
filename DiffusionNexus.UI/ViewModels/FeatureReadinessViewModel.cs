@@ -239,6 +239,8 @@ public sealed partial class FeatureReadinessViewModel : ObservableObject
             Logger.Warning(ex, "Readiness check failed for {Feature}", _feature);
             IsReady = false;
             IsBackendOnline = false;
+            ActiveBackendName = null;
+            _activeBackendKind = null;
             MissingRequirements = [$"Readiness check failed: {ex.Message}"];
             Warnings = [];
             StatusMessage = "Check failed";

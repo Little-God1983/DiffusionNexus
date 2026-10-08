@@ -67,6 +67,22 @@ public class FeatureReadinessViewModelBackendLineTests
     }
 
     [Fact]
+    public async Task ACheckThatThrows_DropsTheStaleBackendLine()
+    {
+        Returns(Feature.Outpaint, BackendKind.Engine, "Diffusion Nexus Engine", "Model missing on the Engine: qwen_image_vae");
+        var vm = new FeatureReadinessViewModel(_service.Object, Feature.Outpaint, _events.Object);
+        await vm.CheckReadinessAsync();
+        vm.ShowInstallOnEngine.Should().BeTrue();
+
+        _service.Setup(s => s.CheckAsync(Feature.Outpaint, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("boom"));
+        await vm.CheckReadinessAsync();
+
+        vm.ShowInstallOnEngine.Should().BeFalse();
+        vm.ShowBackendLine.Should().BeFalse();
+    }
+
+    [Fact]
     public void ChangeLink_OpensSettingsAtTheComfyUiServerSection()
     {
         var vm = new FeatureReadinessViewModel(_service.Object, Feature.Inpainting, _events.Object);
