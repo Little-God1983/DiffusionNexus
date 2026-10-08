@@ -1,5 +1,5 @@
-using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services.Diffusion;
 using DiffusionNexus.UI.Services.Engine;
@@ -10,17 +10,17 @@ namespace DiffusionNexus.Tests.Engine;
 
 public class ComfyUiClientProviderTests
 {
-    private AppSettings _current = new() { Id = 1 };
+    private ComfyUiServerConnection _current = new(ComfyUiServerMode.Engine, "http://127.0.0.1:8188/");
     private readonly Mock<IEngineRootResolver> _root = new();
     private readonly Mock<IManagedComfyUiEngine> _engine = new();
     private readonly List<string> _clientUrls = [];
     private readonly List<Mock<IComfyUIWrapperService>> _clients = [];
     private bool _looksInstalled = true;
-    private Func<CancellationToken, Task<AppSettings>>? _readSettings;
+    private Func<CancellationToken, Task<ComfyUiServerConnection>>? _readSettings;
     private Exception? _clientFactoryThrows;
 
     private void Mode(ComfyUiServerMode mode, string url = "http://127.0.0.1:8188/") =>
-        _current = new AppSettings { Id = 1, ComfyUiServerMode = mode, ComfyUiServerUrl = url };
+        _current = new ComfyUiServerConnection(mode, url);
 
     private ComfyUiClientProvider Sut() => new(
         _readSettings ?? (_ => Task.FromResult(_current)), _root.Object, _engine.Object, unifiedLogger: null,

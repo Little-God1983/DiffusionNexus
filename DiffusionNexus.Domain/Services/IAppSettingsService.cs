@@ -23,6 +23,13 @@ public interface IAppSettingsService
     Task<Enums.ComfyUiServerMode> GetComfyUiServerModeAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Reads only Settings → ComfyUI Server mode and URL, as light as
+    /// <see cref="GetComfyUiServerModeAsync"/>: read-only, nothing created, seeded or tracked. Without a
+    /// settings row it answers <see cref="Enums.ComfyUiServerMode.Engine"/> with a null URL.
+    /// </summary>
+    Task<Models.ComfyUiServerConnection> GetComfyUiServerConnectionAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Saves the application settings.
     /// </summary>
     /// <param name="settings">The settings to save.</param>

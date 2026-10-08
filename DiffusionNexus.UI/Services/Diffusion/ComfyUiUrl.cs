@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace DiffusionNexus.UI.Services.Diffusion;
 
 /// <summary>
@@ -11,7 +13,7 @@ public static class ComfyUiUrl
     public const string Default = "http://127.0.0.1:8188";
 
     /// <summary>True for an absolute http or https URL.</summary>
-    public static bool IsValid(string? url) =>
+    public static bool IsValid([NotNullWhen(true)] string? url) =>
         !string.IsNullOrWhiteSpace(url)
         && Uri.TryCreate(url, UriKind.Absolute, out var uri)
         && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);

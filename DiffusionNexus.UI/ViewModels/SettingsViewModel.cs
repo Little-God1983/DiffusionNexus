@@ -33,6 +33,7 @@ public partial class SettingsViewModel : BusyViewModelBase, IModuleActivationAwa
     private readonly ICivitaiBaseModelCatalog? _baseModelCatalog;
     private readonly IUiScheduler _uiScheduler;
     private bool _isSaving;
+    private int _engineStatusGeneration;
 
     #region Observable Properties
 
@@ -469,7 +470,9 @@ public partial class SettingsViewModel : BusyViewModelBase, IModuleActivationAwa
             StatusMessage = null;
         }, "Loading settings...");
 
-        await RefreshEngineStatusAsync();
+        // Not awaited, like the connection test below: every module's startup waits on this load.
+        // The refresh catches its own errors.
+        EngineStatusRefresh = RefreshEngineStatusAsync();
 
         // Check ComfyUI server connectivity in the background — only the custom URL; in Engine
         // mode the stored URL is stale and pinging it would show a meaningless status.
@@ -1615,8 +1618,16 @@ public partial class SettingsViewModel : BusyViewModelBase, IModuleActivationAwa
     private void OpenEngineFeatures() =>
         _eventAggregator?.PublishNavigateToEngineFeatures(new NavigateToEngineFeaturesEventArgs());
 
-    private async Task RefreshEngineStatusAsync()
+    /// <summary>The Engine-status refresh the last load started; a test seam, since load does not wait on it.</summary>
+    internal Task EngineStatusRefresh { get; private set; } = Task.CompletedTask;
+
+    /// <summary>Refreshes <see cref="EngineStatusText"/>; internal for tests.</summary>
+    internal async Task RefreshEngineStatusAsync()
     {
+        // Load, module activation, the dropdown, SettingsSaved and EngineChanged all start one, and
+        // they overlap: only the latest may write the line, or an older lookup can win.
+        var generation = ++_engineStatusGeneration;
+
         if (_engineRootResolver is null)
         {
             EngineStatusText = string.Empty;
@@ -1626,6 +1637,9 @@ public partial class SettingsViewModel : BusyViewModelBase, IModuleActivationAwa
         try
         {
             var root = await _engineRootResolver.ResolveAsync();
+            if (generation != _engineStatusGeneration)
+                return;
+
             EngineStatusText = !_looksInstalled(root)
                 ? "Not installed — install it in the Installation Manager"
                 : _engine?.BaseUrl is not null
@@ -1635,7 +1649,8 @@ public partial class SettingsViewModel : BusyViewModelBase, IModuleActivationAwa
         catch (Exception ex)
         {
             Serilog.Log.Warning(ex, "Could not determine the Diffusion Nexus Engine status for Settings");
-            EngineStatusText = string.Empty;
+            if (generation == _engineStatusGeneration)
+                EngineStatusText = string.Empty;
         }
     }
 
@@ -1754,6 +1769,18 @@ public partial class SettingsViewModel : BusyViewModelBase, IModuleActivationAwa
                 await _exportService.ImportAsync(filePath);
                 await LoadAsync();
                 StatusMessage = $"Settings imported from {Path.GetFileName(filePath)}.";
+
+                // The import rewrote the Server mode and URL among the rest: let open readiness lines
+                // re-check, as a save does. Guarded so this view model does not reload a second time.
+                _isSaving = true;
+                try
+                {
+                    _eventAggregator?.PublishSettingsSaved(new SettingsSavedEventArgs());
+                }
+                finally
+                {
+                    _isSaving = false;
+                }
             }, "Importing settings...");
         }
         catch (Exception ex)

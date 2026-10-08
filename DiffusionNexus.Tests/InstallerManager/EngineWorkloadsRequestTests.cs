@@ -129,8 +129,8 @@ public class EngineWorkloadsRequestTests
     [InlineData(true, false, "http://127.0.0.1:51234", 0)] // models only: a running ComfyUI picks them up
     [InlineData(true, true, null, 0)]
     [InlineData(false, false, "http://127.0.0.1:51234", 0)]
-    public async Task FeaturesDialog_AfterAnInstall_StopsARunningEngine_OnlyForNewNodePacks_AndPublishesEngineChanged(
-        bool didInstall, bool didInstallNodePacks, string? engineBaseUrl, int expectedStops)
+    public async Task FeaturesDialog_AfterAnInstall_AsksARunningEngineToRestart_OnlyForNewNodePacks_AndPublishesEngineChanged(
+        bool didInstall, bool didInstallNodePacks, string? engineBaseUrl, int expectedRestarts)
     {
         var root = Directory.CreateTempSubdirectory().FullName;
         File.WriteAllText(Path.Combine(root, "main.py"), "");
@@ -143,7 +143,6 @@ public class EngineWorkloadsRequestTests
             var aggregator = new Mock<IDatasetEventAggregator>();
             var engine = new Mock<IManagedComfyUiEngine>();
             engine.Setup(e => e.BaseUrl).Returns(engineBaseUrl);
-            engine.Setup(e => e.StopAsync()).Returns(Task.CompletedTask);
             var vm = EngineTestHarness.CreateInstallerManagerViewModel(
                 packages: packages, eventAggregatorMock: aggregator, engine: engine.Object);
             vm.EngineFeaturesDialogPresenter = features =>
@@ -157,7 +156,9 @@ public class EngineWorkloadsRequestTests
 
             await vm.OpenEngineFeaturesAsync();
 
-            engine.Verify(e => e.StopAsync(), Times.Exactly(expectedStops));
+            // #606 code review 2 (G1): never stopped now, a job may be running on it (StopAsync is
+            // no longer on IManagedComfyUiEngine at all); it restarts on its next use instead.
+            engine.Verify(e => e.RequestRestart(), Times.Exactly(expectedRestarts));
             aggregator.Verify(a => a.PublishEngineChanged(It.IsAny<EngineChangedEventArgs>()),
                 didInstall ? Times.Once() : Times.Never());
             aggregator.Verify(a => a.PublishSettingsSaved(It.IsAny<SettingsSavedEventArgs>()), Times.Never,

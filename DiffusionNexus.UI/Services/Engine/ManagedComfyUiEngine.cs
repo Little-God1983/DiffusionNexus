@@ -41,6 +41,11 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposab
     // instead of blocking on the lock for up to the full ~120 s poll window.
     private volatile bool _stopRequested;
 
+    // Set by RequestRestart (e.g. after node packs were installed) and used up by the next
+    // EnsureRunningAsync, under _startLock: a running engine is stopped there and started fresh,
+    // never at request time, so a job running on the engine is not killed by the install.
+    private volatile bool _restartRequested;
+
     public ManagedComfyUiEngine(IUnifiedLogger? unifiedLogger)
     {
         _unifiedLogger = unifiedLogger;
@@ -48,6 +53,13 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposab
 
     /// <summary>Base URL of the running engine, or null when it is not running.</summary>
     public string? BaseUrl => _baseUrl;
+
+    /// <summary>
+    /// Asks for a fresh process on the next <see cref="EnsureRunningAsync"/>. Stops nothing now: the
+    /// next call stops a running engine and starts a new one; when the engine is not running, that
+    /// call's ordinary cold start already loads everything and uses the request up.
+    /// </summary>
+    public void RequestRestart() => _restartRequested = true;
 
     /// <summary>
     /// Starts the engine if it is not already running and waits until it answers /system_stats.
@@ -64,7 +76,16 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposab
             // lock was even taken, so that exception could escape this method uncaught.
             var current = _process;
             if (current is { HasExited: false } && _baseUrl is not null)
-                return new EngineStartResult(true, _baseUrl, null);
+            {
+                if (!_restartRequested)
+                    return new EngineStartResult(true, _baseUrl, null);
+
+                Log("Restarting the engine so it loads the newly installed node packs...");
+                await StopCoreAsync().ConfigureAwait(false);
+            }
+
+            // Whatever starts below is a fresh process, so a pending restart request is used up.
+            _restartRequested = false;
 
             var mainPy = ManagedEngineLocator.ResolveMainPy(installRoot);
             if (mainPy is null)

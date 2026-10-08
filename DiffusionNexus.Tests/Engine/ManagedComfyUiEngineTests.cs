@@ -117,4 +117,118 @@ public class ManagedComfyUiEngineTests
         // Must fail gracefully (a false EngineStartResult), not throw past the caller.
         await act.Should().NotThrowAsync();
     }
+
+    // #606 code review 2 (G1). A Features install that adds node packs no longer stops the engine
+    // (a job may be running on it); it asks for a restart on the next use. These hand the engine a
+    // stand-in "running engine" (a long-lived cmd.exe) through the same private fields a real start
+    // sets, and an install root without main.py, so the fresh start after a restart fails cleanly
+    // instead of spawning Python.
+
+    private static readonly string NotInstalledRoot =
+        Path.Combine(Path.GetTempPath(), "definitely-not-here-" + Guid.NewGuid());
+
+    private static Process StartStandInEngine() =>
+        Process.Start(new ProcessStartInfo("cmd.exe", "/c ping -n 120 127.0.0.1 > nul")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true
+        })!;
+
+    /// <summary>Makes the engine believe <paramref name="process"/> is its running engine.</summary>
+    private static void PretendRunning(ManagedComfyUiEngine engine, Process process, string baseUrl)
+    {
+        typeof(ManagedComfyUiEngine).GetField("_process", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .SetValue(engine, process);
+        typeof(ManagedComfyUiEngine).GetField("_baseUrl", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .SetValue(engine, baseUrl);
+    }
+
+    private static void KillQuietly(Process process)
+    {
+        try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
+        catch (InvalidOperationException) { /* already gone */ }
+        process.Dispose();
+    }
+
+    [Fact]
+    public async Task RequestRestart_DoesNotStopTheRunningEngine()
+    {
+        await using var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+        var running = StartStandInEngine();
+        using var observer = Process.GetProcessById(running.Id);
+        try
+        {
+            PretendRunning(engine, running, "http://127.0.0.1:51234");
+
+            engine.RequestRestart();
+
+            observer.HasExited.Should().BeFalse("a job may be running on the engine right now");
+            engine.BaseUrl.Should().Be("http://127.0.0.1:51234");
+        }
+        finally
+        {
+            KillQuietly(observer);
+        }
+    }
+
+    [Fact]
+    public async Task EnsureRunningAsync_AfterRequestRestart_StopsTheRunningEngineOnce_AndStartsFresh()
+    {
+        await using var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+        var first = StartStandInEngine();
+        using var firstObserver = Process.GetProcessById(first.Id);
+        var second = StartStandInEngine();
+        using var secondObserver = Process.GetProcessById(second.Id);
+        try
+        {
+            PretendRunning(engine, first, "http://127.0.0.1:51234");
+            engine.RequestRestart();
+
+            var restarted = await engine.EnsureRunningAsync(NotInstalledRoot, CancellationToken.None);
+
+            firstObserver.WaitForExit(TimeSpan.FromSeconds(10)).Should()
+                .BeTrue("the old process is stopped so the fresh one loads the new node packs");
+            restarted.IsRunning.Should().BeFalse("the fresh start ran (and found no install here)");
+            restarted.FailureReason.Should().Contain("main.py");
+
+            // The request is used up: the next running engine is reused, not restarted again.
+            PretendRunning(engine, second, "http://127.0.0.1:51235");
+            var reused = await engine.EnsureRunningAsync(NotInstalledRoot, CancellationToken.None);
+
+            reused.Should().Be(new EngineStartResult(true, "http://127.0.0.1:51235", null));
+            secondObserver.HasExited.Should().BeFalse();
+        }
+        finally
+        {
+            KillQuietly(firstObserver);
+            KillQuietly(secondObserver);
+        }
+    }
+
+    [Fact]
+    public async Task RequestRestart_WhileNotRunning_IsUsedUpByTheNextColdStart()
+    {
+        await using var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+        engine.RequestRestart();
+
+        var cold = await engine.EnsureRunningAsync(NotInstalledRoot, CancellationToken.None);
+        cold.IsRunning.Should().BeFalse();
+
+        var running = StartStandInEngine();
+        using var observer = Process.GetProcessById(running.Id);
+        try
+        {
+            PretendRunning(engine, running, "http://127.0.0.1:51234");
+
+            var reused = await engine.EnsureRunningAsync(NotInstalledRoot, CancellationToken.None);
+
+            reused.Should().Be(new EngineStartResult(true, "http://127.0.0.1:51234", null),
+                "a cold start already loads every node pack, so the request was cleared by it");
+            observer.HasExited.Should().BeFalse();
+        }
+        finally
+        {
+            KillQuietly(observer);
+        }
+    }
 }

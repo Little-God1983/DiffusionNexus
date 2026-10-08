@@ -1,5 +1,5 @@
-using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Service.Services;
@@ -15,18 +15,18 @@ public sealed class ComfyUiClientProvider : IComfyUiClientProvider
     private const string ComfySource = "ComfyUI";
     private static readonly ILogger Logger = Log.ForContext<ComfyUiClientProvider>();
 
-    private readonly Func<CancellationToken, Task<AppSettings>> _readSettings;
+    private readonly Func<CancellationToken, Task<ComfyUiServerConnection>> _readSettings;
     private readonly IEngineRootResolver _rootResolver;
     private readonly IManagedComfyUiEngine _engine;
     private readonly IUnifiedLogger? _unifiedLogger;
     private readonly Func<string, IComfyUIWrapperService> _clientFactory;
     private readonly Func<string?, bool> _looksInstalled;
 
-    /// <param name="readSettings">Reads the current settings; DI gives each call its own scope.</param>
+    /// <param name="readSettings">Reads the current server mode and URL; DI gives each call its own scope.</param>
     /// <param name="clientFactory">Test seam; defaults to <c>new ComfyUIWrapperService(url)</c>.</param>
     /// <param name="looksInstalled">Test seam; defaults to <see cref="ManagedEngineLocator.LooksInstalled"/>.</param>
     public ComfyUiClientProvider(
-        Func<CancellationToken, Task<AppSettings>> readSettings,
+        Func<CancellationToken, Task<ComfyUiServerConnection>> readSettings,
         IEngineRootResolver rootResolver,
         IManagedComfyUiEngine engine,
         IUnifiedLogger? unifiedLogger = null,
@@ -49,7 +49,7 @@ public sealed class ComfyUiClientProvider : IComfyUiClientProvider
         // Anything unexpected below (a locked database, a resolver that throws) becomes a
         // ComfyUiUnavailableException worded for the server in use, so the panel never guesses the
         // hint from a lease it never got. Cancellation passes through unchanged.
-        AppSettings settings;
+        ComfyUiServerConnection settings;
         try
         {
             // Read on every call: the user may have switched the dropdown since the last generate.
@@ -60,9 +60,9 @@ public sealed class ComfyUiClientProvider : IComfyUiClientProvider
             throw Unavailable(ComfySource, $"Could not read the ComfyUI server setting: {ex.Message}", ex);
         }
 
-        if (settings.ComfyUiServerMode == ComfyUiServerMode.CustomUrl)
+        if (settings.Mode == ComfyUiServerMode.CustomUrl)
         {
-            var url = settings.ComfyUiServerUrl;
+            var url = settings.Url;
             if (!ComfyUiUrl.IsValid(url))
             {
                 // Checked before the client factory: an invalid URL throws inside new Uri(...).

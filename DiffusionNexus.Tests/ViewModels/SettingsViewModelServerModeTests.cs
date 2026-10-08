@@ -1,5 +1,6 @@
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Tests.Helpers;
 using DiffusionNexus.UI.Services;
@@ -178,5 +179,132 @@ public class SettingsViewModelServerModeTests
         vm.OpenEngineFeaturesCommand.Execute(null);
 
         _events.Verify(e => e.PublishNavigateToEngineFeatures(It.IsAny<NavigateToEngineFeaturesEventArgs>()), Times.Once);
+    }
+
+    // #606 code review 2 (G4). Importing settings rewrites Server mode and URL in the database; an
+    // open Inpaint/Outpaint panel only re-checks its readiness line on SettingsSaved.
+
+    private const string ImportPath = @"C:\Exports\settings.json";
+
+    private (SettingsViewModel Vm, Mock<ISettingsExportService> Export) ForImport(DatasetEventAggregator events)
+    {
+        _settings.Setup(s => s.GetSettingsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AppSettings { Id = 1, ComfyUiServerMode = ComfyUiServerMode.CustomUrl });
+        var export = new Mock<ISettingsExportService>();
+        export.Setup(e => e.ReadAsync(ImportPath, It.IsAny<CancellationToken>())).ReturnsAsync(new SettingsExportData());
+        var dialogs = new Mock<IDialogService>();
+        dialogs.Setup(d => d.ShowOpenFileDialogAsync("Import Settings", "*.json")).ReturnsAsync(ImportPath);
+        dialogs.Setup(d => d.ShowConfirmAsync("Import Settings", It.IsAny<string>())).ReturnsAsync(true);
+        var vm = new SettingsViewModel(_settings.Object, new Mock<ISecureStorage>().Object,
+            eventAggregator: events, exportService: export.Object, uiScheduler: new ImmediateUiScheduler())
+        {
+            DialogService = dialogs.Object
+        };
+        return (vm, export);
+    }
+
+    [Fact]
+    public async Task Import_PublishesSettingsSavedOnce_WithoutReloadingItselfAgain()
+    {
+        var events = new DatasetEventAggregator();
+        var published = 0;
+        events.SettingsSaved += (_, _) => published++;
+        var (vm, export) = ForImport(events);
+        export.Setup(e => e.ImportAsync(ImportPath, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        await vm.ImportSettingsCommand.ExecuteAsync(null);
+
+        published.Should().Be(1, "open readiness lines re-check on SettingsSaved");
+        _settings.Verify(s => s.GetSettingsAsync(It.IsAny<CancellationToken>()), Times.Once,
+            "the import reloads once; its own SettingsSaved must not trigger a second reload");
+        vm.StatusMessage.Should().Be("Settings imported from settings.json.");
+    }
+
+    [Fact]
+    public async Task Import_ThatFails_DoesNotPublishSettingsSaved()
+    {
+        var events = new DatasetEventAggregator();
+        var published = 0;
+        events.SettingsSaved += (_, _) => published++;
+        var (vm, export) = ForImport(events);
+        export.Setup(e => e.ImportAsync(ImportPath, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidDataException("bad file"));
+
+        await vm.ImportSettingsCommand.ExecuteAsync(null);
+
+        published.Should().Be(0);
+        vm.StatusMessage.Should().Be("Import failed: bad file");
+    }
+
+    // #606 code review 2 (G5). Load, module activation, the dropdown, SettingsSaved and
+    // EngineChanged all refresh the Engine status; only the latest refresh may write it.
+
+    [Fact]
+    public async Task EngineStatus_OverlappingRefreshes_TheOlderFinishingLast_DoesNotOverwriteTheNewer()
+    {
+        var older = new TaskCompletionSource<string?>();
+        var newer = new TaskCompletionSource<string?>();
+        _root.SetupSequence(r => r.ResolveAsync(It.IsAny<CancellationToken>()))
+            .Returns(older.Task)
+            .Returns(newer.Task);
+        var vm = new SettingsViewModel(_settings.Object, new Mock<ISecureStorage>().Object,
+            engineRootResolver: _root.Object, engine: _engine.Object, looksInstalled: r => r is not null);
+
+        var first = vm.RefreshEngineStatusAsync();
+        var second = vm.RefreshEngineStatusAsync();
+
+        newer.SetResult(@"C:\Engine\ComfyUI"); // installed meanwhile
+        await second;
+        older.SetResult(null);
+        await first;
+
+        vm.EngineStatusText.Should().Be("Installed · not running (starts on first use)");
+    }
+
+    [Fact]
+    public async Task EngineStatus_AnOlderRefreshThatThrows_DoesNotClearTheNewerResult()
+    {
+        var older = new TaskCompletionSource<string?>();
+        var newer = new TaskCompletionSource<string?>();
+        _root.SetupSequence(r => r.ResolveAsync(It.IsAny<CancellationToken>()))
+            .Returns(older.Task)
+            .Returns(newer.Task);
+        var vm = new SettingsViewModel(_settings.Object, new Mock<ISecureStorage>().Object,
+            engineRootResolver: _root.Object, engine: _engine.Object, looksInstalled: r => r is not null);
+
+        var first = vm.RefreshEngineStatusAsync();
+        var second = vm.RefreshEngineStatusAsync();
+
+        newer.SetResult(@"C:\Engine\ComfyUI");
+        await second;
+        older.SetException(new IOException("locked"));
+        await first;
+
+        vm.EngineStatusText.Should().Be("Installed · not running (starts on first use)");
+    }
+
+    // #606 code review 2 (G6). Every module's startup waits on the Settings load; the Engine-status
+    // lookup must not hold it up.
+
+    [Fact]
+    public async Task Load_DoesNotWaitForTheEngineStatus()
+    {
+        var engineRoot = new TaskCompletionSource<string?>();
+        _settings.Setup(s => s.GetSettingsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AppSettings { Id = 1, ComfyUiServerMode = ComfyUiServerMode.Engine });
+        _root.Setup(r => r.ResolveAsync(It.IsAny<CancellationToken>())).Returns(engineRoot.Task);
+        var vm = new SettingsViewModel(_settings.Object, new Mock<ISecureStorage>().Object,
+            engineRootResolver: _root.Object, engine: _engine.Object, looksInstalled: r => r is not null);
+
+        var load = vm.LoadCommand.ExecuteAsync(null);
+
+        load.IsCompleted.Should().BeTrue("the load must not wait on the Engine lookup");
+        await load;
+        vm.EngineStatusText.Should().BeEmpty();
+
+        engineRoot.SetResult(@"C:\Engine\ComfyUI");
+        await vm.EngineStatusRefresh;
+
+        vm.EngineStatusText.Should().Be("Installed · not running (starts on first use)");
     }
 }

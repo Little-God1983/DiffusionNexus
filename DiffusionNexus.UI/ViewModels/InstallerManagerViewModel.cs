@@ -836,7 +836,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
                 if (vm.DidInstallNodePacks)
                 {
-                    await StopEngineForNewNodePacksAsync();
+                    RestartEngineOnNextUseForNewNodePacks();
                 }
                 else if (_engine?.BaseUrl is not null)
                 {
@@ -861,29 +861,20 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
     /// <summary>
     /// ComfyUI loads custom nodes only at process start, so an Engine that was already running
-    /// during a Features install would never see the new node packs. Stop it; the next Generate
-    /// or Canvas use starts it fresh. A failed stop is logged, not shown: the old process keeps
-    /// working for what it already had.
+    /// during a Features install would never see the new node packs. It is not stopped now — an
+    /// Inpaint, Outpaint or Canvas job may be running on it — but asked to restart: the next
+    /// Generate or Canvas use starts it fresh.
     /// </summary>
-    private async Task StopEngineForNewNodePacksAsync()
+    private void RestartEngineOnNextUseForNewNodePacks()
     {
         if (_engine?.BaseUrl is null)
             return;
 
         const string message =
-            "Restarting the Diffusion Nexus Engine on next use so it loads the newly installed node packs.";
+            "The Diffusion Nexus Engine restarts on its next use so it loads the newly installed node packs.";
         Serilog.Log.Information(message);
         _unifiedLogger.Info(LogCategory.InstanceManagement, "Diffusion Nexus Engine", message);
-        try
-        {
-            await _engine.StopAsync();
-        }
-        catch (Exception ex)
-        {
-            Serilog.Log.Warning(ex, "Could not stop the Diffusion Nexus Engine after a Features install");
-            _unifiedLogger.Warn(LogCategory.InstanceManagement, "Diffusion Nexus Engine",
-                $"Could not stop the engine after the install; restart the app to load the new node packs. {ex.Message}");
-        }
+        _engine.RequestRestart();
     }
 
     /// <summary>

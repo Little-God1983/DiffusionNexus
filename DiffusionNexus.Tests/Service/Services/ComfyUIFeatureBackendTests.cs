@@ -71,11 +71,14 @@ public class ComfyUIFeatureBackendTests
     public void WhenAnyRequiredDependencyIsNullThenConstructorThrows()
     {
         var withoutComfy = () => new ComfyUIFeatureBackend(null!, _settings.Object, _workloadChecker.Object);
-        var withoutSettings = () => new ComfyUIFeatureBackend(_comfyUi.Object, null!, _workloadChecker.Object);
+        var withoutSettings = () => new ComfyUIFeatureBackend(_comfyUi.Object, (IAppSettingsService)null!, _workloadChecker.Object);
+        var withoutUrlReader = () => new ComfyUIFeatureBackend(
+            _comfyUi.Object, (Func<CancellationToken, Task<string?>>)null!, _workloadChecker.Object);
         var withoutChecker = () => new ComfyUIFeatureBackend(_comfyUi.Object, _settings.Object, null!);
 
         withoutComfy.Should().Throw<ArgumentNullException>();
         withoutSettings.Should().Throw<ArgumentNullException>();
+        withoutUrlReader.Should().Throw<ArgumentNullException>();
         withoutChecker.Should().Throw<ArgumentNullException>();
     }
 
@@ -141,6 +144,51 @@ public class ComfyUIFeatureBackendTests
         var act = async () => await backend.CheckFeatureAsync(Feature.Captioning);
 
         await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    /// <summary>
+    /// #606 code review 2 (G2). The Outpaint panel checks Outpaint and OutpaintVision in parallel on
+    /// this one singleton. Each check must make its own URL read (DI gives every read its own scope)
+    /// rather than share, serialize or cache one: the two reads below are both in flight at once, and
+    /// each check ends on its URL instead of "Could not resolve ComfyUI server URL".
+    /// </summary>
+    [Fact]
+    public async Task WhenTwoChecksRunInParallelThenEachMakesItsOwnUrlRead_AndBothResolveIt()
+    {
+        var url = ClosedPortUrl();
+        var reads = 0;
+        var bothReading = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var backend = new ComfyUIFeatureBackend(_comfyUi.Object, async ct =>
+        {
+            if (Interlocked.Increment(ref reads) == 2) bothReading.TrySetResult();
+            await bothReading.Task.WaitAsync(TimeSpan.FromSeconds(10), ct);
+            return url;
+        }, _workloadChecker.Object);
+
+        var results = await Task.WhenAll(
+            backend.CheckFeatureAsync(Feature.Outpaint),
+            backend.CheckFeatureAsync(Feature.OutpaintVision));
+
+        reads.Should().Be(2, "one URL read per check");
+        results.Should().AllSatisfy(r =>
+        {
+            r.Endpoint.Should().Be(url);
+            r.MissingRequirements.Should().ContainSingle().Which.Should().Contain("not reachable");
+        });
+    }
+
+    [Fact]
+    public async Task WhenTheUrlReaderFindsNoUrlThenResultIsBackendOfflineWithUnknownEndpoint()
+    {
+        var backend = new ComfyUIFeatureBackend(
+            _comfyUi.Object, _ => Task.FromResult<string?>(null), _workloadChecker.Object);
+
+        var result = await backend.CheckFeatureAsync(Feature.Captioning);
+
+        result.IsBackendOnline.Should().BeFalse();
+        result.Endpoint.Should().Be("(unknown)");
+        result.MissingRequirements.Should().ContainSingle()
+            .Which.Should().Contain("Could not resolve ComfyUI server URL");
     }
 
     #endregion

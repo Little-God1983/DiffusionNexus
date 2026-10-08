@@ -762,9 +762,11 @@ public partial class App : Application
             string? url;
             try
             {
+                // Only the URL column, read-only: a full settings load (with its writes) is not
+                // worth blocking first resolution on.
                 using var scope = sp.CreateScope();
                 url = scope.ServiceProvider.GetRequiredService<IAppSettingsService>()
-                    .GetSettingsAsync().GetAwaiter().GetResult().ComfyUiServerUrl;
+                    .GetComfyUiServerConnectionAsync().GetAwaiter().GetResult().Url;
             }
             catch (Exception ex)
             {
@@ -788,7 +790,8 @@ public partial class App : Application
 
         // The ComfyUI that Inpaint and Outpaint run on: the Engine or the user's own, per Settings.
         // Settings are read through a fresh scope per call: IAppSettingsService is transient over a
-        // scoped DbContext, and parallel readiness checks must not share one context.
+        // scoped DbContext, and parallel readiness checks must not share one context. Only the mode
+        // and URL are read, read-only, on every Generate.
         services.AddSingleton<IComfyUiClientProvider>(sp =>
         {
             var scopes = sp.GetRequiredService<IServiceScopeFactory>();
@@ -796,7 +799,8 @@ public partial class App : Application
                 async ct =>
                 {
                     using var scope = scopes.CreateScope();
-                    return await scope.ServiceProvider.GetRequiredService<IAppSettingsService>().GetSettingsAsync(ct);
+                    return await scope.ServiceProvider.GetRequiredService<IAppSettingsService>()
+                        .GetComfyUiServerConnectionAsync(ct);
                 },
                 sp.GetRequiredService<Services.Engine.IEngineRootResolver>(),
                 sp.GetRequiredService<Services.Engine.IManagedComfyUiEngine>(),
@@ -815,11 +819,22 @@ public partial class App : Application
         // Installer Manager dialog. The unified logger plumb-through makes readiness
         // decisions visible in the in-app console.
         services.AddSingleton<IFeatureBackend>(sp =>
-            new ComfyUIFeatureBackend(
+        {
+            var scopes = sp.GetRequiredService<IServiceScopeFactory>();
+            return new ComfyUIFeatureBackend(
                 sp.GetRequiredService<IComfyUIWrapperService>(),
-                sp.GetRequiredService<IAppSettingsService>(),
+                readServerUrl: async ct =>
+                {
+                    // Fresh scope per read: the Outpaint panel checks Outpaint and OutpaintVision in
+                    // parallel, and two reads on one DbContext throw (Vision then shows offline).
+                    using var scope = scopes.CreateScope();
+                    var connection = await scope.ServiceProvider.GetRequiredService<IAppSettingsService>()
+                        .GetComfyUiServerConnectionAsync(ct).ConfigureAwait(false);
+                    return connection.Url ?? ComfyUiUrl.Default;
+                },
                 sp.GetRequiredService<Domain.Services.IWorkloadInstallationChecker>(),
-                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>());
+        });
 
         // Resolves the concrete LocalInferenceCaptioningBackend rather than the
         // ICaptioningBackend collection — going through the collection would force the
