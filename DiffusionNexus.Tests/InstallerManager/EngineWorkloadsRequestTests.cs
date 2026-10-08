@@ -2,6 +2,7 @@ using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Installer.SDK.Catalog;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
 using Moq;
 
@@ -42,7 +43,7 @@ public class EngineWorkloadsRequestTests
 
         dialog.Verify(d => d.ShowMessageAsync(
                 "Diffusion Nexus Engine",
-                "Install the engine first — workloads are installed into it."),
+                "Install the engine first — features are installed into it."),
             Times.Once);
 
         // Confirms the refusal returns before ever constructing a WorkloadsViewModel /
@@ -90,8 +91,42 @@ public class EngineWorkloadsRequestTests
 
         dialog.Verify(d => d.ShowMessageAsync(
                 "Diffusion Nexus Engine",
-                "Install the engine first — workloads are installed into it."),
+                "Install the engine first — features are installed into it."),
             Times.Once);
         catalog.Verify(r => r.GetWorkloadsAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task EngineInstalled_OpensTheFeaturesDialog_ScopedToTheEngineRoot()
+    {
+        var root = Directory.CreateTempSubdirectory().FullName;
+        File.WriteAllText(Path.Combine(root, "main.py"), "");
+        try
+        {
+            var packages = new List<InstallerPackage>
+            {
+                new() { Id = 1, Name = "Diffusion Nexus Engine", InstallationPath = root, ExecutablePath = Path.Combine(root, "main.py"), Type = InstallerType.ComfyUI, IsAppManaged = true }
+            };
+            var vm = EngineTestHarness.CreateInstallerManagerViewModel(packages: packages);
+            EngineFeaturesViewModel? shown = null;
+            vm.EngineFeaturesDialogPresenter = features => { shown = features; return Task.CompletedTask; };
+            await vm.LoadInstallationsCommand.ExecuteAsync(null);
+
+            await vm.InstallerCards.Single(c => c.IsEngine).ShowWorkloadsCommand.ExecuteAsync(null);
+
+            shown.Should().NotBeNull();
+            shown!.Rows.Select(r => r.DisplayName).Should().Equal("Inpaint & Outpaint", "Canvas · Krea 2 Turbo");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void EngineTile_IsVisibleByDefault_WithoutTheCanvasSwitch()
+    {
+        var vm = EngineTestHarness.CreateInstallerManagerViewModel(packages: []);
+        vm.IsEngineTileVisible.Should().BeTrue();
     }
 }

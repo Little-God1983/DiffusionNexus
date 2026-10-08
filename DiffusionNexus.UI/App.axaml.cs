@@ -1115,6 +1115,7 @@ public partial class App : Application
         // leaves its slot null, and the compound guard below skips wiring + data
         // load for the degraded app (the ready-check list shows which module died).
         InstallerManagerViewModel? installerManagerVm = null;
+        ModuleItem? installerManagerModule = null;
         LoraDatasetHelperViewModel? loraDatasetHelperVm = null;
         ModuleItem? loraDatasetHelperModule = null;
         LoraViewerViewModel? loraViewerVm = null;
@@ -1132,7 +1133,7 @@ public partial class App : Application
         {
             installerManagerVm = Services!.GetRequiredService<InstallerManagerViewModel>();
             var installerManagerView = new InstallerManagerView { DataContext = installerManagerVm };
-            var installerManagerModule = new ModuleItem(
+            installerManagerModule = new ModuleItem(
                 "Installer Manager",
                 "avares://DiffusionNexus.UI/Assets/Installer.png", // TODO: add dedicated Installer Manager icon
                 installerManagerView)
@@ -1278,20 +1279,6 @@ public partial class App : Application
                 mainViewModel.RegisterModule(diffusionCanvasModule);
                 mainViewModel.SetDiffusionCanvasModule(diffusionCanvasModule);
 
-                // The engine tile follows the same switch as the Canvas — both surfaces are
-                // unfinished and must appear or disappear together. Reuses the same
-                // InstallerManagerViewModel instance resolved earlier (AddScoped, single
-                // root scope) rather than re-resolving it.
-                if (installerManagerVm is not null)
-                {
-                    installerManagerVm.IsEngineTileVisible = mainViewModel.IsDiffusionCanvasEnabled;
-                    mainViewModel.PropertyChanged += (_, e) =>
-                    {
-                        if (e.PropertyName == nameof(mainViewModel.IsDiffusionCanvasEnabled))
-                            installerManagerVm.IsEngineTileVisible = mainViewModel.IsDiffusionCanvasEnabled;
-                    };
-                }
-
                 startupProgress.Complete("diffusion-canvas");
             }
             catch (Exception ex)
@@ -1414,6 +1401,13 @@ public partial class App : Application
             eventAggregator.NavigateToSettingsRequested += (_, _) =>
             {
                 mainViewModel.NavigateToModuleCommand.Execute(settingsModule);
+            };
+
+            eventAggregator.NavigateToEngineFeaturesRequested += (_, e) =>
+            {
+                if (installerManagerModule is not null)
+                    mainViewModel.NavigateToModuleCommand.Execute(installerManagerModule);
+                _ = installerManagerVm.OpenEngineFeaturesAsync(e.Preselect);
             };
 
             eventAggregator.NavigateToImageComparerRequested += (_, e) =>

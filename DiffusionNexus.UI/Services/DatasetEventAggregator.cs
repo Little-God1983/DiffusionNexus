@@ -264,6 +264,15 @@ public sealed class NavigateToSettingsEventArgs : DatasetEventArgs
 }
 
 /// <summary>
+/// Raised to open the Diffusion Nexus Engine's Features dialog, optionally with one row pre-ticked
+/// (the editor's "Install Inpaint &amp; Outpaint" link).
+/// </summary>
+public sealed class NavigateToEngineFeaturesEventArgs : DatasetEventArgs
+{
+    public Engine.EngineFeature? Preselect { get; init; }
+}
+
+/// <summary>
 /// Event raised when navigation to the Captioning tab is requested.
 /// Supply either <see cref="ImagePath"/> for a single image or <see cref="ImagePaths"/> for a batch.
 /// </summary>
@@ -510,6 +519,11 @@ public interface IDatasetEventAggregator
     event EventHandler<NavigateToSettingsEventArgs>? NavigateToSettingsRequested;
 
     /// <summary>
+    /// Raised when the Diffusion Nexus Engine's Features dialog should open.
+    /// </summary>
+    event EventHandler<NavigateToEngineFeaturesEventArgs>? NavigateToEngineFeaturesRequested;
+
+    /// <summary>
     /// Raised when navigation to the Image Comparer is requested.
     /// </summary>
     event EventHandler<NavigateToImageComparerEventArgs>? NavigateToImageComparerRequested;
@@ -549,6 +563,7 @@ public interface IDatasetEventAggregator
     void PublishNavigateToImageEditor(NavigateToImageEditorEventArgs args);
     void PublishNavigateToBatchCropScale(NavigateToBatchCropScaleEventArgs args);
     void PublishNavigateToSettings(NavigateToSettingsEventArgs args);
+    void PublishNavigateToEngineFeatures(NavigateToEngineFeaturesEventArgs args);
     void PublishNavigateToImageComparer(NavigateToImageComparerEventArgs args);
     void PublishNavigateToCaptioning(NavigateToCaptioningEventArgs args);
     void PublishNavigateToBatchUpscale(NavigateToBatchUpscaleEventArgs args);
@@ -630,6 +645,9 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
 
     /// <inheritdoc/>
     public event EventHandler<NavigateToSettingsEventArgs>? NavigateToSettingsRequested;
+
+    /// <inheritdoc/>
+    public event EventHandler<NavigateToEngineFeaturesEventArgs>? NavigateToEngineFeaturesRequested;
 
     /// <inheritdoc/>
     public event EventHandler<NavigateToImageComparerEventArgs>? NavigateToImageComparerRequested;
@@ -757,6 +775,13 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
     {
         ArgumentNullException.ThrowIfNull(args);
         RaiseEvent(NavigateToSettingsRequested, args);
+    }
+
+    /// <inheritdoc/>
+    public void PublishNavigateToEngineFeatures(NavigateToEngineFeaturesEventArgs args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+        RaiseEvent(NavigateToEngineFeaturesRequested, args);
     }
 
     /// <inheritdoc/>
