@@ -22,6 +22,7 @@ public sealed partial class FeatureReadinessViewModel : ObservableObject
     private readonly Feature _feature;
     private readonly IDatasetEventAggregator? _eventAggregator;
     private BackendKind? _activeBackendKind;
+    private int _checkGeneration;
 
     private bool _isChecking;
     private bool _isReady;
@@ -55,7 +56,13 @@ public sealed partial class FeatureReadinessViewModel : ObservableObject
         InstallOnEngineCommand = new RelayCommand(() =>
         {
             if (EngineFeatureCatalog.ForAppFeature(_feature) is { } row)
-                _eventAggregator?.PublishNavigateToEngineFeatures(new NavigateToEngineFeaturesEventArgs { Preselect = row });
+            {
+                _eventAggregator?.PublishNavigateToEngineFeatures(new NavigateToEngineFeaturesEventArgs
+                {
+                    Preselect = row,
+                    InstallEngineOnly = IsEngineNotInstalled
+                });
+            }
         });
 
         FeatureDisplayName = readinessService?.GetRequirements(feature)?.DisplayName ?? feature.ToString();
@@ -93,9 +100,19 @@ public sealed partial class FeatureReadinessViewModel : ObservableObject
     public bool ShowInstallOnEngine =>
         ShowBackendLine && IsEngineBackend && HasMissingRequirements && EngineFeatureCatalog.ForAppFeature(_feature) is not null;
 
-    /// <summary>"Install Inpaint &amp; Outpaint" — the row's display name.</summary>
+    /// <summary>
+    /// "Install Inpaint &amp; Outpaint" — the row's display name; "Install the Diffusion Nexus Engine" while
+    /// the Engine itself is missing, because the Features dialog cannot install anything before it.
+    /// </summary>
     public string? InstallOnEngineLabel =>
-        EngineFeatureCatalog.ForAppFeature(_feature) is { } row ? $"Install {EngineFeatureCatalog.Get(row).DisplayName}" : null;
+        EngineFeatureCatalog.ForAppFeature(_feature) is not { } row
+            ? null
+            : IsEngineNotInstalled
+                ? "Install the Diffusion Nexus Engine"
+                : $"Install {EngineFeatureCatalog.Get(row).DisplayName}";
+
+    /// <summary>The Engine answered that it is not installed (it reports itself offline only then).</summary>
+    private bool IsEngineNotInstalled => IsEngineBackend && !IsBackendOnline;
 
     /// <summary>Whether the feature is ready to execute on its currently selected backend.</summary>
     public bool IsReady
@@ -210,12 +227,21 @@ public sealed partial class FeatureReadinessViewModel : ObservableObject
             return;
         }
 
+        // Checks can overlap (Settings saved, Engine changed, the Check button, the panel opening):
+        // only the latest one may write its answer, or an older check finishing last would show a
+        // backend the user has already switched away from.
+        var generation = ++_checkGeneration;
         IsChecking = true;
         StatusMessage = "Checking…";
 
         try
         {
             var result = await _readinessService.CheckAsync(_feature, ct);
+            if (generation != _checkGeneration)
+            {
+                Logger.Debug("Discarding an outdated readiness check for {Feature}", _feature);
+                return;
+            }
 
             IsBackendOnline = result.IsBackendOnline;
             IsReady = result.IsReady;
@@ -232,11 +258,15 @@ public sealed partial class FeatureReadinessViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
-            StatusMessage = "Check cancelled";
+            if (generation == _checkGeneration)
+                StatusMessage = "Check cancelled";
         }
         catch (Exception ex)
         {
             Logger.Warning(ex, "Readiness check failed for {Feature}", _feature);
+            if (generation != _checkGeneration)
+                return;
+
             IsReady = false;
             IsBackendOnline = false;
             ActiveBackendName = null;
@@ -247,11 +277,15 @@ public sealed partial class FeatureReadinessViewModel : ObservableObject
         }
         finally
         {
-            IsChecking = false;
-            HasChecked = true;
-            OnPropertyChanged(nameof(IsEngineBackend));
-            OnPropertyChanged(nameof(ShowBackendLine));
-            OnPropertyChanged(nameof(ShowInstallOnEngine));
+            if (generation == _checkGeneration)
+            {
+                IsChecking = false;
+                HasChecked = true;
+                OnPropertyChanged(nameof(IsEngineBackend));
+                OnPropertyChanged(nameof(ShowBackendLine));
+                OnPropertyChanged(nameof(ShowInstallOnEngine));
+                OnPropertyChanged(nameof(InstallOnEngineLabel));
+            }
         }
     }
 

@@ -50,4 +50,6 @@ public sealed class ComfyUiClientLease : IDisposable
 public sealed class ComfyUiUnavailableException : Exception
 {
     public ComfyUiUnavailableException(string message) : base(message) { }
+
+    public ComfyUiUnavailableException(string message, Exception? innerException) : base(message, innerException) { }
 }

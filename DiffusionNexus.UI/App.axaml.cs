@@ -843,13 +843,14 @@ public partial class App : Application
             var scopes = sp.GetRequiredService<IServiceScopeFactory>();
             return new FeatureBackendRouter(
                 sp.GetServices<IFeatureBackend>(),
-                serverMode: () =>
+                serverModeAsync: async ct =>
                 {
                     // Fresh scope per call: the Outpaint panel resolves Outpaint and OutpaintVision in
-                    // parallel, and two reads on one DbContext throw.
+                    // parallel, and two reads on one DbContext throw. A one-column read-only query,
+                    // awaited, so a readiness check never blocks the UI thread on the database.
                     using var scope = scopes.CreateScope();
-                    return scope.ServiceProvider.GetRequiredService<IAppSettingsService>()
-                        .GetSettingsAsync().GetAwaiter().GetResult().ComfyUiServerMode;
+                    return await scope.ServiceProvider.GetRequiredService<IAppSettingsService>()
+                        .GetComfyUiServerModeAsync(ct).ConfigureAwait(false);
                 });
         });
 
@@ -1444,7 +1445,10 @@ public partial class App : Application
             {
                 if (installerManagerModule is not null)
                     mainViewModel.NavigateToModuleCommand.Execute(installerManagerModule);
-                _ = installerManagerVm.OpenEngineFeaturesAsync(e.Preselect);
+                // Engine not installed: the Installation Manager offers its install; the Features
+                // dialog would only refuse.
+                if (!e.InstallEngineOnly)
+                    _ = installerManagerVm.OpenEngineFeaturesAsync(e.Preselect);
             };
 
             eventAggregator.NavigateToImageComparerRequested += (_, e) =>

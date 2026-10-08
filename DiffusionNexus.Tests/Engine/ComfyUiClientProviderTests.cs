@@ -16,14 +16,17 @@ public class ComfyUiClientProviderTests
     private readonly List<string> _clientUrls = [];
     private readonly List<Mock<IComfyUIWrapperService>> _clients = [];
     private bool _looksInstalled = true;
+    private Func<CancellationToken, Task<AppSettings>>? _readSettings;
+    private Exception? _clientFactoryThrows;
 
     private void Mode(ComfyUiServerMode mode, string url = "http://127.0.0.1:8188/") =>
         _current = new AppSettings { Id = 1, ComfyUiServerMode = mode, ComfyUiServerUrl = url };
 
     private ComfyUiClientProvider Sut() => new(
-        _ => Task.FromResult(_current), _root.Object, _engine.Object, unifiedLogger: null,
+        _readSettings ?? (_ => Task.FromResult(_current)), _root.Object, _engine.Object, unifiedLogger: null,
         clientFactory: url =>
         {
+            if (_clientFactoryThrows is not null) throw _clientFactoryThrows;
             _clientUrls.Add(url);
             var client = new Mock<IComfyUIWrapperService>();
             _clients.Add(client);
@@ -124,6 +127,71 @@ public class ComfyUiClientProviderTests
         await act.Should().ThrowAsync<ComfyUiUnavailableException>()
             .WithMessage("Diffusion Nexus Engine failed to start: The engine process exited on its own during startup (exit code 1).");
         _clientUrls.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task SettingsReadThrows_BecomesUnavailable_WithTheSettingsHint()
+    {
+        var cause = new InvalidOperationException("database is locked");
+        _readSettings = _ => throw cause;
+
+        var act = () => Sut().AcquireAsync();
+
+        (await act.Should().ThrowAsync<ComfyUiUnavailableException>()
+            .WithMessage("Could not read the ComfyUI server setting: database is locked"))
+            .Which.InnerException.Should().BeSameAs(cause);
+    }
+
+    [Fact]
+    public async Task RootResolverThrows_InEngineMode_BecomesUnavailable_WithTheEngineHint()
+    {
+        Mode(ComfyUiServerMode.Engine);
+        _root.Setup(r => r.ResolveAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("database is locked"));
+
+        var act = () => Sut().AcquireAsync();
+
+        await act.Should().ThrowAsync<ComfyUiUnavailableException>()
+            .WithMessage("Diffusion Nexus Engine could not be prepared: database is locked");
+    }
+
+    [Fact]
+    public async Task EngineStartThrows_BecomesUnavailable_WithTheEngineHint()
+    {
+        Mode(ComfyUiServerMode.Engine);
+        _root.Setup(r => r.ResolveAsync(It.IsAny<CancellationToken>())).ReturnsAsync(@"C:\Engine\ComfyUI");
+        _engine.Setup(e => e.EnsureRunningAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new System.ComponentModel.Win32Exception("Access is denied"));
+
+        var act = () => Sut().AcquireAsync();
+
+        await act.Should().ThrowAsync<ComfyUiUnavailableException>()
+            .WithMessage("Diffusion Nexus Engine could not be prepared: Access is denied");
+    }
+
+    [Fact]
+    public async Task CustomUrlClientCreationThrows_BecomesUnavailable_WithTheUrl()
+    {
+        Mode(ComfyUiServerMode.CustomUrl, "http://192.168.1.20:8188/");
+        _clientFactoryThrows = new InvalidOperationException("boom");
+
+        var act = () => Sut().AcquireAsync();
+
+        await act.Should().ThrowAsync<ComfyUiUnavailableException>()
+            .WithMessage("Could not connect to your ComfyUI at http://192.168.1.20:8188/: boom");
+    }
+
+    [Fact]
+    public async Task Cancellation_PropagatesUnchanged()
+    {
+        var cancelled = new OperationCanceledException();
+        _readSettings = _ => throw cancelled;
+        (await ((Func<Task>)(() => Sut().AcquireAsync())).Should().ThrowAsync<OperationCanceledException>())
+            .Which.Should().BeSameAs(cancelled);
+
+        _readSettings = null;
+        Mode(ComfyUiServerMode.Engine);
+        _root.Setup(r => r.ResolveAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new TaskCanceledException());
+        await ((Func<Task>)(() => Sut().AcquireAsync())).Should().ThrowExactlyAsync<TaskCanceledException>();
     }
 
     [Fact]

@@ -834,10 +834,20 @@ public partial class InstallerManagerViewModel : ViewModelBase
                 if (_engineModelPaths is not null)
                     await _engineModelPaths.SyncAsync(card.InstallationPath);
 
-                await StopEngineForNewNodePacksAsync();
+                if (vm.DidInstallNodePacks)
+                {
+                    await StopEngineForNewNodePacksAsync();
+                }
+                else if (_engine?.BaseUrl is not null)
+                {
+                    const string kept =
+                        "Keeping the Diffusion Nexus Engine running: only models were installed, and it finds new model files without a restart.";
+                    Serilog.Log.Information(kept);
+                    _unifiedLogger.Info(LogCategory.InstanceManagement, "Diffusion Nexus Engine", kept);
+                }
 
-                // Lets an open Inpaint/Outpaint panel re-check its readiness line.
-                _eventAggregator.PublishSettingsSaved(new SettingsSavedEventArgs());
+                // Lets an open Inpaint/Outpaint panel and Settings' Engine status re-check.
+                _eventAggregator.PublishEngineChanged(new EngineChangedEventArgs());
             }
         }
         catch (Exception ex)
@@ -1171,7 +1181,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
                     _eventAggregator.PublishInstallerPackagesChanged(new InstallerPackagesChangedEventArgs());
                     // Settings' Engine status line and the editor's readiness lines re-check on this.
-                    _eventAggregator.PublishSettingsSaved(new SettingsSavedEventArgs());
+                    _eventAggregator.PublishEngineChanged(new EngineChangedEventArgs());
                 }
                 else if (outcome.IsCancelled)
                 {

@@ -125,11 +125,12 @@ public class EngineWorkloadsRequestTests
     }
 
     [Theory]
-    [InlineData(true, "http://127.0.0.1:51234", 1)]
-    [InlineData(true, null, 0)]
-    [InlineData(false, "http://127.0.0.1:51234", 0)]
-    public async Task FeaturesDialog_AfterAnInstall_StopsARunningEngine_AndPublishesSettingsSaved(
-        bool didInstall, string? engineBaseUrl, int expectedStops)
+    [InlineData(true, true, "http://127.0.0.1:51234", 1)]
+    [InlineData(true, false, "http://127.0.0.1:51234", 0)] // models only: a running ComfyUI picks them up
+    [InlineData(true, true, null, 0)]
+    [InlineData(false, false, "http://127.0.0.1:51234", 0)]
+    public async Task FeaturesDialog_AfterAnInstall_StopsARunningEngine_OnlyForNewNodePacks_AndPublishesEngineChanged(
+        bool didInstall, bool didInstallNodePacks, string? engineBaseUrl, int expectedStops)
     {
         var root = Directory.CreateTempSubdirectory().FullName;
         File.WriteAllText(Path.Combine(root, "main.py"), "");
@@ -148,6 +149,7 @@ public class EngineWorkloadsRequestTests
             vm.EngineFeaturesDialogPresenter = features =>
             {
                 features.DidInstall = didInstall;
+                features.DidInstallNodePacks = didInstallNodePacks;
                 return Task.CompletedTask;
             };
             await vm.LoadInstallationsCommand.ExecuteAsync(null);
@@ -156,8 +158,10 @@ public class EngineWorkloadsRequestTests
             await vm.OpenEngineFeaturesAsync();
 
             engine.Verify(e => e.StopAsync(), Times.Exactly(expectedStops));
-            aggregator.Verify(a => a.PublishSettingsSaved(It.IsAny<SettingsSavedEventArgs>()),
+            aggregator.Verify(a => a.PublishEngineChanged(It.IsAny<EngineChangedEventArgs>()),
                 didInstall ? Times.Once() : Times.Never());
+            aggregator.Verify(a => a.PublishSettingsSaved(It.IsAny<SettingsSavedEventArgs>()), Times.Never,
+                "a Features install changes the Engine, not the settings: no gallery rescan");
         }
         finally
         {

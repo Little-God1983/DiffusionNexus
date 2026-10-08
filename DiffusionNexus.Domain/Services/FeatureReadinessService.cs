@@ -25,7 +25,8 @@ public sealed class FeatureReadinessService : IFeatureReadinessService
     /// <inheritdoc />
     public async Task<FeatureReadinessResult> CheckAsync(Feature feature, CancellationToken ct = default)
     {
-        var backend = _router.Resolve(feature);
+        // Async: the governed features read the Server mode from the database.
+        var backend = await _router.ResolveAsync(feature, ct).ConfigureAwait(false);
 
         if (backend is null)
         {

@@ -217,6 +217,17 @@ public sealed class AppSettingsService : IAppSettingsService
     }
 
     /// <inheritdoc />
+    public async Task<Domain.Enums.ComfyUiServerMode> GetComfyUiServerModeAsync(CancellationToken cancellationToken = default)
+    {
+        var mode = await _unitOfWork.AppSettings
+            .GetComfyUiServerModeAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        // No row yet: a fresh database, whose settings will default to the Engine.
+        return mode ?? Domain.Enums.ComfyUiServerMode.Engine;
+    }
+
+    /// <inheritdoc />
     public async Task SaveSettingsAsync(AppSettings settings, CancellationToken cancellationToken = default)
     {
         settings.UpdatedAt = DateTimeOffset.UtcNow;

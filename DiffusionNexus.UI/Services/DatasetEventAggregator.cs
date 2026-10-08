@@ -279,6 +279,12 @@ public sealed class NavigateToSettingsEventArgs : DatasetEventArgs
 public sealed class NavigateToEngineFeaturesEventArgs : DatasetEventArgs
 {
     public Engine.EngineFeature? Preselect { get; init; }
+
+    /// <summary>
+    /// The Engine itself is not installed: open the Installation Manager so the user can install it,
+    /// without opening the Features dialog (which would only refuse).
+    /// </summary>
+    public bool InstallEngineOnly { get; init; }
 }
 
 /// <summary>
@@ -392,6 +398,15 @@ public sealed class InstallerPackagesChangedEventArgs : DatasetEventArgs
 {
 }
 
+/// <summary>
+/// Raised when the Diffusion Nexus Engine changed on disk (installed, or features installed into it).
+/// Carries no payload — subscribers re-check what they show about the Engine. Separate from
+/// <see cref="SettingsSavedEventArgs"/> so an Engine install does not rescan the gallery or reload datasets.
+/// </summary>
+public sealed class EngineChangedEventArgs : DatasetEventArgs
+{
+}
+
 #endregion
 
 /// <summary>
@@ -473,6 +488,12 @@ public interface IDatasetEventAggregator
     /// Console's docked-instance bar) to refresh without an app restart.
     /// </summary>
     event EventHandler<InstallerPackagesChangedEventArgs>? InstallerPackagesChanged;
+
+    /// <summary>
+    /// Raised when the Diffusion Nexus Engine changed on disk (installed, or features installed
+    /// into it), so readiness lines and the Settings Engine status re-check.
+    /// </summary>
+    event EventHandler<EngineChangedEventArgs>? EngineChanged;
 
     #endregion
 
@@ -579,6 +600,7 @@ public interface IDatasetEventAggregator
     void PublishNavigateToWorkflow(NavigateToWorkflowEventArgs args);
     void PublishSettingsSaved(SettingsSavedEventArgs args);
     void PublishInstallerPackagesChanged(InstallerPackagesChangedEventArgs args);
+    void PublishEngineChanged(EngineChangedEventArgs args);
 
     #endregion
 }
@@ -619,6 +641,9 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
 
     /// <inheritdoc/>
     public event EventHandler<InstallerPackagesChangedEventArgs>? InstallerPackagesChanged;
+
+    /// <inheritdoc/>
+    public event EventHandler<EngineChangedEventArgs>? EngineChanged;
 
     #endregion
 
@@ -833,6 +858,13 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
     {
         ArgumentNullException.ThrowIfNull(args);
         RaiseEvent(InstallerPackagesChanged, args);
+    }
+
+    /// <inheritdoc/>
+    public void PublishEngineChanged(EngineChangedEventArgs args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+        RaiseEvent(EngineChanged, args);
     }
 
     #endregion

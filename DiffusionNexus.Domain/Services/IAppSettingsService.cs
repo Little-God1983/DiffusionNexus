@@ -16,6 +16,13 @@ public interface IAppSettingsService
     Task<AppSettings> GetSettingsAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Reads only Settings → ComfyUI Server mode: a read-only query that creates, seeds and tracks
+    /// nothing, cheap enough for every readiness check. Without a settings row it answers
+    /// <see cref="Enums.ComfyUiServerMode.Engine"/>, the default of a fresh database.
+    /// </summary>
+    Task<Enums.ComfyUiServerMode> GetComfyUiServerModeAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Saves the application settings.
     /// </summary>
     /// <param name="settings">The settings to save.</param>

@@ -191,6 +191,64 @@ public class EditorEngineGenerateTests
         readiness.Verify(r => r.CheckAsync(Feature.Inpainting, It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
+    [Fact]
+    public async Task EngineChanged_WhileTheInpaintPanelIsOpen_RechecksReadiness()
+    {
+        var events = new Mock<IDatasetEventAggregator>();
+        var readiness = new Mock<IFeatureReadinessService>();
+        readiness.Setup(r => r.CheckAsync(Feature.Inpainting, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new FeatureReadinessResult
+            {
+                Feature = Feature.Inpainting, Backend = BackendKind.Engine, ActiveBackendName = "Diffusion Nexus Engine",
+                IsBackendOnline = true, IsReady = true, MissingRequirements = [], Warnings = []
+            });
+        var vm = new InpaintingViewModel(() => true, _ => { }, comfyUiClientProvider: null, events.Object, readiness.Object);
+        vm.IsPanelOpen = true;
+        await Task.Delay(50); // the open-panel check is fire-and-forget
+
+        events.Raise(e => e.EngineChanged += null, events.Object, new EngineChangedEventArgs());
+        await Task.Delay(50);
+
+        readiness.Verify(r => r.CheckAsync(Feature.Inpainting, It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task EngineChanged_WhileTheOutpaintPanelIsOpen_RechecksReadiness()
+    {
+        var events = new Mock<IDatasetEventAggregator>();
+        var readiness = new Mock<IFeatureReadinessService>();
+        readiness.Setup(r => r.CheckAsync(It.IsAny<Feature>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Feature f, CancellationToken _) => new FeatureReadinessResult
+            {
+                Feature = f, Backend = BackendKind.Engine, ActiveBackendName = "Diffusion Nexus Engine",
+                IsBackendOnline = true, IsReady = true, MissingRequirements = [], Warnings = []
+            });
+        var vm = new OutpaintingViewModel(() => true, () => 512, () => 512, _ => { },
+            readinessService: readiness.Object, eventAggregator: events.Object);
+        vm.IsPanelOpen = true;
+        await Task.Delay(50);
+
+        events.Raise(e => e.EngineChanged += null, events.Object, new EngineChangedEventArgs());
+        await Task.Delay(50);
+
+        readiness.Verify(r => r.CheckAsync(Feature.Outpaint, It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task EngineChanged_WithThePanelClosed_DoesNotCheck()
+    {
+        var events = new Mock<IDatasetEventAggregator>();
+        var readiness = new Mock<IFeatureReadinessService>();
+        _ = new InpaintingViewModel(() => true, _ => { }, comfyUiClientProvider: null, events.Object, readiness.Object);
+        _ = new OutpaintingViewModel(() => true, () => 512, () => 512, _ => { },
+            readinessService: readiness.Object, eventAggregator: events.Object);
+
+        events.Raise(e => e.EngineChanged += null, events.Object, new EngineChangedEventArgs());
+        await Task.Delay(50);
+
+        readiness.Verify(r => r.CheckAsync(It.IsAny<Feature>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     private const string EngineNoVision = "Outpaint Vision is not available on the Diffusion Nexus Engine yet";
 
     private static OutpaintingViewModel OutpaintWithVision(bool visionReady)

@@ -46,8 +46,19 @@ public sealed class ComfyUiClientProvider : IComfyUiClientProvider
 
     public async Task<ComfyUiClientLease> AcquireAsync(IProgress<string>? progress = null, CancellationToken ct = default)
     {
-        // Read on every call: the user may have switched the dropdown since the last generate.
-        var settings = await _readSettings(ct);
+        // Anything unexpected below (a locked database, a resolver that throws) becomes a
+        // ComfyUiUnavailableException worded for the server in use, so the panel never guesses the
+        // hint from a lease it never got. Cancellation passes through unchanged.
+        AppSettings settings;
+        try
+        {
+            // Read on every call: the user may have switched the dropdown since the last generate.
+            settings = await _readSettings(ct);
+        }
+        catch (Exception ex) when (IsUnexpected(ex))
+        {
+            throw Unavailable(ComfySource, $"Could not read the ComfyUI server setting: {ex.Message}", ex);
+        }
 
         if (settings.ComfyUiServerMode == ComfyUiServerMode.CustomUrl)
         {
@@ -62,9 +73,31 @@ public sealed class ComfyUiClientProvider : IComfyUiClientProvider
             }
 
             Info(LogCategory.Configuration, ComfySource, $"Using your own ComfyUI at {url}.");
-            return new ComfyUiClientLease(_clientFactory(url), ComfyUiServerMode.CustomUrl, url, ownsClient: true);
+            IComfyUIWrapperService client;
+            try
+            {
+                client = _clientFactory(url);
+            }
+            catch (Exception ex) when (IsUnexpected(ex))
+            {
+                throw Unavailable(ComfySource, $"Could not connect to your ComfyUI at {url}: {ex.Message}", ex);
+            }
+
+            return new ComfyUiClientLease(client, ComfyUiServerMode.CustomUrl, url, ownsClient: true);
         }
 
+        try
+        {
+            return await AcquireEngineAsync(progress, ct);
+        }
+        catch (Exception ex) when (IsUnexpected(ex))
+        {
+            throw Unavailable(EngineSource, $"Diffusion Nexus Engine could not be prepared: {ex.Message}", ex);
+        }
+    }
+
+    private async Task<ComfyUiClientLease> AcquireEngineAsync(IProgress<string>? progress, CancellationToken ct)
+    {
         var root = await _rootResolver.ResolveAsync(ct);
         if (!_looksInstalled(root))
         {
@@ -90,6 +123,16 @@ public sealed class ComfyUiClientProvider : IComfyUiClientProvider
 
         Info(LogCategory.InstanceManagement, EngineSource, $"Using the Engine at {started.BaseUrl}.");
         return new ComfyUiClientLease(_clientFactory(started.BaseUrl), ComfyUiServerMode.Engine, started.BaseUrl, ownsClient: true);
+    }
+
+    private static bool IsUnexpected(Exception ex) =>
+        ex is not OperationCanceledException and not ComfyUiUnavailableException;
+
+    private ComfyUiUnavailableException Unavailable(string source, string message, Exception cause)
+    {
+        Logger.Warning(cause, "{Source}: {Message}", source, message);
+        _unifiedLogger?.Warn(LogCategory.InstanceManagement, source, message, cause.ToString());
+        return new ComfyUiUnavailableException(message, cause);
     }
 
     private void Info(LogCategory category, string source, string message)

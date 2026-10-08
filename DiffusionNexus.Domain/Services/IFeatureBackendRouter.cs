@@ -16,4 +16,11 @@ public interface IFeatureBackendRouter
     /// and may change between calls.
     /// </summary>
     IFeatureBackend? Resolve(Feature feature);
+
+    /// <summary>
+    /// Asynchronous <see cref="Resolve"/>: reads the Settings → ComfyUI Server mode without blocking the
+    /// caller. The default answers with <see cref="Resolve"/>, for routers that need no I/O.
+    /// </summary>
+    Task<IFeatureBackend?> ResolveAsync(Feature feature, CancellationToken ct = default) =>
+        Task.FromResult(Resolve(feature));
 }

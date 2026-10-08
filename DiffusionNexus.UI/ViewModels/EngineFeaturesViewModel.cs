@@ -86,6 +86,13 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
     /// </summary>
     public bool DidInstall { get; internal set; }
 
+    /// <summary>
+    /// True once an install call was made with at least one missing node pack. Only then must a
+    /// running Engine restart: ComfyUI loads custom nodes at start-up but finds new model files on
+    /// its own. Internal setter is a test seam.
+    /// </summary>
+    public bool DidInstallNodePacks { get; internal set; }
+
     private IEnumerable<EngineFeatureRowViewModel> RowsToInstall =>
         Rows.Where(r => r.IsSelected && r.IsSelectable);
 
@@ -118,6 +125,8 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
         _installCts = new CancellationTokenSource();
         var ct = _installCts.Token;
         var rows = RowsToInstall.ToList();
+        var summaries = new List<string>();
+        var completed = false;
         Info($"Installing {string.Join(", ", rows.Select(r => r.DisplayName))} into {_engineRoot}.");
 
         try
@@ -145,6 +154,8 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
                     Info(ProgressText);
 
                     DidInstall = true;
+                    if (nodes.Count > 0)
+                        DidInstallNodePacks = true;
                     var summary = await _installer.InstallSelectedAsync(
                         config, _engineRoot, nodes, models, vramGb,
                         new Progress<WorkloadInstallProgress>(p =>
@@ -162,10 +173,11 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
                         ct);
 
                     Info($"{row.DisplayName}: {summary}");
+                    summaries.Add($"{row.DisplayName}: {summary.TrimEnd('.')}");
                 }
             }
 
-            ProgressText = "Done.";
+            completed = true;
         }
         catch (OperationCanceledException)
         {
@@ -183,12 +195,17 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
             try
             {
                 await CheckAllAsync(CancellationToken.None);
+                if (completed)
+                    ReportOutcome(rows, summaries);
             }
             catch (Exception ex)
             {
                 // The re-check must never keep the dialog locked: IsInstalling is reset below regardless.
                 Logger.Warning(ex, "Engine feature re-check after install failed");
                 _unifiedLogger?.Warn(LogCategory.Installation, LogSource, $"Re-check after install failed — {ex.Message}");
+                // Rows the re-check did not reach are not Installed, so this reports problems.
+                if (completed)
+                    ReportOutcome(rows, summaries);
             }
             finally
             {
@@ -201,6 +218,27 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
 
     [RelayCommand]
     private void CancelInstall() => _installCts?.Cancel();
+
+    /// <summary>
+    /// The installer reports failed items in its summary rather than throwing, so "Done." is only
+    /// honest when the re-check finds every selected row installed.
+    /// </summary>
+    private void ReportOutcome(IReadOnlyList<EngineFeatureRowViewModel> rows, IReadOnlyList<string> summaries)
+    {
+        var summaryText = string.Join("; ", summaries);
+        if (rows.Any(r => r.Status != EngineFeatureStatus.Installed))
+        {
+            ProgressText = summaryText.Length > 0
+                ? $"Finished with problems: {summaryText}. See the Unified Console for details."
+                : "Finished with problems. See the Unified Console for details.";
+            Warn(ProgressText);
+        }
+        else
+        {
+            ProgressText = summaryText.Length > 0 ? $"Done. {summaryText}." : "Done.";
+            Info(ProgressText);
+        }
+    }
 
     private async Task CheckAllAsync(CancellationToken ct)
     {

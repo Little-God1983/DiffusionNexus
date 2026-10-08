@@ -44,6 +44,55 @@ public class FeatureBackendRouterModeTests
         router.Resolve(feature).Should().BeSameAs(_comfy);
     }
 
+    [Theory]
+    [InlineData(Feature.Inpainting)]
+    [InlineData(Feature.Outpaint)]
+    [InlineData(Feature.OutpaintVision)]
+    public async Task ResolveAsync_FollowsTheAsyncServerModeSource_OnEveryCall(Feature feature)
+    {
+        var mode = ComfyUiServerMode.Engine;
+        var calls = 0;
+        var router = new FeatureBackendRouter([_comfy, _engine],
+            serverMode: () => throw new InvalidOperationException("the blocking source must not be read"),
+            serverModeAsync: _ => { calls++; return Task.FromResult(mode); });
+
+        (await router.ResolveAsync(feature)).Should().BeSameAs(_engine);
+
+        mode = ComfyUiServerMode.CustomUrl;
+        (await router.ResolveAsync(feature)).Should().BeSameAs(_comfy, "the mode is read on every call");
+        calls.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_PassesTheCancellationTokenToTheModeSource()
+    {
+        using var cts = new CancellationTokenSource();
+        CancellationToken seen = default;
+        var router = new FeatureBackendRouter([_comfy, _engine],
+            serverModeAsync: ct => { seen = ct; return Task.FromResult(ComfyUiServerMode.Engine); });
+
+        await router.ResolveAsync(Feature.Inpainting, cts.Token);
+
+        seen.Should().Be(cts.Token);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_OtherFeatures_NeverReadTheModeSource()
+    {
+        var router = new FeatureBackendRouter([_comfy, _engine],
+            serverModeAsync: _ => throw new InvalidOperationException("not governed"));
+
+        (await router.ResolveAsync(Feature.Captioning)).Should().BeSameAs(_comfy);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_WithOnlyTheSyncModeSource_FallsBackToIt()
+    {
+        var router = new FeatureBackendRouter([_comfy, _engine], serverMode: () => ComfyUiServerMode.Engine);
+
+        (await router.ResolveAsync(Feature.Outpaint)).Should().BeSameAs(_engine);
+    }
+
     [Fact]
     public void WithoutAModeSource_TheStaticRoutingStillApplies()
     {

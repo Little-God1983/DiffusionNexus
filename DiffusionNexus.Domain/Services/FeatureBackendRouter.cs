@@ -5,7 +5,8 @@ namespace DiffusionNexus.Domain.Services;
 /// <summary>
 /// Default <see cref="IFeatureBackendRouter"/> that uses a static per-feature constant map
 /// to pick a backend, except for the features in <see cref="ServerModeFeatures"/>, which follow the
-/// Settings → ComfyUI Server mode (read on every call). Re-pointing a feature at a different backend later is a one-line
+/// Settings → ComfyUI Server mode (read on every call; <see cref="ResolveAsync"/> reads it without
+/// blocking). Re-pointing a feature at a different backend later is a one-line
 /// change to <see cref="DefaultRouting"/> — no view-model edits.
 /// </summary>
 public sealed class FeatureBackendRouter : IFeatureBackendRouter
@@ -33,13 +34,15 @@ public sealed class FeatureBackendRouter : IFeatureBackendRouter
         new HashSet<Feature> { Feature.Inpainting, Feature.Outpaint, Feature.OutpaintVision };
 
     private readonly Func<ComfyUiServerMode>? _serverMode;
+    private readonly Func<CancellationToken, Task<ComfyUiServerMode>>? _serverModeAsync;
     private readonly IReadOnlyDictionary<BackendKind, IFeatureBackend> _backendsByKind;
     private readonly IReadOnlyDictionary<Feature, BackendKind> _routing;
 
     public FeatureBackendRouter(
         IEnumerable<IFeatureBackend> backends,
         IReadOnlyDictionary<Feature, BackendKind>? routing = null,
-        Func<ComfyUiServerMode>? serverMode = null)
+        Func<ComfyUiServerMode>? serverMode = null,
+        Func<CancellationToken, Task<ComfyUiServerMode>>? serverModeAsync = null)
     {
         ArgumentNullException.ThrowIfNull(backends);
 
@@ -55,20 +58,30 @@ public sealed class FeatureBackendRouter : IFeatureBackendRouter
         _backendsByKind = byKind;
         _routing = routing ?? DefaultRouting;
         _serverMode = serverMode;
+        _serverModeAsync = serverModeAsync;
     }
 
     /// <inheritdoc />
     public IFeatureBackend? Resolve(Feature feature)
     {
         if (_serverMode is not null && ServerModeFeatures.Contains(feature))
-        {
-            var modeKind = _serverMode() == ComfyUiServerMode.Engine ? BackendKind.Engine : BackendKind.ComfyUI;
-            return _backendsByKind.GetValueOrDefault(modeKind);
-        }
+            return ForMode(_serverMode());
 
         if (!_routing.TryGetValue(feature, out var staticKind))
             return null;
 
         return _backendsByKind.GetValueOrDefault(staticKind);
     }
+
+    /// <inheritdoc />
+    public async Task<IFeatureBackend?> ResolveAsync(Feature feature, CancellationToken ct = default)
+    {
+        if (_serverModeAsync is not null && ServerModeFeatures.Contains(feature))
+            return ForMode(await _serverModeAsync(ct).ConfigureAwait(false));
+
+        return Resolve(feature);
+    }
+
+    private IFeatureBackend? ForMode(ComfyUiServerMode mode) =>
+        _backendsByKind.GetValueOrDefault(mode == ComfyUiServerMode.Engine ? BackendKind.Engine : BackendKind.ComfyUI);
 }

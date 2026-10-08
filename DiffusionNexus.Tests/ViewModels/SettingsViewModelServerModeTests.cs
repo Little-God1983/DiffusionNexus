@@ -137,6 +137,16 @@ public class SettingsViewModelServerModeTests
     }
 
     [Fact]
+    public async Task EngineStatus_RefreshesOnEngineChanged()
+    {
+        var (vm, events) = await LoadedBeforeInstallAsync();
+
+        events.PublishEngineChanged(new EngineChangedEventArgs());
+
+        vm.EngineStatusText.Should().Be("Installed · not running (starts on first use)");
+    }
+
+    [Fact]
     public async Task EngineStatus_RefreshesWhenTheSettingsModuleIsShownAgain()
     {
         var (vm, _) = await LoadedBeforeInstallAsync();

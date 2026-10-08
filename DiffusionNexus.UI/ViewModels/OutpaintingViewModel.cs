@@ -186,16 +186,20 @@ public partial class OutpaintingViewModel : ObservableObject
         // app-wide aggregator for the life of the tab; it only does work while the panel is open.
         if (_eventAggregator is not null)
         {
-            // SettingsSaved can arrive on a thread-pool thread (the startup backfill publishes inside
-            // Task.Run); the re-check writes bound properties, so it runs on the UI thread. With no
-            // Avalonia application (unit tests) the dispatcher has no pump, so run inline.
-            _eventAggregator.SettingsSaved += (_, _) =>
+            // SettingsSaved (the Server mode) and EngineChanged (an Engine or Features install) can
+            // arrive on a thread-pool thread (the startup backfill publishes inside Task.Run); the
+            // re-check writes bound properties, so it runs on the UI thread. With no Avalonia
+            // application (unit tests) the dispatcher has no pump, so run inline.
+            void OnReadinessInputChanged()
             {
                 if (Avalonia.Application.Current is null || Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
                     RecheckReadinessIfOpen();
                 else
                     Avalonia.Threading.Dispatcher.UIThread.Post(RecheckReadinessIfOpen);
-            };
+            }
+
+            _eventAggregator.SettingsSaved += (_, _) => OnReadinessInputChanged();
+            _eventAggregator.EngineChanged += (_, _) => OnReadinessInputChanged();
         }
     }
 

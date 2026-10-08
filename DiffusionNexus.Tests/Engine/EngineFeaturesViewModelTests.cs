@@ -199,6 +199,77 @@ public class EngineFeaturesViewModelTests
             "an install that threw may have left files behind, so the caller must still re-sync and refresh");
     }
 
+    private void InstallReturns(string summary, Action? onInstall = null) =>
+        _installer.Setup(i => i.InstallSelectedAsync(It.IsAny<InstallationConfiguration>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
+                It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
+                It.IsAny<Func<CancellationToken>?>(), It.IsAny<CancellationToken>()))
+            .Callback(() => onInstall?.Invoke())
+            .ReturnsAsync(summary);
+
+    [Fact]
+    public async Task Install_WithMissingNodePacks_ReportsThatNodePacksWereInstalled()
+    {
+        _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(1, 0, 2, 3);
+        _state[EngineFeatureCatalog.Krea2Turbo] = Result(0, 2, 0, 3);
+        var vm = Sut(EngineFeature.InpaintOutpaint);
+        await vm.LoadCommand.ExecuteAsync(null);
+        InstallReturns("1 node(s) installed, 2 model(s) downloaded");
+
+        await vm.InstallSelectedCommand.ExecuteAsync(null);
+
+        vm.DidInstall.Should().BeTrue();
+        vm.DidInstallNodePacks.Should().BeTrue("a running Engine must restart to load new node packs");
+    }
+
+    [Fact]
+    public async Task Install_ModelsOnly_DoesNotReportNodePacks()
+    {
+        _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(0, 1, 2, 3);
+        _state[EngineFeatureCatalog.Krea2Turbo] = Result(0, 2, 0, 3);
+        var vm = Sut(EngineFeature.InpaintOutpaint);
+        await vm.LoadCommand.ExecuteAsync(null);
+        InstallReturns("2 model(s) downloaded");
+
+        await vm.InstallSelectedCommand.ExecuteAsync(null);
+
+        vm.DidInstall.Should().BeTrue();
+        vm.DidInstallNodePacks.Should().BeFalse("a running ComfyUI picks up new model files without a restart");
+    }
+
+    [Fact]
+    public async Task Install_ThatLeavesTheRowPartial_SaysFinishedWithProblems()
+    {
+        _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(1, 0, 5, 0);
+        _state[EngineFeatureCatalog.Krea2Turbo] = Result(0, 2, 0, 3);
+        var vm = Sut(EngineFeature.InpaintOutpaint);
+        await vm.LoadCommand.ExecuteAsync(null);
+        InstallReturns("1 node(s) installed, 4 model(s) downloaded, 1 model(s) failed",
+            () => _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(0, 1, 1, 4));
+
+        await vm.InstallSelectedCommand.ExecuteAsync(null);
+
+        Row(vm, EngineFeature.InpaintOutpaint).Status.Should().Be(EngineFeatureStatus.Partial);
+        vm.ProgressText.Should().Be(
+            "Finished with problems: Inpaint & Outpaint: 1 node(s) installed, 4 model(s) downloaded, 1 model(s) failed. " +
+            "See the Unified Console for details.");
+    }
+
+    [Fact]
+    public async Task Install_ThatCompletesTheRow_SaysDone_WithTheSummary()
+    {
+        _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(1, 0, 5, 0);
+        _state[EngineFeatureCatalog.Krea2Turbo] = Result(0, 2, 0, 3);
+        var vm = Sut(EngineFeature.InpaintOutpaint);
+        await vm.LoadCommand.ExecuteAsync(null);
+        InstallReturns("1 node(s) installed, 5 model(s) downloaded",
+            () => _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(0, 1, 0, 5));
+
+        await vm.InstallSelectedCommand.ExecuteAsync(null);
+
+        vm.ProgressText.Should().Be("Done. Inpaint & Outpaint: 1 node(s) installed, 5 model(s) downloaded.");
+    }
+
     [Fact]
     public async Task InstallEnds_EvenWhenTheRecheckThrows()
     {

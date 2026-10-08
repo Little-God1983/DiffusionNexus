@@ -326,6 +326,8 @@ public partial class SettingsViewModel : BusyViewModelBase, IModuleActivationAwa
         if (_eventAggregator is not null)
         {
             _eventAggregator.SettingsSaved += OnExternalSettingsSaved;
+            // The Engine was installed or features were installed into it: refresh its status line.
+            _eventAggregator.EngineChanged += (_, _) => _uiScheduler.Post(() => _ = RefreshEngineStatusAsync());
         }
     }
 

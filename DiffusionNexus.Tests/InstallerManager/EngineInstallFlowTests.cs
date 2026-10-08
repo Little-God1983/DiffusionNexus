@@ -39,6 +39,29 @@ public class EngineInstallFlowTests
     }
 
     [Fact]
+    public async Task SuccessfulInstall_PublishesEngineChanged_NotSettingsSaved()
+    {
+        var installer = new Mock<IManagedEngineInstaller>();
+        installer.Setup(i => i.InstallBaseEngineAsync(
+                It.IsAny<EngineInstallRequest>(), It.IsAny<IProgress<InstallLogEntry>>(),
+                It.IsAny<IProgress<InstallationProgress>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new EngineInstallOutcome(true, false, "done", @"C:\Engine\ComfyUI"));
+        var aggregator = new Mock<IDatasetEventAggregator>();
+
+        var vm = EngineTestHarness.CreateInstallerManagerViewModel(
+            packages: [], engineInstaller: installer.Object,
+            chosenFolder: @"C:\Engine\ComfyUI", onPackageAdded: _ => { }, eventAggregatorMock: aggregator);
+
+        vm.IsEngineTileVisible = true;
+        await vm.LoadInstallationsCommand.ExecuteAsync(null);
+        await vm.InstallEngineAsync();
+
+        aggregator.Verify(a => a.PublishEngineChanged(It.IsAny<EngineChangedEventArgs>()), Times.Once);
+        aggregator.Verify(a => a.PublishSettingsSaved(It.IsAny<SettingsSavedEventArgs>()), Times.Never,
+            "installing the Engine changes no setting: no gallery rescan");
+    }
+
+    [Fact]
     public async Task CancelledInstall_PersistsNothing()
     {
         InstallerPackage? saved = null;
