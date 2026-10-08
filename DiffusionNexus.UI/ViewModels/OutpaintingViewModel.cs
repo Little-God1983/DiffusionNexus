@@ -727,7 +727,7 @@ public partial class OutpaintingViewModel : ObservableObject
                 ProgressDisplayText = msg;
             }));
             var comfy = lease.Client;
-            EmitGenerate($"Running on{(lease.Mode == ComfyUiServerMode.Engine ? "the Diffusion Nexus Engine" : "your own ComfyUI")} at {lease.BaseUrl}.");
+            EmitGenerate($"Running on {(lease.Mode == ComfyUiServerMode.Engine ? "the Diffusion Nexus Engine" : "your own ComfyUI")} at {lease.BaseUrl}.");
 
             Status = "Uploading image to ComfyUI...";
             var uploadedFilename = await comfy.UploadImageAsync(imagePath);
