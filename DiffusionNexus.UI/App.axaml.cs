@@ -785,6 +785,7 @@ public partial class App : Application
         //     -> IFeatureBackendRouter               (picks the backend per feature)
         //       -> ComfyUIFeatureBackend             (ComfyUI server + workload checker)
         //       -> LocalInferenceFeatureBackend      (LlamaSharp captioning, sd.cpp generation)
+        //       -> EngineFeatureBackend              (Diffusion Nexus Engine folder + catalog workloads)
         //
         // A feature reports "Ready" iff its backing workload would show as "Full" in the
         // Installer Manager dialog. The unified logger plumb-through makes readiness
@@ -806,8 +807,27 @@ public partial class App : Application
                 sp.GetService<Inference.Captioning.LocalInferenceCaptioningBackend>(),
                 diffusion: null));
 
+        services.AddSingleton<IFeatureBackend>(sp =>
+            new Services.Engine.EngineFeatureBackend(
+                sp.GetRequiredService<Services.Engine.IEngineRootResolver>(),
+                sp.GetRequiredService<ICatalog>(),
+                sp.GetRequiredService<IConfigurationCheckerService>(),
+                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+
         services.AddSingleton<IFeatureBackendRouter>(sp =>
-            new FeatureBackendRouter(sp.GetServices<IFeatureBackend>()));
+        {
+            var scopes = sp.GetRequiredService<IServiceScopeFactory>();
+            return new FeatureBackendRouter(
+                sp.GetServices<IFeatureBackend>(),
+                serverMode: () =>
+                {
+                    // Fresh scope per call: the Outpaint panel resolves Outpaint and OutpaintVision in
+                    // parallel, and two reads on one DbContext throw.
+                    using var scope = scopes.CreateScope();
+                    return scope.ServiceProvider.GetRequiredService<IAppSettingsService>()
+                        .GetSettingsAsync().GetAwaiter().GetResult().ComfyUiServerMode;
+                });
+        });
 
         services.AddSingleton<IFeatureReadinessService>(sp =>
             new FeatureReadinessService(

@@ -11,7 +11,9 @@ public interface IFeatureBackendRouter
 {
     /// <summary>
     /// Returns the backend currently selected for <paramref name="feature"/>, or
-    /// <c>null</c> if no backend is registered for it.
+    /// <c>null</c> if no backend is registered for it. For the features in
+    /// <c>FeatureBackendRouter.ServerModeFeatures</c> the answer follows Settings → ComfyUI Server
+    /// and may change between calls.
     /// </summary>
     IFeatureBackend? Resolve(Feature feature);
 }
