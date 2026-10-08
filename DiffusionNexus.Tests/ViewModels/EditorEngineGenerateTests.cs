@@ -65,7 +65,7 @@ public class EditorEngineGenerateTests
 
         await vm.ProcessInpaintAsync(TempImage());
 
-        vm.ProgressDisplayText.Should().Be("Generation failed – is the Diffusion Nexus Engine running?");
+        vm.ProgressDisplayText.Should().Be("Generation failed â€“ is the Diffusion Nexus Engine running?");
     }
 
     [Fact]
