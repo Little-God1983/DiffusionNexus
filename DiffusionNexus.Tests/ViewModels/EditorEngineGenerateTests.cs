@@ -140,6 +140,48 @@ public class EditorEngineGenerateTests
         readiness.Verify(r => r.CheckAsync(Feature.Inpainting, It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
+    private const string EngineNoVision = "Outpaint Vision is not available on the Diffusion Nexus Engine yet";
+
+    private static OutpaintingViewModel OutpaintWithVision(bool visionReady)
+    {
+        var readiness = new Mock<IFeatureReadinessService>();
+        readiness.Setup(r => r.CheckAsync(Feature.OutpaintVision, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new FeatureReadinessResult
+            {
+                Feature = Feature.OutpaintVision, Backend = BackendKind.Engine, ActiveBackendName = "Diffusion Nexus Engine",
+                IsBackendOnline = true, IsReady = visionReady,
+                MissingRequirements = visionReady ? [] : [EngineNoVision], Warnings = []
+            });
+        return new OutpaintingViewModel(() => true, () => 512, () => 512, _ => { }, readinessService: readiness.Object);
+    }
+
+    [Fact]
+    public async Task Outpaint_VisionNotReady_ExposesTheReason()
+    {
+        var vm = OutpaintWithVision(visionReady: false);
+        var changed = new List<string?>();
+        vm.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+
+        vm.VisionUnavailableReason.Should().BeNull("nothing has been checked yet");
+        await vm.VisionReadiness.CheckReadinessAsync();
+
+        vm.VisionUnavailableReason.Should().Be(EngineNoVision);
+        vm.HasVisionUnavailableReason.Should().BeTrue();
+        vm.VisionButtonToolTip.Should().Be(EngineNoVision);
+        changed.Should().Contain(nameof(OutpaintingViewModel.VisionUnavailableReason));
+    }
+
+    [Fact]
+    public async Task Outpaint_VisionReady_HasNoReason()
+    {
+        var vm = OutpaintWithVision(visionReady: true);
+
+        await vm.VisionReadiness.CheckReadinessAsync();
+
+        vm.VisionUnavailableReason.Should().BeNull();
+        vm.HasVisionUnavailableReason.Should().BeFalse();
+    }
+
     [Fact]
     public async Task SettingsSaved_WithThePanelClosed_DoesNotCheck()
     {

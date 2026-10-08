@@ -168,6 +168,16 @@ public partial class OutpaintingViewModel : ObservableObject
                 GenerateVisionCommand.NotifyCanExecuteChanged();
                 LogCanExecuteState($"after VisionReadiness.{args.PropertyName}");
             }
+
+            if (args.PropertyName is nameof(FeatureReadinessViewModel.IsReady)
+                                  or nameof(FeatureReadinessViewModel.HasChecked)
+                                  or nameof(FeatureReadinessViewModel.MissingRequirements)
+                                  or nameof(FeatureReadinessViewModel.StatusMessage))
+            {
+                OnPropertyChanged(nameof(VisionUnavailableReason));
+                OnPropertyChanged(nameof(HasVisionUnavailableReason));
+                OnPropertyChanged(nameof(VisionButtonToolTip));
+            }
         };
 
         // The Settings dropdown decides which ComfyUI this tool runs on. Re-check when it is saved so
@@ -260,6 +270,29 @@ public partial class OutpaintingViewModel : ObservableObject
 
     /// <summary>Readiness check for the Vision (Qwen3-VL auto-prompt) Outpaint workflow.</summary>
     public FeatureReadinessViewModel VisionReadiness { get; }
+
+    /// <summary>
+    /// Why Generate (Vision) is unavailable: the first missing requirement of
+    /// <see cref="VisionReadiness"/> (or its status text if none). Null when the check has not run
+    /// or the Vision workflow is ready. The main readiness panel only shows <see cref="Readiness"/>,
+    /// so without this a greyed-out Vision button would give no reason.
+    /// </summary>
+    public string? VisionUnavailableReason
+    {
+        get
+        {
+            if (!VisionReadiness.HasChecked || VisionReadiness.IsReady) return null;
+            if (VisionReadiness.MissingRequirements.Count > 0) return VisionReadiness.MissingRequirements[0];
+            return string.IsNullOrWhiteSpace(VisionReadiness.StatusMessage) ? null : VisionReadiness.StatusMessage;
+        }
+    }
+
+    /// <summary>Tooltip of Generate (Vision): the unavailable reason, else the button's description.</summary>
+    public string VisionButtonToolTip =>
+        VisionUnavailableReason ?? "Outpaint using a Qwen3-VL auto-generated description of the surroundings";
+
+    /// <summary>Whether <see cref="VisionUnavailableReason"/> has text to show.</summary>
+    public bool HasVisionUnavailableReason => VisionUnavailableReason is not null;
 
     #region Properties
 

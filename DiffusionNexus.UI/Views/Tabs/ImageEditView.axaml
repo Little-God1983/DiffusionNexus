@@ -579,7 +579,10 @@
                 <Button Content="Generate (Vision)" Command="{Binding ImageEditor.Outpainting.GenerateVisionCommand}"
                         HorizontalAlignment="Stretch" Padding="8,6" FontSize="11"
                         Background="#5E35B1" Foreground="White"
-                        ToolTip.Tip="Outpaint using a Qwen3-VL auto-generated description of the surroundings"/>
+                        ToolTip.Tip="{Binding ImageEditor.Outpainting.VisionButtonToolTip}"/>
+                <TextBlock Text="{Binding ImageEditor.Outpainting.VisionUnavailableReason}"
+                           IsVisible="{Binding ImageEditor.Outpainting.HasVisionUnavailableReason}"
+                           FontSize="11" Opacity="0.7" TextWrapping="Wrap"/>
 
                 <!-- Progress -->
                 <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.Outpainting.IsProgressVisible}" Margin="0,4,0,0">

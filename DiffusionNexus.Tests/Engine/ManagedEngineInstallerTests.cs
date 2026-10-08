@@ -288,6 +288,44 @@ public class ManagedEngineInstallerTests
     }
 
     [Fact]
+    public async Task InstallBaseEngine_SetsTheRootDirectoryTheCatalogShipsEmpty()
+    {
+        // The SDK 2.x catalog ships "rootDirectory": "" and the SDK validates it before any
+        // download ("Installation root directory is required.").
+        var config = BuildKreaConfiguration();
+        config.Paths.RootDirectory = "";
+        var (coordinator, repo) = Mocks(config);
+        var rootAtPreChecks = "<unset>";
+        var rootAtInstall = "<unset>";
+        var logSink = new CapturingProgress<InstallLogEntry>();
+
+        coordinator.Setup(c => c.RunPreChecksAsync(
+                It.IsAny<InstallationConfiguration>(), It.IsAny<string>(), It.IsAny<InstallationType>(),
+                It.IsAny<IUserPromptService>(), It.IsAny<Action<string, LogEntryLevel>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<InstallationConfiguration, string, InstallationType, IUserPromptService,
+                Action<string, LogEntryLevel>, CancellationToken>((c, _, _, _, _, _) => rootAtPreChecks = c.Paths.RootDirectory)
+            .ReturnsAsync(CanProceedResult());
+        coordinator.Setup(c => c.InstallAsync(
+                It.IsAny<InstallationConfiguration>(), It.IsAny<string>(), It.IsAny<InstallationOptions>(),
+                It.IsAny<IProgress<InstallLogEntry>>(), It.IsAny<IProgress<InstallationProgress>>(),
+                It.IsAny<IProgress<DownloadProgress>>(), It.IsAny<Func<CancellationToken>?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<InstallationConfiguration, string, InstallationOptions, IProgress<InstallLogEntry>,
+                IProgress<InstallationProgress>, IProgress<DownloadProgress>, Func<CancellationToken>?,
+                CancellationToken>((c, _, _, _, _, _, _, _) => rootAtInstall = c.Paths.RootDirectory)
+            .ReturnsAsync(InstallationResult.Success("done", @"C:\Engine\ComfyUI"));
+
+        await Create(coordinator, repo).InstallBaseEngineAsync(
+            new EngineInstallRequest(@"C:\Engine\ComfyUI", []),
+            logSink, new Progress<InstallationProgress>(), CancellationToken.None);
+
+        rootAtPreChecks.Should().Be(@"C:\Engine\ComfyUI");
+        rootAtInstall.Should().Be(@"C:\Engine\ComfyUI");
+        logSink.Reports.Should().Contain(e => e.Message == @"Engine install root: C:\Engine\ComfyUI");
+    }
+
+    [Fact]
     public async Task InstallBaseEngine_ReportsCancellationDistinctlyFromFailure()
     {
         var config = BuildKreaConfiguration();
