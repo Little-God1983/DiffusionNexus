@@ -15,7 +15,7 @@ public sealed record EngineStartResult(bool IsRunning, string? BaseUrl, string? 
 /// user's own ComfyUI on 8188 is never disturbed, started on demand, and killed when the app
 /// exits. Health is confirmed against /system_stats before the engine is declared ready.
 /// </summary>
-public sealed class ManagedComfyUiEngine : IAsyncDisposable
+public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposable
 {
     private static readonly ILogger Logger = Serilog.Log.ForContext<ManagedComfyUiEngine>();
 

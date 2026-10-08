@@ -630,29 +630,13 @@ public partial class App : Application
 
         // The Canvas's second backend: the app-owned ComfyUI engine.
         services.AddSingleton<Services.Diffusion.ManagedComfyUiBackend>(sp =>
-            new Services.Diffusion.ManagedComfyUiBackend(
+        {
+            var rootResolver = sp.GetRequiredService<Services.Engine.IEngineRootResolver>();
+            return new Services.Diffusion.ManagedComfyUiBackend(
                 sp.GetRequiredService<Services.Engine.ManagedComfyUiEngine>(),
-                async () =>
-                {
-                    using var scope = sp.CreateScope();
-                    var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-                    var packages = await uow.InstallerPackages.GetAllAsync();
-                    var installRoot = packages.FirstOrDefault(p => p.IsAppManaged)?.InstallationPath;
-
-                    // The engine reads extra_model_paths.yaml once, at process start. This resolver
-                    // runs on every availability check — immediately before EnsureRunningAsync — so
-                    // it is the one point where "the folder list in Settings changed" can still be
-                    // acted on. Never fails the resolve: the synchronizer swallows its own errors.
-                    if (!string.IsNullOrWhiteSpace(installRoot))
-                    {
-                        await scope.ServiceProvider
-                            .GetRequiredService<Services.Engine.EngineModelPathsSynchronizer>()
-                            .SyncAsync(installRoot);
-                    }
-
-                    return installRoot;
-                },
-                sp.GetService<Services.Diffusion.IWorkflowTemplateSource>()));
+                () => rootResolver.ResolveAsync(),
+                sp.GetService<Services.Diffusion.IWorkflowTemplateSource>());
+        });
 
         // Diffusion Canvas view model (singleton — frames persist across navigation in v1).
         services.AddSingleton<DiffusionNexus.UI.ViewModels.DiffusionCanvas.DiffusionCanvasViewModel>(sp =>
@@ -761,6 +745,10 @@ public partial class App : Application
         services.AddSingleton<Services.Engine.ManagedComfyUiEngine>(sp =>
             new Services.Engine.ManagedComfyUiEngine(
                 sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+        services.AddSingleton<Services.Engine.IManagedComfyUiEngine>(sp =>
+            sp.GetRequiredService<Services.Engine.ManagedComfyUiEngine>());
+        services.AddSingleton<Services.Engine.IEngineRootResolver>(sp =>
+            new Services.Engine.EngineRootResolver(sp.GetRequiredService<IServiceScopeFactory>()));
 
         // ComfyUI workflow execution service (singleton - maintains HttpClient)
         services.AddSingleton<IComfyUIWrapperService>(sp =>
