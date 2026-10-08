@@ -66,11 +66,27 @@ public class EngineFeaturesViewModelTests
         await vm.LoadCommand.ExecuteAsync(null);
 
         Row(vm, EngineFeature.InpaintOutpaint).Status.Should().Be(EngineFeatureStatus.Partial);
-        Row(vm, EngineFeature.InpaintOutpaint).StatusText.Should().Be("Partial · 2 of 5 models");
+        Row(vm, EngineFeature.InpaintOutpaint).StatusText.Should().Be("Partial · 1 node pack and 3 models missing");
         Row(vm, EngineFeature.InpaintOutpaint).NeedsText.Should().Be("1 node pack · 5 models");
         Row(vm, EngineFeature.Canvas).Status.Should().Be(EngineFeatureStatus.Installed);
         Row(vm, EngineFeature.Canvas).IsSelected.Should().BeTrue("installed rows are ticked");
         Row(vm, EngineFeature.Canvas).IsSelectable.Should().BeFalse("and locked");
+    }
+
+    [Theory]
+    [InlineData(1, 1, 0, 5, "Partial · 1 node pack missing")]
+    [InlineData(2, 0, 0, 5, "Partial · 2 node packs missing")]
+    [InlineData(0, 1, 1, 4, "Partial · 1 model missing")]
+    [InlineData(0, 1, 2, 3, "Partial · 2 models missing")]
+    public async Task Partial_NamesWhatIsMissing(int nodesMissing, int nodesPresent, int modelsMissing, int modelsPresent, string expected)
+    {
+        _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(nodesMissing, nodesPresent, modelsMissing, modelsPresent);
+        _state[EngineFeatureCatalog.Krea2Turbo] = Result(0, 2, 0, 3);
+        var vm = Sut();
+
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        Row(vm, EngineFeature.InpaintOutpaint).StatusText.Should().Be(expected);
     }
 
     [Fact]

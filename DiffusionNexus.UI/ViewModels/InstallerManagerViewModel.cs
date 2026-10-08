@@ -1170,6 +1170,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
                     }
 
                     _eventAggregator.PublishInstallerPackagesChanged(new InstallerPackagesChangedEventArgs());
+                    // Settings' Engine status line and the editor's readiness lines re-check on this.
+                    _eventAggregator.PublishSettingsSaved(new SettingsSavedEventArgs());
                 }
                 else if (outcome.IsCancelled)
                 {

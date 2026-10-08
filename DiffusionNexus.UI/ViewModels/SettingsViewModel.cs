@@ -18,7 +18,7 @@ namespace DiffusionNexus.UI.ViewModels;
 /// <summary>
 /// ViewModel for the application settings view.
 /// </summary>
-public partial class SettingsViewModel : BusyViewModelBase
+public partial class SettingsViewModel : BusyViewModelBase, IModuleActivationAware
 {
     private readonly IAppSettingsService _settingsService;
     private readonly ISecureStorage _secureStorage;
@@ -669,8 +669,14 @@ public partial class SettingsViewModel : BusyViewModelBase
             {
                 Serilog.Log.Error(ex, "Failed to reload settings after external change");
             }
+
+            // e.g. the Engine was just installed: the status line must not keep saying "Not installed".
+            await RefreshEngineStatusAsync();
         });
     }
+
+    /// <summary>Settings was navigated to: the Engine may have been installed or started meanwhile.</summary>
+    public void OnModuleActivated() => _ = RefreshEngineStatusAsync();
 
     /// <summary>
     /// Saves settings to the database.
@@ -1591,6 +1597,8 @@ public partial class SettingsViewModel : BusyViewModelBase
             {
                 ComfyUiServerMode = value.Mode;
                 OnPropertyChanged();
+                // The Engine may have been installed or started since the page was loaded.
+                _ = RefreshEngineStatusAsync();
             }
         }
     }

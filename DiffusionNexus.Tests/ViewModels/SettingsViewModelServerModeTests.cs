@@ -1,6 +1,7 @@
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Tests.Helpers;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.Engine;
 using DiffusionNexus.UI.ViewModels;
@@ -94,6 +95,55 @@ public class SettingsViewModelServerModeTests
         var vm = await LoadedAsync(ComfyUiServerMode.Engine, root);
 
         vm.EngineStatusText.Should().Be(expected);
+    }
+
+    private const string NotInstalledText = "Not installed — install it in the Installation Manager";
+
+    /// <summary>Loads with the Engine not installed yet, then lets the resolver find a root.</summary>
+    private async Task<(SettingsViewModel Vm, DatasetEventAggregator Events)> LoadedBeforeInstallAsync()
+    {
+        _settings.Setup(s => s.GetSettingsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AppSettings { Id = 1, ComfyUiServerMode = ComfyUiServerMode.Engine });
+        _root.Setup(r => r.ResolveAsync(It.IsAny<CancellationToken>())).ReturnsAsync((string?)null);
+        var events = new DatasetEventAggregator();
+        var vm = new SettingsViewModel(_settings.Object, new Mock<ISecureStorage>().Object,
+            eventAggregator: events, uiScheduler: new ImmediateUiScheduler(),
+            engineRootResolver: _root.Object, engine: _engine.Object, looksInstalled: r => r is not null);
+        await vm.LoadCommand.ExecuteAsync(null);
+        vm.EngineStatusText.Should().Be(NotInstalledText);
+        _root.Setup(r => r.ResolveAsync(It.IsAny<CancellationToken>())).ReturnsAsync(@"C:\Engine\ComfyUI");
+        return (vm, events);
+    }
+
+    [Fact]
+    public async Task EngineStatus_RefreshesWhenTheEngineIsPickedInTheDropdown()
+    {
+        var (vm, _) = await LoadedBeforeInstallAsync();
+        vm.SelectedServerModeOption = vm.ServerModeOptions.Single(o => o.Mode == ComfyUiServerMode.CustomUrl);
+
+        vm.SelectedServerModeOption = vm.ServerModeOptions.Single(o => o.Mode == ComfyUiServerMode.Engine);
+
+        vm.EngineStatusText.Should().Be("Installed · not running (starts on first use)");
+    }
+
+    [Fact]
+    public async Task EngineStatus_RefreshesOnAnExternalSettingsSaved()
+    {
+        var (vm, events) = await LoadedBeforeInstallAsync();
+
+        events.PublishSettingsSaved(new SettingsSavedEventArgs());
+
+        vm.EngineStatusText.Should().Be("Installed · not running (starts on first use)");
+    }
+
+    [Fact]
+    public async Task EngineStatus_RefreshesWhenTheSettingsModuleIsShownAgain()
+    {
+        var (vm, _) = await LoadedBeforeInstallAsync();
+
+        ((IModuleActivationAware)vm).OnModuleActivated();
+
+        vm.EngineStatusText.Should().Be("Installed · not running (starts on first use)");
     }
 
     [Fact]

@@ -58,7 +58,13 @@ public sealed partial class EngineFeatureRowViewModel : ObservableObject
         else
         {
             Status = EngineFeatureStatus.Partial;
-            StatusText = $"Partial · {models.Count(m => m.IsInstalled)} of {models.Count} models";
+            // Name what is missing, nodes and models alike: "Partial · 1 node pack and 3 models missing".
+            var nodesMissing = nodes.Count(n => !n.IsInstalled);
+            var modelsMissing = models.Count(m => !m.IsInstalled);
+            var parts = new List<string>(2);
+            if (nodesMissing > 0) parts.Add($"{nodesMissing} node pack{(nodesMissing == 1 ? "" : "s")}");
+            if (modelsMissing > 0) parts.Add($"{modelsMissing} model{(modelsMissing == 1 ? "" : "s")}");
+            StatusText = $"Partial · {string.Join(" and ", parts)} missing";
         }
     }
 }

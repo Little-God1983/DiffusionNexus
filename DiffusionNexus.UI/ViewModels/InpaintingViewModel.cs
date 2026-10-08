@@ -461,7 +461,13 @@ public partial class InpaintingViewModel : ObservableObject
         try
         {
             Emit("Generate requested.");
-            lease = await _clientProvider.AcquireAsync(new Progress<string>(msg => Status = msg));
+            lease = await _clientProvider.AcquireAsync(new Progress<string>(msg =>
+            {
+                // Engine start-up text ("Starting Diffusion Nexus Engine…"): the panel shows
+                // ProgressDisplayText, and setting Status alone replaces it with a fun message.
+                Status = msg;
+                ProgressDisplayText = msg;
+            }));
             var comfy = lease.Client;
             Emit($"Running on {(lease.Mode == ComfyUiServerMode.Engine ? "the Diffusion Nexus Engine" : "your own ComfyUI")} at {lease.BaseUrl}.");
 

@@ -1383,7 +1383,10 @@ public partial class App : Application
             settingsModule = new ModuleItem(
                 "Settings",
                 "avares://DiffusionNexus.UI/Assets/settings.png",
-                settingsView);
+                settingsView)
+            {
+                ViewModel = settingsVm
+            };
 
             mainViewModel.RegisterModule(settingsModule);
             startupProgress.Complete("settings");

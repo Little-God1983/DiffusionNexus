@@ -41,6 +41,57 @@ public class EditorEngineGenerateTests
         messages.Should().Contain("Diffusion Nexus Engine failed to start: exit code 1");
     }
 
+    private const string StartingText = "Starting Diffusion Nexus Engine…";
+
+    /// <summary>
+    /// A provider that reports the start-up text through the progress it is given, then waits until the
+    /// view model has shown it (the Progress&lt;T&gt; handler runs on another thread here) before failing.
+    /// </summary>
+    private static Mock<IComfyUiClientProvider> ReportsStartingThenWaits(Task shown)
+    {
+        var provider = new Mock<IComfyUiClientProvider>();
+        provider.Setup(p => p.AcquireAsync(It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()))
+            .Returns(async (IProgress<string>? progress, CancellationToken _) =>
+            {
+                progress!.Report(StartingText);
+                await shown.WaitAsync(TimeSpan.FromSeconds(10));
+                throw new ComfyUiUnavailableException("stop");
+            });
+        return provider;
+    }
+
+    [Fact]
+    public async Task Inpaint_EngineStartingText_IsShownInTheProgressPanelText()
+    {
+        var shown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var vm = new InpaintingViewModel(() => true, _ => { }, ReportsStartingThenWaits(shown.Task).Object, eventAggregator: null);
+        vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(InpaintingViewModel.ProgressDisplayText) && vm.ProgressDisplayText == StartingText)
+                shown.TrySetResult();
+        };
+
+        await vm.ProcessInpaintAsync(TempImage());
+
+        shown.Task.IsCompletedSuccessfully.Should().BeTrue("the panel binds ProgressDisplayText, so the text must land there");
+    }
+
+    [Fact]
+    public async Task Outpaint_EngineStartingText_IsShownInTheProgressPanelText()
+    {
+        var shown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var vm = new OutpaintingViewModel(() => true, () => 512, () => 512, _ => { }, ReportsStartingThenWaits(shown.Task).Object);
+        vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(OutpaintingViewModel.ProgressDisplayText) && vm.ProgressDisplayText == StartingText)
+                shown.TrySetResult();
+        };
+
+        await vm.ProcessOutpaintAsync(TempImage(), useVision: false, 64, 0, 64, 0);
+
+        shown.Task.IsCompletedSuccessfully.Should().BeTrue("the panel binds ProgressDisplayText, so the text must land there");
+    }
+
     [Fact]
     public async Task Outpaint_EngineNotInstalled_ShowsTheReason_AndIsNotLeftBusy()
     {

@@ -463,6 +463,11 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
             newAware.OnThumbnailActivated();
         }
 
+        if (module.ViewModel is IModuleActivationAware activationAware)
+        {
+            activationAware.OnModuleActivated();
+        }
+
         // Collapse the menu after selection
         IsMenuOpen = false;
     }

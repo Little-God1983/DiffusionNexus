@@ -265,6 +265,13 @@ public partial class OutpaintingViewModel : ObservableObject
         _unifiedLogger?.Info(LogCategory.Configuration, LogSource, message);
     }
 
+    /// <summary>Same as <see cref="EmitInfo"/> for the generate path, which logs under General (spec §4.5).</summary>
+    private void EmitGenerate(string message)
+    {
+        Logger.Information("Outpaint: {Message}", message);
+        _unifiedLogger?.Info(LogCategory.General, LogSource, message);
+    }
+
     /// <summary>Readiness check for the prompt-driven Outpaint workflow.</summary>
     public FeatureReadinessViewModel Readiness { get; }
 
@@ -711,14 +718,20 @@ public partial class OutpaintingViewModel : ObservableObject
         ComfyUiClientLease? lease = null;
         try
         {
-            EmitInfo("Generate requested.");
-            lease = await _clientProvider.AcquireAsync(new Progress<string>(msg => Status = msg));
+            EmitGenerate("Generate requested.");
+            lease = await _clientProvider.AcquireAsync(new Progress<string>(msg =>
+            {
+                // Engine start-up text ("Starting Diffusion Nexus Engine…"): the panel shows
+                // ProgressDisplayText, and setting Status alone replaces it with a fun message.
+                Status = msg;
+                ProgressDisplayText = msg;
+            }));
             var comfy = lease.Client;
-            EmitInfo($"Running on {(lease.Mode == ComfyUiServerMode.Engine ? "the Diffusion Nexus Engine" : "your own ComfyUI")} at {lease.BaseUrl}.");
+            EmitGenerate($"Running on{(lease.Mode == ComfyUiServerMode.Engine ? "the Diffusion Nexus Engine" : "your own ComfyUI")} at {lease.BaseUrl}.");
 
             Status = "Uploading image to ComfyUI...";
             var uploadedFilename = await comfy.UploadImageAsync(imagePath);
-            EmitInfo($"Image uploaded as {uploadedFilename}.");
+            EmitGenerate($"Image uploaded as {uploadedFilename}.");
 
             Status = "Checking available models...";
             var resolvedUnetName = await ResolveQwenImageGGUFModelAsync(comfy);
@@ -802,7 +815,7 @@ public partial class OutpaintingViewModel : ObservableObject
             }
 
             var promptId = await comfy.QueueWorkflowAsync(workflowPath, overrides);
-            EmitInfo($"Prompt queued ({promptId}).");
+            EmitGenerate($"Prompt queued ({promptId}).");
 
             Status = "Generating (this may take a while)...";
             var progress = new Progress<string>(msg => Status = msg);
@@ -814,7 +827,7 @@ public partial class OutpaintingViewModel : ObservableObject
             if (result.Images.Count > 0)
             {
                 var imageBytes = await comfy.DownloadImageAsync(result.Images[0]);
-                EmitInfo("Result received.");
+                EmitGenerate("Result received.");
                 ResultReady?.Invoke(this, imageBytes);
                 StatusMessageChanged?.Invoke(this, "Outpainting completed successfully.");
             }
@@ -828,7 +841,7 @@ public partial class OutpaintingViewModel : ObservableObject
             HasError = true;
             ProgressDisplayText = ex.Message;
             StatusMessageChanged?.Invoke(this, ex.Message);
-            _unifiedLogger?.Warn(LogCategory.Configuration, LogSource, ex.Message);
+            _unifiedLogger?.Warn(LogCategory.General, LogSource, ex.Message);
         }
         catch (OperationCanceledException)
         {
@@ -837,7 +850,7 @@ public partial class OutpaintingViewModel : ObservableObject
         catch (Exception ex)
         {
             Logger.Error(ex, "Outpainting failed");
-            _unifiedLogger?.Error(LogCategory.Configuration, LogSource, "Outpainting failed", ex);
+            _unifiedLogger?.Error(LogCategory.General, LogSource, "Outpainting failed", ex);
             HasError = true;
             ProgressDisplayText = lease?.Mode == ComfyUiServerMode.Engine
                 ? "Generation failed – is the Diffusion Nexus Engine running?"
