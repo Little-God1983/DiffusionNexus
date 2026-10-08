@@ -211,6 +211,10 @@ public partial class SettingsViewModel : BusyViewModelBase
     [ObservableProperty]
     private bool _isComfyUiServerOnline;
 
+    /// <summary>Bound to the ComfyUI Server expander; set by navigation from the editor's "change" link.</summary>
+    [ObservableProperty]
+    private bool _isComfyUiServerExpanded;
+
     /// <summary>
     /// Whether a ComfyUI connection test is in progress.
     /// </summary>

@@ -2,6 +2,8 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.Engine;
 using Serilog;
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -18,6 +20,8 @@ public sealed partial class FeatureReadinessViewModel : ObservableObject
 
     private readonly IFeatureReadinessService? _readinessService;
     private readonly Feature _feature;
+    private readonly IDatasetEventAggregator? _eventAggregator;
+    private BackendKind? _activeBackendKind;
 
     private bool _isChecking;
     private bool _isReady;
@@ -33,12 +37,26 @@ public sealed partial class FeatureReadinessViewModel : ObservableObject
     /// </summary>
     /// <param name="readinessService">The unified readiness service. May be <c>null</c> if no backend is configured.</param>
     /// <param name="feature">The feature to check prerequisites for.</param>
-    public FeatureReadinessViewModel(IFeatureReadinessService? readinessService, Feature feature)
+    /// <param name="eventAggregator">
+    /// Optional. Needed for the "change" and "Install …" links; without it they do nothing.
+    /// </param>
+    public FeatureReadinessViewModel(
+        IFeatureReadinessService? readinessService,
+        Feature feature,
+        IDatasetEventAggregator? eventAggregator = null)
     {
         _readinessService = readinessService;
         _feature = feature;
+        _eventAggregator = eventAggregator;
 
         CheckReadinessCommand = new AsyncRelayCommand(CheckReadinessAsync);
+        ChangeBackendCommand = new RelayCommand(() =>
+            _eventAggregator?.PublishNavigateToSettings(new NavigateToSettingsEventArgs { Section = SettingsSection.ComfyUiServer }));
+        InstallOnEngineCommand = new RelayCommand(() =>
+        {
+            if (EngineFeatureCatalog.ForAppFeature(_feature) is { } row)
+                _eventAggregator?.PublishNavigateToEngineFeatures(new NavigateToEngineFeaturesEventArgs { Preselect = row });
+        });
 
         FeatureDisplayName = readinessService?.GetRequirements(feature)?.DisplayName ?? feature.ToString();
     }
@@ -52,8 +70,32 @@ public sealed partial class FeatureReadinessViewModel : ObservableObject
     public bool IsChecking
     {
         get => _isChecking;
-        private set => SetProperty(ref _isChecking, value);
+        private set
+        {
+            if (SetProperty(ref _isChecking, value))
+                OnPropertyChanged(nameof(ShowBackendLine));
+        }
     }
+
+    /// <summary>True when the last check was answered by the Diffusion Nexus Engine.</summary>
+    public bool IsEngineBackend => _activeBackendKind == BackendKind.Engine;
+
+    /// <summary>Show the "Running on …" / "Not installed on the Engine" line once a check has answered.</summary>
+    public bool ShowBackendLine => HasChecked && !IsChecking && !string.IsNullOrEmpty(ActiveBackendName);
+
+    /// <summary>
+    /// The "change" link only appears for features the Settings dropdown actually governs; elsewhere it
+    /// would promise a switch that does nothing.
+    /// </summary>
+    public bool ShowChangeLink => FeatureBackendRouter.ServerModeFeatures.Contains(_feature);
+
+    /// <summary>The Engine answered, something is missing, and an Engine row can install it.</summary>
+    public bool ShowInstallOnEngine =>
+        ShowBackendLine && IsEngineBackend && HasMissingRequirements && EngineFeatureCatalog.ForAppFeature(_feature) is not null;
+
+    /// <summary>"Install Inpaint &amp; Outpaint" — the row's display name.</summary>
+    public string? InstallOnEngineLabel =>
+        EngineFeatureCatalog.ForAppFeature(_feature) is { } row ? $"Install {EngineFeatureCatalog.Get(row).DisplayName}" : null;
 
     /// <summary>Whether the feature is ready to execute on its currently selected backend.</summary>
     public bool IsReady
@@ -141,6 +183,12 @@ public sealed partial class FeatureReadinessViewModel : ObservableObject
     /// <summary>Command to trigger a readiness check. Safe to call multiple times.</summary>
     public IAsyncRelayCommand CheckReadinessCommand { get; }
 
+    /// <summary>Opens Settings at the ComfyUI Server section.</summary>
+    public IRelayCommand ChangeBackendCommand { get; }
+
+    /// <summary>Opens the Engine's Features dialog with this feature's row ticked.</summary>
+    public IRelayCommand InstallOnEngineCommand { get; }
+
     #endregion
 
     #region Methods
@@ -172,6 +220,7 @@ public sealed partial class FeatureReadinessViewModel : ObservableObject
             IsBackendOnline = result.IsBackendOnline;
             IsReady = result.IsReady;
             ActiveBackendName = result.ActiveBackendName;
+            _activeBackendKind = result.Backend;
             MissingRequirements = result.MissingRequirements;
             Warnings = result.Warnings;
 
@@ -198,6 +247,9 @@ public sealed partial class FeatureReadinessViewModel : ObservableObject
         {
             IsChecking = false;
             HasChecked = true;
+            OnPropertyChanged(nameof(IsEngineBackend));
+            OnPropertyChanged(nameof(ShowBackendLine));
+            OnPropertyChanged(nameof(ShowInstallOnEngine));
         }
     }
 

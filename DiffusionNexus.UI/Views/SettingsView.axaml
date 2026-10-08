@@ -632,7 +632,7 @@
         </Expander>
 
         <!-- ComfyUI Server -->
-        <Expander Header="ComfyUI Server" IsExpanded="False" HorizontalAlignment="Stretch">
+        <Expander x:Name="ComfyUiServerExpander" Header="ComfyUI Server" IsExpanded="{Binding IsComfyUiServerExpanded, Mode=TwoWay}" HorizontalAlignment="Stretch">
           <Border Padding="16">
             <StackPanel Spacing="12">
 

@@ -15,6 +15,31 @@ public partial class SettingsView : UserControl
     {
         InitializeComponent();
         AttachedToVisualTree += OnAttachedToVisualTree;
+        DataContextChanged += OnDataContextChanged;
+    }
+
+    private SettingsViewModel? _observedViewModel;
+
+    private void OnDataContextChanged(object? sender, EventArgs e)
+    {
+        if (_observedViewModel is not null)
+            _observedViewModel.PropertyChanged -= OnViewModelPropertyChanged;
+
+        _observedViewModel = DataContext as SettingsViewModel;
+
+        if (_observedViewModel is not null)
+            _observedViewModel.PropertyChanged += OnViewModelPropertyChanged;
+    }
+
+    private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(SettingsViewModel.IsComfyUiServerExpanded)
+            && _observedViewModel?.IsComfyUiServerExpanded == true)
+        {
+            Avalonia.Threading.Dispatcher.UIThread.Post(
+                () => this.FindControl<Expander>("ComfyUiServerExpander")?.BringIntoView(),
+                Avalonia.Threading.DispatcherPriority.Loaded);
+        }
     }
 
     private void InitializeComponent()

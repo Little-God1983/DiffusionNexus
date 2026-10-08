@@ -256,11 +256,20 @@ public sealed class NavigateToImageEditorEventArgs : DatasetEventArgs
     public IReadOnlyList<DatasetImageViewModel>? Images { get; init; }
 }
 
+/// <summary>A part of the Settings page a navigation request can open directly.</summary>
+public enum SettingsSection
+{
+    /// <summary>The "ComfyUI Server" expander (server dropdown + URL).</summary>
+    ComfyUiServer
+}
+
 /// <summary>
 /// Event raised when navigation to the Settings page is requested.
 /// </summary>
 public sealed class NavigateToSettingsEventArgs : DatasetEventArgs
 {
+    /// <summary>When set, Settings expands this section and scrolls it into view.</summary>
+    public SettingsSection? Section { get; init; }
 }
 
 /// <summary>

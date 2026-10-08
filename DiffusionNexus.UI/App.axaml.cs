@@ -1398,9 +1398,15 @@ public partial class App : Application
                 mainViewModel.NavigateToModuleCommand.Execute(loraDatasetHelperModule);
             };
 
-            eventAggregator.NavigateToSettingsRequested += (_, _) =>
+            eventAggregator.NavigateToSettingsRequested += (_, e) =>
             {
                 mainViewModel.NavigateToModuleCommand.Execute(settingsModule);
+                if (e.Section == SettingsSection.ComfyUiServer)
+                {
+                    // Reset first so a second "change" click re-triggers the scroll.
+                    settingsVm.IsComfyUiServerExpanded = false;
+                    settingsVm.IsComfyUiServerExpanded = true;
+                }
             };
 
             eventAggregator.NavigateToEngineFeaturesRequested += (_, e) =>
