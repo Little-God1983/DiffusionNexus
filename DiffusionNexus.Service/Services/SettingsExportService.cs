@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
 
@@ -76,7 +77,8 @@ public sealed class SettingsExportService : ISettingsExportService
             AutoBackupLocation = settings.AutoBackupLocation,
             MaxBackups = settings.MaxBackups,
 
-            ComfyUiServerUrl = settings.ComfyUiServerUrl
+            ComfyUiServerUrl = settings.ComfyUiServerUrl,
+            ComfyUiServerMode = settings.ComfyUiServerMode
         };
 
         var order = 0;
@@ -189,7 +191,9 @@ public sealed class SettingsExportService : ISettingsExportService
             AutoBackupLocation = export.AutoBackupLocation,
             MaxBackups = export.MaxBackups,
 
-            ComfyUiServerUrl = export.ComfyUiServerUrl
+            ComfyUiServerUrl = export.ComfyUiServerUrl,
+            // A file without the field predates the setting: its owner ran their own ComfyUI.
+            ComfyUiServerMode = export.ComfyUiServerMode ?? ComfyUiServerMode.CustomUrl
         };
 
         foreach (var s in export.LoraSources.OrderBy(x => x.Order))

@@ -311,6 +311,7 @@ public sealed class AppSettingsService : IAppSettingsService
         // holds the true value; leaving it alone is the fix. Same rule as LastLibrarySyncAt, which
         // is absent from this whitelist for exactly the same reason.
         existingSettings.ComfyUiServerUrl = settings.ComfyUiServerUrl;
+        existingSettings.ComfyUiServerMode = settings.ComfyUiServerMode;
         existingSettings.LoraUpdateCheckStalenessDays = settings.LoraUpdateCheckStalenessDays;
         existingSettings.SyncNotIdentifiedRetryDays = settings.SyncNotIdentifiedRetryDays;
         existingSettings.SyncErrorRetryDays = settings.SyncErrorRetryDays;

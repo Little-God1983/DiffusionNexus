@@ -1,5 +1,6 @@
 using System.Text.Json;
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Service.Services;
@@ -108,7 +109,8 @@ public class SettingsExportServiceTests : IDisposable
         AutoBackupLocation = @"D:\Backups",
         MaxBackups = 42,
 
-        ComfyUiServerUrl = "http://192.168.0.42:9999/"
+        ComfyUiServerUrl = "http://192.168.0.42:9999/",
+        ComfyUiServerMode = ComfyUiServerMode.CustomUrl
     };
 
     // ── Round trip ───────────────────────────────────────────────────────
@@ -147,6 +149,7 @@ public class SettingsExportServiceTests : IDisposable
         imported.AutoBackupLocation.Should().Be(@"D:\Backups");
         imported.MaxBackups.Should().Be(42);
         imported.ComfyUiServerUrl.Should().Be("http://192.168.0.42:9999/");
+        imported.ComfyUiServerMode.Should().Be(ComfyUiServerMode.CustomUrl);
     }
 
     [Fact]
@@ -301,16 +304,16 @@ public class SettingsExportServiceTests : IDisposable
     /// <summary>
     /// The file's own rule: bump <c>CurrentVersion</c> whenever fields are added to
     /// <c>SettingsExportData</c>. v3 is the metadata-sync retry windows and thumbnail concurrency;
-    /// v4 is the LoRA sorter's excluded-folders list.
+    /// v4 is the LoRA sorter's excluded-folders list; v5 is the ComfyUI server mode.
     /// Without the bump a file written before a feature and one written after it are
     /// indistinguishable, so no later migration can tell "absent because it predates the feature"
     /// from "the user chose nothing" — which is exactly the distinction the v1→v2 backup split
     /// needed and got.
     /// </summary>
     [Fact]
-    public void TheSchemaVersionIsBumpedForTheSorterExclusionField()
+    public void TheSchemaVersionIsBumpedForTheComfyUiServerModeField()
     {
-        SettingsExportSchema.CurrentVersion.Should().Be(4);
+        SettingsExportSchema.CurrentVersion.Should().Be(5);
         SettingsExportSchema.MinSupportedVersion.Should().Be(1,
             "the bump costs nothing on the way in — v1 and v2 files still import");
     }
@@ -873,6 +876,21 @@ public class SettingsExportServiceTests : IDisposable
         _settingsService.Verify(
             s => s.SaveSettingsAsync(It.IsAny<AppSettings>(), It.IsAny<CancellationToken>()),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task Import_OfFileWithoutServerMode_YieldsCustomUrl()
+    {
+        // A file written before the setting existed (schema <= 4) came from a user whose editor ran
+        // on their own ComfyUI. Importing it must not silently move them onto the Engine.
+        var captured = GivenSaveIsCaptured();
+        var path = await WriteJsonAsync("v4-no-servermode.json",
+            "{\"schemaVersion\":4,\"comfyUiServerUrl\":\"http://127.0.0.1:8188/\"}");
+        var sut = CreateSut();
+
+        await sut.ImportAsync(path);
+
+        captured()!.ComfyUiServerMode.Should().Be(ComfyUiServerMode.CustomUrl);
     }
 
     public void Dispose()

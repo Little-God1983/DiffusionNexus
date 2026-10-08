@@ -228,6 +228,12 @@ public class AppSettings
     /// </summary>
     public string ComfyUiServerUrl { get; set; } = "http://127.0.0.1:8188/";
 
+    /// <summary>
+    /// Which ComfyUI runs Inpaint and Outpaint. A fresh install uses the Engine; a database that had
+    /// a settings row before this column existed is migrated to <see cref="Enums.ComfyUiServerMode.CustomUrl"/>.
+    /// </summary>
+    public Enums.ComfyUiServerMode ComfyUiServerMode { get; set; } = Enums.ComfyUiServerMode.Engine;
+
     #endregion
 
     #region Timestamps

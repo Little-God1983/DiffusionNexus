@@ -4,6 +4,7 @@ using DiffusionNexus.Domain.Enums;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 
 namespace DiffusionNexus.Tests.DataAccess;
 
@@ -160,6 +161,61 @@ public class CoreDbMigrationTests
                 var stored = ctx.Database.SqlQueryRaw<string>(
                     "SELECT MetadataOutcome AS Value FROM ModelSyncStates").Single();
                 stored.Should().Be(nameof(SyncOutcome.Header));
+            }
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            tempDir.Delete(recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// A database that already has a settings row belongs to someone whose Inpaint and Outpaint ran on
+    /// their own ComfyUI. The AddComfyUiServerMode migration must keep them there (CustomUrl), while a
+    /// row created after the migration - a fresh install, or publish.ps1's seed - gets Engine.
+    /// </summary>
+    [Fact]
+    public void AddComfyUiServerMode_ExistingRowBecomesCustomUrl_RowInsertedAfterwardsIsEngine()
+    {
+        var tempDir = Directory.CreateTempSubdirectory();
+        var dbPath = Path.Combine(tempDir.FullName, "servermode-test.db");
+        const string insertRow =
+            "INSERT INTO [AppSettings] (Id, ShowNsfw, GenerateVideoThumbnails, ShowVideoPreview, " +
+            "UseForgeStylePrompts, MergeLoraSources, DeleteEmptySourceFolders, BackupDatasetImagesEnabled, " +
+            "BackupDatabaseEnabled, AutoBackupIntervalDays, AutoBackupIntervalHours, MaxBackups, " +
+            "ComfyUiServerUrl, UpdatedAt) VALUES (1, 0, 1, 0, 1, 0, 0, 0, 1, 1, 0, 10, " +
+            "'http://127.0.0.1:8188/', datetime('now'))";
+        try
+        {
+            var options = new DbContextOptionsBuilder<DiffusionNexusCoreDbContext>()
+                .UseSqlite($"Data Source={dbPath};Pooling=False")
+                .Options;
+
+            using (var ctx = new DiffusionNexusCoreDbContext(options))
+            {
+                var migrator = ctx.GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>();
+                migrator.Migrate("20260829104419_AddCivitaiBrowserFilterJson");
+
+                // Same column list publish.ps1 seeds with; every later column has a default.
+                ctx.Database.ExecuteSqlRaw(insertRow);
+
+                ctx.Database.Migrate();
+            }
+
+            using (var ctx = new DiffusionNexusCoreDbContext(options))
+            {
+                ctx.AppSettings.Single().ComfyUiServerMode.Should().Be(ComfyUiServerMode.CustomUrl,
+                    "an upgrading user's editor must keep running on their own ComfyUI");
+
+                ctx.Database.ExecuteSqlRaw("DELETE FROM [AppSettings]");
+                ctx.Database.ExecuteSqlRaw(insertRow);
+            }
+
+            using (var ctx = new DiffusionNexusCoreDbContext(options))
+            {
+                ctx.AppSettings.Single().ComfyUiServerMode.Should().Be(ComfyUiServerMode.Engine,
+                    "a row created after the migration (fresh install / publish seed) defaults to the Engine");
             }
         }
         finally
