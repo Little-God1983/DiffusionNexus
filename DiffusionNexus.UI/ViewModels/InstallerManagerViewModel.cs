@@ -57,6 +57,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
     /// report models missing that the user does in fact have.
     /// </summary>
     private readonly Services.Engine.EngineModelPathsSynchronizer? _engineModelPaths;
+    private readonly Services.Engine.IEngineFolderModelDownloader? _folderModelDownloader;
 
     /// <summary>
     /// The running Diffusion Nexus Engine. ComfyUI loads custom nodes only at process start, so a
@@ -139,7 +140,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         Services.Engine.IManagedEngineInstaller? engineInstaller = null,
         IResourceMonitorService? resourceMonitor = null,
         Services.Engine.EngineModelPathsSynchronizer? engineModelPaths = null,
-        Services.Engine.IManagedComfyUiEngine? engine = null)
+        Services.Engine.IManagedComfyUiEngine? engine = null,
+        Services.Engine.IEngineFolderModelDownloader? folderModelDownloader = null)
     {
         _dialogService = dialogService;
         _unitOfWork = unitOfWork;
@@ -160,6 +162,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         _resourceMonitor = resourceMonitor;
         _engineModelPaths = engineModelPaths;
         _engine = engine;
+        _folderModelDownloader = folderModelDownloader;
 
         InstallerCards.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
 
@@ -810,7 +813,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         {
             var vm = new EngineFeaturesViewModel(
                 _catalog, _checkerService, _installService, card.InstallationPath,
-                _resourceMonitor, _unifiedLogger, preselect);
+                _resourceMonitor, _unifiedLogger, preselect,
+                folderModelDownloader: _folderModelDownloader);
             await vm.LoadCommand.ExecuteAsync(null);
 
             Serilog.Log.Information("Opening the Engine Features dialog for {Path}", card.InstallationPath);

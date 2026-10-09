@@ -28,6 +28,8 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
     private readonly IUnifiedLogger? _unifiedLogger;
     private readonly EngineFeature? _preselect;
     private readonly Func<string, long?> _freeSpaceProbe;
+    private readonly IEngineFolderModelDownloader? _folderModelDownloader;
+    private readonly Func<string, EngineFolderModel, bool> _folderModelComplete;
     private CancellationTokenSource? _installCts;
 
     public EngineFeaturesViewModel(
@@ -38,7 +40,9 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
         IResourceMonitorService? resourceMonitor = null,
         IUnifiedLogger? unifiedLogger = null,
         EngineFeature? preselect = null,
-        Func<string, long?>? freeSpaceProbe = null)
+        Func<string, long?>? freeSpaceProbe = null,
+        IEngineFolderModelDownloader? folderModelDownloader = null,
+        Func<string, EngineFolderModel, bool>? folderModelComplete = null)
     {
         ArgumentNullException.ThrowIfNull(catalog);
         ArgumentNullException.ThrowIfNull(checker);
@@ -52,6 +56,8 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
         _unifiedLogger = unifiedLogger;
         _preselect = preselect;
         _freeSpaceProbe = freeSpaceProbe ?? ProbeFreeSpace;
+        _folderModelDownloader = folderModelDownloader;
+        _folderModelComplete = folderModelComplete ?? ((root, model) => model.IsComplete(root));
 
         foreach (var definition in EngineFeatureCatalog.All)
         {
@@ -175,6 +181,13 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
                     Info($"{row.DisplayName}: {summary}");
                     summaries.Add($"{row.DisplayName}: {summary.TrimEnd('.')}");
                 }
+
+                foreach (var model in row.Definition.FolderModels)
+                {
+                    if (_folderModelComplete(_engineRoot, model))
+                        continue;
+                    summaries.Add($"{row.DisplayName}: {await DownloadFolderModelAsync(row, model, ct)}");
+                }
             }
 
             completed = true;
@@ -219,6 +232,35 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
     [RelayCommand]
     private void CancelInstall() => _installCts?.Cancel();
 
+    /// <summary>Downloads one folder model and returns its summary line.</summary>
+    private async Task<string> DownloadFolderModelAsync(EngineFeatureRowViewModel row, EngineFolderModel model, CancellationToken ct)
+    {
+        if (_folderModelDownloader is null)
+        {
+            var unavailable = $"{model.Name}: no downloader available";
+            Warn($"{row.DisplayName}: {unavailable}");
+            return unavailable;
+        }
+
+        ProgressText = $"{row.DisplayName}: downloading {model.Name} ({model.TotalSize / 1_000_000_000d:0.0} GB)…";
+        Info(ProgressText);
+        DidInstall = true;
+        var result = await _folderModelDownloader.DownloadAsync(_engineRoot, model,
+            new Progress<DownloadProgress>(d =>
+            {
+                if (d.IsActive && !d.IsComplete)
+                    ProgressText = $"{row.DisplayName}: downloading {d.FileName} {d.DownloadedSizeText} / {d.TotalSizeText} {d.SpeedText}";
+            }),
+            ct);
+
+        var text = result.Succeeded
+            ? $"{model.Name} downloaded ({result.Downloaded} file(s))"
+            : $"{model.Name}: {result.Failures.Count} file(s) failed";
+        if (result.Succeeded) Info($"{row.DisplayName}: {text}");
+        else Warn($"{row.DisplayName}: {text} — {string.Join("; ", result.Failures)}");
+        return text;
+    }
+
     /// <summary>
     /// The installer reports failed items in its summary rather than throwing, so "Done." is only
     /// honest when the re-check finds every selected row installed.
@@ -245,6 +287,7 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
         foreach (var row in Rows)
         {
             row.Checks.Clear();
+            row.FolderModelChecks.Clear();
             try
             {
                 foreach (var workloadId in row.Definition.WorkloadIds)
@@ -254,6 +297,9 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
                         throw new InvalidOperationException($"Workload {workloadId} is missing from the catalog.");
                     row.Checks.Add((config, await _checker.CheckConfigurationAsync(config, _engineRoot, options: null, ct)));
                 }
+
+                foreach (var model in row.Definition.FolderModels)
+                    row.FolderModelChecks.Add((model, _folderModelComplete(_engineRoot, model)));
 
                 row.ApplyChecks();
             }

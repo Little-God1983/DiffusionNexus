@@ -107,6 +107,8 @@ public sealed class GenerationStepText
             return "Sending the job";
         if (status.StartsWith("Downloading", StringComparison.OrdinalIgnoreCase))
             return "Downloading the result";
+        if (status.StartsWith("Describing", StringComparison.OrdinalIgnoreCase))
+            return "Describing the surroundings (Qwen3-VL)";
         if (status.StartsWith("Generating", StringComparison.OrdinalIgnoreCase)
             || status.StartsWith("Executing", StringComparison.OrdinalIgnoreCase)
             || status.StartsWith("Loading", StringComparison.OrdinalIgnoreCase)

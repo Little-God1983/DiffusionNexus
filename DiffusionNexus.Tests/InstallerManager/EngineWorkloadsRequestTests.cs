@@ -116,7 +116,7 @@ public class EngineWorkloadsRequestTests
             await vm.InstallerCards.Single(c => c.IsEngine).ShowWorkloadsCommand.ExecuteAsync(null);
 
             shown.Should().NotBeNull();
-            shown!.Rows.Select(r => r.DisplayName).Should().Equal("Inpaint & Outpaint", "Canvas · Krea 2 Turbo");
+            shown!.Rows.Select(r => r.DisplayName).Should().Equal("Inpaint & Outpaint", "Outpaint Vision", "Canvas · Krea 2 Turbo");
         }
         finally
         {

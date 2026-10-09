@@ -54,16 +54,19 @@ public class FeatureReadinessViewModelBackendLineTests
     }
 
     [Fact]
-    public async Task OutpaintVisionOnTheEngine_HasNoInstallLink_BecauseNoRowOffersItYet()
+    public async Task OutpaintVisionMissingOnTheEngine_OffersItsOwnRow()
     {
         Returns(Feature.OutpaintVision, BackendKind.Engine, "Diffusion Nexus Engine",
-            "Outpaint Vision is not available on the Diffusion Nexus Engine yet");
+            "Model missing on the Engine: Qwen3-VL-4B-Instruct-FP8");
         var vm = new FeatureReadinessViewModel(_service.Object, Feature.OutpaintVision, _events.Object);
 
         await vm.CheckReadinessAsync();
+        vm.InstallOnEngineCommand.Execute(null);
 
-        vm.ShowInstallOnEngine.Should().BeFalse();
-        vm.ShowChangeLink.Should().BeTrue("the user can still switch to their own ComfyUI");
+        vm.ShowInstallOnEngine.Should().BeTrue();
+        vm.InstallOnEngineLabel.Should().Be("Install Outpaint Vision");
+        _events.Verify(e => e.PublishNavigateToEngineFeatures(It.Is<NavigateToEngineFeaturesEventArgs>(a =>
+            a.Preselect == EngineFeature.OutpaintVision && !a.InstallEngineOnly)), Times.Once);
     }
 
     [Fact]

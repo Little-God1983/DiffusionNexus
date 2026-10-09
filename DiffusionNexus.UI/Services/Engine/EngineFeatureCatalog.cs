@@ -8,27 +8,46 @@ public enum EngineFeature
     /// <summary>Image Editor Inpaint and non-Vision Outpaint (identical model set).</summary>
     InpaintOutpaint,
 
+    /// <summary>Image Editor Outpaint with Vision: the Outpaint set plus Qwen3-VL and its node packs.</summary>
+    OutpaintVision,
+
     /// <summary>Diffusion Canvas text-to-image with Krea 2 Turbo.</summary>
     Canvas
 }
 
-/// <summary>What a Features row shows and which catalog workloads it installs.</summary>
+/// <summary>
+/// What a Features row shows, which catalog workloads it installs, and which folder models (models a
+/// node loads as a whole folder, which the catalog cannot describe) it downloads on top.
+/// </summary>
 public sealed record EngineFeatureDefinition(
     EngineFeature Feature,
     string DisplayName,
     string Description,
-    IReadOnlyList<Guid> WorkloadIds);
+    IReadOnlyList<Guid> WorkloadIds,
+    IReadOnlyList<EngineFolderModel>? FolderModelsOrNull = null)
+{
+    public IReadOnlyList<EngineFolderModel> FolderModels => FolderModelsOrNull ?? [];
+}
 
 /// <summary>
 /// The app features the Diffusion Nexus Engine can be equipped with, each mapped to the catalog
 /// workloads that carry its node packs and models. Rows map to whole workloads so the catalog stays
-/// the single source of what a feature needs; nothing here lists model files. A row only appears once
-/// it has been verified against the Engine: Outpaint Vision arrives with #607, Batch Upscale with #608.
+/// the single source of what a feature needs. The one exception is a folder model, which the catalog
+/// cannot express (see <see cref="EngineFolderModel"/>). A row only appears once it has been verified
+/// against the Engine: Batch Upscale arrives with #608.
 /// </summary>
 public static class EngineFeatureCatalog
 {
     /// <summary>"Inpainting-Qwen 2512": ComfyUI-GGUF + the five Qwen-Image 2512 inpaint models.</summary>
     public static readonly Guid InpaintingQwen2512 = Guid.Parse("4C486765-A4C1-4E94-ACC2-BBAC0E405B6A");
+
+    /// <summary>
+    /// "Outpainting-Qwen 2512": the Inpainting set (same model names, so nothing is downloaded twice;
+    /// the checker accepts any present Qwen-Image 2512 GGUF) plus ComfyUI_Qwen3-VL-Instruct,
+    /// ComfyUI-Custom-Scripts (ShowText) and ComfyUI-KJNodes (SomethingToString). Its "Qwen 3 VL" model
+    /// is a catalog placeholder; the files come from <see cref="EngineFolderModels.Qwen3VL4BInstructFp8"/>.
+    /// </summary>
+    public static readonly Guid OutpaintingQwen2512 = Guid.Parse("137929E4-5C05-4304-80D4-5D785D45FD3F");
 
     /// <summary>Krea 2 Turbo — the first Engine workload, and the Engine's torch source.</summary>
     public static readonly Guid Krea2Turbo = Guid.Parse("E79C079A-2FD7-4FE7-8086-23731092555D");
@@ -40,6 +59,11 @@ public static class EngineFeatureCatalog
             "Inpaint & Outpaint",
             "Image Editor · Qwen-Image 2512 with the InstantX inpaint ControlNet and the Lightning LoRA",
             [InpaintingQwen2512]),
+        new(EngineFeature.OutpaintVision,
+            "Outpaint Vision",
+            "Image Editor · Qwen3-VL describes the surroundings and writes the outpaint prompt (adds Qwen3-VL, 6 GB)",
+            [OutpaintingQwen2512],
+            [EngineFolderModels.Qwen3VL4BInstructFp8]),
         new(EngineFeature.Canvas,
             "Canvas · Krea 2 Turbo",
             "Text to image in the Diffusion Canvas",
@@ -57,6 +81,7 @@ public static class EngineFeatureCatalog
     public static EngineFeature? ForAppFeature(Feature feature) => feature switch
     {
         Feature.Inpainting or Feature.Outpaint => EngineFeature.InpaintOutpaint,
+        Feature.OutpaintVision => EngineFeature.OutpaintVision,
         _ => null
     };
 

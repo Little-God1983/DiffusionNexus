@@ -583,6 +583,11 @@
                 <TextBlock Text="{Binding ImageEditor.Outpainting.VisionUnavailableReason}"
                            IsVisible="{Binding ImageEditor.Outpainting.HasVisionUnavailableReason}"
                            FontSize="11" Opacity="0.7" TextWrapping="Wrap"/>
+                <Button Content="{Binding ImageEditor.Outpainting.VisionReadiness.InstallOnEngineLabel}"
+                        Command="{Binding ImageEditor.Outpainting.VisionReadiness.InstallOnEngineCommand}"
+                        IsVisible="{Binding ImageEditor.Outpainting.VisionReadiness.ShowInstallOnEngine}"
+                        Background="Transparent" BorderThickness="0" Padding="0" FontSize="11" Foreground="#8AB4F8"
+                        Cursor="Hand" ToolTip.Tip="Open the Engine's Features dialog with Outpaint Vision ticked"/>
 
                 <!-- Progress -->
                 <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.Outpainting.IsProgressVisible}" Margin="0,4,0,0">

@@ -17,16 +17,20 @@ public class EngineFeatureBackendTests
     private readonly Mock<ICatalog> _catalog = new();
     private readonly Mock<IConfigurationCheckerService> _checker = new();
     private bool _looksInstalled = true;
+    private bool _folderModelComplete = true;
 
     public EngineFeatureBackendTests()
     {
         _root.Setup(r => r.ResolveAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Root);
         _catalog.Setup(c => c.GetWorkloadAsync(EngineFeatureCatalog.InpaintingQwen2512, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new InstallationConfiguration { Id = EngineFeatureCatalog.InpaintingQwen2512, Name = "Inpainting-Qwen 2512" });
+        _catalog.Setup(c => c.GetWorkloadAsync(EngineFeatureCatalog.OutpaintingQwen2512, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new InstallationConfiguration { Id = EngineFeatureCatalog.OutpaintingQwen2512, Name = "Outpainting-Qwen 2512" });
     }
 
     private EngineFeatureBackend Sut() =>
-        new(_root.Object, _catalog.Object, _checker.Object, unifiedLogger: null, looksInstalled: _ => _looksInstalled);
+        new(_root.Object, _catalog.Object, _checker.Object, unifiedLogger: null, looksInstalled: _ => _looksInstalled,
+            folderModelComplete: (_, _) => _folderModelComplete);
 
     private void CheckReturns(params (string Name, bool Installed, bool IsNode)[] items) =>
         _checker.Setup(c => c.CheckConfigurationAsync(It.IsAny<InstallationConfiguration>(), Root,
@@ -87,12 +91,35 @@ public class EngineFeatureBackendTests
     }
 
     [Fact]
-    public async Task OutpaintVision_IsNotOfferedOnTheEngineYet()
+    public async Task OutpaintVision_ChecksTheOutpaintingWorkload_AndTheQwen3VLFolder()
     {
+        CheckReturns(("ComfyUI_Qwen3-VL-Instruct", true, true), ("Qwen 3 VL", true, false));
+        _folderModelComplete = false;
+
         var result = await Sut().CheckFeatureAsync(Feature.OutpaintVision);
 
         result.IsReady.Should().BeFalse();
-        result.MissingRequirements.Should().Equal("Outpaint Vision is not available on the Diffusion Nexus Engine yet");
+        result.MissingRequirements.Should().Equal("Model missing on the Engine: Qwen3-VL-4B-Instruct-FP8");
+        _catalog.Verify(c => c.GetWorkloadAsync(EngineFeatureCatalog.OutpaintingQwen2512, It.IsAny<CancellationToken>()));
+    }
+
+    [Fact]
+    public async Task OutpaintVision_WithEverythingPresent_IsReady()
+    {
+        CheckReturns(("ComfyUI_Qwen3-VL-Instruct", true, true), ("Qwen 3 VL", true, false));
+
+        var result = await Sut().CheckFeatureAsync(Feature.OutpaintVision);
+
+        result.IsReady.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task NoFeatureRow_IsNotOfferedOnTheEngineYet()
+    {
+        var result = await Sut().CheckFeatureAsync(Feature.BatchUpscale);
+
+        result.IsReady.Should().BeFalse();
+        result.MissingRequirements.Should().Equal("BatchUpscale is not available on the Diffusion Nexus Engine yet");
         _checker.VerifyNoOtherCalls();
     }
 

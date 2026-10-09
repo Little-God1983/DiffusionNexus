@@ -49,6 +49,7 @@ public partial class OutpaintingViewModel : ObservableObject
     private const string UnetLoaderNodeId = "15";
     private const string ImagePadNodeId = "26";
     private const string ImageScaleNodeId = "17";
+    private const string VisionQwen3VqaNodeId = "256";
     private const string UnetLoaderGGUFNodeType = "UnetLoaderGGUF";
     private const string QwenImageGGUFPrefix = "qwen-image-2512-";
     private const string DefaultQwenImageGGUF = "qwen-image-2512-Q8_0.gguf";
@@ -833,11 +834,27 @@ public partial class OutpaintingViewModel : ObservableObject
             EmitGenerate($"Prompt queued ({promptId}).");
 
             Status = "Generating (this may take a while)...";
-            var progress = new Progress<string>(msg => Status = msg);
+            // ComfyUI reports the Qwen3-VL step only as "Executing node 256…"; name it.
+            var visionNodeStatus = $"Executing node {VisionQwen3VqaNodeId}...";
+            var progress = new Progress<string>(msg => Status =
+                useVision && msg == visionNodeStatus ? "Describing the surroundings with Qwen3-VL..." : msg);
             await comfy.WaitForCompletionAsync(promptId, progress);
 
             Status = "Downloading result...";
             var result = await comfy.GetResultAsync(promptId);
+
+            // The prompt the Vision result came from: what Qwen3-VL wrote (ShowText's output).
+            if (useVision)
+            {
+                var description = result.Texts.FirstOrDefault(t => !string.IsNullOrWhiteSpace(t));
+                if (description is not null)
+                    EmitGenerate($"Vision description: {description.Trim()}");
+                else
+                {
+                    Logger.Warning("Outpaint: Vision returned no description");
+                    _unifiedLogger?.Warn(LogCategory.General, LogSource, "Vision returned no description.");
+                }
+            }
 
             if (result.Images.Count > 0)
             {
