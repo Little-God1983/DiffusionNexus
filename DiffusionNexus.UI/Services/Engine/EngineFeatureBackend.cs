@@ -24,15 +24,13 @@ public sealed class EngineFeatureBackend : IFeatureBackend
     private readonly IConfigurationCheckerService _checker;
     private readonly IUnifiedLogger? _unifiedLogger;
     private readonly Func<string?, bool> _looksInstalled;
-    private readonly Func<string, EngineFolderModel, bool> _folderModelComplete;
 
     public EngineFeatureBackend(
         IEngineRootResolver rootResolver,
         ICatalog catalog,
         IConfigurationCheckerService checker,
         IUnifiedLogger? unifiedLogger = null,
-        Func<string?, bool>? looksInstalled = null,
-        Func<string, EngineFolderModel, bool>? folderModelComplete = null)
+        Func<string?, bool>? looksInstalled = null)
     {
         ArgumentNullException.ThrowIfNull(rootResolver);
         ArgumentNullException.ThrowIfNull(catalog);
@@ -42,7 +40,6 @@ public sealed class EngineFeatureBackend : IFeatureBackend
         _checker = checker;
         _unifiedLogger = unifiedLogger;
         _looksInstalled = looksInstalled ?? ManagedEngineLocator.LooksInstalled;
-        _folderModelComplete = folderModelComplete ?? ((root, model) => model.IsComplete(root));
     }
 
     public BackendKind Kind => BackendKind.Engine;
@@ -66,10 +63,10 @@ public sealed class EngineFeatureBackend : IFeatureBackend
         }
 
         var missing = new List<string>();
+        var modelPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            var definition = EngineFeatureCatalog.Get(row.Value);
-            foreach (var workloadId in definition.WorkloadIds)
+            foreach (var workloadId in EngineFeatureCatalog.Get(row.Value).WorkloadIds)
             {
                 var configuration = await _catalog.GetWorkloadAsync(workloadId, ct);
                 if (configuration is null)
@@ -83,12 +80,9 @@ public sealed class EngineFeatureBackend : IFeatureBackend
                     .Select(n => $"Custom node missing on the Engine: {n.Name}"));
                 missing.AddRange(check.ModelResults.Where(m => !m.IsInstalled)
                     .Select(m => $"Model missing on the Engine: {m.Name}"));
+                foreach (var model in check.ModelResults.Where(m => m.IsInstalled && !string.IsNullOrEmpty(m.FoundAtPath)))
+                    modelPaths.TryAdd(model.Name, model.FoundAtPath);
             }
-
-            // Every file by size: the node only checks that the folder exists, so a cut-off download
-            // would pass that and fail inside Generate.
-            missing.AddRange(definition.FolderModels.Where(m => !_folderModelComplete(root!, m))
-                .Select(m => $"Model missing on the Engine: {m.Name}"));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -113,7 +107,8 @@ public sealed class EngineFeatureBackend : IFeatureBackend
             ActiveBackendName = DisplayName,
             MissingRequirements = missing,
             Warnings = [],
-            Endpoint = root
+            Endpoint = root,
+            ModelPaths = modelPaths
         };
     }
 

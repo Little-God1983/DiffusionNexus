@@ -742,11 +742,6 @@ public partial class App : Application
         // App-owned ComfyUI engine (Diffusion Nexus Engine).
         services.AddSingleton<DiffusionNexus.Installer.SDK.Shared.Services.IUserPromptService>(sp =>
             new Services.Engine.DialogUserPromptService(sp.GetRequiredService<IDialogService>()));
-        // Folder models (Qwen3-VL for Outpaint Vision, #607): files the catalog cannot describe.
-        services.AddSingleton<Services.Engine.IEngineFolderModelDownloader>(sp =>
-            new Services.Engine.EngineFolderModelDownloader(
-                new HttpClient(),
-                sp.GetRequiredService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
         services.AddSingleton<Services.Engine.IManagedEngineInstaller>(sp =>
             new Services.Engine.ManagedEngineInstaller(
                 sp.GetRequiredService<IInstallationCoordinator>(),
@@ -1077,8 +1072,7 @@ public partial class App : Application
             engineInstaller: sp.GetRequiredService<Services.Engine.IManagedEngineInstaller>(),
             resourceMonitor: sp.GetRequiredService<IResourceMonitorService>(),
             engineModelPaths: sp.GetRequiredService<Services.Engine.EngineModelPathsSynchronizer>(),
-            engine: sp.GetRequiredService<Services.Engine.IManagedComfyUiEngine>(),
-            folderModelDownloader: sp.GetRequiredService<Services.Engine.IEngineFolderModelDownloader>()));
+            engine: sp.GetRequiredService<Services.Engine.IManagedComfyUiEngine>()));
         services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),

@@ -18,8 +18,6 @@ public class EngineFeaturesViewModelTests
     private readonly Mock<IConfigurationCheckerService> _checker = new();
     private readonly Mock<IWorkloadInstallService> _installer = new();
     private readonly Dictionary<Guid, ConfigurationCheckResult> _state = new();
-    private readonly Mock<IEngineFolderModelDownloader> _folderDownloader = new();
-    private bool _folderModelComplete = true;
 
     public EngineFeaturesViewModelTests()
     {
@@ -35,7 +33,7 @@ public class EngineFeaturesViewModelTests
             .ReturnsAsync((InstallationConfiguration c, string _, ConfigurationCheckOptions? _, CancellationToken _) => _state[c.Id]);
 
         // The Vision row is installed unless a test says otherwise.
-        _state[EngineFeatureCatalog.OutpaintingQwen2512] = Result(0, 4, 0, 6);
+        _state[EngineFeatureCatalog.OutpaintingQwen2512] = Result(0, 3, 0, 7);
     }
 
     private static ConfigurationCheckResult Result(int nodesMissing, int nodesPresent, int modelsMissing, int modelsPresent) => new()
@@ -56,9 +54,7 @@ public class EngineFeaturesViewModelTests
 
     private EngineFeaturesViewModel Sut(EngineFeature? preselect = null) =>
         new(_catalog.Object, _checker.Object, _installer.Object, Root, preselect: preselect,
-            freeSpaceProbe: _ => 412L * 1024 * 1024 * 1024,
-            folderModelDownloader: _folderDownloader.Object,
-            folderModelComplete: (_, _) => _folderModelComplete);
+            freeSpaceProbe: _ => 412L * 1024 * 1024 * 1024);
 
     private EngineFeatureRowViewModel Row(EngineFeaturesViewModel vm, EngineFeature f) =>
         vm.Rows.Single(r => r.Definition.Feature == f);
@@ -332,104 +328,94 @@ public class EngineFeaturesViewModelTests
         vm.IsInstalling.Should().BeFalse("a failing re-check must not leave the dialog locked");
     }
 
-    // ── #607: Outpaint Vision and its Qwen3-VL folder model ──
+    // ── #607: the Qwen3-VL GGUF node needs a prebuilt llama-cpp-python wheel, picked for the Engine's CUDA ──
 
-    private static ConfigurationCheckResult WithPlaceholder(ConfigurationCheckResult result) => result with
+    private static readonly LamaCppWheel Cu128 = new()
     {
-        ModelResults = [.. result.ModelResults, new ModelCheckResult
-        {
-            Id = Guid.NewGuid(), Name = "Qwen 3 VL", IsInstalled = true, IsPlaceholder = true, SearchedPaths = []
-        }]
+        Id = Guid.Parse("F119F4D4-EF71-484F-8213-0ABC49F26900"), Name = "JamePeng cu128", IsGPU = true,
+        PythonVersion = "3.12", CudaVersion = "12.8", Url = "https://example/llama_cpp_python-0.3.20-cp312-cp312-win_amd64.whl"
+    };
+    private static readonly LamaCppWheel Cu130 = new()
+    {
+        Id = Guid.NewGuid(), Name = "JamePeng cu130", IsGPU = true,
+        PythonVersion = "3.12", CudaVersion = "13.0", Url = "https://example/llama_cpp_python-0.4.2+cu130-cp312-cp312-win_amd64.whl"
     };
 
-    [Fact]
-    public async Task VisionRow_WithTheWorkloadInstalled_ButNoQwen3VL_IsPartial_OneModelMissing()
+    private async Task<EngineFeaturesViewModel> VisionNeedsNodePacksAsync()
     {
+        _catalog.Setup(c => c.GetLamaCppWheelsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([Cu128, Cu130]);
+        var engine = (await _catalog.Object.GetWorkloadAsync(EngineFeatureCatalog.Krea2Turbo))!;
+        engine.Torch.CudaVersion = "13.0";
+        engine.Python.PythonVersion = "3.12";
+        var vision = (await _catalog.Object.GetWorkloadAsync(EngineFeatureCatalog.OutpaintingQwen2512))!;
+        vision.SelectedLamaCppWheelId = Cu128.Id; // the workload's own (standalone) choice: a cu128 torch
         _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(0, 1, 0, 5);
         _state[EngineFeatureCatalog.Krea2Turbo] = Result(0, 2, 0, 3);
-        _state[EngineFeatureCatalog.OutpaintingQwen2512] = WithPlaceholder(Result(0, 4, 0, 5));
-        _folderModelComplete = false;
-        var vm = Sut();
-
-        await vm.LoadCommand.ExecuteAsync(null);
-
-        var row = Row(vm, EngineFeature.OutpaintVision);
-        row.StatusText.Should().Be("Partial · 1 model missing");
-        row.NeedsText.Should().Be("4 node packs · 6 models", "the catalog placeholder is not a model; Qwen3-VL is");
-    }
-
-    [Fact]
-    public async Task VisionRow_WithQwen3VLComplete_IsInstalled()
-    {
-        _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(0, 1, 0, 5);
-        _state[EngineFeatureCatalog.Krea2Turbo] = Result(0, 2, 0, 3);
-        _state[EngineFeatureCatalog.OutpaintingQwen2512] = WithPlaceholder(Result(0, 4, 0, 5));
-        var vm = Sut();
-
-        await vm.LoadCommand.ExecuteAsync(null);
-
-        Row(vm, EngineFeature.OutpaintVision).Status.Should().Be(EngineFeatureStatus.Installed);
-    }
-
-    [Fact]
-    public async Task VisionInstall_DownloadsQwen3VL_IntoTheEngine_AndReportsDone()
-    {
-        _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(0, 1, 0, 5);
-        _state[EngineFeatureCatalog.Krea2Turbo] = Result(0, 2, 0, 3);
-        _state[EngineFeatureCatalog.OutpaintingQwen2512] = Result(0, 4, 0, 5);
-        _folderModelComplete = false;
-        _folderDownloader.Setup(d => d.DownloadAsync(Root, EngineFolderModels.Qwen3VL4BInstructFp8,
-                It.IsAny<IProgress<DownloadProgress>?>(), It.IsAny<CancellationToken>()))
-            .Callback(() => _folderModelComplete = true)
-            .ReturnsAsync(new EngineFolderModelDownloadResult(2, []));
+        _state[EngineFeatureCatalog.OutpaintingQwen2512] = Result(2, 1, 0, 7);
+        InstallReturns("2 node(s) installed", () => _state[EngineFeatureCatalog.OutpaintingQwen2512] = Result(0, 3, 0, 7));
+        _installer.Setup(i => i.InstallLlamaCppWheelAsync(Root, It.IsAny<string>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
         var vm = Sut(EngineFeature.OutpaintVision);
+        await vm.LoadCommand.ExecuteAsync(null);
+        return vm;
+    }
+
+    [Fact]
+    public async Task VisionInstall_InstallsTheWheelForTheEnginesCuda_BeforeTheNodePacks()
+    {
+        var vm = await VisionNeedsNodePacksAsync();
+        var order = new List<string>();
+        _installer.Setup(i => i.InstallLlamaCppWheelAsync(Root, Cu130.Url, It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<CancellationToken>()))
+            .Callback(() => order.Add("wheel")).ReturnsAsync(true);
+        _installer.Setup(i => i.InstallSelectedAsync(It.IsAny<InstallationConfiguration>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
+                It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
+                It.IsAny<Func<CancellationToken>?>(), It.IsAny<CancellationToken>()))
+            .Callback(() => { order.Add("nodes"); _state[EngineFeatureCatalog.OutpaintingQwen2512] = Result(0, 3, 0, 7); })
+            .ReturnsAsync("2 node(s) installed");
+
+        await vm.InstallSelectedCommand.ExecuteAsync(null);
+
+        order.Should().Equal(new List<string> { "wheel", "nodes" }, "pip must find llama-cpp-python satisfied before the node pack's requirements");
+        _installer.Verify(i => i.InstallLlamaCppWheelAsync(Root, Cu128.Url, It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<CancellationToken>()),
+            Times.Never, "the workload's cu128 wheel would run on the CPU in a cu130 Engine");
+        vm.ProgressText.Should().StartWith("Done.");
+    }
+
+    [Fact]
+    public async Task VisionInstall_ModelsOnly_DoesNotTouchTheWheel()
+    {
+        var vm = await VisionNeedsNodePacksAsync();
+        _state[EngineFeatureCatalog.OutpaintingQwen2512] = Result(0, 3, 1, 6);
+        await vm.LoadCommand.ExecuteAsync(null);
+        Row(vm, EngineFeature.OutpaintVision).IsSelected = true;
+
+        await vm.InstallSelectedCommand.ExecuteAsync(null);
+
+        _installer.Verify(i => i.InstallLlamaCppWheelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task InpaintInstall_HasNoWheelToInstall()
+    {
+        _catalog.Setup(c => c.GetLamaCppWheelsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([Cu130]);
+        _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(1, 0, 5, 0);
+        _state[EngineFeatureCatalog.Krea2Turbo] = Result(0, 2, 0, 3);
+        InstallReturns("done", () => _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(0, 1, 0, 5));
+        var vm = Sut(EngineFeature.InpaintOutpaint);
         await vm.LoadCommand.ExecuteAsync(null);
 
         await vm.InstallSelectedCommand.ExecuteAsync(null);
 
-        _folderDownloader.Verify(d => d.DownloadAsync(Root, EngineFolderModels.Qwen3VL4BInstructFp8,
-            It.IsAny<IProgress<DownloadProgress>?>(), It.IsAny<CancellationToken>()), Times.Once);
-        vm.DidInstall.Should().BeTrue();
-        vm.DidInstallNodePacks.Should().BeFalse("the node reads the model from disk at Generate; no restart");
-        Row(vm, EngineFeature.OutpaintVision).Status.Should().Be(EngineFeatureStatus.Installed);
-        vm.ProgressText.Should().Be("Done. Outpaint Vision: Qwen3-VL-4B-Instruct-FP8 downloaded (2 file(s)).");
+        _installer.Verify(i => i.InstallLlamaCppWheelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task VisionInstall_WithQwen3VLComplete_DoesNotDownload()
+    public void PickLlamaCppWheel_MatchesCudaAndPython_OrNothing()
     {
-        _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(0, 1, 0, 5);
-        _state[EngineFeatureCatalog.Krea2Turbo] = Result(0, 2, 0, 3);
-        _state[EngineFeatureCatalog.OutpaintingQwen2512] = Result(1, 3, 0, 5);
-        InstallReturns("1 node(s) installed",
-            () => _state[EngineFeatureCatalog.OutpaintingQwen2512] = Result(0, 4, 0, 5));
-        var vm = Sut(EngineFeature.OutpaintVision);
-        await vm.LoadCommand.ExecuteAsync(null);
-
-        await vm.InstallSelectedCommand.ExecuteAsync(null);
-
-        _folderDownloader.Verify(d => d.DownloadAsync(It.IsAny<string>(), It.IsAny<EngineFolderModel>(),
-            It.IsAny<IProgress<DownloadProgress>?>(), It.IsAny<CancellationToken>()), Times.Never);
-        vm.DidInstallNodePacks.Should().BeTrue();
-    }
-
-    [Fact]
-    public async Task VisionInstall_FailedFiles_SayFinishedWithProblems()
-    {
-        _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(0, 1, 0, 5);
-        _state[EngineFeatureCatalog.Krea2Turbo] = Result(0, 2, 0, 3);
-        _state[EngineFeatureCatalog.OutpaintingQwen2512] = Result(0, 4, 0, 5);
-        _folderModelComplete = false;
-        _folderDownloader.Setup(d => d.DownloadAsync(It.IsAny<string>(), It.IsAny<EngineFolderModel>(),
-                It.IsAny<IProgress<DownloadProgress>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new EngineFolderModelDownloadResult(0, ["model-00001-of-00002.safetensors: 404"]));
-        var vm = Sut(EngineFeature.OutpaintVision);
-        await vm.LoadCommand.ExecuteAsync(null);
-
-        await vm.InstallSelectedCommand.ExecuteAsync(null);
-
-        vm.ProgressText.Should().Be(
-            "Finished with problems: Outpaint Vision: Qwen3-VL-4B-Instruct-FP8: 1 file(s) failed. " +
-            "See the Unified Console for details.");
+        EngineFeaturesViewModel.PickLlamaCppWheel([Cu128, Cu130], "13.0", "3.12").Should().BeSameAs(Cu130);
+        EngineFeaturesViewModel.PickLlamaCppWheel([Cu128, Cu130], "12.8", "3.12").Should().BeSameAs(Cu128);
+        EngineFeaturesViewModel.PickLlamaCppWheel([Cu128, Cu130], "12.4", "3.12").Should().BeNull("another CUDA's wheel loads but runs on the CPU");
+        EngineFeaturesViewModel.PickLlamaCppWheel([Cu130], "13.0", "3.13").Should().BeNull();
     }
 }

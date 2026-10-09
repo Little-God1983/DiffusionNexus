@@ -32,4 +32,10 @@ public sealed record WorkloadCheckSummary
     /// <c>null</c> when no ComfyUI installation could be located.
     /// </summary>
     public string? CheckedAgainstPath { get; init; }
+
+    /// <summary>
+    /// Where the check found each present model, by catalog model name. A workflow that needs a
+    /// model's absolute path (the Qwen3-VL GGUF node takes file paths, #607) reads it from here.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> ModelPaths { get; init; } = new Dictionary<string, string>();
 }

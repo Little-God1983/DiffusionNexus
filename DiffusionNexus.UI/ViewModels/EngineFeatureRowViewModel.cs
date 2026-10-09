@@ -45,21 +45,13 @@ public sealed partial class EngineFeatureRowViewModel : ObservableObject
     /// <summary>Latest check per workload, kept for the install step.</summary>
     internal List<(InstallationConfiguration Config, ConfigurationCheckResult Result)> Checks { get; } = [];
 
-    /// <summary>Latest check per folder model (see <see cref="EngineFolderModel"/>).</summary>
-    internal List<(EngineFolderModel Model, bool IsComplete)> FolderModelChecks { get; } = [];
-
     /// <summary>Derives status, status text and the Needs column from <see cref="Checks"/>.</summary>
     internal void ApplyChecks()
     {
         var nodes = Checks.SelectMany(c => c.Result.CustomNodeResults).ToList();
-        // A catalog placeholder stands for a model the catalog cannot describe; when the row brings
-        // that model as a folder model, the folder model is what counts.
-        var models = Checks.SelectMany(c => c.Result.ModelResults).Where(m => !m.IsPlaceholder)
-            .Select(m => m.IsInstalled)
-            .Concat(FolderModelChecks.Select(f => f.IsComplete))
-            .ToList();
-        var missing = nodes.Count(n => !n.IsInstalled) + models.Count(installed => !installed);
-        var present = nodes.Count(n => n.IsInstalled) + models.Count(installed => installed);
+        var models = Checks.SelectMany(c => c.Result.ModelResults).ToList();
+        var missing = nodes.Count(n => !n.IsInstalled) + models.Count(m => !m.IsInstalled);
+        var present = nodes.Count(n => n.IsInstalled) + models.Count(m => m.IsInstalled);
 
         NeedsText = $"{nodes.Count} node pack{(nodes.Count == 1 ? "" : "s")} · {models.Count} model{(models.Count == 1 ? "" : "s")}";
 
@@ -79,7 +71,7 @@ public sealed partial class EngineFeatureRowViewModel : ObservableObject
             Status = EngineFeatureStatus.Partial;
             // Name what is missing, nodes and models alike: "Partial · 1 node pack and 3 models missing".
             var nodesMissing = nodes.Count(n => !n.IsInstalled);
-            var modelsMissing = models.Count(installed => !installed);
+            var modelsMissing = models.Count(m => !m.IsInstalled);
             var parts = new List<string>(2);
             if (nodesMissing > 0) parts.Add($"{nodesMissing} node pack{(nodesMissing == 1 ? "" : "s")}");
             if (modelsMissing > 0) parts.Add($"{modelsMissing} model{(modelsMissing == 1 ? "" : "s")}");

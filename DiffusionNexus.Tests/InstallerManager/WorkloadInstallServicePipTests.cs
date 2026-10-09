@@ -247,4 +247,15 @@ public class WorkloadInstallServicePipTests
         File.WriteAllLines(path, lines);
         return path;
     }
+
+    [Theory]
+    [InlineData("https://github.com/JamePeng/llama-cpp-python/releases/download/v0.4.2-cu130-win-20261003/llama_cpp_python-0.4.2+cu130-cp312-cp312-win_amd64.whl", "0.4.2+cu130")]
+    [InlineData("https://example/llama_cpp_python-0.3.20-cp312-cp312-win_amd64.whl", "0.3.20")]
+    [InlineData(@"E:\wheels\llama_cpp_python-0.3.20-cp312-cp312-win_amd64.whl", "0.3.20")]
+    [InlineData("https://example/not-a-wheel.zip", null)]
+    [InlineData("", null)]
+    public void WheelVersionFromUrl_ReadsTheVersionSegment(string url, string? expected)
+    {
+        WorkloadInstallService.WheelVersionFromUrl(url).Should().Be(expected);
+    }
 }

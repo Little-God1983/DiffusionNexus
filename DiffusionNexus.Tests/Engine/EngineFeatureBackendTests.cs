@@ -17,7 +17,6 @@ public class EngineFeatureBackendTests
     private readonly Mock<ICatalog> _catalog = new();
     private readonly Mock<IConfigurationCheckerService> _checker = new();
     private bool _looksInstalled = true;
-    private bool _folderModelComplete = true;
 
     public EngineFeatureBackendTests()
     {
@@ -29,8 +28,7 @@ public class EngineFeatureBackendTests
     }
 
     private EngineFeatureBackend Sut() =>
-        new(_root.Object, _catalog.Object, _checker.Object, unifiedLogger: null, looksInstalled: _ => _looksInstalled,
-            folderModelComplete: (_, _) => _folderModelComplete);
+        new(_root.Object, _catalog.Object, _checker.Object, unifiedLogger: null, looksInstalled: _ => _looksInstalled);
 
     private void CheckReturns(params (string Name, bool Installed, bool IsNode)[] items) =>
         _checker.Setup(c => c.CheckConfigurationAsync(It.IsAny<InstallationConfiguration>(), Root,
@@ -91,36 +89,44 @@ public class EngineFeatureBackendTests
     }
 
     [Fact]
-    public async Task OutpaintVision_ChecksTheOutpaintingWorkload_AndTheQwen3VLFolder()
-    {
-        CheckReturns(("ComfyUI_Qwen3-VL-Instruct", true, true), ("Qwen 3 VL", true, false));
-        _folderModelComplete = false;
-
-        var result = await Sut().CheckFeatureAsync(Feature.OutpaintVision);
-
-        result.IsReady.Should().BeFalse();
-        result.MissingRequirements.Should().Equal("Model missing on the Engine: Qwen3-VL-4B-Instruct-FP8");
-        _catalog.Verify(c => c.GetWorkloadAsync(EngineFeatureCatalog.OutpaintingQwen2512, It.IsAny<CancellationToken>()));
-    }
-
-    [Fact]
-    public async Task OutpaintVision_WithEverythingPresent_IsReady()
-    {
-        CheckReturns(("ComfyUI_Qwen3-VL-Instruct", true, true), ("Qwen 3 VL", true, false));
-
-        var result = await Sut().CheckFeatureAsync(Feature.OutpaintVision);
-
-        result.IsReady.Should().BeTrue();
-    }
-
-    [Fact]
-    public async Task NoFeatureRow_IsNotOfferedOnTheEngineYet()
+    public async Task BatchUpscale_IsNotOfferedOnTheEngineYet()
     {
         var result = await Sut().CheckFeatureAsync(Feature.BatchUpscale);
 
         result.IsReady.Should().BeFalse();
         result.MissingRequirements.Should().Equal("BatchUpscale is not available on the Diffusion Nexus Engine yet");
         _checker.VerifyNoOtherCalls();
+    }
+
+    // #607: the Qwen3-VL GGUF node takes its model files as paths, so readiness reports where it found them.
+    [Fact]
+    public async Task OutpaintVision_ReportsWhereEachPresentModelWas()
+    {
+        _checker.Setup(c => c.CheckConfigurationAsync(It.IsAny<InstallationConfiguration>(), Root,
+                It.IsAny<ConfigurationCheckOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ConfigurationCheckResult
+            {
+                OverallStatus = ConfigurationStatus.Full, CustomNodesStatus = ConfigurationStatus.Full,
+                ModelsStatus = ConfigurationStatus.Full, InstallationType = ComfyUIInstallationType.Manual,
+                CustomNodeResults = [],
+                ModelResults =
+                [
+                    new ModelCheckResult { Id = Guid.NewGuid(), Name = "Qwen3-VL-8B-Abliterated-Caption-it", IsInstalled = true,
+                        FoundAtPath = @"D:\Models\Captioning\Qwen3-VL-8B-Abliterated-Caption-it.Q6_K.gguf", SearchedPaths = [] },
+                    new ModelCheckResult { Id = Guid.NewGuid(), Name = "Qwen3-VL-8B-Abliterated-Caption-it mmproj", IsInstalled = true,
+                        FoundAtPath = @"D:\Models\Captioning\Qwen3-VL-8B-Abliterated-Caption-it.mmproj-f16.gguf", SearchedPaths = [] },
+                    new ModelCheckResult { Id = Guid.NewGuid(), Name = "missing", IsInstalled = false, SearchedPaths = [] },
+                ]
+            });
+
+        var result = await Sut().CheckFeatureAsync(Feature.OutpaintVision);
+
+        result.IsReady.Should().BeFalse();
+        result.ModelPaths.Should().BeEquivalentTo(new Dictionary<string, string>
+        {
+            ["Qwen3-VL-8B-Abliterated-Caption-it"] = @"D:\Models\Captioning\Qwen3-VL-8B-Abliterated-Caption-it.Q6_K.gguf",
+            ["Qwen3-VL-8B-Abliterated-Caption-it mmproj"] = @"D:\Models\Captioning\Qwen3-VL-8B-Abliterated-Caption-it.mmproj-f16.gguf",
+        });
     }
 
     // #606 code review 3 (H6): a throw used to reach FeatureReadinessViewModel's catch, which drops

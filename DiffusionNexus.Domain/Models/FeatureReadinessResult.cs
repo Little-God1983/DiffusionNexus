@@ -42,6 +42,12 @@ public sealed record FeatureReadinessResult
     /// <summary>Optional endpoint identifier (e.g. ComfyUI server URL). Useful for error messages.</summary>
     public string? Endpoint { get; init; }
 
+    /// <summary>
+    /// Where the backend found each present model, by catalog model name. Empty when the backend does
+    /// not check files (offline, not installed). The Qwen3-VL GGUF node takes file paths (#607).
+    /// </summary>
+    public IReadOnlyDictionary<string, string> ModelPaths { get; init; } = new Dictionary<string, string>();
+
     /// <summary>Creates a result representing a backend that is completely unreachable.</summary>
     public static FeatureReadinessResult BackendOffline(
         Enums.Feature feature,

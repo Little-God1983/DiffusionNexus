@@ -65,6 +65,18 @@ public interface IWorkloadInstallService
     /// <param name="progress">Reports per-item progress.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Summary message.</returns>
+    /// <summary>
+    /// Installs a prebuilt llama-cpp-python wheel into the install's venv, unless that exact version
+    /// is there already. Node packs that run GGUF models (Outpaint Vision's Qwen3-VL node, #607) list
+    /// llama-cpp-python in their requirements, and without a wheel pip would try to compile it from
+    /// source. Returns true when the wheel is in place afterwards.
+    /// </summary>
+    Task<bool> InstallLlamaCppWheelAsync(
+        string comfyUIRootPath,
+        string wheelUrl,
+        IProgress<WorkloadInstallProgress>? progress = null,
+        CancellationToken cancellationToken = default);
+
     Task<string> RepairPipDependenciesAsync(
         InstallationConfiguration configuration,
         string comfyUIRootPath,

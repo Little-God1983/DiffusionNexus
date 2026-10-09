@@ -49,7 +49,11 @@ public partial class OutpaintingViewModel : ObservableObject
     private const string UnetLoaderNodeId = "15";
     private const string ImagePadNodeId = "26";
     private const string ImageScaleNodeId = "17";
-    private const string VisionQwen3VqaNodeId = "256";
+    private const string VisionNodeId = "256";
+
+    /// <summary>Catalog names of the Vision model files; the readiness check reports where they are.</summary>
+    internal const string VisionModelName = "Qwen3-VL-8B-Abliterated-Caption-it";
+    internal const string VisionProjectorName = "Qwen3-VL-8B-Abliterated-Caption-it mmproj";
     private const string UnetLoaderGGUFNodeType = "UnetLoaderGGUF";
     private const string QwenImageGGUFPrefix = "qwen-image-2512-";
     private const string DefaultQwenImageGGUF = "qwen-image-2512-Q8_0.gguf";
@@ -273,6 +277,22 @@ public partial class OutpaintingViewModel : ObservableObject
     }
 
     /// <summary>Same as <see cref="EmitInfo"/> for the generate path, which logs under General (spec §4.5).</summary>
+    /// <summary>
+    /// The Qwen3-VL GGUF node's config: model and projector paths, a bounded answer (a looping
+    /// description once ran to 2048 tokens and became the prompt), low temperature.
+    /// </summary>
+    internal static string BuildVisionConfig(string modelPath, string projectorPath) =>
+        System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["model_path"] = modelPath,
+            ["mmproj_path"] = projectorPath,
+            ["chat_handler"] = "qwen3",
+            ["ctx"] = 8192,
+            ["output_max_tokens"] = 400,
+            ["temperature"] = 0.3,
+            ["repeat_penalty"] = 1.1,
+        });
+
     private void EmitGenerate(string message)
     {
         Logger.Information("Outpaint: {Message}", message);
@@ -821,12 +841,34 @@ public partial class OutpaintingViewModel : ObservableObject
             };
 
             // Only override the positive prompt for nonVision; the Vision workflow
-            // wires positive prompt to the Qwen3_VQA node output.
+            // wires the positive prompt to the Qwen3-VL node's output.
             if (!useVision)
             {
                 overrides[PositivePromptNodeId] = node =>
                 {
                     node["inputs"]!["text"] = _positivePrompt;
+                };
+            }
+            else
+            {
+                // The GGUF node takes the model files as paths; the readiness check found them.
+                if (!VisionReadiness.ModelPaths.TryGetValue(VisionModelName, out var modelPath)
+                    || !VisionReadiness.ModelPaths.TryGetValue(VisionProjectorName, out var projectorPath))
+                {
+                    HasError = true;
+                    ProgressDisplayText = "Qwen3-VL model files not found";
+                    StatusMessageChanged?.Invoke(this, lease.Mode == ComfyUiServerMode.Engine
+                        ? "The Qwen3-VL GGUF model was not found. Install Outpaint Vision in Installation Manager → Diffusion Nexus Engine → Features."
+                        : "The Qwen3-VL GGUF model was not found in your ComfyUI. Open Installer Manager → Outpainting-Qwen 2512 to install it.");
+                    return;
+                }
+
+                var visionConfig = BuildVisionConfig(modelPath, projectorPath);
+                EmitGenerate($"Vision model: {modelPath}");
+                overrides[VisionNodeId] = node =>
+                {
+                    node["inputs"]!["seed"] = seed;
+                    node["inputs"]!["config_override"] = visionConfig;
                 };
             }
 
@@ -835,7 +877,7 @@ public partial class OutpaintingViewModel : ObservableObject
 
             Status = "Generating (this may take a while)...";
             // ComfyUI reports the Qwen3-VL step only as "Executing node 256…"; name it.
-            var visionNodeStatus = $"Executing node {VisionQwen3VqaNodeId}...";
+            var visionNodeStatus = $"Executing node {VisionNodeId}...";
             var progress = new Progress<string>(msg => Status =
                 useVision && msg == visionNodeStatus ? "Describing the surroundings with Qwen3-VL..." : msg);
             await comfy.WaitForCompletionAsync(promptId, progress);

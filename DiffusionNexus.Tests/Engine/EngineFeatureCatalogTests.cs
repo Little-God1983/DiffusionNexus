@@ -19,15 +19,6 @@ public class EngineFeatureCatalogTests
     }
 
     [Fact]
-    public void OutpaintVision_BringsTheQwen3VLFolderModel_OtherRowsNone()
-    {
-        EngineFeatureCatalog.Get(EngineFeature.OutpaintVision).FolderModels
-            .Should().Equal(EngineFolderModels.Qwen3VL4BInstructFp8);
-        EngineFeatureCatalog.Get(EngineFeature.InpaintOutpaint).FolderModels.Should().BeEmpty();
-        EngineFeatureCatalog.Get(EngineFeature.Canvas).FolderModels.Should().BeEmpty();
-    }
-
-    [Fact]
     public void Rows_AreListedInDisplayOrder_WithTheirLabels()
     {
         EngineFeatureCatalog.All.Select(r => r.DisplayName)

@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Installer.SDK.Catalog;
+using DiffusionNexus.Installer.SDK.Models.Configuration;
 using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.ConfigurationChecker;
@@ -28,8 +29,6 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
     private readonly IUnifiedLogger? _unifiedLogger;
     private readonly EngineFeature? _preselect;
     private readonly Func<string, long?> _freeSpaceProbe;
-    private readonly IEngineFolderModelDownloader? _folderModelDownloader;
-    private readonly Func<string, EngineFolderModel, bool> _folderModelComplete;
     private CancellationTokenSource? _installCts;
 
     public EngineFeaturesViewModel(
@@ -40,9 +39,7 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
         IResourceMonitorService? resourceMonitor = null,
         IUnifiedLogger? unifiedLogger = null,
         EngineFeature? preselect = null,
-        Func<string, long?>? freeSpaceProbe = null,
-        IEngineFolderModelDownloader? folderModelDownloader = null,
-        Func<string, EngineFolderModel, bool>? folderModelComplete = null)
+        Func<string, long?>? freeSpaceProbe = null)
     {
         ArgumentNullException.ThrowIfNull(catalog);
         ArgumentNullException.ThrowIfNull(checker);
@@ -56,8 +53,6 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
         _unifiedLogger = unifiedLogger;
         _preselect = preselect;
         _freeSpaceProbe = freeSpaceProbe ?? ProbeFreeSpace;
-        _folderModelDownloader = folderModelDownloader;
-        _folderModelComplete = folderModelComplete ?? ((root, model) => model.IsComplete(root));
 
         foreach (var definition in EngineFeatureCatalog.All)
         {
@@ -162,6 +157,8 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
                     DidInstall = true;
                     if (nodes.Count > 0)
                         DidInstallNodePacks = true;
+                    if (nodes.Count > 0 && config.SelectedLamaCppWheelId is not null)
+                        await InstallLlamaCppWheelAsync(row, config, ct);
                     var summary = await _installer.InstallSelectedAsync(
                         config, _engineRoot, nodes, models, vramGb,
                         new Progress<WorkloadInstallProgress>(p =>
@@ -180,13 +177,6 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
 
                     Info($"{row.DisplayName}: {summary}");
                     summaries.Add($"{row.DisplayName}: {summary.TrimEnd('.')}");
-                }
-
-                foreach (var model in row.Definition.FolderModels)
-                {
-                    if (_folderModelComplete(_engineRoot, model))
-                        continue;
-                    summaries.Add($"{row.DisplayName}: {await DownloadFolderModelAsync(row, model, ct)}");
                 }
             }
 
@@ -232,34 +222,43 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
     [RelayCommand]
     private void CancelInstall() => _installCts?.Cancel();
 
-    /// <summary>Downloads one folder model and returns its summary line.</summary>
-    private async Task<string> DownloadFolderModelAsync(EngineFeatureRowViewModel row, EngineFolderModel model, CancellationToken ct)
+    /// <summary>
+    /// A workload whose node packs run GGUF models (Outpaint Vision's Qwen3-VL node) gets the prebuilt
+    /// llama-cpp-python wheel first, so pip finds the node's requirement satisfied instead of compiling
+    /// it from source. The wheel is picked for the Engine's own CUDA and Python (the torch it was
+    /// installed with, <see cref="EngineFeatureCatalog.Krea2Turbo"/>), not the workload's declared ones.
+    /// </summary>
+    private async Task InstallLlamaCppWheelAsync(EngineFeatureRowViewModel row, InstallationConfiguration config, CancellationToken ct)
     {
-        if (_folderModelDownloader is null)
+        var engine = await _catalog.GetWorkloadAsync(EngineFeatureCatalog.Krea2Turbo, ct);
+        var cuda = engine?.Torch.CudaVersion ?? config.Torch.CudaVersion;
+        var python = engine?.Python.PythonVersion ?? config.Python.PythonVersion;
+        var wheel = PickLlamaCppWheel(await _catalog.GetLamaCppWheelsAsync(ct), cuda, python);
+        if (wheel is null)
         {
-            var unavailable = $"{model.Name}: no downloader available";
-            Warn($"{row.DisplayName}: {unavailable}");
-            return unavailable;
+            Warn($"{row.DisplayName}: the catalog has no llama-cpp-python wheel for CUDA {cuda} / Python {python}; " +
+                 "pip may try to build it from source, which usually fails on Windows.");
+            return;
         }
 
-        ProgressText = $"{row.DisplayName}: downloading {model.Name} ({model.TotalSize / 1_000_000_000d:0.0} GB)…";
+        ProgressText = $"{row.DisplayName}: installing llama-cpp-python {WorkloadInstallService.WheelVersionFromUrl(wheel.Url)} ({wheel.Name})…";
         Info(ProgressText);
-        DidInstall = true;
-        var result = await _folderModelDownloader.DownloadAsync(_engineRoot, model,
-            new Progress<DownloadProgress>(d =>
+        var ok = await _installer.InstallLlamaCppWheelAsync(_engineRoot, wheel.Url,
+            new Progress<WorkloadInstallProgress>(p =>
             {
-                if (d.IsActive && !d.IsComplete)
-                    ProgressText = $"{row.DisplayName}: downloading {d.FileName} {d.DownloadedSizeText} / {d.TotalSizeText} {d.SpeedText}";
-            }),
-            ct);
-
-        var text = result.Succeeded
-            ? $"{model.Name} downloaded ({result.Downloaded} file(s))"
-            : $"{model.Name}: {result.Failures.Count} file(s) failed";
-        if (result.Succeeded) Info($"{row.DisplayName}: {text}");
-        else Warn($"{row.DisplayName}: {text} — {string.Join("; ", result.Failures)}");
-        return text;
+                ProgressText = $"{row.DisplayName}: {p.Message}";
+                if (p.IsFailed) Warn(ProgressText);
+                else Info(ProgressText);
+            }), ct);
+        if (!ok)
+            Warn($"{row.DisplayName}: llama-cpp-python was not installed; the Qwen3-VL node will not load.");
     }
+
+    /// <summary>The GPU wheel built for exactly this CUDA and Python, or null: a wheel for another CUDA loads but runs on the CPU.</summary>
+    internal static LamaCppWheel? PickLlamaCppWheel(IReadOnlyList<LamaCppWheel> wheels, string cudaVersion, string pythonVersion) =>
+        wheels.FirstOrDefault(w => w.IsGPU
+            && string.Equals(w.CudaVersion, cudaVersion, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(w.PythonVersion, pythonVersion, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// The installer reports failed items in its summary rather than throwing, so "Done." is only
@@ -287,7 +286,6 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
         foreach (var row in Rows)
         {
             row.Checks.Clear();
-            row.FolderModelChecks.Clear();
             try
             {
                 foreach (var workloadId in row.Definition.WorkloadIds)
@@ -297,9 +295,6 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
                         throw new InvalidOperationException($"Workload {workloadId} is missing from the catalog.");
                     row.Checks.Add((config, await _checker.CheckConfigurationAsync(config, _engineRoot, options: null, ct)));
                 }
-
-                foreach (var model in row.Definition.FolderModels)
-                    row.FolderModelChecks.Add((model, _folderModelComplete(_engineRoot, model)));
 
                 row.ApplyChecks();
             }

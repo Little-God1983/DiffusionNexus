@@ -143,7 +143,9 @@ public class EditorEngineGenerateTests
             InpaintingViewModelGGUFResolutionTests.Provider(ClientWhoseNodeFails(), ComfyUiServerMode.Engine));
         vm.StatusMessageChanged += (_, m) => messages.Add(m);
 
-        await vm.ProcessOutpaintAsync(TempImage(), useVision: true, 64, 0, 64, 0);
+        vm.PositivePrompt = "a beach";
+
+        await vm.ProcessOutpaintAsync(TempImage(), useVision: false, 64, 0, 64, 0);
 
         vm.HasError.Should().BeTrue();
         vm.ProgressDisplayText.Should().Be("Failed in the ComfyUI node Qwen3_VQA – see the Unified Console");

@@ -545,6 +545,90 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
     /// Runs a single pip install command and reports progress.
     /// </summary>
     /// <returns>A tuple of (success, stderr output).</returns>
+    /// <inheritdoc />
+    public async Task<bool> InstallLlamaCppWheelAsync(
+        string comfyUIRootPath,
+        string wheelUrl,
+        IProgress<WorkloadInstallProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(comfyUIRootPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(wheelUrl);
+        const string name = "llama-cpp-python";
+
+        var installationType = ConfigurationCheckerService.DetectInstallationType(comfyUIRootPath);
+        var repositoryPath = ConfigurationCheckerService.GetRepositoryPath(comfyUIRootPath, installationType);
+        var pythonExe = ResolvePythonExecutable(comfyUIRootPath, repositoryPath, installationType);
+        if (pythonExe is null)
+        {
+            Logger.Warning("Could not find Python executable for {Root} - llama-cpp-python will not be installed", comfyUIRootPath);
+            progress?.Report(new WorkloadInstallProgress { ItemName = name, Message = "Python not found - llama-cpp-python was not installed", IsFailed = true });
+            return false;
+        }
+
+        var wanted = WheelVersionFromUrl(wheelUrl);
+        var installed = await ReadModuleVersionAsync(pythonExe, "llama_cpp", repositoryPath, cancellationToken);
+        if (wanted is not null && string.Equals(installed, wanted, StringComparison.OrdinalIgnoreCase))
+        {
+            Logger.Information("llama-cpp-python {Version} is already installed in {Root}", wanted, comfyUIRootPath);
+            progress?.Report(new WorkloadInstallProgress { ItemName = name, Message = $"llama-cpp-python {wanted} is already installed", IsSuccess = true });
+            return true;
+        }
+
+        progress?.Report(new WorkloadInstallProgress
+        {
+            ItemName = name,
+            Message = installed is null
+                ? $"Installing llama-cpp-python {wanted ?? "(wheel)"}..."
+                : $"Replacing llama-cpp-python {installed} with {wanted ?? "(wheel)"}..."
+        });
+        var (success, _) = await RunPipInstallAsync(
+            pythonExe, repositoryPath, $"-m pip install \"{wheelUrl}\"", name,
+            $"llama-cpp-python {wanted ?? ""}".TrimEnd(), progress, cancellationToken);
+        return success;
+    }
+
+    /// <summary>The version in a wheel file name: <c>llama_cpp_python-0.4.2+cu130-cp312-...whl</c> → <c>0.4.2+cu130</c>.</summary>
+    internal static string? WheelVersionFromUrl(string wheelUrl)
+    {
+        if (string.IsNullOrWhiteSpace(wheelUrl)) return null;
+        var file = wheelUrl.Split('/', '\\').LastOrDefault() ?? "";
+        if (!file.EndsWith(".whl", StringComparison.OrdinalIgnoreCase)) return null;
+        var parts = file[..^4].Split('-');
+        return parts.Length >= 2 && parts[1].Length > 0 ? parts[1] : null;
+    }
+
+    /// <summary>The <c>__version__</c> of an importable module in the venv, or null when it is not importable.</summary>
+    private static async Task<string?> ReadModuleVersionAsync(string pythonExe, string module, string workingDirectory, CancellationToken ct)
+    {
+        try
+        {
+            using var process = new Process();
+            process.StartInfo = new ProcessStartInfo
+            {
+                FileName = pythonExe,
+                Arguments = $"-c \"import {module}; print({module}.__version__)\"",
+                WorkingDirectory = workingDirectory,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            process.Start();
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+            var stderrTask = process.StandardError.ReadToEndAsync(ct);
+            await process.WaitForExitAsync(ct);
+            var stdout = (await stdoutTask).Trim();
+            await stderrTask;
+            return process.ExitCode == 0 && stdout.Length > 0 ? stdout : null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.Debug(ex, "Could not read the version of {Module}", module);
+            return null;
+        }
+    }
+
     private static async Task<(bool Success, string StdErr)> RunPipInstallAsync(
         string pythonExe,
         string workingDirectory,
