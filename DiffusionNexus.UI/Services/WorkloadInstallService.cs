@@ -598,6 +598,24 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
         return parts.Length >= 2 && parts[1].Length > 0 ? parts[1] : null;
     }
 
+    private const string VersionMarker = "DN_VERSION=";
+
+    /// <summary>The version after <see cref="VersionMarker"/> in a probe's output, ignoring whatever else the import printed.</summary>
+    internal static string? ParseMarkedVersion(string? stdout)
+    {
+        if (string.IsNullOrEmpty(stdout)) return null;
+        foreach (var line in stdout.Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.StartsWith(VersionMarker, StringComparison.Ordinal))
+            {
+                var version = trimmed[VersionMarker.Length..].Trim();
+                return version.Length > 0 ? version : null;
+            }
+        }
+        return null;
+    }
+
     /// <summary>The <c>__version__</c> of an importable module in the venv, or null when it is not importable.</summary>
     private static async Task<string?> ReadModuleVersionAsync(string pythonExe, string module, string workingDirectory, CancellationToken ct)
     {
@@ -607,7 +625,9 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
             process.StartInfo = new ProcessStartInfo
             {
                 FileName = pythonExe,
-                Arguments = $"-c \"import {module}; print({module}.__version__)\"",
+                // The module may print start-up lines of its own (llama_cpp logs the DLLs it loads), so
+                // the version is marked and read from the marked line only.
+                Arguments = $"-c \"import {module}; print('{VersionMarker}' + {module}.__version__)\"",
                 WorkingDirectory = workingDirectory,
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -618,9 +638,9 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
             var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
             var stderrTask = process.StandardError.ReadToEndAsync(ct);
             await process.WaitForExitAsync(ct);
-            var stdout = (await stdoutTask).Trim();
+            var stdout = await stdoutTask;
             await stderrTask;
-            return process.ExitCode == 0 && stdout.Length > 0 ? stdout : null;
+            return process.ExitCode == 0 ? ParseMarkedVersion(stdout) : null;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

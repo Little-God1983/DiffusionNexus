@@ -418,4 +418,30 @@ public class EngineFeaturesViewModelTests
         EngineFeaturesViewModel.PickLlamaCppWheel([Cu128, Cu130], "12.4", "3.12").Should().BeNull("another CUDA's wheel loads but runs on the CPU");
         EngineFeaturesViewModel.PickLlamaCppWheel([Cu130], "13.0", "3.13").Should().BeNull();
     }
+
+    // Smoke 2: "Done. …" was replaced 3 ms later by the last node pack's own progress line.
+    [Fact]
+    public async Task ProgressThatArrivesAfterTheInstallReturned_DoesNotOverwriteTheOutcome()
+    {
+        _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(1, 0, 5, 0);
+        _state[EngineFeatureCatalog.Krea2Turbo] = Result(0, 2, 0, 3);
+        IProgress<WorkloadInstallProgress>? captured = null;
+        _installer.Setup(i => i.InstallSelectedAsync(It.IsAny<InstallationConfiguration>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
+                It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
+                It.IsAny<Func<CancellationToken>?>(), It.IsAny<CancellationToken>()))
+            .Callback((InstallationConfiguration _, string _, IReadOnlyList<CustomNodeCheckResult> _, IReadOnlyList<ModelCheckResult> _,
+                int _, IProgress<WorkloadInstallProgress>? p, IProgress<DownloadProgress>? _, Func<CancellationToken>? _, CancellationToken _) =>
+            { captured = p; _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(0, 1, 0, 5); })
+            .ReturnsAsync("1 node(s) installed, 5 model(s) downloaded");
+        var vm = Sut(EngineFeature.InpaintOutpaint);
+        await vm.LoadCommand.ExecuteAsync(null);
+        await vm.InstallSelectedCommand.ExecuteAsync(null);
+        vm.ProgressText.Should().StartWith("Done.");
+
+        captured!.Report(new WorkloadInstallProgress { ItemName = "ComfyUI-GGUF", Message = "Installed ComfyUI-GGUF", IsSuccess = true });
+        await Task.Delay(100); // Progress<T> posts the report; give it time to land
+
+        vm.ProgressText.Should().StartWith("Done.");
+    }
 }

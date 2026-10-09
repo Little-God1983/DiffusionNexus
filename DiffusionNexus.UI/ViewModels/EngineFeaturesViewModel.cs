@@ -30,6 +30,7 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
     private readonly EngineFeature? _preselect;
     private readonly Func<string, long?> _freeSpaceProbe;
     private CancellationTokenSource? _installCts;
+    private bool _acceptProgress;
 
     public EngineFeaturesViewModel(
         ICatalog catalog,
@@ -123,6 +124,7 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
     private async Task InstallSelectedAsync()
     {
         IsInstalling = true;
+        _acceptProgress = true;
         _installCts = new CancellationTokenSource();
         var ct = _installCts.Token;
         var rows = RowsToInstall.ToList();
@@ -163,12 +165,14 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
                         config, _engineRoot, nodes, models, vramGb,
                         new Progress<WorkloadInstallProgress>(p =>
                         {
+                            if (!_acceptProgress) return;
                             ProgressText = $"{row.DisplayName}: {p.ItemName} — {p.Message}";
                             if (p.IsFailed) Warn(ProgressText);
                             else Info(ProgressText);
                         }),
                         new Progress<DownloadProgress>(d =>
                         {
+                            if (!_acceptProgress) return;
                             if (d.IsActive && !d.IsComplete)
                                 ProgressText = $"{row.DisplayName}: downloading {d.FileName} {d.DownloadedSizeText} / {d.TotalSizeText} {d.SpeedText}";
                         }),
@@ -195,6 +199,9 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
         }
         finally
         {
+            // Progress<T> posts to the UI thread; a report the installer sent just before returning can
+            // arrive after the outcome is written and replace "Done." with the last item's line.
+            _acceptProgress = false;
             try
             {
                 await CheckAllAsync(CancellationToken.None);
@@ -246,6 +253,7 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
         var ok = await _installer.InstallLlamaCppWheelAsync(_engineRoot, wheel.Url,
             new Progress<WorkloadInstallProgress>(p =>
             {
+                if (!_acceptProgress) return;
                 ProgressText = $"{row.DisplayName}: {p.Message}";
                 if (p.IsFailed) Warn(ProgressText);
                 else Info(ProgressText);

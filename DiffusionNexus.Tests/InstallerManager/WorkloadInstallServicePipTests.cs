@@ -258,4 +258,15 @@ public class WorkloadInstallServicePipTests
     {
         WorkloadInstallService.WheelVersionFromUrl(url).Should().Be(expected);
     }
+
+    [Theory]
+    [InlineData("DN_VERSION=0.4.2+cu130\n", "0.4.2+cu130")]
+    [InlineData("[llama-cpp-python] loaded bundled OpenMP runtime: C:\\x\\libomp.dll\r\n[llama-cpp-python].find_library: loaded ggml.dll\r\nDN_VERSION=0.4.2+cu130\r\n", "0.4.2+cu130")]
+    [InlineData("0.4.2+cu130\n", null)]
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    public void ParseMarkedVersion_IgnoresTheModulesOwnOutput(string? stdout, string? expected)
+    {
+        WorkloadInstallService.ParseMarkedVersion(stdout).Should().Be(expected);
+    }
 }

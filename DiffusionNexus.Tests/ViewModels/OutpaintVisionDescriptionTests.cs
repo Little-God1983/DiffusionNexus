@@ -145,6 +145,7 @@ public class OutpaintVisionDescriptionTests
         config["model_path"]!.GetValue<string>().Should().Be(@"D:\Models\Captioning\Qwen3-VL-8B-Abliterated-Caption-it.Q6_K.gguf");
         config["mmproj_path"]!.GetValue<string>().Should().Be(@"D:\Models\Captioning\Qwen3-VL-8B-Abliterated-Caption-it.mmproj-f16.gguf");
         config["output_max_tokens"]!.GetValue<int>().Should().Be(400, "a looping description must not run to the node's 2048 default");
+        node["inputs"]!["seed"]!.GetValue<long>().Should().BeInRange(0, uint.MaxValue, "the GGUF node's seed input is 32-bit");
         overrides()!.Should().NotContainKey("5", "the Vision workflow wires the prompt from the node");
     }
 

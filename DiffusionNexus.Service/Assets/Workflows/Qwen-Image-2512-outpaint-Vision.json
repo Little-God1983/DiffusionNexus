@@ -268,10 +268,11 @@
       "unload_all_models": false,
       "mode": "direct_clean",
       "image": [
-        "16",
+        "260",
         0
       ],
-      "config_override": ""
+      "config_override": "",
+      "bypass": false
     },
     "class_type": "SimpleQwenVLggufV2",
     "_meta": {
@@ -342,6 +343,20 @@
     "class_type": "ImageBlur",
     "_meta": {
       "title": "Image Blur"
+    }
+  },
+  "260": {
+    "inputs": {
+      "upscale_method": "area",
+      "largest_size": 1280,
+      "image": [
+        "16",
+        0
+      ]
+    },
+    "class_type": "ImageScaleToMaxDimension",
+    "_meta": {
+      "title": "Image for the description (1280 px)"
     }
   }
 }

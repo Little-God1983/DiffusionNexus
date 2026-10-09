@@ -867,7 +867,8 @@ public partial class OutpaintingViewModel : ObservableObject
                 EmitGenerate($"Vision model: {modelPath}");
                 overrides[VisionNodeId] = node =>
                 {
-                    node["inputs"]!["seed"] = seed;
+                    // The GGUF node's seed input tops out at 0xFFFFFFFF; the KSampler's 63-bit seed is rejected.
+                    node["inputs"]!["seed"] = seed & 0xFFFFFFFFL;
                     node["inputs"]!["config_override"] = visionConfig;
                 };
             }
