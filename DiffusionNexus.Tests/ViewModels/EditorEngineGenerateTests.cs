@@ -119,6 +119,51 @@ public class EditorEngineGenerateTests
         vm.ProgressDisplayText.Should().Be("Generation failed – is the Diffusion Nexus Engine running?");
     }
 
+    // #607 smoke: a node failing inside ComfyUI was reported as "is the Diffusion Nexus Engine
+    // running?" although the Engine was running; the panel now names the node.
+    private static IComfyUIWrapperService ClientWhoseNodeFails()
+    {
+        var client = new Mock<IComfyUIWrapperService>();
+        client.Setup(c => c.UploadImageAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync("up.png");
+        client.Setup(c => c.GetNodeInputOptionsAsync("UnetLoaderGGUF", "unet_name", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<string> { "qwen-image-2512-Q8_0.gguf" });
+        client.Setup(c => c.QueueWorkflowAsync(It.IsAny<string>(),
+                It.IsAny<Dictionary<string, Action<System.Text.Json.Nodes.JsonNode>>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("p1");
+        client.Setup(c => c.WaitForCompletionAsync("p1", It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ComfyUIExecutionException("Qwen3_VQA", "kernel trust check failed"));
+        return client.Object;
+    }
+
+    [Fact]
+    public async Task Outpaint_NodeFailure_NamesTheNode_NotTheEngine()
+    {
+        var messages = new List<string?>();
+        var vm = new OutpaintingViewModel(() => true, () => 512, () => 512, _ => { },
+            InpaintingViewModelGGUFResolutionTests.Provider(ClientWhoseNodeFails(), ComfyUiServerMode.Engine));
+        vm.StatusMessageChanged += (_, m) => messages.Add(m);
+
+        await vm.ProcessOutpaintAsync(TempImage(), useVision: true, 64, 0, 64, 0);
+
+        vm.HasError.Should().BeTrue();
+        vm.ProgressDisplayText.Should().Be("Failed in the ComfyUI node Qwen3_VQA – see the Unified Console");
+        messages.Should().Contain("Outpainting failed in the ComfyUI node Qwen3_VQA: kernel trust check failed");
+    }
+
+    [Fact]
+    public async Task Inpaint_NodeFailure_NamesTheNode_NotTheEngine()
+    {
+        var messages = new List<string?>();
+        var vm = new InpaintingViewModel(() => true, _ => { },
+            InpaintingViewModelGGUFResolutionTests.Provider(ClientWhoseNodeFails(), ComfyUiServerMode.Engine), eventAggregator: null);
+        vm.StatusMessageChanged += (_, m) => messages.Add(m);
+
+        await vm.ProcessInpaintAsync(TempImage());
+
+        vm.ProgressDisplayText.Should().Be("Failed in the ComfyUI node Qwen3_VQA – see the Unified Console");
+        messages.Should().Contain("Inpainting failed in the ComfyUI node Qwen3_VQA: kernel trust check failed");
+    }
+
     private const string EngineNoGguf =
         "No Qwen Image 2512 GGUF model found on the Diffusion Nexus Engine. " +
         "Install Inpaint & Outpaint in Installation Manager → Diffusion Nexus Engine → Features.";

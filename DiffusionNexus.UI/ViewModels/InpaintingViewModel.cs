@@ -591,6 +591,15 @@ public partial class InpaintingViewModel : ObservableObject
             StatusMessageChanged?.Invoke(this, ex.Message);
             _unifiedLogger?.Warn(LogCategory.General, LogSource, ex.Message);
         }
+        catch (ComfyUIExecutionException ex)
+        {
+            // The server ran the job and a node failed: name the node, not the server.
+            Logger.Error(ex, "Inpainting failed in node {NodeType}", ex.NodeType);
+            _unifiedLogger?.Error(LogCategory.General, LogSource, $"Inpainting failed in the ComfyUI node {ex.NodeType}: {ex.Detail}", ex);
+            HasError = true;
+            ProgressDisplayText = $"Failed in the ComfyUI node {ex.NodeType} – see the Unified Console";
+            StatusMessageChanged?.Invoke(this, $"Inpainting failed in the ComfyUI node {ex.NodeType}: {ex.Detail}");
+        }
         catch (OperationCanceledException)
         {
             StatusMessageChanged?.Invoke(this, "Inpainting was cancelled.");

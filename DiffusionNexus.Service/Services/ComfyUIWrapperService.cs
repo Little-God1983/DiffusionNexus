@@ -216,7 +216,7 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
                         "ComfyUI execution error in node {NodeType}: {Error}",
                         parsed.ErrorNodeType,
                         parsed.ErrorDetail);
-                    throw new InvalidOperationException(parsed.ExecutionErrorMessage);
+                    throw new ComfyUIExecutionException(parsed.ErrorNodeType ?? "unknown", parsed.ErrorDetail ?? "Unknown execution error");
 
                 case ComfyUIProgressAction.Completed:
                     Logger.Information("Workflow execution completed for prompt {PromptId}", promptId);

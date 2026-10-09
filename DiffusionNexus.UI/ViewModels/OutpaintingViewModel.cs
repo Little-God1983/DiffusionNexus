@@ -875,6 +875,15 @@ public partial class OutpaintingViewModel : ObservableObject
             StatusMessageChanged?.Invoke(this, ex.Message);
             _unifiedLogger?.Warn(LogCategory.General, LogSource, ex.Message);
         }
+        catch (ComfyUIExecutionException ex)
+        {
+            // The server ran the job and a node failed: name the node, not the server.
+            Logger.Error(ex, "Outpainting failed in node {NodeType}", ex.NodeType);
+            _unifiedLogger?.Error(LogCategory.General, LogSource, $"Outpainting failed in the ComfyUI node {ex.NodeType}: {ex.Detail}", ex);
+            HasError = true;
+            ProgressDisplayText = $"Failed in the ComfyUI node {ex.NodeType} – see the Unified Console";
+            StatusMessageChanged?.Invoke(this, $"Outpainting failed in the ComfyUI node {ex.NodeType}: {ex.Detail}");
+        }
         catch (OperationCanceledException)
         {
             StatusMessageChanged?.Invoke(this, "Outpainting was cancelled.");

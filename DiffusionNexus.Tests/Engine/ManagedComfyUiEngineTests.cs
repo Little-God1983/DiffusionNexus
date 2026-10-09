@@ -32,6 +32,19 @@ public class ManagedComfyUiEngineTests
             "the script path must be quoted so folders with spaces work");
     }
 
+    // #607 smoke: ComfyUI's main.py disables Hugging Face telemetry, and with that `kernels` 0.17.x
+    // builds an empty user-agent part; huggingface_hub turns it into a header ending in "; ", which
+    // httpx rejects, so the FP8 kernel's publisher trust check fails and Qwen3-VL (Outpaint Vision)
+    // cannot run. An origin is appended after that part, so the header no longer ends in whitespace.
+    [Fact]
+    public void EngineEnvironment_SetsAUserAgentOrigin_WithoutWhitespace()
+    {
+        ManagedComfyUiEngine.EngineEnvironment.Should().ContainKey("HF_HUB_USER_AGENT_ORIGIN");
+        var origin = ManagedComfyUiEngine.EngineEnvironment["HF_HUB_USER_AGENT_ORIGIN"];
+        origin.Should().NotBeNullOrWhiteSpace();
+        origin.Should().NotContainAny(" ", ";", "	");
+    }
+
     [Fact]
     public void ResolveVenvPython_FindsTheEngineVenvInterpreter()
     {
