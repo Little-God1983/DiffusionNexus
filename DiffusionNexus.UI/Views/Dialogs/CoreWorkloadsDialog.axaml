@@ -38,7 +38,7 @@
 
     <Grid Margin="16" RowDefinitions="Auto,*,Auto">
         <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto" Margin="0,0,0,8">
-            <TextBlock Grid.Column="0" Text="Diffusion Nexus Core" FontSize="18" FontWeight="Bold"
+            <TextBlock Grid.Column="0" Text="Legacy Engine Core (Deprecated)" FontSize="18" FontWeight="Bold"
                        Foreground="White" VerticalAlignment="Center"/>
             <TextBlock Grid.Column="2" Text="Download to:" Foreground="#AAAAAA"
                        VerticalAlignment="Center" Margin="16,0,8,0"

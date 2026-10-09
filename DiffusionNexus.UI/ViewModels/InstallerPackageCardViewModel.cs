@@ -291,7 +291,7 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
             throw new ArgumentException("Use the public constructor for database-backed packages.", nameof(forCore));
 
         Id = 0;
-        _name = "Diffusion Nexus Core";
+        _name = "Legacy Engine Core (Deprecated)";
         _type = InstallerType.DiffusionNexusCore;
         _installationPath = string.Empty;
         _executablePath = null;
