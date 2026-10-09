@@ -217,6 +217,28 @@ public sealed class AppSettingsService : IAppSettingsService
     }
 
     /// <inheritdoc />
+    public async Task<Domain.Enums.ComfyUiServerMode> GetComfyUiServerModeAsync(CancellationToken cancellationToken = default)
+    {
+        var mode = await _unitOfWork.AppSettings
+            .GetComfyUiServerModeAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        // No row yet: a fresh database, whose settings will default to the Engine.
+        return mode ?? Domain.Enums.ComfyUiServerMode.Engine;
+    }
+
+    /// <inheritdoc />
+    public async Task<Domain.Models.ComfyUiServerConnection> GetComfyUiServerConnectionAsync(CancellationToken cancellationToken = default)
+    {
+        var connection = await _unitOfWork.AppSettings
+            .GetComfyUiServerConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        // No row yet: a fresh database, whose settings will default to the Engine.
+        return connection ?? new Domain.Models.ComfyUiServerConnection(Domain.Enums.ComfyUiServerMode.Engine, null);
+    }
+
+    /// <inheritdoc />
     public async Task SaveSettingsAsync(AppSettings settings, CancellationToken cancellationToken = default)
     {
         settings.UpdatedAt = DateTimeOffset.UtcNow;
@@ -311,6 +333,7 @@ public sealed class AppSettingsService : IAppSettingsService
         // holds the true value; leaving it alone is the fix. Same rule as LastLibrarySyncAt, which
         // is absent from this whitelist for exactly the same reason.
         existingSettings.ComfyUiServerUrl = settings.ComfyUiServerUrl;
+        existingSettings.ComfyUiServerMode = settings.ComfyUiServerMode;
         existingSettings.LoraUpdateCheckStalenessDays = settings.LoraUpdateCheckStalenessDays;
         existingSettings.SyncNotIdentifiedRetryDays = settings.SyncNotIdentifiedRetryDays;
         existingSettings.SyncErrorRetryDays = settings.SyncErrorRetryDays;

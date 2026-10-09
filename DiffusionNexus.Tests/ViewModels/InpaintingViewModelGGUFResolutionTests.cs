@@ -1,3 +1,4 @@
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
@@ -16,12 +17,21 @@ public class InpaintingViewModelGGUFResolutionTests
     private readonly InpaintingViewModel _sut;
     private readonly List<string?> _statusMessages = [];
 
+    internal static IComfyUiClientProvider Provider(IComfyUIWrapperService client,
+        ComfyUiServerMode mode = ComfyUiServerMode.CustomUrl)
+    {
+        var provider = new Mock<IComfyUiClientProvider>();
+        provider.Setup(p => p.AcquireAsync(It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => new ComfyUiClientLease(client, mode, "http://test", ownsClient: false));
+        return provider.Object;
+    }
+
     public InpaintingViewModelGGUFResolutionTests()
     {
         _sut = new InpaintingViewModel(
             hasImage: () => true,
             deactivateOtherTools: _ => { },
-            comfyUiService: _comfyMock.Object,
+            comfyUiClientProvider: Provider(_comfyMock.Object),
             eventAggregator: null);
 
         _sut.PositivePrompt = "test prompt";

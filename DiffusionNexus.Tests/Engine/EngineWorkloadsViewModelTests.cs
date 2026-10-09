@@ -25,7 +25,7 @@ public class EngineWorkloadsViewModelTests
     {
         var configs = new List<InstallationConfiguration>
         {
-            Config(EngineWorkloadCatalog.Krea2Turbo, "Krea-2-Turbo"),
+            Config(EngineFeatureCatalog.Krea2Turbo, "Krea-2-Turbo"),
             Config(Guid.NewGuid(), "Some other workload")
         };
 
@@ -37,7 +37,7 @@ public class EngineWorkloadsViewModelTests
             new Mock<IConfigurationCheckerService>().Object,
             new Mock<IWorkloadInstallService>().Object,
             @"C:\Engine\ComfyUI",
-            allowedConfigurationIds: EngineWorkloadCatalog.WorkloadIds);
+            allowedConfigurationIds: [EngineFeatureCatalog.Krea2Turbo]);
 
         await vm.LoadWorkloadsCommand.ExecuteAsync(null);
 
@@ -51,7 +51,7 @@ public class EngineWorkloadsViewModelTests
     {
         var configs = new List<InstallationConfiguration>
         {
-            Config(EngineWorkloadCatalog.Krea2Turbo, "Krea-2-Turbo"),
+            Config(EngineFeatureCatalog.Krea2Turbo, "Krea-2-Turbo"),
             Config(Guid.NewGuid(), "Some other workload")
         };
 

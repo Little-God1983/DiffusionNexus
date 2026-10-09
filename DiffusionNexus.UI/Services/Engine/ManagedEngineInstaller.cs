@@ -75,6 +75,13 @@ public sealed class ManagedEngineInstaller : IManagedEngineInstaller
                 "The shipped catalog may be out of date.", null);
         }
 
+        // The SDK 2.x JSON catalog ships "rootDirectory": "" for every workload, and the SDK's
+        // InstallationEngine validates Paths.RootDirectory before doing anything. Every other
+        // caller (the legacy installers) sets it to the target folder it passes as the install
+        // root, so do the same. ICatalog hands out a clone, so this does not leak into the cache.
+        configuration.Paths.RootDirectory = request.InstallRoot;
+        LogAction($"Engine install root: {request.InstallRoot}", LogEntryLevel.Info);
+
         // The engine authors no torch settings of its own (see this class's doc comment) — log
         // what the base configuration actually resolved to so it's readable at runtime instead of
         // assumed from a comment that can go stale. Empty TorchVersion means "latest" (see

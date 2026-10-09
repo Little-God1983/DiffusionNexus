@@ -5,6 +5,7 @@ using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Installer.SDK.Catalog;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.Diffusion;
 using DiffusionNexus.UI.Services.ConfigurationChecker;
 using DiffusionNexus.UI.Services.Engine;
 using DiffusionNexus.UI.ViewModels;
@@ -26,7 +27,10 @@ internal static class EngineTestHarness
         Mock<IDialogService>? dialogMock = null,
         Mock<ICatalog>? catalogMock = null,
         Action<InstallerPackage>? onPackageUpdated = null,
-        Action<InstallerPackage>? onPackageRemoved = null)
+        Action<InstallerPackage>? onPackageRemoved = null,
+        Mock<IDatasetEventAggregator>? eventAggregatorMock = null,
+        IManagedComfyUiEngine? engine = null,
+        IReadOnlyList<string>? modelSearchRoots = null)
     {
         var repo = new Mock<IInstallerPackageRepository>();
         repo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>()))
@@ -64,11 +68,22 @@ internal static class EngineTestHarness
 
         return new InstallerManagerViewModel(
             dialog.Object, uow.Object, new PackageProcessManager(),
-            new Mock<IDatasetEventAggregator>().Object,
+            (eventAggregatorMock ?? new Mock<IDatasetEventAggregator>()).Object,
             (catalogMock ?? new Mock<ICatalog>()).Object,
             new Mock<IConfigurationCheckerService>().Object,
             new Mock<IWorkloadInstallService>().Object,
             [], new Mock<IUnifiedLogger>().Object,
-            engineInstaller: engineInstaller);
+            engineInstaller: engineInstaller,
+            engine: engine,
+            engineModelPaths: modelSearchRoots is null ? null : RealSynchronizer(uow.Object, modelSearchRoots));
+    }
+
+    // The synchronizer is sealed, so tests drive the real one: it writes extra_model_paths.yaml into
+    // the fake engine folder and reports Written = true only when the file's content changed.
+    private static EngineModelPathsSynchronizer RealSynchronizer(IUnitOfWork uow, IReadOnlyList<string> roots)
+    {
+        var catalog = new Mock<IModelFolderCatalog>();
+        catalog.Setup(c => c.GetSearchRootsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(roots);
+        return new EngineModelPathsSynchronizer(uow, catalog.Object);
     }
 }

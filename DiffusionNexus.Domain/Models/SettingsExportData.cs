@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using DiffusionNexus.Domain.Enums;
 
 namespace DiffusionNexus.Domain.Models;
 
@@ -105,6 +106,13 @@ public sealed record SettingsExportData
     // ?? ComfyUI ??????????????????????????????????????????????
 
     public string ComfyUiServerUrl { get; init; } = "http://127.0.0.1:8188/";
+
+    /// <summary>
+    /// Null in files written before schema v5; import treats null as CustomUrl. Written by name
+    /// ("Engine" / "CustomUrl"); a numeric value is still read.
+    /// </summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<ComfyUiServerMode>))]
+    public ComfyUiServerMode? ComfyUiServerMode { get; init; }
 }
 
 /// <summary>
@@ -162,6 +170,7 @@ public static class SettingsExportSchema
     /// v2: split AutoBackupEnabled into BackupDatasetImagesEnabled + BackupDatabaseEnabled.
     /// v3: metadata-sync retry windows + thumbnail concurrency.
     /// v4: LoRA sorter excluded-folders list.
+    /// v5: ComfyUI server mode (Engine | CustomUrl).
     /// </summary>
     /// <remarks>
     /// Bumping is cheap in both directions. The importer enforces only
@@ -172,7 +181,7 @@ public static class SettingsExportSchema
     /// feature or because the user chose nothing — exactly what
     /// <see cref="SettingsExportData.LegacyAutoBackupEnabled"/> needed for the v1→v2 split.
     /// </remarks>
-    public const int CurrentVersion = 4;
+    public const int CurrentVersion = 5;
 
     /// <summary>
     /// Minimum schema version that can still be imported.

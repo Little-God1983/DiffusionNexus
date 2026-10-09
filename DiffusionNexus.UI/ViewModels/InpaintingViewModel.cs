@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.Services;
 using Serilog;
 
@@ -17,8 +18,10 @@ public partial class InpaintingViewModel : ObservableObject
 
     private readonly Func<bool> _hasImage;
     private readonly Action<string> _deactivateOtherTools;
-    private readonly IComfyUIWrapperService? _comfyUiService;
+    private readonly IComfyUiClientProvider? _clientProvider;
     private readonly IDatasetEventAggregator? _eventAggregator;
+    private readonly IUnifiedLogger? _unifiedLogger;
+    private const string LogSource = "Inpaint";
 
     private const string InpaintWorkflowPath = "Assets/Workflows/Inpaint-Qwen-2512.json";
     private const string InpaintLoadImageNodeId = "16";
@@ -55,6 +58,7 @@ public partial class InpaintingViewModel : ObservableObject
         "Painting with invisible brushes…"
     ];
     private readonly Random _random = new();
+    private readonly GenerationStepText _stepText = new();
 
     private bool _isPanelOpen;
     private float _brushSize = 40f;
@@ -76,18 +80,21 @@ public partial class InpaintingViewModel : ObservableObject
     public InpaintingViewModel(
         Func<bool> hasImage,
         Action<string> deactivateOtherTools,
-        IComfyUIWrapperService? comfyUiService,
+        IComfyUiClientProvider? comfyUiClientProvider,
         IDatasetEventAggregator? eventAggregator,
-        IFeatureReadinessService? readinessService = null)
+        IFeatureReadinessService? readinessService = null,
+        IUnifiedLogger? unifiedLogger = null)
     {
         ArgumentNullException.ThrowIfNull(hasImage);
         ArgumentNullException.ThrowIfNull(deactivateOtherTools);
         _hasImage = hasImage;
         _deactivateOtherTools = deactivateOtherTools;
-        _comfyUiService = comfyUiService;
+        _clientProvider = comfyUiClientProvider;
+        _stepText.Changed += (_, _) => OnPropertyChanged(nameof(ProgressStepText));
         _eventAggregator = eventAggregator;
+        _unifiedLogger = unifiedLogger;
 
-        Readiness = new FeatureReadinessViewModel(readinessService, Feature.Inpainting);
+        Readiness = new FeatureReadinessViewModel(readinessService, Feature.Inpainting, eventAggregator);
 
         ClearMaskCommand = new RelayCommand(
             () => ClearMaskRequested?.Invoke(this, EventArgs.Empty),
@@ -114,6 +121,33 @@ public partial class InpaintingViewModel : ObservableObject
                 GenerateAndCompareCommand.NotifyCanExecuteChanged();
             }
         };
+
+        // The Settings dropdown decides which ComfyUI this tool runs on. Re-check when it is saved so
+        // the "Running on ..." line follows a switch without reopening the tool.
+        // Lifetime: this view model has no teardown path, so the handler stays attached to the
+        // app-wide aggregator for the life of the tab; it only does work while the panel is open.
+        if (_eventAggregator is not null)
+        {
+            // SettingsSaved (the Server mode) and EngineChanged (an Engine or Features install) can
+            // arrive on a thread-pool thread (the startup backfill publishes inside Task.Run); the
+            // re-check writes bound properties, so it runs on the UI thread. With no Avalonia
+            // application (unit tests) the dispatcher has no pump, so run inline.
+            void OnReadinessInputChanged()
+            {
+                if (Avalonia.Application.Current is null || Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+                    RecheckReadinessIfOpen();
+                else
+                    Avalonia.Threading.Dispatcher.UIThread.Post(RecheckReadinessIfOpen);
+            }
+
+            _eventAggregator.SettingsSaved += (_, _) => OnReadinessInputChanged();
+            _eventAggregator.EngineChanged += (_, _) => OnReadinessInputChanged();
+        }
+    }
+
+    private void RecheckReadinessIfOpen()
+    {
+        if (IsPanelOpen) _ = RunReadinessCheckAsync();
     }
 
     /// <summary>
@@ -258,9 +292,15 @@ public partial class InpaintingViewModel : ObservableObject
         private set
         {
             if (SetProperty(ref _status, value))
+            {
                 ParseProgress(value);
+                _stepText.Update(value);
+            }
         }
     }
+
+    /// <summary>Plain status line with the elapsed time ("Generating · step 2 of 4 · 0:47"); null when idle.</summary>
+    public string? ProgressStepText => _stepText.Text;
 
     /// <summary>Progress percentage (0-100) for the current inpainting operation, or -1 when indeterminate.</summary>
     public int InpaintProgress
@@ -364,9 +404,6 @@ public partial class InpaintingViewModel : ObservableObject
     /// <summary>Event raised when a status message should be shown.</summary>
     public event EventHandler<string?>? StatusMessageChanged;
 
-    /// <summary>Event raised when the inpaint mask should be hidden (after successful send to ComfyUI).</summary>
-    public event EventHandler? HideMaskRequested;
-
     // TODO: Linux Implementation for Inpainting
 
     #endregion
@@ -408,6 +445,12 @@ public partial class InpaintingViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Ends a Generate the view could not hand over (no mask painted, the image export failed):
+    /// without this the panel stayed busy and Generate stayed disabled until the editor closed.
+    /// </summary>
+    public void EndWithoutRun() => OnFinished();
+
     /// <summary>Sets the path to the "before" image saved by the View for compare mode.</summary>
     public void SetCompareBeforeImagePath(string path)
     {
@@ -422,29 +465,39 @@ public partial class InpaintingViewModel : ObservableObject
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(maskedImagePath);
 
-        if (_comfyUiService is null)
+        if (_clientProvider is null)
         {
             StatusMessageChanged?.Invoke(this, "ComfyUI service not available.");
             OnFinished();
             return;
         }
 
+        ComfyUiClientLease? lease = null;
+        if (!_stepText.IsRunning) _stepText.Start();
         try
         {
+            Emit("Generate requested.");
+            // Engine start-up text ("Starting Diffusion Nexus Engine…") lands on the status line.
+            lease = await _clientProvider.AcquireAsync(new Progress<string>(msg => Status = msg));
+            var comfy = lease.Client;
+            Emit($"Running on {(lease.Mode == ComfyUiServerMode.Engine ? "the Diffusion Nexus Engine" : "your own ComfyUI")} at {lease.BaseUrl}.");
+
             Status = "Uploading image to ComfyUI...";
-            var uploadedFilename = await _comfyUiService.UploadImageAsync(maskedImagePath);
+            var uploadedFilename = await comfy.UploadImageAsync(maskedImagePath);
+            Emit($"Image uploaded as {uploadedFilename}.");
 
             Status = "Checking available models...";
-            var resolvedUnetName = await ResolveQwenImageGGUFModelAsync();
+            var resolvedUnetName = await ResolveQwenImageGGUFModelAsync(comfy);
             if (resolvedUnetName is null)
             {
                 HasError = true;
                 ProgressDisplayText = "No Qwen Image GGUF model found";
-                StatusMessageChanged?.Invoke(this,
-                    "No Qwen Image 2512 GGUF model found in ComfyUI. " +
-                    "Please download a qwen-image-2512 GGUF variant (e.g. Q8_0, Q4_K_M) " +
-                    "and place it in your ComfyUI diffusion_models folder.");
-                OnFinished();
+                StatusMessageChanged?.Invoke(this, lease.Mode == ComfyUiServerMode.Engine
+                    ? "No Qwen Image 2512 GGUF model found on the Diffusion Nexus Engine. " +
+                      "Install Inpaint & Outpaint in Installation Manager → Diffusion Nexus Engine → Features."
+                    : "No Qwen Image 2512 GGUF model found in ComfyUI. " +
+                      "Please download a qwen-image-2512 GGUF variant (e.g. Q8_0, Q4_K_M) " +
+                      "and place it in your ComfyUI diffusion_models folder.");
                 return;
             }
 
@@ -459,14 +512,13 @@ public partial class InpaintingViewModel : ObservableObject
                 HasError = true;
                 ProgressDisplayText = "Inpainting workflow file missing";
                 StatusMessageChanged?.Invoke(this, $"Inpainting workflow not found: {workflowPath}");
-                OnFinished();
                 return;
             }
 
             var random = new Random();
             var seed = (long)(random.NextDouble() * long.MaxValue);
 
-            var promptId = await _comfyUiService.QueueWorkflowAsync(workflowPath,
+            var promptId = await comfy.QueueWorkflowAsync(workflowPath,
                 new Dictionary<string, Action<System.Text.Json.Nodes.JsonNode>>
                 {
                     [InpaintLoadImageNodeId] = node =>
@@ -491,29 +543,21 @@ public partial class InpaintingViewModel : ObservableObject
                         node["inputs"]!["unet_name"] = resolvedUnetName;
                     }
                 });
+            Emit($"Prompt queued ({promptId}).");
 
             Status = "Generating (this may take a while)...";
-            var maskHidden = false;
-            var progress = new Progress<string>(msg =>
-            {
-                Status = msg;
-
-                // Hide the mask on the first real progress update from ComfyUI,
-                // meaning the server has picked up the job and is actively working.
-                if (!maskHidden)
-                {
-                    maskHidden = true;
-                    HideMaskRequested?.Invoke(this, EventArgs.Empty);
-                }
-            });
-            await _comfyUiService.WaitForCompletionAsync(promptId, progress);
+            // The mask stays visible on the canvas through and after the run (#606 smoke), so the
+            // user can generate again with it or adjust it without repainting.
+            var progress = new Progress<string>(msg => Status = msg);
+            await comfy.WaitForCompletionAsync(promptId, progress);
 
             Status = "Downloading result...";
-            var result = await _comfyUiService.GetResultAsync(promptId);
+            var result = await comfy.GetResultAsync(promptId);
 
             if (result.Images.Count > 0)
             {
-                var imageBytes = await _comfyUiService.DownloadImageAsync(result.Images[0]);
+                var imageBytes = await comfy.DownloadImageAsync(result.Images[0]);
+                Emit("Result received.");
                 ResultReady?.Invoke(this, imageBytes);
                 StatusMessageChanged?.Invoke(this, "Inpainting completed successfully.");
 
@@ -540,20 +584,38 @@ public partial class InpaintingViewModel : ObservableObject
                 StatusMessageChanged?.Invoke(this, "Inpainting completed but no output image was returned.");
             }
         }
+        catch (ComfyUiUnavailableException ex)
+        {
+            HasError = true;
+            ProgressDisplayText = ex.Message;
+            StatusMessageChanged?.Invoke(this, ex.Message);
+            _unifiedLogger?.Warn(LogCategory.General, LogSource, ex.Message);
+        }
         catch (OperationCanceledException)
         {
             StatusMessageChanged?.Invoke(this, "Inpainting was cancelled.");
         }
         catch (Exception ex)
         {
+            Logger.Error(ex, "Inpainting failed");
+            _unifiedLogger?.Error(LogCategory.General, LogSource, "Inpainting failed", ex);
             HasError = true;
-            ProgressDisplayText = "Generation failed – is ComfyUI running?";
+            ProgressDisplayText = lease?.Mode == ComfyUiServerMode.Engine
+                ? "Generation failed – is the Diffusion Nexus Engine running?"
+                : "Generation failed – is ComfyUI running?";
             StatusMessageChanged?.Invoke(this, $"Inpainting failed: {ex.Message}");
         }
         finally
         {
+            lease?.Dispose();
             OnFinished();
         }
+    }
+
+    private void Emit(string message)
+    {
+        Logger.Information("Inpaint: {Message}", message);
+        _unifiedLogger?.Info(LogCategory.General, LogSource, message);
     }
 
     #endregion
@@ -570,7 +632,7 @@ public partial class InpaintingViewModel : ObservableObject
             return;
         }
 
-        if (_comfyUiService is null)
+        if (_clientProvider is null)
         {
             StatusMessageChanged?.Invoke(this, "ComfyUI service not available. Check ComfyUI server settings.");
             return;
@@ -579,6 +641,7 @@ public partial class InpaintingViewModel : ObservableObject
         _pendingCompareBeforeImagePath = null;
         ResetErrorState();
         IsBusy = true;
+        _stepText.Start();
         Status = "Preparing image and mask...";
         NotifyGenerateCommandsCanExecuteChanged();
 
@@ -597,7 +660,7 @@ public partial class InpaintingViewModel : ObservableObject
             return;
         }
 
-        if (_comfyUiService is null)
+        if (_clientProvider is null)
         {
             StatusMessageChanged?.Invoke(this, "ComfyUI service not available. Check ComfyUI server settings.");
             return;
@@ -606,6 +669,7 @@ public partial class InpaintingViewModel : ObservableObject
         _pendingCompareBeforeImagePath = string.Empty;
         ResetErrorState();
         IsBusy = true;
+        _stepText.Start();
         Status = "Preparing image and mask...";
         NotifyGenerateCommandsCanExecuteChanged();
 
@@ -638,6 +702,7 @@ public partial class InpaintingViewModel : ObservableObject
         _pendingCompareBeforeImagePath = null;
         IsBusy = false;
         IsProgressIndeterminate = false;
+        _stepText.Stop();
 
         if (_hasError)
         {
@@ -753,14 +818,11 @@ public partial class InpaintingViewModel : ObservableObject
     /// Queries ComfyUI for available UnetLoaderGGUF models and returns the best
     /// <c>qwen-image-2512-*.gguf</c> variant, or <c>null</c> if none is installed.
     /// </summary>
-    private async Task<string?> ResolveQwenImageGGUFModelAsync()
+    private async Task<string?> ResolveQwenImageGGUFModelAsync(IComfyUIWrapperService comfy)
     {
-        if (_comfyUiService is null)
-            return null;
-
         try
         {
-            var availableModels = await _comfyUiService.GetNodeInputOptionsAsync(
+            var availableModels = await comfy.GetNodeInputOptionsAsync(
                 UnetLoaderGGUFNodeType, "unet_name");
 
             // Filter to only qwen-image-2512 GGUF variants (case-insensitive)

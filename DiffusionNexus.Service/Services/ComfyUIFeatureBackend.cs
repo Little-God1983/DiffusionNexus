@@ -18,23 +18,43 @@ public sealed class ComfyUIFeatureBackend : IFeatureBackend
     private static readonly SerilogILogger SerilogLogger = Log.ForContext<ComfyUIFeatureBackend>();
 
     private readonly IComfyUIWrapperService _comfyUi;
-    private readonly IAppSettingsService _settingsService;
+    private readonly Func<CancellationToken, Task<string?>> _readServerUrl;
     private readonly IWorkloadInstallationChecker _workloadChecker;
     private readonly IUnifiedLogger? _unifiedLogger;
 
+    /// <summary>Reads the server URL through <paramref name="settingsService"/> on every check.</summary>
     public ComfyUIFeatureBackend(
         IComfyUIWrapperService comfyUi,
         IAppSettingsService settingsService,
         IWorkloadInstallationChecker workloadChecker,
         IUnifiedLogger? unifiedLogger = null)
+        : this(comfyUi, ReadUrlFrom(settingsService), workloadChecker, unifiedLogger)
+    {
+    }
+
+    /// <param name="readServerUrl">
+    /// Reads Settings → ComfyUI server URL, once per check. Parallel checks call it concurrently, so
+    /// it must not share a DbContext between calls: DI gives every call its own scope.
+    /// </param>
+    public ComfyUIFeatureBackend(
+        IComfyUIWrapperService comfyUi,
+        Func<CancellationToken, Task<string?>> readServerUrl,
+        IWorkloadInstallationChecker workloadChecker,
+        IUnifiedLogger? unifiedLogger = null)
     {
         ArgumentNullException.ThrowIfNull(comfyUi);
-        ArgumentNullException.ThrowIfNull(settingsService);
+        ArgumentNullException.ThrowIfNull(readServerUrl);
         ArgumentNullException.ThrowIfNull(workloadChecker);
         _comfyUi = comfyUi;
-        _settingsService = settingsService;
+        _readServerUrl = readServerUrl;
         _workloadChecker = workloadChecker;
         _unifiedLogger = unifiedLogger;
+    }
+
+    private static Func<CancellationToken, Task<string?>> ReadUrlFrom(IAppSettingsService settingsService)
+    {
+        ArgumentNullException.ThrowIfNull(settingsService);
+        return async ct => (await settingsService.GetSettingsAsync(ct)).ComfyUiServerUrl;
     }
 
     /// <inheritdoc />
@@ -187,8 +207,9 @@ public sealed class ComfyUIFeatureBackend : IFeatureBackend
 
     private async Task<string> GetServerUrlAsync(CancellationToken ct)
     {
-        var settings = await _settingsService.GetSettingsAsync(ct);
-        return settings.ComfyUiServerUrl.TrimEnd('/');
+        var url = await _readServerUrl(ct)
+                  ?? throw new InvalidOperationException("No ComfyUI server URL is set in Settings.");
+        return url.TrimEnd('/');
     }
 
     /// <summary>Emits to both Serilog (file) and the in-app unified console when available.</summary>

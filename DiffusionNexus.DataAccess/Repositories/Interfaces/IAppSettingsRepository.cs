@@ -24,6 +24,20 @@ public interface IAppSettingsRepository : IRepository<AppSettings>
     Task<AppSettings?> GetSettingsAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Reads only the Settings → ComfyUI Server mode column, untracked.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The stored mode, or null if the settings row does not exist yet.</returns>
+    Task<Domain.Enums.ComfyUiServerMode?> GetComfyUiServerModeAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Reads only the Settings → ComfyUI Server mode and URL columns, untracked.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The stored mode and URL, or null if the settings row does not exist yet.</returns>
+    Task<Domain.Models.ComfyUiServerConnection?> GetComfyUiServerConnectionAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Gets the count of dataset categories.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>

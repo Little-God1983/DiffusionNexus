@@ -59,7 +59,7 @@ public class FeatureReadinessServiceTests
     [Fact]
     public async Task WhenRouterResolvesNoBackendThenResultIsNotReadyAndOffline()
     {
-        _router.Setup(r => r.Resolve(Feature.Outpaint)).Returns((IFeatureBackend?)null);
+        _router.Setup(r => r.ResolveAsync(Feature.Outpaint, It.IsAny<CancellationToken>())).ReturnsAsync((IFeatureBackend?)null);
         var service = CreateService();
 
         var result = await service.CheckAsync(Feature.Outpaint);
@@ -75,7 +75,7 @@ public class FeatureReadinessServiceTests
     [Fact]
     public async Task WhenRouterResolvesNoBackendThenMissingRequirementsNamesTheFeature()
     {
-        _router.Setup(r => r.Resolve(It.IsAny<Feature>())).Returns((IFeatureBackend?)null);
+        _router.Setup(r => r.ResolveAsync(It.IsAny<Feature>(), It.IsAny<CancellationToken>())).ReturnsAsync((IFeatureBackend?)null);
         var service = CreateService();
 
         var result = await service.CheckAsync(Feature.BatchUpscaleVision);
@@ -89,7 +89,7 @@ public class FeatureReadinessServiceTests
     {
         // There is no "unknown" BackendKind, so the fallback result reports ComfyUI. Pinned
         // because the UI switches on Backend when rendering the remediation hint.
-        _router.Setup(r => r.Resolve(It.IsAny<Feature>())).Returns((IFeatureBackend?)null);
+        _router.Setup(r => r.ResolveAsync(It.IsAny<Feature>(), It.IsAny<CancellationToken>())).ReturnsAsync((IFeatureBackend?)null);
         var service = CreateService();
 
         var result = await service.CheckAsync(Feature.Captioning);
@@ -108,7 +108,7 @@ public class FeatureReadinessServiceTests
         var backend = new Mock<IFeatureBackend>();
         backend.Setup(b => b.CheckFeatureAsync(Feature.Captioning, It.IsAny<CancellationToken>()))
                .ReturnsAsync(backendResult);
-        _router.Setup(r => r.Resolve(Feature.Captioning)).Returns(backend.Object);
+        _router.Setup(r => r.ResolveAsync(Feature.Captioning, It.IsAny<CancellationToken>())).ReturnsAsync(backend.Object);
 
         var result = await CreateService().CheckAsync(Feature.Captioning);
 
@@ -127,7 +127,7 @@ public class FeatureReadinessServiceTests
         var backend = new Mock<IFeatureBackend>();
         backend.Setup(b => b.CheckFeatureAsync(Feature.Inpainting, It.IsAny<CancellationToken>()))
                .ReturnsAsync(backendResult);
-        _router.Setup(r => r.Resolve(Feature.Inpainting)).Returns(backend.Object);
+        _router.Setup(r => r.ResolveAsync(Feature.Inpainting, It.IsAny<CancellationToken>())).ReturnsAsync(backend.Object);
 
         var result = await CreateService().CheckAsync(Feature.Inpainting);
 
@@ -144,7 +144,7 @@ public class FeatureReadinessServiceTests
         var backend = new Mock<IFeatureBackend>();
         backend.Setup(b => b.CheckFeatureAsync(It.IsAny<Feature>(), It.IsAny<CancellationToken>()))
                .ReturnsAsync(ResultFor(Feature.Captioning, isReady: true));
-        _router.Setup(r => r.Resolve(It.IsAny<Feature>())).Returns(backend.Object);
+        _router.Setup(r => r.ResolveAsync(It.IsAny<Feature>(), It.IsAny<CancellationToken>())).ReturnsAsync(backend.Object);
 
         await CreateService().CheckAsync(Feature.Captioning, cts.Token);
 
@@ -157,7 +157,7 @@ public class FeatureReadinessServiceTests
         var backend = new Mock<IFeatureBackend>();
         backend.Setup(b => b.CheckFeatureAsync(It.IsAny<Feature>(), It.IsAny<CancellationToken>()))
                .ThrowsAsync(new InvalidOperationException("boom"));
-        _router.Setup(r => r.Resolve(It.IsAny<Feature>())).Returns(backend.Object);
+        _router.Setup(r => r.ResolveAsync(It.IsAny<Feature>(), It.IsAny<CancellationToken>())).ReturnsAsync(backend.Object);
 
         var act = async () => await CreateService().CheckAsync(Feature.Captioning);
 
@@ -171,13 +171,31 @@ public class FeatureReadinessServiceTests
         var backend = new Mock<IFeatureBackend>();
         backend.Setup(b => b.CheckFeatureAsync(It.IsAny<Feature>(), It.IsAny<CancellationToken>()))
                .ReturnsAsync(ResultFor(Feature.Captioning, isReady: true));
-        _router.Setup(r => r.Resolve(Feature.Captioning)).Returns(backend.Object);
+        _router.Setup(r => r.ResolveAsync(Feature.Captioning, It.IsAny<CancellationToken>())).ReturnsAsync(backend.Object);
         var service = CreateService();
 
         await service.CheckAsync(Feature.Captioning);
         await service.CheckAsync(Feature.Captioning);
 
-        _router.Verify(r => r.Resolve(Feature.Captioning), Times.Exactly(2));
+        _router.Verify(r => r.ResolveAsync(Feature.Captioning, It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task WhenCheckingThenTheRouterIsAskedAsynchronously_NeverThroughTheBlockingResolve()
+    {
+        // The governed features read the Server mode from the database; the sync Resolve would block
+        // the UI thread on it.
+        using var cts = new CancellationTokenSource();
+        var backend = new Mock<IFeatureBackend>();
+        backend.Setup(b => b.CheckFeatureAsync(It.IsAny<Feature>(), It.IsAny<CancellationToken>()))
+               .ReturnsAsync(ResultFor(Feature.Inpainting, isReady: true));
+        _router.Setup(r => r.Resolve(It.IsAny<Feature>())).Throws(new InvalidOperationException("sync Resolve hit"));
+        _router.Setup(r => r.ResolveAsync(Feature.Inpainting, cts.Token)).ReturnsAsync(backend.Object);
+
+        var result = await CreateService().CheckAsync(Feature.Inpainting, cts.Token);
+
+        result.IsReady.Should().BeTrue();
+        _router.Verify(r => r.ResolveAsync(Feature.Inpainting, cts.Token), Times.Once);
     }
 
     #endregion
@@ -209,6 +227,8 @@ public class FeatureReadinessServiceTests
         service.GetRequirements(Feature.Outpaint);
 
         _router.Verify(r => r.Resolve(It.IsAny<Feature>()), Times.Never,
+            "GetRequirements is documented as performing no network/backend work");
+        _router.Verify(r => r.ResolveAsync(It.IsAny<Feature>(), It.IsAny<CancellationToken>()), Times.Never,
             "GetRequirements is documented as performing no network/backend work");
     }
 

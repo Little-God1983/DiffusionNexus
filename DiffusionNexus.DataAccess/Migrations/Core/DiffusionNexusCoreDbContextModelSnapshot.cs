@@ -15,7 +15,7 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.11");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.12");
 
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.AppSettings", b =>
                 {
@@ -41,6 +41,13 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
 
                     b.Property<string>("CivitaiBrowserFilterJson")
                         .HasColumnType("TEXT");
+
+                    b.Property<string>("ComfyUiServerMode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("Engine");
 
                     b.Property<string>("ComfyUiServerUrl")
                         .IsRequired()

@@ -64,7 +64,7 @@ All paths are relative to `DiffusionNexus.UI/`.
 | `ActivityLogPanel` (+ `ActivityLogViewModel`) | Scoped activity log panel. |
 | `StatusBarControl` (+ `StatusBarViewModel`) | App status bar. |
 | `ResourceMonitorView` (+ `ResourceMonitorViewModel`) | CPU/GPU/VRAM monitor. |
-| `FeatureReadinessPanel` (+ `FeatureReadinessViewModel`) | "Is this feature ready to run" preflight panel. |
+| `FeatureReadinessPanel` (+ `FeatureReadinessViewModel`) | "Is this feature ready to run" preflight panel. Also shows "Running on <backend> · change" (change only for Inpaint/Outpaint/Outpaint Vision, opens Settings at ComfyUI Server) and, when the Engine answered with something missing, "Not installed on the Engine · Install …" (opens the Engine Features dialog with that row ticked). Both links need the optional 3rd constructor parameter `IDatasetEventAggregator`. |
 
 ### Charts
 | Control | Purpose |

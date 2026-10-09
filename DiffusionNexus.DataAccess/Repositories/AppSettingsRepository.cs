@@ -42,6 +42,28 @@ internal sealed class AppSettingsRepository : RepositoryBase<AppSettings>, IAppS
     }
 
     /// <inheritdoc />
+    public async Task<Domain.Enums.ComfyUiServerMode?> GetComfyUiServerModeAsync(CancellationToken cancellationToken = default)
+    {
+        return await DbSet
+            .AsNoTracking()
+            .Where(s => s.Id == 1)
+            .Select(s => (Domain.Enums.ComfyUiServerMode?)s.ComfyUiServerMode)
+            .FirstOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<Domain.Models.ComfyUiServerConnection?> GetComfyUiServerConnectionAsync(CancellationToken cancellationToken = default)
+    {
+        return await DbSet
+            .AsNoTracking()
+            .Where(s => s.Id == 1)
+            .Select(s => new Domain.Models.ComfyUiServerConnection(s.ComfyUiServerMode, s.ComfyUiServerUrl))
+            .FirstOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
     public async Task<int> GetDatasetCategoryCountAsync(CancellationToken cancellationToken = default)
     {
         return await Context.DatasetCategories

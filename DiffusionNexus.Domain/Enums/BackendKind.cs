@@ -16,5 +16,11 @@ public enum BackendKind
     /// (LlamaSharp captioning, stable-diffusion.cpp generation, etc.). Readiness is determined
     /// by the relevant native library + model files being present.
     /// </summary>
-    LocalInference
+    LocalInference,
+
+    /// <summary>
+    /// The feature runs on the app-owned embedded ComfyUI (Diffusion Nexus Engine). Readiness is the
+    /// feature's catalog workloads checked against the Engine's own folder only.
+    /// </summary>
+    Engine
 }

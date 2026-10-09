@@ -11,7 +11,16 @@ public interface IFeatureBackendRouter
 {
     /// <summary>
     /// Returns the backend currently selected for <paramref name="feature"/>, or
-    /// <c>null</c> if no backend is registered for it.
+    /// <c>null</c> if no backend is registered for it. For the features in
+    /// <c>FeatureBackendRouter.ServerModeFeatures</c> the answer follows Settings → ComfyUI Server
+    /// and may change between calls.
     /// </summary>
     IFeatureBackend? Resolve(Feature feature);
+
+    /// <summary>
+    /// Asynchronous <see cref="Resolve"/>: reads the Settings → ComfyUI Server mode without blocking the
+    /// caller. The default answers with <see cref="Resolve"/>, for routers that need no I/O.
+    /// </summary>
+    Task<IFeatureBackend?> ResolveAsync(Feature feature, CancellationToken ct = default) =>
+        Task.FromResult(Resolve(feature));
 }

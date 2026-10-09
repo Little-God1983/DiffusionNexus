@@ -59,6 +59,12 @@ public partial class InstallerManagerViewModel : ViewModelBase
     private readonly Services.Engine.EngineModelPathsSynchronizer? _engineModelPaths;
 
     /// <summary>
+    /// The running Diffusion Nexus Engine. ComfyUI loads custom nodes only at process start, so a
+    /// Features install stops a running engine and the next use starts it with the new node packs.
+    /// </summary>
+    private readonly Services.Engine.IManagedComfyUiEngine? _engine;
+
+    /// <summary>
     /// Raised when the unified console panel should be opened (e.g., during an update).
     /// </summary>
     public event EventHandler? UnifiedConsolePanelRequested;
@@ -86,12 +92,12 @@ public partial class InstallerManagerViewModel : ViewModelBase
     public bool IsEmpty => InstallerCards.Count == 0 && !IsLoading;
 
     /// <summary>
-    /// Whether the Diffusion Nexus Engine tile is shown. Bound at startup to the same
-    /// hamburger switch that reveals the Diffusion Canvas, so both surfaces stay hidden
-    /// together while the feature is unfinished.
+    /// Whether the Diffusion Nexus Engine tile is shown: whenever the local-diffusion flag is on.
+    /// No longer tied to the Canvas switch, because the Image Editor's Inpaint and Outpaint
+    /// install into the Engine too.
     /// </summary>
     [ObservableProperty]
-    private bool _isEngineTileVisible;
+    private bool _isEngineTileVisible = Services.Diffusion.DiffusionFeatureFlags.UseLocalDiffusionBackend;
 
     /// <summary>
     /// True for the duration of <see cref="InstallEngineAsync"/>. Guards against two hazards
@@ -132,7 +138,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         Func<IUnitOfWork>? unitOfWorkFactory = null,
         Services.Engine.IManagedEngineInstaller? engineInstaller = null,
         IResourceMonitorService? resourceMonitor = null,
-        Services.Engine.EngineModelPathsSynchronizer? engineModelPaths = null)
+        Services.Engine.EngineModelPathsSynchronizer? engineModelPaths = null,
+        Services.Engine.IManagedComfyUiEngine? engine = null)
     {
         _dialogService = dialogService;
         _unitOfWork = unitOfWork;
@@ -152,6 +159,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         _engineInstaller = engineInstaller;
         _resourceMonitor = resourceMonitor;
         _engineModelPaths = engineModelPaths;
+        _engine = engine;
 
         InstallerCards.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
 
@@ -763,42 +771,124 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
         if (card.IsEngine)
         {
-            if (!card.IsEngineInstalled || string.IsNullOrWhiteSpace(card.InstallationPath))
-            {
-                await _dialogService.ShowMessageAsync("Diffusion Nexus Engine",
-                    "Install the engine first — workloads are installed into it.");
-                return;
-            }
-
-            // The disk check behind this dialog resolves its search paths from the engine's own
-            // extra_model_paths.yaml, so sync it first. Without this, a model folder added in
-            // Settings after the engine was installed is invisible here and every model in it is
-            // reported missing — which is exactly what the engine itself would do at generate time,
-            // so widening only the check would have traded an honest "None" for a green lie.
-            if (_engineModelPaths is not null)
-            {
-                await _engineModelPaths.SyncAsync(card.InstallationPath);
-            }
-
-            await ShowWorkloadsDialogAsync(card.InstallationPath,
-                Services.Engine.EngineWorkloadCatalog.WorkloadIds);
+            await OpenEngineFeaturesAsync();
             return;
         }
 
-        await ShowWorkloadsDialogAsync(card.InstallationPath, null);
+        await ShowWorkloadsDialogAsync(card.InstallationPath);
     }
 
     /// <summary>
-    /// Opens the workloads dialog against a ComfyUI root. <paramref name="allowedConfigurationIds"/>
-    /// narrows the list to the curated engine workloads; null shows every ComfyUI workload.
+    /// Test seam: shows the Features dialog. Null in production, where a real
+    /// <see cref="Views.Dialogs.EngineFeaturesDialog"/> is opened over the main window.
     /// </summary>
-    private async Task ShowWorkloadsDialogAsync(string comfyUiRoot, IReadOnlyList<Guid>? allowedConfigurationIds)
+    internal Func<EngineFeaturesViewModel, Task>? EngineFeaturesDialogPresenter { get; set; }
+
+    /// <summary>
+    /// Opens the Engine's Features dialog, optionally with <paramref name="preselect"/> ticked. Called
+    /// from the Engine tile and from the editor's "Install Inpaint &amp; Outpaint" link.
+    /// </summary>
+    public async Task OpenEngineFeaturesAsync(Services.Engine.EngineFeature? preselect = null)
+    {
+        var card = InstallerCards.FirstOrDefault(c => c.IsEngine);
+        if (card is null || !card.IsEngineInstalled || string.IsNullOrWhiteSpace(card.InstallationPath))
+        {
+            Serilog.Log.Information("Engine Features dialog refused: the Diffusion Nexus Engine is not installed");
+            _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
+                "Features dialog not opened: the engine is not installed.");
+            await _dialogService.ShowMessageAsync("Diffusion Nexus Engine",
+                "Install the engine first — features are installed into it.");
+            return;
+        }
+
+        // The disk check behind this dialog resolves its search paths from the engine's own
+        // extra_model_paths.yaml, so sync it before checking and again after installing.
+        if (_engineModelPaths is not null)
+            DiffusionNexus.UI.Services.Engine.EngineModelFoldersChanged.RequestRestartIfWritten(await _engineModelPaths.SyncAsync(card.InstallationPath), _engine, _unifiedLogger);
+
+        try
+        {
+            var vm = new EngineFeaturesViewModel(
+                _catalog, _checkerService, _installService, card.InstallationPath,
+                _resourceMonitor, _unifiedLogger, preselect);
+            await vm.LoadCommand.ExecuteAsync(null);
+
+            Serilog.Log.Information("Opening the Engine Features dialog for {Path}", card.InstallationPath);
+            _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
+                $"Opening the Features dialog for {card.InstallationPath}.");
+            if (EngineFeaturesDialogPresenter is not null)
+            {
+                await EngineFeaturesDialogPresenter(vm);
+            }
+            else
+            {
+                var dialog = new Views.Dialogs.EngineFeaturesDialog { DataContext = vm };
+                var parentWindow = (Avalonia.Application.Current?.ApplicationLifetime
+                    as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.MainWindow;
+                if (parentWindow is not null)
+                    await dialog.ShowDialog(parentWindow);
+            }
+
+            if (vm.DidInstall)
+            {
+                if (_engineModelPaths is not null)
+                    DiffusionNexus.UI.Services.Engine.EngineModelFoldersChanged.RequestRestartIfWritten(await _engineModelPaths.SyncAsync(card.InstallationPath), _engine, _unifiedLogger);
+
+                if (vm.DidInstallNodePacks)
+                {
+                    RestartEngineOnNextUseForNewNodePacks();
+                }
+                else if (_engine?.BaseUrl is not null)
+                {
+                    const string kept =
+                        "Keeping the Diffusion Nexus Engine running: only models were installed, and it finds new model files without a restart.";
+                    Serilog.Log.Information(kept);
+                    _unifiedLogger.Info(LogCategory.InstanceManagement, "Diffusion Nexus Engine", kept);
+                }
+
+                // Lets an open Inpaint/Outpaint panel and Settings' Engine status re-check.
+                _eventAggregator.PublishEngineChanged(new EngineChangedEventArgs());
+            }
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Failed to open the Engine Features dialog for {Path}", card.InstallationPath);
+            _unifiedLogger.Error(LogCategory.Installation, "Diffusion Nexus Engine",
+                "Failed to open the Features dialog", ex);
+            await _dialogService.ShowMessageAsync("Error", $"Failed to load Engine features: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// ComfyUI loads custom nodes only at process start, so an Engine that was already running
+    /// during a Features install would never see the new node packs. It is not stopped now — an
+    /// Inpaint, Outpaint or Canvas job may be running on it — but asked to restart: the next
+    /// Generate or Canvas use starts it fresh. Asked even when the Engine reports no URL: that is also
+    /// the case mid cold-start, when Python may already have scanned custom_nodes. A request made
+    /// while it is not running at all is used up by the next cold start.
+    /// </summary>
+    private void RestartEngineOnNextUseForNewNodePacks()
+    {
+        if (_engine is null)
+            return;
+
+        const string message =
+            "The Diffusion Nexus Engine restarts on its next use so it loads the newly installed node packs.";
+        Serilog.Log.Information(message);
+        _unifiedLogger.Info(LogCategory.InstanceManagement, "Diffusion Nexus Engine", message);
+        _engine.RequestRestart();
+    }
+
+    /// <summary>
+    /// Opens the workloads dialog against a ComfyUI root, listing every ComfyUI workload.
+    /// </summary>
+    private async Task ShowWorkloadsDialogAsync(string comfyUiRoot)
     {
         try
         {
             var vm = new WorkloadsViewModel(
                 _catalog, _checkerService, _installService,
-                comfyUiRoot, allowedConfigurationIds, _resourceMonitor);
+                comfyUiRoot, resourceMonitor: _resourceMonitor);
             await vm.LoadWorkloadsCommand.ExecuteAsync(null);
 
             var dialog = new Views.Dialogs.WorkloadsDialog { DataContext = vm };
@@ -935,7 +1025,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
     /// <summary>
     /// Builds the static "Diffusion Nexus Engine" tile. Wires the install handler and, once
     /// the engine exists, the workloads handler. Visibility is controlled by
-    /// <see cref="IsEngineTileVisible"/>, which follows the same switch as the Diffusion Canvas.
+    /// <see cref="IsEngineTileVisible"/>.
     /// </summary>
     private InstallerPackageCardViewModel CreateEngineCard(InstallerPackage? enginePackage)
     {
@@ -1075,6 +1165,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
                     if (_engineModelPaths is not null)
                     {
                         var sync = await _engineModelPaths.SyncAsync(package.InstallationPath);
+                        DiffusionNexus.UI.Services.Engine.EngineModelFoldersChanged.RequestRestartIfWritten(sync, _engine, _unifiedLogger);
                         _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
                             sync.Roots.Count > 0
                                 ? $"Engine reads {sync.Roots.Count} model folder(s): {string.Join(" | ", sync.Roots)}"
@@ -1083,6 +1174,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
                     }
 
                     _eventAggregator.PublishInstallerPackagesChanged(new InstallerPackagesChangedEventArgs());
+                    // Settings' Engine status line and the editor's readiness lines re-check on this.
+                    _eventAggregator.PublishEngineChanged(new EngineChangedEventArgs());
                 }
                 else if (outcome.IsCancelled)
                 {

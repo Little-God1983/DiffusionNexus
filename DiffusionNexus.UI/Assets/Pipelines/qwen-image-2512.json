@@ -1,0 +1,48 @@
+{
+  "id": "qwen-image-2512",
+  "title": "Qwen-Image-2512 (Canvas)",
+  "description": "Local text-to-image model for the Diffusion Canvas: Qwen-Image-2512 run in 4 steps with the Lightning 4-step LoRA, rendered by the DiffusionNexus core. After install, select it in the Diffusion Canvas model dropdown.",
+  "showInGallery": false,
+  "assets": [
+    {
+      "name": "Qwen-Image-2512 GGUF",
+      "kind": "DiffusionModel",
+      "targetSubfolder": "diffusion_models",
+      "_comment": "Only BLACK-SAFE quants (leejet/stable-diffusion.cpp#1385): Q2_K/Q4_K_M/Q5_K_M/Q5_K_S render black for Qwen-Image; Q4_K_S/Q4_1/Q5_0/Q5_1/Q8_0 are fine. Q8_0 (20.7 GB) + the resident ~8.5 GB encoder won't fit a 32 GB card, so the top tier is Q5_1.",
+      "huggingFaceLinks": [
+        { "vramGb": 8,  "url": "https://huggingface.co/unsloth/Qwen-Image-2512-GGUF/resolve/main/qwen-image-2512-Q4_K_S.gguf?download=true" },
+        { "vramGb": 12, "url": "https://huggingface.co/unsloth/Qwen-Image-2512-GGUF/resolve/main/qwen-image-2512-Q4_K_S.gguf?download=true" },
+        { "vramGb": 16, "url": "https://huggingface.co/unsloth/Qwen-Image-2512-GGUF/resolve/main/qwen-image-2512-Q4_1.gguf?download=true" },
+        { "vramGb": 24, "url": "https://huggingface.co/unsloth/Qwen-Image-2512-GGUF/resolve/main/qwen-image-2512-Q5_0.gguf?download=true" },
+        { "vramGb": 32, "url": "https://huggingface.co/unsloth/Qwen-Image-2512-GGUF/resolve/main/qwen-image-2512-Q5_1.gguf?download=true" }
+      ]
+    },
+    {
+      "name": "Qwen2.5-VL 7B text encoder (GGUF)",
+      "kind": "TextEncoder",
+      "targetSubfolder": "text_encoders",
+      "expectedFileName": "Qwen2.5-VL-7B-Instruct-Q8_0.gguf",
+      "huggingFaceLinks": [
+        { "url": "https://huggingface.co/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct-Q8_0.gguf?download=true" }
+      ]
+    },
+    {
+      "name": "Qwen-Image VAE",
+      "kind": "Vae",
+      "targetSubfolder": "vae",
+      "expectedFileName": "qwen_image_vae.safetensors",
+      "huggingFaceLinks": [
+        { "url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors?download=true" }
+      ]
+    },
+    {
+      "name": "Qwen-Image Lightning 4-step LoRA",
+      "kind": "Lora",
+      "targetSubfolder": "loras",
+      "expectedFileName": "Qwen-Image-Lightning-4steps-V1.0.safetensors",
+      "huggingFaceLinks": [
+        { "url": "https://huggingface.co/lightx2v/Qwen-Image-Lightning/resolve/main/Qwen-Image-Lightning-4steps-V1.0.safetensors?download=true" }
+      ]
+    }
+  ]
+}

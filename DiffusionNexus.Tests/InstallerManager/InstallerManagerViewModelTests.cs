@@ -187,10 +187,12 @@ public class InstallerManagerViewModelTests
             new Mock<IUnifiedLogger>().Object);
 
         // Load cards. The list now contains 3 DB-backed packages plus the
-        // singleton static "Diffusion Nexus Core" card pinned to the top.
+        // singleton static "Diffusion Nexus Core" card pinned to the top and the
+        // Engine tile (visible by default since it no longer follows the Canvas switch).
         await vm.LoadInstallationsCommand.ExecuteAsync(null);
-        vm.InstallerCards.Should().HaveCount(4);
+        vm.InstallerCards.Should().HaveCount(5);
         vm.InstallerCards.Count(c => c.IsCore).Should().Be(1);
+        vm.InstallerCards.Count(c => c.IsEngine).Should().Be(1);
 
         var cardToMakeDefault = vm.InstallerCards.First(c => c.Id == 2);
 

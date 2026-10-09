@@ -256,11 +256,35 @@ public sealed class NavigateToImageEditorEventArgs : DatasetEventArgs
     public IReadOnlyList<DatasetImageViewModel>? Images { get; init; }
 }
 
+/// <summary>A part of the Settings page a navigation request can open directly.</summary>
+public enum SettingsSection
+{
+    /// <summary>The "ComfyUI Server" expander (server dropdown + URL).</summary>
+    ComfyUiServer
+}
+
 /// <summary>
 /// Event raised when navigation to the Settings page is requested.
 /// </summary>
 public sealed class NavigateToSettingsEventArgs : DatasetEventArgs
 {
+    /// <summary>When set, Settings expands this section and scrolls it into view.</summary>
+    public SettingsSection? Section { get; init; }
+}
+
+/// <summary>
+/// Raised to open the Diffusion Nexus Engine's Features dialog, optionally with one row pre-ticked
+/// (the editor's "Install Inpaint &amp; Outpaint" link).
+/// </summary>
+public sealed class NavigateToEngineFeaturesEventArgs : DatasetEventArgs
+{
+    public Engine.EngineFeature? Preselect { get; init; }
+
+    /// <summary>
+    /// The Engine itself is not installed: open the Installation Manager so the user can install it,
+    /// without opening the Features dialog (which would only refuse).
+    /// </summary>
+    public bool InstallEngineOnly { get; init; }
 }
 
 /// <summary>
@@ -374,6 +398,15 @@ public sealed class InstallerPackagesChangedEventArgs : DatasetEventArgs
 {
 }
 
+/// <summary>
+/// Raised when the Diffusion Nexus Engine changed on disk (installed, or features installed into it).
+/// Carries no payload — subscribers re-check what they show about the Engine. Separate from
+/// <see cref="SettingsSavedEventArgs"/> so an Engine install does not rescan the gallery or reload datasets.
+/// </summary>
+public sealed class EngineChangedEventArgs : DatasetEventArgs
+{
+}
+
 #endregion
 
 /// <summary>
@@ -456,6 +489,12 @@ public interface IDatasetEventAggregator
     /// </summary>
     event EventHandler<InstallerPackagesChangedEventArgs>? InstallerPackagesChanged;
 
+    /// <summary>
+    /// Raised when the Diffusion Nexus Engine changed on disk (installed, or features installed
+    /// into it), so readiness lines and the Settings Engine status re-check.
+    /// </summary>
+    event EventHandler<EngineChangedEventArgs>? EngineChanged;
+
     #endregion
 
     #region Image Events
@@ -510,6 +549,11 @@ public interface IDatasetEventAggregator
     event EventHandler<NavigateToSettingsEventArgs>? NavigateToSettingsRequested;
 
     /// <summary>
+    /// Raised when the Diffusion Nexus Engine's Features dialog should open.
+    /// </summary>
+    event EventHandler<NavigateToEngineFeaturesEventArgs>? NavigateToEngineFeaturesRequested;
+
+    /// <summary>
     /// Raised when navigation to the Image Comparer is requested.
     /// </summary>
     event EventHandler<NavigateToImageComparerEventArgs>? NavigateToImageComparerRequested;
@@ -549,12 +593,14 @@ public interface IDatasetEventAggregator
     void PublishNavigateToImageEditor(NavigateToImageEditorEventArgs args);
     void PublishNavigateToBatchCropScale(NavigateToBatchCropScaleEventArgs args);
     void PublishNavigateToSettings(NavigateToSettingsEventArgs args);
+    void PublishNavigateToEngineFeatures(NavigateToEngineFeaturesEventArgs args);
     void PublishNavigateToImageComparer(NavigateToImageComparerEventArgs args);
     void PublishNavigateToCaptioning(NavigateToCaptioningEventArgs args);
     void PublishNavigateToBatchUpscale(NavigateToBatchUpscaleEventArgs args);
     void PublishNavigateToWorkflow(NavigateToWorkflowEventArgs args);
     void PublishSettingsSaved(SettingsSavedEventArgs args);
     void PublishInstallerPackagesChanged(InstallerPackagesChangedEventArgs args);
+    void PublishEngineChanged(EngineChangedEventArgs args);
 
     #endregion
 }
@@ -596,6 +642,9 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
     /// <inheritdoc/>
     public event EventHandler<InstallerPackagesChangedEventArgs>? InstallerPackagesChanged;
 
+    /// <inheritdoc/>
+    public event EventHandler<EngineChangedEventArgs>? EngineChanged;
+
     #endregion
 
     #region Image Events
@@ -630,6 +679,9 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
 
     /// <inheritdoc/>
     public event EventHandler<NavigateToSettingsEventArgs>? NavigateToSettingsRequested;
+
+    /// <inheritdoc/>
+    public event EventHandler<NavigateToEngineFeaturesEventArgs>? NavigateToEngineFeaturesRequested;
 
     /// <inheritdoc/>
     public event EventHandler<NavigateToImageComparerEventArgs>? NavigateToImageComparerRequested;
@@ -760,6 +812,13 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
     }
 
     /// <inheritdoc/>
+    public void PublishNavigateToEngineFeatures(NavigateToEngineFeaturesEventArgs args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+        RaiseEvent(NavigateToEngineFeaturesRequested, args);
+    }
+
+    /// <inheritdoc/>
     public void PublishNavigateToImageComparer(NavigateToImageComparerEventArgs args)
     {
         ArgumentNullException.ThrowIfNull(args);
@@ -799,6 +858,13 @@ public sealed class DatasetEventAggregator : IDatasetEventAggregator
     {
         ArgumentNullException.ThrowIfNull(args);
         RaiseEvent(InstallerPackagesChanged, args);
+    }
+
+    /// <inheritdoc/>
+    public void PublishEngineChanged(EngineChangedEventArgs args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+        RaiseEvent(EngineChanged, args);
     }
 
     #endregion

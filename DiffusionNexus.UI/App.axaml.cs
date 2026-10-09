@@ -28,6 +28,7 @@ using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using ComfyUiUrl = DiffusionNexus.UI.Services.Diffusion.ComfyUiUrl;
 
 namespace DiffusionNexus.UI;
 
@@ -309,9 +310,13 @@ public partial class App : Application
                         // engine. Runs here as well as before each engine start so an engine
                         // installed by an older build — which could only ever see the first folder
                         // — is corrected without the user reinstalling it.
-                        await scope.ServiceProvider
+                        var modelPathsSync = await scope.ServiceProvider
                             .GetRequiredService<Services.Engine.EngineModelPathsSynchronizer>()
                             .SyncAsync();
+                        DiffusionNexus.UI.Services.Engine.EngineModelFoldersChanged.RequestRestartIfWritten(
+                            modelPathsSync,
+                            Services!.GetService<Services.Engine.IManagedComfyUiEngine>(),
+                            Services!.GetService<DiffusionNexus.Domain.Services.UnifiedLogging.IUnifiedLogger>());
                     }
                     catch (Exception ex)
                     {
@@ -630,29 +635,13 @@ public partial class App : Application
 
         // The Canvas's second backend: the app-owned ComfyUI engine.
         services.AddSingleton<Services.Diffusion.ManagedComfyUiBackend>(sp =>
-            new Services.Diffusion.ManagedComfyUiBackend(
+        {
+            var rootResolver = sp.GetRequiredService<Services.Engine.IEngineRootResolver>();
+            return new Services.Diffusion.ManagedComfyUiBackend(
                 sp.GetRequiredService<Services.Engine.ManagedComfyUiEngine>(),
-                async () =>
-                {
-                    using var scope = sp.CreateScope();
-                    var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-                    var packages = await uow.InstallerPackages.GetAllAsync();
-                    var installRoot = packages.FirstOrDefault(p => p.IsAppManaged)?.InstallationPath;
-
-                    // The engine reads extra_model_paths.yaml once, at process start. This resolver
-                    // runs on every availability check — immediately before EnsureRunningAsync — so
-                    // it is the one point where "the folder list in Settings changed" can still be
-                    // acted on. Never fails the resolve: the synchronizer swallows its own errors.
-                    if (!string.IsNullOrWhiteSpace(installRoot))
-                    {
-                        await scope.ServiceProvider
-                            .GetRequiredService<Services.Engine.EngineModelPathsSynchronizer>()
-                            .SyncAsync(installRoot);
-                    }
-
-                    return installRoot;
-                },
-                sp.GetService<Services.Diffusion.IWorkflowTemplateSource>()));
+                () => rootResolver.ResolveAsync(),
+                sp.GetService<Services.Diffusion.IWorkflowTemplateSource>());
+        });
 
         // Diffusion Canvas view model (singleton — frames persist across navigation in v1).
         services.AddSingleton<DiffusionNexus.UI.ViewModels.DiffusionCanvas.DiffusionCanvasViewModel>(sp =>
@@ -761,13 +750,70 @@ public partial class App : Application
         services.AddSingleton<Services.Engine.ManagedComfyUiEngine>(sp =>
             new Services.Engine.ManagedComfyUiEngine(
                 sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+        services.AddSingleton<Services.Engine.IManagedComfyUiEngine>(sp =>
+            sp.GetRequiredService<Services.Engine.ManagedComfyUiEngine>());
+        // A changed extra_model_paths.yaml needs an Engine restart: it is read only at start-up. The
+        // engine is resolved inside the callback, when it fires, not while building the resolver.
+        services.AddSingleton<Services.Engine.IEngineRootResolver>(sp =>
+            new Services.Engine.EngineRootResolver(
+                sp.GetRequiredService<IServiceScopeFactory>(),
+                onModelPathsChanged: () => sp.GetRequiredService<Services.Engine.IManagedComfyUiEngine>().RequestRestart(),
+                unifiedLogger: sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
 
-        // ComfyUI workflow execution service (singleton - maintains HttpClient)
+        // ComfyUI client for the features not yet on IComfyUiClientProvider (Batch Upscale,
+        // ComfyUI captioning, the ComfyUI readiness backend). Built from the Settings URL — it used
+        // to ignore it and always talk to 8188. A URL change reaches these after a restart; #608
+        // moves Batch Upscale onto the provider.
+        // A bad Settings URL must not throw here: this singleton feeds the readiness backend,
+        // captioning and the LoRA Dataset Helper, and a throw would keep the user out of Settings.
         services.AddSingleton<IComfyUIWrapperService>(sp =>
         {
-            var settings = sp.GetRequiredService<IAppSettingsService>();
-            // Default URL; callers can reconfigure later if settings change
-            return new ComfyUIWrapperService();
+            string? url;
+            try
+            {
+                // Only the URL column, read-only: a full settings load (with its writes) is not
+                // worth blocking first resolution on.
+                using var scope = sp.CreateScope();
+                url = scope.ServiceProvider.GetRequiredService<IAppSettingsService>()
+                    .GetComfyUiServerConnectionAsync().GetAwaiter().GetResult().Url;
+            }
+            catch (Exception ex)
+            {
+                Serilog.Log.Warning(ex, "Could not read the ComfyUI server URL from Settings; using {Default}", ComfyUiUrl.Default);
+                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()?.Warn(
+                    Domain.Services.UnifiedLogging.LogCategory.Configuration, "ComfyUI",
+                    $"Could not read the ComfyUI server URL from Settings; using {ComfyUiUrl.Default}.");
+                return new ComfyUIWrapperService(ComfyUiUrl.Default);
+            }
+
+            if (!string.IsNullOrWhiteSpace(url) && !ComfyUiUrl.IsValid(url))
+            {
+                Serilog.Log.Warning("The ComfyUI server URL in Settings is not valid: '{Url}'; using {Default}", url, ComfyUiUrl.Default);
+                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()?.Warn(
+                    Domain.Services.UnifiedLogging.LogCategory.Configuration, "ComfyUI",
+                    $"The ComfyUI server URL in Settings is not valid: '{url}'. Using {ComfyUiUrl.Default}; fix it in Settings → ComfyUI Server.");
+            }
+
+            return new ComfyUIWrapperService(ComfyUiUrl.OrDefault(url));
+        });
+
+        // The ComfyUI that Inpaint and Outpaint run on: the Engine or the user's own, per Settings.
+        // Settings are read through a fresh scope per call: IAppSettingsService is transient over a
+        // scoped DbContext, and parallel readiness checks must not share one context. Only the mode
+        // and URL are read, read-only, on every Generate.
+        services.AddSingleton<IComfyUiClientProvider>(sp =>
+        {
+            var scopes = sp.GetRequiredService<IServiceScopeFactory>();
+            return new Services.Diffusion.ComfyUiClientProvider(
+                async ct =>
+                {
+                    using var scope = scopes.CreateScope();
+                    return await scope.ServiceProvider.GetRequiredService<IAppSettingsService>()
+                        .GetComfyUiServerConnectionAsync(ct);
+                },
+                sp.GetRequiredService<Services.Engine.IEngineRootResolver>(),
+                sp.GetRequiredService<Services.Engine.IManagedComfyUiEngine>(),
+                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>());
         });
 
         // Backend-agnostic feature readiness pipeline.
@@ -776,16 +822,28 @@ public partial class App : Application
         //     -> IFeatureBackendRouter               (picks the backend per feature)
         //       -> ComfyUIFeatureBackend             (ComfyUI server + workload checker)
         //       -> LocalInferenceFeatureBackend      (LlamaSharp captioning, sd.cpp generation)
+        //       -> EngineFeatureBackend              (Diffusion Nexus Engine folder + catalog workloads)
         //
         // A feature reports "Ready" iff its backing workload would show as "Full" in the
         // Installer Manager dialog. The unified logger plumb-through makes readiness
         // decisions visible in the in-app console.
         services.AddSingleton<IFeatureBackend>(sp =>
-            new ComfyUIFeatureBackend(
+        {
+            var scopes = sp.GetRequiredService<IServiceScopeFactory>();
+            return new ComfyUIFeatureBackend(
                 sp.GetRequiredService<IComfyUIWrapperService>(),
-                sp.GetRequiredService<IAppSettingsService>(),
+                readServerUrl: async ct =>
+                {
+                    // Fresh scope per read: the Outpaint panel checks Outpaint and OutpaintVision in
+                    // parallel, and two reads on one DbContext throw (Vision then shows offline).
+                    using var scope = scopes.CreateScope();
+                    var connection = await scope.ServiceProvider.GetRequiredService<IAppSettingsService>()
+                        .GetComfyUiServerConnectionAsync(ct).ConfigureAwait(false);
+                    return connection.Url ?? ComfyUiUrl.Default;
+                },
                 sp.GetRequiredService<Domain.Services.IWorkloadInstallationChecker>(),
-                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>());
+        });
 
         // Resolves the concrete LocalInferenceCaptioningBackend rather than the
         // ICaptioningBackend collection — going through the collection would force the
@@ -797,8 +855,28 @@ public partial class App : Application
                 sp.GetService<Inference.Captioning.LocalInferenceCaptioningBackend>(),
                 diffusion: null));
 
+        services.AddSingleton<IFeatureBackend>(sp =>
+            new Services.Engine.EngineFeatureBackend(
+                sp.GetRequiredService<Services.Engine.IEngineRootResolver>(),
+                sp.GetRequiredService<ICatalog>(),
+                sp.GetRequiredService<IConfigurationCheckerService>(),
+                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+
         services.AddSingleton<IFeatureBackendRouter>(sp =>
-            new FeatureBackendRouter(sp.GetServices<IFeatureBackend>()));
+        {
+            var scopes = sp.GetRequiredService<IServiceScopeFactory>();
+            return new FeatureBackendRouter(
+                sp.GetServices<IFeatureBackend>(),
+                serverModeAsync: async ct =>
+                {
+                    // Fresh scope per call: the Outpaint panel resolves Outpaint and OutpaintVision in
+                    // parallel, and two reads on one DbContext throw. A one-column read-only query,
+                    // awaited, so a readiness check never blocks the UI thread on the database.
+                    using var scope = scopes.CreateScope();
+                    return await scope.ServiceProvider.GetRequiredService<IAppSettingsService>()
+                        .GetComfyUiServerModeAsync(ct).ConfigureAwait(false);
+                });
+        });
 
         services.AddSingleton<IFeatureReadinessService>(sp =>
             new FeatureReadinessService(
@@ -894,7 +972,9 @@ public partial class App : Application
             sp.GetService<IActivityLogService>(),
             sp.GetService<ISettingsExportService>(),
             sp.GetService<Civitai.ICivitaiBaseModelCatalog>(),
-            sp.GetService<IBackupScheduler>()));
+            sp.GetService<IBackupScheduler>(),
+            engineRootResolver: sp.GetService<Services.Engine.IEngineRootResolver>(),
+            engine: sp.GetService<Services.Engine.IManagedComfyUiEngine>()));
 
         services.AddSingleton<ILoraUpdateChecker>(sp => new LoraUpdateChecker(
             sp.GetRequiredService<IServiceScopeFactory>(),
@@ -991,7 +1071,8 @@ public partial class App : Application
             unitOfWorkFactory: () => sp.GetRequiredService<IUnitOfWork>(),
             engineInstaller: sp.GetRequiredService<Services.Engine.IManagedEngineInstaller>(),
             resourceMonitor: sp.GetRequiredService<IResourceMonitorService>(),
-            engineModelPaths: sp.GetRequiredService<Services.Engine.EngineModelPathsSynchronizer>()));
+            engineModelPaths: sp.GetRequiredService<Services.Engine.EngineModelPathsSynchronizer>(),
+            engine: sp.GetRequiredService<Services.Engine.IManagedComfyUiEngine>()));
         services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),
@@ -1025,7 +1106,8 @@ public partial class App : Application
             sp.GetService<ColorDistributionAnalyzer>(),
             sp.GetService<IDownloadCoordinator>(),
             sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>(),
-            sp.GetService<Civitai.ICivitaiBaseModelCatalog>()));
+            sp.GetService<Civitai.ICivitaiBaseModelCatalog>(),
+            sp.GetService<IComfyUiClientProvider>()));
     }
 
     /// <summary>
@@ -1086,6 +1168,7 @@ public partial class App : Application
         // leaves its slot null, and the compound guard below skips wiring + data
         // load for the degraded app (the ready-check list shows which module died).
         InstallerManagerViewModel? installerManagerVm = null;
+        ModuleItem? installerManagerModule = null;
         LoraDatasetHelperViewModel? loraDatasetHelperVm = null;
         ModuleItem? loraDatasetHelperModule = null;
         LoraViewerViewModel? loraViewerVm = null;
@@ -1103,7 +1186,7 @@ public partial class App : Application
         {
             installerManagerVm = Services!.GetRequiredService<InstallerManagerViewModel>();
             var installerManagerView = new InstallerManagerView { DataContext = installerManagerVm };
-            var installerManagerModule = new ModuleItem(
+            installerManagerModule = new ModuleItem(
                 "Installer Manager",
                 "avares://DiffusionNexus.UI/Assets/Installer.png", // TODO: add dedicated Installer Manager icon
                 installerManagerView)
@@ -1249,20 +1332,6 @@ public partial class App : Application
                 mainViewModel.RegisterModule(diffusionCanvasModule);
                 mainViewModel.SetDiffusionCanvasModule(diffusionCanvasModule);
 
-                // The engine tile follows the same switch as the Canvas — both surfaces are
-                // unfinished and must appear or disappear together. Reuses the same
-                // InstallerManagerViewModel instance resolved earlier (AddScoped, single
-                // root scope) rather than re-resolving it.
-                if (installerManagerVm is not null)
-                {
-                    installerManagerVm.IsEngineTileVisible = mainViewModel.IsDiffusionCanvasEnabled;
-                    mainViewModel.PropertyChanged += (_, e) =>
-                    {
-                        if (e.PropertyName == nameof(mainViewModel.IsDiffusionCanvasEnabled))
-                            installerManagerVm.IsEngineTileVisible = mainViewModel.IsDiffusionCanvasEnabled;
-                    };
-                }
-
                 startupProgress.Complete("diffusion-canvas");
             }
             catch (Exception ex)
@@ -1339,7 +1408,10 @@ public partial class App : Application
             settingsModule = new ModuleItem(
                 "Settings",
                 "avares://DiffusionNexus.UI/Assets/settings.png",
-                settingsView);
+                settingsView)
+            {
+                ViewModel = settingsVm
+            };
 
             mainViewModel.RegisterModule(settingsModule);
             startupProgress.Complete("settings");
@@ -1382,9 +1454,25 @@ public partial class App : Application
                 mainViewModel.NavigateToModuleCommand.Execute(loraDatasetHelperModule);
             };
 
-            eventAggregator.NavigateToSettingsRequested += (_, _) =>
+            eventAggregator.NavigateToSettingsRequested += (_, e) =>
             {
                 mainViewModel.NavigateToModuleCommand.Execute(settingsModule);
+                if (e.Section == SettingsSection.ComfyUiServer)
+                {
+                    // Reset first so a second "change" click re-triggers the scroll.
+                    settingsVm.IsComfyUiServerExpanded = false;
+                    settingsVm.IsComfyUiServerExpanded = true;
+                }
+            };
+
+            eventAggregator.NavigateToEngineFeaturesRequested += (_, e) =>
+            {
+                if (installerManagerModule is not null)
+                    mainViewModel.NavigateToModuleCommand.Execute(installerManagerModule);
+                // Engine not installed: the Installation Manager offers its install; the Features
+                // dialog would only refuse.
+                if (!e.InstallEngineOnly)
+                    _ = installerManagerVm.OpenEngineFeaturesAsync(e.Preselect);
             };
 
             eventAggregator.NavigateToImageComparerRequested += (_, e) =>
