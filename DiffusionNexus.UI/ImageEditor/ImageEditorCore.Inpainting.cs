@@ -209,10 +209,21 @@ public partial class ImageEditorCore
     /// Prepares a masked image for AI inpainting by compositing the inpaint base with the
     /// painted mask. Transparent pixels in the result mark the regions to regenerate.
     /// If no inpaint base exists, the current state is auto-captured.
+    /// Base and mask are copied before this returns; the feather, composite and PNG encode run
+    /// on a worker thread, because on a large canvas they take seconds and froze the window.
     /// </summary>
     /// <param name="featherRadius">Mask feather radius for softening brush edges (0 = hard).</param>
     /// <returns>Result containing PNG bytes of the masked image, or an error.</returns>
-    public InpaintPrepareResult PrepareInpaintMaskedImage(float featherRadius)
+    public Task<InpaintPrepareResult> PrepareInpaintMaskedImageAsync(float featherRadius)
+    {
+        var (failure, baseCopy, maskCopy, baseCaptured) = CaptureInpaintInputs();
+        if (failure is not null)
+            return Task.FromResult(failure);
+
+        return Task.Run(() => CompositeAndEncode(baseCopy!, maskCopy!, featherRadius, baseCaptured));
+    }
+
+    private (InpaintPrepareResult? Failure, SKBitmap? Base, SKBitmap? Mask, bool BaseCaptured) CaptureInpaintInputs()
     {
         bool baseCaptured = false;
         SKBitmap? baseCopy;
@@ -231,7 +242,7 @@ public partial class ImageEditorCore
 
             baseCopy = _inpaintBaseBitmap?.Copy();
             if (baseCopy is null)
-                return InpaintPrepareResult.Failed("No image to inpaint.");
+                return (InpaintPrepareResult.Failed("No image to inpaint."), null, null, baseCaptured);
 
             maskCopy = _layers?.Layers
                 .FirstOrDefault(l => l.IsInpaintMask)?.Bitmap?.Copy();
@@ -240,20 +251,21 @@ public partial class ImageEditorCore
         if (maskCopy is null)
         {
             baseCopy.Dispose();
-            return InpaintPrepareResult.Failed(
+            return (InpaintPrepareResult.Failed(
                 "No inpaint mask painted. Paint over areas to regenerate.",
-                baseCaptured);
+                baseCaptured), null, null, baseCaptured);
         }
 
-        return CompositeAndEncode(baseCopy, maskCopy, featherRadius, baseCaptured);
+        return (null, baseCopy, maskCopy, baseCaptured);
     }
 
     /// <summary>
     /// Exports the current inpaint base bitmap as PNG bytes.
     /// Useful for saving a "before" image for comparison workflows.
+    /// The base is copied before this returns; the encode runs on a worker thread.
     /// </summary>
     /// <returns>PNG bytes, or null if no inpaint base has been captured.</returns>
-    public byte[]? GetInpaintBaseAsPng()
+    public Task<byte[]?> GetInpaintBaseAsPngAsync()
     {
         SKBitmap? copy;
         lock (_bitmapLock)
@@ -261,8 +273,13 @@ public partial class ImageEditorCore
             copy = _inpaintBaseBitmap?.Copy();
         }
 
-        if (copy is null) return null;
+        if (copy is null) return Task.FromResult<byte[]?>(null);
 
+        return Task.Run(() => EncodeBaseAsPng(copy));
+    }
+
+    private static byte[]? EncodeBaseAsPng(SKBitmap copy)
+    {
         try
         {
             // Convert to unpremultiplied alpha so RGB values are stored straight in the PNG.

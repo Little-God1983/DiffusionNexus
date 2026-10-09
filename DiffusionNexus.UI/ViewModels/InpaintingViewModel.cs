@@ -58,6 +58,7 @@ public partial class InpaintingViewModel : ObservableObject
         "Painting with invisible brushes…"
     ];
     private readonly Random _random = new();
+    private readonly GenerationStepText _stepText = new();
 
     private bool _isPanelOpen;
     private float _brushSize = 40f;
@@ -89,6 +90,7 @@ public partial class InpaintingViewModel : ObservableObject
         _hasImage = hasImage;
         _deactivateOtherTools = deactivateOtherTools;
         _clientProvider = comfyUiClientProvider;
+        _stepText.Changed += (_, _) => OnPropertyChanged(nameof(ProgressStepText));
         _eventAggregator = eventAggregator;
         _unifiedLogger = unifiedLogger;
 
@@ -290,9 +292,15 @@ public partial class InpaintingViewModel : ObservableObject
         private set
         {
             if (SetProperty(ref _status, value))
+            {
                 ParseProgress(value);
+                _stepText.Update(value);
+            }
         }
     }
+
+    /// <summary>Plain status line with the elapsed time ("Generating · step 2 of 4 · 0:47"); null when idle.</summary>
+    public string? ProgressStepText => _stepText.Text;
 
     /// <summary>Progress percentage (0-100) for the current inpainting operation, or -1 when indeterminate.</summary>
     public int InpaintProgress
@@ -396,9 +404,6 @@ public partial class InpaintingViewModel : ObservableObject
     /// <summary>Event raised when a status message should be shown.</summary>
     public event EventHandler<string?>? StatusMessageChanged;
 
-    /// <summary>Event raised when the inpaint mask should be hidden (after successful send to ComfyUI).</summary>
-    public event EventHandler? HideMaskRequested;
-
     // TODO: Linux Implementation for Inpainting
 
     #endregion
@@ -440,6 +445,12 @@ public partial class InpaintingViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Ends a Generate the view could not hand over (no mask painted, the image export failed):
+    /// without this the panel stayed busy and Generate stayed disabled until the editor closed.
+    /// </summary>
+    public void EndWithoutRun() => OnFinished();
+
     /// <summary>Sets the path to the "before" image saved by the View for compare mode.</summary>
     public void SetCompareBeforeImagePath(string path)
     {
@@ -462,16 +473,12 @@ public partial class InpaintingViewModel : ObservableObject
         }
 
         ComfyUiClientLease? lease = null;
+        if (!_stepText.IsRunning) _stepText.Start();
         try
         {
             Emit("Generate requested.");
-            lease = await _clientProvider.AcquireAsync(new Progress<string>(msg =>
-            {
-                // Engine start-up text ("Starting Diffusion Nexus Engine…"): the panel shows
-                // ProgressDisplayText, and setting Status alone replaces it with a fun message.
-                Status = msg;
-                ProgressDisplayText = msg;
-            }));
+            // Engine start-up text ("Starting Diffusion Nexus Engine…") lands on the status line.
+            lease = await _clientProvider.AcquireAsync(new Progress<string>(msg => Status = msg));
             var comfy = lease.Client;
             Emit($"Running on {(lease.Mode == ComfyUiServerMode.Engine ? "the Diffusion Nexus Engine" : "your own ComfyUI")} at {lease.BaseUrl}.");
 
@@ -539,19 +546,9 @@ public partial class InpaintingViewModel : ObservableObject
             Emit($"Prompt queued ({promptId}).");
 
             Status = "Generating (this may take a while)...";
-            var maskHidden = false;
-            var progress = new Progress<string>(msg =>
-            {
-                Status = msg;
-
-                // Hide the mask on the first real progress update from ComfyUI,
-                // meaning the server has picked up the job and is actively working.
-                if (!maskHidden)
-                {
-                    maskHidden = true;
-                    HideMaskRequested?.Invoke(this, EventArgs.Empty);
-                }
-            });
+            // The mask stays visible on the canvas through and after the run (#606 smoke), so the
+            // user can generate again with it or adjust it without repainting.
+            var progress = new Progress<string>(msg => Status = msg);
             await comfy.WaitForCompletionAsync(promptId, progress);
 
             Status = "Downloading result...";
@@ -644,6 +641,7 @@ public partial class InpaintingViewModel : ObservableObject
         _pendingCompareBeforeImagePath = null;
         ResetErrorState();
         IsBusy = true;
+        _stepText.Start();
         Status = "Preparing image and mask...";
         NotifyGenerateCommandsCanExecuteChanged();
 
@@ -671,6 +669,7 @@ public partial class InpaintingViewModel : ObservableObject
         _pendingCompareBeforeImagePath = string.Empty;
         ResetErrorState();
         IsBusy = true;
+        _stepText.Start();
         Status = "Preparing image and mask...";
         NotifyGenerateCommandsCanExecuteChanged();
 
@@ -703,6 +702,7 @@ public partial class InpaintingViewModel : ObservableObject
         _pendingCompareBeforeImagePath = null;
         IsBusy = false;
         IsProgressIndeterminate = false;
+        _stepText.Stop();
 
         if (_hasError)
         {

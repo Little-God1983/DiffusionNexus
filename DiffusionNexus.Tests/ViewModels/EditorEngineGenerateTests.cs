@@ -61,35 +61,35 @@ public class EditorEngineGenerateTests
     }
 
     [Fact]
-    public async Task Inpaint_EngineStartingText_IsShownInTheProgressPanelText()
+    public async Task Inpaint_EngineStartingText_IsShownOnTheStatusLine()
     {
         var shown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var vm = new InpaintingViewModel(() => true, _ => { }, ReportsStartingThenWaits(shown.Task).Object, eventAggregator: null);
         vm.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(InpaintingViewModel.ProgressDisplayText) && vm.ProgressDisplayText == StartingText)
+            if (e.PropertyName == nameof(InpaintingViewModel.ProgressStepText) && vm.ProgressStepText?.StartsWith("Starting the Diffusion Nexus Engine · ") == true)
                 shown.TrySetResult();
         };
 
         await vm.ProcessInpaintAsync(TempImage());
 
-        shown.Task.IsCompletedSuccessfully.Should().BeTrue("the panel binds ProgressDisplayText, so the text must land there");
+        shown.Task.IsCompletedSuccessfully.Should().BeTrue("the panel shows the Engine start on its status line");
     }
 
     [Fact]
-    public async Task Outpaint_EngineStartingText_IsShownInTheProgressPanelText()
+    public async Task Outpaint_EngineStartingText_IsShownOnTheStatusLine()
     {
         var shown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var vm = new OutpaintingViewModel(() => true, () => 512, () => 512, _ => { }, ReportsStartingThenWaits(shown.Task).Object);
         vm.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(OutpaintingViewModel.ProgressDisplayText) && vm.ProgressDisplayText == StartingText)
+            if (e.PropertyName == nameof(OutpaintingViewModel.ProgressStepText) && vm.ProgressStepText?.StartsWith("Starting the Diffusion Nexus Engine · ") == true)
                 shown.TrySetResult();
         };
 
         await vm.ProcessOutpaintAsync(TempImage(), useVision: false, 64, 0, 64, 0);
 
-        shown.Task.IsCompletedSuccessfully.Should().BeTrue("the panel binds ProgressDisplayText, so the text must land there");
+        shown.Task.IsCompletedSuccessfully.Should().BeTrue("the panel shows the Engine start on its status line");
     }
 
     [Fact]

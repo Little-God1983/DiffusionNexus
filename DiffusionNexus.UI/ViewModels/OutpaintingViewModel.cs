@@ -80,6 +80,7 @@ public partial class OutpaintingViewModel : ObservableObject
         "Q3_K_M", "Q3_K_S", "Q2_K", "F16", "BF16"
     ];
     private readonly Random _random = new();
+    private readonly GenerationStepText _stepText = new();
 
     private bool _isPanelOpen;
     private string _outpaintResolutionText = string.Empty;
@@ -119,6 +120,7 @@ public partial class OutpaintingViewModel : ObservableObject
         _getImageWidth = getImageWidth;
         _getImageHeight = getImageHeight;
         _deactivateOtherTools = deactivateOtherTools;
+        _stepText.Changed += (_, _) => OnPropertyChanged(nameof(ProgressStepText));
         _clientProvider = comfyUiClientProvider;
         _unifiedLogger = unifiedLogger;
         _eventAggregator = eventAggregator;
@@ -444,9 +446,15 @@ public partial class OutpaintingViewModel : ObservableObject
         private set
         {
             if (SetProperty(ref _status, value))
+            {
                 ParseProgress(value);
+                _stepText.Update(value);
+            }
         }
     }
+
+    /// <summary>Plain status line with the elapsed time ("Generating · step 2 of 4 · 0:47"); null when idle.</summary>
+    public string? ProgressStepText => _stepText.Text;
 
     /// <summary>Progress percentage (0-100) for the current outpainting operation.</summary>
     public int OutpaintProgress
@@ -687,6 +695,7 @@ public partial class OutpaintingViewModel : ObservableObject
         }
 
         IsBusy = true;
+        _stepText.Start();
         Status = "Preparing image...";
         NotifyGenerateCommandsCanExecuteChanged();
 
@@ -702,6 +711,12 @@ public partial class OutpaintingViewModel : ObservableObject
         ProgressDisplayText = message;
         StatusMessageChanged?.Invoke(this, message);
     }
+
+    /// <summary>
+    /// Ends a Generate the view could not hand over (no mask painted, the image export failed):
+    /// without this the panel stayed busy and Generate stayed disabled until the editor closed.
+    /// </summary>
+    public void EndWithoutRun() => OnFinished();
 
     /// <summary>
     /// Processes the outpainting workflow via ComfyUI.
@@ -720,16 +735,12 @@ public partial class OutpaintingViewModel : ObservableObject
         }
 
         ComfyUiClientLease? lease = null;
+        if (!_stepText.IsRunning) _stepText.Start();
         try
         {
             EmitGenerate("Generate requested.");
-            lease = await _clientProvider.AcquireAsync(new Progress<string>(msg =>
-            {
-                // Engine start-up text ("Starting Diffusion Nexus Engine…"): the panel shows
-                // ProgressDisplayText, and setting Status alone replaces it with a fun message.
-                Status = msg;
-                ProgressDisplayText = msg;
-            }));
+            // Engine start-up text ("Starting Diffusion Nexus Engine…") lands on the status line.
+            lease = await _clientProvider.AcquireAsync(new Progress<string>(msg => Status = msg));
             var comfy = lease.Client;
             EmitGenerate($"Running on {(lease.Mode == ComfyUiServerMode.Engine ? "the Diffusion Nexus Engine" : "your own ComfyUI")} at {lease.BaseUrl}.");
 
@@ -871,6 +882,7 @@ public partial class OutpaintingViewModel : ObservableObject
     private void OnFinished()
     {
         IsBusy = false;
+        _stepText.Stop();
 
         if (_hasError)
         {

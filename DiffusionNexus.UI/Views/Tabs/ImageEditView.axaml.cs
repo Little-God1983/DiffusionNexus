@@ -444,6 +444,7 @@ public partial class ImageEditView : UserControl
                 if (imageEditor.SaveImageFunc is null || !imageEditor.SaveImageFunc(tempPath, null))
                 {
                     imageEditor.StatusMessage = "Failed to export current image for outpainting.";
+                    imageEditor.Outpainting.EndWithoutRun();
                     imageEditor.Outpainting.RefreshCommandStates();
                     return;
                 }
@@ -454,6 +455,7 @@ public partial class ImageEditView : UserControl
             catch (Exception ex)
             {
                 imageEditor.StatusMessage = $"Outpainting failed: {ex.Message}";
+                if (imageEditor.Outpainting.IsBusy) imageEditor.Outpainting.EndWithoutRun();
             }
             finally
             {
@@ -1045,27 +1047,30 @@ public partial class ImageEditView : UserControl
                 var editorCore = _imageEditorCanvas.EditorCore;
                 var versionBefore = editorCore.InpaintBaseVersion;
 
-                var prepareResult = editorCore.PrepareInpaintMaskedImage(imageEditor.Inpainting.MaskFeather);
+                // Both calls copy base and mask before returning; the encodes run off the UI thread.
+                var prepareTask = editorCore.PrepareInpaintMaskedImageAsync(imageEditor.Inpainting.MaskFeather);
+                var beforeTask = imageEditor.Inpainting.IsCompareModePending
+                    ? editorCore.GetInpaintBaseAsPngAsync()
+                    : null;
+                var versionAfterCapture = editorCore.InpaintBaseVersion;
+                var prepareResult = await prepareTask;
 
-                if (editorCore.InpaintBaseVersion != versionBefore)
+                if (versionAfterCapture != versionBefore)
                 {
-                    _lastSyncedInpaintBaseVersion = editorCore.InpaintBaseVersion;
+                    _lastSyncedInpaintBaseVersion = versionAfterCapture;
                     imageEditor.Inpainting.UpdateBaseThumbnail(CreateThumbnailFromEditorCore(editorCore));
                 }
 
                 if (!prepareResult.Success)
                 {
                     imageEditor.StatusMessage = prepareResult.ErrorMessage;
+                    imageEditor.Inpainting.EndWithoutRun();
                     return;
                 }
 
-                // Capture the before PNG synchronously (before any await) so the
-                // inpaint base bitmap cannot be modified by another event during a yield.
-                byte[]? beforePng = null;
-                if (imageEditor.Inpainting.IsCompareModePending)
-                {
-                    beforePng = editorCore.GetInpaintBaseAsPng();
-                }
+                // The before image was copied above, before the first await, so the inpaint
+                // base cannot be changed by another event while the encodes run.
+                var beforePng = beforeTask is null ? null : await beforeTask;
 
                 tempPath = Path.Combine(Path.GetTempPath(), $"diffnexus_inpaint_{Guid.NewGuid():N}.png");
                 await File.WriteAllBytesAsync(tempPath, prepareResult.MaskedImagePng!);
@@ -1082,6 +1087,7 @@ public partial class ImageEditView : UserControl
             catch (Exception ex)
             {
                 imageEditor.StatusMessage = $"Inpainting failed: {ex.Message}";
+                if (imageEditor.Inpainting.IsBusy) imageEditor.Inpainting.EndWithoutRun();
             }
             finally
             {
@@ -1124,18 +1130,6 @@ public partial class ImageEditView : UserControl
             imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas!.EditorCore.Layers);
         _imageEditorCanvas.InpaintMaskChanged += onMaskChanged;
         _eventCleanup.Add(() => _imageEditorCanvas!.InpaintMaskChanged -= onMaskChanged);
-
-        EventHandler onHideMask = (_, _) =>
-        {
-            if (_imageEditorCanvas is null) return;
-            if (_imageEditorCanvas.EditorCore.SetInpaintMaskVisible(false))
-            {
-                imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
-                _imageEditorCanvas.InvalidateVisual();
-            }
-        };
-        imageEditor.Inpainting.HideMaskRequested += onHideMask;
-        _eventCleanup.Add(() => imageEditor.Inpainting.HideMaskRequested -= onHideMask);
 
         EventHandler onPaintingStarted = (_, _) =>
         {

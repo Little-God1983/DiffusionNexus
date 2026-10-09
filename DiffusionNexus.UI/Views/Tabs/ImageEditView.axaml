@@ -586,6 +586,9 @@
 
                 <!-- Progress -->
                 <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.Outpainting.IsProgressVisible}" Margin="0,4,0,0">
+                  <TextBlock Text="{Binding ImageEditor.Outpainting.ProgressStepText}"
+                             IsVisible="{Binding ImageEditor.Outpainting.ProgressStepText, Converter={x:Static ObjectConverters.IsNotNull}}"
+                             FontSize="11" TextWrapping="Wrap"/>
                   <TextBlock Text="{Binding ImageEditor.Outpainting.ProgressDisplayText}"
                              FontSize="10" Opacity="0.7" TextWrapping="Wrap" FontStyle="Italic"/>
                   <Border Background="#333" CornerRadius="2" Height="6" Margin="0,2,0,0">
@@ -1316,6 +1319,9 @@
                 
                 <!-- Progress (shown when busy) -->
                 <StackPanel Spacing="4" IsVisible="{Binding ImageEditor.Inpainting.IsProgressVisible}" Margin="0,4,0,0">
+                  <TextBlock Text="{Binding ImageEditor.Inpainting.ProgressStepText}"
+                             IsVisible="{Binding ImageEditor.Inpainting.ProgressStepText, Converter={x:Static ObjectConverters.IsNotNull}}"
+                             FontSize="11" TextWrapping="Wrap"/>
                   <TextBlock Text="{Binding ImageEditor.Inpainting.ProgressDisplayText}" 
                              FontSize="10" Opacity="0.7" TextWrapping="Wrap" FontStyle="Italic"/>
                   <Border Background="#333" CornerRadius="2" Height="6" Margin="0,2,0,0">
