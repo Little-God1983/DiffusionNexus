@@ -11,6 +11,12 @@ public enum EngineFeature
     /// <summary>Image Editor Outpaint with Vision: the Outpaint set plus the Qwen3-VL GGUF node and model.</summary>
     OutpaintVision,
 
+    /// <summary>Batch Upscale with a typed, caption or metadata prompt: Z-Image Turbo + Ultimate SD Upscale.</summary>
+    BatchUpscale,
+
+    /// <summary>Batch Upscale with Vision Auto-Prompt: the upscale set plus the Qwen3-VL GGUF describer.</summary>
+    BatchUpscaleVision,
+
     /// <summary>Diffusion Canvas text-to-image with Krea 2 Turbo.</summary>
     Canvas
 }
@@ -26,7 +32,7 @@ public sealed record EngineFeatureDefinition(
 /// The app features the Diffusion Nexus Engine can be equipped with, each mapped to the catalog
 /// workloads that carry its node packs and models. Rows map to whole workloads so the catalog stays
 /// the single source of what a feature needs; nothing here lists model files. A row only appears once
-/// it has been verified against the Engine: Batch Upscale arrives with #608.
+/// it has been verified against the Engine.
 /// </summary>
 public static class EngineFeatureCatalog
 {
@@ -40,6 +46,16 @@ public static class EngineFeatureCatalog
     /// its projector. The node pack needs a prebuilt llama-cpp-python wheel (#607).
     /// </summary>
     public static readonly Guid OutpaintingQwen2512 = Guid.Parse("137929E4-5C05-4304-80D4-5D785D45FD3F");
+
+    /// <summary>"Upscaling-Z-Image-Turbo": Z-Image Turbo bf16, qwen_3_4b, ae, 4x-UltraSharp + ComfyUI_UltimateSDUpscale.</summary>
+    public static readonly Guid UpscalingZImageTurbo = Guid.Parse("B853EB7C-0A0E-48A6-985E-E32B2F8848F5");
+
+    /// <summary>
+    /// "Upscaling-Z-Image-Turbo Vision": the upscale set plus ComfyUI_Simple_Qwen3-VL-gguf, ComfyUI-Custom-Scripts
+    /// and the Qwen3-VL 8B GGUF with its projector (same names as Outpaint Vision, so nothing downloads twice).
+    /// On catalog main (Preview); a Stable release follows with the SDK 2 app release (#608).
+    /// </summary>
+    public static readonly Guid UpscalingZImageTurboVision = Guid.Parse("FE2E7606-AC36-470E-A7C5-7F8CC23ECC98");
 
     /// <summary>Krea 2 Turbo — the first Engine workload, and the Engine's torch source.</summary>
     public static readonly Guid Krea2Turbo = Guid.Parse("E79C079A-2FD7-4FE7-8086-23731092555D");
@@ -55,6 +71,14 @@ public static class EngineFeatureCatalog
             "Outpaint Vision",
             "Image Editor · Qwen3-VL (GGUF, llama.cpp) describes the surroundings and writes the outpaint prompt",
             [OutpaintingQwen2512]),
+        new(EngineFeature.BatchUpscale,
+            "Batch Upscale",
+            "Batch Upscale · Z-Image Turbo with Ultimate SD Upscale and 4x-UltraSharp",
+            [UpscalingZImageTurbo]),
+        new(EngineFeature.BatchUpscaleVision,
+            "Batch Upscale Vision",
+            "Batch Upscale · Qwen3-VL (GGUF, llama.cpp) describes each image and writes its upscale prompt",
+            [UpscalingZImageTurboVision]),
         new(EngineFeature.Canvas,
             "Canvas · Krea 2 Turbo",
             "Text to image in the Diffusion Canvas",
@@ -73,6 +97,8 @@ public static class EngineFeatureCatalog
     {
         Feature.Inpainting or Feature.Outpaint => EngineFeature.InpaintOutpaint,
         Feature.OutpaintVision => EngineFeature.OutpaintVision,
+        Feature.BatchUpscale => EngineFeature.BatchUpscale,
+        Feature.BatchUpscaleVision => EngineFeature.BatchUpscaleVision,
         _ => null
     };
 

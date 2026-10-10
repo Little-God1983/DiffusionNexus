@@ -217,7 +217,6 @@ public class FeatureReadinessViewModelBackendLineTests
 
     [Theory]
     [InlineData(Feature.Captioning)]
-    [InlineData(Feature.BatchUpscale)]
     public async Task FeaturesTheDropdownDoesNotGovern_ShowTheirBackend_WithoutAChangeLink(Feature feature)
     {
         Returns(feature, BackendKind.ComfyUI, "ComfyUI");

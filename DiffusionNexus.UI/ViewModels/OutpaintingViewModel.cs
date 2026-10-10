@@ -6,6 +6,7 @@ using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.ImageEditor.Services;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.Vision;
 using Serilog;
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -49,9 +50,6 @@ public partial class OutpaintingViewModel : ObservableObject
     private const string ImagePadNodeId = "26";
     private const string VisionNodeId = "256";
 
-    /// <summary>Catalog names of the Vision model files; the readiness check reports where they are.</summary>
-    internal const string VisionModelName = "Qwen3-VL-8B-Abliterated-Caption-it";
-    internal const string VisionProjectorName = "Qwen3-VL-8B-Abliterated-Caption-it mmproj";
     private const string UnetLoaderGGUFNodeType = "UnetLoaderGGUF";
     private const string QwenImageGGUFPrefix = "qwen-image-2512-";
     private const string DefaultQwenImageGGUF = "qwen-image-2512-Q8_0.gguf";
@@ -267,22 +265,6 @@ public partial class OutpaintingViewModel : ObservableObject
         Logger.Information("Outpaint: {Message}", message);
         _unifiedLogger?.Info(LogCategory.Configuration, LogSource, message);
     }
-
-    /// <summary>
-    /// The Qwen3-VL GGUF node's config: model and projector paths, a bounded answer (a looping
-    /// description once ran to 2048 tokens and became the prompt), low temperature.
-    /// </summary>
-    internal static string BuildVisionConfig(string modelPath, string projectorPath) =>
-        System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object>
-        {
-            ["model_path"] = modelPath,
-            ["mmproj_path"] = projectorPath,
-            ["chat_handler"] = "qwen3",
-            ["ctx"] = 8192,
-            ["output_max_tokens"] = 400,
-            ["temperature"] = 0.3,
-            ["repeat_penalty"] = 1.1,
-        });
 
     /// <summary>Same as <see cref="EmitInfo"/> for the generate path, which logs under General (spec §4.5).</summary>
     private void EmitGenerate(string message)
@@ -843,10 +825,9 @@ public partial class OutpaintingViewModel : ObservableObject
             {
                 // The GGUF node takes the model files as paths; the readiness check found them. Generate
                 // is clickable before the first check finished, so a missing answer is checked once more.
-                if (!VisionReadiness.ModelPaths.ContainsKey(VisionModelName) || !VisionReadiness.ModelPaths.ContainsKey(VisionProjectorName))
+                if (!QwenVlGguf.TryGetPaths(VisionReadiness.ModelPaths, out _, out _))
                     await VisionReadiness.CheckReadinessAsync();
-                if (!VisionReadiness.ModelPaths.TryGetValue(VisionModelName, out var modelPath)
-                    || !VisionReadiness.ModelPaths.TryGetValue(VisionProjectorName, out var projectorPath))
+                if (!QwenVlGguf.TryGetPaths(VisionReadiness.ModelPaths, out var modelPath, out var projectorPath))
                 {
                     HasError = true;
                     ProgressDisplayText = "Qwen3-VL model files not found";
@@ -856,12 +837,12 @@ public partial class OutpaintingViewModel : ObservableObject
                     return;
                 }
 
-                var visionConfig = BuildVisionConfig(modelPath, projectorPath);
+                var visionConfig = QwenVlGguf.BuildConfig(modelPath, projectorPath);
                 EmitGenerate($"Vision model: {modelPath}");
                 overrides[VisionNodeId] = node =>
                 {
                     // The GGUF node's seed input tops out at 0xFFFFFFFF; the KSampler's 63-bit seed is rejected.
-                    node["inputs"]!["seed"] = seed & 0xFFFFFFFFL;
+                    node["inputs"]!["seed"] = QwenVlGguf.Seed(seed);
                     node["inputs"]!["config_override"] = visionConfig;
                 };
             }

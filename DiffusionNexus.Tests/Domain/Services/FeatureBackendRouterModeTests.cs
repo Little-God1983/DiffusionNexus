@@ -22,6 +22,8 @@ public class FeatureBackendRouterModeTests
     [InlineData(Feature.Inpainting)]
     [InlineData(Feature.Outpaint)]
     [InlineData(Feature.OutpaintVision)]
+    [InlineData(Feature.BatchUpscale)]
+    [InlineData(Feature.BatchUpscaleVision)]
     public void GovernedFeatures_FollowTheServerMode(Feature feature)
     {
         var mode = ComfyUiServerMode.Engine;
@@ -35,8 +37,6 @@ public class FeatureBackendRouterModeTests
 
     [Theory]
     [InlineData(Feature.Captioning)]
-    [InlineData(Feature.BatchUpscale)]
-    [InlineData(Feature.BatchUpscaleVision)]
     public void OtherFeatures_StayOnComfyUi_InEngineMode(Feature feature)
     {
         var router = new FeatureBackendRouter([_comfy, _engine], serverMode: () => ComfyUiServerMode.Engine);

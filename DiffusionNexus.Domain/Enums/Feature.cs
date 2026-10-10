@@ -28,7 +28,7 @@ public enum Feature
 
     /// <summary>
     /// Batch image upscaling with vision-model auto-prompt (Qwen3-VL generates the prompt).
-    /// Workflow: <c>Vision-Z-Image-Turbo-Upscale.json</c>
+    /// Workflows: <c>Qwen3-VL-Describe.json</c> for every image, then <c>Z-Image-Turbo-Upscale.json</c>.
     /// </summary>
     BatchUpscaleVision,
 

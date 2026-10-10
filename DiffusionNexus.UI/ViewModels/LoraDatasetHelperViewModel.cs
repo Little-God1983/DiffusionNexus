@@ -118,6 +118,9 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
             {
                 _state.SelectedTabIndex = value;
                 NotifyActiveTab(value);
+                // Batch Upscale (tab 4) checks its readiness when shown, so Start and the panel are current.
+                if (value == 4) BatchUpscale.OnTabActivated();
+                else BatchUpscale.OnTabDeactivated();
                 RefreshCurrentTabCommand.NotifyCanExecuteChanged();
             }
         }
@@ -211,9 +214,8 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// <param name="backgroundRemovalService">Optional background removal service for AI-powered background removal.</param>
     /// <param name="backupService">Optional dataset backup service for automatic backups.</param>
     /// <param name="activityLog">Optional activity log service for logging actions.</param>
-    /// <param name="comfyUiService">Optional ComfyUI wrapper service for inpainting.</param>
     /// <param name="readinessService">Optional unified ComfyUI readiness service for prerequisite checks.</param>
-    /// <param name="comfyUiClientProvider">Optional provider of the ComfyUI client chosen in Settings (Engine or own server), used by Inpaint and Outpaint.</param>
+    /// <param name="comfyUiClientProvider">Optional provider of the ComfyUI client chosen in Settings (Engine or own server), used by Inpaint, Outpaint and Batch Upscale.</param>
     public LoraDatasetHelperViewModel(
         IAppSettingsService settingsService,
         IDatasetStorageService datasetStorageService,
@@ -225,7 +227,6 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         IBackgroundRemovalService? backgroundRemovalService = null,
         IDatasetBackupService? backupService = null,
         IActivityLogService? activityLog = null,
-        IComfyUIWrapperService? comfyUiService = null,
         IThumbnailOrchestrator? thumbnailOrchestrator = null,
         AnalysisPipeline? analysisPipeline = null,
         BucketAnalyzer? bucketAnalyzer = null,
@@ -268,7 +269,8 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         ImageEdit = new ImageEditTabViewModel(eventAggregator, state, backgroundRemovalService, comfyUiClientProvider, thumbnailOrchestrator, readinessService, unifiedLogger, settingsService, videoThumbnailService, downloadCoordinator);
         BatchCropScale = new BatchCropScaleTabViewModel(state, eventAggregator, settingsService);
         Captioning = new CaptioningTabViewModel(eventAggregator, state, captioningService, captioningBackends, settingsService, readinessService, downloadCoordinator);
-        BatchUpscale = new BatchUpscaleTabViewModel(eventAggregator, state, comfyUiService, settingsService, readinessService);
+        BatchUpscale = new BatchUpscaleTabViewModel(eventAggregator, state, comfyUiClientProvider, settingsService, readinessService,
+            unifiedLogger: unifiedLogger);
 
         RefreshCurrentTabCommand = new AsyncRelayCommand(RefreshCurrentTabAsync, CanRefreshCurrentTab);
 
@@ -285,7 +287,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// <summary>
     /// Design-time constructor.
     /// </summary>
-    public LoraDatasetHelperViewModel() : this(null!, null!, null!, null!, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null)
+    public LoraDatasetHelperViewModel() : this(null!, null!, null!, null!, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null)
     {
     }
 

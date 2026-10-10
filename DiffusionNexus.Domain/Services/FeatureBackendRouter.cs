@@ -28,10 +28,15 @@ public sealed class FeatureBackendRouter : IFeatureBackendRouter
 
     /// <summary>
     /// Features whose backend the Settings → ComfyUI Server dropdown decides (#606). OutpaintVision is
-    /// included because the Outpaint panel runs both workflows through the same client.
+    /// included because the Outpaint panel runs both workflows through the same client; Batch Upscale
+    /// (#608) likewise runs both its workflows through the client the dropdown picks.
     /// </summary>
     public static readonly IReadOnlySet<Feature> ServerModeFeatures =
-        new HashSet<Feature> { Feature.Inpainting, Feature.Outpaint, Feature.OutpaintVision };
+        new HashSet<Feature>
+        {
+            Feature.Inpainting, Feature.Outpaint, Feature.OutpaintVision,
+            Feature.BatchUpscale, Feature.BatchUpscaleVision,
+        };
 
     private readonly Func<ComfyUiServerMode>? _serverMode;
     private readonly Func<CancellationToken, Task<ComfyUiServerMode>>? _serverModeAsync;
