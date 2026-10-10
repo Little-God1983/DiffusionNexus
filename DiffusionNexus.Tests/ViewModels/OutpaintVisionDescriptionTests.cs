@@ -176,6 +176,25 @@ public class OutpaintVisionDescriptionTests : IDisposable
         overrides().Should().BeNull("nothing was queued");
     }
 
+    // Review: Generate (Vision) is clickable before the first check finished, when the paths are not known yet.
+    [Fact]
+    public async Task VisionRun_BeforeTheFirstCheckFinished_ChecksForThePaths_InsteadOfReportingThemMissing()
+    {
+        var (client, overrides) = ClientCapturingOverrides();
+        var vm = new OutpaintingViewModel(() => true, _ => { },
+            InpaintingViewModelGGUFResolutionTests.Provider(client.Object, ComfyUiServerMode.Engine),
+            ReadinessWithPaths(new Dictionary<string, string>
+            {
+                [OutpaintingViewModel.VisionModelName] = @"D:\m\model.gguf",
+                [OutpaintingViewModel.VisionProjectorName] = @"D:\m\mmproj.gguf",
+            }));
+
+        await vm.ProcessOutpaintAsync(TempImage(), useVision: true, 64, 0, 64, 0);
+
+        vm.HasError.Should().BeFalse();
+        overrides()!.Should().ContainKey("256");
+    }
+
     [Fact]
     public void BuildVisionConfig_IsJsonWithEscapedWindowsPaths()
     {

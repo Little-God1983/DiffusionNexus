@@ -282,11 +282,50 @@ public partial class WorkloadsViewModel : ViewModelBase
                 .Where(m => modelIds.Contains(m.Id))
                 .ToList();
 
-            return await _installService.InstallSelectedAsync(
-                config, _comfyUIRootPath,
-                selectedNodes, selectedModels,
+            return await InstallItemsAsync(
+                config, selectedNodes, selectedModels,
                 vramGb, progress, downloadProgress, skipTokenProvider, ct);
         };
+    }
+
+    /// <summary>
+    /// Installs the selected node packs and models. A workload whose node packs run GGUF models through
+    /// llama.cpp (Outpainting-Qwen 2512, #607) names a prebuilt llama-cpp-python wheel; it goes in first,
+    /// because the packs' requirements would otherwise make pip compile it from source. No node pack
+    /// without its wheel: a pack on disk reads as installed, so Install would never retry the wheel.
+    /// </summary>
+    internal async Task<string> InstallItemsAsync(
+        InstallationConfiguration config,
+        IReadOnlyList<CustomNodeCheckResult> nodes,
+        IReadOnlyList<ModelCheckResult> models,
+        int vramGb,
+        IProgress<WorkloadInstallProgress> progress,
+        IProgress<DownloadProgress> downloadProgress,
+        Func<CancellationToken> skipTokenProvider,
+        CancellationToken ct)
+    {
+        var wheelNote = "";
+        if (nodes.Count > 0 && config.InstallLamaCpp && config.SelectedLamaCppWheelId is { } wheelId)
+        {
+            var wheel = (await _catalog.GetLamaCppWheelsAsync(ct)).FirstOrDefault(w => w.Id == wheelId);
+            if (wheel is null)
+            {
+                Serilog.Log.Warning("{Workload}: the catalog has no llama-cpp-python wheel {WheelId}", config.Name, wheelId);
+            }
+            else if (!await _installService.InstallLlamaCppWheelAsync(_comfyUIRootPath, wheel, progress, ct))
+            {
+                wheelNote = "llama-cpp-python was not installed, so its node packs were left out; Install again to retry. ";
+                nodes = [];
+            }
+        }
+
+        if (nodes.Count == 0 && models.Count == 0)
+            return wheelNote.TrimEnd();
+
+        return wheelNote + await _installService.InstallSelectedAsync(
+            config, _comfyUIRootPath,
+            nodes, models,
+            vramGb, progress, downloadProgress, skipTokenProvider, ct);
     }
 
     /// <summary>

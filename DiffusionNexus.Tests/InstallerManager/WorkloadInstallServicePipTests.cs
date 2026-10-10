@@ -1,3 +1,4 @@
+using DiffusionNexus.Installer.SDK.Models.Configuration;
 using DiffusionNexus.UI.Services;
 using FluentAssertions;
 
@@ -268,5 +269,17 @@ public class WorkloadInstallServicePipTests
     public void ParseMarkedVersion_IgnoresTheModulesOwnOutput(string? stdout, string? expected)
     {
         WorkloadInstallService.ParseMarkedVersion(stdout).Should().Be(expected);
+    }
+
+    // Review (#607): the wheel came from a third-party release with no integrity check although the catalog has its hash.
+    [Theory]
+    [InlineData("sha256:693CEF0Babc", "https://x/llama_cpp_python-0.4.2+cu130-cp312-cp312-win_amd64.whl#sha256=693cef0babc")]
+    [InlineData("693cef0babc", "https://x/llama_cpp_python-0.4.2+cu130-cp312-cp312-win_amd64.whl#sha256=693cef0babc")]
+    [InlineData("", "https://x/llama_cpp_python-0.4.2+cu130-cp312-cp312-win_amd64.whl")]
+    public void PipWheelRequirement_CarriesTheCatalogHash_SoPipRejectsAnyOtherFile(string sha256, string expected)
+    {
+        var wheel = new LamaCppWheel { Url = "https://x/llama_cpp_python-0.4.2+cu130-cp312-cp312-win_amd64.whl", Sha256 = sha256 };
+
+        WorkloadInstallService.PipWheelRequirement(wheel).Should().Be(expected);
     }
 }

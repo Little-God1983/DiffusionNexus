@@ -841,7 +841,10 @@ public partial class OutpaintingViewModel : ObservableObject
             }
             else
             {
-                // The GGUF node takes the model files as paths; the readiness check found them.
+                // The GGUF node takes the model files as paths; the readiness check found them. Generate
+                // is clickable before the first check finished, so a missing answer is checked once more.
+                if (!VisionReadiness.ModelPaths.ContainsKey(VisionModelName) || !VisionReadiness.ModelPaths.ContainsKey(VisionProjectorName))
+                    await VisionReadiness.CheckReadinessAsync();
                 if (!VisionReadiness.ModelPaths.TryGetValue(VisionModelName, out var modelPath)
                     || !VisionReadiness.ModelPaths.TryGetValue(VisionProjectorName, out var projectorPath))
                 {

@@ -1,8 +1,10 @@
 using DiffusionNexus.Installer.SDK.Catalog;
 using DiffusionNexus.Installer.SDK.Models.Configuration;
 using DiffusionNexus.Installer.SDK.Models.Enums;
+using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.ConfigurationChecker;
+using DiffusionNexus.UI.Services.ConfigurationChecker.Models;
 using DiffusionNexus.UI.Services.Engine;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
@@ -141,5 +143,86 @@ public class EngineWorkloadsViewModelTests
 
         suggested.Should().BeNull(
             "no monitor means the dialog keeps its pre-existing default — the behaviour before this task");
+    }
+
+    // ── Review (#607): a user's own ComfyUI installing Outpainting-Qwen 2512 from Installer Manager got the
+    // GGUF node pack, whose requirements make pip compile llama-cpp-python from source ──
+
+    private static readonly LamaCppWheel Cu128Wheel = new()
+    {
+        Id = Guid.NewGuid(), Name = "JamePeng cu128", IsGPU = true, PythonVersion = "3.12", CudaVersion = "12.8",
+        Url = "https://example/llama_cpp_python-0.3.20-cp312-cp312-win_amd64.whl"
+    };
+
+    private static readonly CustomNodeCheckResult NodePack = new() { Id = Guid.NewGuid(), Name = "ComfyUI_Simple_Qwen3-VL-gguf", Url = "https://github.com/KLL535/ComfyUI_Simple_Qwen3-VL-gguf", ExpectedPath = "", IsInstalled = false };
+    private static readonly ModelCheckResult Model = new() { Id = Guid.NewGuid(), Name = "Qwen3-VL-8B-Abliterated-Caption-it", IsInstalled = false, SearchedPaths = [] };
+
+    private static (WorkloadsViewModel Vm, Mock<IWorkloadInstallService> Installer, List<string> Order,
+        List<IReadOnlyList<CustomNodeCheckResult>> NodesPassed) WheelSut(bool wheelInstalls)
+    {
+        var catalog = new Mock<ICatalog>();
+        catalog.Setup(c => c.GetLamaCppWheelsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([Cu128Wheel]);
+        var order = new List<string>();
+        var nodesPassed = new List<IReadOnlyList<CustomNodeCheckResult>>();
+        var installer = new Mock<IWorkloadInstallService>();
+        installer.Setup(i => i.InstallLlamaCppWheelAsync(@"C:\ComfyUI", Cu128Wheel, It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<CancellationToken>()))
+            .Callback(() => order.Add("wheel")).ReturnsAsync(wheelInstalls);
+        installer.Setup(i => i.InstallSelectedAsync(It.IsAny<InstallationConfiguration>(), @"C:\ComfyUI",
+                It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
+                It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
+                It.IsAny<Func<CancellationToken>?>(), It.IsAny<CancellationToken>()))
+            .Callback((InstallationConfiguration _, string _, IReadOnlyList<CustomNodeCheckResult> n, IReadOnlyList<ModelCheckResult> _,
+                int _, IProgress<WorkloadInstallProgress>? _, IProgress<DownloadProgress>? _, Func<CancellationToken>? _, CancellationToken _) =>
+            { order.Add("nodes"); nodesPassed.Add(n); })
+            .ReturnsAsync("done");
+        var vm = new WorkloadsViewModel(catalog.Object, new Mock<IConfigurationCheckerService>().Object,
+            installer.Object, @"C:\ComfyUI");
+        return (vm, installer, order, nodesPassed);
+    }
+
+    private static InstallationConfiguration WithWheel()
+    {
+        var config = Config(Guid.NewGuid(), "Outpainting-Qwen 2512");
+        config.InstallLamaCpp = true;
+        config.SelectedLamaCppWheelId = Cu128Wheel.Id;
+        return config;
+    }
+
+    [Fact]
+    public async Task Install_WorkloadWithAWheel_InstallsItBeforeTheNodePacks()
+    {
+        var (vm, _, order, _) = WheelSut(wheelInstalls: true);
+
+        await vm.InstallItemsAsync(WithWheel(), [NodePack], [Model], 16, new Progress<WorkloadInstallProgress>(),
+            new Progress<DownloadProgress>(), () => CancellationToken.None, CancellationToken.None);
+
+        order.Should().Equal(new List<string> { "wheel", "nodes" }, "pip must find llama-cpp-python satisfied before the node pack's requirements");
+    }
+
+    [Fact]
+    public async Task Install_WheelFails_InstallsTheModelsButNotTheNodePacks()
+    {
+        var (vm, _, _, nodesPassed) = WheelSut(wheelInstalls: false);
+
+        var summary = await vm.InstallItemsAsync(WithWheel(), [NodePack], [Model], 16, new Progress<WorkloadInstallProgress>(),
+            new Progress<DownloadProgress>(), () => CancellationToken.None, CancellationToken.None);
+
+        nodesPassed.Should().ContainSingle().Which.Should().BeEmpty("the node pack waits for its wheel, so Install retries both");
+        summary.Should().Contain("llama-cpp-python");
+    }
+
+    [Fact]
+    public async Task Install_ModelsOnly_OrNoWheel_DoesNotTouchTheWheel()
+    {
+        var (vm, installer, _, _) = WheelSut(wheelInstalls: true);
+        var plain = Config(Guid.NewGuid(), "Inpainting");
+
+        await vm.InstallItemsAsync(WithWheel(), [], [Model], 16, new Progress<WorkloadInstallProgress>(),
+            new Progress<DownloadProgress>(), () => CancellationToken.None, CancellationToken.None);
+        await vm.InstallItemsAsync(plain, [NodePack], [], 16, new Progress<WorkloadInstallProgress>(),
+            new Progress<DownloadProgress>(), () => CancellationToken.None, CancellationToken.None);
+
+        installer.Verify(i => i.InstallLlamaCppWheelAsync(It.IsAny<string>(), It.IsAny<LamaCppWheel>(),
+            It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

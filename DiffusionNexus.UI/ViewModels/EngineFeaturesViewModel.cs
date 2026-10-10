@@ -147,10 +147,22 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
                     // Fresh check right before installing: a file shared with an earlier workload in
                     // this run, or delivered since the dialog opened, must not be downloaded again.
                     var check = await _checker.CheckConfigurationAsync(config, _engineRoot, options: null, ct);
-                    var nodes = check.CustomNodeResults.Where(n => !n.IsInstalled).ToList();
+                    IReadOnlyList<Services.ConfigurationChecker.Models.CustomNodeCheckResult> nodes = check.CustomNodeResults.Where(n => !n.IsInstalled).ToList();
                     var models = check.ModelResults.Where(m => !m.IsInstalled).ToList();
                     if (nodes.Count == 0 && models.Count == 0)
                         continue;
+
+                    // No node pack without its wheel: the pack's requirements would make pip compile
+                    // llama-cpp-python, and a pack on disk reads as installed, so Install would never retry.
+                    if (nodes.Count > 0 && config.SelectedLamaCppWheelId is not null
+                        && !await InstallLlamaCppWheelAsync(row, config, ct))
+                    {
+                        Warn($"{row.DisplayName}: the node packs wait for llama-cpp-python; Install again to retry.");
+                        summaries.Add($"{row.DisplayName}: llama-cpp-python was not installed");
+                        nodes = [];
+                        if (models.Count == 0)
+                            continue;
+                    }
 
                     var vramGb = await SuggestVramAsync(config.Vram.VramProfiles, ct);
                     ProgressText = $"{row.DisplayName}: installing {nodes.Count} node pack(s) and {models.Count} model(s)…";
@@ -159,8 +171,6 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
                     DidInstall = true;
                     if (nodes.Count > 0)
                         DidInstallNodePacks = true;
-                    if (nodes.Count > 0 && config.SelectedLamaCppWheelId is not null)
-                        await InstallLlamaCppWheelAsync(row, config, ct);
                     var summary = await _installer.InstallSelectedAsync(
                         config, _engineRoot, nodes, models, vramGb,
                         new Progress<WorkloadInstallProgress>(p =>
@@ -235,7 +245,8 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
     /// it from source. The wheel is picked for the Engine's own CUDA and Python (the torch it was
     /// installed with, <see cref="EngineFeatureCatalog.Krea2Turbo"/>), not the workload's declared ones.
     /// </summary>
-    private async Task InstallLlamaCppWheelAsync(EngineFeatureRowViewModel row, InstallationConfiguration config, CancellationToken ct)
+    /// <summary>False only when the wheel's install ran and failed; no matching wheel warns and goes on.</summary>
+    private async Task<bool> InstallLlamaCppWheelAsync(EngineFeatureRowViewModel row, InstallationConfiguration config, CancellationToken ct)
     {
         var engine = await _catalog.GetWorkloadAsync(EngineFeatureCatalog.Krea2Turbo, ct);
         var cuda = engine?.Torch.CudaVersion ?? config.Torch.CudaVersion;
@@ -245,12 +256,12 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
         {
             Warn($"{row.DisplayName}: the catalog has no llama-cpp-python wheel for CUDA {cuda} / Python {python}; " +
                  "pip may try to build it from source, which usually fails on Windows.");
-            return;
+            return true;
         }
 
         ProgressText = $"{row.DisplayName}: installing llama-cpp-python {WorkloadInstallService.WheelVersionFromUrl(wheel.Url)} ({wheel.Name})…";
         Info(ProgressText);
-        var ok = await _installer.InstallLlamaCppWheelAsync(_engineRoot, wheel.Url,
+        var ok = await _installer.InstallLlamaCppWheelAsync(_engineRoot, wheel,
             new Progress<WorkloadInstallProgress>(p =>
             {
                 if (!_acceptProgress) return;
@@ -260,6 +271,7 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
             }), ct);
         if (!ok)
             Warn($"{row.DisplayName}: llama-cpp-python was not installed; the Qwen3-VL node will not load.");
+        return ok;
     }
 
     /// <summary>The GPU wheel built for exactly this CUDA and Python, or null: a wheel for another CUDA loads but runs on the CPU.</summary>

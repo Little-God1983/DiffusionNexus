@@ -541,19 +541,17 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
         }
     }
 
-    /// <summary>
-    /// Runs a single pip install command and reports progress.
-    /// </summary>
-    /// <returns>A tuple of (success, stderr output).</returns>
     /// <inheritdoc />
     public async Task<bool> InstallLlamaCppWheelAsync(
         string comfyUIRootPath,
-        string wheelUrl,
+        LamaCppWheel wheel,
         IProgress<WorkloadInstallProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(comfyUIRootPath);
-        ArgumentException.ThrowIfNullOrWhiteSpace(wheelUrl);
+        ArgumentNullException.ThrowIfNull(wheel);
+        ArgumentException.ThrowIfNullOrWhiteSpace(wheel.Url);
+        var wheelUrl = wheel.Url;
         const string name = "llama-cpp-python";
 
         var installationType = ConfigurationCheckerService.DetectInstallationType(comfyUIRootPath);
@@ -583,9 +581,22 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
                 : $"Replacing llama-cpp-python {installed} with {wanted ?? "(wheel)"}..."
         });
         var (success, _) = await RunPipInstallAsync(
-            pythonExe, repositoryPath, $"-m pip install \"{wheelUrl}\"", name,
+            pythonExe, repositoryPath, $"-m pip install \"{PipWheelRequirement(wheel)}\"", name,
             $"llama-cpp-python {wanted ?? ""}".TrimEnd(), progress, cancellationToken);
         return success;
+    }
+
+    /// <summary>
+    /// The wheel's URL with the catalog's hash as a <c>#sha256=</c> fragment, which pip verifies: the
+    /// wheel comes from a third-party release and is loaded into the ComfyUI process. The catalog
+    /// stores hashes as <c>sha256:&lt;hex&gt;</c>.
+    /// </summary>
+    internal static string PipWheelRequirement(LamaCppWheel wheel)
+    {
+        var hash = wheel.Sha256?.Trim() ?? "";
+        if (hash.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
+            hash = hash["sha256:".Length..];
+        return hash.Length == 0 ? wheel.Url : $"{wheel.Url}#sha256={hash.ToLowerInvariant()}";
     }
 
     /// <summary>The version in a wheel file name: <c>llama_cpp_python-0.4.2+cu130-cp312-...whl</c> → <c>0.4.2+cu130</c>.</summary>
@@ -649,6 +660,10 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
         }
     }
 
+    /// <summary>
+    /// Runs a single pip install command and reports progress.
+    /// </summary>
+    /// <returns>A tuple of (success, stderr output).</returns>
     private static async Task<(bool Success, string StdErr)> RunPipInstallAsync(
         string pythonExe,
         string workingDirectory,

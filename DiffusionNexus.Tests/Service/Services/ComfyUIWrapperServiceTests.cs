@@ -153,7 +153,8 @@ public class ComfyUIWrapperServiceTests
         result.Action.Should().Be(ComfyUIProgressAction.Error);
         result.ErrorNodeType.Should().Be("Qwen3_VQA");
         result.ErrorDetail.Should().Be("boom");
-        result.ExecutionErrorMessage.Should().Be("ComfyUI workflow failed in node 'Qwen3_VQA': boom");
+        new ComfyUIExecutionException(result.ErrorNodeType!, result.ErrorDetail!).Message
+            .Should().Be("ComfyUI workflow failed in node 'Qwen3_VQA': boom");
     }
 
     [Fact]

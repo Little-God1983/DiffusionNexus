@@ -833,12 +833,4 @@ internal readonly record struct ComfyUIProgressMessage(
     string? ReportText = null,
     string? ErrorNodeType = null,
     string? ErrorDetail = null,
-    int? QueueRemaining = null)
-{
-    /// <summary>
-    /// The exception message to surface when <see cref="Action"/> is
-    /// <see cref="ComfyUIProgressAction.Error"/>. Preserves the historical wording exactly.
-    /// </summary>
-    public string ExecutionErrorMessage =>
-        $"ComfyUI workflow failed in node '{ErrorNodeType}': {ErrorDetail}";
-}
+    int? QueueRemaining = null);
