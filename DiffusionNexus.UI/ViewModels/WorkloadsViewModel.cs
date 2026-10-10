@@ -314,9 +314,6 @@ public partial class WorkloadsViewModel : ViewModelBase
             nodes = [];
         }
 
-        if (nodes.Count == 0 && models.Count == 0)
-            return wheelNote.TrimEnd();
-
         return wheelNote + await _installService.InstallSelectedAsync(
             config, _comfyUIRootPath,
             nodes, models,

@@ -594,7 +594,9 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
             ItemName = name,
             Message = venv.LlamaCppVersion is null
                 ? $"Installing llama-cpp-python {wanted ?? "(wheel)"} ({wheel.Name})..."
-                : $"Replacing llama-cpp-python {venv.LlamaCppVersion} with {wanted ?? "(wheel)"} ({wheel.Name})..."
+                : string.Equals(venv.LlamaCppVersion, wanted, StringComparison.OrdinalIgnoreCase)
+                    ? $"Replacing another build of llama-cpp-python {wanted} with the catalog's ({wheel.Name})..."
+                    : $"Replacing llama-cpp-python {venv.LlamaCppVersion} with {wanted ?? "(wheel)"} ({wheel.Name})..."
         });
         // Progress stays here: RunPipInstallAsync's own lines are phrased for a node pack's requirements.
         var (success, stderr) = await RunPipInstallAsync(
@@ -698,9 +700,6 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
 
     private const string VersionMarker = "DN_VERSION=";
 
-    /// <summary>The version after <see cref="VersionMarker"/> in a probe's output, ignoring whatever else the import printed.</summary>
-    internal static string? ParseMarkedVersion(string? stdout) => ParseMarked(stdout, VersionMarker);
-
     /// <summary>The value after <paramref name="marker"/> in a probe's output, ignoring whatever else the imports printed.</summary>
     private static string? ParseMarked(string? stdout, string marker)
     {
@@ -723,15 +722,25 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
     /// </summary>
     private static async Task<string?> RunPythonProbeAsync(string pythonExe, string code, string workingDirectory, CancellationToken ct)
     {
+        // Modules may print start-up lines of their own (llama_cpp logs the DLLs it loads), so probes
+        // mark their answers and only the marked lines are read.
+        var run = await RunPythonAsync(pythonExe, $"-c \"{code}\"", workingDirectory, ct);
+        if (run is null)
+            Logger.Debug("Python probe could not run: {Code}", code);
+        return run?.StdOut;
+    }
+
+    /// <summary>Runs the venv's Python to completion, reading both streams; null when the process could not start.</summary>
+    private static async Task<(int ExitCode, string StdOut, string StdErr)?> RunPythonAsync(
+        string pythonExe, string arguments, string workingDirectory, CancellationToken ct)
+    {
         try
         {
             using var process = new Process();
             process.StartInfo = new ProcessStartInfo
             {
                 FileName = pythonExe,
-                // Modules may print start-up lines of their own (llama_cpp logs the DLLs it loads), so
-                // probes mark their answers and only the marked lines are read.
-                Arguments = $"-c \"{code}\"",
+                Arguments = arguments,
                 WorkingDirectory = workingDirectory,
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -739,16 +748,16 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
                 RedirectStandardError = true
             };
             process.Start();
+
+            // Read output asynchronously to avoid deadlock on large output
             var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
             var stderrTask = process.StandardError.ReadToEndAsync(ct);
             await process.WaitForExitAsync(ct);
-            var stdout = await stdoutTask;
-            await stderrTask;
-            return stdout;
+            return (process.ExitCode, await stdoutTask, await stderrTask);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Logger.Debug(ex, "Python probe failed: {Code}", code);
+            Logger.Error(ex, "Failed to run {Python} {Arguments}", pythonExe, arguments);
             return null;
         }
     }
@@ -766,64 +775,40 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
         IProgress<WorkloadInstallProgress>? progress,
         CancellationToken cancellationToken)
     {
-        try
+        var run = await RunPythonAsync(pythonExe, arguments, workingDirectory, cancellationToken);
+        if (run is null)
         {
-            using var process = new Process();
-            process.StartInfo = new ProcessStartInfo
-            {
-                FileName = pythonExe,
-                Arguments = arguments,
-                WorkingDirectory = workingDirectory,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            };
-
-            process.Start();
-
-            // Read output asynchronously to avoid deadlock on large output
-            var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-            var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
-
-            await process.WaitForExitAsync(cancellationToken);
-
-            var stdoutText = await stdoutTask;
-            var stderrText = await stderrTask;
-
-            if (process.ExitCode == 0)
-            {
-                Logger.Information("{Description} installed for {Name}", description, nodeName);
-                progress?.Report(new WorkloadInstallProgress
-                {
-                    ItemName = nodeName,
-                    Message = $"{description} installed for {nodeName}"
-                });
-                return (true, stderrText);
-            }
-
-            Logger.Warning(
-                "pip install {Description} failed for {Name} (exit code {Code}):\n{StdErr}",
-                description, nodeName, process.ExitCode, stderrText);
-
             progress?.Report(new WorkloadInstallProgress
             {
                 ItemName = nodeName,
-                Message = $"pip install {description} failed for {nodeName} (exit code {process.ExitCode})"
+                Message = $"Failed to install {description} for {nodeName}: Python could not be started"
             });
-
-            return (false, stderrText);
+            return (false, "Python could not be started");
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+
+        var (exitCode, _, stderrText) = run.Value;
+        if (exitCode == 0)
         {
-            Logger.Error(ex, "Failed to run pip install {Description} for {Name}", description, nodeName);
+            Logger.Information("{Description} installed for {Name}", description, nodeName);
             progress?.Report(new WorkloadInstallProgress
             {
                 ItemName = nodeName,
-                Message = $"Failed to install {description} for {nodeName}: {ex.Message}"
+                Message = $"{description} installed for {nodeName}"
             });
-            return (false, ex.Message);
+            return (true, stderrText);
         }
+
+        Logger.Warning(
+            "pip install {Description} failed for {Name} (exit code {Code}):\n{StdErr}",
+            description, nodeName, exitCode, stderrText);
+
+        progress?.Report(new WorkloadInstallProgress
+        {
+            ItemName = nodeName,
+            Message = $"pip install {description} failed for {nodeName} (exit code {exitCode})"
+        });
+
+        return (false, stderrText);
     }
 
     // TODO: Remove once SDK NuGet is updated to include SupplementaryPipPackageResolver.

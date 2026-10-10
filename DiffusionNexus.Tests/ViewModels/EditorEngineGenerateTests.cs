@@ -152,6 +152,57 @@ public class EditorEngineGenerateTests
         messages.Should().Contain("Outpainting failed in the ComfyUI node Qwen3_VQA: kernel trust check failed");
     }
 
+    // Review round 5: a 400 with a non-JSON body (a reverse proxy) still read "is the Engine running?".
+    private static IComfyUIWrapperService ClientWhoseQueueFails(Exception ex)
+    {
+        var client = new Mock<IComfyUIWrapperService>();
+        client.Setup(c => c.UploadImageAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync("up.png");
+        client.Setup(c => c.GetNodeInputOptionsAsync("UnetLoaderGGUF", "unet_name", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<string> { "qwen-image-2512-Q8_0.gguf" });
+        client.Setup(c => c.QueueWorkflowAsync(It.IsAny<string>(),
+                It.IsAny<Dictionary<string, Action<System.Text.Json.Nodes.JsonNode>>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(ex);
+        return client.Object;
+    }
+
+    [Fact]
+    public async Task Outpaint_ServerAnswered400_SaysSo_NotIsTheEngineRunning()
+    {
+        var vm = new OutpaintingViewModel(() => true, _ => { }, InpaintingViewModelGGUFResolutionTests.Provider(
+            ClientWhoseQueueFails(new System.Net.Http.HttpRequestException("ComfyUI answered /prompt with 400: <html>…", null, System.Net.HttpStatusCode.BadRequest)),
+            ComfyUiServerMode.Engine));
+        vm.PositivePrompt = "a beach";
+
+        await vm.ProcessOutpaintAsync(TempImage(), useVision: false, 64, 0, 64, 0);
+
+        vm.HasError.Should().BeTrue();
+        vm.ProgressDisplayText.Should().Be("ComfyUI answered 400 – see the Unified Console");
+    }
+
+    [Fact]
+    public async Task Outpaint_ConnectionRefused_StillAsksWhetherTheEngineRuns()
+    {
+        var vm = new OutpaintingViewModel(() => true, _ => { }, InpaintingViewModelGGUFResolutionTests.Provider(
+            ClientWhoseQueueFails(new System.Net.Http.HttpRequestException("No connection could be made")), ComfyUiServerMode.Engine));
+        vm.PositivePrompt = "a beach";
+
+        await vm.ProcessOutpaintAsync(TempImage(), useVision: false, 64, 0, 64, 0);
+
+        vm.ProgressDisplayText.Should().Be("Generation failed – is the Diffusion Nexus Engine running?");
+    }
+
+    [Fact]
+    public async Task Inpaint_ServerAnswered400_SaysSo_NotIsTheEngineRunning()
+    {
+        var vm = new InpaintingViewModel(() => true, _ => { }, InpaintingViewModelGGUFResolutionTests.Provider(
+            ClientWhoseQueueFails(new System.Net.Http.HttpRequestException("bad", null, System.Net.HttpStatusCode.BadRequest)),
+            ComfyUiServerMode.Engine), eventAggregator: null);
+
+        await vm.ProcessInpaintAsync(TempImage());
+
+        vm.ProgressDisplayText.Should().Be("ComfyUI answered 400 – see the Unified Console");
+    }
+
     [Fact]
     public async Task Inpaint_NodeFailure_NamesTheNode_NotTheEngine()
     {

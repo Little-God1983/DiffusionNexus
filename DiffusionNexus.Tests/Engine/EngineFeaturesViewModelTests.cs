@@ -406,7 +406,8 @@ public class EngineFeaturesViewModelTests
 
         nodesPassed.Should().ContainSingle().Which.Should().BeEmpty("the node packs wait for their wheel; the model still comes");
         Row(vm, EngineFeature.OutpaintVision).Status.Should().NotBe(EngineFeatureStatus.Installed);
-        vm.ProgressText.Should().StartWith("Finished with problems").And.Contain("llama-cpp-python");
+        vm.ProgressText.Should().StartWith("Finished with problems").And.Contain("llama-cpp-python").And.Contain("1 model(s) downloaded");
+        System.Text.RegularExpressions.Regex.Matches(vm.ProgressText, "Outpaint Vision:").Count.Should().Be(1, "one line per row in the outcome");
     }
 
     [Fact]

@@ -154,14 +154,18 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
 
                     // No node pack without its wheel: the pack's requirements would make pip compile
                     // llama-cpp-python, and a pack on disk reads as installed, so Install would never retry.
+                    var wheelNote = "";
                     if (nodes.Count > 0 && config.InstallLamaCpp
                         && await EnsureLlamaCppWheelAsync(row, ct) == LlamaCppWheelOutcome.Failed)
                     {
-                        Warn($"{row.DisplayName}: the node packs wait for llama-cpp-python; Install again to retry.");
-                        summaries.Add($"{row.DisplayName}: llama-cpp-python was not installed");
+                        Warn($"{row.DisplayName}: llama-cpp-python was not installed; the node packs wait for it, Install again to retry.");
+                        wheelNote = "llama-cpp-python was not installed; ";
                         nodes = [];
                         if (models.Count == 0)
+                        {
+                            summaries.Add($"{row.DisplayName}: llama-cpp-python was not installed");
                             continue;
+                        }
                     }
 
                     var vramGb = await SuggestVramAsync(config.Vram.VramProfiles, ct);
@@ -190,7 +194,7 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
                         ct);
 
                     Info($"{row.DisplayName}: {summary}");
-                    summaries.Add($"{row.DisplayName}: {summary.TrimEnd('.')}");
+                    summaries.Add($"{row.DisplayName}: {wheelNote}{summary.TrimEnd('.')}");
                 }
             }
 
@@ -256,8 +260,6 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
                 if (p.IsFailed) Warn(ProgressText);
                 else Info(ProgressText);
             }), ct);
-        if (outcome == LlamaCppWheelOutcome.Failed)
-            Warn($"{row.DisplayName}: llama-cpp-python was not installed; the Qwen3-VL node will not load.");
         return outcome;
     }
 

@@ -267,9 +267,9 @@ public class WorkloadInstallServicePipTests
     [InlineData("0.4.2+cu130\n", null)]
     [InlineData("", null)]
     [InlineData(null, null)]
-    public void ParseMarkedVersion_IgnoresTheModulesOwnOutput(string? stdout, string? expected)
+    public void ParseVenvProbe_IgnoresTheModulesOwnOutput(string? stdout, string? expected)
     {
-        WorkloadInstallService.ParseMarkedVersion(stdout).Should().Be(expected);
+        WorkloadInstallService.ParseVenvProbe(stdout).LlamaCppVersion.Should().Be(expected);
     }
 
     // Review (#607): the wheel came from a third-party release with no integrity check although the catalog has its hash.

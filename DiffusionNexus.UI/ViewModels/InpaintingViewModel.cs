@@ -1,3 +1,4 @@
+using System.Net.Http;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Enums;
@@ -608,6 +609,15 @@ public partial class InpaintingViewModel : ObservableObject
             HasError = true;
             ProgressDisplayText = "ComfyUI rejected the workflow – see the Unified Console";
             StatusMessageChanged?.Invoke(this, $"ComfyUI rejected the inpainting workflow: {ex.Reason}");
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode is { } status)
+        {
+            // The server answered (a 400 with a body that is not ComfyUI's JSON, a proxy's 502): not "is it running?".
+            Logger.Error(ex, "Inpainting: ComfyUI answered {Status}", (int)status);
+            _unifiedLogger?.Error(LogCategory.General, LogSource, $"ComfyUI answered {(int)status}: {ex.Message}", ex);
+            HasError = true;
+            ProgressDisplayText = $"ComfyUI answered {(int)status} – see the Unified Console";
+            StatusMessageChanged?.Invoke(this, $"Inpainting failed, ComfyUI answered {(int)status}: {ex.Message}");
         }
         catch (OperationCanceledException)
         {

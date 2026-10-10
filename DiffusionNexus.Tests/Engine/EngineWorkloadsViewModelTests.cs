@@ -229,6 +229,17 @@ public class EngineWorkloadsViewModelTests
         nodesPassed.Should().ContainSingle().Which.Should().ContainSingle();
     }
 
+    // Review round 5: with nothing left to install the dialog got "" instead of the installer's summary line.
+    [Fact]
+    public async Task Install_NothingSelected_ReturnsTheInstallersOwnSummary()
+    {
+        var (vm, _, _, _) = WheelSut(LlamaCppWheelOutcome.Installed);
+
+        var summary = await Install(vm, WithWheel(), [], []);
+
+        summary.Should().Be("done", "InstallSelectedAsync words the empty case itself (\"Nothing to install.\")");
+    }
+
     [Fact]
     public async Task Install_ModelsOnly_OrNoWheel_DoesNotTouchTheWheel()
     {
