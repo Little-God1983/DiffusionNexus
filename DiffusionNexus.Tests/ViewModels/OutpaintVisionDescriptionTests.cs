@@ -3,6 +3,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.UI.Services.Vision;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
 using Moq;
@@ -47,8 +48,8 @@ public class OutpaintVisionDescriptionTests : IDisposable
             InpaintingViewModelGGUFResolutionTests.Provider(client.Object, ComfyUiServerMode.Engine),
             ReadinessWithPaths(new Dictionary<string, string>
             {
-                [OutpaintingViewModel.VisionModelName] = @"D:\m\model.gguf",
-                [OutpaintingViewModel.VisionProjectorName] = @"D:\m\mmproj.gguf",
+                [QwenVlGguf.ModelName] = @"D:\m\model.gguf",
+                [QwenVlGguf.ProjectorName] = @"D:\m\mmproj.gguf",
             }),
             unifiedLogger: logger.Object);
         vm.VisionReadiness.CheckReadinessAsync().GetAwaiter().GetResult();
@@ -139,8 +140,8 @@ public class OutpaintVisionDescriptionTests : IDisposable
             InpaintingViewModelGGUFResolutionTests.Provider(client.Object, ComfyUiServerMode.Engine),
             ReadinessWithPaths(new Dictionary<string, string>
             {
-                [OutpaintingViewModel.VisionModelName] = @"D:\Models\Captioning\Qwen3-VL-8B-Abliterated-Caption-it.Q6_K.gguf",
-                [OutpaintingViewModel.VisionProjectorName] = @"D:\Models\Captioning\Qwen3-VL-8B-Abliterated-Caption-it.mmproj-f16.gguf",
+                [QwenVlGguf.ModelName] = @"D:\Models\Captioning\Qwen3-VL-8B-Abliterated-Caption-it.Q6_K.gguf",
+                [QwenVlGguf.ProjectorName] = @"D:\Models\Captioning\Qwen3-VL-8B-Abliterated-Caption-it.mmproj-f16.gguf",
             }));
         await vm.VisionReadiness.CheckReadinessAsync();
 
@@ -185,25 +186,14 @@ public class OutpaintVisionDescriptionTests : IDisposable
             InpaintingViewModelGGUFResolutionTests.Provider(client.Object, ComfyUiServerMode.Engine),
             ReadinessWithPaths(new Dictionary<string, string>
             {
-                [OutpaintingViewModel.VisionModelName] = @"D:\m\model.gguf",
-                [OutpaintingViewModel.VisionProjectorName] = @"D:\m\mmproj.gguf",
+                [QwenVlGguf.ModelName] = @"D:\m\model.gguf",
+                [QwenVlGguf.ProjectorName] = @"D:\m\mmproj.gguf",
             }));
 
         await vm.ProcessOutpaintAsync(TempImage(), useVision: true, 64, 0, 64, 0);
 
         vm.HasError.Should().BeFalse();
         overrides()!.Should().ContainKey("256");
-    }
-
-    [Fact]
-    public void BuildVisionConfig_IsJsonWithEscapedWindowsPaths()
-    {
-        var json = OutpaintingViewModel.BuildVisionConfig(@"C:\m\model.gguf", @"C:\m\mmproj.gguf");
-
-        var config = JsonNode.Parse(json)!;
-        config["model_path"]!.GetValue<string>().Should().Be(@"C:\m\model.gguf");
-        config["chat_handler"]!.GetValue<string>().Should().Be("qwen3");
-        config["temperature"]!.GetValue<double>().Should().Be(0.3);
     }
 
     // ── Owner smoke: the scale node got largest_size 0 (the editor's ImageWidth was 0) and the result was 296x80 ──
@@ -218,8 +208,8 @@ public class OutpaintVisionDescriptionTests : IDisposable
             InpaintingViewModelGGUFResolutionTests.Provider(client.Object, ComfyUiServerMode.Engine),
             ReadinessWithPaths(new Dictionary<string, string>
             {
-                [OutpaintingViewModel.VisionModelName] = @"D:\m\model.gguf",
-                [OutpaintingViewModel.VisionProjectorName] = @"D:\m\mmproj.gguf",
+                [QwenVlGguf.ModelName] = @"D:\m\model.gguf",
+                [QwenVlGguf.ProjectorName] = @"D:\m\mmproj.gguf",
             }));
         await vm.VisionReadiness.CheckReadinessAsync();
         vm.PositivePrompt = "a beach";
