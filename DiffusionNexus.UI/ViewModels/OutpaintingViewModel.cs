@@ -34,8 +34,6 @@ public partial class OutpaintingViewModel : ObservableObject
     private static readonly ILogger Logger = Log.ForContext<OutpaintingViewModel>();
 
     private readonly Func<bool> _hasImage;
-    private readonly Func<int> _getImageWidth;
-    private readonly Func<int> _getImageHeight;
     private readonly Action<string> _deactivateOtherTools;
     private readonly IComfyUiClientProvider? _clientProvider;
     private readonly IDatasetEventAggregator? _eventAggregator;
@@ -48,7 +46,7 @@ public partial class OutpaintingViewModel : ObservableObject
     private const string KSamplerNodeId = "11";
     private const string UnetLoaderNodeId = "15";
     private const string ImagePadNodeId = "26";
-    private const string ImageScaleNodeId = "17";
+    private const string LoadImageOutput = "16";
     private const string VisionNodeId = "256";
 
     /// <summary>Catalog names of the Vision model files; the readiness check reports where they are.</summary>
@@ -108,8 +106,6 @@ public partial class OutpaintingViewModel : ObservableObject
 
     public OutpaintingViewModel(
         Func<bool> hasImage,
-        Func<int> getImageWidth,
-        Func<int> getImageHeight,
         Action<string> deactivateOtherTools,
         IComfyUiClientProvider? comfyUiClientProvider = null,
         IFeatureReadinessService? readinessService = null,
@@ -117,13 +113,9 @@ public partial class OutpaintingViewModel : ObservableObject
         IDatasetEventAggregator? eventAggregator = null)
     {
         ArgumentNullException.ThrowIfNull(hasImage);
-        ArgumentNullException.ThrowIfNull(getImageWidth);
-        ArgumentNullException.ThrowIfNull(getImageHeight);
         ArgumentNullException.ThrowIfNull(deactivateOtherTools);
 
         _hasImage = hasImage;
-        _getImageWidth = getImageWidth;
-        _getImageHeight = getImageHeight;
         _deactivateOtherTools = deactivateOtherTools;
         _stepText.Changed += (_, _) => OnPropertyChanged(nameof(ProgressStepText));
         _clientProvider = comfyUiClientProvider;
@@ -276,23 +268,6 @@ public partial class OutpaintingViewModel : ObservableObject
         _unifiedLogger?.Info(LogCategory.Configuration, LogSource, message);
     }
 
-    /// <summary>Same as <see cref="EmitInfo"/> for the generate path, which logs under General (spec §4.5).</summary>
-    /// <summary>Width and height from the image file's header, or null when the file is not a decodable image.</summary>
-    internal static (int Width, int Height)? ReadImageSize(string path)
-    {
-        try
-        {
-            using var codec = SkiaSharp.SKCodec.Create(path);
-            if (codec is null || codec.Info.Width <= 0 || codec.Info.Height <= 0) return null;
-            return (codec.Info.Width, codec.Info.Height);
-        }
-        catch (Exception ex)
-        {
-            Logger.Debug(ex, "Outpaint: could not read the image size of {Path}", path);
-            return null;
-        }
-    }
-
     /// <summary>
     /// The Qwen3-VL GGUF node's config: model and projector paths, a bounded answer (a looping
     /// description once ran to 2048 tokens and became the prompt), low temperature.
@@ -309,6 +284,7 @@ public partial class OutpaintingViewModel : ObservableObject
             ["repeat_penalty"] = 1.1,
         });
 
+    /// <summary>Same as <see cref="EmitInfo"/> for the generate path, which logs under General (spec §4.5).</summary>
     private void EmitGenerate(string message)
     {
         Logger.Information("Outpaint: {Message}", message);
@@ -820,11 +796,7 @@ public partial class OutpaintingViewModel : ObservableObject
 
             var seed = (long)(_random.NextDouble() * long.MaxValue);
 
-            // The exported file is what ComfyUI receives, so its header is the size that counts. The
-            // editor's ImageWidth/ImageHeight were 0 on one load path (owner smoke): largest_size 0
-            // shrank the image to nothing and the padding became the whole 296x80 result.
-            var (origW, origH) = ReadImageSize(imagePath) ?? (_getImageWidth(), _getImageHeight());
-            EmitGenerate($"Image {origW}×{origH}, extending left {extendLeft}, top {extendTop}, right {extendRight}, bottom {extendBottom}.");
+            EmitGenerate($"Extending left {extendLeft}, top {extendTop}, right {extendRight}, bottom {extendBottom}.");
 
             var overrides = new Dictionary<string, Action<System.Text.Json.Nodes.JsonNode>>
             {
@@ -846,19 +818,15 @@ public partial class OutpaintingViewModel : ObservableObject
                 },
                 [ImagePadNodeId] = node =>
                 {
+                    // The workflow rescales the input to 1536 on its largest edge (ImageScaleToMaxDimension)
+                    // before padding; the receiver lays the result over a canvas computed at native size,
+                    // so the pad node reads the loaded image directly and the scale node, now unused, does
+                    // not run. (Sizing that node from the editor once sent largest_size 0: a 296x80 result.)
+                    node["inputs"]!["image"] = new System.Text.Json.Nodes.JsonArray(LoadImageOutput, 0);
                     node["inputs"]!["left"] = extendLeft;
                     node["inputs"]!["top"] = extendTop;
                     node["inputs"]!["right"] = extendRight;
                     node["inputs"]!["bottom"] = extendBottom;
-                },
-                // Neutralize ImageScaleToMaxDimension: without this the workflow rescales
-                // the input to 1536 on its largest edge, and the receiver then non-uniformly
-                // stretches the result onto the canvas the UI computed at native resolution.
-                [ImageScaleNodeId] = node =>
-                {
-                    // Unknown size: leave the workflow's own value rather than send 0.
-                    if (Math.Max(origW, origH) > 0)
-                        node["inputs"]!["largest_size"] = Math.Max(origW, origH);
                 }
             };
 

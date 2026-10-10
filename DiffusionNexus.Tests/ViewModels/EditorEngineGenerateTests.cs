@@ -80,7 +80,7 @@ public class EditorEngineGenerateTests
     public async Task Outpaint_EngineStartingText_IsShownOnTheStatusLine()
     {
         var shown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var vm = new OutpaintingViewModel(() => true, () => 512, () => 512, _ => { }, ReportsStartingThenWaits(shown.Task).Object);
+        var vm = new OutpaintingViewModel(() => true, _ => { }, ReportsStartingThenWaits(shown.Task).Object);
         vm.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(OutpaintingViewModel.ProgressStepText) && vm.ProgressStepText?.StartsWith("Starting the Diffusion Nexus Engine · ") == true)
@@ -95,7 +95,7 @@ public class EditorEngineGenerateTests
     [Fact]
     public async Task Outpaint_EngineNotInstalled_ShowsTheReason_AndIsNotLeftBusy()
     {
-        var vm = new OutpaintingViewModel(() => true, () => 512, () => 512, _ => { },
+        var vm = new OutpaintingViewModel(() => true, _ => { },
             Unavailable("Diffusion Nexus Engine is not installed. Install it in the Installation Manager.").Object);
 
         await vm.ProcessOutpaintAsync(TempImage(), useVision: false, 64, 0, 64, 0);
@@ -139,7 +139,7 @@ public class EditorEngineGenerateTests
     public async Task Outpaint_NodeFailure_NamesTheNode_NotTheEngine()
     {
         var messages = new List<string?>();
-        var vm = new OutpaintingViewModel(() => true, () => 512, () => 512, _ => { },
+        var vm = new OutpaintingViewModel(() => true, _ => { },
             InpaintingViewModelGGUFResolutionTests.Provider(ClientWhoseNodeFails(), ComfyUiServerMode.Engine));
         vm.StatusMessageChanged += (_, m) => messages.Add(m);
 
@@ -207,7 +207,7 @@ public class EditorEngineGenerateTests
     public async Task Outpaint_NoQwenGguf_WordsTheFixForTheServerInUse(ComfyUiServerMode mode, string expected)
     {
         var messages = new List<string?>();
-        var vm = new OutpaintingViewModel(() => true, () => 512, () => 512, _ => { },
+        var vm = new OutpaintingViewModel(() => true, _ => { },
             InpaintingViewModelGGUFResolutionTests.Provider(ClientWithoutQwenGguf().Object, mode));
         vm.StatusMessageChanged += (_, m) => messages.Add(m);
 
@@ -270,7 +270,7 @@ public class EditorEngineGenerateTests
                 Feature = f, Backend = BackendKind.Engine, ActiveBackendName = "Diffusion Nexus Engine",
                 IsBackendOnline = true, IsReady = true, MissingRequirements = [], Warnings = []
             });
-        var vm = new OutpaintingViewModel(() => true, () => 512, () => 512, _ => { },
+        var vm = new OutpaintingViewModel(() => true, _ => { },
             readinessService: readiness.Object, eventAggregator: events.Object);
         vm.IsPanelOpen = true;
         await Task.Delay(50);
@@ -287,7 +287,7 @@ public class EditorEngineGenerateTests
         var events = new Mock<IDatasetEventAggregator>();
         var readiness = new Mock<IFeatureReadinessService>();
         _ = new InpaintingViewModel(() => true, _ => { }, comfyUiClientProvider: null, events.Object, readiness.Object);
-        _ = new OutpaintingViewModel(() => true, () => 512, () => 512, _ => { },
+        _ = new OutpaintingViewModel(() => true, _ => { },
             readinessService: readiness.Object, eventAggregator: events.Object);
 
         events.Raise(e => e.EngineChanged += null, events.Object, new EngineChangedEventArgs());
@@ -308,7 +308,7 @@ public class EditorEngineGenerateTests
                 IsBackendOnline = true, IsReady = visionReady,
                 MissingRequirements = visionReady ? [] : [EngineNoVision], Warnings = []
             });
-        return new OutpaintingViewModel(() => true, () => 512, () => 512, _ => { }, readinessService: readiness.Object);
+        return new OutpaintingViewModel(() => true, _ => { }, readinessService: readiness.Object);
     }
 
     [Fact]
@@ -343,7 +343,7 @@ public class EditorEngineGenerateTests
     {
         var events = new Mock<IDatasetEventAggregator>();
         var readiness = new Mock<IFeatureReadinessService>();
-        _ = new OutpaintingViewModel(() => true, () => 512, () => 512, _ => { },
+        _ = new OutpaintingViewModel(() => true, _ => { },
             readinessService: readiness.Object, eventAggregator: events.Object);
 
         events.Raise(e => e.SettingsSaved += null, events.Object, new SettingsSavedEventArgs());

@@ -13,9 +13,16 @@ namespace DiffusionNexus.Tests.ViewModels;
 /// #607: after a Vision outpaint the Unified Console shows what Qwen3-VL wrote, so the user can see
 /// the prompt the result came from.
 /// </summary>
-public class OutpaintVisionDescriptionTests
+public class OutpaintVisionDescriptionTests : IDisposable
 {
     private readonly List<(string Level, string Message)> _logged = [];
+    private readonly List<string> _tempFiles = [];
+
+    public void Dispose()
+    {
+        foreach (var path in _tempFiles)
+            File.Delete(path);
+    }
 
     private OutpaintingViewModel Sut(ComfyUIResult result)
     {
@@ -36,7 +43,7 @@ public class OutpaintVisionDescriptionTests
         logger.Setup(l => l.Warn(It.IsAny<LogCategory>(), "Outpaint", It.IsAny<string>(), It.IsAny<string?>()))
             .Callback((LogCategory _, string _, string m, string? _) => _logged.Add(("Warn", m)));
 
-        var vm = new OutpaintingViewModel(() => true, () => 512, () => 512, _ => { },
+        var vm = new OutpaintingViewModel(() => true, _ => { },
             InpaintingViewModelGGUFResolutionTests.Provider(client.Object, ComfyUiServerMode.Engine),
             ReadinessWithPaths(new Dictionary<string, string>
             {
@@ -48,10 +55,11 @@ public class OutpaintVisionDescriptionTests
         return vm;
     }
 
-    private static string TempImage()
+    private string TempImage()
     {
         var path = Path.Combine(Path.GetTempPath(), $"dn-vision-{Guid.NewGuid():N}.png");
         File.WriteAllBytes(path, [0x89, 0x50, 0x4E, 0x47]);
+        _tempFiles.Add(path);
         return path;
     }
 
@@ -127,7 +135,7 @@ public class OutpaintVisionDescriptionTests
     public async Task VisionRun_HandsTheGgufNodeTheModelPathsTheCheckFound()
     {
         var (client, overrides) = ClientCapturingOverrides();
-        var vm = new OutpaintingViewModel(() => true, () => 512, () => 512, _ => { },
+        var vm = new OutpaintingViewModel(() => true, _ => { },
             InpaintingViewModelGGUFResolutionTests.Provider(client.Object, ComfyUiServerMode.Engine),
             ReadinessWithPaths(new Dictionary<string, string>
             {
@@ -154,7 +162,7 @@ public class OutpaintVisionDescriptionTests
     {
         var (client, overrides) = ClientCapturingOverrides();
         var messages = new List<string?>();
-        var vm = new OutpaintingViewModel(() => true, () => 512, () => 512, _ => { },
+        var vm = new OutpaintingViewModel(() => true, _ => { },
             InpaintingViewModelGGUFResolutionTests.Provider(client.Object, ComfyUiServerMode.Engine),
             ReadinessWithPaths(new Dictionary<string, string>()));
         vm.StatusMessageChanged += (_, m) => messages.Add(m);
@@ -181,69 +189,28 @@ public class OutpaintVisionDescriptionTests
 
     // ── Owner smoke: the scale node got largest_size 0 (the editor's ImageWidth was 0) and the result was 296x80 ──
 
-    private static string RealPng(int width, int height)
-    {
-        var path = Path.Combine(Path.GetTempPath(), $"dn-vision-{Guid.NewGuid():N}.png");
-        using var bitmap = new SkiaSharp.SKBitmap(width, height);
-        bitmap.Erase(SkiaSharp.SKColors.Teal);
-        using var image = SkiaSharp.SKImage.FromBitmap(bitmap);
-        using var data = image.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100);
-        File.WriteAllBytes(path, data.ToArray());
-        return path;
-    }
-
-    private static int? LargestSizeSentTo17(Dictionary<string, Action<JsonNode>> overrides)
-    {
-        var node = JsonNode.Parse("""{"inputs": {"largest_size": 1536}}""")!;
-        overrides["17"](node);
-        return node["inputs"]!["largest_size"]!.GetValue<int>();
-    }
-
-    [Fact]
-    public async Task ScaleNode_UsesTheExportedFilesSize_NotTheEditorsCounters()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PadNode_ReadsTheLoadedImage_SoNoSizeFromTheEditorIsInvolved(bool useVision)
     {
         var (client, overrides) = ClientCapturingOverrides();
-        var vm = new OutpaintingViewModel(() => true, () => 0, () => 0, _ => { },
-            InpaintingViewModelGGUFResolutionTests.Provider(client.Object, ComfyUiServerMode.Engine));
+        var vm = new OutpaintingViewModel(() => true, _ => { },
+            InpaintingViewModelGGUFResolutionTests.Provider(client.Object, ComfyUiServerMode.Engine),
+            ReadinessWithPaths(new Dictionary<string, string>
+            {
+                [OutpaintingViewModel.VisionModelName] = @"D:\m\model.gguf",
+                [OutpaintingViewModel.VisionProjectorName] = @"D:\m\mmproj.gguf",
+            }));
+        await vm.VisionReadiness.CheckReadinessAsync();
         vm.PositivePrompt = "a beach";
 
-        await vm.ProcessOutpaintAsync(RealPng(640, 480), useVision: false, 64, 0, 64, 0);
+        await vm.ProcessOutpaintAsync(TempImage(), useVision, 64, 0, 64, 0);
 
-        LargestSizeSentTo17(overrides()!).Should().Be(640);
-    }
-
-    [Fact]
-    public async Task ScaleNode_UnreadableFile_FallsBackToTheEditorsCounters()
-    {
-        var (client, overrides) = ClientCapturingOverrides();
-        var vm = new OutpaintingViewModel(() => true, () => 1024, () => 768, _ => { },
-            InpaintingViewModelGGUFResolutionTests.Provider(client.Object, ComfyUiServerMode.Engine));
-        vm.PositivePrompt = "a beach";
-
-        await vm.ProcessOutpaintAsync(TempImage(), useVision: false, 64, 0, 64, 0);
-
-        LargestSizeSentTo17(overrides()!).Should().Be(1024);
-    }
-
-    [Fact]
-    public async Task ScaleNode_NoSizeAtAll_LeavesTheWorkflowsValue_NeverSendsZero()
-    {
-        var (client, overrides) = ClientCapturingOverrides();
-        var vm = new OutpaintingViewModel(() => true, () => 0, () => 0, _ => { },
-            InpaintingViewModelGGUFResolutionTests.Provider(client.Object, ComfyUiServerMode.Engine));
-        vm.PositivePrompt = "a beach";
-
-        await vm.ProcessOutpaintAsync(TempImage(), useVision: false, 64, 0, 64, 0);
-
-        LargestSizeSentTo17(overrides()!).Should().Be(1536, "0 shrinks the image to nothing; the workflow's default is the lesser evil");
-    }
-
-    [Fact]
-    public void ReadImageSize_ReadsTheHeader_AndIsNullForNonImages()
-    {
-        OutpaintingViewModel.ReadImageSize(RealPng(300, 200)).Should().Be((300, 200));
-        OutpaintingViewModel.ReadImageSize(TempImage()).Should().BeNull();
-        OutpaintingViewModel.ReadImageSize(@"C:\does
-ot\exist.png").Should().BeNull();
+        var pad = JsonNode.Parse("""{"inputs": {"image": ["17", 0], "left": 0, "top": 0, "right": 0, "bottom": 0}}""")!;
+        overrides()!["26"](pad);
+        pad["inputs"]!["image"]!.ToJsonString().Should().Be("""["16",0]""", "the pad node reads LoadImage, not the scale node");
+        pad["inputs"]!["right"]!.GetValue<int>().Should().Be(64);
+        overrides()!.Should().NotContainKey("17", "nothing feeds from the scale node any more, so it does not run");
     }
 }
