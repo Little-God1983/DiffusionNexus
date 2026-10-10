@@ -189,6 +189,45 @@ public class BatchUpscaleEngineRunTests : IDisposable
         Logged.Should().Contain(e => e.Level == "Error" && e.Message.Contains("upscaling image 2/2"));
     }
 
+    // Round 4: the result was written with the run's token; a Cancel during the write truncated the target, which in
+    // Overwrite mode is the original. A downloaded result is now always written whole, and the run stops after it.
+    [Fact]
+    public async Task ACancelAfterTheDownload_StillWritesThatImageWhole()
+    {
+        BatchUpscaleTabViewModel? vm = null;
+        Client.Setup(c => c.DownloadImageAsync(It.IsAny<ComfyUIImage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => { vm!.CancelUpscaleCommand.Execute(null); return [1, 2, 3]; });
+        vm = Sut();
+        vm.PositivePrompt = "x";
+
+        await RunAsync(vm, UpscalePromptMode.ManualPrompt, "a.png", "b.png");
+
+        var written = Directory.EnumerateFiles(Path.GetDirectoryName(vm.SingleImagePaths[0])!).Select(Path.GetFileName).ToList();
+        written.Should().BeEquivalentTo(["a.png", "b.png", "a_upscaled.png"]);
+        File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(vm.SingleImagePaths[0])!, "a_upscaled.png")).Should().Equal(1, 2, 3);
+        vm.CurrentProcessingStatus.Should().Be("Cancelled after 1/2 images.");
+    }
+
+    // Round 4: the prompt mode stays editable during a run, and step 2 read it live.
+    [Fact]
+    public async Task ThePromptModeChangesDuringTheRun_TheRunKeepsTheOneItStartedWith()
+    {
+        BatchUpscaleTabViewModel? vm = null;
+        var waits = 0;
+        Client.Setup(c => c.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                if (++waits == 1) vm!.PromptMode = UpscalePromptMode.VisionAutoPrompt;
+                return Task.CompletedTask;
+            });
+        vm = Sut();
+        vm.PositivePrompt = "a sharp photo";
+
+        await RunAsync(vm, UpscalePromptMode.ManualPrompt, "a.png", "b.png");
+
+        Queued.Select(q => PromptOf(q.Overrides)).Should().Equal("a sharp photo", "a sharp photo");
+    }
+
     // Round 2: every unexpected error in Engine mode asked "is the Diffusion Nexus Engine running?", also a full disk.
     [Fact]
     public async Task ALocalFileError_DoesNotBlameTheEngine()

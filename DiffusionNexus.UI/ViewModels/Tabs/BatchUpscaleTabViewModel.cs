@@ -234,6 +234,11 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
     /// <summary>What the run is doing, for failure log lines ("describing image 2/5").</summary>
     private string _runStep = "";
+
+    // Save mode and prompt mode as the run started: both stay editable during a run (step 1 takes minutes),
+    // and a switch to Overwrite mid-run replaced originals with no confirmation and no compare backup.
+    private UpscaleSaveMode _runSaveMode;
+    private UpscalePromptMode _runPromptMode;
     private readonly Func<string, int, Bitmap?> _thumbnailDecoder;
     private CancellationTokenSource? _cts;
     private bool _disposed;
@@ -835,10 +840,13 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             return;
         }
 
+        _runSaveMode = SaveMode;
+        _runPromptMode = PromptMode;
+
         // Defensive short-circuit: if readiness has flipped to "not ready" between the
         // CanExecute check and the click, surface the same message the readiness panel
         // shows so the user isn't left wondering why nothing happens.
-        var requiredReadiness = PromptMode == UpscalePromptMode.VisionAutoPrompt ? VisionReadiness : Readiness;
+        var requiredReadiness = _runPromptMode == UpscalePromptMode.VisionAutoPrompt ? VisionReadiness : Readiness;
         if (requiredReadiness.HasChecked && !requiredReadiness.IsReady)
         {
             CurrentProcessingStatus = requiredReadiness.MissingRequirements.Count > 0
@@ -873,7 +881,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         // Gallery Selection (temp dataset): convert to persistent dataset first
         if (SelectedDataset.IsTemporary && _tempImagePaths is { Count: > 0 })
         {
-            if (SaveMode == UpscaleSaveMode.NewVersion)
+            if (_runSaveMode == UpscaleSaveMode.NewVersion)
             {
                 var persistentDataset = await ConvertTempDatasetToPersistentAsync();
                 if (persistentDataset is null)
@@ -915,7 +923,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         }
 
         // Warn when overwriting originals — this is destructive and cannot be undone.
-        if (SaveMode == UpscaleSaveMode.OverwriteInPlace && DialogService is not null)
+        if (_runSaveMode == UpscaleSaveMode.OverwriteInPlace && DialogService is not null)
         {
             var confirmed = await DialogService.ShowConfirmAsync(
                 "Overwrite Original Images?",
@@ -936,7 +944,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         string? newVersionPath = null;
         int? newVersionNumber = null;
         int? branchedFromVersion = SelectedDatasetVersion?.Version;
-        if (SaveMode == UpscaleSaveMode.NewVersion && SelectedDataset.IsVersionedStructure)
+        if (_runSaveMode == UpscaleSaveMode.NewVersion && SelectedDataset.IsVersionedStructure)
         {
             var maxVersion = SelectedDataset.GetAllVersionNumbers().DefaultIfEmpty(1).Max();
             newVersionNumber = maxVersion + 1;
@@ -952,7 +960,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
             Logger.Information("Upscale: created new version folder {Path}", newVersionPath);
         }
-        else if (SaveMode == UpscaleSaveMode.NewVersion && !SelectedDataset.IsVersionedStructure)
+        else if (_runSaveMode == UpscaleSaveMode.NewVersion && !SelectedDataset.IsVersionedStructure)
         {
             // Non-versioned dataset: create v2 folder
             newVersionPath = Path.Combine(Path.GetDirectoryName(SelectedDataset.FolderPath)!,
@@ -969,20 +977,22 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         }
         else if (newVersionPath is not null && CompletedCount == 0)
         {
-            // Nothing was upscaled (cancel, an error, a failed Engine start): drop the version made for it.
-            DiscardEmptyVersion(dataset, newVersionPath, newVersionNumber);
+            // Nothing was upscaled (cancel, an error, a failed Engine start): drop the version made for it. One
+            // that keeps a file (an image written before the run stopped) is shown like any new version.
+            if (DiscardEmptyVersion(dataset, newVersionPath, newVersionNumber) && newVersionNumber.HasValue)
+                FinalizeVersionCreation(dataset, newVersionNumber.Value, branchedFromVersion);
         }
     }
 
     /// <summary>Removes a version folder a run created but never wrote to, and its branch record. A folder
-    /// that holds a file (a write cut off by Cancel) stays, with its record.</summary>
-    private static void DiscardEmptyVersion(DatasetCardViewModel dataset, string versionPath, int? versionNumber)
+    /// that holds a file stays, with its record; returns true then.</summary>
+    private static bool DiscardEmptyVersion(DatasetCardViewModel dataset, string versionPath, int? versionNumber)
     {
         try
         {
             if (Directory.Exists(versionPath))
             {
-                if (Directory.EnumerateFileSystemEntries(versionPath).Any()) return;
+                if (Directory.EnumerateFileSystemEntries(versionPath).Any()) return true;
                 Directory.Delete(versionPath);
             }
             if (versionNumber is { } number && dataset.VersionBranchedFrom.Remove(number))
@@ -992,6 +1002,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         {
             Logger.Warning(ex, "Upscale: could not remove the empty version folder {Path}", versionPath);
         }
+        return false;
     }
 
     /// <summary>
@@ -1013,7 +1024,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         var isSingleImage = isSingleImageMode;
 
         // Resolve the workflow file. Vision describes first (step 1), then runs the same upscale workflow.
-        var isVision = PromptMode == UpscalePromptMode.VisionAutoPrompt;
+        var isVision = _runPromptMode == UpscalePromptMode.VisionAutoPrompt;
         var workflowPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, ManualUpscaleWorkflowPath);
 
         if (!File.Exists(workflowPath))
@@ -1043,7 +1054,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
         // Clean up any previous temp originals and prepare for OverwriteInPlace comparison
         CleanupCompareOriginalsTempDir();
-        if (!isSingleImage && SaveMode == UpscaleSaveMode.OverwriteInPlace)
+        if (!isSingleImage && _runSaveMode == UpscaleSaveMode.OverwriteInPlace)
         {
             _compareOriginalsTempDir = Path.Combine(Path.GetTempPath(), "DiffusionNexus", "upscale-compare", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(_compareOriginalsTempDir);
@@ -1077,7 +1088,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             lease = await _clientProvider.AcquireAsync(new Progress<string>(msg => CurrentProcessingStatus = msg), ct);
             var comfy = lease.Client;
             Info($"Running on {(lease.Mode == ComfyUiServerMode.Engine ? "the Diffusion Nexus Engine" : "your own ComfyUI")} at {lease.BaseUrl}.");
-            Info($"{TotalImageCount} image(s), prompt mode {PromptMode.GetDisplayName()}.");
+            Info($"{TotalImageCount} image(s), prompt mode {_runPromptMode.GetDisplayName()}.");
 
             var undescribed = 0;
             if (isVision)
@@ -1137,19 +1148,23 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
                     // Preserve the original in a temp dir before overwriting so
                     // ImageCompareControl can still show a before/after comparison.
-                    if (!isSingleImage && SaveMode == UpscaleSaveMode.OverwriteInPlace && _compareOriginalsTempDir is not null)
+                    if (!isSingleImage && _runSaveMode == UpscaleSaveMode.OverwriteInPlace && _compareOriginalsTempDir is not null)
                     {
                         var tempOriginal = Path.Combine(_compareOriginalsTempDir, item.FileName);
                         File.Copy(item.OriginalPath, tempOriginal, overwrite: true);
                         item.OriginalPath = tempOriginal;
                     }
 
-                    await File.WriteAllBytesAsync(outputPath, imageBytes, ct);
+                    // Written whole, without the run's token: a Cancel mid-write truncated the target, which in
+                    // Overwrite mode is the original. The move replaces the target only once the bytes are complete.
+                    var partialPath = outputPath + ".upscaling";
+                    await File.WriteAllBytesAsync(partialPath, imageBytes, CancellationToken.None);
+                    File.Move(partialPath, outputPath, overwrite: true);
 
                     item.UpscaledPath = outputPath;
 
                     // Copy caption files when creating a new version (dataset mode only)
-                    if (!isSingleImage && SaveMode == UpscaleSaveMode.NewVersion && newVersionPath is not null)
+                    if (!isSingleImage && _runSaveMode == UpscaleSaveMode.NewVersion && newVersionPath is not null)
                     {
                         CopyCaptionFiles(item.OriginalPath, newVersionPath);
                     }
@@ -1343,13 +1358,12 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             [SaveImageNodeId] = node =>
             {
                 node["inputs"]!["filename_prefix"] = "DiffNexus_Upscale";
+            },
+            // Every mode sets the prompt text; Vision passes the description step 1 wrote.
+            [PositivePromptNodeId] = node =>
+            {
+                node["inputs"]!["text"] = positivePrompt;
             }
-        };
-
-        // Every mode sets the prompt text on node 17; Vision passes the description step 1 wrote.
-        modifiers[PositivePromptNodeId] = node =>
-        {
-            node["inputs"]!["text"] = positivePrompt;
         };
 
         return modifiers;
@@ -1358,7 +1372,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     private string GetOutputPath(string originalPath, string? newVersionPath)
     {
         var fileName = Path.GetFileName(originalPath);
-        return SaveMode switch
+        return _runSaveMode switch
         {
             UpscaleSaveMode.NewVersion when newVersionPath is not null
                 => Path.Combine(newVersionPath, fileName),
@@ -1542,16 +1556,17 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     }
 
     /// <summary>
-    /// Resolves the positive prompt for a single image based on the current <see cref="PromptMode"/>.
+    /// Resolves the positive prompt for a single image from the prompt mode the run started with.
+    /// Vision runs use the description step 1 wrote and do not come here.
     /// </summary>
     private string ResolvePositivePrompt(string imagePath)
     {
-        return PromptMode switch
+        return _runPromptMode switch
         {
             UpscalePromptMode.ManualPrompt => _positivePrompt,
             UpscalePromptMode.FromCaptions => ReadCaptionForImage(imagePath) ?? _positivePrompt,
             UpscalePromptMode.FromMetadata => ReadMetadataPrompt(imagePath) ?? _positivePrompt,
-            _ => string.Empty // VisionAutoPrompt — prompt is generated by the vision model node
+            _ => string.Empty
         };
     }
 

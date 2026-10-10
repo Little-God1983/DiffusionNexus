@@ -383,6 +383,32 @@ public class BatchUpscaleVisionTwoStepTests : BatchUpscaleEngineRunTests
 
         Directory.Exists(Path.Combine(folder, "V2")).Should().BeTrue();
         dataset.VersionBranchedFrom.Should().Contain(2, 1);
+        dataset.CurrentVersion.Should().Be(2, "Round 4: a version that keeps a file is finalized, not left hidden");
+    }
+
+    // Round 4: Save mode stays editable during step 1 (minutes); switching to Overwrite made step 2 replace the
+    // originals with no confirmation and no compare backup.
+    [Fact]
+    public async Task TheSaveModeChangesDuringStepOne_TheRunKeepsTheOneItStartedWith()
+    {
+        var dataset = TwoImageDataset(out var folder);
+        var vm = Sut();
+        var waits = 0;
+        Client.Setup(c => c.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                if (++waits == 1) vm.SaveMode = UpscaleSaveMode.OverwriteInPlace;
+                return Task.CompletedTask;
+            });
+        vm.SelectedDataset = dataset;
+        vm.SelectedDatasetVersion = vm.AvailableDatasetVersions.Single(v => v.Version == 1);
+        vm.PromptMode = UpscalePromptMode.VisionAutoPrompt;
+        await vm.VisionReadiness.CheckReadinessAsync();
+
+        await vm.StartUpscaleCommand.ExecuteAsync(null);
+
+        File.ReadAllBytes(Path.Combine(folder, "V1", "a.png")).Should().Equal(0x89, 0x50, 0x4E, 0x47);
+        Directory.EnumerateFiles(Path.Combine(folder, "V2")).Should().HaveCount(2);
     }
 
     // Round 3: a failure in a node after Qwen3-VL (ShowText) was taken for one before it, so a later cancel left
