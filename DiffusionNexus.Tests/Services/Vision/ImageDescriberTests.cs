@@ -97,6 +97,19 @@ public class ImageDescriberTests
         free.Config.ToJsonString().Should().Be(Applied(_queued[0]).Config.ToJsonString());
     }
 
+    // Round 1: the free-up job waited without a timeout on CancellationToken.None, so a stalled server kept the
+    // tab busy forever (Cancel had already been used).
+    [Fact]
+    public async Task Free_GivesUpAfterItsTimeout()
+    {
+        _client.Setup(c => c.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()))
+            .Returns((string _, IProgress<string>? _, CancellationToken t) => Task.Delay(Timeout.Infinite, t));
+        var sut = Sut();
+        sut.FreeTimeout = TimeSpan.FromMilliseconds(50);
+
+        await sut.Invoking(s => s.FreeAsync("up.png").WaitAsync(TimeSpan.FromSeconds(10))).Should().NotThrowAsync();
+    }
+
     [Fact]
     public async Task Free_NeverThrows()
     {

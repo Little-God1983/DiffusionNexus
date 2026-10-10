@@ -54,16 +54,21 @@ public sealed class ImageDescriber
 
     private const string InferenceFailedPrefix = "❌ Inference failed:";
 
+    /// <summary>How long <see cref="FreeAsync"/> waits for its job: it runs after Cancel, so nothing else can stop it.</summary>
+    public TimeSpan FreeTimeout { get; set; } = TimeSpan.FromMinutes(2);
+
     /// <summary>
     /// Frees a model a batch kept loaded: one <c>direct_clean</c> job with the same config reuses it and
-    /// unloads it after answering. Runs to the end even when the batch was cancelled, and never throws.
+    /// unloads it after answering. Runs even when the batch was cancelled, gives up after
+    /// <see cref="FreeTimeout"/>, and never throws.
     /// </summary>
     public async Task FreeAsync(string uploadedImage)
     {
+        using var timeout = new CancellationTokenSource(FreeTimeout);
         try
         {
-            var promptId = await _client.QueueWorkflowAsync(_workflowPath, Overrides(uploadedImage, "direct_clean", freeComfyModels: false), CancellationToken.None);
-            await _client.WaitForCompletionAsync(promptId, progress: null, CancellationToken.None);
+            var promptId = await _client.QueueWorkflowAsync(_workflowPath, Overrides(uploadedImage, "direct_clean", freeComfyModels: false), timeout.Token);
+            await _client.WaitForCompletionAsync(promptId, progress: null, timeout.Token);
         }
         catch (Exception ex)
         {

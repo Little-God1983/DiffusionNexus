@@ -231,6 +231,9 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     private const string LogSource = "Batch Upscale";
     private readonly IAppSettingsService? _settingsService;
     private readonly IUiScheduler _uiScheduler;
+
+    /// <summary>What the run is doing, for failure log lines ("describing image 2/5").</summary>
+    private string _runStep = "";
     private readonly Func<string, int, Bitmap?> _thumbnailDecoder;
     private CancellationTokenSource? _cts;
     private bool _disposed;
@@ -781,10 +784,10 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
     private void OnReadinessInputChanged(object? sender, EventArgs e)
     {
-        if (Avalonia.Application.Current is null || Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+        if (_uiScheduler.IsOnUiThread)
             RecheckIfActive();
         else
-            Avalonia.Threading.Dispatcher.UIThread.Post(RecheckIfActive);
+            _uiScheduler.Post(RecheckIfActive);
     }
 
     private void RecheckIfActive()
@@ -961,6 +964,27 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         {
             FinalizeVersionCreation(newVersionNumber.Value, branchedFromVersion);
         }
+        else if (newVersionPath is not null && CompletedCount == 0)
+        {
+            // Nothing was upscaled (cancel, an error, a failed Engine start): drop the version made for it.
+            DiscardEmptyVersion(SelectedDataset, newVersionPath, newVersionNumber);
+        }
+    }
+
+    /// <summary>Removes a version folder a run created but never wrote to, and its branch record.</summary>
+    private static void DiscardEmptyVersion(DatasetCardViewModel dataset, string versionPath, int? versionNumber)
+    {
+        try
+        {
+            if (Directory.Exists(versionPath) && !Directory.EnumerateFileSystemEntries(versionPath).Any())
+                Directory.Delete(versionPath);
+            if (versionNumber is { } number && dataset.VersionBranchedFrom.Remove(number))
+                dataset.SaveMetadata();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Logger.Warning(ex, "Upscale: could not remove the empty version folder {Path}", versionPath);
+        }
     }
 
     /// <summary>
@@ -1035,6 +1059,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         TotalProgress = 0;
 
         ComfyUiClientLease? lease = null;
+        _runStep = "connecting to ComfyUI";
         try
         {
             // Engine start-up text ("Starting Diffusion Nexus Engine…") lands on the status line.
@@ -1059,6 +1084,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
                 var item = UpscaleItems[i];
                 item.IsProcessing = true;
+                _runStep = $"upscaling image {i + 1}/{TotalImageCount}";
 
                 // 1. Upload image to ComfyUI, right before its job: ComfyUI stores an upload under its plain
                 // file name and overwrites on a clash, so a step-1 upload of a same-named image from another
@@ -1146,17 +1172,17 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         catch (ComfyUIExecutionException ex)
         {
             CurrentProcessingStatus = $"Failed in the ComfyUI node {ex.NodeType} – see the Unified Console";
-            Error($"Upscale failed in the ComfyUI node {ex.NodeType}: {ex.Detail}", ex);
+            Error($"Failed while {_runStep} in the ComfyUI node {ex.NodeType}: {ex.Detail}", ex);
         }
         catch (ComfyUIWorkflowRejectedException ex)
         {
             CurrentProcessingStatus = "ComfyUI rejected the workflow – see the Unified Console";
-            Error($"ComfyUI rejected the upscale workflow: {ex.Reason}", ex);
+            Error($"ComfyUI rejected the workflow while {_runStep}: {ex.Reason}", ex);
         }
         catch (HttpRequestException ex) when (ex.StatusCode is { } status)
         {
             CurrentProcessingStatus = $"ComfyUI answered {(int)status} – see the Unified Console";
-            Error($"ComfyUI answered {(int)status}: {ex.Message}", ex);
+            Error($"ComfyUI answered {(int)status} while {_runStep}: {ex.Message}", ex);
         }
         catch (OperationCanceledException)
         {
@@ -1168,7 +1194,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             CurrentProcessingStatus = lease?.Mode == ComfyUiServerMode.Engine
                 ? $"Error: {ex.Message} – is the Diffusion Nexus Engine running?"
                 : $"Error: {ex.Message}";
-            Error($"Batch upscale failed at image {CompletedCount + 1}/{TotalImageCount}", ex);
+            Error($"Batch upscale failed while {_runStep}", ex);
         }
         finally
         {
@@ -1189,9 +1215,10 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
     /// <summary>
     /// Step 1 of a Vision run: uploads and describes every image with Qwen3-VL kept loaded, the last one
-    /// freeing it. Stopping early (cancel, an error) frees the model with one extra job, so it does not
-    /// stay in the server's VRAM. A description that fails for one image is a warning: that image is
-    /// upscaled without a prompt. Returns how many images got no description.
+    /// freeing it. When the model may still be loaded at the end (cancel, an error, a last job that failed
+    /// before the node ran), one extra job with the last described image frees it, so it does not stay in
+    /// the server's VRAM. A description that fails for one image is a warning: that image is upscaled
+    /// without a prompt. Returns how many images got no description.
     /// </summary>
     private async Task<int> DescribeAllAsync(IComfyUIWrapperService comfy, ImageDescriber describer, CancellationToken ct)
     {
@@ -1200,8 +1227,8 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         TotalProgress = 0;
         Info("Step 1 of 2: describing every image with Qwen3-VL.");
 
-        string? lastUploaded = null;
-        var lastFailed = false;
+        // The upload a keep_vram job described while leaving Qwen3-VL loaded; null while nothing is loaded.
+        string? loadedWith = null;
         var undescribed = 0;
         try
         {
@@ -1212,14 +1239,15 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 item.IsProcessing = true;
                 CurrentProcessingStatus = $"[{i + 1}/{TotalImageCount}] Describing {item.FileName}…";
 
-                lastUploaded = await comfy.UploadImageAsync(item.OriginalPath, ct);
+                _runStep = $"describing image {i + 1}/{TotalImageCount}";
+                var uploaded = await comfy.UploadImageAsync(item.OriginalPath, ct);
+                var keepLoaded = i < UpscaleItems.Count - 1;
                 try
                 {
                     // The first description also unloads ComfyUI's own models (the last run's upscaler):
                     // llama.cpp allocates outside ComfyUI's memory manager, which would not make room.
-                    item.Description = await describer.DescribeAsync(lastUploaded, keepLoaded: i < UpscaleItems.Count - 1, ct,
-                        freeComfyModels: i == 0);
-                    lastFailed = false;
+                    item.Description = await describer.DescribeAsync(uploaded, keepLoaded, ct, freeComfyModels: i == 0);
+                    loadedWith = keepLoaded ? uploaded : null;
                     if (item.Description is null)
                     {
                         undescribed++;
@@ -1230,13 +1258,14 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 }
                 catch (ComfyUIExecutionException ex)
                 {
-                    lastFailed = true;
+                    // Failed before or in the node: whatever an earlier job left loaded is still there.
                     undescribed++;
                     Warn($"Could not describe {item.FileName} (node {ex.NodeType}: {ex.Detail}); it is upscaled without a prompt.");
                 }
                 catch (ImageDescriptionFailedException ex)
                 {
-                    lastFailed = true;
+                    // The node unloads everything after a failed inference.
+                    loadedWith = null;
                     undescribed++;
                     Warn($"Qwen3-VL could not describe {item.FileName} ({ex.Message}); it is upscaled without a prompt.");
                 }
@@ -1246,15 +1275,15 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 TotalProgress = (double)(i + 1) / TotalImageCount * 100;
             }
 
-            // The last job frees the model itself; when it failed, it may have died before doing so.
-            if (lastFailed && lastUploaded is not null)
-                await describer.FreeAsync(lastUploaded);
+            // The last job frees the model itself; when it failed before the node ran, it did not.
+            if (loadedWith is not null)
+                await describer.FreeAsync(loadedWith);
             return undescribed;
         }
-        catch (Exception) when (lastUploaded is not null)
+        catch (Exception) when (loadedWith is not null)
         {
             Info("Freeing Qwen3-VL on the server after step 1 stopped early.");
-            await describer.FreeAsync(lastUploaded);
+            await describer.FreeAsync(loadedWith);
             throw;
         }
     }

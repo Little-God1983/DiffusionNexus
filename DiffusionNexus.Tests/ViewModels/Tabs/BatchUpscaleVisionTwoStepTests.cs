@@ -138,9 +138,118 @@ public class BatchUpscaleVisionTwoStepTests : BatchUpscaleEngineRunTests
 
         Upscales.Should().BeEmpty();
         Describes.Select(d => ModeOf(d.Overrides)).Should().Equal("keep_vram", "keep_vram", "direct_clean");
-        ImageOf(Describes.Last().Overrides, "1").Should().Be("up-b.png", "the free-up job reuses the last upload");
+        ImageOf(Describes.Last().Overrides, "1").Should().Be("up-a.png", "the free-up job reuses the last described image");
         vm.StepText.Should().BeNull();
         vm.CurrentProcessingStatus.Should().StartWith("Cancelled");
+    }
+
+    /// <summary>Fails the describe job of the given image (1-based) while it waits for completion.</summary>
+    private void FailDescribeWait(int image, Exception ex)
+    {
+        Client.Setup(c => c.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()))
+            .Returns((string id, IProgress<string>? _, CancellationToken _) =>
+            {
+                var job = Queued[int.Parse(id[1..]) - 1];
+                var describeNo = Queued.Take(int.Parse(id[1..])).Count(q => q.Workflow == "Qwen3-VL-Describe.json");
+                return job.Workflow == "Qwen3-VL-Describe.json" && describeNo == image ? Task.FromException(ex) : Task.CompletedTask;
+            });
+    }
+
+    // Round 1: the last image failing before Qwen3-VL ran (LoadImage) made the free-up job fail on the same image,
+    // leaving the model loaded by the earlier keep_vram jobs in VRAM for step 2.
+    [Fact]
+    public async Task TheLastImageFailsBeforeQwenRuns_TheFreeJobUsesTheLastDescribedImage()
+    {
+        FailDescribeWait(2, new ComfyUIExecutionException("LoadImage", "cannot identify image file"));
+
+        await RunAsync(Sut(), UpscalePromptMode.VisionAutoPrompt, "a.png", "b.png");
+
+        Describes.Should().HaveCount(3);
+        ImageOf(Describes.Last().Overrides, "1").Should().Be("up-a.png");
+        ModeOf(Describes.Last().Overrides).Should().Be("direct_clean");
+    }
+
+    // Round 1: after "❌ Inference failed" the node has already unloaded everything; a free-up job only reloads the model.
+    [Fact]
+    public async Task TheLastInferenceFailed_NoFreeJob_TheNodeAlreadyUnloaded()
+    {
+        var describes = 0;
+        Client.Setup(c => c.GetResultAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string id, CancellationToken _) =>
+            {
+                var job = Queued[int.Parse(id[1..]) - 1];
+                if (job.Workflow == "Qwen3-VL-Describe.json" && ++describes == 2)
+                {
+                    var failed = new ComfyUIResult();
+                    failed.Texts.Add("❌ Inference failed:\nCUDA out of memory\nCheck console for details.");
+                    return failed;
+                }
+                return ResultFor(job);
+            });
+
+        await RunAsync(Sut(), UpscalePromptMode.VisionAutoPrompt, "a.png", "b.png");
+
+        Describes.Should().HaveCount(2);
+        Upscales.Should().HaveCount(2);
+    }
+
+    // Round 1: step 1 stopping before any description finished loaded Qwen3-VL from cold just to unload it.
+    [Fact]
+    public async Task StepOneStopsBeforeAnythingWasDescribed_NoFreeJob()
+    {
+        FailDescribeWait(1, new ComfyUIWorkflowRejectedException("prompt_outputs_failed_validation"));
+
+        await RunAsync(Sut(), UpscalePromptMode.VisionAutoPrompt, "a.png", "b.png", "c.png");
+
+        Describes.Should().HaveCount(1);
+        Upscales.Should().BeEmpty();
+    }
+
+    // Round 1: the log said "failed at image 1/3" for any step-1 failure and named the upscale workflow.
+    [Fact]
+    public async Task StepOneFailures_NameTheDescribeStepAndTheImage()
+    {
+        FailDescribeWait(2, new HttpRequestException("connection reset"));
+
+        await RunAsync(Sut(), UpscalePromptMode.VisionAutoPrompt, "a.png", "b.png", "c.png");
+
+        Logged.Should().Contain(e => e.Level == "Error" && e.Message.Contains("describing image 2/3"));
+    }
+
+    [Fact]
+    public async Task ARejectedDescribeJob_IsNotCalledTheUpscaleWorkflow()
+    {
+        FailDescribeWait(1, new ComfyUIWorkflowRejectedException("prompt_outputs_failed_validation"));
+
+        await RunAsync(Sut(), UpscalePromptMode.VisionAutoPrompt, "a.png");
+
+        Logged.Should().Contain(e => e.Level == "Error" && e.Message.Contains("describing image 1/1")
+                                     && !e.Message.Contains("upscale workflow"));
+    }
+
+    // Round 1: a dataset run in New Version mode creates the version folder and its branch record before step 1;
+    // stopping before any image was upscaled left an empty version behind, one more per retry.
+    [Fact]
+    public async Task NewVersion_CancelledInStepOne_LeavesNoEmptyVersionBehind()
+    {
+        var datasetFolder = Path.GetDirectoryName(Path.GetDirectoryName(Image(Path.Combine("ds", "V1", "a.png"))))!;
+        Image(Path.Combine("ds", "V1", "b.png"));
+        var dataset = DiffusionNexus.UI.ViewModels.DatasetCardViewModel.FromFolder(datasetFolder);
+        var waits = 0;
+        Client.Setup(c => c.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()))
+            .Returns(() => ++waits == 2 ? Task.FromCanceled(new CancellationToken(true)) : Task.CompletedTask);
+        var vm = Sut();
+        vm.SelectedDataset = dataset;
+        vm.SelectedDatasetVersion = vm.AvailableDatasetVersions.Single(v => v.Version == 1);
+        vm.PromptMode = UpscalePromptMode.VisionAutoPrompt;
+        await vm.VisionReadiness.CheckReadinessAsync();
+
+        await vm.StartUpscaleCommand.ExecuteAsync(null);
+
+        vm.CurrentProcessingStatus.Should().StartWith("Cancelled");
+        Directory.Exists(Path.Combine(datasetFolder, "V2")).Should().BeFalse();
+        dataset.VersionBranchedFrom.Should().NotContainKey(2);
+        DiffusionNexus.UI.ViewModels.DatasetCardViewModel.FromFolder(datasetFolder).VersionBranchedFrom.Should().NotContainKey(2);
     }
 
     [Fact]

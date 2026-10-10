@@ -214,7 +214,6 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// <param name="backgroundRemovalService">Optional background removal service for AI-powered background removal.</param>
     /// <param name="backupService">Optional dataset backup service for automatic backups.</param>
     /// <param name="activityLog">Optional activity log service for logging actions.</param>
-    /// <param name="comfyUiService">Optional ComfyUI wrapper service for inpainting.</param>
     /// <param name="readinessService">Optional unified ComfyUI readiness service for prerequisite checks.</param>
     /// <param name="comfyUiClientProvider">Optional provider of the ComfyUI client chosen in Settings (Engine or own server), used by Inpaint, Outpaint and Batch Upscale.</param>
     public LoraDatasetHelperViewModel(
@@ -228,7 +227,6 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
         IBackgroundRemovalService? backgroundRemovalService = null,
         IDatasetBackupService? backupService = null,
         IActivityLogService? activityLog = null,
-        IComfyUIWrapperService? comfyUiService = null,
         IThumbnailOrchestrator? thumbnailOrchestrator = null,
         AnalysisPipeline? analysisPipeline = null,
         BucketAnalyzer? bucketAnalyzer = null,
@@ -289,7 +287,7 @@ public partial class LoraDatasetHelperViewModel : ViewModelBase, IDialogServiceA
     /// <summary>
     /// Design-time constructor.
     /// </summary>
-    public LoraDatasetHelperViewModel() : this(null!, null!, null!, null!, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null)
+    public LoraDatasetHelperViewModel() : this(null!, null!, null!, null!, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null)
     {
     }
 

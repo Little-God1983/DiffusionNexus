@@ -83,7 +83,7 @@ public class BatchUpscaleEngineRunTests : IDisposable
                 IsBackendOnline = true, IsReady = true, MissingRequirements = [], Warnings = [], ModelPaths = paths
             });
 
-    protected BatchUpscaleTabViewModel Sut(IComfyUiClientProvider? provider = null)
+    protected BatchUpscaleTabViewModel Sut(IComfyUiClientProvider? provider = null, IUiScheduler? uiScheduler = null)
     {
         var logger = new Mock<IUnifiedLogger>();
         logger.Setup(l => l.Info(It.IsAny<LogCategory>(), "Batch Upscale", It.IsAny<string>(), It.IsAny<string?>()))
@@ -94,7 +94,7 @@ public class BatchUpscaleEngineRunTests : IDisposable
             .Callback((LogCategory _, string _, string m, Exception? _) => Logged.Add(("Error", m)));
         return new BatchUpscaleTabViewModel(Events, new Mock<IDatasetState>().Object,
             clientProvider: provider ?? InpaintingViewModelGGUFResolutionTests.Provider(Client.Object, ComfyUiServerMode.Engine),
-            readinessService: Readiness.Object, uiScheduler: new ImmediateUiScheduler(),
+            readinessService: Readiness.Object, uiScheduler: uiScheduler ?? new ImmediateUiScheduler(),
             thumbnailDecoder: (_, _) => null, unifiedLogger: logger.Object);
     }
 
@@ -172,6 +172,38 @@ public class BatchUpscaleEngineRunTests : IDisposable
         await RunAsync(vm, UpscalePromptMode.ManualPrompt, "a.png");
 
         vm.CurrentProcessingStatus.Should().Be("ComfyUI answered 400 – see the Unified Console");
+    }
+
+    // Round 1: the generic failure line said "failed at image N" without the step.
+    [Fact]
+    public async Task AnUpscaleFailure_NamesTheStepAndTheImage()
+    {
+        var waits = 0;
+        Client.Setup(c => c.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()))
+            .Returns(() => ++waits == 2 ? Task.FromException(new HttpRequestException("connection reset")) : Task.CompletedTask);
+        var vm = Sut();
+        vm.PositivePrompt = "x";
+
+        await RunAsync(vm, UpscalePromptMode.ManualPrompt, "a.png", "b.png");
+
+        Logged.Should().Contain(e => e.Level == "Error" && e.Message.Contains("upscaling image 2/2"));
+    }
+
+    // Round 1: Settings/Engine events reached the tab through Dispatcher.UIThread instead of the injected scheduler.
+    [Fact]
+    public void ReadinessInputEvents_AreMarshalledThroughTheInjectedScheduler()
+    {
+        var scheduler = new Mock<IUiScheduler>();
+        scheduler.SetupGet(s => s.IsOnUiThread).Returns(false);
+        scheduler.Setup(s => s.Post(It.IsAny<Action>())).Callback((Action a) => a());
+        var vm = Sut(uiScheduler: scheduler.Object);
+        vm.PromptMode = UpscalePromptMode.ManualPrompt;
+        vm.OnTabActivated();
+
+        Events.PublishEngineChanged(new EngineChangedEventArgs());
+
+        scheduler.Verify(s => s.Post(It.IsAny<Action>()), Times.Once);
+        Readiness.Verify(r => r.CheckAsync(Feature.BatchUpscale, It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
     // ── Readiness follows the tab (the tab never checked on its own; Start stayed greyed until "Check") ──

@@ -763,8 +763,8 @@ public partial class App : Application
         // ComfyUI client for the features not yet on IComfyUiClientProvider (ComfyUI captioning, the
         // ComfyUI readiness backend). Built from the Settings URL — it used to ignore it and always
         // talk to 8188. A URL change reaches these after a restart.
-        // A bad Settings URL must not throw here: this singleton feeds the readiness backend,
-        // captioning and the LoRA Dataset Helper, and a throw would keep the user out of Settings.
+        // A bad Settings URL must not throw here: this singleton feeds the readiness backend and
+        // captioning, and a throw would keep the user out of Settings.
         services.AddSingleton<IComfyUIWrapperService>(sp =>
         {
             string? url;
@@ -1094,7 +1094,6 @@ public partial class App : Application
             sp.GetService<IBackgroundRemovalService>(),
             sp.GetService<IDatasetBackupService>(),
             sp.GetService<IActivityLogService>(),
-            sp.GetService<IComfyUIWrapperService>(),
             sp.GetService<IThumbnailOrchestrator>(),
             sp.GetService<AnalysisPipeline>(),
             sp.GetService<BucketAnalyzer>(),
