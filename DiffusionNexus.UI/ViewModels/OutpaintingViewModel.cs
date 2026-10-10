@@ -277,6 +277,22 @@ public partial class OutpaintingViewModel : ObservableObject
     }
 
     /// <summary>Same as <see cref="EmitInfo"/> for the generate path, which logs under General (spec §4.5).</summary>
+    /// <summary>Width and height from the image file's header, or null when the file is not a decodable image.</summary>
+    internal static (int Width, int Height)? ReadImageSize(string path)
+    {
+        try
+        {
+            using var codec = SkiaSharp.SKCodec.Create(path);
+            if (codec is null || codec.Info.Width <= 0 || codec.Info.Height <= 0) return null;
+            return (codec.Info.Width, codec.Info.Height);
+        }
+        catch (Exception ex)
+        {
+            Logger.Debug(ex, "Outpaint: could not read the image size of {Path}", path);
+            return null;
+        }
+    }
+
     /// <summary>
     /// The Qwen3-VL GGUF node's config: model and projector paths, a bounded answer (a looping
     /// description once ran to 2048 tokens and became the prompt), low temperature.
@@ -804,6 +820,12 @@ public partial class OutpaintingViewModel : ObservableObject
 
             var seed = (long)(_random.NextDouble() * long.MaxValue);
 
+            // The exported file is what ComfyUI receives, so its header is the size that counts. The
+            // editor's ImageWidth/ImageHeight were 0 on one load path (owner smoke): largest_size 0
+            // shrank the image to nothing and the padding became the whole 296x80 result.
+            var (origW, origH) = ReadImageSize(imagePath) ?? (_getImageWidth(), _getImageHeight());
+            EmitGenerate($"Image {origW}×{origH}, extending left {extendLeft}, top {extendTop}, right {extendRight}, bottom {extendBottom}.");
+
             var overrides = new Dictionary<string, Action<System.Text.Json.Nodes.JsonNode>>
             {
                 [LoadImageNodeId] = node =>
@@ -834,9 +856,9 @@ public partial class OutpaintingViewModel : ObservableObject
                 // stretches the result onto the canvas the UI computed at native resolution.
                 [ImageScaleNodeId] = node =>
                 {
-                    var origW = _getImageWidth();
-                    var origH = _getImageHeight();
-                    node["inputs"]!["largest_size"] = Math.Max(origW, origH);
+                    // Unknown size: leave the workflow's own value rather than send 0.
+                    if (Math.Max(origW, origH) > 0)
+                        node["inputs"]!["largest_size"] = Math.Max(origW, origH);
                 }
             };
 

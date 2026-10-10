@@ -178,4 +178,72 @@ public class OutpaintVisionDescriptionTests
         config["chat_handler"]!.GetValue<string>().Should().Be("qwen3");
         config["temperature"]!.GetValue<double>().Should().Be(0.3);
     }
+
+    // ── Owner smoke: the scale node got largest_size 0 (the editor's ImageWidth was 0) and the result was 296x80 ──
+
+    private static string RealPng(int width, int height)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"dn-vision-{Guid.NewGuid():N}.png");
+        using var bitmap = new SkiaSharp.SKBitmap(width, height);
+        bitmap.Erase(SkiaSharp.SKColors.Teal);
+        using var image = SkiaSharp.SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100);
+        File.WriteAllBytes(path, data.ToArray());
+        return path;
+    }
+
+    private static int? LargestSizeSentTo17(Dictionary<string, Action<JsonNode>> overrides)
+    {
+        var node = JsonNode.Parse("""{"inputs": {"largest_size": 1536}}""")!;
+        overrides["17"](node);
+        return node["inputs"]!["largest_size"]!.GetValue<int>();
+    }
+
+    [Fact]
+    public async Task ScaleNode_UsesTheExportedFilesSize_NotTheEditorsCounters()
+    {
+        var (client, overrides) = ClientCapturingOverrides();
+        var vm = new OutpaintingViewModel(() => true, () => 0, () => 0, _ => { },
+            InpaintingViewModelGGUFResolutionTests.Provider(client.Object, ComfyUiServerMode.Engine));
+        vm.PositivePrompt = "a beach";
+
+        await vm.ProcessOutpaintAsync(RealPng(640, 480), useVision: false, 64, 0, 64, 0);
+
+        LargestSizeSentTo17(overrides()!).Should().Be(640);
+    }
+
+    [Fact]
+    public async Task ScaleNode_UnreadableFile_FallsBackToTheEditorsCounters()
+    {
+        var (client, overrides) = ClientCapturingOverrides();
+        var vm = new OutpaintingViewModel(() => true, () => 1024, () => 768, _ => { },
+            InpaintingViewModelGGUFResolutionTests.Provider(client.Object, ComfyUiServerMode.Engine));
+        vm.PositivePrompt = "a beach";
+
+        await vm.ProcessOutpaintAsync(TempImage(), useVision: false, 64, 0, 64, 0);
+
+        LargestSizeSentTo17(overrides()!).Should().Be(1024);
+    }
+
+    [Fact]
+    public async Task ScaleNode_NoSizeAtAll_LeavesTheWorkflowsValue_NeverSendsZero()
+    {
+        var (client, overrides) = ClientCapturingOverrides();
+        var vm = new OutpaintingViewModel(() => true, () => 0, () => 0, _ => { },
+            InpaintingViewModelGGUFResolutionTests.Provider(client.Object, ComfyUiServerMode.Engine));
+        vm.PositivePrompt = "a beach";
+
+        await vm.ProcessOutpaintAsync(TempImage(), useVision: false, 64, 0, 64, 0);
+
+        LargestSizeSentTo17(overrides()!).Should().Be(1536, "0 shrinks the image to nothing; the workflow's default is the lesser evil");
+    }
+
+    [Fact]
+    public void ReadImageSize_ReadsTheHeader_AndIsNullForNonImages()
+    {
+        OutpaintingViewModel.ReadImageSize(RealPng(300, 200)).Should().Be((300, 200));
+        OutpaintingViewModel.ReadImageSize(TempImage()).Should().BeNull();
+        OutpaintingViewModel.ReadImageSize(@"C:\does
+ot\exist.png").Should().BeNull();
+    }
 }
