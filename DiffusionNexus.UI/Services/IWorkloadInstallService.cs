@@ -56,6 +56,19 @@ public interface IWorkloadInstallService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Installs the prebuilt llama-cpp-python wheel that fits the install's own venv (its Python and
+    /// torch's CUDA, read from the venv), unless that version is there already. Node packs that run
+    /// GGUF models (Outpaint Vision's Qwen3-VL node, #607) list llama-cpp-python in their requirements,
+    /// and without a wheel pip would try to compile it from source. pip checks the download against
+    /// the catalog's hash.
+    /// </summary>
+    Task<LlamaCppWheelOutcome> EnsureLlamaCppWheelAsync(
+        string comfyUIRootPath,
+        IReadOnlyList<LamaCppWheel> wheels,
+        IProgress<WorkloadInstallProgress>? progress = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Scans already-installed custom nodes for a workload configuration and installs
     /// any missing supplementary pip packages. Use this to repair existing installations
     /// where upstream <c>requirements.txt</c> files omit runtime dependencies.
@@ -70,4 +83,17 @@ public interface IWorkloadInstallService
         string comfyUIRootPath,
         IProgress<WorkloadInstallProgress>? progress = null,
         CancellationToken cancellationToken = default);
+}
+
+/// <summary>What <see cref="IWorkloadInstallService.EnsureLlamaCppWheelAsync"/> did.</summary>
+public enum LlamaCppWheelOutcome
+{
+    /// <summary>The wheel for this venv is in place (installed now or already there).</summary>
+    Installed,
+
+    /// <summary>The catalog has no wheel for this venv's Python and CUDA (or they could not be read); nothing was installed.</summary>
+    NoMatchingWheel,
+
+    /// <summary>A matching wheel's install ran and failed.</summary>
+    Failed,
 }

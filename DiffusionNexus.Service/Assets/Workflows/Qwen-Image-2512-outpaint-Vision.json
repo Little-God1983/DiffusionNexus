@@ -35,7 +35,7 @@
   "5": {
     "inputs": {
       "text": [
-        "259",
+        "257",
         0
       ],
       "clip": [
@@ -261,24 +261,22 @@
   },
   "256": {
     "inputs": {
-      "text": "Describe the sourroundings and the background of the image not the subject,\n",
-      "model": "Qwen3-VL-4B-Instruct-FP8",
-      "quantization": "none",
-      "keep_model_loaded": true,
-      "temperature": 0.3,
-      "max_new_tokens": 2048,
-      "min_pixels": 200704,
-      "max_pixels": 1003520,
+      "model_preset": "None",
+      "system_preset": "None",
+      "user_prompt": "Describe the surroundings and the background of the image, not the subject. Write one paragraph of plain prose, no lists and no headings.",
       "seed": 1602,
-      "attention": "eager",
+      "unload_all_models": false,
+      "mode": "direct_clean",
       "image": [
-        "16",
+        "260",
         0
-      ]
+      ],
+      "config_override": "",
+      "bypass": false
     },
-    "class_type": "Qwen3_VQA",
+    "class_type": "SimpleQwenVLggufV2",
     "_meta": {
-      "title": "Qwen3 VQA"
+      "title": "Qwen3-VL (GGUF)"
     }
   },
   "257": {
@@ -292,20 +290,6 @@
     "class_type": "ShowText|pysssss",
     "_meta": {
       "title": "Show Text"
-    }
-  },
-  "259": {
-    "inputs": {
-      "prefix": "",
-      "suffix": "",
-      "input": [
-        "257",
-        0
-      ]
-    },
-    "class_type": "SomethingToString",
-    "_meta": {
-      "title": "Something To String"
     }
   },
   "19:253": {
@@ -359,6 +343,20 @@
     "class_type": "ImageBlur",
     "_meta": {
       "title": "Image Blur"
+    }
+  },
+  "260": {
+    "inputs": {
+      "upscale_method": "area",
+      "largest_size": 1280,
+      "image": [
+        "16",
+        0
+      ]
+    },
+    "class_type": "ImageScaleToMaxDimension",
+    "_meta": {
+      "title": "Image for the description (1280 px)"
     }
   }
 }

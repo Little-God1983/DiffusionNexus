@@ -20,6 +20,7 @@ public class GenerationStepTextTests
     [InlineData("Executing node 12...", "Loading the models (slow on the first run)")]
     [InlineData("Progress: 2/4", "Generating · step 2 of 4")]
     [InlineData("Downloading result...", "Downloading the result")]
+    [InlineData("Describing the surroundings with Qwen3-VL...", "Describing the surroundings (Qwen3-VL)")]
     public void Describe_MapsEachPhase(string status, string expected)
     {
         var sampled = false;

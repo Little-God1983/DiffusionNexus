@@ -170,6 +170,9 @@ public sealed partial class FeatureReadinessViewModel : ObservableObject
     /// <summary>Whether there are any blocking missing requirements.</summary>
     public bool HasMissingRequirements => MissingRequirements.Count > 0;
 
+    /// <summary>Where the last check found each present model, by catalog model name (#607).</summary>
+    public IReadOnlyDictionary<string, string> ModelPaths { get; private set; } = new Dictionary<string, string>();
+
     /// <summary>Non-blocking warnings (e.g. auto-download model not yet present).</summary>
     public IReadOnlyList<string> Warnings
     {
@@ -249,6 +252,7 @@ public sealed partial class FeatureReadinessViewModel : ObservableObject
             _activeBackendKind = result.Backend;
             MissingRequirements = result.MissingRequirements;
             Warnings = result.Warnings;
+            ModelPaths = result.ModelPaths;
 
             StatusMessage = result.IsReady
                 ? "Ready"
@@ -273,6 +277,7 @@ public sealed partial class FeatureReadinessViewModel : ObservableObject
             _activeBackendKind = null;
             MissingRequirements = [$"Readiness check failed: {ex.Message}"];
             Warnings = [];
+            ModelPaths = new Dictionary<string, string>();
             StatusMessage = "Check failed";
         }
         finally

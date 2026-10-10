@@ -51,8 +51,7 @@ public sealed class EngineFeatureBackend : IFeatureBackend
         var row = EngineFeatureCatalog.ForAppFeature(feature);
         if (row is null)
         {
-            var label = feature == Feature.OutpaintVision ? "Outpaint Vision" : feature.ToString();
-            return NotReady(feature, isOnline: true, [$"{label} is not available on the Diffusion Nexus Engine yet"]);
+            return NotReady(feature, isOnline: true, [$"{feature} is not available on the Diffusion Nexus Engine yet"]);
         }
 
         var root = await _rootResolver.ResolveAsync(ct);
@@ -63,6 +62,7 @@ public sealed class EngineFeatureBackend : IFeatureBackend
         }
 
         var missing = new List<string>();
+        var modelPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         try
         {
             foreach (var workloadId in EngineFeatureCatalog.Get(row.Value).WorkloadIds)
@@ -79,6 +79,8 @@ public sealed class EngineFeatureBackend : IFeatureBackend
                     .Select(n => $"Custom node missing on the Engine: {n.Name}"));
                 missing.AddRange(check.ModelResults.Where(m => !m.IsInstalled)
                     .Select(m => $"Model missing on the Engine: {m.Name}"));
+                foreach (var model in check.ModelResults.Where(m => m.IsInstalled && !string.IsNullOrEmpty(m.FoundAtPath)))
+                    modelPaths.TryAdd(model.Name, model.FoundAtPath);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -104,7 +106,8 @@ public sealed class EngineFeatureBackend : IFeatureBackend
             ActiveBackendName = DisplayName,
             MissingRequirements = missing,
             Warnings = [],
-            Endpoint = root
+            Endpoint = root,
+            ModelPaths = modelPaths
         };
     }
 

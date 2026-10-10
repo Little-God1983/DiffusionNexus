@@ -1004,7 +1004,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         catch (Exception ex)
         {
             Serilog.Log.Error(ex, "Failed to open Diffusion Nexus Core captioning dialog");
-            await _dialogService.ShowMessageAsync("Diffusion Nexus Core",
+            await _dialogService.ShowMessageAsync("Legacy Engine Core (Deprecated)",
                 $"Could not open captioning models view: {ex.Message}");
         }
     }

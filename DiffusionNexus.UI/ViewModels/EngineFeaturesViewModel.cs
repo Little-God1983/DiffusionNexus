@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Installer.SDK.Catalog;
+using DiffusionNexus.Installer.SDK.Models.Configuration;
 using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.ConfigurationChecker;
@@ -29,6 +30,7 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
     private readonly EngineFeature? _preselect;
     private readonly Func<string, long?> _freeSpaceProbe;
     private CancellationTokenSource? _installCts;
+    private bool _acceptProgress;
 
     public EngineFeaturesViewModel(
         ICatalog catalog,
@@ -122,6 +124,7 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
     private async Task InstallSelectedAsync()
     {
         IsInstalling = true;
+        _acceptProgress = true;
         _installCts = new CancellationTokenSource();
         var ct = _installCts.Token;
         var rows = RowsToInstall.ToList();
@@ -144,10 +147,26 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
                     // Fresh check right before installing: a file shared with an earlier workload in
                     // this run, or delivered since the dialog opened, must not be downloaded again.
                     var check = await _checker.CheckConfigurationAsync(config, _engineRoot, options: null, ct);
-                    var nodes = check.CustomNodeResults.Where(n => !n.IsInstalled).ToList();
+                    IReadOnlyList<Services.ConfigurationChecker.Models.CustomNodeCheckResult> nodes = check.CustomNodeResults.Where(n => !n.IsInstalled).ToList();
                     var models = check.ModelResults.Where(m => !m.IsInstalled).ToList();
                     if (nodes.Count == 0 && models.Count == 0)
                         continue;
+
+                    // No node pack without its wheel: the pack's requirements would make pip compile
+                    // llama-cpp-python, and a pack on disk reads as installed, so Install would never retry.
+                    var wheelNote = "";
+                    if (nodes.Count > 0 && config.InstallLamaCpp
+                        && await EnsureLlamaCppWheelAsync(row, ct) == LlamaCppWheelOutcome.Failed)
+                    {
+                        Warn($"{row.DisplayName}: llama-cpp-python was not installed; the node packs wait for it, Install again to retry.");
+                        wheelNote = "llama-cpp-python was not installed; ";
+                        nodes = [];
+                        if (models.Count == 0)
+                        {
+                            summaries.Add($"{row.DisplayName}: llama-cpp-python was not installed");
+                            continue;
+                        }
+                    }
 
                     var vramGb = await SuggestVramAsync(config.Vram.VramProfiles, ct);
                     ProgressText = $"{row.DisplayName}: installing {nodes.Count} node pack(s) and {models.Count} model(s)…";
@@ -160,12 +179,14 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
                         config, _engineRoot, nodes, models, vramGb,
                         new Progress<WorkloadInstallProgress>(p =>
                         {
+                            if (!_acceptProgress) return;
                             ProgressText = $"{row.DisplayName}: {p.ItemName} — {p.Message}";
                             if (p.IsFailed) Warn(ProgressText);
                             else Info(ProgressText);
                         }),
                         new Progress<DownloadProgress>(d =>
                         {
+                            if (!_acceptProgress) return;
                             if (d.IsActive && !d.IsComplete)
                                 ProgressText = $"{row.DisplayName}: downloading {d.FileName} {d.DownloadedSizeText} / {d.TotalSizeText} {d.SpeedText}";
                         }),
@@ -173,7 +194,7 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
                         ct);
 
                     Info($"{row.DisplayName}: {summary}");
-                    summaries.Add($"{row.DisplayName}: {summary.TrimEnd('.')}");
+                    summaries.Add($"{row.DisplayName}: {wheelNote}{summary.TrimEnd('.')}");
                 }
             }
 
@@ -192,6 +213,9 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
         }
         finally
         {
+            // Progress<T> posts to the UI thread; a report the installer sent just before returning can
+            // arrive after the outcome is written and replace "Done." with the last item's line.
+            _acceptProgress = false;
             try
             {
                 await CheckAllAsync(CancellationToken.None);
@@ -218,6 +242,26 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
 
     [RelayCommand]
     private void CancelInstall() => _installCts?.Cancel();
+
+    /// <summary>
+    /// A workload whose node packs run GGUF models (Outpaint Vision's Qwen3-VL node) gets the prebuilt
+    /// llama-cpp-python wheel first, so pip finds the node's requirement satisfied instead of compiling
+    /// it from source. The service picks the wheel for the Engine venv's own Python and CUDA.
+    /// </summary>
+    private async Task<LlamaCppWheelOutcome> EnsureLlamaCppWheelAsync(EngineFeatureRowViewModel row, CancellationToken ct)
+    {
+        ProgressText = $"{row.DisplayName}: checking llama-cpp-python…";
+        Info(ProgressText);
+        var outcome = await _installer.EnsureLlamaCppWheelAsync(_engineRoot, await _catalog.GetLamaCppWheelsAsync(ct),
+            new Progress<WorkloadInstallProgress>(p =>
+            {
+                if (!_acceptProgress) return;
+                ProgressText = $"{row.DisplayName}: {p.Message}";
+                if (p.IsFailed) Warn(ProgressText);
+                else Info(ProgressText);
+            }), ct);
+        return outcome;
+    }
 
     /// <summary>
     /// The installer reports failed items in its summary rather than throwing, so "Done." is only

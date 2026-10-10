@@ -172,7 +172,8 @@ public sealed class ComfyUIFeatureBackend : IFeatureBackend
             ActiveBackendName = DisplayName,
             MissingRequirements = missingReqs,
             Warnings = [],
-            Endpoint = serverUrl
+            Endpoint = serverUrl,
+            ModelPaths = summary.ModelPaths
         };
 
         LogInfo(

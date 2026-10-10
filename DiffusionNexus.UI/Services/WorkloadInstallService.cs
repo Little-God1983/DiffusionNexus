@@ -541,18 +541,198 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
         }
     }
 
+    /// <inheritdoc />
+    public async Task<LlamaCppWheelOutcome> EnsureLlamaCppWheelAsync(
+        string comfyUIRootPath,
+        IReadOnlyList<LamaCppWheel> wheels,
+        IProgress<WorkloadInstallProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(comfyUIRootPath);
+        ArgumentNullException.ThrowIfNull(wheels);
+        const string name = "llama-cpp-python";
+
+        var installationType = ConfigurationCheckerService.DetectInstallationType(comfyUIRootPath);
+        var repositoryPath = ConfigurationCheckerService.GetRepositoryPath(comfyUIRootPath, installationType);
+        var pythonExe = ResolvePythonExecutable(comfyUIRootPath, repositoryPath, installationType);
+        if (pythonExe is null)
+        {
+            Logger.Warning("Could not find Python executable for {Root} - llama-cpp-python will not be installed", comfyUIRootPath);
+            progress?.Report(new WorkloadInstallProgress { ItemName = name, Message = "Python not found - llama-cpp-python was not installed", IsFailed = true });
+            return LlamaCppWheelOutcome.NoMatchingWheel;
+        }
+
+        // A wheel for another CUDA loads but runs on the CPU, and one for another Python does not install,
+        // so the venv itself says which one fits, whatever torch the workload declares.
+        var venv = ParseVenvProbe(await RunPythonProbeAsync(pythonExe, VenvProbeCode, repositoryPath, cancellationToken));
+        var (python, cuda) = (venv.Python, venv.Cuda);
+        var wheel = python is null || cuda is null ? null : PickLlamaCppWheel(wheels, cuda, python);
+        if (wheel is null)
+        {
+            Logger.Warning("No prebuilt llama-cpp-python wheel for Python {Python} / CUDA {Cuda} in {Root}", python, cuda, comfyUIRootPath);
+            progress?.Report(new WorkloadInstallProgress
+            {
+                ItemName = name,
+                Message = $"The catalog has no prebuilt llama-cpp-python wheel for Python {python ?? "unknown"} / CUDA {cuda ?? "none"}; " +
+                          "pip may try to build it from source, which usually fails on Windows.",
+                IsFailed = true
+            });
+            return LlamaCppWheelOutcome.NoMatchingWheel;
+        }
+
+        var wanted = WheelVersionFromUrl(wheel.Url);
+        var arguments = PipInstallArguments(wheel, venv.LlamaCppVersion, venv.LlamaCppHash);
+        if (arguments is null)
+        {
+            Logger.Information("llama-cpp-python {Version} is already installed in {Root}", wanted, comfyUIRootPath);
+            progress?.Report(new WorkloadInstallProgress { ItemName = name, Message = $"llama-cpp-python {wanted} is already installed", IsSuccess = true });
+            return LlamaCppWheelOutcome.Installed;
+        }
+
+        progress?.Report(new WorkloadInstallProgress
+        {
+            ItemName = name,
+            Message = venv.LlamaCppVersion is null
+                ? $"Installing llama-cpp-python {wanted ?? "(wheel)"} ({wheel.Name})..."
+                : string.Equals(venv.LlamaCppVersion, wanted, StringComparison.OrdinalIgnoreCase)
+                    ? $"Replacing another build of llama-cpp-python {wanted} with the catalog's ({wheel.Name})..."
+                    : $"Replacing llama-cpp-python {venv.LlamaCppVersion} with {wanted ?? "(wheel)"} ({wheel.Name})..."
+        });
+        // Progress stays here: RunPipInstallAsync's own lines are phrased for a node pack's requirements.
+        var (success, stderr) = await RunPipInstallAsync(
+            pythonExe, repositoryPath, arguments, name,
+            $"llama-cpp-python {wanted ?? ""}".TrimEnd(), progress: null, cancellationToken);
+        if (success)
+        {
+            progress?.Report(new WorkloadInstallProgress { ItemName = name, Message = $"llama-cpp-python {wanted} installed ({wheel.Name})", IsSuccess = true });
+            return LlamaCppWheelOutcome.Installed;
+        }
+
+        // pip's own reason (hash mismatch, unsupported wheel, network) belongs in the Unified Console, not only the log file.
+        progress?.Report(new WorkloadInstallProgress { ItemName = name, Message = $"llama-cpp-python was not installed: {PipFailureReason(stderr)}", IsFailed = true });
+        return LlamaCppWheelOutcome.Failed;
+    }
+
+    /// <summary>The GPU wheel built for exactly this CUDA and Python, or null: a wheel for another CUDA loads but runs on the CPU.</summary>
+    internal static LamaCppWheel? PickLlamaCppWheel(IReadOnlyList<LamaCppWheel> wheels, string cudaVersion, string pythonVersion) =>
+        wheels.FirstOrDefault(w => w.IsGPU
+            && string.Equals(w.CudaVersion, cudaVersion, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(w.PythonVersion, pythonVersion, StringComparison.OrdinalIgnoreCase));
+
+    private const string PythonMarker = "DN_PYTHON=";
+    private const string CudaMarker = "DN_CUDA=";
+    private const string HashMarker = "DN_HASH=";
+
+    // One interpreter start for everything the wheel step needs. Each line prints before the next import,
+    // so a venv without torch still reports its Python, and one without llama-cpp-python its CUDA. The
+    // package metadata (not `import llama_cpp`, which loads the DLLs) carries the version with its local
+    // tag and, in direct_url.json, the hash of the file pip installed.
+    private const string VenvProbeCode =
+        "import sys; print('" + PythonMarker + "%d.%d' % sys.version_info[:2]); " +
+        "import torch; print('" + CudaMarker + "' + str(torch.version.cuda)); " +
+        "import importlib.metadata as m, json; d = m.distribution('llama-cpp-python'); print('" + VersionMarker + "' + d.version); " +
+        "print('" + HashMarker + "' + str(json.loads(d.read_text('direct_url.json') or '{}').get('archive_info', {}).get('hashes', {}).get('sha256')))";
+
+    /// <summary>What the venv probe found; each part is null when its line did not come (import failed, nothing installed, no recorded file).</summary>
+    internal sealed record VenvProbe(string? Python, string? Cuda, string? LlamaCppVersion, string? LlamaCppHash);
+
+    /// <summary>The venv's Python (<c>3.12</c>), torch's CUDA (<c>13.0</c>, null for a CPU torch), and the installed llama-cpp-python's version and file hash.</summary>
+    internal static VenvProbe ParseVenvProbe(string? stdout)
+    {
+        static string? NotNone(string? value) => string.Equals(value, "None", StringComparison.Ordinal) ? null : value;
+        return new VenvProbe(ParseMarked(stdout, PythonMarker), NotNone(ParseMarked(stdout, CudaMarker)),
+            ParseMarked(stdout, VersionMarker), NotNone(ParseMarked(stdout, HashMarker)));
+    }
+
     /// <summary>
-    /// Runs a single pip install command and reports progress.
+    /// The pip arguments that put the catalog's wheel in place, or null when it is there already. The
+    /// catalog's hash against pip's recorded one tells builds of the same version apart (the cu128
+    /// wheel is plain 0.3.20, like PyPI's CPU build); pip itself skips a wheel whose version equals the
+    /// installed one, so another build of the same version is force-reinstalled without its
+    /// dependencies, which that build already brought.
     /// </summary>
-    /// <returns>A tuple of (success, stderr output).</returns>
-    private static async Task<(bool Success, string StdErr)> RunPipInstallAsync(
-        string pythonExe,
-        string workingDirectory,
-        string arguments,
-        string nodeName,
-        string description,
-        IProgress<WorkloadInstallProgress>? progress,
-        CancellationToken cancellationToken)
+    internal static string? PipInstallArguments(LamaCppWheel wheel, string? installedVersion, string? installedHash)
+    {
+        var wanted = WheelVersionFromUrl(wheel.Url);
+        var catalogHash = CatalogHash(wheel);
+        var sameVersion = wanted is not null && string.Equals(installedVersion, wanted, StringComparison.OrdinalIgnoreCase);
+        if (sameVersion && (catalogHash is null || string.Equals(installedHash, catalogHash, StringComparison.OrdinalIgnoreCase)))
+            return null;
+        var force = sameVersion ? "--force-reinstall --no-deps " : "";
+        return $"-m pip install {force}\"{PipWheelRequirement(wheel)}\"";
+    }
+
+    private static string? CatalogHash(LamaCppWheel wheel)
+    {
+        var hash = wheel.Sha256?.Trim() ?? "";
+        if (hash.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
+            hash = hash["sha256:".Length..];
+        return hash.Length == 0 ? null : hash.ToLowerInvariant();
+    }
+
+    /// <summary>pip's <c>ERROR:</c> line, else its last line: the reason a user can act on.</summary>
+    internal static string PipFailureReason(string? stderr)
+    {
+        var lines = (stderr ?? "").Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
+        var reason = lines.FirstOrDefault(l => l.StartsWith("ERROR:", StringComparison.Ordinal)) ?? lines.LastOrDefault();
+        if (reason is null) return "see the log";
+        return reason.Length > 300 ? reason[..300] + "…" : reason;
+    }
+
+    /// <summary>
+    /// The wheel's URL with the catalog's hash as a <c>#sha256=</c> fragment, which pip verifies: the
+    /// wheel comes from a third-party release and is loaded into the ComfyUI process. The catalog
+    /// stores hashes as <c>sha256:&lt;hex&gt;</c>.
+    /// </summary>
+    internal static string PipWheelRequirement(LamaCppWheel wheel) =>
+        CatalogHash(wheel) is { } hash ? $"{wheel.Url}#sha256={hash}" : wheel.Url;
+
+    /// <summary>The version in a wheel file name: <c>llama_cpp_python-0.4.2+cu130-cp312-...whl</c> → <c>0.4.2+cu130</c>.</summary>
+    internal static string? WheelVersionFromUrl(string wheelUrl)
+    {
+        if (string.IsNullOrWhiteSpace(wheelUrl)) return null;
+        var file = wheelUrl.Split('/', '\\').LastOrDefault() ?? "";
+        file = file.Split('?', '#')[0]; // a Hugging Face link ends in ?download=true
+        if (!file.EndsWith(".whl", StringComparison.OrdinalIgnoreCase)) return null;
+        var parts = file[..^4].Split('-');
+        return parts.Length >= 2 && parts[1].Length > 0 ? parts[1] : null;
+    }
+
+    private const string VersionMarker = "DN_VERSION=";
+
+    /// <summary>The value after <paramref name="marker"/> in a probe's output, ignoring whatever else the imports printed.</summary>
+    private static string? ParseMarked(string? stdout, string marker)
+    {
+        if (string.IsNullOrEmpty(stdout)) return null;
+        foreach (var line in stdout.Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.StartsWith(marker, StringComparison.Ordinal))
+            {
+                var value = trimmed[marker.Length..].Trim();
+                return value.Length > 0 ? value : null;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Runs a short Python snippet in the venv and returns its stdout, whatever the exit code (a probe
+    /// prints what it learned before an import that may fail), or null when Python could not run.
+    /// </summary>
+    private static async Task<string?> RunPythonProbeAsync(string pythonExe, string code, string workingDirectory, CancellationToken ct)
+    {
+        // Modules may print start-up lines of their own (llama_cpp logs the DLLs it loads), so probes
+        // mark their answers and only the marked lines are read.
+        var run = await RunPythonAsync(pythonExe, $"-c \"{code}\"", workingDirectory, ct);
+        if (run is null)
+            Logger.Debug("Python probe could not run: {Code}", code);
+        return run?.StdOut;
+    }
+
+    /// <summary>Runs the venv's Python to completion, reading both streams; null when the process could not start.</summary>
+    private static async Task<(int ExitCode, string StdOut, string StdErr)?> RunPythonAsync(
+        string pythonExe, string arguments, string workingDirectory, CancellationToken ct)
     {
         try
         {
@@ -567,51 +747,68 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
                 RedirectStandardOutput = true,
                 RedirectStandardError = true
             };
-
             process.Start();
 
             // Read output asynchronously to avoid deadlock on large output
-            var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-            var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
-
-            await process.WaitForExitAsync(cancellationToken);
-
-            var stdoutText = await stdoutTask;
-            var stderrText = await stderrTask;
-
-            if (process.ExitCode == 0)
-            {
-                Logger.Information("{Description} installed for {Name}", description, nodeName);
-                progress?.Report(new WorkloadInstallProgress
-                {
-                    ItemName = nodeName,
-                    Message = $"{description} installed for {nodeName}"
-                });
-                return (true, stderrText);
-            }
-
-            Logger.Warning(
-                "pip install {Description} failed for {Name} (exit code {Code}):\n{StdErr}",
-                description, nodeName, process.ExitCode, stderrText);
-
-            progress?.Report(new WorkloadInstallProgress
-            {
-                ItemName = nodeName,
-                Message = $"pip install {description} failed for {nodeName} (exit code {process.ExitCode})"
-            });
-
-            return (false, stderrText);
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+            var stderrTask = process.StandardError.ReadToEndAsync(ct);
+            await process.WaitForExitAsync(ct);
+            return (process.ExitCode, await stdoutTask, await stderrTask);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Logger.Error(ex, "Failed to run pip install {Description} for {Name}", description, nodeName);
+            Logger.Error(ex, "Failed to run {Python} {Arguments}", pythonExe, arguments);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Runs a single pip install command and reports progress.
+    /// </summary>
+    /// <returns>A tuple of (success, stderr output).</returns>
+    private static async Task<(bool Success, string StdErr)> RunPipInstallAsync(
+        string pythonExe,
+        string workingDirectory,
+        string arguments,
+        string nodeName,
+        string description,
+        IProgress<WorkloadInstallProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        var run = await RunPythonAsync(pythonExe, arguments, workingDirectory, cancellationToken);
+        if (run is null)
+        {
             progress?.Report(new WorkloadInstallProgress
             {
                 ItemName = nodeName,
-                Message = $"Failed to install {description} for {nodeName}: {ex.Message}"
+                Message = $"Failed to install {description} for {nodeName}: Python could not be started"
             });
-            return (false, ex.Message);
+            return (false, "Python could not be started");
         }
+
+        var (exitCode, _, stderrText) = run.Value;
+        if (exitCode == 0)
+        {
+            Logger.Information("{Description} installed for {Name}", description, nodeName);
+            progress?.Report(new WorkloadInstallProgress
+            {
+                ItemName = nodeName,
+                Message = $"{description} installed for {nodeName}"
+            });
+            return (true, stderrText);
+        }
+
+        Logger.Warning(
+            "pip install {Description} failed for {Name} (exit code {Code}):\n{StdErr}",
+            description, nodeName, exitCode, stderrText);
+
+        progress?.Report(new WorkloadInstallProgress
+        {
+            ItemName = nodeName,
+            Message = $"pip install {description} failed for {nodeName} (exit code {exitCode})"
+        });
+
+        return (false, stderrText);
     }
 
     // TODO: Remove once SDK NuGet is updated to include SupplementaryPipPackageResolver.

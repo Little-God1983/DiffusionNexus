@@ -438,7 +438,7 @@ public partial class ImageEditorViewModel : ObservableObject
         BackgroundRemoval = new BackgroundRemovalViewModel(() => HasImage, DeactivateOtherTools, backgroundRemovalService, downloadCoordinator);
         BackgroundFill = new BackgroundFillViewModel(() => HasImage, DeactivateOtherTools);
         Inpainting = new InpaintingViewModel(() => HasImage, DeactivateOtherTools, comfyUiClientProvider, eventAggregator, readinessService, unifiedLogger);
-        Outpainting = new OutpaintingViewModel(() => HasImage, () => ImageWidth, () => ImageHeight, DeactivateOtherTools, comfyUiClientProvider, readinessService, unifiedLogger, eventAggregator);
+        Outpainting = new OutpaintingViewModel(() => HasImage, DeactivateOtherTools, comfyUiClientProvider, readinessService, unifiedLogger, eventAggregator);
         CanvasExtend = new CanvasExtendViewModel(() => HasImage, () => ImageWidth, () => ImageHeight, DeactivateOtherTools, unifiedLogger);
         LayerTransform = new LayerTransformViewModel(() => HasImage, DeactivateOtherTools, unifiedLogger);
         Rating = new RatingViewModel(() => HasImage, eventAggregator);

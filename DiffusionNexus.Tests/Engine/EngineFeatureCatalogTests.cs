@@ -11,28 +11,30 @@ public class EngineFeatureCatalogTests
     {
         EngineFeatureCatalog.Get(EngineFeature.InpaintOutpaint).WorkloadIds
             .Should().Equal(Guid.Parse("4C486765-A4C1-4E94-ACC2-BBAC0E405B6A"));
+        EngineFeatureCatalog.Get(EngineFeature.OutpaintVision).WorkloadIds
+            .Should().Equal(Guid.Parse("137929E4-5C05-4304-80D4-5D785D45FD3F"));
         EngineFeatureCatalog.Get(EngineFeature.Canvas).WorkloadIds
             .Should().Equal(Guid.Parse("E79C079A-2FD7-4FE7-8086-23731092555D"));
-        EngineFeatureCatalog.AllWorkloadIds.Should().HaveCount(2);
+        EngineFeatureCatalog.AllWorkloadIds.Should().HaveCount(3);
     }
 
     [Fact]
     public void Rows_AreListedInDisplayOrder_WithTheirLabels()
     {
         EngineFeatureCatalog.All.Select(r => r.DisplayName)
-            .Should().Equal("Inpaint & Outpaint", "Canvas · Krea 2 Turbo");
+            .Should().Equal("Inpaint & Outpaint", "Outpaint Vision", "Canvas · Krea 2 Turbo");
     }
 
     [Theory]
     [InlineData(Feature.Inpainting, EngineFeature.InpaintOutpaint)]
     [InlineData(Feature.Outpaint, EngineFeature.InpaintOutpaint)]
+    [InlineData(Feature.OutpaintVision, EngineFeature.OutpaintVision)]
     public void ForAppFeature_MapsEditorToolsToTheirRow(Feature feature, EngineFeature expected)
     {
         EngineFeatureCatalog.ForAppFeature(feature).Should().Be(expected);
     }
 
     [Theory]
-    [InlineData(Feature.OutpaintVision)]
     [InlineData(Feature.BatchUpscale)]
     [InlineData(Feature.BatchUpscaleVision)]
     [InlineData(Feature.Captioning)]

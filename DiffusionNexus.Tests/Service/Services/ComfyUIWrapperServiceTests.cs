@@ -153,7 +153,8 @@ public class ComfyUIWrapperServiceTests
         result.Action.Should().Be(ComfyUIProgressAction.Error);
         result.ErrorNodeType.Should().Be("Qwen3_VQA");
         result.ErrorDetail.Should().Be("boom");
-        result.ExecutionErrorMessage.Should().Be("ComfyUI workflow failed in node 'Qwen3_VQA': boom");
+        new ComfyUIExecutionException(result.ErrorNodeType!, result.ErrorDetail!).Message
+            .Should().Be("ComfyUI workflow failed in node 'Qwen3_VQA': boom");
     }
 
     [Fact]
@@ -587,6 +588,88 @@ public class ComfyUIWrapperServiceTests
         {
             Requests.Add(request);
             return Task.FromResult(_responder(request));
+        }
+    }
+
+    // ── Review (#607): a node pack that failed to load made ComfyUI answer /prompt with 400, and the app
+    // said "is the Engine running?" ──
+
+    [Fact]
+    public void ParsePromptRejection_MissingNodeType_NamesTheNode()
+    {
+        const string body = """
+            {"error":{"type":"missing_node_type","message":"Node 'Describe' not found. The custom node may not be installed.",
+             "details":"Node ID '#256'","extra_info":{"node_id":"256","class_type":"SimpleQwenVLggufV2","node_title":"Describe"}},
+             "node_errors":{}}
+            """;
+
+        var ex = ComfyUIWrapperService.ParsePromptRejection(body);
+
+        ex.Should().BeOfType<ComfyUIExecutionException>()
+            .Which.NodeType.Should().Be("SimpleQwenVLggufV2");
+        ((ComfyUIExecutionException)ex!).Detail.Should().Contain("not found");
+    }
+
+    [Fact]
+    public void ParsePromptRejection_NodeErrors_NamesTheFirstFailingNode()
+    {
+        const string body = """
+            {"error":{"type":"prompt_outputs_failed_validation","message":"Prompt outputs failed validation","details":""},
+             "node_errors":{"256":{"errors":[{"type":"value_bigger_than_max","message":"Value bigger than max","details":"seed: 99999999999 > 4294967295"}],
+             "dependent_outputs":["9"],"class_type":"SimpleQwenVLggufV2"}}}
+            """;
+
+        var ex = ComfyUIWrapperService.ParsePromptRejection(body) as ComfyUIExecutionException;
+
+        ex!.NodeType.Should().Be("SimpleQwenVLggufV2");
+        ex.Detail.Should().Be("Value bigger than max: seed: 99999999999 > 4294967295");
+    }
+
+    // Review round 4: older ComfyUI builds (a Custom URL user's) answer a missing node pack with a plain message and no
+    // class_type; that must not come out as "is ComfyUI running?".
+    [Fact]
+    public void ParsePromptRejection_WithoutANode_IsARejection_NotAGenericError_AndUnparseableIsNull()
+    {
+        ComfyUIWrapperService.ParsePromptRejection("""{"error":{"type":"invalid_prompt","message":"Cannot execute because node SimpleQwenVLggufV2 does not exist.","details":"Node ID '#256'","extra_info":{}},"node_errors":{}}""")
+            .Should().BeOfType<ComfyUIWorkflowRejectedException>()
+            .Which.Reason.Should().Be("Cannot execute because node SimpleQwenVLggufV2 does not exist.");
+        ComfyUIWrapperService.ParsePromptRejection("<html>bad gateway</html>").Should().BeNull();
+    }
+
+    [Fact]
+    public void ParsePromptRejection_CapsTheDetail_ComfyUIListsEveryAllowedValue()
+    {
+        var list = string.Join(", ", Enumerable.Range(0, 400).Select(i => $"'model-{i:D4}.gguf'"));
+        var body = $$$$"""{"error":{"type":"prompt_outputs_failed_validation","message":"Prompt outputs failed validation"},"node_errors":{"37":{"errors":[{"type":"value_not_in_list","message":"Value not in list","details":"unet_name: 'x' not in [{{{{list}}}}]"}],"class_type":"UnetLoaderGGUF"}}}""";
+
+        var ex = (ComfyUIExecutionException)ComfyUIWrapperService.ParsePromptRejection(body)!;
+
+        ex.NodeType.Should().Be("UnetLoaderGGUF");
+        ex.Detail.Length.Should().BeLessThan(400);
+        ex.Detail.Should().StartWith("Value not in list: unet_name: 'x' not in [").And.EndWith("…");
+    }
+
+    [Fact]
+    public async Task QueueWorkflowAsync_Rejected_ThrowsTheNamedNode_NotAnHttpError()
+    {
+        var workflowFile = Path.GetTempFileName();
+        await File.WriteAllTextAsync(workflowFile, """{"256":{"class_type":"SimpleQwenVLggufV2","inputs":{}}}""");
+        var (sut, _) = CreateService(_ => Json(HttpStatusCode.BadRequest, """
+            {"error":{"type":"missing_node_type","message":"Node 'Describe' not found. The custom node may not be installed.",
+             "details":"Node ID '#256'","extra_info":{"node_id":"256","class_type":"SimpleQwenVLggufV2"}},"node_errors":{}}
+            """));
+
+        try
+        {
+            using (sut)
+            {
+                var act = () => sut.QueueWorkflowAsync(workflowFile, new Dictionary<string, Action<JsonNode>>());
+                (await act.Should().ThrowAsync<ComfyUIExecutionException>()).Which.NodeType.Should().Be("SimpleQwenVLggufV2");
+            }
+        }
+        finally
+        {
+            File.Delete(workflowFile);
         }
     }
 }

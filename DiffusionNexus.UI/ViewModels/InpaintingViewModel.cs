@@ -1,3 +1,4 @@
+using System.Net.Http;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Enums;
@@ -590,6 +591,33 @@ public partial class InpaintingViewModel : ObservableObject
             ProgressDisplayText = ex.Message;
             StatusMessageChanged?.Invoke(this, ex.Message);
             _unifiedLogger?.Warn(LogCategory.General, LogSource, ex.Message);
+        }
+        catch (ComfyUIExecutionException ex)
+        {
+            // The server ran the job and a node failed: name the node, not the server.
+            Logger.Error(ex, "Inpainting failed in node {NodeType}", ex.NodeType);
+            _unifiedLogger?.Error(LogCategory.General, LogSource, $"Inpainting failed in the ComfyUI node {ex.NodeType}: {ex.Detail}", ex);
+            HasError = true;
+            ProgressDisplayText = $"Failed in the ComfyUI node {ex.NodeType} – see the Unified Console";
+            StatusMessageChanged?.Invoke(this, $"Inpainting failed in the ComfyUI node {ex.NodeType}: {ex.Detail}");
+        }
+        catch (ComfyUIWorkflowRejectedException ex)
+        {
+            // The server answered and refused the workflow (an older build's "node X does not exist").
+            Logger.Error(ex, "Inpainting: ComfyUI rejected the workflow");
+            _unifiedLogger?.Error(LogCategory.General, LogSource, $"ComfyUI rejected the inpainting workflow: {ex.Reason}", ex);
+            HasError = true;
+            ProgressDisplayText = "ComfyUI rejected the workflow – see the Unified Console";
+            StatusMessageChanged?.Invoke(this, $"ComfyUI rejected the inpainting workflow: {ex.Reason}");
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode is { } status)
+        {
+            // The server answered (a 400 with a body that is not ComfyUI's JSON, a proxy's 502): not "is it running?".
+            Logger.Error(ex, "Inpainting: ComfyUI answered {Status}", (int)status);
+            _unifiedLogger?.Error(LogCategory.General, LogSource, $"ComfyUI answered {(int)status}: {ex.Message}", ex);
+            HasError = true;
+            ProgressDisplayText = $"ComfyUI answered {(int)status} – see the Unified Console";
+            StatusMessageChanged?.Invoke(this, $"Inpainting failed, ComfyUI answered {(int)status}: {ex.Message}");
         }
         catch (OperationCanceledException)
         {

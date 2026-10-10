@@ -23,6 +23,8 @@ public class EngineFeatureBackendTests
         _root.Setup(r => r.ResolveAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Root);
         _catalog.Setup(c => c.GetWorkloadAsync(EngineFeatureCatalog.InpaintingQwen2512, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new InstallationConfiguration { Id = EngineFeatureCatalog.InpaintingQwen2512, Name = "Inpainting-Qwen 2512" });
+        _catalog.Setup(c => c.GetWorkloadAsync(EngineFeatureCatalog.OutpaintingQwen2512, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new InstallationConfiguration { Id = EngineFeatureCatalog.OutpaintingQwen2512, Name = "Outpainting-Qwen 2512" });
     }
 
     private EngineFeatureBackend Sut() =>
@@ -87,13 +89,44 @@ public class EngineFeatureBackendTests
     }
 
     [Fact]
-    public async Task OutpaintVision_IsNotOfferedOnTheEngineYet()
+    public async Task BatchUpscale_IsNotOfferedOnTheEngineYet()
     {
+        var result = await Sut().CheckFeatureAsync(Feature.BatchUpscale);
+
+        result.IsReady.Should().BeFalse();
+        result.MissingRequirements.Should().Equal("BatchUpscale is not available on the Diffusion Nexus Engine yet");
+        _checker.VerifyNoOtherCalls();
+    }
+
+    // #607: the Qwen3-VL GGUF node takes its model files as paths, so readiness reports where it found them.
+    [Fact]
+    public async Task OutpaintVision_ReportsWhereEachPresentModelWas()
+    {
+        _checker.Setup(c => c.CheckConfigurationAsync(It.IsAny<InstallationConfiguration>(), Root,
+                It.IsAny<ConfigurationCheckOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ConfigurationCheckResult
+            {
+                OverallStatus = ConfigurationStatus.Full, CustomNodesStatus = ConfigurationStatus.Full,
+                ModelsStatus = ConfigurationStatus.Full, InstallationType = ComfyUIInstallationType.Manual,
+                CustomNodeResults = [],
+                ModelResults =
+                [
+                    new ModelCheckResult { Id = Guid.NewGuid(), Name = "Qwen3-VL-8B-Abliterated-Caption-it", IsInstalled = true,
+                        FoundAtPath = @"D:\Models\Captioning\Qwen3-VL-8B-Abliterated-Caption-it.Q6_K.gguf", SearchedPaths = [] },
+                    new ModelCheckResult { Id = Guid.NewGuid(), Name = "Qwen3-VL-8B-Abliterated-Caption-it mmproj", IsInstalled = true,
+                        FoundAtPath = @"D:\Models\Captioning\Qwen3-VL-8B-Abliterated-Caption-it.mmproj-f16.gguf", SearchedPaths = [] },
+                    new ModelCheckResult { Id = Guid.NewGuid(), Name = "missing", IsInstalled = false, SearchedPaths = [] },
+                ]
+            });
+
         var result = await Sut().CheckFeatureAsync(Feature.OutpaintVision);
 
         result.IsReady.Should().BeFalse();
-        result.MissingRequirements.Should().Equal("Outpaint Vision is not available on the Diffusion Nexus Engine yet");
-        _checker.VerifyNoOtherCalls();
+        result.ModelPaths.Should().BeEquivalentTo(new Dictionary<string, string>
+        {
+            ["Qwen3-VL-8B-Abliterated-Caption-it"] = @"D:\Models\Captioning\Qwen3-VL-8B-Abliterated-Caption-it.Q6_K.gguf",
+            ["Qwen3-VL-8B-Abliterated-Caption-it mmproj"] = @"D:\Models\Captioning\Qwen3-VL-8B-Abliterated-Caption-it.mmproj-f16.gguf",
+        });
     }
 
     // #606 code review 3 (H6): a throw used to reach FeatureReadinessViewModel's catch, which drops

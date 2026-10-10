@@ -155,6 +155,8 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposab
                 RedirectStandardOutput = true,
                 RedirectStandardError = true
             };
+            foreach (var (name, value) in EngineEnvironment)
+                startInfo.Environment[name] = value;
 
             Log($"Starting engine on 127.0.0.1:{port}...");
             _process = Process.Start(startInfo);
@@ -423,6 +425,19 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposab
 
         throw new InvalidOperationException("Could not allocate a free TCP port for the engine.");
     }
+
+    /// <summary>
+    /// Environment variables the engine process starts with. <c>HF_HUB_USER_AGENT_ORIGIN</c> works
+    /// around a library bug (#607): ComfyUI's main.py disables Hugging Face telemetry, with which
+    /// <c>kernels</c> 0.17 passes an empty user-agent part that huggingface_hub turns into a header
+    /// ending in "; ". httpx rejects that header, so the publisher trust check of the FP8 kernel
+    /// fails and the Qwen3-VL node (Outpaint Vision) cannot run. An origin is appended after the empty
+    /// part, so the header no longer ends in whitespace.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> EngineEnvironment { get; } = new Dictionary<string, string>
+    {
+        ["HF_HUB_USER_AGENT_ORIGIN"] = "diffusion-nexus-engine",
+    };
 
     /// <summary>Command line for the engine: loopback-only, private port, no browser.</summary>
     public static string BuildArguments(string mainPyPath, int port) =>

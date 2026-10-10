@@ -14,6 +14,34 @@ public record ComfyUIImage(
     string Url);
 
 /// <summary>
+/// A node failed while ComfyUI ran the workflow (ComfyUI's <c>execution_error</c> event), or ComfyUI
+/// rejected the workflow because of a node (a node pack that did not load, an input out of range): the
+/// server was reachable, the work itself failed. Derives from <see cref="InvalidOperationException"/>
+/// and keeps the historical message, so existing catches behave as before.
+/// </summary>
+public sealed class ComfyUIExecutionException(string nodeType, string detail)
+    : InvalidOperationException($"ComfyUI workflow failed in node '{nodeType}': {detail}")
+{
+    /// <summary>The failing node's class type, e.g. <c>Qwen3_VQA</c>.</summary>
+    public string NodeType { get; } = nodeType;
+
+    /// <summary>ComfyUI's exception message for the node.</summary>
+    public string Detail { get; } = detail;
+}
+
+/// <summary>
+/// ComfyUI refused the workflow before running it (a 400 from <c>/prompt</c>) and did not name a node:
+/// an older build's "node X does not exist", "Prompt has no outputs". The server answered, so this is
+/// not an availability problem.
+/// </summary>
+public sealed class ComfyUIWorkflowRejectedException(string reason)
+    : InvalidOperationException($"ComfyUI rejected the workflow: {reason}")
+{
+    /// <summary>ComfyUI's own message.</summary>
+    public string Reason { get; } = reason;
+}
+
+/// <summary>
 /// Aggregated result of a ComfyUI workflow execution, containing text and image outputs.
 /// </summary>
 public sealed class ComfyUIResult

@@ -117,6 +117,7 @@ public sealed class WorkloadInstallationCheckerAdapter : IWorkloadInstallationCh
             // installed for the user's purposes.
             var nodeInstalled = new Dictionary<Guid, (bool installed, string name)>();
             var modelInstalled = new Dictionary<Guid, (bool installed, string name)>();
+            var modelPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
             LogInfo(
                 $"Workload '{configuration.Name}': checking against {comfyInstallPaths.Count} ComfyUI install(s): " +
@@ -156,6 +157,8 @@ public sealed class WorkloadInstallationCheckerAdapter : IWorkloadInstallationCh
 
                 foreach (var model in result.ModelResults)
                 {
+                    if (model.IsInstalled && !string.IsNullOrEmpty(model.FoundAtPath))
+                        modelPaths.TryAdd(model.Name, model.FoundAtPath);
                     LogDebug(
                         $"  model '{model.Name}' installed={model.IsInstalled} " +
                         $"placeholder={model.IsPlaceholder} " +
@@ -190,7 +193,8 @@ public sealed class WorkloadInstallationCheckerAdapter : IWorkloadInstallationCh
                 WorkloadName = configuration.Name,
                 IsFullyInstalled = isFullyInstalled,
                 MissingItems = missingItems,
-                CheckedAgainstPath = string.Join(" | ", comfyInstallPaths)
+                CheckedAgainstPath = string.Join(" | ", comfyInstallPaths),
+                ModelPaths = modelPaths
             };
         }
         catch (OperationCanceledException)

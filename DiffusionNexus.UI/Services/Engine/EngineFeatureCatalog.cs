@@ -8,6 +8,9 @@ public enum EngineFeature
     /// <summary>Image Editor Inpaint and non-Vision Outpaint (identical model set).</summary>
     InpaintOutpaint,
 
+    /// <summary>Image Editor Outpaint with Vision: the Outpaint set plus the Qwen3-VL GGUF node and model.</summary>
+    OutpaintVision,
+
     /// <summary>Diffusion Canvas text-to-image with Krea 2 Turbo.</summary>
     Canvas
 }
@@ -23,12 +26,20 @@ public sealed record EngineFeatureDefinition(
 /// The app features the Diffusion Nexus Engine can be equipped with, each mapped to the catalog
 /// workloads that carry its node packs and models. Rows map to whole workloads so the catalog stays
 /// the single source of what a feature needs; nothing here lists model files. A row only appears once
-/// it has been verified against the Engine: Outpaint Vision arrives with #607, Batch Upscale with #608.
+/// it has been verified against the Engine: Batch Upscale arrives with #608.
 /// </summary>
 public static class EngineFeatureCatalog
 {
     /// <summary>"Inpainting-Qwen 2512": ComfyUI-GGUF + the five Qwen-Image 2512 inpaint models.</summary>
     public static readonly Guid InpaintingQwen2512 = Guid.Parse("4C486765-A4C1-4E94-ACC2-BBAC0E405B6A");
+
+    /// <summary>
+    /// "Outpainting-Qwen 2512": the Inpainting set (same model names, so nothing is downloaded twice)
+    /// plus ComfyUI_Simple_Qwen3-VL-gguf (runs Qwen3-VL through llama.cpp), ComfyUI-Custom-Scripts
+    /// (ShowText, which puts the description in the job's outputs) and the Qwen3-VL 8B GGUF model with
+    /// its projector. The node pack needs a prebuilt llama-cpp-python wheel (#607).
+    /// </summary>
+    public static readonly Guid OutpaintingQwen2512 = Guid.Parse("137929E4-5C05-4304-80D4-5D785D45FD3F");
 
     /// <summary>Krea 2 Turbo — the first Engine workload, and the Engine's torch source.</summary>
     public static readonly Guid Krea2Turbo = Guid.Parse("E79C079A-2FD7-4FE7-8086-23731092555D");
@@ -40,6 +51,10 @@ public static class EngineFeatureCatalog
             "Inpaint & Outpaint",
             "Image Editor · Qwen-Image 2512 with the InstantX inpaint ControlNet and the Lightning LoRA",
             [InpaintingQwen2512]),
+        new(EngineFeature.OutpaintVision,
+            "Outpaint Vision",
+            "Image Editor · Qwen3-VL (GGUF, llama.cpp) describes the surroundings and writes the outpaint prompt",
+            [OutpaintingQwen2512]),
         new(EngineFeature.Canvas,
             "Canvas · Krea 2 Turbo",
             "Text to image in the Diffusion Canvas",
@@ -57,6 +72,7 @@ public static class EngineFeatureCatalog
     public static EngineFeature? ForAppFeature(Feature feature) => feature switch
     {
         Feature.Inpainting or Feature.Outpaint => EngineFeature.InpaintOutpaint,
+        Feature.OutpaintVision => EngineFeature.OutpaintVision,
         _ => null
     };
 

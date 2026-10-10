@@ -41,7 +41,7 @@ public class EditorGenerateProgressTests
 
     private static async Task<OutpaintingViewModel> Outpaint()
     {
-        var vm = new OutpaintingViewModel(() => true, () => 512, () => 512, _ => { }, Provider(), Ready())
+        var vm = new OutpaintingViewModel(() => true, _ => { }, Provider(), Ready())
         {
             PositivePrompt = "a beach",
         };

@@ -668,8 +668,8 @@
                            IsVisible="{Binding IsCustomUrlMode}"/>
               </StackPanel>
 
-              <!-- Server URL -->
-              <StackPanel Spacing="4" IsEnabled="{Binding IsCustomUrlMode}">
+              <!-- Server URL: only for Custom URL; the Engine picks its own port, so the row is hidden -->
+              <StackPanel Spacing="4" IsVisible="{Binding IsCustomUrlMode}">
                 <TextBlock Text="Server URL" FontWeight="SemiBold"/>
                 <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto">
 

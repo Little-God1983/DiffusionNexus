@@ -31,6 +31,9 @@ public class EngineFeaturesViewModelTests
         _checker.Setup(c => c.CheckConfigurationAsync(It.IsAny<InstallationConfiguration>(), Root,
                 It.IsAny<ConfigurationCheckOptions?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((InstallationConfiguration c, string _, ConfigurationCheckOptions? _, CancellationToken _) => _state[c.Id]);
+
+        // The Vision row is installed unless a test says otherwise.
+        _state[EngineFeatureCatalog.OutpaintingQwen2512] = Result(0, 3, 0, 7);
     }
 
     private static ConfigurationCheckResult Result(int nodesMissing, int nodesPresent, int modelsMissing, int modelsPresent) => new()
@@ -323,5 +326,161 @@ public class EngineFeaturesViewModelTests
         await vm.InstallSelectedCommand.ExecuteAsync(null);
 
         vm.IsInstalling.Should().BeFalse("a failing re-check must not leave the dialog locked");
+    }
+
+    // ── #607: the Qwen3-VL GGUF node needs a prebuilt llama-cpp-python wheel; the service picks it for the venv ──
+
+    private static readonly LamaCppWheel Cu130 = new()
+    {
+        Id = Guid.NewGuid(), Name = "JamePeng cu130", IsGPU = true,
+        PythonVersion = "3.12", CudaVersion = "13.0", Url = "https://example/llama_cpp_python-0.4.2+cu130-cp312-cp312-win_amd64.whl"
+    };
+
+    private void WheelOutcome(LlamaCppWheelOutcome outcome, Action? callback = null) =>
+        _installer.Setup(i => i.EnsureLlamaCppWheelAsync(Root, It.IsAny<IReadOnlyList<LamaCppWheel>>(),
+                It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<CancellationToken>()))
+            .Callback(() => callback?.Invoke())
+            .ReturnsAsync(outcome);
+
+    private void VerifyNoWheel() =>
+        _installer.Verify(i => i.EnsureLlamaCppWheelAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<LamaCppWheel>>(),
+            It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<CancellationToken>()), Times.Never);
+
+    private async Task<EngineFeaturesViewModel> VisionNeedsNodePacksAsync()
+    {
+        _catalog.Setup(c => c.GetLamaCppWheelsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([Cu130]);
+        var vision = (await _catalog.Object.GetWorkloadAsync(EngineFeatureCatalog.OutpaintingQwen2512))!;
+        vision.InstallLamaCpp = true;
+        _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(0, 1, 0, 5);
+        _state[EngineFeatureCatalog.Krea2Turbo] = Result(0, 2, 0, 3);
+        _state[EngineFeatureCatalog.OutpaintingQwen2512] = Result(2, 1, 0, 7);
+        InstallReturns("2 node(s) installed", () => _state[EngineFeatureCatalog.OutpaintingQwen2512] = Result(0, 3, 0, 7));
+        WheelOutcome(LlamaCppWheelOutcome.Installed);
+        var vm = Sut(EngineFeature.OutpaintVision);
+        await vm.LoadCommand.ExecuteAsync(null);
+        return vm;
+    }
+
+    [Fact]
+    public async Task VisionInstall_InstallsTheWheel_BeforeTheNodePacks()
+    {
+        var vm = await VisionNeedsNodePacksAsync();
+        var order = new List<string>();
+        WheelOutcome(LlamaCppWheelOutcome.Installed, () => order.Add("wheel"));
+        _installer.Setup(i => i.InstallSelectedAsync(It.IsAny<InstallationConfiguration>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
+                It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
+                It.IsAny<Func<CancellationToken>?>(), It.IsAny<CancellationToken>()))
+            .Callback(() => { order.Add("nodes"); _state[EngineFeatureCatalog.OutpaintingQwen2512] = Result(0, 3, 0, 7); })
+            .ReturnsAsync("2 node(s) installed");
+
+        await vm.InstallSelectedCommand.ExecuteAsync(null);
+
+        order.Should().Equal(new List<string> { "wheel", "nodes" }, "pip must find llama-cpp-python satisfied before the node pack's requirements");
+        _installer.Verify(i => i.EnsureLlamaCppWheelAsync(Root, It.Is<IReadOnlyList<LamaCppWheel>>(w => w.Contains(Cu130)),
+            It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<CancellationToken>()), "the catalog's wheels go to the service, which reads the venv");
+        vm.ProgressText.Should().StartWith("Done.");
+    }
+
+    // Review: a wheel that failed once was never retried — the node pack landed, the row read Installed,
+    // and the next Install found nothing missing.
+    [Fact]
+    public async Task VisionInstall_WheelFails_LeavesTheNodePacksOut_SoTheNextInstallRetries()
+    {
+        var vm = await VisionNeedsNodePacksAsync();
+        _state[EngineFeatureCatalog.OutpaintingQwen2512] = Result(2, 1, 1, 6);
+        await vm.LoadCommand.ExecuteAsync(null);
+        Row(vm, EngineFeature.OutpaintVision).IsSelected = true;
+        WheelOutcome(LlamaCppWheelOutcome.Failed);
+        var nodesPassed = new List<IReadOnlyList<CustomNodeCheckResult>>();
+        _installer.Setup(i => i.InstallSelectedAsync(It.IsAny<InstallationConfiguration>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
+                It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
+                It.IsAny<Func<CancellationToken>?>(), It.IsAny<CancellationToken>()))
+            .Callback((InstallationConfiguration _, string _, IReadOnlyList<CustomNodeCheckResult> n, IReadOnlyList<ModelCheckResult> _,
+                int _, IProgress<WorkloadInstallProgress>? _, IProgress<DownloadProgress>? _, Func<CancellationToken>? _, CancellationToken _) =>
+                nodesPassed.Add(n))
+            .ReturnsAsync("1 model(s) downloaded");
+
+        await vm.InstallSelectedCommand.ExecuteAsync(null);
+
+        nodesPassed.Should().ContainSingle().Which.Should().BeEmpty("the node packs wait for their wheel; the model still comes");
+        Row(vm, EngineFeature.OutpaintVision).Status.Should().NotBe(EngineFeatureStatus.Installed);
+        vm.ProgressText.Should().StartWith("Finished with problems").And.Contain("llama-cpp-python").And.Contain("1 model(s) downloaded");
+        System.Text.RegularExpressions.Regex.Matches(vm.ProgressText, "Outpaint Vision:").Count.Should().Be(1, "one line per row in the outcome");
+    }
+
+    [Fact]
+    public async Task VisionInstall_NoMatchingWheel_StillInstallsTheNodePacks()
+    {
+        var vm = await VisionNeedsNodePacksAsync();
+        WheelOutcome(LlamaCppWheelOutcome.NoMatchingWheel);
+        var nodesPassed = new List<IReadOnlyList<CustomNodeCheckResult>>();
+        _installer.Setup(i => i.InstallSelectedAsync(It.IsAny<InstallationConfiguration>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
+                It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
+                It.IsAny<Func<CancellationToken>?>(), It.IsAny<CancellationToken>()))
+            .Callback((InstallationConfiguration _, string _, IReadOnlyList<CustomNodeCheckResult> n, IReadOnlyList<ModelCheckResult> _,
+                int _, IProgress<WorkloadInstallProgress>? _, IProgress<DownloadProgress>? _, Func<CancellationToken>? _, CancellationToken _) =>
+                nodesPassed.Add(n))
+            .ReturnsAsync("2 node(s) installed");
+
+        await vm.InstallSelectedCommand.ExecuteAsync(null);
+
+        nodesPassed.Should().ContainSingle().Which.Should().HaveCount(2, "retrying cannot conjure a wheel the catalog does not have");
+    }
+
+    [Fact]
+    public async Task VisionInstall_ModelsOnly_DoesNotTouchTheWheel()
+    {
+        var vm = await VisionNeedsNodePacksAsync();
+        _state[EngineFeatureCatalog.OutpaintingQwen2512] = Result(0, 3, 1, 6);
+        await vm.LoadCommand.ExecuteAsync(null);
+        Row(vm, EngineFeature.OutpaintVision).IsSelected = true;
+
+        await vm.InstallSelectedCommand.ExecuteAsync(null);
+
+        VerifyNoWheel();
+    }
+
+    [Fact]
+    public async Task InpaintInstall_HasNoWheelToInstall()
+    {
+        _catalog.Setup(c => c.GetLamaCppWheelsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([Cu130]);
+        _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(1, 0, 5, 0);
+        _state[EngineFeatureCatalog.Krea2Turbo] = Result(0, 2, 0, 3);
+        InstallReturns("done", () => _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(0, 1, 0, 5));
+        var vm = Sut(EngineFeature.InpaintOutpaint);
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        await vm.InstallSelectedCommand.ExecuteAsync(null);
+
+        VerifyNoWheel();
+    }
+
+    // Smoke 2: "Done. …" was replaced 3 ms later by the last node pack's own progress line.
+    [Fact]
+    public async Task ProgressThatArrivesAfterTheInstallReturned_DoesNotOverwriteTheOutcome()
+    {
+        _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(1, 0, 5, 0);
+        _state[EngineFeatureCatalog.Krea2Turbo] = Result(0, 2, 0, 3);
+        IProgress<WorkloadInstallProgress>? captured = null;
+        _installer.Setup(i => i.InstallSelectedAsync(It.IsAny<InstallationConfiguration>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
+                It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
+                It.IsAny<Func<CancellationToken>?>(), It.IsAny<CancellationToken>()))
+            .Callback((InstallationConfiguration _, string _, IReadOnlyList<CustomNodeCheckResult> _, IReadOnlyList<ModelCheckResult> _,
+                int _, IProgress<WorkloadInstallProgress>? p, IProgress<DownloadProgress>? _, Func<CancellationToken>? _, CancellationToken _) =>
+            { captured = p; _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(0, 1, 0, 5); })
+            .ReturnsAsync("1 node(s) installed, 5 model(s) downloaded");
+        var vm = Sut(EngineFeature.InpaintOutpaint);
+        await vm.LoadCommand.ExecuteAsync(null);
+        await vm.InstallSelectedCommand.ExecuteAsync(null);
+        vm.ProgressText.Should().StartWith("Done.");
+
+        captured!.Report(new WorkloadInstallProgress { ItemName = "ComfyUI-GGUF", Message = "Installed ComfyUI-GGUF", IsSuccess = true });
+        await Task.Delay(100); // Progress<T> posts the report; give it time to land
+
+        vm.ProgressText.Should().StartWith("Done.");
     }
 }

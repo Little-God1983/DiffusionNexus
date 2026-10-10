@@ -282,11 +282,42 @@ public partial class WorkloadsViewModel : ViewModelBase
                 .Where(m => modelIds.Contains(m.Id))
                 .ToList();
 
-            return await _installService.InstallSelectedAsync(
-                config, _comfyUIRootPath,
-                selectedNodes, selectedModels,
+            return await InstallItemsAsync(
+                config, selectedNodes, selectedModels,
                 vramGb, progress, downloadProgress, skipTokenProvider, ct);
         };
+    }
+
+    /// <summary>
+    /// Installs the selected node packs and models. A workload whose node packs run GGUF models through
+    /// llama.cpp (Outpainting-Qwen 2512, #607) gets the prebuilt llama-cpp-python wheel for this ComfyUI's
+    /// Python and CUDA first, because the packs' requirements would otherwise make pip compile it from
+    /// source. A wheel that fails to install keeps its node packs out: a pack on disk reads as installed,
+    /// so Install would never retry the wheel. Without a wheel for this ComfyUI the packs go in anyway.
+    /// </summary>
+    internal async Task<string> InstallItemsAsync(
+        InstallationConfiguration config,
+        IReadOnlyList<CustomNodeCheckResult> nodes,
+        IReadOnlyList<ModelCheckResult> models,
+        int vramGb,
+        IProgress<WorkloadInstallProgress> progress,
+        IProgress<DownloadProgress> downloadProgress,
+        Func<CancellationToken> skipTokenProvider,
+        CancellationToken ct)
+    {
+        var wheelNote = "";
+        if (nodes.Count > 0 && config.InstallLamaCpp
+            && await _installService.EnsureLlamaCppWheelAsync(_comfyUIRootPath, await _catalog.GetLamaCppWheelsAsync(ct), progress, ct)
+                == LlamaCppWheelOutcome.Failed)
+        {
+            wheelNote = "llama-cpp-python was not installed, so its node packs were left out; Install again to retry. ";
+            nodes = [];
+        }
+
+        return wheelNote + await _installService.InstallSelectedAsync(
+            config, _comfyUIRootPath,
+            nodes, models,
+            vramGb, progress, downloadProgress, skipTokenProvider, ct);
     }
 
     /// <summary>
