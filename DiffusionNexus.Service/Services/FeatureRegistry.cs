@@ -20,7 +20,8 @@ public static class FeatureRegistry
     private static readonly Guid CaptioningWorkloadId   = new("701DA214-2B25-44B4-A904-E4B036621564"); // Captioning-Qwen-3-VL
     private static readonly Guid InpaintingWorkloadId   = new("4C486765-A4C1-4E94-ACC2-BBAC0E405B6A"); // Inpainting-Qwen 2512
     private static readonly Guid OutpaintWorkloadId     = new("137929E4-5C05-4304-80D4-5D785D45FD3F"); // Outpainting-Qwen 2512 (covers Vision variant - same workload installs Qwen3-VL nodes)
-    private static readonly Guid BatchUpscaleWorkloadId = new("B853EB7C-0A0E-48A6-985E-E32B2F8848F5"); // Upscaling-Z-Image-Turbo (covers Vision variant)
+    private static readonly Guid BatchUpscaleWorkloadId = new("B853EB7C-0A0E-48A6-985E-E32B2F8848F5"); // Upscaling-Z-Image-Turbo
+    private static readonly Guid BatchUpscaleVisionWorkloadId = new("FE2E7606-AC36-470E-A7C5-7F8CC23ECC98"); // Upscaling-Z-Image-Turbo Vision
 
     private static readonly Dictionary<Feature, FeatureRequirements> Registry = BuildRegistry();
 
@@ -55,7 +56,7 @@ public static class FeatureRegistry
         [Feature.BatchUpscaleVision] = new FeatureRequirements(
             Feature.BatchUpscaleVision,
             "Batch Upscale (Vision Auto-Prompt)",
-            WorkloadConfigurationId: BatchUpscaleWorkloadId),
+            WorkloadConfigurationId: BatchUpscaleVisionWorkloadId),
 
         // Outpaint — Qwen-Image-2512-outpaint-nonVision.json
         [Feature.Outpaint] = new FeatureRequirements(

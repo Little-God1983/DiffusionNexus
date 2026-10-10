@@ -13,30 +13,34 @@ public class EngineFeatureCatalogTests
             .Should().Equal(Guid.Parse("4C486765-A4C1-4E94-ACC2-BBAC0E405B6A"));
         EngineFeatureCatalog.Get(EngineFeature.OutpaintVision).WorkloadIds
             .Should().Equal(Guid.Parse("137929E4-5C05-4304-80D4-5D785D45FD3F"));
+        EngineFeatureCatalog.Get(EngineFeature.BatchUpscale).WorkloadIds
+            .Should().Equal(Guid.Parse("B853EB7C-0A0E-48A6-985E-E32B2F8848F5"));
+        EngineFeatureCatalog.Get(EngineFeature.BatchUpscaleVision).WorkloadIds
+            .Should().Equal(Guid.Parse("FE2E7606-AC36-470E-A7C5-7F8CC23ECC98"));
         EngineFeatureCatalog.Get(EngineFeature.Canvas).WorkloadIds
             .Should().Equal(Guid.Parse("E79C079A-2FD7-4FE7-8086-23731092555D"));
-        EngineFeatureCatalog.AllWorkloadIds.Should().HaveCount(3);
+        EngineFeatureCatalog.AllWorkloadIds.Should().HaveCount(5);
     }
 
     [Fact]
     public void Rows_AreListedInDisplayOrder_WithTheirLabels()
     {
         EngineFeatureCatalog.All.Select(r => r.DisplayName)
-            .Should().Equal("Inpaint & Outpaint", "Outpaint Vision", "Canvas · Krea 2 Turbo");
+            .Should().Equal("Inpaint & Outpaint", "Outpaint Vision", "Batch Upscale", "Batch Upscale Vision", "Canvas · Krea 2 Turbo");
     }
 
     [Theory]
     [InlineData(Feature.Inpainting, EngineFeature.InpaintOutpaint)]
     [InlineData(Feature.Outpaint, EngineFeature.InpaintOutpaint)]
     [InlineData(Feature.OutpaintVision, EngineFeature.OutpaintVision)]
+    [InlineData(Feature.BatchUpscale, EngineFeature.BatchUpscale)]
+    [InlineData(Feature.BatchUpscaleVision, EngineFeature.BatchUpscaleVision)]
     public void ForAppFeature_MapsEditorToolsToTheirRow(Feature feature, EngineFeature expected)
     {
         EngineFeatureCatalog.ForAppFeature(feature).Should().Be(expected);
     }
 
     [Theory]
-    [InlineData(Feature.BatchUpscale)]
-    [InlineData(Feature.BatchUpscaleVision)]
     [InlineData(Feature.Captioning)]
     public void ForAppFeature_IsNull_ForFeaturesTheEngineDoesNotOfferYet(Feature feature)
     {

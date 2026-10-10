@@ -89,12 +89,12 @@ public class EngineFeatureBackendTests
     }
 
     [Fact]
-    public async Task BatchUpscale_IsNotOfferedOnTheEngineYet()
+    public async Task Captioning_IsNotOfferedOnTheEngineYet()
     {
-        var result = await Sut().CheckFeatureAsync(Feature.BatchUpscale);
+        var result = await Sut().CheckFeatureAsync(Feature.Captioning);
 
         result.IsReady.Should().BeFalse();
-        result.MissingRequirements.Should().Equal("BatchUpscale is not available on the Diffusion Nexus Engine yet");
+        result.MissingRequirements.Should().Equal("Captioning is not available on the Diffusion Nexus Engine yet");
         _checker.VerifyNoOtherCalls();
     }
 
