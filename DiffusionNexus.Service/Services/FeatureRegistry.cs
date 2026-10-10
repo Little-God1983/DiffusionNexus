@@ -51,9 +51,7 @@ public static class FeatureRegistry
             "Batch Upscale",
             WorkloadConfigurationId: BatchUpscaleWorkloadId),
 
-        // Batch Upscale + Vision — Vision-Z-Image-Turbo-Upscale.json
-        // Same workload as BatchUpscale; the Z-Image-Turbo workload already brings the
-        // Qwen3-VL custom node + model needed for the Vision auto-prompt variant.
+        // Batch Upscale + Vision — Qwen3-VL-Describe.json, then Z-Image-Turbo-Upscale.json
         [Feature.BatchUpscaleVision] = new FeatureRequirements(
             Feature.BatchUpscaleVision,
             "Batch Upscale (Vision Auto-Prompt)",

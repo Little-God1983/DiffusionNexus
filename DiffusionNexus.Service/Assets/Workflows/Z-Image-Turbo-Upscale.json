@@ -3,8 +3,8 @@
     "inputs": {
       "text": "",
       "clip": [
-        "53",
-        1
+        "27",
+        0
       ]
     },
     "class_type": "CLIPTextEncode",
@@ -46,8 +46,8 @@
     "inputs": {
       "text": "",
       "clip": [
-        "53",
-        1
+        "27",
+        0
       ]
     },
     "class_type": "CLIPTextEncode",
@@ -91,7 +91,7 @@
         0
       ],
       "model": [
-        "53",
+        "28",
         0
       ],
       "positive": [
@@ -136,31 +136,6 @@
     "class_type": "LoadImage",
     "_meta": {
       "title": "Load Image"
-    }
-  },
-  "53": {
-    "inputs": {
-      "PowerLoraLoaderHeaderWidget": {
-        "type": "PowerLoraLoaderHeaderWidget"
-      },
-      "lora_1": {
-        "on": false,
-        "lora": "Jinx_Arcane_Season_1_LoRA_Z_Image_Turbo.safetensors",
-        "strength": 1
-      },
-      "➕ Add Lora": "",
-      "model": [
-        "28",
-        0
-      ],
-      "clip": [
-        "27",
-        0
-      ]
-    },
-    "class_type": "Power Lora Loader (rgthree)",
-    "_meta": {
-      "title": "Power Lora Loader (rgthree)"
     }
   }
 }
