@@ -19,6 +19,8 @@ public class BatchUpscaleEngineRunTests : IDisposable
     protected readonly Mock<IComfyUIWrapperService> Client = new();
     protected readonly List<(string Workflow, Dictionary<string, Action<JsonNode>> Overrides)> Queued = [];
     protected readonly List<(string Level, string Message)> Logged = [];
+    /// <summary>Uploads and queued workflows in call order: "upload:{path}", "queue:{workflow file}".</summary>
+    protected readonly List<string> Calls = [];
     protected readonly Mock<IFeatureReadinessService> Readiness = new();
     protected readonly DatasetEventAggregator Events = new();
     private readonly string _dir = Directory.CreateTempSubdirectory("dn-upscale-").FullName;
@@ -26,11 +28,12 @@ public class BatchUpscaleEngineRunTests : IDisposable
     public BatchUpscaleEngineRunTests()
     {
         Client.Setup(c => c.UploadImageAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string path, CancellationToken _) => "up-" + Path.GetFileName(path));
+            .ReturnsAsync((string path, CancellationToken _) => { Calls.Add("upload:" + path); return "up-" + Path.GetFileName(path); });
         Client.Setup(c => c.QueueWorkflowAsync(It.IsAny<string>(), It.IsAny<Dictionary<string, Action<JsonNode>>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string wf, Dictionary<string, Action<JsonNode>> o, CancellationToken _) =>
             {
                 Queued.Add((Path.GetFileName(wf), o));
+                Calls.Add("queue:" + Path.GetFileName(wf));
                 return $"p{Queued.Count}";
             });
         Client.Setup(c => c.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()))
@@ -98,6 +101,7 @@ public class BatchUpscaleEngineRunTests : IDisposable
     protected string Image(string name)
     {
         var path = Path.Combine(_dir, name);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllBytes(path, [0x89, 0x50, 0x4E, 0x47]);
         return path;
     }

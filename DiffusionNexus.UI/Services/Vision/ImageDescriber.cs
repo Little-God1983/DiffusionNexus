@@ -30,14 +30,29 @@ public sealed class ImageDescriber
         _config = QwenVlGguf.BuildConfig(modelPath, projectorPath);
     }
 
-    /// <summary>The description of an image already uploaded to the server, or null when the node returned none.</summary>
-    public async Task<string?> DescribeAsync(string uploadedImage, bool keepLoaded, CancellationToken ct)
+    /// <summary>
+    /// The description of an image already uploaded to the server, or null when the node returned none.
+    /// <paramref name="freeComfyModels"/> asks the node to unload ComfyUI's own models first: llama.cpp
+    /// allocates outside ComfyUI's memory manager, so ComfyUI would not make room for it.
+    /// </summary>
+    /// <exception cref="ImageDescriptionFailedException">The node reported a failed inference as its text.</exception>
+    public async Task<string?> DescribeAsync(string uploadedImage, bool keepLoaded, CancellationToken ct, bool freeComfyModels = false)
     {
-        var promptId = await _client.QueueWorkflowAsync(_workflowPath, Overrides(uploadedImage, keepLoaded ? "keep_vram" : "direct_clean"), ct);
+        var overrides = Overrides(uploadedImage, keepLoaded ? "keep_vram" : "direct_clean", freeComfyModels);
+        var promptId = await _client.QueueWorkflowAsync(_workflowPath, overrides, ct);
         await _client.WaitForCompletionAsync(promptId, progress: null, ct);
         var result = await _client.GetResultAsync(promptId, ct);
-        return result.Texts.FirstOrDefault(t => !string.IsNullOrWhiteSpace(t))?.Trim();
+        var text = result.Texts.FirstOrDefault(t => !string.IsNullOrWhiteSpace(t))?.Trim();
+
+        // The node catches its own inference errors (a model that will not load, CUDA out of memory) and
+        // returns them as its text, after unloading everything.
+        if (text is not null && text.StartsWith(InferenceFailedPrefix, StringComparison.Ordinal))
+            throw new ImageDescriptionFailedException(text[InferenceFailedPrefix.Length..]
+                .Replace("Check console for details.", "").Trim());
+        return text;
     }
+
+    private const string InferenceFailedPrefix = "❌ Inference failed:";
 
     /// <summary>
     /// Frees a model a batch kept loaded: one <c>direct_clean</c> job with the same config reuses it and
@@ -47,7 +62,7 @@ public sealed class ImageDescriber
     {
         try
         {
-            var promptId = await _client.QueueWorkflowAsync(_workflowPath, Overrides(uploadedImage, "direct_clean"), CancellationToken.None);
+            var promptId = await _client.QueueWorkflowAsync(_workflowPath, Overrides(uploadedImage, "direct_clean", freeComfyModels: false), CancellationToken.None);
             await _client.WaitForCompletionAsync(promptId, progress: null, CancellationToken.None);
         }
         catch (Exception ex)
@@ -56,7 +71,7 @@ public sealed class ImageDescriber
         }
     }
 
-    private Dictionary<string, Action<JsonNode>> Overrides(string uploadedImage, string mode)
+    private Dictionary<string, Action<JsonNode>> Overrides(string uploadedImage, string mode, bool freeComfyModels)
     {
         var seed = QwenVlGguf.Seed((long)(_random.NextDouble() * long.MaxValue));
         return new Dictionary<string, Action<JsonNode>>
@@ -65,9 +80,13 @@ public sealed class ImageDescriber
             [DescribeNodeId] = node =>
             {
                 node["inputs"]!["mode"] = mode;
+                node["inputs"]!["unload_all_models"] = freeComfyModels;
                 node["inputs"]!["seed"] = seed;
                 node["inputs"]!["config_override"] = _config;
             },
         };
     }
 }
+
+/// <summary>Qwen3-VL could not describe an image; the message is the node's reason.</summary>
+public sealed class ImageDescriptionFailedException(string reason) : Exception(reason);

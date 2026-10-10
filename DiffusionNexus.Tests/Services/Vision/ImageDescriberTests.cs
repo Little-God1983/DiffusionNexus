@@ -58,6 +58,30 @@ public class ImageDescriberTests
         (await Sut().DescribeAsync("up.png", keepLoaded: true, CancellationToken.None)).Should().BeNull();
     }
 
+    // Review: the node reports a failed inference as its text ("❌ Inference failed: …") instead of raising.
+    [Fact]
+    public async Task Describe_InferenceFailedText_Throws_WithTheNodesReason()
+    {
+        _client.Setup(c => c.GetResultAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => { var r = new ComfyUIResult(); r.Texts.Add("❌ Inference failed:\nCUDA out of memory\nCheck console for details."); return r; });
+
+        var act = () => Sut().DescribeAsync("up.png", keepLoaded: true, CancellationToken.None);
+
+        (await act.Should().ThrowAsync<ImageDescriptionFailedException>()).Which.Message.Should().Contain("CUDA out of memory");
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public async Task Describe_CanAskTheNodeToUnloadComfyUIsModelsFirst(bool freeComfyModels, bool expected)
+    {
+        await Sut().DescribeAsync("up.png", keepLoaded: true, CancellationToken.None, freeComfyModels);
+
+        var node = JsonNode.Parse("""{"inputs":{"mode":"","seed":0,"config_override":"","unload_all_models":false}}""")!;
+        _queued.Single()["3"](node);
+        node["inputs"]!["unload_all_models"]!.GetValue<bool>().Should().Be(expected);
+    }
+
     // The free-up job reuses the loaded model (same config) and unloads it after answering.
     [Fact]
     public async Task Free_QueuesOneDirectCleanJob_WithTheSameConfig()

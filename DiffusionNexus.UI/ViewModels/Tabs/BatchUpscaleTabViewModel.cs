@@ -1043,10 +1043,10 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             Info($"Running on {(lease.Mode == ComfyUiServerMode.Engine ? "the Diffusion Nexus Engine" : "your own ComfyUI")} at {lease.BaseUrl}.");
             Info($"{TotalImageCount} image(s), prompt mode {PromptMode.GetDisplayName()}.");
 
-            var uploaded = new string?[UpscaleItems.Count];
+            var undescribed = 0;
             if (isVision)
             {
-                await DescribeAllAsync(comfy, new ImageDescriber(comfy, modelPath, projectorPath), uploaded, ct);
+                undescribed = await DescribeAllAsync(comfy, new ImageDescriber(comfy, modelPath, projectorPath), ct);
                 StepText = StepTwoText;
                 StepExplanation = null;
                 TotalProgress = 0;
@@ -1060,13 +1060,11 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 var item = UpscaleItems[i];
                 item.IsProcessing = true;
 
-                // 1. Upload image to ComfyUI (a Vision run uploaded it in step 1)
-                if (uploaded[i] is null)
-                {
-                    CurrentProcessingStatus = $"[{i + 1}/{TotalImageCount}] Uploading {item.FileName}…";
-                    uploaded[i] = await comfy.UploadImageAsync(item.OriginalPath, ct);
-                }
-                var uploadedFilename = uploaded[i]!;
+                // 1. Upload image to ComfyUI, right before its job: ComfyUI stores an upload under its plain
+                // file name and overwrites on a clash, so a step-1 upload of a same-named image from another
+                // folder may have replaced it since.
+                CurrentProcessingStatus = $"[{i + 1}/{TotalImageCount}] Uploading {item.FileName}…";
+                var uploadedFilename = await comfy.UploadImageAsync(item.OriginalPath, ct);
 
                 // 2. Resolve the positive prompt for this image (Vision: what Qwen3-VL wrote; none when it failed)
                 var imagePositivePrompt = isVision ? item.Description ?? string.Empty : ResolvePositivePrompt(item.OriginalPath);
@@ -1135,7 +1133,9 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 TotalProgress = (double)(i + 1) / TotalImageCount * 100;
             }
 
-            CurrentProcessingStatus = $"Done – {CompletedCount}/{TotalImageCount} image(s) upscaled.";
+            CurrentProcessingStatus = undescribed > 0
+                ? $"Done – {CompletedCount}/{TotalImageCount} image(s) upscaled; {undescribed} without a description (see the Unified Console)."
+                : $"Done – {CompletedCount}/{TotalImageCount} image(s) upscaled.";
             Info(CurrentProcessingStatus);
         }
         catch (ComfyUiUnavailableException ex)
@@ -1191,9 +1191,9 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     /// Step 1 of a Vision run: uploads and describes every image with Qwen3-VL kept loaded, the last one
     /// freeing it. Stopping early (cancel, an error) frees the model with one extra job, so it does not
     /// stay in the server's VRAM. A description that fails for one image is a warning: that image is
-    /// upscaled without a prompt.
+    /// upscaled without a prompt. Returns how many images got no description.
     /// </summary>
-    private async Task DescribeAllAsync(IComfyUIWrapperService comfy, ImageDescriber describer, string?[] uploaded, CancellationToken ct)
+    private async Task<int> DescribeAllAsync(IComfyUIWrapperService comfy, ImageDescriber describer, CancellationToken ct)
     {
         StepText = StepOneText;
         StepExplanation = StepOneExplanation;
@@ -1202,6 +1202,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
         string? lastUploaded = null;
         var lastFailed = false;
+        var undescribed = 0;
         try
         {
             for (var i = 0; i < UpscaleItems.Count; i++)
@@ -1211,21 +1212,33 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 item.IsProcessing = true;
                 CurrentProcessingStatus = $"[{i + 1}/{TotalImageCount}] Describing {item.FileName}…";
 
-                uploaded[i] = await comfy.UploadImageAsync(item.OriginalPath, ct);
-                lastUploaded = uploaded[i];
+                lastUploaded = await comfy.UploadImageAsync(item.OriginalPath, ct);
                 try
                 {
-                    item.Description = await describer.DescribeAsync(uploaded[i]!, keepLoaded: i < UpscaleItems.Count - 1, ct);
+                    // The first description also unloads ComfyUI's own models (the last run's upscaler):
+                    // llama.cpp allocates outside ComfyUI's memory manager, which would not make room.
+                    item.Description = await describer.DescribeAsync(lastUploaded, keepLoaded: i < UpscaleItems.Count - 1, ct,
+                        freeComfyModels: i == 0);
                     lastFailed = false;
                     if (item.Description is null)
+                    {
+                        undescribed++;
                         Warn($"Qwen3-VL returned no description for {item.FileName}; it is upscaled without a prompt.");
+                    }
                     else
                         Info($"Description of {item.FileName}: {item.Description}");
                 }
                 catch (ComfyUIExecutionException ex)
                 {
                     lastFailed = true;
+                    undescribed++;
                     Warn($"Could not describe {item.FileName} (node {ex.NodeType}: {ex.Detail}); it is upscaled without a prompt.");
+                }
+                catch (ImageDescriptionFailedException ex)
+                {
+                    lastFailed = true;
+                    undescribed++;
+                    Warn($"Qwen3-VL could not describe {item.FileName} ({ex.Message}); it is upscaled without a prompt.");
                 }
 
                 item.IsProcessing = false;
@@ -1236,6 +1249,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             // The last job frees the model itself; when it failed, it may have died before doing so.
             if (lastFailed && lastUploaded is not null)
                 await describer.FreeAsync(lastUploaded);
+            return undescribed;
         }
         catch (Exception) when (lastUploaded is not null)
         {

@@ -39,12 +39,83 @@ public class BatchUpscaleVisionTwoStepTests : BatchUpscaleEngineRunTests
         Upscales.Select(u => PromptOf(u.Overrides)).Should().Equal(
             "Description of up-a.png", "Description of up-b.png", "Description of up-c.png");
         Upscales.Select(u => ImageOf(u.Overrides, "50")).Should().Equal("up-a.png", "up-b.png", "up-c.png");
-        Client.Verify(c => c.UploadImageAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Exactly(3),
-            "step 2 reuses the uploads of step 1");
         steps.Should().Equal(BatchUpscaleTabViewModel.StepOneText, BatchUpscaleTabViewModel.StepTwoText, null);
         vm.UpscaleItems.Select(i => i.Description).Should().Equal(
             "Description of up-a.png", "Description of up-b.png", "Description of up-c.png");
         Logged.Should().Contain(("Info", "Description of a.png: Description of up-a.png"));
+    }
+
+    // Review: ComfyUI stores an upload under its plain file name and overwrites on a clash, so two inputs
+    // named alike (gallery subfolders restart their counters) shared one server file across the steps.
+    [Fact]
+    public async Task SameFileNameInTwoFolders_EachUpscaleUsesTheUploadMadeRightBeforeIt()
+    {
+        await RunAsync(Sut(), UpscalePromptMode.VisionAutoPrompt, Path.Combine("day1", "img.png"), Path.Combine("day2", "img.png"));
+
+        var upscales = Calls.Select((c, i) => (c, i)).Where(x => x.c == "queue:Z-Image-Turbo-Upscale.json").Select(x => x.i).ToList();
+        upscales.Should().HaveCount(2);
+        Calls[upscales[0] - 1].Should().EndWith(Path.Combine("day1", "img.png"));
+        Calls[upscales[1] - 1].Should().EndWith(Path.Combine("day2", "img.png"));
+    }
+
+    // Review: ComfyUI keeps the last run's models (Z-Image, ~20 GB) loaded; llama.cpp allocates outside its
+    // memory manager, so the first description asks the node to unload them first.
+    [Fact]
+    public async Task TheFirstDescriptionFreesComfyUIsModels_TheOthersDoNot()
+    {
+        await RunAsync(Sut(), UpscalePromptMode.VisionAutoPrompt, "a.png", "b.png", "c.png");
+
+        Describes.Select(d =>
+        {
+            var node = JsonNode.Parse("""{"inputs":{"mode":"","seed":0,"config_override":"","unload_all_models":false}}""")!;
+            d.Overrides["3"](node);
+            return node["inputs"]!["unload_all_models"]!.GetValue<bool>();
+        }).Should().Equal(true, false, false);
+    }
+
+    // Review: the node returns "❌ Inference failed: …" as its text instead of raising; it must not become a prompt.
+    [Fact]
+    public async Task InferenceFailedText_IsAFailedDescription_NotAPrompt()
+    {
+        var describes = 0;
+        Client.Setup(c => c.GetResultAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string id, CancellationToken _) =>
+            {
+                var job = Queued[int.Parse(id[1..]) - 1];
+                if (job.Workflow == "Qwen3-VL-Describe.json" && ++describes == 1)
+                {
+                    var failed = new ComfyUIResult();
+                    failed.Texts.Add("❌ Inference failed:\nCUDA out of memory\nCheck console for details.");
+                    return failed;
+                }
+                return ResultFor(job);
+            });
+        var vm = Sut();
+
+        await RunAsync(vm, UpscalePromptMode.VisionAutoPrompt, "a.png", "b.png");
+
+        Upscales.Select(u => PromptOf(u.Overrides)).Should().Equal("", "Description of up-b.png");
+        vm.UpscaleItems[0].Description.Should().BeNull();
+        Logged.Should().Contain(e => e.Level == "Warn" && e.Message.Contains("a.png") && e.Message.Contains("CUDA out of memory"));
+    }
+
+    // Review: a describe step failing for every image upscaled everything without a prompt and still said "Done".
+    [Fact]
+    public async Task ImagesUpscaledWithoutADescription_AreCountedInTheFinalStatus()
+    {
+        Client.Setup(c => c.GetResultAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string id, CancellationToken _) =>
+            {
+                var job = Queued[int.Parse(id[1..]) - 1];
+                if (job.Workflow == "Qwen3-VL-Describe.json")
+                    throw new ComfyUIExecutionException("SimpleQwenVLggufV2", "node type not found");
+                return ResultFor(job);
+            });
+        var vm = Sut();
+
+        await RunAsync(vm, UpscalePromptMode.VisionAutoPrompt, "a.png", "b.png", "c.png");
+
+        vm.CurrentProcessingStatus.Should().Be("Done – 3/3 image(s) upscaled; 3 without a description (see the Unified Console).");
     }
 
     [Fact]
