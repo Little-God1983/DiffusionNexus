@@ -760,10 +760,9 @@ public partial class App : Application
                 onModelPathsChanged: () => sp.GetRequiredService<Services.Engine.IManagedComfyUiEngine>().RequestRestart(),
                 unifiedLogger: sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
 
-        // ComfyUI client for the features not yet on IComfyUiClientProvider (Batch Upscale,
-        // ComfyUI captioning, the ComfyUI readiness backend). Built from the Settings URL — it used
-        // to ignore it and always talk to 8188. A URL change reaches these after a restart; #608
-        // moves Batch Upscale onto the provider.
+        // ComfyUI client for the features not yet on IComfyUiClientProvider (ComfyUI captioning, the
+        // ComfyUI readiness backend). Built from the Settings URL — it used to ignore it and always
+        // talk to 8188. A URL change reaches these after a restart.
         // A bad Settings URL must not throw here: this singleton feeds the readiness backend,
         // captioning and the LoRA Dataset Helper, and a throw would keep the user out of Settings.
         services.AddSingleton<IComfyUIWrapperService>(sp =>

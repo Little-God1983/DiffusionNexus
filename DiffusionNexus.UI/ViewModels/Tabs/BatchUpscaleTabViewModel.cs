@@ -1,10 +1,12 @@
 using System.Collections.ObjectModel;
+using System.Net.Http;
 using System.Text.Json.Nodes;
 using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.Models;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
@@ -199,7 +201,10 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
     private readonly IDatasetEventAggregator _eventAggregator;
     private readonly IDatasetState _state;
-    private readonly IComfyUIWrapperService? _comfyUiService;
+    private readonly IComfyUiClientProvider? _clientProvider;
+    private readonly IUnifiedLogger? _unifiedLogger;
+    private bool _isActive;
+    private const string LogSource = "Batch Upscale";
     private readonly IAppSettingsService? _settingsService;
     private readonly IUiScheduler _uiScheduler;
     private readonly Func<string, int, Bitmap?> _thumbnailDecoder;
@@ -269,21 +274,24 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     /// <summary>
     /// Creates a new instance of BatchUpscaleTabViewModel.
     /// </summary>
-    /// <param name="comfyUiService">Optional ComfyUI wrapper service for executing upscale workflows.</param>
+    /// <param name="clientProvider">Hands out a client for the ComfyUI chosen in Settings (the Engine, started on demand, or the user's own).</param>
     /// <param name="settingsService">Optional settings service for dataset storage path resolution.</param>
     /// <param name="readinessService">Optional unified ComfyUI readiness service for prerequisite checks.</param>
+    /// <param name="unifiedLogger">Optional Unified Console logger for the run's steps.</param>
     public BatchUpscaleTabViewModel(
         IDatasetEventAggregator eventAggregator,
         IDatasetState state,
-        IComfyUIWrapperService? comfyUiService = null,
+        IComfyUiClientProvider? clientProvider = null,
         IAppSettingsService? settingsService = null,
         IFeatureReadinessService? readinessService = null,
         IUiScheduler? uiScheduler = null,
-        Func<string, int, Bitmap?>? thumbnailDecoder = null)
+        Func<string, int, Bitmap?>? thumbnailDecoder = null,
+        IUnifiedLogger? unifiedLogger = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
-        _comfyUiService = comfyUiService;
+        _clientProvider = clientProvider;
+        _unifiedLogger = unifiedLogger;
         _settingsService = settingsService;
         _uiScheduler = uiScheduler ?? AvaloniaUiScheduler.Instance;
         // The thumbnail decode is the other (filesystem/Skia) boundary in front of
@@ -292,8 +300,8 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         _thumbnailDecoder = thumbnailDecoder ?? EfficientImageDecoder.DecodeThumbnail;
 
         // Create readiness ViewModels for both upscale variants
-        Readiness = new FeatureReadinessViewModel(readinessService, Feature.BatchUpscale);
-        VisionReadiness = new FeatureReadinessViewModel(readinessService, Feature.BatchUpscaleVision);
+        Readiness = new FeatureReadinessViewModel(readinessService, Feature.BatchUpscale, eventAggregator);
+        VisionReadiness = new FeatureReadinessViewModel(readinessService, Feature.BatchUpscaleVision, eventAggregator);
 
         AvailableDatasetVersions = [];
         AvailableSaveModes = Enum.GetValues<UpscaleSaveMode>();
@@ -325,6 +333,12 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             if (e.PropertyName is nameof(FeatureReadinessViewModel.IsReady))
                 StartUpscaleCommand.NotifyCanExecuteChanged();
         };
+
+        // SettingsSaved (the Server mode) and EngineChanged (an Engine or Features install) change what
+        // readiness reports; they can arrive on a thread-pool thread, and the check writes bound
+        // properties. With no Avalonia application (unit tests) run inline.
+        _eventAggregator.SettingsSaved += OnReadinessInputChanged;
+        _eventAggregator.EngineChanged += OnReadinessInputChanged;
 
         _eventAggregator.RefreshDatasetsRequested += OnRefreshDatasetsRequested;
     }
@@ -521,6 +535,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                     OnPropertyChanged(nameof(PromptModeDescription));
                     OnPropertyChanged(nameof(ActiveReadiness));
                     StartUpscaleCommand.NotifyCanExecuteChanged();
+                    RecheckIfActive();
                 }
         }
     }
@@ -568,7 +583,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     /// <summary>
     /// Whether the ComfyUI service is available.
     /// </summary>
-    public bool IsComfyUIAvailable => _comfyUiService is not null;
+    public bool IsComfyUIAvailable => _clientProvider is not null;
 
     #endregion
 
@@ -703,9 +718,50 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
     #region Private Methods
 
+    /// <summary>The tab became visible: check the active mode's readiness so Start and the panel are current.</summary>
+    public void OnTabActivated()
+    {
+        _isActive = true;
+        _ = ActiveReadiness.CheckReadinessAsync();
+    }
+
+    /// <summary>The tab was left: Settings and Engine changes no longer trigger checks.</summary>
+    public void OnTabDeactivated() => _isActive = false;
+
+    private void OnReadinessInputChanged(object? sender, EventArgs e)
+    {
+        if (Avalonia.Application.Current is null || Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+            RecheckIfActive();
+        else
+            Avalonia.Threading.Dispatcher.UIThread.Post(RecheckIfActive);
+    }
+
+    private void RecheckIfActive()
+    {
+        if (_isActive) _ = ActiveReadiness.CheckReadinessAsync();
+    }
+
+    private void Info(string message)
+    {
+        Logger.Information("Batch Upscale: {Message}", message);
+        _unifiedLogger?.Info(LogCategory.General, LogSource, message);
+    }
+
+    private void Warn(string message)
+    {
+        Logger.Warning("Batch Upscale: {Message}", message);
+        _unifiedLogger?.Warn(LogCategory.General, LogSource, message);
+    }
+
+    private void Error(string message, Exception? ex)
+    {
+        Logger.Error(ex, "Batch Upscale: {Message}", message);
+        _unifiedLogger?.Error(LogCategory.General, LogSource, message, ex);
+    }
+
     private bool CanStartUpscale()
     {
-        if (IsProcessing || _comfyUiService is null) return false;
+        if (IsProcessing || _clientProvider is null) return false;
 
         // Require ComfyUI readiness for the selected workflow
         var requiredReadiness = PromptMode == UpscalePromptMode.VisionAutoPrompt ? VisionReadiness : Readiness;
@@ -719,7 +775,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
     private async Task StartUpscaleAsync()
     {
-        if (_comfyUiService is null)
+        if (_clientProvider is null)
         {
             CurrentProcessingStatus = "ComfyUI service not available.";
             return;
@@ -868,7 +924,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         string? newVersionPath,
         bool isSingleImageMode)
     {
-        if (_comfyUiService is null) return;
+        if (_clientProvider is null) return;
 
         var isSingleImage = isSingleImageMode;
 
@@ -913,8 +969,15 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         TotalImageCount = imageFiles.Count;
         TotalProgress = 0;
 
+        ComfyUiClientLease? lease = null;
         try
         {
+            // Engine start-up text ("Starting Diffusion Nexus Engine…") lands on the status line.
+            lease = await _clientProvider.AcquireAsync(new Progress<string>(msg => CurrentProcessingStatus = msg), ct);
+            var comfy = lease.Client;
+            Info($"Running on {(lease.Mode == ComfyUiServerMode.Engine ? "the Diffusion Nexus Engine" : "your own ComfyUI")} at {lease.BaseUrl}.");
+            Info($"{TotalImageCount} image(s), prompt mode {PromptMode.GetDisplayName()}.");
+
             for (var i = 0; i < UpscaleItems.Count; i++)
             {
                 ct.ThrowIfCancellationRequested();
@@ -924,18 +987,18 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 CurrentProcessingStatus = $"[{i + 1}/{TotalImageCount}] Uploading {item.FileName}…";
 
                 // 1. Upload image to ComfyUI
-                var uploadedFilename = await _comfyUiService.UploadImageAsync(item.OriginalPath, ct);
+                var uploadedFilename = await comfy.UploadImageAsync(item.OriginalPath, ct);
 
                 // 2. Resolve the positive prompt for this image
                 var imagePositivePrompt = ResolvePositivePrompt(item.OriginalPath);
 
                 // 3. Build node modifiers
                 var seed = (long)(_random.NextDouble() * long.MaxValue);
-                var nodeModifiers = BuildNodeModifiers(uploadedFilename, seed, isVision, imagePositivePrompt);
+                var nodeModifiers = BuildNodeModifiers(uploadedFilename, seed, imagePositivePrompt);
 
                 // 4. Queue the workflow
                 CurrentProcessingStatus = $"[{i + 1}/{TotalImageCount}] Queuing workflow for {item.FileName}…";
-                var promptId = await _comfyUiService.QueueWorkflowAsync(workflowPath, nodeModifiers, ct);
+                var promptId = await comfy.QueueWorkflowAsync(workflowPath, nodeModifiers, ct);
 
                 // 5. Wait for completion with progress
                 CurrentProcessingStatus = $"[{i + 1}/{TotalImageCount}] {FunProgressMessages[_random.Next(FunProgressMessages.Length)]}";
@@ -943,15 +1006,15 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 {
                     CurrentProcessingStatus = $"[{i + 1}/{TotalImageCount}] {msg}";
                 });
-                await _comfyUiService.WaitForCompletionAsync(promptId, progress, ct);
+                await comfy.WaitForCompletionAsync(promptId, progress, ct);
 
                 // 6. Download result
                 CurrentProcessingStatus = $"[{i + 1}/{TotalImageCount}] Downloading result…";
-                var result = await _comfyUiService.GetResultAsync(promptId, ct);
+                var result = await comfy.GetResultAsync(promptId, ct);
 
                 if (result.Images.Count > 0)
                 {
-                    var imageBytes = await _comfyUiService.DownloadImageAsync(result.Images[0], ct);
+                    var imageBytes = await comfy.DownloadImageAsync(result.Images[0], ct);
 
                     // 7. Save based on mode
                     var outputPath = isSingleImage
@@ -980,11 +1043,11 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                     // Load the upscaled thumbnail
                     await LoadThumbnailAsync(item, outputPath, isOriginal: false);
 
-                    Logger.Information("Upscaled {File} -> {Output}", item.FileName, outputPath);
+                    Info($"Upscaled {item.FileName} → {outputPath}.");
                 }
                 else
                 {
-                    Logger.Warning("No output image returned for {File}", item.FileName);
+                    Warn($"ComfyUI returned no image for {item.FileName}.");
                 }
 
                 item.IsProcessing = false;
@@ -994,16 +1057,39 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             }
 
             CurrentProcessingStatus = $"Done – {CompletedCount}/{TotalImageCount} image(s) upscaled.";
+            Info(CurrentProcessingStatus);
+        }
+        catch (ComfyUiUnavailableException ex)
+        {
+            CurrentProcessingStatus = ex.Message;
+            Warn(ex.Message);
+        }
+        catch (ComfyUIExecutionException ex)
+        {
+            CurrentProcessingStatus = $"Failed in the ComfyUI node {ex.NodeType} – see the Unified Console";
+            Error($"Upscale failed in the ComfyUI node {ex.NodeType}: {ex.Detail}", ex);
+        }
+        catch (ComfyUIWorkflowRejectedException ex)
+        {
+            CurrentProcessingStatus = "ComfyUI rejected the workflow – see the Unified Console";
+            Error($"ComfyUI rejected the upscale workflow: {ex.Reason}", ex);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode is { } status)
+        {
+            CurrentProcessingStatus = $"ComfyUI answered {(int)status} – see the Unified Console";
+            Error($"ComfyUI answered {(int)status}: {ex.Message}", ex);
         }
         catch (OperationCanceledException)
         {
             CurrentProcessingStatus = $"Cancelled after {CompletedCount}/{TotalImageCount} images.";
-            Logger.Information("Batch upscale cancelled by user after {Count} images", CompletedCount);
+            Info(CurrentProcessingStatus);
         }
         catch (Exception ex)
         {
-            CurrentProcessingStatus = $"Error: {ex.Message}";
-            Logger.Error(ex, "Batch upscale failed at image {Count}/{Total}", CompletedCount, TotalImageCount);
+            CurrentProcessingStatus = lease?.Mode == ComfyUiServerMode.Engine
+                ? $"Error: {ex.Message} – is the Diffusion Nexus Engine running?"
+                : $"Error: {ex.Message}";
+            Error($"Batch upscale failed at image {CompletedCount + 1}/{TotalImageCount}", ex);
         }
         finally
         {
@@ -1013,6 +1099,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 item.IsProcessing = false;
             }
 
+            lease?.Dispose();
             IsProcessing = false;
             _cts?.Dispose();
             _cts = null;
@@ -1020,7 +1107,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     }
 
     private Dictionary<string, Action<JsonNode>> BuildNodeModifiers(
-        string uploadedFilename, long seed, bool isVision, string positivePrompt)
+        string uploadedFilename, long seed, string positivePrompt)
     {
         var modifiers = new Dictionary<string, Action<JsonNode>>
         {
@@ -1044,15 +1131,11 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             }
         };
 
-        // In vision mode, node 17 is wired to the Qwen3_VQA output chain, so we leave it alone.
-        // All other modes set the prompt text explicitly on node 17.
-        if (!isVision)
+        // Every mode sets the prompt text on node 17; Vision passes the description step 1 wrote.
+        modifiers[PositivePromptNodeId] = node =>
         {
-            modifiers[PositivePromptNodeId] = node =>
-            {
-                node["inputs"]!["text"] = positivePrompt;
-            };
-        }
+            node["inputs"]!["text"] = positivePrompt;
+        };
 
         return modifiers;
     }
@@ -1545,6 +1628,8 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         CleanupCompareOriginalsTempDir();
         ClearGallerySelection();
         _eventAggregator.RefreshDatasetsRequested -= OnRefreshDatasetsRequested;
+        _eventAggregator.SettingsSaved -= OnReadinessInputChanged;
+        _eventAggregator.EngineChanged -= OnReadinessInputChanged;
         GC.SuppressFinalize(this);
     }
 
