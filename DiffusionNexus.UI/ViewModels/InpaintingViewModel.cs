@@ -600,6 +600,15 @@ public partial class InpaintingViewModel : ObservableObject
             ProgressDisplayText = $"Failed in the ComfyUI node {ex.NodeType} – see the Unified Console";
             StatusMessageChanged?.Invoke(this, $"Inpainting failed in the ComfyUI node {ex.NodeType}: {ex.Detail}");
         }
+        catch (ComfyUIWorkflowRejectedException ex)
+        {
+            // The server answered and refused the workflow (an older build's "node X does not exist").
+            Logger.Error(ex, "Inpainting: ComfyUI rejected the workflow");
+            _unifiedLogger?.Error(LogCategory.General, LogSource, $"ComfyUI rejected the inpainting workflow: {ex.Reason}", ex);
+            HasError = true;
+            ProgressDisplayText = "ComfyUI rejected the workflow – see the Unified Console";
+            StatusMessageChanged?.Invoke(this, $"ComfyUI rejected the inpainting workflow: {ex.Reason}");
+        }
         catch (OperationCanceledException)
         {
             StatusMessageChanged?.Invoke(this, "Inpainting was cancelled.");

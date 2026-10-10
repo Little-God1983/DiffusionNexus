@@ -253,6 +253,7 @@ public class WorkloadInstallServicePipTests
     [InlineData("https://github.com/JamePeng/llama-cpp-python/releases/download/v0.4.2-cu130-win-20261003/llama_cpp_python-0.4.2+cu130-cp312-cp312-win_amd64.whl", "0.4.2+cu130")]
     [InlineData("https://example/llama_cpp_python-0.3.20-cp312-cp312-win_amd64.whl", "0.3.20")]
     [InlineData(@"E:\wheels\llama_cpp_python-0.3.20-cp312-cp312-win_amd64.whl", "0.3.20")]
+    [InlineData("https://huggingface.co/x/resolve/main/llama_cpp_python-0.3.20-cp312-cp312-win_amd64.whl?download=true", "0.3.20")]
     [InlineData("https://example/not-a-wheel.zip", null)]
     [InlineData("", null)]
     public void WheelVersionFromUrl_ReadsTheVersionSegment(string url, string? expected)
@@ -296,13 +297,43 @@ public class WorkloadInstallServicePipTests
     }
 
     [Theory]
-    [InlineData("DN_PYTHON=3.12\r\nDN_CUDA=13.0\r\n", "3.12", "13.0")]
-    [InlineData("DN_PYTHON=3.13\n", "3.13", null)]          // torch missing: the import failed after the Python line
-    [InlineData("DN_PYTHON=3.12\nDN_CUDA=None\n", "3.12", null)] // a CPU torch
-    [InlineData(null, null, null)]
-    public void ParsePythonAndCuda_ReadsTheVenvProbe(string? stdout, string? python, string? cuda)
+    [InlineData("DN_PYTHON=3.12\r\nDN_CUDA=13.0\r\nDN_VERSION=0.4.2+cu130\r\nDN_HASH=693cef0b\r\n", "3.12", "13.0", "0.4.2+cu130", "693cef0b")]
+    [InlineData("DN_PYTHON=3.13\n", "3.13", null, null, null)]                 // torch missing: the import failed after the Python line
+    [InlineData("DN_PYTHON=3.12\nDN_CUDA=None\n", "3.12", null, null, null)]   // a CPU torch, no llama-cpp-python
+    [InlineData("DN_PYTHON=3.12\nDN_CUDA=12.8\nDN_VERSION=0.3.20\nDN_HASH=None\n", "3.12", "12.8", "0.3.20", null)] // installed from PyPI: no recorded file
+    [InlineData(null, null, null, null, null)]
+    public void ParseVenvProbe_ReadsPythonCudaAndTheInstalledWheel(string? stdout, string? python, string? cuda, string? version, string? hash)
     {
-        WorkloadInstallService.ParsePythonAndCuda(stdout).Should().Be((python, cuda));
+        WorkloadInstallService.ParseVenvProbe(stdout).Should().Be(new WorkloadInstallService.VenvProbe(python, cuda, version, hash));
+    }
+
+    // Review round 4: the cu128 wheel is plain 0.3.20, so a CPU 0.3.20 from PyPI (or JamePeng's cu124 build) read as
+    // "already installed" and the node ran on the CPU. pip's recorded file hash tells the builds apart.
+    [Fact]
+    public void PipInstallArguments_SameHash_Nothing_SameVersionOtherBuild_ForceReinstall()
+    {
+        var wheel = new LamaCppWheel { Url = "https://x/llama_cpp_python-0.3.20-cp312-cp312-win_amd64.whl", Sha256 = "sha256:949ACA17" };
+
+        WorkloadInstallService.PipInstallArguments(wheel, installedVersion: "0.3.20", installedHash: "949aca17")
+            .Should().BeNull("the catalog's own file is in place");
+        WorkloadInstallService.PipInstallArguments(wheel, installedVersion: "0.3.20", installedHash: null)
+            .Should().Be("-m pip install --force-reinstall --no-deps \"https://x/llama_cpp_python-0.3.20-cp312-cp312-win_amd64.whl#sha256=949aca17\"",
+                "pip skips a wheel whose version equals the installed one; its dependencies are already there");
+        WorkloadInstallService.PipInstallArguments(wheel, installedVersion: "0.3.20", installedHash: "deadbeef")
+            .Should().Contain("--force-reinstall");
+        WorkloadInstallService.PipInstallArguments(wheel, installedVersion: "0.3.17", installedHash: "deadbeef")
+            .Should().Be("-m pip install \"https://x/llama_cpp_python-0.3.20-cp312-cp312-win_amd64.whl#sha256=949aca17\"");
+        WorkloadInstallService.PipInstallArguments(wheel, installedVersion: null, installedHash: null)
+            .Should().Be("-m pip install \"https://x/llama_cpp_python-0.3.20-cp312-cp312-win_amd64.whl#sha256=949aca17\"");
+    }
+
+    [Fact]
+    public void PipInstallArguments_WithoutACatalogHash_TrustsTheVersion()
+    {
+        var wheel = new LamaCppWheel { Url = "https://x/llama_cpp_python-0.3.20-cp312-cp312-win_amd64.whl", Sha256 = "" };
+
+        WorkloadInstallService.PipInstallArguments(wheel, "0.3.20", "whatever").Should().BeNull();
+        WorkloadInstallService.PipInstallArguments(wheel, "0.3.19", null).Should().Be("-m pip install \"https://x/llama_cpp_python-0.3.20-cp312-cp312-win_amd64.whl\"");
     }
 
     [Theory]

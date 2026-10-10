@@ -45,11 +45,17 @@ at 400 tokens. ShowText stays so the description lands in the job's outputs.
    install hint instead of queuing.
 3. **llama-cpp-python wheel**: the node pack's requirements list `llama-cpp-python`; without a
    prebuilt wheel pip would compile it (needs a C++ toolchain, usually fails on Windows). The catalog
-   gets a CUDA 13 wheel (JamePeng 0.4.2+cu130, Python 3.12) next to the existing cu128 one. The
-   Features dialog picks the wheel for the Engine's own CUDA and Python (the torch the Engine was
-   installed with, *Krea 2 Turbo*) and installs it through `IWorkloadInstallService.InstallLlamaCppWheelAsync`
-   before the node packs, skipping the install when that version is already present. A wheel for
-   another CUDA loads but runs on the CPU, so no fallback: without a match the dialog warns.
+   gets a CUDA 13 wheel (JamePeng 0.4.2+cu130, Python 3.12) next to the existing cu128 one.
+   `IWorkloadInstallService.EnsureLlamaCppWheelAsync` runs before the node packs on both install
+   paths (the Engine's Features dialog and Installer Manager for a user's own ComfyUI, whenever the
+   workload has `installLamaCpp`): one Python probe reads the target venv's Python, torch's CUDA and
+   the installed llama-cpp-python (version and the hash of the file pip installed), the matching
+   catalog wheel is picked, and pip installs it with the catalog's `#sha256=` so any other file is
+   rejected. The catalog's own file in place → nothing to do; the same version from another build
+   (PyPI's CPU 0.3.20) → force-reinstalled. A wheel for another CUDA loads but runs on the CPU, so no
+   fallback: without a wheel for this venv the node packs install anyway with a warning, while a
+   matching wheel that fails to install keeps the packs out (a pack on disk reads as installed, so
+   Install would never retry) and the row stays Partial.
 4. **Catalog** (`Into-The-Latent/DiffusionNexus.Catalog`, on `main`): the *Outpainting-Qwen 2512*
    workload lists the GGUF node pack and Custom-Scripts instead of Qwen3-VL-Instruct and KJNodes,
    the "Qwen 3 VL" placeholder becomes two real models with VRAM-tiered links (the same tiers the

@@ -30,6 +30,18 @@ public sealed class ComfyUIExecutionException(string nodeType, string detail)
 }
 
 /// <summary>
+/// ComfyUI refused the workflow before running it (a 400 from <c>/prompt</c>) and did not name a node:
+/// an older build's "node X does not exist", "Prompt has no outputs". The server answered, so this is
+/// not an availability problem.
+/// </summary>
+public sealed class ComfyUIWorkflowRejectedException(string reason)
+    : InvalidOperationException($"ComfyUI rejected the workflow: {reason}")
+{
+    /// <summary>ComfyUI's own message.</summary>
+    public string Reason { get; } = reason;
+}
+
+/// <summary>
 /// Aggregated result of a ComfyUI workflow execution, containing text and image outputs.
 /// </summary>
 public sealed class ComfyUIResult

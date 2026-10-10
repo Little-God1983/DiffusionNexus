@@ -46,7 +46,6 @@ public partial class OutpaintingViewModel : ObservableObject
     private const string KSamplerNodeId = "11";
     private const string UnetLoaderNodeId = "15";
     private const string ImagePadNodeId = "26";
-    private const string LoadImageOutput = "16";
     private const string VisionNodeId = "256";
 
     /// <summary>Catalog names of the Vision model files; the readiness check reports where they are.</summary>
@@ -822,7 +821,7 @@ public partial class OutpaintingViewModel : ObservableObject
                     // before padding; the receiver lays the result over a canvas computed at native size,
                     // so the pad node reads the loaded image directly and the scale node, now unused, does
                     // not run. (Sizing that node from the editor once sent largest_size 0: a 296x80 result.)
-                    node["inputs"]!["image"] = new System.Text.Json.Nodes.JsonArray(LoadImageOutput, 0);
+                    node["inputs"]!["image"] = new System.Text.Json.Nodes.JsonArray(LoadImageNodeId, 0);
                     node["inputs"]!["left"] = extendLeft;
                     node["inputs"]!["top"] = extendTop;
                     node["inputs"]!["right"] = extendRight;
@@ -919,6 +918,15 @@ public partial class OutpaintingViewModel : ObservableObject
             HasError = true;
             ProgressDisplayText = $"Failed in the ComfyUI node {ex.NodeType} – see the Unified Console";
             StatusMessageChanged?.Invoke(this, $"Outpainting failed in the ComfyUI node {ex.NodeType}: {ex.Detail}");
+        }
+        catch (ComfyUIWorkflowRejectedException ex)
+        {
+            // The server answered and refused the workflow (an older build's "node X does not exist").
+            Logger.Error(ex, "Outpainting: ComfyUI rejected the workflow");
+            _unifiedLogger?.Error(LogCategory.General, LogSource, $"ComfyUI rejected the outpainting workflow: {ex.Reason}", ex);
+            HasError = true;
+            ProgressDisplayText = "ComfyUI rejected the workflow – see the Unified Console";
+            StatusMessageChanged?.Invoke(this, $"ComfyUI rejected the outpainting workflow: {ex.Reason}");
         }
         catch (OperationCanceledException)
         {

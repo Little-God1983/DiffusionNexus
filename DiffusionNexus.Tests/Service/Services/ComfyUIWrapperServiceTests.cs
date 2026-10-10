@@ -625,13 +625,28 @@ public class ComfyUIWrapperServiceTests
         ex.Detail.Should().Be("Value bigger than max: seed: 99999999999 > 4294967295");
     }
 
+    // Review round 4: older ComfyUI builds (a Custom URL user's) answer a missing node pack with a plain message and no
+    // class_type; that must not come out as "is ComfyUI running?".
     [Fact]
-    public void ParsePromptRejection_WithoutANode_KeepsComfyUIsMessage_AndUnparseableIsNull()
+    public void ParsePromptRejection_WithoutANode_IsARejection_NotAGenericError_AndUnparseableIsNull()
     {
-        ComfyUIWrapperService.ParsePromptRejection("""{"error":{"type":"prompt_no_outputs","message":"Prompt has no outputs"},"node_errors":{}}""")
-            .Should().BeOfType<InvalidOperationException>()
-            .Which.Message.Should().Be("ComfyUI rejected the workflow: Prompt has no outputs");
+        ComfyUIWrapperService.ParsePromptRejection("""{"error":{"type":"invalid_prompt","message":"Cannot execute because node SimpleQwenVLggufV2 does not exist.","details":"Node ID '#256'","extra_info":{}},"node_errors":{}}""")
+            .Should().BeOfType<ComfyUIWorkflowRejectedException>()
+            .Which.Reason.Should().Be("Cannot execute because node SimpleQwenVLggufV2 does not exist.");
         ComfyUIWrapperService.ParsePromptRejection("<html>bad gateway</html>").Should().BeNull();
+    }
+
+    [Fact]
+    public void ParsePromptRejection_CapsTheDetail_ComfyUIListsEveryAllowedValue()
+    {
+        var list = string.Join(", ", Enumerable.Range(0, 400).Select(i => $"'model-{i:D4}.gguf'"));
+        var body = $$$$"""{"error":{"type":"prompt_outputs_failed_validation","message":"Prompt outputs failed validation"},"node_errors":{"37":{"errors":[{"type":"value_not_in_list","message":"Value not in list","details":"unet_name: 'x' not in [{{{{list}}}}]"}],"class_type":"UnetLoaderGGUF"}}}""";
+
+        var ex = (ComfyUIExecutionException)ComfyUIWrapperService.ParsePromptRejection(body)!;
+
+        ex.NodeType.Should().Be("UnetLoaderGGUF");
+        ex.Detail.Length.Should().BeLessThan(400);
+        ex.Detail.Should().StartWith("Value not in list: unet_name: 'x' not in [").And.EndWith("…");
     }
 
     [Fact]

@@ -564,7 +564,8 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
 
         // A wheel for another CUDA loads but runs on the CPU, and one for another Python does not install,
         // so the venv itself says which one fits, whatever torch the workload declares.
-        var (python, cuda) = ParsePythonAndCuda(await RunPythonProbeAsync(pythonExe, PythonAndCudaProbe, repositoryPath, cancellationToken));
+        var venv = ParseVenvProbe(await RunPythonProbeAsync(pythonExe, VenvProbeCode, repositoryPath, cancellationToken));
+        var (python, cuda) = (venv.Python, venv.Cuda);
         var wheel = python is null || cuda is null ? null : PickLlamaCppWheel(wheels, cuda, python);
         if (wheel is null)
         {
@@ -580,9 +581,8 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
         }
 
         var wanted = WheelVersionFromUrl(wheel.Url);
-        var installed = ParseMarkedVersion(await RunPythonProbeAsync(pythonExe,
-            $"import llama_cpp; print('{VersionMarker}' + llama_cpp.__version__)", repositoryPath, cancellationToken));
-        if (wanted is not null && string.Equals(installed, wanted, StringComparison.OrdinalIgnoreCase))
+        var arguments = PipInstallArguments(wheel, venv.LlamaCppVersion, venv.LlamaCppHash);
+        if (arguments is null)
         {
             Logger.Information("llama-cpp-python {Version} is already installed in {Root}", wanted, comfyUIRootPath);
             progress?.Report(new WorkloadInstallProgress { ItemName = name, Message = $"llama-cpp-python {wanted} is already installed", IsSuccess = true });
@@ -592,15 +592,19 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
         progress?.Report(new WorkloadInstallProgress
         {
             ItemName = name,
-            Message = installed is null
+            Message = venv.LlamaCppVersion is null
                 ? $"Installing llama-cpp-python {wanted ?? "(wheel)"} ({wheel.Name})..."
-                : $"Replacing llama-cpp-python {installed} with {wanted ?? "(wheel)"} ({wheel.Name})..."
+                : $"Replacing llama-cpp-python {venv.LlamaCppVersion} with {wanted ?? "(wheel)"} ({wheel.Name})..."
         });
+        // Progress stays here: RunPipInstallAsync's own lines are phrased for a node pack's requirements.
         var (success, stderr) = await RunPipInstallAsync(
-            pythonExe, repositoryPath, $"-m pip install \"{PipWheelRequirement(wheel)}\"", name,
-            $"llama-cpp-python {wanted ?? ""}".TrimEnd(), progress, cancellationToken);
+            pythonExe, repositoryPath, arguments, name,
+            $"llama-cpp-python {wanted ?? ""}".TrimEnd(), progress: null, cancellationToken);
         if (success)
+        {
+            progress?.Report(new WorkloadInstallProgress { ItemName = name, Message = $"llama-cpp-python {wanted} installed ({wheel.Name})", IsSuccess = true });
             return LlamaCppWheelOutcome.Installed;
+        }
 
         // pip's own reason (hash mismatch, unsupported wheel, network) belongs in the Unified Console, not only the log file.
         progress?.Report(new WorkloadInstallProgress { ItemName = name, Message = $"llama-cpp-python was not installed: {PipFailureReason(stderr)}", IsFailed = true });
@@ -615,16 +619,53 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
 
     private const string PythonMarker = "DN_PYTHON=";
     private const string CudaMarker = "DN_CUDA=";
+    private const string HashMarker = "DN_HASH=";
 
-    // The Python line comes first, so a venv without torch still reports its Python.
-    private const string PythonAndCudaProbe =
-        "import sys; print('" + PythonMarker + "%d.%d' % sys.version_info[:2]); import torch; print('" + CudaMarker + "' + str(torch.version.cuda))";
+    // One interpreter start for everything the wheel step needs. Each line prints before the next import,
+    // so a venv without torch still reports its Python, and one without llama-cpp-python its CUDA. The
+    // package metadata (not `import llama_cpp`, which loads the DLLs) carries the version with its local
+    // tag and, in direct_url.json, the hash of the file pip installed.
+    private const string VenvProbeCode =
+        "import sys; print('" + PythonMarker + "%d.%d' % sys.version_info[:2]); " +
+        "import torch; print('" + CudaMarker + "' + str(torch.version.cuda)); " +
+        "import importlib.metadata as m, json; d = m.distribution('llama-cpp-python'); print('" + VersionMarker + "' + d.version); " +
+        "print('" + HashMarker + "' + str(json.loads(d.read_text('direct_url.json') or '{}').get('archive_info', {}).get('hashes', {}).get('sha256')))";
 
-    /// <summary>The venv's Python (<c>3.12</c>) and torch's CUDA (<c>13.0</c>) from the probe; CUDA is null for a CPU torch or none.</summary>
-    internal static (string? Python, string? Cuda) ParsePythonAndCuda(string? stdout)
+    /// <summary>What the venv probe found; each part is null when its line did not come (import failed, nothing installed, no recorded file).</summary>
+    internal sealed record VenvProbe(string? Python, string? Cuda, string? LlamaCppVersion, string? LlamaCppHash);
+
+    /// <summary>The venv's Python (<c>3.12</c>), torch's CUDA (<c>13.0</c>, null for a CPU torch), and the installed llama-cpp-python's version and file hash.</summary>
+    internal static VenvProbe ParseVenvProbe(string? stdout)
     {
-        var cuda = ParseMarked(stdout, CudaMarker);
-        return (ParseMarked(stdout, PythonMarker), string.Equals(cuda, "None", StringComparison.Ordinal) ? null : cuda);
+        static string? NotNone(string? value) => string.Equals(value, "None", StringComparison.Ordinal) ? null : value;
+        return new VenvProbe(ParseMarked(stdout, PythonMarker), NotNone(ParseMarked(stdout, CudaMarker)),
+            ParseMarked(stdout, VersionMarker), NotNone(ParseMarked(stdout, HashMarker)));
+    }
+
+    /// <summary>
+    /// The pip arguments that put the catalog's wheel in place, or null when it is there already. The
+    /// catalog's hash against pip's recorded one tells builds of the same version apart (the cu128
+    /// wheel is plain 0.3.20, like PyPI's CPU build); pip itself skips a wheel whose version equals the
+    /// installed one, so another build of the same version is force-reinstalled without its
+    /// dependencies, which that build already brought.
+    /// </summary>
+    internal static string? PipInstallArguments(LamaCppWheel wheel, string? installedVersion, string? installedHash)
+    {
+        var wanted = WheelVersionFromUrl(wheel.Url);
+        var catalogHash = CatalogHash(wheel);
+        var sameVersion = wanted is not null && string.Equals(installedVersion, wanted, StringComparison.OrdinalIgnoreCase);
+        if (sameVersion && (catalogHash is null || string.Equals(installedHash, catalogHash, StringComparison.OrdinalIgnoreCase)))
+            return null;
+        var force = sameVersion ? "--force-reinstall --no-deps " : "";
+        return $"-m pip install {force}\"{PipWheelRequirement(wheel)}\"";
+    }
+
+    private static string? CatalogHash(LamaCppWheel wheel)
+    {
+        var hash = wheel.Sha256?.Trim() ?? "";
+        if (hash.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
+            hash = hash["sha256:".Length..];
+        return hash.Length == 0 ? null : hash.ToLowerInvariant();
     }
 
     /// <summary>pip's <c>ERROR:</c> line, else its last line: the reason a user can act on.</summary>
@@ -641,19 +682,15 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
     /// wheel comes from a third-party release and is loaded into the ComfyUI process. The catalog
     /// stores hashes as <c>sha256:&lt;hex&gt;</c>.
     /// </summary>
-    internal static string PipWheelRequirement(LamaCppWheel wheel)
-    {
-        var hash = wheel.Sha256?.Trim() ?? "";
-        if (hash.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
-            hash = hash["sha256:".Length..];
-        return hash.Length == 0 ? wheel.Url : $"{wheel.Url}#sha256={hash.ToLowerInvariant()}";
-    }
+    internal static string PipWheelRequirement(LamaCppWheel wheel) =>
+        CatalogHash(wheel) is { } hash ? $"{wheel.Url}#sha256={hash}" : wheel.Url;
 
     /// <summary>The version in a wheel file name: <c>llama_cpp_python-0.4.2+cu130-cp312-...whl</c> → <c>0.4.2+cu130</c>.</summary>
     internal static string? WheelVersionFromUrl(string wheelUrl)
     {
         if (string.IsNullOrWhiteSpace(wheelUrl)) return null;
         var file = wheelUrl.Split('/', '\\').LastOrDefault() ?? "";
+        file = file.Split('?', '#')[0]; // a Hugging Face link ends in ?download=true
         if (!file.EndsWith(".whl", StringComparison.OrdinalIgnoreCase)) return null;
         var parts = file[..^4].Split('-');
         return parts.Length >= 2 && parts[1].Length > 0 ? parts[1] : null;

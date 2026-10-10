@@ -51,8 +51,7 @@ public sealed class EngineFeatureBackend : IFeatureBackend
         var row = EngineFeatureCatalog.ForAppFeature(feature);
         if (row is null)
         {
-            var label = feature == Feature.OutpaintVision ? "Outpaint Vision" : feature.ToString();
-            return NotReady(feature, isOnline: true, [$"{label} is not available on the Diffusion Nexus Engine yet"]);
+            return NotReady(feature, isOnline: true, [$"{feature} is not available on the Diffusion Nexus Engine yet"]);
         }
 
         var root = await _rootResolver.ResolveAsync(ct);
