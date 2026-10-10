@@ -56,15 +56,15 @@ public interface IWorkloadInstallService
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Installs a prebuilt llama-cpp-python wheel into the install's venv, unless that exact version
-    /// is there already. Node packs that run GGUF models (Outpaint Vision's Qwen3-VL node, #607) list
-    /// llama-cpp-python in their requirements, and without a wheel pip would try to compile it from
-    /// source. pip checks the download against the catalog's hash. Returns true when the wheel is in
-    /// place afterwards.
+    /// Installs the prebuilt llama-cpp-python wheel that fits the install's own venv (its Python and
+    /// torch's CUDA, read from the venv), unless that version is there already. Node packs that run
+    /// GGUF models (Outpaint Vision's Qwen3-VL node, #607) list llama-cpp-python in their requirements,
+    /// and without a wheel pip would try to compile it from source. pip checks the download against
+    /// the catalog's hash.
     /// </summary>
-    Task<bool> InstallLlamaCppWheelAsync(
+    Task<LlamaCppWheelOutcome> EnsureLlamaCppWheelAsync(
         string comfyUIRootPath,
-        LamaCppWheel wheel,
+        IReadOnlyList<LamaCppWheel> wheels,
         IProgress<WorkloadInstallProgress>? progress = null,
         CancellationToken cancellationToken = default);
 
@@ -83,4 +83,17 @@ public interface IWorkloadInstallService
         string comfyUIRootPath,
         IProgress<WorkloadInstallProgress>? progress = null,
         CancellationToken cancellationToken = default);
+}
+
+/// <summary>What <see cref="IWorkloadInstallService.EnsureLlamaCppWheelAsync"/> did.</summary>
+public enum LlamaCppWheelOutcome
+{
+    /// <summary>The wheel for this venv is in place (installed now or already there).</summary>
+    Installed,
+
+    /// <summary>The catalog has no wheel for this venv's Python and CUDA (or they could not be read); nothing was installed.</summary>
+    NoMatchingWheel,
+
+    /// <summary>A matching wheel's install ran and failed.</summary>
+    Failed,
 }

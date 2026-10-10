@@ -290,9 +290,10 @@ public partial class WorkloadsViewModel : ViewModelBase
 
     /// <summary>
     /// Installs the selected node packs and models. A workload whose node packs run GGUF models through
-    /// llama.cpp (Outpainting-Qwen 2512, #607) names a prebuilt llama-cpp-python wheel; it goes in first,
-    /// because the packs' requirements would otherwise make pip compile it from source. No node pack
-    /// without its wheel: a pack on disk reads as installed, so Install would never retry the wheel.
+    /// llama.cpp (Outpainting-Qwen 2512, #607) gets the prebuilt llama-cpp-python wheel for this ComfyUI's
+    /// Python and CUDA first, because the packs' requirements would otherwise make pip compile it from
+    /// source. A wheel that fails to install keeps its node packs out: a pack on disk reads as installed,
+    /// so Install would never retry the wheel. Without a wheel for this ComfyUI the packs go in anyway.
     /// </summary>
     internal async Task<string> InstallItemsAsync(
         InstallationConfiguration config,
@@ -305,18 +306,12 @@ public partial class WorkloadsViewModel : ViewModelBase
         CancellationToken ct)
     {
         var wheelNote = "";
-        if (nodes.Count > 0 && config.InstallLamaCpp && config.SelectedLamaCppWheelId is { } wheelId)
+        if (nodes.Count > 0 && config.InstallLamaCpp
+            && await _installService.EnsureLlamaCppWheelAsync(_comfyUIRootPath, await _catalog.GetLamaCppWheelsAsync(ct), progress, ct)
+                == LlamaCppWheelOutcome.Failed)
         {
-            var wheel = (await _catalog.GetLamaCppWheelsAsync(ct)).FirstOrDefault(w => w.Id == wheelId);
-            if (wheel is null)
-            {
-                Serilog.Log.Warning("{Workload}: the catalog has no llama-cpp-python wheel {WheelId}", config.Name, wheelId);
-            }
-            else if (!await _installService.InstallLlamaCppWheelAsync(_comfyUIRootPath, wheel, progress, ct))
-            {
-                wheelNote = "llama-cpp-python was not installed, so its node packs were left out; Install again to retry. ";
-                nodes = [];
-            }
+            wheelNote = "llama-cpp-python was not installed, so its node packs were left out; Install again to retry. ";
+            nodes = [];
         }
 
         if (nodes.Count == 0 && models.Count == 0)

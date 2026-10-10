@@ -282,4 +282,35 @@ public class WorkloadInstallServicePipTests
 
         WorkloadInstallService.PipWheelRequirement(wheel).Should().Be(expected);
     }
+
+    private static readonly LamaCppWheel Cu128 = new() { IsGPU = true, PythonVersion = "3.12", CudaVersion = "12.8", Url = "https://x/a.whl" };
+    private static readonly LamaCppWheel Cu130 = new() { IsGPU = true, PythonVersion = "3.12", CudaVersion = "13.0", Url = "https://x/b.whl" };
+
+    [Fact]
+    public void PickLlamaCppWheel_MatchesCudaAndPython_OrNothing()
+    {
+        WorkloadInstallService.PickLlamaCppWheel([Cu128, Cu130], "13.0", "3.12").Should().BeSameAs(Cu130);
+        WorkloadInstallService.PickLlamaCppWheel([Cu128, Cu130], "12.8", "3.12").Should().BeSameAs(Cu128);
+        WorkloadInstallService.PickLlamaCppWheel([Cu128, Cu130], "12.4", "3.12").Should().BeNull("another CUDA's wheel loads but runs on the CPU");
+        WorkloadInstallService.PickLlamaCppWheel([Cu130], "13.0", "3.13").Should().BeNull("a cp312 wheel does not install into Python 3.13");
+    }
+
+    [Theory]
+    [InlineData("DN_PYTHON=3.12\r\nDN_CUDA=13.0\r\n", "3.12", "13.0")]
+    [InlineData("DN_PYTHON=3.13\n", "3.13", null)]          // torch missing: the import failed after the Python line
+    [InlineData("DN_PYTHON=3.12\nDN_CUDA=None\n", "3.12", null)] // a CPU torch
+    [InlineData(null, null, null)]
+    public void ParsePythonAndCuda_ReadsTheVenvProbe(string? stdout, string? python, string? cuda)
+    {
+        WorkloadInstallService.ParsePythonAndCuda(stdout).Should().Be((python, cuda));
+    }
+
+    [Theory]
+    [InlineData("Collecting x\nERROR: THESE PACKAGES DO NOT MATCH THE HASHES FROM THE REQUIREMENTS FILE.\n    llama_cpp_python ...\n", "ERROR: THESE PACKAGES DO NOT MATCH THE HASHES FROM THE REQUIREMENTS FILE.")]
+    [InlineData("WARNING: x\nsomething broke\n\n", "something broke")]
+    [InlineData("", "see the log")]
+    public void PipFailureReason_PrefersPipsErrorLine(string stderr, string expected)
+    {
+        WorkloadInstallService.PipFailureReason(stderr).Should().Be(expected);
+    }
 }

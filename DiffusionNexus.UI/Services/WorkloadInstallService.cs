@@ -542,16 +542,14 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
     }
 
     /// <inheritdoc />
-    public async Task<bool> InstallLlamaCppWheelAsync(
+    public async Task<LlamaCppWheelOutcome> EnsureLlamaCppWheelAsync(
         string comfyUIRootPath,
-        LamaCppWheel wheel,
+        IReadOnlyList<LamaCppWheel> wheels,
         IProgress<WorkloadInstallProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(comfyUIRootPath);
-        ArgumentNullException.ThrowIfNull(wheel);
-        ArgumentException.ThrowIfNullOrWhiteSpace(wheel.Url);
-        var wheelUrl = wheel.Url;
+        ArgumentNullException.ThrowIfNull(wheels);
         const string name = "llama-cpp-python";
 
         var installationType = ConfigurationCheckerService.DetectInstallationType(comfyUIRootPath);
@@ -561,29 +559,81 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
         {
             Logger.Warning("Could not find Python executable for {Root} - llama-cpp-python will not be installed", comfyUIRootPath);
             progress?.Report(new WorkloadInstallProgress { ItemName = name, Message = "Python not found - llama-cpp-python was not installed", IsFailed = true });
-            return false;
+            return LlamaCppWheelOutcome.NoMatchingWheel;
         }
 
-        var wanted = WheelVersionFromUrl(wheelUrl);
-        var installed = await ReadModuleVersionAsync(pythonExe, "llama_cpp", repositoryPath, cancellationToken);
+        // A wheel for another CUDA loads but runs on the CPU, and one for another Python does not install,
+        // so the venv itself says which one fits, whatever torch the workload declares.
+        var (python, cuda) = ParsePythonAndCuda(await RunPythonProbeAsync(pythonExe, PythonAndCudaProbe, repositoryPath, cancellationToken));
+        var wheel = python is null || cuda is null ? null : PickLlamaCppWheel(wheels, cuda, python);
+        if (wheel is null)
+        {
+            Logger.Warning("No prebuilt llama-cpp-python wheel for Python {Python} / CUDA {Cuda} in {Root}", python, cuda, comfyUIRootPath);
+            progress?.Report(new WorkloadInstallProgress
+            {
+                ItemName = name,
+                Message = $"The catalog has no prebuilt llama-cpp-python wheel for Python {python ?? "unknown"} / CUDA {cuda ?? "none"}; " +
+                          "pip may try to build it from source, which usually fails on Windows.",
+                IsFailed = true
+            });
+            return LlamaCppWheelOutcome.NoMatchingWheel;
+        }
+
+        var wanted = WheelVersionFromUrl(wheel.Url);
+        var installed = ParseMarkedVersion(await RunPythonProbeAsync(pythonExe,
+            $"import llama_cpp; print('{VersionMarker}' + llama_cpp.__version__)", repositoryPath, cancellationToken));
         if (wanted is not null && string.Equals(installed, wanted, StringComparison.OrdinalIgnoreCase))
         {
             Logger.Information("llama-cpp-python {Version} is already installed in {Root}", wanted, comfyUIRootPath);
             progress?.Report(new WorkloadInstallProgress { ItemName = name, Message = $"llama-cpp-python {wanted} is already installed", IsSuccess = true });
-            return true;
+            return LlamaCppWheelOutcome.Installed;
         }
 
         progress?.Report(new WorkloadInstallProgress
         {
             ItemName = name,
             Message = installed is null
-                ? $"Installing llama-cpp-python {wanted ?? "(wheel)"}..."
-                : $"Replacing llama-cpp-python {installed} with {wanted ?? "(wheel)"}..."
+                ? $"Installing llama-cpp-python {wanted ?? "(wheel)"} ({wheel.Name})..."
+                : $"Replacing llama-cpp-python {installed} with {wanted ?? "(wheel)"} ({wheel.Name})..."
         });
-        var (success, _) = await RunPipInstallAsync(
+        var (success, stderr) = await RunPipInstallAsync(
             pythonExe, repositoryPath, $"-m pip install \"{PipWheelRequirement(wheel)}\"", name,
             $"llama-cpp-python {wanted ?? ""}".TrimEnd(), progress, cancellationToken);
-        return success;
+        if (success)
+            return LlamaCppWheelOutcome.Installed;
+
+        // pip's own reason (hash mismatch, unsupported wheel, network) belongs in the Unified Console, not only the log file.
+        progress?.Report(new WorkloadInstallProgress { ItemName = name, Message = $"llama-cpp-python was not installed: {PipFailureReason(stderr)}", IsFailed = true });
+        return LlamaCppWheelOutcome.Failed;
+    }
+
+    /// <summary>The GPU wheel built for exactly this CUDA and Python, or null: a wheel for another CUDA loads but runs on the CPU.</summary>
+    internal static LamaCppWheel? PickLlamaCppWheel(IReadOnlyList<LamaCppWheel> wheels, string cudaVersion, string pythonVersion) =>
+        wheels.FirstOrDefault(w => w.IsGPU
+            && string.Equals(w.CudaVersion, cudaVersion, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(w.PythonVersion, pythonVersion, StringComparison.OrdinalIgnoreCase));
+
+    private const string PythonMarker = "DN_PYTHON=";
+    private const string CudaMarker = "DN_CUDA=";
+
+    // The Python line comes first, so a venv without torch still reports its Python.
+    private const string PythonAndCudaProbe =
+        "import sys; print('" + PythonMarker + "%d.%d' % sys.version_info[:2]); import torch; print('" + CudaMarker + "' + str(torch.version.cuda))";
+
+    /// <summary>The venv's Python (<c>3.12</c>) and torch's CUDA (<c>13.0</c>) from the probe; CUDA is null for a CPU torch or none.</summary>
+    internal static (string? Python, string? Cuda) ParsePythonAndCuda(string? stdout)
+    {
+        var cuda = ParseMarked(stdout, CudaMarker);
+        return (ParseMarked(stdout, PythonMarker), string.Equals(cuda, "None", StringComparison.Ordinal) ? null : cuda);
+    }
+
+    /// <summary>pip's <c>ERROR:</c> line, else its last line: the reason a user can act on.</summary>
+    internal static string PipFailureReason(string? stderr)
+    {
+        var lines = (stderr ?? "").Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
+        var reason = lines.FirstOrDefault(l => l.StartsWith("ERROR:", StringComparison.Ordinal)) ?? lines.LastOrDefault();
+        if (reason is null) return "see the log";
+        return reason.Length > 300 ? reason[..300] + "…" : reason;
     }
 
     /// <summary>
@@ -612,23 +662,29 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
     private const string VersionMarker = "DN_VERSION=";
 
     /// <summary>The version after <see cref="VersionMarker"/> in a probe's output, ignoring whatever else the import printed.</summary>
-    internal static string? ParseMarkedVersion(string? stdout)
+    internal static string? ParseMarkedVersion(string? stdout) => ParseMarked(stdout, VersionMarker);
+
+    /// <summary>The value after <paramref name="marker"/> in a probe's output, ignoring whatever else the imports printed.</summary>
+    private static string? ParseMarked(string? stdout, string marker)
     {
         if (string.IsNullOrEmpty(stdout)) return null;
         foreach (var line in stdout.Split('\n'))
         {
             var trimmed = line.Trim();
-            if (trimmed.StartsWith(VersionMarker, StringComparison.Ordinal))
+            if (trimmed.StartsWith(marker, StringComparison.Ordinal))
             {
-                var version = trimmed[VersionMarker.Length..].Trim();
-                return version.Length > 0 ? version : null;
+                var value = trimmed[marker.Length..].Trim();
+                return value.Length > 0 ? value : null;
             }
         }
         return null;
     }
 
-    /// <summary>The <c>__version__</c> of an importable module in the venv, or null when it is not importable.</summary>
-    private static async Task<string?> ReadModuleVersionAsync(string pythonExe, string module, string workingDirectory, CancellationToken ct)
+    /// <summary>
+    /// Runs a short Python snippet in the venv and returns its stdout, whatever the exit code (a probe
+    /// prints what it learned before an import that may fail), or null when Python could not run.
+    /// </summary>
+    private static async Task<string?> RunPythonProbeAsync(string pythonExe, string code, string workingDirectory, CancellationToken ct)
     {
         try
         {
@@ -636,9 +692,9 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
             process.StartInfo = new ProcessStartInfo
             {
                 FileName = pythonExe,
-                // The module may print start-up lines of its own (llama_cpp logs the DLLs it loads), so
-                // the version is marked and read from the marked line only.
-                Arguments = $"-c \"import {module}; print('{VersionMarker}' + {module}.__version__)\"",
+                // Modules may print start-up lines of their own (llama_cpp logs the DLLs it loads), so
+                // probes mark their answers and only the marked lines are read.
+                Arguments = $"-c \"{code}\"",
                 WorkingDirectory = workingDirectory,
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -651,11 +707,11 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
             await process.WaitForExitAsync(ct);
             var stdout = await stdoutTask;
             await stderrTask;
-            return process.ExitCode == 0 ? ParseMarkedVersion(stdout) : null;
+            return stdout;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Logger.Debug(ex, "Could not read the version of {Module}", module);
+            Logger.Debug(ex, "Python probe failed: {Code}", code);
             return null;
         }
     }

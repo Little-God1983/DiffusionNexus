@@ -158,15 +158,16 @@ public class EngineWorkloadsViewModelTests
     private static readonly ModelCheckResult Model = new() { Id = Guid.NewGuid(), Name = "Qwen3-VL-8B-Abliterated-Caption-it", IsInstalled = false, SearchedPaths = [] };
 
     private static (WorkloadsViewModel Vm, Mock<IWorkloadInstallService> Installer, List<string> Order,
-        List<IReadOnlyList<CustomNodeCheckResult>> NodesPassed) WheelSut(bool wheelInstalls)
+        List<IReadOnlyList<CustomNodeCheckResult>> NodesPassed) WheelSut(LlamaCppWheelOutcome outcome)
     {
         var catalog = new Mock<ICatalog>();
         catalog.Setup(c => c.GetLamaCppWheelsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([Cu128Wheel]);
         var order = new List<string>();
         var nodesPassed = new List<IReadOnlyList<CustomNodeCheckResult>>();
         var installer = new Mock<IWorkloadInstallService>();
-        installer.Setup(i => i.InstallLlamaCppWheelAsync(@"C:\ComfyUI", Cu128Wheel, It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<CancellationToken>()))
-            .Callback(() => order.Add("wheel")).ReturnsAsync(wheelInstalls);
+        installer.Setup(i => i.EnsureLlamaCppWheelAsync(@"C:\ComfyUI", It.IsAny<IReadOnlyList<LamaCppWheel>>(),
+                It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<CancellationToken>()))
+            .Callback(() => order.Add("wheel")).ReturnsAsync(outcome);
         installer.Setup(i => i.InstallSelectedAsync(It.IsAny<InstallationConfiguration>(), @"C:\ComfyUI",
                 It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
                 It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
@@ -188,41 +189,55 @@ public class EngineWorkloadsViewModelTests
         return config;
     }
 
+    private static Task<string> Install(WorkloadsViewModel vm, InstallationConfiguration config,
+        IReadOnlyList<CustomNodeCheckResult> nodes, IReadOnlyList<ModelCheckResult> models) =>
+        vm.InstallItemsAsync(config, nodes, models, 16, new Progress<WorkloadInstallProgress>(),
+            new Progress<DownloadProgress>(), () => CancellationToken.None, CancellationToken.None);
+
     [Fact]
     public async Task Install_WorkloadWithAWheel_InstallsItBeforeTheNodePacks()
     {
-        var (vm, _, order, _) = WheelSut(wheelInstalls: true);
+        var (vm, installer, order, _) = WheelSut(LlamaCppWheelOutcome.Installed);
 
-        await vm.InstallItemsAsync(WithWheel(), [NodePack], [Model], 16, new Progress<WorkloadInstallProgress>(),
-            new Progress<DownloadProgress>(), () => CancellationToken.None, CancellationToken.None);
+        await Install(vm, WithWheel(), [NodePack], [Model]);
 
         order.Should().Equal(new List<string> { "wheel", "nodes" }, "pip must find llama-cpp-python satisfied before the node pack's requirements");
+        installer.Verify(i => i.EnsureLlamaCppWheelAsync(@"C:\ComfyUI", It.Is<IReadOnlyList<LamaCppWheel>>(w => w.Contains(Cu128Wheel)),
+            It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<CancellationToken>()), "the service picks from the catalog's wheels by the venv");
     }
 
     [Fact]
     public async Task Install_WheelFails_InstallsTheModelsButNotTheNodePacks()
     {
-        var (vm, _, _, nodesPassed) = WheelSut(wheelInstalls: false);
+        var (vm, _, _, nodesPassed) = WheelSut(LlamaCppWheelOutcome.Failed);
 
-        var summary = await vm.InstallItemsAsync(WithWheel(), [NodePack], [Model], 16, new Progress<WorkloadInstallProgress>(),
-            new Progress<DownloadProgress>(), () => CancellationToken.None, CancellationToken.None);
+        var summary = await Install(vm, WithWheel(), [NodePack], [Model]);
 
         nodesPassed.Should().ContainSingle().Which.Should().BeEmpty("the node pack waits for its wheel, so Install retries both");
         summary.Should().Contain("llama-cpp-python");
     }
 
+    // Review round 3: the workload's cp312 wheel does not install into a Python 3.13 ComfyUI; leaving the
+    // packs out there would block them forever.
+    [Fact]
+    public async Task Install_NoWheelForThisComfyUi_StillInstallsTheNodePacks()
+    {
+        var (vm, _, _, nodesPassed) = WheelSut(LlamaCppWheelOutcome.NoMatchingWheel);
+
+        await Install(vm, WithWheel(), [NodePack], [Model]);
+
+        nodesPassed.Should().ContainSingle().Which.Should().ContainSingle();
+    }
+
     [Fact]
     public async Task Install_ModelsOnly_OrNoWheel_DoesNotTouchTheWheel()
     {
-        var (vm, installer, _, _) = WheelSut(wheelInstalls: true);
-        var plain = Config(Guid.NewGuid(), "Inpainting");
+        var (vm, installer, _, _) = WheelSut(LlamaCppWheelOutcome.Installed);
 
-        await vm.InstallItemsAsync(WithWheel(), [], [Model], 16, new Progress<WorkloadInstallProgress>(),
-            new Progress<DownloadProgress>(), () => CancellationToken.None, CancellationToken.None);
-        await vm.InstallItemsAsync(plain, [NodePack], [], 16, new Progress<WorkloadInstallProgress>(),
-            new Progress<DownloadProgress>(), () => CancellationToken.None, CancellationToken.None);
+        await Install(vm, WithWheel(), [], [Model]);
+        await Install(vm, Config(Guid.NewGuid(), "Inpainting"), [NodePack], []);
 
-        installer.Verify(i => i.InstallLlamaCppWheelAsync(It.IsAny<string>(), It.IsAny<LamaCppWheel>(),
+        installer.Verify(i => i.EnsureLlamaCppWheelAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<LamaCppWheel>>(),
             It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

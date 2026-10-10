@@ -154,8 +154,8 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
 
                     // No node pack without its wheel: the pack's requirements would make pip compile
                     // llama-cpp-python, and a pack on disk reads as installed, so Install would never retry.
-                    if (nodes.Count > 0 && config.SelectedLamaCppWheelId is not null
-                        && !await InstallLlamaCppWheelAsync(row, config, ct))
+                    if (nodes.Count > 0 && config.InstallLamaCpp
+                        && await EnsureLlamaCppWheelAsync(row, ct) == LlamaCppWheelOutcome.Failed)
                     {
                         Warn($"{row.DisplayName}: the node packs wait for llama-cpp-python; Install again to retry.");
                         summaries.Add($"{row.DisplayName}: llama-cpp-python was not installed");
@@ -242,26 +242,13 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
     /// <summary>
     /// A workload whose node packs run GGUF models (Outpaint Vision's Qwen3-VL node) gets the prebuilt
     /// llama-cpp-python wheel first, so pip finds the node's requirement satisfied instead of compiling
-    /// it from source. The wheel is picked for the Engine's own CUDA and Python (the torch it was
-    /// installed with, <see cref="EngineFeatureCatalog.Krea2Turbo"/>), not the workload's declared ones.
+    /// it from source. The service picks the wheel for the Engine venv's own Python and CUDA.
     /// </summary>
-    /// <summary>False only when the wheel's install ran and failed; no matching wheel warns and goes on.</summary>
-    private async Task<bool> InstallLlamaCppWheelAsync(EngineFeatureRowViewModel row, InstallationConfiguration config, CancellationToken ct)
+    private async Task<LlamaCppWheelOutcome> EnsureLlamaCppWheelAsync(EngineFeatureRowViewModel row, CancellationToken ct)
     {
-        var engine = await _catalog.GetWorkloadAsync(EngineFeatureCatalog.Krea2Turbo, ct);
-        var cuda = engine?.Torch.CudaVersion ?? config.Torch.CudaVersion;
-        var python = engine?.Python.PythonVersion ?? config.Python.PythonVersion;
-        var wheel = PickLlamaCppWheel(await _catalog.GetLamaCppWheelsAsync(ct), cuda, python);
-        if (wheel is null)
-        {
-            Warn($"{row.DisplayName}: the catalog has no llama-cpp-python wheel for CUDA {cuda} / Python {python}; " +
-                 "pip may try to build it from source, which usually fails on Windows.");
-            return true;
-        }
-
-        ProgressText = $"{row.DisplayName}: installing llama-cpp-python {WorkloadInstallService.WheelVersionFromUrl(wheel.Url)} ({wheel.Name})…";
+        ProgressText = $"{row.DisplayName}: checking llama-cpp-python…";
         Info(ProgressText);
-        var ok = await _installer.InstallLlamaCppWheelAsync(_engineRoot, wheel,
+        var outcome = await _installer.EnsureLlamaCppWheelAsync(_engineRoot, await _catalog.GetLamaCppWheelsAsync(ct),
             new Progress<WorkloadInstallProgress>(p =>
             {
                 if (!_acceptProgress) return;
@@ -269,16 +256,10 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
                 if (p.IsFailed) Warn(ProgressText);
                 else Info(ProgressText);
             }), ct);
-        if (!ok)
+        if (outcome == LlamaCppWheelOutcome.Failed)
             Warn($"{row.DisplayName}: llama-cpp-python was not installed; the Qwen3-VL node will not load.");
-        return ok;
+        return outcome;
     }
-
-    /// <summary>The GPU wheel built for exactly this CUDA and Python, or null: a wheel for another CUDA loads but runs on the CPU.</summary>
-    internal static LamaCppWheel? PickLlamaCppWheel(IReadOnlyList<LamaCppWheel> wheels, string cudaVersion, string pythonVersion) =>
-        wheels.FirstOrDefault(w => w.IsGPU
-            && string.Equals(w.CudaVersion, cudaVersion, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(w.PythonVersion, pythonVersion, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// The installer reports failed items in its summary rather than throwing, so "Done." is only

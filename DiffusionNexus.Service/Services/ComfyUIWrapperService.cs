@@ -164,6 +164,13 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
 
         Logger.Debug("Queuing workflow on ComfyUI server");
         using var response = await _httpClient.PostAsync("/prompt", content, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.BadRequest
+            && ParsePromptRejection(await response.Content.ReadAsStringAsync(ct)) is { } rejection)
+        {
+            // A node pack that did not load, or an input out of range: ComfyUI says which node in a 400.
+            Logger.Warning(rejection, "ComfyUI rejected the workflow");
+            throw rejection;
+        }
         response.EnsureSuccessStatusCode();
 
         var resultText = await response.Content.ReadAsStringAsync(ct);
@@ -598,6 +605,43 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
 
         Logger.Debug("No options found for node {NodeType} input {InputName}", nodeType, inputName);
         return [];
+    }
+
+    /// <summary>
+    /// ComfyUI's 400 answer to <c>/prompt</c> as an exception: a <see cref="ComfyUIExecutionException"/>
+    /// naming the node when one is to blame (<c>node_errors</c>, or a missing node type), else ComfyUI's
+    /// message; null when the body is not ComfyUI's error JSON.
+    /// </summary>
+    internal static Exception? ParsePromptRejection(string body)
+    {
+        try
+        {
+            if (JsonNode.Parse(body) is not JsonObject json || json["error"] is not JsonObject error)
+                return null;
+            var message = error["message"]?.GetValue<string>();
+
+            if (json["node_errors"] is JsonObject nodeErrors && nodeErrors.Count > 0)
+            {
+                var (nodeId, entry) = nodeErrors.First();
+                var nodeType = entry?["class_type"]?.GetValue<string>() ?? $"#{nodeId}";
+                var first = entry?["errors"] is JsonArray errors && errors.Count > 0 ? errors[0] : null;
+                var errorMessage = first?["message"]?.GetValue<string>();
+                var details = first?["details"]?.GetValue<string>();
+                var detail = errorMessage is null ? message ?? "invalid input"
+                    : string.IsNullOrWhiteSpace(details) ? errorMessage : $"{errorMessage}: {details}";
+                return new ComfyUIExecutionException(nodeType, detail);
+            }
+
+            if (message is null)
+                return null;
+            return error["extra_info"]?["class_type"]?.GetValue<string>() is { Length: > 0 } classType
+                ? new ComfyUIExecutionException(classType, message)
+                : new InvalidOperationException($"ComfyUI rejected the workflow: {message}");
+        }
+        catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException or FormatException)
+        {
+            return null;
+        }
     }
 
     /// <inheritdoc />

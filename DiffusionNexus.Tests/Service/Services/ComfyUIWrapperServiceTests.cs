@@ -590,4 +590,71 @@ public class ComfyUIWrapperServiceTests
             return Task.FromResult(_responder(request));
         }
     }
+
+    // ── Review (#607): a node pack that failed to load made ComfyUI answer /prompt with 400, and the app
+    // said "is the Engine running?" ──
+
+    [Fact]
+    public void ParsePromptRejection_MissingNodeType_NamesTheNode()
+    {
+        const string body = """
+            {"error":{"type":"missing_node_type","message":"Node 'Describe' not found. The custom node may not be installed.",
+             "details":"Node ID '#256'","extra_info":{"node_id":"256","class_type":"SimpleQwenVLggufV2","node_title":"Describe"}},
+             "node_errors":{}}
+            """;
+
+        var ex = ComfyUIWrapperService.ParsePromptRejection(body);
+
+        ex.Should().BeOfType<ComfyUIExecutionException>()
+            .Which.NodeType.Should().Be("SimpleQwenVLggufV2");
+        ((ComfyUIExecutionException)ex!).Detail.Should().Contain("not found");
+    }
+
+    [Fact]
+    public void ParsePromptRejection_NodeErrors_NamesTheFirstFailingNode()
+    {
+        const string body = """
+            {"error":{"type":"prompt_outputs_failed_validation","message":"Prompt outputs failed validation","details":""},
+             "node_errors":{"256":{"errors":[{"type":"value_bigger_than_max","message":"Value bigger than max","details":"seed: 99999999999 > 4294967295"}],
+             "dependent_outputs":["9"],"class_type":"SimpleQwenVLggufV2"}}}
+            """;
+
+        var ex = ComfyUIWrapperService.ParsePromptRejection(body) as ComfyUIExecutionException;
+
+        ex!.NodeType.Should().Be("SimpleQwenVLggufV2");
+        ex.Detail.Should().Be("Value bigger than max: seed: 99999999999 > 4294967295");
+    }
+
+    [Fact]
+    public void ParsePromptRejection_WithoutANode_KeepsComfyUIsMessage_AndUnparseableIsNull()
+    {
+        ComfyUIWrapperService.ParsePromptRejection("""{"error":{"type":"prompt_no_outputs","message":"Prompt has no outputs"},"node_errors":{}}""")
+            .Should().BeOfType<InvalidOperationException>()
+            .Which.Message.Should().Be("ComfyUI rejected the workflow: Prompt has no outputs");
+        ComfyUIWrapperService.ParsePromptRejection("<html>bad gateway</html>").Should().BeNull();
+    }
+
+    [Fact]
+    public async Task QueueWorkflowAsync_Rejected_ThrowsTheNamedNode_NotAnHttpError()
+    {
+        var workflowFile = Path.GetTempFileName();
+        await File.WriteAllTextAsync(workflowFile, """{"256":{"class_type":"SimpleQwenVLggufV2","inputs":{}}}""");
+        var (sut, _) = CreateService(_ => Json(HttpStatusCode.BadRequest, """
+            {"error":{"type":"missing_node_type","message":"Node 'Describe' not found. The custom node may not be installed.",
+             "details":"Node ID '#256'","extra_info":{"node_id":"256","class_type":"SimpleQwenVLggufV2"}},"node_errors":{}}
+            """));
+
+        try
+        {
+            using (sut)
+            {
+                var act = () => sut.QueueWorkflowAsync(workflowFile, new Dictionary<string, Action<JsonNode>>());
+                (await act.Should().ThrowAsync<ComfyUIExecutionException>()).Which.NodeType.Should().Be("SimpleQwenVLggufV2");
+            }
+        }
+        finally
+        {
+            File.Delete(workflowFile);
+        }
+    }
 }

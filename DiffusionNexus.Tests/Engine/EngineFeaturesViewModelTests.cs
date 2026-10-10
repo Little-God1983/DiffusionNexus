@@ -328,45 +328,45 @@ public class EngineFeaturesViewModelTests
         vm.IsInstalling.Should().BeFalse("a failing re-check must not leave the dialog locked");
     }
 
-    // ── #607: the Qwen3-VL GGUF node needs a prebuilt llama-cpp-python wheel, picked for the Engine's CUDA ──
+    // ── #607: the Qwen3-VL GGUF node needs a prebuilt llama-cpp-python wheel; the service picks it for the venv ──
 
-    private static readonly LamaCppWheel Cu128 = new()
-    {
-        Id = Guid.Parse("F119F4D4-EF71-484F-8213-0ABC49F26900"), Name = "JamePeng cu128", IsGPU = true,
-        PythonVersion = "3.12", CudaVersion = "12.8", Url = "https://example/llama_cpp_python-0.3.20-cp312-cp312-win_amd64.whl"
-    };
     private static readonly LamaCppWheel Cu130 = new()
     {
         Id = Guid.NewGuid(), Name = "JamePeng cu130", IsGPU = true,
         PythonVersion = "3.12", CudaVersion = "13.0", Url = "https://example/llama_cpp_python-0.4.2+cu130-cp312-cp312-win_amd64.whl"
     };
 
+    private void WheelOutcome(LlamaCppWheelOutcome outcome, Action? callback = null) =>
+        _installer.Setup(i => i.EnsureLlamaCppWheelAsync(Root, It.IsAny<IReadOnlyList<LamaCppWheel>>(),
+                It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<CancellationToken>()))
+            .Callback(() => callback?.Invoke())
+            .ReturnsAsync(outcome);
+
+    private void VerifyNoWheel() =>
+        _installer.Verify(i => i.EnsureLlamaCppWheelAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<LamaCppWheel>>(),
+            It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<CancellationToken>()), Times.Never);
+
     private async Task<EngineFeaturesViewModel> VisionNeedsNodePacksAsync()
     {
-        _catalog.Setup(c => c.GetLamaCppWheelsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([Cu128, Cu130]);
-        var engine = (await _catalog.Object.GetWorkloadAsync(EngineFeatureCatalog.Krea2Turbo))!;
-        engine.Torch.CudaVersion = "13.0";
-        engine.Python.PythonVersion = "3.12";
+        _catalog.Setup(c => c.GetLamaCppWheelsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([Cu130]);
         var vision = (await _catalog.Object.GetWorkloadAsync(EngineFeatureCatalog.OutpaintingQwen2512))!;
-        vision.SelectedLamaCppWheelId = Cu128.Id; // the workload's own (standalone) choice: a cu128 torch
+        vision.InstallLamaCpp = true;
         _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(0, 1, 0, 5);
         _state[EngineFeatureCatalog.Krea2Turbo] = Result(0, 2, 0, 3);
         _state[EngineFeatureCatalog.OutpaintingQwen2512] = Result(2, 1, 0, 7);
         InstallReturns("2 node(s) installed", () => _state[EngineFeatureCatalog.OutpaintingQwen2512] = Result(0, 3, 0, 7));
-        _installer.Setup(i => i.InstallLlamaCppWheelAsync(Root, It.IsAny<LamaCppWheel>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+        WheelOutcome(LlamaCppWheelOutcome.Installed);
         var vm = Sut(EngineFeature.OutpaintVision);
         await vm.LoadCommand.ExecuteAsync(null);
         return vm;
     }
 
     [Fact]
-    public async Task VisionInstall_InstallsTheWheelForTheEnginesCuda_BeforeTheNodePacks()
+    public async Task VisionInstall_InstallsTheWheel_BeforeTheNodePacks()
     {
         var vm = await VisionNeedsNodePacksAsync();
         var order = new List<string>();
-        _installer.Setup(i => i.InstallLlamaCppWheelAsync(Root, Cu130, It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<CancellationToken>()))
-            .Callback(() => order.Add("wheel")).ReturnsAsync(true);
+        WheelOutcome(LlamaCppWheelOutcome.Installed, () => order.Add("wheel"));
         _installer.Setup(i => i.InstallSelectedAsync(It.IsAny<InstallationConfiguration>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
                 It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
@@ -377,8 +377,8 @@ public class EngineFeaturesViewModelTests
         await vm.InstallSelectedCommand.ExecuteAsync(null);
 
         order.Should().Equal(new List<string> { "wheel", "nodes" }, "pip must find llama-cpp-python satisfied before the node pack's requirements");
-        _installer.Verify(i => i.InstallLlamaCppWheelAsync(Root, Cu128, It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<CancellationToken>()),
-            Times.Never, "the workload's cu128 wheel would run on the CPU in a cu130 Engine");
+        _installer.Verify(i => i.EnsureLlamaCppWheelAsync(Root, It.Is<IReadOnlyList<LamaCppWheel>>(w => w.Contains(Cu130)),
+            It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<CancellationToken>()), "the catalog's wheels go to the service, which reads the venv");
         vm.ProgressText.Should().StartWith("Done.");
     }
 
@@ -391,8 +391,7 @@ public class EngineFeaturesViewModelTests
         _state[EngineFeatureCatalog.OutpaintingQwen2512] = Result(2, 1, 1, 6);
         await vm.LoadCommand.ExecuteAsync(null);
         Row(vm, EngineFeature.OutpaintVision).IsSelected = true;
-        _installer.Setup(i => i.InstallLlamaCppWheelAsync(Root, Cu130, It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(false);
+        WheelOutcome(LlamaCppWheelOutcome.Failed);
         var nodesPassed = new List<IReadOnlyList<CustomNodeCheckResult>>();
         _installer.Setup(i => i.InstallSelectedAsync(It.IsAny<InstallationConfiguration>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
@@ -411,6 +410,26 @@ public class EngineFeaturesViewModelTests
     }
 
     [Fact]
+    public async Task VisionInstall_NoMatchingWheel_StillInstallsTheNodePacks()
+    {
+        var vm = await VisionNeedsNodePacksAsync();
+        WheelOutcome(LlamaCppWheelOutcome.NoMatchingWheel);
+        var nodesPassed = new List<IReadOnlyList<CustomNodeCheckResult>>();
+        _installer.Setup(i => i.InstallSelectedAsync(It.IsAny<InstallationConfiguration>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
+                It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
+                It.IsAny<Func<CancellationToken>?>(), It.IsAny<CancellationToken>()))
+            .Callback((InstallationConfiguration _, string _, IReadOnlyList<CustomNodeCheckResult> n, IReadOnlyList<ModelCheckResult> _,
+                int _, IProgress<WorkloadInstallProgress>? _, IProgress<DownloadProgress>? _, Func<CancellationToken>? _, CancellationToken _) =>
+                nodesPassed.Add(n))
+            .ReturnsAsync("2 node(s) installed");
+
+        await vm.InstallSelectedCommand.ExecuteAsync(null);
+
+        nodesPassed.Should().ContainSingle().Which.Should().HaveCount(2, "retrying cannot conjure a wheel the catalog does not have");
+    }
+
+    [Fact]
     public async Task VisionInstall_ModelsOnly_DoesNotTouchTheWheel()
     {
         var vm = await VisionNeedsNodePacksAsync();
@@ -420,7 +439,7 @@ public class EngineFeaturesViewModelTests
 
         await vm.InstallSelectedCommand.ExecuteAsync(null);
 
-        _installer.Verify(i => i.InstallLlamaCppWheelAsync(It.IsAny<string>(), It.IsAny<LamaCppWheel>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<CancellationToken>()), Times.Never);
+        VerifyNoWheel();
     }
 
     [Fact]
@@ -435,16 +454,7 @@ public class EngineFeaturesViewModelTests
 
         await vm.InstallSelectedCommand.ExecuteAsync(null);
 
-        _installer.Verify(i => i.InstallLlamaCppWheelAsync(It.IsAny<string>(), It.IsAny<LamaCppWheel>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
-    public void PickLlamaCppWheel_MatchesCudaAndPython_OrNothing()
-    {
-        EngineFeaturesViewModel.PickLlamaCppWheel([Cu128, Cu130], "13.0", "3.12").Should().BeSameAs(Cu130);
-        EngineFeaturesViewModel.PickLlamaCppWheel([Cu128, Cu130], "12.8", "3.12").Should().BeSameAs(Cu128);
-        EngineFeaturesViewModel.PickLlamaCppWheel([Cu128, Cu130], "12.4", "3.12").Should().BeNull("another CUDA's wheel loads but runs on the CPU");
-        EngineFeaturesViewModel.PickLlamaCppWheel([Cu130], "13.0", "3.13").Should().BeNull();
+        VerifyNoWheel();
     }
 
     // Smoke 2: "Done. …" was replaced 3 ms later by the last node pack's own progress line.
