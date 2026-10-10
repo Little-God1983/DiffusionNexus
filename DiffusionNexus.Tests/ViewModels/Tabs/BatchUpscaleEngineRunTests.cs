@@ -92,10 +92,28 @@ public class BatchUpscaleEngineRunTests : IDisposable
             .Callback((LogCategory _, string _, string m, string? _) => Logged.Add(("Warn", m)));
         logger.Setup(l => l.Error(It.IsAny<LogCategory>(), "Batch Upscale", It.IsAny<string>(), It.IsAny<Exception?>()))
             .Callback((LogCategory _, string _, string m, Exception? _) => Logged.Add(("Error", m)));
-        return new BatchUpscaleTabViewModel(Events, new Mock<IDatasetState>().Object,
+        var state = new Mock<IDatasetState>();
+        state.SetupGet(s => s.Datasets).Returns(new System.Collections.ObjectModel.ObservableCollection<DiffusionNexus.UI.ViewModels.DatasetCardViewModel>());
+        return Current = new BatchUpscaleTabViewModel(Events, state.Object,
             clientProvider: provider ?? InpaintingViewModelGGUFResolutionTests.Provider(Client.Object, ComfyUiServerMode.Engine),
             readinessService: Readiness.Object, uiScheduler: uiScheduler ?? new ImmediateUiScheduler(),
             thumbnailDecoder: (_, _) => null, unifiedLogger: logger.Object);
+    }
+
+    /// <summary>The view model the last <see cref="Sut"/> call made.</summary>
+    protected BatchUpscaleTabViewModel? Current;
+
+    /// <summary>Presses Cancel and answers like a client call the cancelled token stopped.</summary>
+    protected Task UserCancels()
+    {
+        Current!.CancelUpscaleCommand.Execute(null);
+        return Task.FromCanceled(new CancellationToken(true));
+    }
+
+    protected Task<T> UserCancels<T>()
+    {
+        Current!.CancelUpscaleCommand.Execute(null);
+        return Task.FromCanceled<T>(new CancellationToken(true));
     }
 
     protected string Image(string name)
@@ -187,6 +205,140 @@ public class BatchUpscaleEngineRunTests : IDisposable
         await RunAsync(vm, UpscalePromptMode.ManualPrompt, "a.png", "b.png");
 
         Logged.Should().Contain(e => e.Level == "Error" && e.Message.Contains("upscaling image 2/2"));
+    }
+
+    // ── Round 5 ──
+
+    private static string UpscaleFactorOf(Dictionary<string, Action<JsonNode>> o)
+    {
+        var node = JsonNode.Parse("""{"inputs":{"upscale_by":0,"denoise":0,"seed":0}}""")!;
+        o["39"](node);
+        return node["inputs"]!["upscale_by"]!.ToJsonString();
+    }
+
+    private Mock<DiffusionNexus.UI.Services.IDialogService> Confirm(bool answer)
+    {
+        var dialogs = new Mock<DiffusionNexus.UI.Services.IDialogService>();
+        dialogs.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(answer);
+        return dialogs;
+    }
+
+    // Round 5: New Version on a gallery selection fell back to processing the images in place when no dataset could be
+    // created (no storage path), and the save rule then wrote each upscale over its original.
+    [Fact]
+    public async Task GallerySelection_NewVersionWithoutADataset_KeepsTheOriginals()
+    {
+        var a = Image(Path.Combine("day1", "a.png"));
+        var b = Image(Path.Combine("day2", "b.png"));
+        var vm = Sut();
+        vm.PositivePrompt = "x";
+        vm.LoadTemporaryImages([a, b]);
+        vm.PromptMode = UpscalePromptMode.ManualPrompt;
+        vm.SaveMode = UpscaleSaveMode.NewVersion;
+        await vm.Readiness.CheckReadinessAsync();
+
+        await vm.StartUpscaleCommand.ExecuteAsync(null);
+
+        File.ReadAllBytes(a).Should().Equal(0x89, 0x50, 0x4E, 0x47);
+        File.ReadAllBytes(b).Should().Equal(0x89, 0x50, 0x4E, 0x47);
+        File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(a)!, "a_upscaled.png")).Should().Equal(1, 2, 3);
+    }
+
+    // Round 5: Overwrite on a gallery selection skipped the "cannot be undone" confirmation.
+    [Fact]
+    public async Task GallerySelection_Overwrite_AsksFirst_AndANoChangesNothing()
+    {
+        var a = Image(Path.Combine("day1", "a.png"));
+        var dialogs = Confirm(false);
+        var vm = Sut();
+        vm.DialogService = dialogs.Object;
+        vm.PositivePrompt = "x";
+        vm.LoadTemporaryImages([a]);
+        vm.PromptMode = UpscalePromptMode.ManualPrompt;
+        vm.SaveMode = UpscaleSaveMode.OverwriteInPlace;
+        await vm.Readiness.CheckReadinessAsync();
+
+        await vm.StartUpscaleCommand.ExecuteAsync(null);
+
+        dialogs.Verify(d => d.ShowConfirmAsync("Overwrite Original Images?", It.IsAny<string>()), Times.Once);
+        Queued.Should().BeEmpty();
+        File.ReadAllBytes(a).Should().Equal(0x89, 0x50, 0x4E, 0x47);
+    }
+
+    // Round 5: the compare backups were named by file name only; same-named gallery images shared one backup.
+    [Fact]
+    public async Task GallerySelection_Overwrite_SameNamedImagesKeepTheirOwnBeforeCopy()
+    {
+        var a = Image(Path.Combine("day1", "img.png"));
+        var b = Image(Path.Combine("day2", "img.png"));
+        File.WriteAllBytes(a, [0xA]);
+        File.WriteAllBytes(b, [0xB]);
+        var vm = Sut();
+        vm.DialogService = Confirm(true).Object;
+        vm.PositivePrompt = "x";
+        vm.LoadTemporaryImages([a, b]);
+        vm.PromptMode = UpscalePromptMode.ManualPrompt;
+        vm.SaveMode = UpscaleSaveMode.OverwriteInPlace;
+        await vm.Readiness.CheckReadinessAsync();
+
+        await vm.StartUpscaleCommand.ExecuteAsync(null);
+
+        File.ReadAllBytes(vm.UpscaleItems[0].OriginalPath).Should().Equal(0xA);
+        File.ReadAllBytes(vm.UpscaleItems[1].OriginalPath).Should().Equal(0xB);
+    }
+
+    // Round 5: a failed write or move left the ".upscaling" partial behind.
+    [Fact]
+    public async Task AFailedSave_LeavesNoPartialFile()
+    {
+        var vm = Sut();
+        vm.PositivePrompt = "x";
+        var a = Image("a.png");
+        Directory.CreateDirectory(Path.Combine(Path.GetDirectoryName(a)!, "a_upscaled.png"));
+
+        await RunAsync(vm, UpscalePromptMode.ManualPrompt);
+        vm.SingleImagePaths.Add(a);
+        await vm.StartUpscaleCommand.ExecuteAsync(null);
+
+        vm.CurrentProcessingStatus.Should().StartWith("Error:");
+        Directory.EnumerateFiles(Path.GetDirectoryName(a)!, "*.upscaling").Should().BeEmpty();
+    }
+
+    // Round 5: upscale factor, denoise and prompts were read per image, so a change during the run split the batch.
+    [Fact]
+    public async Task SettingsChangedDuringTheRun_TheRunKeepsTheOnesItStartedWith()
+    {
+        BatchUpscaleTabViewModel? vm = null;
+        var waits = 0;
+        Client.Setup(c => c.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                if (++waits == 1) { vm!.UpscaleFactor = 3.0; vm.PositivePrompt = "changed"; }
+                return Task.CompletedTask;
+            });
+        vm = Sut();
+        vm.PositivePrompt = "a sharp photo";
+        vm.UpscaleFactor = 1.5;
+
+        await RunAsync(vm, UpscalePromptMode.ManualPrompt, "a.png", "b.png");
+
+        Queued.Select(q => UpscaleFactorOf(q.Overrides)).Should().Equal("1.5", "1.5");
+        Queued.Select(q => PromptOf(q.Overrides)).Should().Equal("a sharp photo", "a sharp photo");
+    }
+
+    // Round 5: an HttpClient timeout (TaskCanceledException without Cancel) was reported as "Cancelled".
+    [Fact]
+    public async Task ATimeout_IsAnError_NotACancel()
+    {
+        Client.Setup(c => c.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout of 600 seconds elapsing."));
+        var vm = Sut();
+        vm.PositivePrompt = "x";
+
+        await RunAsync(vm, UpscalePromptMode.ManualPrompt, "a.png");
+
+        vm.CurrentProcessingStatus.Should().StartWith("Error:");
+        Logged.Should().Contain(e => e.Level == "Error");
     }
 
     // Round 4: the result was written with the run's token; a Cancel during the write truncated the target, which in

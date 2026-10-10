@@ -23,6 +23,9 @@ public sealed class ImageDescriber
     /// <summary>The workflow's nodes that run before Qwen3-VL: a failure there leaves the model as it was.</summary>
     internal static readonly IReadOnlySet<string> NodesBeforeTheDescriber = new HashSet<string> { "LoadImage", "ImageScaleToMaxDimension" };
 
+    /// <summary>The workflow's nodes that run after Qwen3-VL: a failure there leaves what the node's mode left.</summary>
+    internal static readonly IReadOnlySet<string> NodesAfterTheDescriber = new HashSet<string> { "ShowText|pysssss" };
+
     private readonly IComfyUIWrapperService _client;
     private readonly string _workflowPath;
     private readonly string _config;

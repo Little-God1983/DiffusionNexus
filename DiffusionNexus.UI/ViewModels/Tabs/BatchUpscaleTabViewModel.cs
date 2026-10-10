@@ -235,10 +235,13 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     /// <summary>What the run is doing, for failure log lines ("describing image 2/5").</summary>
     private string _runStep = "";
 
-    // Save mode and prompt mode as the run started: both stay editable during a run (step 1 takes minutes),
-    // and a switch to Overwrite mid-run replaced originals with no confirmation and no compare backup.
+    // The settings as the run started: they stay editable during a run (step 1 takes minutes). A switch to
+    // Overwrite mid-run replaced originals with no confirmation and no compare backup; a slider or prompt
+    // change split the batch.
     private UpscaleSaveMode _runSaveMode;
     private UpscalePromptMode _runPromptMode;
+    private double _runUpscaleFactor, _runDenoisingStrength;
+    private string _runPositivePrompt = string.Empty, _runNegativePrompt = string.Empty;
     private readonly Func<string, int, Bitmap?> _thumbnailDecoder;
     private CancellationTokenSource? _cts;
     private bool _disposed;
@@ -842,6 +845,10 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
         _runSaveMode = SaveMode;
         _runPromptMode = PromptMode;
+        _runUpscaleFactor = _upscaleFactor;
+        _runDenoisingStrength = _denoisingStrength;
+        _runPositivePrompt = _positivePrompt;
+        _runNegativePrompt = _negativePrompt;
 
         // Defensive short-circuit: if readiness has flipped to "not ready" between the
         // CanExecute check and the click, surface the same message the readiness panel
@@ -886,8 +893,11 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 var persistentDataset = await ConvertTempDatasetToPersistentAsync();
                 if (persistentDataset is null)
                 {
-                    // Conversion failed (e.g., storage path not configured) — fall back to temp processing
-                    await RunUpscaleLoopAsync(_tempImagePaths, newVersionPath: null, isSingleImageMode: false);
+                    // Conversion failed (e.g., storage path not configured). New Version promised to leave the
+                    // originals untouched, so each result goes next to its original as {name}_upscaled{ext}.
+                    Warn("No dataset could be created for the gallery selection; the upscaled images are written " +
+                         "next to the originals as *_upscaled.");
+                    await RunUpscaleLoopAsync(_tempImagePaths, newVersionPath: null, isSingleImageMode: true);
                     return;
                 }
                 // Fall through to normal dataset processing with the newly persistent dataset
@@ -895,6 +905,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             else
             {
                 // OverwriteInPlace on temp images: process directly, no persistent dataset needed
+                if (!await ConfirmOverwriteAsync(_tempImagePaths.Count)) return;
                 await RunUpscaleLoopAsync(_tempImagePaths, newVersionPath: null, isSingleImageMode: false);
                 return;
             }
@@ -922,20 +933,8 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             return;
         }
 
-        // Warn when overwriting originals — this is destructive and cannot be undone.
-        if (_runSaveMode == UpscaleSaveMode.OverwriteInPlace && DialogService is not null)
-        {
-            var confirmed = await DialogService.ShowConfirmAsync(
-                "Overwrite Original Images?",
-                $"This will permanently replace {datasetImageFiles.Count} original image(s) with their upscaled versions. " +
-                "This action cannot be undone.\n\nDo you want to continue?");
-
-            if (!confirmed)
-            {
-                CurrentProcessingStatus = "Upscale cancelled by user.";
-                return;
-            }
-        }
+        if (_runSaveMode == UpscaleSaveMode.OverwriteInPlace && !await ConfirmOverwriteAsync(datasetImageFiles.Count))
+            return;
 
         // The selector stays enabled during the run, so the run keeps its own dataset for the clean-up.
         var dataset = SelectedDataset;
@@ -982,6 +981,20 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             if (DiscardEmptyVersion(dataset, newVersionPath, newVersionNumber) && newVersionNumber.HasValue)
                 FinalizeVersionCreation(dataset, newVersionNumber.Value, branchedFromVersion);
         }
+    }
+
+    /// <summary>Warns before overwriting originals — destructive and cannot be undone. False when declined.</summary>
+    private async Task<bool> ConfirmOverwriteAsync(int imageCount)
+    {
+        if (DialogService is null) return true;
+
+        var confirmed = await DialogService.ShowConfirmAsync(
+            "Overwrite Original Images?",
+            $"This will permanently replace {imageCount} original image(s) with their upscaled versions. " +
+            "This action cannot be undone.\n\nDo you want to continue?");
+        if (!confirmed)
+            CurrentProcessingStatus = "Upscale cancelled by user.";
+        return confirmed;
     }
 
     /// <summary>Removes a version folder a run created but never wrote to, and its branch record. A folder
@@ -1150,7 +1163,8 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                     // ImageCompareControl can still show a before/after comparison.
                     if (!isSingleImage && _runSaveMode == UpscaleSaveMode.OverwriteInPlace && _compareOriginalsTempDir is not null)
                     {
-                        var tempOriginal = Path.Combine(_compareOriginalsTempDir, item.FileName);
+                        // Numbered: gallery images from different folders can share a name.
+                        var tempOriginal = Path.Combine(_compareOriginalsTempDir, $"{i + 1}_{item.FileName}");
                         File.Copy(item.OriginalPath, tempOriginal, overwrite: true);
                         item.OriginalPath = tempOriginal;
                     }
@@ -1158,8 +1172,17 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                     // Written whole, without the run's token: a Cancel mid-write truncated the target, which in
                     // Overwrite mode is the original. The move replaces the target only once the bytes are complete.
                     var partialPath = outputPath + ".upscaling";
-                    await File.WriteAllBytesAsync(partialPath, imageBytes, CancellationToken.None);
-                    File.Move(partialPath, outputPath, overwrite: true);
+                    try
+                    {
+                        await File.WriteAllBytesAsync(partialPath, imageBytes, CancellationToken.None);
+                        File.Move(partialPath, outputPath, overwrite: true);
+                    }
+                    catch
+                    {
+                        try { File.Delete(partialPath); }
+                        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                        throw;
+                    }
 
                     item.UpscaledPath = outputPath;
 
@@ -1210,7 +1233,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             CurrentProcessingStatus = $"ComfyUI answered {(int)status} – see the Unified Console";
             Error($"ComfyUI answered {(int)status} while {_runStep}: {ex.Message}", ex);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             CurrentProcessingStatus = $"Cancelled after {CompletedCount}/{TotalImageCount} images.";
             Info(CurrentProcessingStatus);
@@ -1299,8 +1322,9 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 {
                     // Before the node (LoadImage, the scale node): what earlier jobs left. In the node: it may have
                     // died holding the model. After it (ShowText): what the node's mode left.
+                    // A node ComfyUI could not name may be the describer.
                     mayBeLoaded = ImageDescriber.NodesBeforeTheDescriber.Contains(ex.NodeType) ? wasLoaded
-                        : ex.NodeType == ImageDescriber.DescribeNodeType || keepLoaded;
+                        : !ImageDescriber.NodesAfterTheDescriber.Contains(ex.NodeType) || keepLoaded;
                     undescribed++;
                     Warn($"Could not describe {item.FileName} (node {ex.NodeType}: {ex.Detail}); it is upscaled without a prompt.");
                 }
@@ -1347,12 +1371,12 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             },
             [NegativePromptNodeId] = node =>
             {
-                node["inputs"]!["text"] = _negativePrompt;
+                node["inputs"]!["text"] = _runNegativePrompt;
             },
             [UltimateSDUpscaleNodeId] = node =>
             {
-                node["inputs"]!["upscale_by"] = _upscaleFactor;
-                node["inputs"]!["denoise"] = _denoisingStrength;
+                node["inputs"]!["upscale_by"] = _runUpscaleFactor;
+                node["inputs"]!["denoise"] = _runDenoisingStrength;
                 node["inputs"]!["seed"] = seed;
             },
             [SaveImageNodeId] = node =>
@@ -1563,9 +1587,9 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     {
         return _runPromptMode switch
         {
-            UpscalePromptMode.ManualPrompt => _positivePrompt,
-            UpscalePromptMode.FromCaptions => ReadCaptionForImage(imagePath) ?? _positivePrompt,
-            UpscalePromptMode.FromMetadata => ReadMetadataPrompt(imagePath) ?? _positivePrompt,
+            UpscalePromptMode.ManualPrompt => _runPositivePrompt,
+            UpscalePromptMode.FromCaptions => ReadCaptionForImage(imagePath) ?? _runPositivePrompt,
+            UpscalePromptMode.FromMetadata => ReadMetadataPrompt(imagePath) ?? _runPositivePrompt,
             _ => string.Empty
         };
     }

@@ -131,7 +131,7 @@ public class BatchUpscaleVisionTwoStepTests : BatchUpscaleEngineRunTests
     {
         var waits = 0;
         Client.Setup(c => c.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()))
-            .Returns(() => ++waits == 2 ? Task.FromCanceled(new CancellationToken(true)) : Task.CompletedTask);
+            .Returns(() => ++waits == 2 ? UserCancels() : Task.CompletedTask);
 
         var vm = Sut();
         await RunAsync(vm, UpscalePromptMode.VisionAutoPrompt, "a.png", "b.png", "c.png");
@@ -237,7 +237,7 @@ public class BatchUpscaleVisionTwoStepTests : BatchUpscaleEngineRunTests
         var dataset = DiffusionNexus.UI.ViewModels.DatasetCardViewModel.FromFolder(datasetFolder);
         var waits = 0;
         Client.Setup(c => c.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()))
-            .Returns(() => ++waits == 2 ? Task.FromCanceled(new CancellationToken(true)) : Task.CompletedTask);
+            .Returns(() => ++waits == 2 ? UserCancels() : Task.CompletedTask);
         var vm = Sut();
         vm.SelectedDataset = dataset;
         vm.SelectedDatasetVersion = vm.AvailableDatasetVersions.Single(v => v.Version == 1);
@@ -259,7 +259,7 @@ public class BatchUpscaleVisionTwoStepTests : BatchUpscaleEngineRunTests
     {
         var waits = 0;
         Client.Setup(c => c.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()))
-            .Returns(() => ++waits == 1 ? Task.FromCanceled(new CancellationToken(true)) : Task.CompletedTask);
+            .Returns(() => ++waits == 1 ? UserCancels() : Task.CompletedTask);
 
         await RunAsync(Sut(), UpscalePromptMode.VisionAutoPrompt, "a.png", "b.png");
 
@@ -309,7 +309,7 @@ public class BatchUpscaleVisionTwoStepTests : BatchUpscaleEngineRunTests
             {
                 if (++waits != 2) return Task.CompletedTask;
                 vm.SelectedDataset = null;
-                return Task.FromCanceled(new CancellationToken(true));
+                return UserCancels();
             });
         vm.SelectedDataset = dataset;
         vm.SelectedDatasetVersion = vm.AvailableDatasetVersions.Single(v => v.Version == 1);
@@ -371,7 +371,7 @@ public class BatchUpscaleVisionTwoStepTests : BatchUpscaleEngineRunTests
             {
                 if (++waits != 2) return Task.CompletedTask;
                 File.WriteAllBytes(Path.Combine(folder, "V2", "a.png"), [1]);
-                return Task.FromCanceled(new CancellationToken(true));
+                return UserCancels();
             });
         var vm = Sut();
         vm.SelectedDataset = dataset;
@@ -420,7 +420,7 @@ public class BatchUpscaleVisionTwoStepTests : BatchUpscaleEngineRunTests
         var uploads = 0;
         Client.Setup(c => c.UploadImageAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns((string path, CancellationToken _) => ++uploads == 2
-                ? Task.FromCanceled<string>(new CancellationToken(true))
+                ? UserCancels<string>()
                 : Task.FromResult("up-" + Path.GetFileName(path)));
 
         await RunAsync(Sut(), UpscalePromptMode.VisionAutoPrompt, "a.png", "b.png", "c.png");
@@ -435,11 +435,23 @@ public class BatchUpscaleVisionTwoStepTests : BatchUpscaleEngineRunTests
     {
         var waits = 0;
         Client.Setup(c => c.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()))
-            .Returns(() => ++waits == 2 ? Task.FromCanceled(new CancellationToken(true)) : Task.CompletedTask);
+            .Returns(() => ++waits == 2 ? UserCancels() : Task.CompletedTask);
 
         await RunAsync(Sut(), UpscalePromptMode.VisionAutoPrompt, "a.png", "b.png");
 
         Describes.Select(d => ModeOf(d.Overrides)).Should().Equal("keep_vram", "direct_clean");
+    }
+
+    // Round 5: a node ComfyUI could not name ("unknown") on the last job counted as one after the describer, so a
+    // model the describer may have died holding was never freed.
+    [Fact]
+    public async Task AnUnnamedNodeFailsTheLastJob_QwenIsFreed()
+    {
+        FailDescribeWait(2, new ComfyUIExecutionException("unknown", "Unknown execution error"));
+
+        await RunAsync(Sut(), UpscalePromptMode.VisionAutoPrompt, "a.png", "b.png");
+
+        Describes.Select(d => ModeOf(d.Overrides)).Should().Equal("keep_vram", "direct_clean", "direct_clean");
     }
 
     [Fact]

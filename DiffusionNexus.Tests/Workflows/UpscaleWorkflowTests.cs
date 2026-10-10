@@ -51,6 +51,8 @@ public class UpscaleWorkflowTests
             .Should().Be(DiffusionNexus.UI.Services.Vision.ImageDescriber.DescribeNodeType);
         DiffusionNexus.UI.Services.Vision.ImageDescriber.NodesBeforeTheDescriber
             .Should().BeEquivalentTo([TypeOf("1"), TypeOf("2")]);
+        DiffusionNexus.UI.Services.Vision.ImageDescriber.NodesAfterTheDescriber
+            .Should().BeEquivalentTo([TypeOf("4")]);
     }
 
     // Checked in the source tree: an incremental build leaves a deleted workflow's old copy in bin.
