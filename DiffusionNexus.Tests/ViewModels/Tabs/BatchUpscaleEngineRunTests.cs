@@ -75,11 +75,11 @@ public class BatchUpscaleEngineRunTests : IDisposable
         [QwenVlGguf.ProjectorName] = @"D:\m\mmproj.gguf",
     };
 
-    protected void ReadinessWith(IReadOnlyDictionary<string, string> paths) =>
+    protected void ReadinessWith(IReadOnlyDictionary<string, string> paths, BackendKind backend = BackendKind.Engine) =>
         Readiness.Setup(r => r.CheckAsync(It.IsAny<Feature>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((Feature f, CancellationToken _) => new FeatureReadinessResult
             {
-                Feature = f, Backend = BackendKind.Engine, ActiveBackendName = "Diffusion Nexus Engine",
+                Feature = f, Backend = backend, ActiveBackendName = backend == BackendKind.Engine ? "Diffusion Nexus Engine" : "ComfyUI",
                 IsBackendOnline = true, IsReady = true, MissingRequirements = [], Warnings = [], ModelPaths = paths
             });
 
@@ -187,6 +187,33 @@ public class BatchUpscaleEngineRunTests : IDisposable
         await RunAsync(vm, UpscalePromptMode.ManualPrompt, "a.png", "b.png");
 
         Logged.Should().Contain(e => e.Level == "Error" && e.Message.Contains("upscaling image 2/2"));
+    }
+
+    // Round 2: every unexpected error in Engine mode asked "is the Diffusion Nexus Engine running?", also a full disk.
+    [Fact]
+    public async Task ALocalFileError_DoesNotBlameTheEngine()
+    {
+        Client.Setup(c => c.DownloadImageAsync(It.IsAny<ComfyUIImage>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("There is not enough space on the disk."));
+        var vm = Sut();
+        vm.PositivePrompt = "x";
+
+        await RunAsync(vm, UpscalePromptMode.ManualPrompt, "a.png");
+
+        vm.CurrentProcessingStatus.Should().Be("Error: There is not enough space on the disk.");
+    }
+
+    [Fact]
+    public async Task AConnectionError_AsksWhetherTheEngineIsRunning()
+    {
+        Client.Setup(c => c.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("No connection could be made"));
+        var vm = Sut();
+        vm.PositivePrompt = "x";
+
+        await RunAsync(vm, UpscalePromptMode.ManualPrompt, "a.png");
+
+        vm.CurrentProcessingStatus.Should().Be("Error: No connection could be made – is the Diffusion Nexus Engine running?");
     }
 
     // Round 1: Settings/Engine events reached the tab through Dispatcher.UIThread instead of the injected scheduler.

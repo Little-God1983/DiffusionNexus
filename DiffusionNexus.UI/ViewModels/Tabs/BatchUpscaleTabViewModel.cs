@@ -929,6 +929,9 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             }
         }
 
+        // The selector stays enabled during the run, so the run keeps its own dataset for the clean-up.
+        var dataset = SelectedDataset;
+
         // Prepare output folder for NewVersion save mode
         string? newVersionPath = null;
         int? newVersionNumber = null;
@@ -967,7 +970,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         else if (newVersionPath is not null && CompletedCount == 0)
         {
             // Nothing was upscaled (cancel, an error, a failed Engine start): drop the version made for it.
-            DiscardEmptyVersion(SelectedDataset, newVersionPath, newVersionNumber);
+            DiscardEmptyVersion(dataset, newVersionPath, newVersionNumber);
         }
     }
 
@@ -1001,6 +1004,8 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     {
         if (_clientProvider is null) return;
 
+        // Reset first: the caller reads the count after an early return too (an empty new version is discarded).
+        CompletedCount = 0;
         var isSingleImage = isSingleImageMode;
 
         // Resolve the workflow file. Vision describes first (step 1), then runs the same upscale workflow.
@@ -1022,8 +1027,11 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 await VisionReadiness.CheckReadinessAsync();
             if (!QwenVlGguf.TryGetPaths(VisionReadiness.ModelPaths, out modelPath, out projectorPath))
             {
-                CurrentProcessingStatus = "The Qwen3-VL GGUF model was not found. Install Batch Upscale Vision in " +
-                                          "Installation Manager → Diffusion Nexus Engine → Features.";
+                CurrentProcessingStatus = VisionReadiness.IsEngineBackend
+                    ? "The Qwen3-VL GGUF model was not found. Install Batch Upscale Vision in " +
+                      "Installation Manager → Diffusion Nexus Engine → Features."
+                    : "The Qwen3-VL GGUF model was not found in your ComfyUI. Open Installer Manager → " +
+                      "Upscaling-Z-Image-Turbo Vision to install it.";
                 Warn(CurrentProcessingStatus);
                 return;
             }
@@ -1054,7 +1062,6 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
         IsProcessing = true;
-        CompletedCount = 0;
         TotalImageCount = imageFiles.Count;
         TotalProgress = 0;
 
@@ -1189,11 +1196,17 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             CurrentProcessingStatus = $"Cancelled after {CompletedCount}/{TotalImageCount} images.";
             Info(CurrentProcessingStatus);
         }
-        catch (Exception ex)
+        catch (HttpRequestException ex)
         {
+            // No status code: the server did not answer at all.
             CurrentProcessingStatus = lease?.Mode == ComfyUiServerMode.Engine
                 ? $"Error: {ex.Message} – is the Diffusion Nexus Engine running?"
                 : $"Error: {ex.Message}";
+            Error($"Batch upscale failed while {_runStep}", ex);
+        }
+        catch (Exception ex)
+        {
+            CurrentProcessingStatus = $"Error: {ex.Message}";
             Error($"Batch upscale failed while {_runStep}", ex);
         }
         finally
@@ -1227,8 +1240,11 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         TotalProgress = 0;
         Info("Step 1 of 2: describing every image with Qwen3-VL.");
 
-        // The upload a keep_vram job described while leaving Qwen3-VL loaded; null while nothing is loaded.
-        string? loadedWith = null;
+        // Whether Qwen3-VL may be loaded on the server: a keep_vram job ran, or still runs there (a cancelled
+        // wait does not stop it), and no later job unloaded it. The free-up job needs an image the server can
+        // read: the last one described, else the one in flight.
+        var mayBeLoaded = false;
+        string? lastDescribed = null, inFlight = null;
         var undescribed = 0;
         try
         {
@@ -1240,14 +1256,17 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 CurrentProcessingStatus = $"[{i + 1}/{TotalImageCount}] Describing {item.FileName}…";
 
                 _runStep = $"describing image {i + 1}/{TotalImageCount}";
-                var uploaded = await comfy.UploadImageAsync(item.OriginalPath, ct);
+                var uploaded = inFlight = await comfy.UploadImageAsync(item.OriginalPath, ct);
                 var keepLoaded = i < UpscaleItems.Count - 1;
+                var wasLoaded = mayBeLoaded;
+                mayBeLoaded |= keepLoaded;
                 try
                 {
                     // The first description also unloads ComfyUI's own models (the last run's upscaler):
                     // llama.cpp allocates outside ComfyUI's memory manager, which would not make room.
                     item.Description = await describer.DescribeAsync(uploaded, keepLoaded, ct, freeComfyModels: i == 0);
-                    loadedWith = keepLoaded ? uploaded : null;
+                    if (keepLoaded) lastDescribed = uploaded;
+                    else mayBeLoaded = false;
                     if (item.Description is null)
                     {
                         undescribed++;
@@ -1258,16 +1277,23 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 }
                 catch (ComfyUIExecutionException ex)
                 {
-                    // Failed before or in the node: whatever an earlier job left loaded is still there.
+                    // Failed before the node ran (LoadImage, the scale node): only what earlier jobs left is loaded.
+                    mayBeLoaded = wasLoaded;
                     undescribed++;
                     Warn($"Could not describe {item.FileName} (node {ex.NodeType}: {ex.Detail}); it is upscaled without a prompt.");
                 }
                 catch (ImageDescriptionFailedException ex)
                 {
                     // The node unloads everything after a failed inference.
-                    loadedWith = null;
+                    mayBeLoaded = false;
                     undescribed++;
                     Warn($"Qwen3-VL could not describe {item.FileName} ({ex.Message}); it is upscaled without a prompt.");
+                }
+                catch (ComfyUIWorkflowRejectedException)
+                {
+                    // Never queued.
+                    mayBeLoaded = wasLoaded;
+                    throw;
                 }
 
                 item.IsProcessing = false;
@@ -1276,14 +1302,14 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             }
 
             // The last job frees the model itself; when it failed before the node ran, it did not.
-            if (loadedWith is not null)
-                await describer.FreeAsync(loadedWith);
+            if (mayBeLoaded)
+                await describer.FreeAsync(lastDescribed ?? inFlight!);
             return undescribed;
         }
-        catch (Exception) when (loadedWith is not null)
+        catch (Exception) when (mayBeLoaded)
         {
             Info("Freeing Qwen3-VL on the server after step 1 stopped early.");
-            await describer.FreeAsync(loadedWith);
+            await describer.FreeAsync(lastDescribed ?? inFlight!);
             throw;
         }
     }

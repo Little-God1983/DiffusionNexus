@@ -252,6 +252,88 @@ public class BatchUpscaleVisionTwoStepTests : BatchUpscaleEngineRunTests
         DiffusionNexus.UI.ViewModels.DatasetCardViewModel.FromFolder(datasetFolder).VersionBranchedFrom.Should().NotContainKey(2);
     }
 
+    // Round 2: a cancel while the first keep_vram job ran skipped the free-up job; the server finishes that job
+    // and leaves Qwen3-VL loaded.
+    [Fact]
+    public async Task CancelWhileTheFirstImageIsDescribed_StillFreesQwen()
+    {
+        var waits = 0;
+        Client.Setup(c => c.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()))
+            .Returns(() => ++waits == 1 ? Task.FromCanceled(new CancellationToken(true)) : Task.CompletedTask);
+
+        await RunAsync(Sut(), UpscalePromptMode.VisionAutoPrompt, "a.png", "b.png");
+
+        Describes.Select(d => ModeOf(d.Overrides)).Should().Equal("keep_vram", "direct_clean");
+        ImageOf(Describes.Last().Overrides, "1").Should().Be("up-a.png");
+    }
+
+    private DiffusionNexus.UI.ViewModels.DatasetCardViewModel TwoImageDataset(out string folder)
+    {
+        folder = Path.GetDirectoryName(Path.GetDirectoryName(Image(Path.Combine("ds", "V1", "a.png"))))!;
+        Image(Path.Combine("ds", "V1", "b.png"));
+        return DiffusionNexus.UI.ViewModels.DatasetCardViewModel.FromFolder(folder);
+    }
+
+    // Round 2: a Vision run that stopped before resetting the count read the previous run's count and turned
+    // its new, empty folder into the dataset's current version.
+    [Fact]
+    public async Task NewVersion_AfterAnEarlierRun_AStopBeforeTheFirstImageLeavesNoEmptyVersion()
+    {
+        var vm = Sut();
+        vm.PositivePrompt = "x";
+        await RunAsync(vm, UpscalePromptMode.ManualPrompt, "x.png", "y.png");
+        vm.CompletedCount.Should().Be(2);
+        var dataset = TwoImageDataset(out var folder);
+        ReadinessWith(new Dictionary<string, string>());
+        vm.SelectedDataset = dataset;
+        vm.SelectedDatasetVersion = vm.AvailableDatasetVersions.Single(v => v.Version == 1);
+        vm.PromptMode = UpscalePromptMode.VisionAutoPrompt;
+        await vm.VisionReadiness.CheckReadinessAsync();
+
+        await vm.StartUpscaleCommand.ExecuteAsync(null);
+
+        Directory.Exists(Path.Combine(folder, "V2")).Should().BeFalse();
+        dataset.CurrentVersion.Should().Be(1);
+    }
+
+    // Round 2: the empty version was discarded from whatever dataset was selected when the run ended; the selector
+    // stays enabled during a run, and Image(s) mode leaves none selected.
+    [Fact]
+    public async Task NewVersion_TheSelectionChangesDuringTheRun_TheRunsOwnDatasetIsCleanedUp()
+    {
+        var dataset = TwoImageDataset(out var folder);
+        var vm = Sut();
+        var waits = 0;
+        Client.Setup(c => c.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                if (++waits != 2) return Task.CompletedTask;
+                vm.SelectedDataset = null;
+                return Task.FromCanceled(new CancellationToken(true));
+            });
+        vm.SelectedDataset = dataset;
+        vm.SelectedDatasetVersion = vm.AvailableDatasetVersions.Single(v => v.Version == 1);
+        vm.PromptMode = UpscalePromptMode.VisionAutoPrompt;
+        await vm.VisionReadiness.CheckReadinessAsync();
+
+        await vm.Invoking(v => v.StartUpscaleCommand.ExecuteAsync(null)).Should().NotThrowAsync();
+
+        Directory.Exists(Path.Combine(folder, "V2")).Should().BeFalse();
+        dataset.VersionBranchedFrom.Should().NotContainKey(2);
+    }
+
+    // Round 2: the install hint sent own-ComfyUI users to the Engine's Features dialog.
+    [Fact]
+    public async Task WithoutTheModelPaths_OnYourOwnComfyUI_TheHintNamesYourComfyUI()
+    {
+        ReadinessWith(new Dictionary<string, string>(), DiffusionNexus.Domain.Enums.BackendKind.ComfyUI);
+        var vm = Sut();
+
+        await RunAsync(vm, UpscalePromptMode.VisionAutoPrompt, "a.png");
+
+        vm.CurrentProcessingStatus.Should().Contain("your ComfyUI").And.NotContain("Diffusion Nexus Engine");
+    }
+
     [Fact]
     public async Task CancelBeforeTheFirstUpload_QueuesNothing()
     {
