@@ -9,6 +9,7 @@ using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.Models;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.Vision;
 using DiffusionNexus.UI.Utilities;
 using Serilog;
 
@@ -57,8 +58,8 @@ public enum UpscalePromptMode
     FromMetadata,
 
     /// <summary>
-    /// A vision model (Qwen3-VL) analyses each image and generates the prompt automatically.
-    /// Uses the Vision-Z-Image-Turbo-Upscale workflow.
+    /// Qwen3-VL describes each image (step 1), then each image is upscaled with its description as the prompt (step 2).
+    /// Uses the Qwen3-VL-Describe workflow, then the Z-Image-Turbo-Upscale workflow.
     /// </summary>
     VisionAutoPrompt
 }
@@ -166,6 +167,29 @@ public partial class UpscaleImageItemViewModel : ObservableObject
         set => SetProperty(ref _isProcessed, value);
     }
 
+    private string? _description;
+    private bool _isDescribed;
+
+    /// <summary>What Qwen3-VL wrote for this image in step 1 of a Vision run; its upscale prompt.</summary>
+    public string? Description
+    {
+        get => _description;
+        set
+        {
+            if (SetProperty(ref _description, value))
+                OnPropertyChanged(nameof(HasDescription));
+        }
+    }
+
+    /// <summary>Step 1 is done for this image (described, or tried and failed).</summary>
+    public bool IsDescribed
+    {
+        get => _isDescribed;
+        set => SetProperty(ref _isDescribed, value);
+    }
+
+    public bool HasDescription => !string.IsNullOrWhiteSpace(_description);
+
     /// <summary>
     /// Whether this image is currently being processed.
     /// </summary>
@@ -216,7 +240,6 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
     // Workflow paths (relative to AppDomain.CurrentDomain.BaseDirectory)
     private const string ManualUpscaleWorkflowPath = "Assets/Workflows/Z-Image-Turbo-Upscale.json";
-    private const string VisionUpscaleWorkflowPath = "Assets/Workflows/Vision-Z-Image-Turbo-Upscale.json";
 
     // Node IDs shared by both workflows
     private const string LoadImageNodeId = "50";
@@ -264,6 +287,14 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     private string _currentProcessingStatus = string.Empty;
     private int _completedCount;
     private int _totalImageCount;
+
+    internal const string StepOneText = "Step 1 of 2 · Describing images with Qwen3-VL";
+    internal const string StepTwoText = "Step 2 of 2 · Upscaling";
+    internal const string StepOneExplanation =
+        "Upscaled images appear in step 2. Qwen3-VL describes every image first so it loads only once; then it is unloaded and the upscaler gets the VRAM.";
+
+    private string? _stepText;
+    private string? _stepExplanation;
 
     // Compare state
     private UpscaleImageItemViewModel? _selectedCompareItem;
@@ -545,6 +576,26 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     /// </summary>
     public bool IsManualPromptMode => PromptMode == UpscalePromptMode.ManualPrompt;
 
+    /// <summary>The step banner of a Vision run; null when the run has one step.</summary>
+    public string? StepText
+    {
+        get => _stepText;
+        private set
+        {
+            if (SetProperty(ref _stepText, value))
+                OnPropertyChanged(nameof(HasStep));
+        }
+    }
+
+    /// <summary>Why no upscaled image has appeared yet (step 1 only).</summary>
+    public string? StepExplanation
+    {
+        get => _stepExplanation;
+        private set => SetProperty(ref _stepExplanation, value);
+    }
+
+    public bool HasStep => _stepText is not null;
+
     /// <summary>
     /// Human-readable description of the selected prompt mode.
     /// </summary>
@@ -553,7 +604,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         UpscalePromptMode.ManualPrompt => "Your prompt is sent to every image. Good when all images share a theme.",
         UpscalePromptMode.FromCaptions => "Uses each image's caption file (.txt) as the positive prompt.",
         UpscalePromptMode.FromMetadata => "Extracts the positive prompt from each image's embedded generation metadata.",
-        UpscalePromptMode.VisionAutoPrompt => "A vision model (Qwen3-VL) analyses each image and writes the prompt for you.",
+        UpscalePromptMode.VisionAutoPrompt => "Qwen3-VL describes each image (step 1), then each image is upscaled with its description as the prompt (step 2).",
         _ => string.Empty
     };
 
@@ -928,16 +979,30 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
         var isSingleImage = isSingleImageMode;
 
-        // Resolve the workflow file.
+        // Resolve the workflow file. Vision describes first (step 1), then runs the same upscale workflow.
         var isVision = PromptMode == UpscalePromptMode.VisionAutoPrompt;
-        var workflowRelPath = isVision ? VisionUpscaleWorkflowPath : ManualUpscaleWorkflowPath;
-        var workflowPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, workflowRelPath);
+        var workflowPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, ManualUpscaleWorkflowPath);
 
         if (!File.Exists(workflowPath))
         {
-            CurrentProcessingStatus = $"Workflow file not found: {Path.GetFileName(workflowRelPath)}";
+            CurrentProcessingStatus = $"Workflow file not found: {Path.GetFileName(ManualUpscaleWorkflowPath)}";
             Logger.Error("Upscale workflow not found at {Path}", workflowPath);
             return;
+        }
+
+        string modelPath = "", projectorPath = "";
+        if (isVision)
+        {
+            // The GGUF node takes the files as paths; readiness found them. Re-check once when unknown.
+            if (!QwenVlGguf.TryGetPaths(VisionReadiness.ModelPaths, out _, out _))
+                await VisionReadiness.CheckReadinessAsync();
+            if (!QwenVlGguf.TryGetPaths(VisionReadiness.ModelPaths, out modelPath, out projectorPath))
+            {
+                CurrentProcessingStatus = "The Qwen3-VL GGUF model was not found. Install Batch Upscale Vision in " +
+                                          "Installation Manager → Diffusion Nexus Engine → Features.";
+                Warn(CurrentProcessingStatus);
+                return;
+            }
         }
 
         // Clean up any previous temp originals and prepare for OverwriteInPlace comparison
@@ -978,19 +1043,33 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             Info($"Running on {(lease.Mode == ComfyUiServerMode.Engine ? "the Diffusion Nexus Engine" : "your own ComfyUI")} at {lease.BaseUrl}.");
             Info($"{TotalImageCount} image(s), prompt mode {PromptMode.GetDisplayName()}.");
 
+            var uploaded = new string?[UpscaleItems.Count];
+            if (isVision)
+            {
+                await DescribeAllAsync(comfy, new ImageDescriber(comfy, modelPath, projectorPath), uploaded, ct);
+                StepText = StepTwoText;
+                StepExplanation = null;
+                TotalProgress = 0;
+                Info("Step 2 of 2: upscaling.");
+            }
+
             for (var i = 0; i < UpscaleItems.Count; i++)
             {
                 ct.ThrowIfCancellationRequested();
 
                 var item = UpscaleItems[i];
                 item.IsProcessing = true;
-                CurrentProcessingStatus = $"[{i + 1}/{TotalImageCount}] Uploading {item.FileName}…";
 
-                // 1. Upload image to ComfyUI
-                var uploadedFilename = await comfy.UploadImageAsync(item.OriginalPath, ct);
+                // 1. Upload image to ComfyUI (a Vision run uploaded it in step 1)
+                if (uploaded[i] is null)
+                {
+                    CurrentProcessingStatus = $"[{i + 1}/{TotalImageCount}] Uploading {item.FileName}…";
+                    uploaded[i] = await comfy.UploadImageAsync(item.OriginalPath, ct);
+                }
+                var uploadedFilename = uploaded[i]!;
 
-                // 2. Resolve the positive prompt for this image
-                var imagePositivePrompt = ResolvePositivePrompt(item.OriginalPath);
+                // 2. Resolve the positive prompt for this image (Vision: what Qwen3-VL wrote; none when it failed)
+                var imagePositivePrompt = isVision ? item.Description ?? string.Empty : ResolvePositivePrompt(item.OriginalPath);
 
                 // 3. Build node modifiers
                 var seed = (long)(_random.NextDouble() * long.MaxValue);
@@ -1099,10 +1178,70 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 item.IsProcessing = false;
             }
 
+            StepText = null;
+            StepExplanation = null;
             lease?.Dispose();
             IsProcessing = false;
             _cts?.Dispose();
             _cts = null;
+        }
+    }
+
+    /// <summary>
+    /// Step 1 of a Vision run: uploads and describes every image with Qwen3-VL kept loaded, the last one
+    /// freeing it. Stopping early (cancel, an error) frees the model with one extra job, so it does not
+    /// stay in the server's VRAM. A description that fails for one image is a warning: that image is
+    /// upscaled without a prompt.
+    /// </summary>
+    private async Task DescribeAllAsync(IComfyUIWrapperService comfy, ImageDescriber describer, string?[] uploaded, CancellationToken ct)
+    {
+        StepText = StepOneText;
+        StepExplanation = StepOneExplanation;
+        TotalProgress = 0;
+        Info("Step 1 of 2: describing every image with Qwen3-VL.");
+
+        string? lastUploaded = null;
+        var lastFailed = false;
+        try
+        {
+            for (var i = 0; i < UpscaleItems.Count; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                var item = UpscaleItems[i];
+                item.IsProcessing = true;
+                CurrentProcessingStatus = $"[{i + 1}/{TotalImageCount}] Describing {item.FileName}…";
+
+                uploaded[i] = await comfy.UploadImageAsync(item.OriginalPath, ct);
+                lastUploaded = uploaded[i];
+                try
+                {
+                    item.Description = await describer.DescribeAsync(uploaded[i]!, keepLoaded: i < UpscaleItems.Count - 1, ct);
+                    lastFailed = false;
+                    if (item.Description is null)
+                        Warn($"Qwen3-VL returned no description for {item.FileName}; it is upscaled without a prompt.");
+                    else
+                        Info($"Description of {item.FileName}: {item.Description}");
+                }
+                catch (ComfyUIExecutionException ex)
+                {
+                    lastFailed = true;
+                    Warn($"Could not describe {item.FileName} (node {ex.NodeType}: {ex.Detail}); it is upscaled without a prompt.");
+                }
+
+                item.IsProcessing = false;
+                item.IsDescribed = true;
+                TotalProgress = (double)(i + 1) / TotalImageCount * 100;
+            }
+
+            // The last job frees the model itself; when it failed, it may have died before doing so.
+            if (lastFailed && lastUploaded is not null)
+                await describer.FreeAsync(lastUploaded);
+        }
+        catch (Exception) when (lastUploaded is not null)
+        {
+            Info("Freeing Qwen3-VL on the server after step 1 stopped early.");
+            await describer.FreeAsync(lastUploaded);
+            throw;
         }
     }
 
