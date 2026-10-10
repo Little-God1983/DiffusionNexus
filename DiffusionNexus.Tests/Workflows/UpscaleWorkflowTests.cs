@@ -40,6 +40,19 @@ public class UpscaleWorkflowTests
         Links(workflow).Should().OnlyContain(id => workflow.ContainsKey(id));
     }
 
+    // Step 1 decides from the failing node's type whether Qwen3-VL may still be loaded; the names must match the workflow.
+    [Fact]
+    public void Describe_TheNodeTypesStepOneKnows_AreTheWorkflowsOwn()
+    {
+        var workflow = Load("Qwen3-VL-Describe.json");
+        string TypeOf(string id) => workflow[id]!["class_type"]!.GetValue<string>();
+
+        TypeOf(DiffusionNexus.UI.Services.Vision.ImageDescriber.DescribeNodeId)
+            .Should().Be(DiffusionNexus.UI.Services.Vision.ImageDescriber.DescribeNodeType);
+        DiffusionNexus.UI.Services.Vision.ImageDescriber.NodesBeforeTheDescriber
+            .Should().BeEquivalentTo([TypeOf("1"), TypeOf("2")]);
+    }
+
     // Checked in the source tree: an incremental build leaves a deleted workflow's old copy in bin.
     [Fact]
     public void TheVisionUpscaleWorkflow_IsGone()

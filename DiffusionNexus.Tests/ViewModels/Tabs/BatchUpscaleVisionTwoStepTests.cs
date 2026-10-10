@@ -334,6 +334,88 @@ public class BatchUpscaleVisionTwoStepTests : BatchUpscaleEngineRunTests
         vm.CurrentProcessingStatus.Should().Contain("your ComfyUI").And.NotContain("Diffusion Nexus Engine");
     }
 
+    // Round 3: the selection can change during a run; a successful run made the selected dataset current instead
+    // of its own.
+    [Fact]
+    public async Task NewVersion_TheSelectionChangesDuringASuccessfulRun_TheRunsOwnDatasetGetsTheVersion()
+    {
+        var dataset = TwoImageDataset(out var folder);
+        var vm = Sut();
+        var waits = 0;
+        Client.Setup(c => c.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                if (++waits == 3) vm.SelectedDataset = null;
+                return Task.CompletedTask;
+            });
+        vm.SelectedDataset = dataset;
+        vm.SelectedDatasetVersion = vm.AvailableDatasetVersions.Single(v => v.Version == 1);
+        vm.PromptMode = UpscalePromptMode.VisionAutoPrompt;
+        await vm.VisionReadiness.CheckReadinessAsync();
+
+        await vm.StartUpscaleCommand.ExecuteAsync(null);
+
+        Directory.EnumerateFiles(Path.Combine(folder, "V2")).Should().HaveCount(2);
+        dataset.CurrentVersion.Should().Be(2);
+    }
+
+    // Round 3: the clean-up dropped the branch record even when the folder kept a file (a write cut off by Cancel),
+    // leaving a version on disk with no record.
+    [Fact]
+    public async Task NewVersion_AFolderThatIsNotEmpty_KeepsItsBranchRecord()
+    {
+        var dataset = TwoImageDataset(out var folder);
+        var waits = 0;
+        Client.Setup(c => c.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                if (++waits != 2) return Task.CompletedTask;
+                File.WriteAllBytes(Path.Combine(folder, "V2", "a.png"), [1]);
+                return Task.FromCanceled(new CancellationToken(true));
+            });
+        var vm = Sut();
+        vm.SelectedDataset = dataset;
+        vm.SelectedDatasetVersion = vm.AvailableDatasetVersions.Single(v => v.Version == 1);
+        vm.PromptMode = UpscalePromptMode.VisionAutoPrompt;
+        await vm.VisionReadiness.CheckReadinessAsync();
+
+        await vm.StartUpscaleCommand.ExecuteAsync(null);
+
+        Directory.Exists(Path.Combine(folder, "V2")).Should().BeTrue();
+        dataset.VersionBranchedFrom.Should().Contain(2, 1);
+    }
+
+    // Round 3: a failure in a node after Qwen3-VL (ShowText) was taken for one before it, so a later cancel left
+    // the model a keep_vram job had loaded.
+    [Fact]
+    public async Task AFailureAfterTheDescriber_StillCountsTheModelAsLoaded()
+    {
+        FailDescribeWait(1, new ComfyUIExecutionException("ShowText|pysssss", "bad text"));
+        var uploads = 0;
+        Client.Setup(c => c.UploadImageAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns((string path, CancellationToken _) => ++uploads == 2
+                ? Task.FromCanceled<string>(new CancellationToken(true))
+                : Task.FromResult("up-" + Path.GetFileName(path)));
+
+        await RunAsync(Sut(), UpscalePromptMode.VisionAutoPrompt, "a.png", "b.png", "c.png");
+
+        Describes.Select(d => ModeOf(d.Overrides)).Should().Equal("keep_vram", "direct_clean");
+    }
+
+    // Round 3: a cancel during the last (direct_clean) job sent a free-up job, though the server runs that job to
+    // the end and unloads the model itself; the extra job only reloaded it.
+    [Fact]
+    public async Task CancelDuringTheLastDescription_NoFreeJob()
+    {
+        var waits = 0;
+        Client.Setup(c => c.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()))
+            .Returns(() => ++waits == 2 ? Task.FromCanceled(new CancellationToken(true)) : Task.CompletedTask);
+
+        await RunAsync(Sut(), UpscalePromptMode.VisionAutoPrompt, "a.png", "b.png");
+
+        Describes.Select(d => ModeOf(d.Overrides)).Should().Equal("keep_vram", "direct_clean");
+    }
+
     [Fact]
     public async Task CancelBeforeTheFirstUpload_QueuesNothing()
     {

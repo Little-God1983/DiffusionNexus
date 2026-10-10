@@ -370,7 +370,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
         // SettingsSaved (the Server mode) and EngineChanged (an Engine or Features install) change what
         // readiness reports; they can arrive on a thread-pool thread, and the check writes bound
-        // properties. With no Avalonia application (unit tests) run inline.
+        // properties, so they reach it through the UI scheduler.
         _eventAggregator.SettingsSaved += OnReadinessInputChanged;
         _eventAggregator.EngineChanged += OnReadinessInputChanged;
 
@@ -965,7 +965,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         // If we created a new version, update the dataset model and publish events
         if (newVersionNumber.HasValue && CompletedCount > 0)
         {
-            FinalizeVersionCreation(newVersionNumber.Value, branchedFromVersion);
+            FinalizeVersionCreation(dataset, newVersionNumber.Value, branchedFromVersion);
         }
         else if (newVersionPath is not null && CompletedCount == 0)
         {
@@ -974,13 +974,17 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         }
     }
 
-    /// <summary>Removes a version folder a run created but never wrote to, and its branch record.</summary>
+    /// <summary>Removes a version folder a run created but never wrote to, and its branch record. A folder
+    /// that holds a file (a write cut off by Cancel) stays, with its record.</summary>
     private static void DiscardEmptyVersion(DatasetCardViewModel dataset, string versionPath, int? versionNumber)
     {
         try
         {
-            if (Directory.Exists(versionPath) && !Directory.EnumerateFileSystemEntries(versionPath).Any())
+            if (Directory.Exists(versionPath))
+            {
+                if (Directory.EnumerateFileSystemEntries(versionPath).Any()) return;
                 Directory.Delete(versionPath);
+            }
             if (versionNumber is { } number && dataset.VersionBranchedFrom.Remove(number))
                 dataset.SaveMetadata();
         }
@@ -1258,15 +1262,16 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 _runStep = $"describing image {i + 1}/{TotalImageCount}";
                 var uploaded = inFlight = await comfy.UploadImageAsync(item.OriginalPath, ct);
                 var keepLoaded = i < UpscaleItems.Count - 1;
+                // A keep_vram job loads the model; a direct_clean job unloads it once it ran, and the server
+                // runs a queued job to the end even after a cancel.
                 var wasLoaded = mayBeLoaded;
-                mayBeLoaded |= keepLoaded;
+                mayBeLoaded = keepLoaded;
                 try
                 {
                     // The first description also unloads ComfyUI's own models (the last run's upscaler):
                     // llama.cpp allocates outside ComfyUI's memory manager, which would not make room.
                     item.Description = await describer.DescribeAsync(uploaded, keepLoaded, ct, freeComfyModels: i == 0);
                     if (keepLoaded) lastDescribed = uploaded;
-                    else mayBeLoaded = false;
                     if (item.Description is null)
                     {
                         undescribed++;
@@ -1277,8 +1282,10 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 }
                 catch (ComfyUIExecutionException ex)
                 {
-                    // Failed before the node ran (LoadImage, the scale node): only what earlier jobs left is loaded.
-                    mayBeLoaded = wasLoaded;
+                    // Before the node (LoadImage, the scale node): what earlier jobs left. In the node: it may have
+                    // died holding the model. After it (ShowText): what the node's mode left.
+                    mayBeLoaded = ImageDescriber.NodesBeforeTheDescriber.Contains(ex.NodeType) ? wasLoaded
+                        : ex.NodeType == ImageDescriber.DescribeNodeType || keepLoaded;
                     undescribed++;
                     Warn($"Could not describe {item.FileName} (node {ex.NodeType}: {ex.Detail}); it is upscaled without a prompt.");
                 }
@@ -1492,18 +1499,16 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     /// <summary>
     /// Updates the dataset model and publishes events after a new version is successfully created.
     /// </summary>
-    private void FinalizeVersionCreation(int newVersion, int? branchedFromVersion)
+    private void FinalizeVersionCreation(DatasetCardViewModel dataset, int newVersion, int? branchedFromVersion)
     {
-        if (SelectedDataset is null) return;
-
-        SelectedDataset.CurrentVersion = newVersion;
-        SelectedDataset.IsVersionedStructure = true;
-        SelectedDataset.TotalVersions = SelectedDataset.GetAllVersionNumbers().Count();
-        SelectedDataset.RefreshImageInfo();
+        dataset.CurrentVersion = newVersion;
+        dataset.IsVersionedStructure = true;
+        dataset.TotalVersions = dataset.GetAllVersionNumbers().Count();
+        dataset.RefreshImageInfo();
 
         _eventAggregator.PublishVersionCreated(new VersionCreatedEventArgs
         {
-            Dataset = SelectedDataset,
+            Dataset = dataset,
             NewVersion = newVersion,
             BranchedFromVersion = branchedFromVersion ?? 1
         });

@@ -17,6 +17,12 @@ public sealed class ImageDescriber
     internal const string LoadImageNodeId = "1";
     internal const string DescribeNodeId = "3";
 
+    /// <summary>The describe node's type, as a <see cref="ComfyUIExecutionException"/> names it.</summary>
+    internal const string DescribeNodeType = "SimpleQwenVLggufV2";
+
+    /// <summary>The workflow's nodes that run before Qwen3-VL: a failure there leaves the model as it was.</summary>
+    internal static readonly IReadOnlySet<string> NodesBeforeTheDescriber = new HashSet<string> { "LoadImage", "ImageScaleToMaxDimension" };
+
     private readonly IComfyUIWrapperService _client;
     private readonly string _workflowPath;
     private readonly string _config;
