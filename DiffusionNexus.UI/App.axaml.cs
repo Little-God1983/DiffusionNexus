@@ -974,7 +974,8 @@ public partial class App : Application
             sp.GetService<Civitai.ICivitaiBaseModelCatalog>(),
             sp.GetService<IBackupScheduler>(),
             engineRootResolver: sp.GetService<Services.Engine.IEngineRootResolver>(),
-            engine: sp.GetService<Services.Engine.IManagedComfyUiEngine>()));
+            engine: sp.GetService<Services.Engine.IManagedComfyUiEngine>(),
+            catalogUpdates: sp.GetService<ICatalogUpdateCoordinator>()));
 
         services.AddSingleton<ILoraUpdateChecker>(sp => new LoraUpdateChecker(
             sp.GetRequiredService<IServiceScopeFactory>(),

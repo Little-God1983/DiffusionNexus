@@ -308,7 +308,8 @@ public partial class SettingsViewModel : BusyViewModelBase, IModuleActivationAwa
         IUiScheduler? uiScheduler = null,
         IEngineRootResolver? engineRootResolver = null,
         IManagedComfyUiEngine? engine = null,
-        Func<string?, bool>? looksInstalled = null)
+        Func<string?, bool>? looksInstalled = null,
+        Services.Catalog.ICatalogUpdateCoordinator? catalogUpdates = null)
     {
         _engineRootResolver = engineRootResolver;
         _engine = engine;
@@ -322,6 +323,7 @@ public partial class SettingsViewModel : BusyViewModelBase, IModuleActivationAwa
         _exportService = exportService;
         _baseModelCatalog = baseModelCatalog;
         _uiScheduler = uiScheduler ?? AvaloniaUiScheduler.Instance;
+        if (catalogUpdates is not null) Catalog = new CatalogSettingsViewModel(catalogUpdates, _uiScheduler);
 
         // Subscribe to settings changes from other components (e.g., Installer Manager adding galleries)
         if (_eventAggregator is not null)
@@ -331,6 +333,9 @@ public partial class SettingsViewModel : BusyViewModelBase, IModuleActivationAwa
             _eventAggregator.EngineChanged += (_, _) => _uiScheduler.Post(() => _ = RefreshEngineStatusAsync());
         }
     }
+
+    /// <summary>Settings → Catalog (#618). Null in the designer and in tests that do not pass a coordinator.</summary>
+    public CatalogSettingsViewModel? Catalog { get; }
 
     /// <summary>
     /// Design-time constructor.

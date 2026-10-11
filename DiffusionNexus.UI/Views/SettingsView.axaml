@@ -712,6 +712,81 @@
           </Border>
         </Expander>
 
+        <!-- Catalog (#618) -->
+        <Expander Header="Catalog" HorizontalAlignment="Stretch" IsVisible="{Binding Catalog, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <Border Padding="16" DataContext="{Binding Catalog}" x:DataType="vm:CatalogSettingsViewModel">
+            <StackPanel Spacing="12">
+              <TextBlock Text="Workloads and workflows come from the Diffusion Nexus catalog, shared with the installer. Preview gets new catalog content before everyone else."
+                         FontSize="12" Opacity="0.7" TextWrapping="Wrap"/>
+
+              <!-- Channel -->
+              <StackPanel Spacing="4">
+                <TextBlock Text="Channel" FontWeight="SemiBold"/>
+                <StackPanel Orientation="Horizontal" Spacing="16">
+                  <RadioButton GroupName="CatalogChannel" Content="Stable" IsChecked="{Binding IsStable, Mode=TwoWay}" IsEnabled="{Binding CanChooseChannel}"/>
+                  <RadioButton GroupName="CatalogChannel" Content="Preview" IsChecked="{Binding IsPreview, Mode=TwoWay}" IsEnabled="{Binding CanChooseChannel}"/>
+                </StackPanel>
+                <TextBlock Text="{Binding ChannelHint}" FontSize="12" Opacity="0.7" IsVisible="{Binding ChannelHint, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+              </StackPanel>
+
+              <!-- Switch warning -->
+              <Border IsVisible="{Binding ShowWarning}" Background="#33D29922" BorderBrush="#D29922" BorderThickness="1" CornerRadius="4" Padding="12">
+                <StackPanel Spacing="8">
+                  <TextBlock Text="{Binding WarningText}" TextWrapping="Wrap"/>
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Content="{Binding SwitchButtonText}" Command="{Binding ConfirmSwitchCommand}" Classes="accent"/>
+                    <Button Content="{Binding KeepButtonText}" Command="{Binding KeepChannelCommand}"/>
+                  </StackPanel>
+                </StackPanel>
+              </Border>
+
+              <!-- Automatic updates -->
+              <StackPanel Spacing="4">
+                <ToggleSwitch IsChecked="{Binding AutoApply, Mode=TwoWay}" IsEnabled="{Binding CanToggleAutoApply}"
+                              OnContent="Apply catalog updates automatically" OffContent="Apply catalog updates automatically"/>
+                <TextBlock Text="When Diffusion Nexus starts and finds a catalog update, it applies it without asking. Never while an install is running; then the update waits here."
+                           FontSize="12" Opacity="0.7" TextWrapping="Wrap"/>
+              </StackPanel>
+
+              <!-- Status -->
+              <StackPanel Spacing="4">
+                <TextBlock Text="{Binding StatusText}" FontWeight="SemiBold"/>
+                <TextBlock Text="{Binding OutcomeText}" TextWrapping="Wrap"/>
+                <TextBlock Text="{Binding LastCheckedText}" FontSize="12" Opacity="0.7" IsVisible="{Binding LastCheckedText, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+              </StackPanel>
+
+              <!-- Change list -->
+              <ItemsControl ItemsSource="{Binding ChangeGroups}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:CatalogChangeGroup">
+                    <StackPanel Spacing="2" Margin="0,4,0,0">
+                      <TextBlock Text="{Binding Heading}" FontWeight="SemiBold" FontSize="12"/>
+                      <ItemsControl ItemsSource="{Binding Rows}">
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate x:DataType="x:String">
+                            <TextBlock Text="{Binding}" FontSize="12" TextWrapping="Wrap"/>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                    </StackPanel>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+
+              <TextBlock Text="{Binding ProgressText}" IsVisible="{Binding ProgressText, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+              <TextBlock Text="{Binding ApplyBlockedReason}" FontSize="12" Opacity="0.7" TextWrapping="Wrap"
+                         IsVisible="{Binding ApplyBlockedReason, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+              <TextBlock Text="{Binding ErrorText}" Foreground="#FF6B6B" TextWrapping="Wrap"
+                         IsVisible="{Binding ErrorText, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="Check for updates" Command="{Binding CheckCommand}"/>
+                <Button Content="Apply catalog update" Command="{Binding ApplyCommand}" Classes="accent" IsVisible="{Binding ShowApply}"/>
+              </StackPanel>
+            </StackPanel>
+          </Border>
+        </Expander>
+
         <!-- LoRA Sort settings � hidden until the LoRA Sort module is integrated.
              Do NOT remove; the ViewModel logic is still in place and will be re-enabled. -->
         <!--
