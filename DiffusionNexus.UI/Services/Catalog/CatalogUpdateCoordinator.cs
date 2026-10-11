@@ -471,11 +471,230 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
         }
     }
 
-    // ----- switch (Task 6) -----
+    // ----- switch -----
 
-    public Task SwitchChannelAsync(CatalogChannel target, CancellationToken ct = default) => throw new NotImplementedException();
-    public Task ConfirmSwitchAsync(CancellationToken ct = default) => throw new NotImplementedException();
-    public void KeepChannel() => throw new NotImplementedException();
+    public async Task SwitchChannelAsync(CatalogChannel target, CancellationToken ct = default)
+    {
+        CatalogUpdatePhase phaseBefore;
+        lock (_gate)
+        {
+            if (_switching || _savingAutoApply || PendingSwitch is not null || Phase is CatalogUpdatePhase.Checking or CatalogUpdatePhase.Applying)
+            {
+                _logger?.Info(LogCategory.General, LogSource, $"Catalog channel switch to {target} refused while {Phase}{(PendingSwitch is null ? "" : ", a switch waits for an answer")}");
+                return;
+            }
+            // Claimed with the guard so a check starting during the awaits below backs off.
+            _switching = true;
+            phaseBefore = Phase;
+        }
+
+        try
+        {
+            await EnsureChannelAsync(ct).ConfigureAwait(false);
+            CatalogChannel current;
+            CatalogChannelSource source;
+            lock (_gate) (current, source) = (Channel, ChannelSource);
+
+            if (source == CatalogChannelSource.Environment)
+            {
+                // The environment decides what this run follows; the preference is saved for runs without it.
+                await _preferences.SaveChannelAsync(target, ct).ConfigureAwait(false);
+                _logger?.Info(LogCategory.General, LogSource, $"Catalog channel {target} saved; DIFFUSIONNEXUS_CATALOG_CHANNEL keeps {current} for this run");
+                return;
+            }
+            if (current == target) return;
+
+            lock (_gate)
+            {
+                Phase = CatalogUpdatePhase.Checking;
+                Progress = null;
+            }
+            Raise();
+
+            var preview = await PreviewAsync(current, target, ct).ConfigureAwait(false);
+            lock (_gate) Phase = phaseBefore;
+
+            if (ChannelSwitchWarning.For(preview) is { } warning)
+            {
+                lock (_gate) PendingSwitch = new CatalogChannelSwitch(preview, warning);
+                _logger?.Info(LogCategory.General, LogSource,
+                    $"Catalog channel switch to {target} waits for an answer: v{warning.Version} removes {warning.Removed.Count} and {warning.ChangesText ?? "changes nothing"}");
+                return;
+            }
+
+            await CommitSwitchAsync(preview, phaseBefore, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                _switching = false;
+                // The preview's Checking ends here; a held switch's background check keeps its own.
+                if (Phase == CatalogUpdatePhase.Checking && _inFlight is not { IsCompleted: false }) Phase = phaseBefore;
+            }
+            Raise();
+        }
+    }
+
+    public async Task ConfirmSwitchAsync(CancellationToken ct = default)
+    {
+        CatalogChannelSwitch pending;
+        CatalogUpdatePhase phaseBefore;
+        lock (_gate)
+        {
+            if (PendingSwitch is null || _switching)
+            {
+                _logger?.Info(LogCategory.General, LogSource, "Catalog channel switch confirmed with no switch waiting; nothing to do");
+                return;
+            }
+            pending = PendingSwitch;
+            PendingSwitch = null;
+            _switching = true;
+            phaseBefore = Phase;
+        }
+
+        _logger?.Info(LogCategory.General, LogSource, $"Catalog channel switch to {pending.Target} confirmed");
+        try
+        {
+            await CommitSwitchAsync(pending.Preview, phaseBefore, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_gate) _switching = false;
+            Raise();
+        }
+    }
+
+    public void KeepChannel()
+    {
+        lock (_gate)
+        {
+            if (PendingSwitch is null) return;
+            _logger?.Info(LogCategory.General, LogSource, $"Catalog channel switch to {PendingSwitch.Target} declined; nothing was saved");
+            PendingSwitch = null;
+        }
+        Raise();
+    }
+
+    /// <summary>The switch as the SDK diffs it, filtered for Diffusion Nexus. Changes nothing. Never throws.</summary>
+    private async Task<CatalogUpdateCheck> PreviewAsync(CatalogChannel from, CatalogChannel target, CancellationToken ct)
+    {
+        _logger?.Info(LogCategory.General, LogSource, $"Catalog channel switch: previewing {target}");
+        try
+        {
+            var check = (await _updates.PreviewSwitchAsync(from, target, ct).ConfigureAwait(false)).For(_audience);
+            _logger?.Info(LogCategory.General, LogSource,
+                $"Catalog channel preview: {check.Outcome} (remote v{check.Remote?.CatalogVersion}, {check.Workloads.Count} workload / {check.Workflows.Count} workflow changes for Diffusion Nexus)",
+                check.Error);
+            return check;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger?.Error(LogCategory.General, LogSource, "Catalog channel preview failed unexpectedly", ex);
+            return FailedCheck(target, Installed, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Saves the channel, follows it, and starts what the folder now followed needs; returns once the choice is
+    /// saved. The caller holds <see cref="_switching"/>. Only a failed save throws, and then nothing changed.
+    /// </summary>
+    private async Task CommitSwitchAsync(CatalogUpdateCheck preview, CatalogUpdatePhase phaseBefore, CancellationToken ct)
+    {
+        var target = preview.Channel;
+        try
+        {
+            await _preferences.SaveChannelAsync(target, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger?.Warn(LogCategory.General, LogSource, $"Catalog channel {target} could not be saved; nothing was changed", ex.Message);
+            lock (_gate) Phase = phaseBefore;
+            throw;
+        }
+
+        // With shared folders an up-to-date preview is handed to the SDK as well: it compared against the folder
+        // being left, and the SDK's apply checks the target folder itself (fills it when missing or behind,
+        // applies nothing when current). With one folder the preview compared against that very folder.
+        var appliable = preview.Outcome == CatalogUpdateOutcome.UpdatesAvailable
+            || (preview.Outcome == CatalogUpdateOutcome.UpToDate && _options.UsesSharedFolders);
+        // The target folder's state file, outside the lock (the shared-folder read enumerates format folders).
+        var known = LocalCatalogState.Load(_options.ReadFolderFor(target));
+        var applying = false;
+        var held = false;
+        lock (_gate)
+        {
+            ApplyResolution(_readEnvironment(), target.ToString());
+            _channelResolved = true;
+            if (known.RecordsAnything()) Installed = known;
+            LastApply = null;
+            _applyAutomatic = false;
+            Progress = null;
+            if (Channel != target)
+            {
+                // The environment variable appeared since the preview: it decides.
+                LastCheck = null;
+                Phase = CatalogUpdatePhase.Idle;
+            }
+            else
+            {
+                LastCheck = preview;
+                LastCheckedAt = DateTimeOffset.Now;
+                if (appliable && _installs.Running is null)
+                {
+                    // Not under the caller's token: the switch has returned by the time the download runs.
+                    Phase = CatalogUpdatePhase.Applying;
+                    _inFlight = Task.Run(() => ApplyCoreAsync(preview, CancellationToken.None), CancellationToken.None);
+                    applying = true;
+                }
+                else
+                {
+                    held = appliable;
+                    Phase = held ? CatalogUpdatePhase.Checking : CatalogUpdatePhase.Checked;
+                }
+            }
+            if (!applying) _inFlight = Task.Run(() => AfterSwitchNotAppliedAsync(held), CancellationToken.None);
+        }
+        _logger?.Info(LogCategory.General, LogSource, $"Catalog channel switched to {target}: " +
+            (applying ? (preview.Outcome == CatalogUpdateOutcome.UpToDate ? "checking its folder" : $"applying v{preview.Remote?.CatalogVersion}")
+            : held ? "the apply waits for the running install" : preview.Outcome.ToString()));
+    }
+
+    /// <summary>
+    /// After a switch that started no apply, in the background: the state of the catalog the app reads now
+    /// (reading it seeds a channel folder that does not exist yet); held by a running install, a check of the
+    /// folder now followed, so the Apply after the install lands what that folder needs. Never throws.
+    /// </summary>
+    private async Task AfterSwitchNotAppliedAsync(bool held)
+    {
+        LocalCatalogState? state = null;
+        try
+        {
+            // ICatalog.State blocks on the load and seeds a missing channel folder; off the caller's thread.
+            state = await Task.Run(() => _catalog.State).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger?.Warn(LogCategory.General, LogSource, "The catalog could not be read after the switch; reading its state file instead.", ex.Message);
+        }
+        state ??= LocalCatalogState.Load(_options.InstalledCatalogPath);
+        lock (_gate)
+        {
+            if (state.RecordsAnything() || Installed is null) Installed = state;
+        }
+
+        if (held)
+        {
+            var fresh = await CheckFollowedAsync().ConfigureAwait(false);
+            lock (_gate)
+            {
+                LastCheck = fresh;
+                LastCheckedAt = DateTimeOffset.Now;
+                Phase = CatalogUpdatePhase.Checked;
+            }
+        }
+        Raise();
+    }
 
     // ----- plumbing -----
 
