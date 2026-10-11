@@ -1279,7 +1279,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         }
     }
 
-    private async Task OnUpdateRequestedAsync(InstallerPackageCardViewModel card)
+    internal async Task OnUpdateRequestedAsync(InstallerPackageCardViewModel card)
     {
         var service = _updateServices.FirstOrDefault(s => s.SupportedTypes.Contains(card.Type));
         if (service is null)
@@ -1309,7 +1309,6 @@ public partial class InstallerManagerViewModel : ViewModelBase
         UnifiedConsolePanelRequested?.Invoke(this, EventArgs.Empty);
 
         card.IsUpdating = true;
-        var updateRunning = _installActivity?.Begin(card.Name);
         card.UpdateStatusMessage = "Starting update...";
         _unifiedLogger.Info(LogCategory.Installation, card.Name, "Starting update...");
 
@@ -1323,6 +1322,9 @@ public partial class InstallerManagerViewModel : ViewModelBase
             _unifiedLogger.Info(LogCategory.Installation, card.Name, msg);
         });
 
+        // Right before the try whose finally ends it: nothing between Begin and the try can throw, so the
+        // catalog apply is never held by an update that is not running (#618 review).
+        var updateRunning = _installActivity?.Begin(card.Name);
         try
         {
             var result = await service.UpdateAsync(card.InstallationPath, progress);

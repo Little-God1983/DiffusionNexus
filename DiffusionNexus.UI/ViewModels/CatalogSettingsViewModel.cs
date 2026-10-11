@@ -61,34 +61,55 @@ public sealed partial class CatalogSettingsViewModel : ObservableObject, IDispos
     private Task ApplyAsync() => _catalog.ApplyAsync();
     private bool CanApplyNow() => _catalog.CanApply;
 
+    /// <summary>
+    /// A save the user asked for that failed (channel or toggle). Kept apart from the coordinator's state, which
+    /// knows nothing about it, so a Refresh never clears it; the next action does.
+    /// </summary>
+    private string? _saveError;
+
+    // Never lets a save error through: from an async command it would end the app (review I2).
     [RelayCommand]
-    private Task ConfirmSwitchAsync() => _catalog.ConfirmSwitchAsync();
+    private async Task ConfirmSwitchAsync()
+    {
+        _saveError = null;
+        try
+        {
+            await _catalog.ConfirmSwitchAsync();
+        }
+        catch (Exception ex)
+        {
+            _saveError = $"The channel could not be saved: {ex.Message}";
+        }
+        Refresh();
+    }
 
     [RelayCommand]
     private void KeepChannel() => _catalog.KeepChannel();
 
     private async Task SwitchAsync(CatalogChannel target)
     {
+        _saveError = null;
         try
         {
             await _catalog.SwitchChannelAsync(target);
         }
         catch (Exception ex)
         {
-            ErrorText = $"The channel could not be saved: {ex.Message}";
+            _saveError = $"The channel could not be saved: {ex.Message}";
         }
         Refresh();   // a refused switch changes nothing in the coordinator; put the dot back
     }
 
     private async Task SetAutoApplyAsync(bool on)
     {
+        _saveError = null;
         try
         {
             if (!await _catalog.SetAutoApplyAsync(on)) Refresh();   // refused: snap back
         }
         catch (Exception ex)
         {
-            ErrorText = $"The setting could not be saved: {ex.Message}";
+            _saveError = $"The setting could not be saved: {ex.Message}";
             Refresh();
         }
     }
@@ -121,10 +142,10 @@ public sealed partial class CatalogSettingsViewModel : ObservableObject, IDispos
             ShowApply = _catalog.UpdateAvailable && _catalog.Phase != CatalogUpdatePhase.Applying && _catalog.ApplyBlockedReason is null;
             ApplyBlockedReason = _catalog.Phase != CatalogUpdatePhase.Applying ? _catalog.ApplyBlockedReason : null;
             ProgressText = _catalog.Phase == CatalogUpdatePhase.Applying ? Progress(_catalog.Progress) : null;
-            if (_catalog.Phase != CatalogUpdatePhase.Applying && _catalog.LastApplyFailed && _catalog.LastApply is { } failed)
-                ErrorText = $"The catalog update failed: {(failed.Error ?? $"{failed.Failed} not applied").TrimEnd('.')}.";
-            else if (busy || _catalog.LastApply is null)
-                ErrorText = null;
+            ErrorText = _saveError
+                ?? (_catalog.Phase != CatalogUpdatePhase.Applying && _catalog.LastApplyFailed && _catalog.LastApply is { } failed
+                    ? $"The catalog update failed: {(failed.Error ?? $"{failed.Failed} not applied").TrimEnd('.')}."
+                    : null);
 
             if (_catalog.PendingSwitch is { } pending)
             {
@@ -158,6 +179,9 @@ public sealed partial class CatalogSettingsViewModel : ObservableObject, IDispos
     {
         if (c.PendingSwitch is { } pending) return $"Switching to {pending.Target} waits for your answer below.";
         if (c.Phase == CatalogUpdatePhase.Checking) return "Checking the catalog…";
+        // While an apply runs (a switch, or the silent startup apply): neither "up to date" nor an offer with nothing to press.
+        if (c.Phase == CatalogUpdatePhase.Applying)
+            return c.LastCheck?.Remote is { } release ? $"Catalog v{release.CatalogVersion} is being applied." : "The catalog is being applied.";
         if (c.Phase == CatalogUpdatePhase.Applied)
         {
             var landed = c.Installed is { } s && s.RecordsAnything() ? s.HighestCatalogVersion : c.LastCheck?.Remote?.CatalogVersion;

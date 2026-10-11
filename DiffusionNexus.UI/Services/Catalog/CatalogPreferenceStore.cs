@@ -42,7 +42,15 @@ public sealed class CatalogPreferenceStore(IServiceScopeFactory scopes, IUserSet
         if (stored.Channel is not null) return new CatalogPreferences(stored.Channel, stored.ApplyAutomatically);
 
         var copied = await InstallerChannelAsync(ct).ConfigureAwait(false);
-        await settings.SetCatalogChannelAsync(copied.ToString(), ct).ConfigureAwait(false);
+        try
+        {
+            await settings.SetCatalogChannelAsync(copied.ToString(), ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The installer's channel was read: follow it this run; the copy is tried again on the next start.
+            logger?.Warn(LogCategory.General, LogSource, $"The {copied} catalog channel could not be saved; following it for this run.", ex.Message);
+        }
         return new CatalogPreferences(copied.ToString(), stored.ApplyAutomatically);
     }
 

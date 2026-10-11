@@ -76,6 +76,17 @@ public sealed class CatalogPreferenceStoreTests
         _installer.Verify(r => r.SaveAsync(It.IsAny<UserSettings>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // Review M5: the first save failed (database locked) and the run followed Stable for a Preview user.
+    [Fact]
+    public async Task A_failed_first_save_still_follows_the_installers_channel()
+    {
+        InstallerSaved("Preview");
+        _settings.Setup(s => s.SetCatalogChannelAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("database locked"));
+
+        (await Store().LoadAsync()).Channel.Should().Be("Preview");
+        _log.GetEntries().Should().Contain(e => e.Source == "Catalog" && e.Message.Contains("could not be saved"));
+    }
+
     [Fact]
     public async Task A_chosen_channel_never_reads_the_installers_file()
     {

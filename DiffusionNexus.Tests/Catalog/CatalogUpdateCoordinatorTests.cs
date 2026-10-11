@@ -45,6 +45,10 @@ public sealed partial class CatalogUpdateCoordinatorTests : IDisposable
 
     private IEnumerable<string> Logged => _log.GetEntries().Where(e => e.Source == "Catalog").Select(e => e.Message);
 
+    /// <summary>The change lines are logged after the phase flips (review M3): wait for them, never race them.</summary>
+    private void WaitLogged(Func<string, bool> line) =>
+        SpinWait.SpinUntil(() => Logged.Any(line), 10_000).Should().BeTrue("the line is logged by the apply task");
+
     internal sealed class FakePreferences : ICatalogPreferenceStore
     {
         public CatalogPreferences Stored { get; set; } = new("Stable", false);
@@ -213,7 +217,7 @@ public sealed partial class CatalogUpdateCoordinatorTests : IDisposable
         _service.AppliedCheck!.Unfiltered.Should().NotBeNull("the SDK sees the whole release");
         coordinator.Phase.Should().Be(CatalogUpdatePhase.Applied);
         coordinator.Installed!.HighestCatalogVersion.Should().Be(7);
-        Logged.Should().Contain(m => m.StartsWith("Updated: Upscaling-Z-Image-Turbo"));
+        WaitLogged(m => m.StartsWith("Updated: Upscaling-Z-Image-Turbo"));
     }
 
     [Fact]
@@ -300,7 +304,7 @@ public sealed partial class CatalogUpdateCoordinatorTests : IDisposable
         coordinator.LastApplyAutomatic.Should().BeTrue();
         coordinator.Phase.Should().Be(CatalogUpdatePhase.Applied);
         Logged.Should().Contain("Applying the catalog update automatically (setting on)");
-        Logged.Should().Contain(m => m.StartsWith("Updated: Upscaling-Z-Image-Turbo"));
+        WaitLogged(m => m.StartsWith("Updated: Upscaling-Z-Image-Turbo"));
     }
 
     [Fact]
@@ -330,6 +334,21 @@ public sealed partial class CatalogUpdateCoordinatorTests : IDisposable
 
         _service.ApplyCalls.Should().Be(0);
         Logged.Should().NotContain("Catalog update available – see Settings → Catalog");
+    }
+
+    // Review M6: toggle on, an install running at startup: the apply waits and the notice was missing.
+    [Fact]
+    public async Task Startup_with_the_toggle_on_and_an_install_running_announces_the_update()
+    {
+        _preferences.Stored = new CatalogPreferences("Stable", true);
+        _service.NextCheck = () => CatalogChecks.Available(7).Targeting(WorkloadTargetType.DiffusionNexusCore);
+        using var running = _installs.Begin("Krea-2-Turbo");
+        using var coordinator = Create();
+
+        await coordinator.CheckAtStartupAsync();
+
+        _service.ApplyCalls.Should().Be(0);
+        Logged.Should().Contain("Catalog update available – see Settings → Catalog");
     }
 
     [Fact]

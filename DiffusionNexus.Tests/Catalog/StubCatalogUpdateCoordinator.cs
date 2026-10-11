@@ -37,6 +37,9 @@ internal sealed class StubCatalogUpdateCoordinator : ICatalogUpdateCoordinator
     public int Keeps { get; private set; }
     public List<bool> AutoApplySet { get; } = [];
     public bool RefuseAutoApply { get; set; }
+    public Exception? SwitchFailure { get; set; }
+    public Exception? AutoApplyFailure { get; set; }
+    public Exception? ConfirmFailure { get; set; }
     public CatalogChannelSwitch? PendingOnSwitch { get; set; }
 
     public Task<CatalogChannel> ResolveChannelAsync(CancellationToken ct = default) => Task.FromResult(Channel);
@@ -47,6 +50,7 @@ internal sealed class StubCatalogUpdateCoordinator : ICatalogUpdateCoordinator
     public Task<bool> SetAutoApplyAsync(bool on, CancellationToken ct = default)
     {
         AutoApplySet.Add(on);
+        if (AutoApplyFailure is not null) { Changed?.Invoke(); return Task.FromException<bool>(AutoApplyFailure); }
         if (RefuseAutoApply) return Task.FromResult(false);
         AutoApply = on;
         return Task.FromResult(true);
@@ -55,6 +59,7 @@ internal sealed class StubCatalogUpdateCoordinator : ICatalogUpdateCoordinator
     public Task SwitchChannelAsync(CatalogChannel target, CancellationToken ct = default)
     {
         Switches.Add(target);
+        if (SwitchFailure is not null) { Changed?.Invoke(); return Task.FromException(SwitchFailure); }   // the real one raises in its finally
         if (PendingOnSwitch is not null) PendingSwitch = PendingOnSwitch;
         else Channel = target;
         Changed?.Invoke();
@@ -64,6 +69,7 @@ internal sealed class StubCatalogUpdateCoordinator : ICatalogUpdateCoordinator
     public Task ConfirmSwitchAsync(CancellationToken ct = default)
     {
         Confirms++;
+        if (ConfirmFailure is not null) { PendingSwitch = null; Changed?.Invoke(); return Task.FromException(ConfirmFailure); }
         if (PendingSwitch is { } p) { Channel = p.Target; PendingSwitch = null; }
         Changed?.Invoke();
         return Task.CompletedTask;

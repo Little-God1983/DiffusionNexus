@@ -289,7 +289,10 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
         {
             // Not awaited and not under the caller's token: returns once the download has started.
             _ = StartApply(automatic: true, CancellationToken.None);
-            return;
+            bool started;
+            lock (_gate) started = Phase is CatalogUpdatePhase.Applying or CatalogUpdatePhase.Applied || LastApply is not null;
+            if (started) return;
+            // Refused (an install runs): the update waits on the page, and the console says where (review M6).
         }
         if (offered) _logger?.Info(LogCategory.General, LogSource, "Catalog update available – see Settings → Catalog");
         else if (release) _logger?.Info(LogCategory.General, LogSource, "The catalog release changes nothing Diffusion Nexus shows; it lands with the next apply.");

@@ -160,6 +160,79 @@ public sealed class CatalogSettingsViewModelTests
         vm.AutoApply.Should().BeFalse();
     }
 
+    // Review I1: a failed save was cleared by the next Refresh (and by the coordinator's own Changed).
+    [Fact]
+    public void A_failed_channel_save_is_shown_and_the_dot_returns()
+    {
+        _catalog.SwitchFailure = new IOException("database locked");
+        var vm = Vm();
+
+        vm.IsPreview = true;
+        _catalog.RaiseChanged();   // the coordinator raises once more in its finally
+
+        vm.ErrorText.Should().Be("The channel could not be saved: database locked");
+        vm.IsStable.Should().BeTrue();
+    }
+
+    [Fact]
+    public void A_failed_toggle_save_is_shown_and_the_toggle_snaps_back()
+    {
+        _catalog.AutoApplyFailure = new IOException("database locked");
+        var vm = Vm();
+
+        vm.AutoApply = true;
+        _catalog.RaiseChanged();
+
+        vm.ErrorText.Should().Be("The setting could not be saved: database locked");
+        vm.AutoApply.Should().BeFalse();
+    }
+
+    [Fact]
+    public void The_save_error_goes_once_the_user_acts_again()
+    {
+        _catalog.SwitchFailure = new IOException("database locked");
+        var vm = Vm();
+        vm.IsPreview = true;
+        _catalog.SwitchFailure = null;
+
+        vm.IsPreview = true;
+
+        vm.ErrorText.Should().BeNull();
+    }
+
+    // Review I2: ConfirmSwitchAsync lets a save error through; through an async command that ends the app.
+    [Fact]
+    public async Task A_failed_switch_confirmation_is_shown_and_never_escapes()
+    {
+        var preview = CatalogChecks.Available(6, CatalogChannel.Preview, [CatalogChecks.WorkloadRemoved("Upscaling-Z-Image-Turbo Vision", "V1.0")])
+            .Targeting(WorkloadTargetType.DiffusionNexusCore).For(CatalogAudience.DiffusionNexus);
+        _catalog.PendingSwitch = new CatalogChannelSwitch(preview, ChannelSwitchWarning.For(preview)!);
+        _catalog.ConfirmFailure = new IOException("database locked");
+        var vm = Vm();
+
+        var act = () => vm.ConfirmSwitchCommand.ExecuteAsync(null);
+
+        await act.Should().NotThrowAsync();
+        vm.ErrorText.Should().Be("The channel could not be saved: database locked");
+        vm.IsStable.Should().BeTrue();
+    }
+
+    // Review M7: "Up to date." next to "Downloading… 40%", or "update available" with nothing to press.
+    [Theory]
+    [InlineData(true, 6, "Catalog v6 is being applied.")]
+    [InlineData(false, 7, "Catalog v7 is being applied.")]
+    public void While_an_apply_runs_the_outcome_says_so(bool switchPreview, int version, string expected)
+    {
+        _catalog.LastCheck = switchPreview
+            ? (CatalogChecks.Outcome(CatalogUpdateOutcome.UpToDate, CatalogChannel.Preview) with { Remote = CatalogChecks.Remote(version, CatalogChannel.Preview), IsSwitchPreview = true })
+                .For(CatalogAudience.DiffusionNexus)
+            : CatalogChecks.Available(version, CatalogChannel.Stable, [CatalogChecks.WorkloadAdded("Qwen-Image-Edit", "V1.0")])
+                .Targeting(WorkloadTargetType.Installer).For(CatalogAudience.DiffusionNexus);
+        _catalog.Phase = CatalogUpdatePhase.Applying;
+
+        Vm().OutcomeText.Should().Be(expected);
+    }
+
     [Fact]
     public void Coordinator_changes_refresh_the_page()
     {
