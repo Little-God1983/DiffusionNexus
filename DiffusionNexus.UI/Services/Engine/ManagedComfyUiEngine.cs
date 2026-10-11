@@ -8,14 +8,14 @@ using Serilog;
 namespace DiffusionNexus.UI.Services.Engine;
 
 /// <summary>Outcome of trying to bring the engine up.</summary>
-public sealed record EngineStartResult(bool IsRunning, string? BaseUrl, string? FailureReason);
+public sealed record EngineStartResult(bool IsRunning, string? BaseUrl, string? FailureReason, bool StoppedByRequest = false);
 
 /// <summary>
 /// Hosts the app-owned ComfyUI process. Bound to loopback on a dynamically allocated port so a
 /// user's own ComfyUI on 8188 is never disturbed, started on demand, and killed when the app
 /// exits. Health is confirmed against /system_stats before the engine is declared ready.
 /// </summary>
-public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposable
+public sealed class ManagedComfyUiEngine : IManagedEngineControl, IAsyncDisposable
 {
     private static readonly ILogger Logger = Serilog.Log.ForContext<ManagedComfyUiEngine>();
 
@@ -54,6 +54,25 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposab
     // Canvas availability check) does not repeat it. Reset when the request is used up.
     private bool _postponementLogged;
 
+    // 1 while the engine is reported running (ready), 0 otherwise. Changed only through
+    // ReportRunning, so StateChanged fires once per change whoever starts or stops it.
+    private int _reportedRunning;
+
+    // 1 while a start runs (under _startLock: spawn and readiness wait), through ReportStarting.
+    private int _reportedStarting;
+
+    // Generations getting under way (BeginPreparing tokens not yet disposed). Counted for the
+    // console's Stop (HasActiveJobs), never for a pending restart (ShouldRestartNow reads _activeJobs).
+    private int _preparing;
+
+    // Maintenance holds (TryBeginMaintenanceAsync: an update changing the engine's folder). No start while > 0.
+    private int _maintenance;
+
+    // Counts stops (the console's, the app's shutdown). A start that was waiting for the start lock when
+    // one happened does not start the engine again: the user stopped it, a generation queued behind
+    // the stop included.
+    private int _stopGeneration;
+
     public ManagedComfyUiEngine(IUnifiedLogger? unifiedLogger)
     {
         _unifiedLogger = unifiedLogger;
@@ -61,6 +80,177 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposab
 
     /// <summary>Base URL of the running engine, or null when it is not running.</summary>
     public string? BaseUrl => _baseUrl;
+
+    /// <inheritdoc />
+    public bool IsRunning => Volatile.Read(ref _reportedRunning) == 1;
+
+    /// <inheritdoc />
+    public bool IsStarting => Volatile.Read(ref _reportedStarting) == 1;
+
+    /// <inheritdoc />
+    public bool HasActiveJobs => Volatile.Read(ref _activeJobs) + Volatile.Read(ref _preparing) > 0;
+
+    /// <inheritdoc />
+    public event Action? StateChanged;
+
+    /// <inheritdoc />
+    public IDisposable BeginPreparing()
+    {
+        Interlocked.Increment(ref _preparing);
+        return new CountToken(() => Interlocked.Decrement(ref _preparing));
+    }
+
+    /// <inheritdoc />
+    public async Task<IDisposable?> TryBeginMaintenanceAsync()
+    {
+        if (IsRunning || IsStarting) return null;
+
+        // Atomic with every start: a start checks the hold under the start lock. A booting start holds
+        // that lock for minutes and is refused below; a brief holder (a call that only checks, a stop,
+        // a crash's release) is waited out rather than reported as "in use".
+        if (!await _startLock.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false)) return null;
+        try
+        {
+            if (IsStarting || (_process is { } process && !HasExitedSafely(process))) return null;
+            Interlocked.Increment(ref _maintenance);
+            return new CountToken(() => Interlocked.Decrement(ref _maintenance));
+        }
+        finally
+        {
+            _startLock.Release();
+        }
+    }
+
+    /// <summary>A stop is under way: starts waiting for the lock now do not start the engine. Internal for tests.</summary>
+    internal void NoteStopRequested() => Interlocked.Increment(ref _stopGeneration);
+
+    /// <inheritdoc />
+    public async Task<bool> StopIfIdleAsync()
+    {
+        await _startLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (HasActiveJobs) return false;
+            NoteStopRequested();
+            await StopCoreAsync().ConfigureAwait(false);
+            return true;
+        }
+        finally
+        {
+            _startLock.Release();
+        }
+    }
+
+    /// <summary>Records the running state and raises <see cref="StateChanged"/> when it changed. Internal for tests.</summary>
+    internal void ReportRunning(bool running) => Report(ref _reportedRunning, running);
+
+    /// <summary>Records the starting state and raises <see cref="StateChanged"/> when it changed. Internal for tests.</summary>
+    internal void ReportStarting(bool starting) => Report(ref _reportedStarting, starting);
+
+    private void Report(ref int field, bool value)
+    {
+        var next = value ? 1 : 0;
+        if (Interlocked.Exchange(ref field, next) == next) return;
+        try
+        {
+            StateChanged?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            // A subscriber's failure must never break a start or a stop.
+            Logger.Warning(ex, "A StateChanged subscriber failed.");
+        }
+    }
+
+    /// <summary>Runs its action once, however often it is disposed.</summary>
+    private sealed class CountToken(Action release) : IDisposable
+    {
+        private int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0) release();
+        }
+    }
+
+    /// <summary>Hears the started process exit (<see cref="OnProcessExited"/>). Internal for tests.</summary>
+    internal void WatchProcess(Process process)
+    {
+        process.EnableRaisingEvents = true;
+        process.Exited += (_, _) => OnProcessExited(process);
+    }
+
+    /// <summary>
+    /// The started process answered its readiness check. Under <see cref="_startLock"/>. Internal for tests.
+    /// </summary>
+    internal async Task<EngineStartResult> CompleteReadyAsync(Process process, string baseUrl)
+    {
+        // It answered, but may have died since: a dead process is never reported running. Checked
+        // again after the report, because OnProcessExited leaves a process not yet reported running
+        // to the start, so an exit between the two would otherwise go unseen.
+        if (process.HasExited) return await FailExitedAfterReadyAsync(process).ConfigureAwait(false);
+        _baseUrl = baseUrl;
+        // Starting ends before running is reported: never both at once. From here an exit is the exit
+        // handler's to report (it leaves an engine that is not running to the start), and the check
+        // below catches one that came before the report.
+        ReportStarting(false);
+        ReportRunning(true);
+        if (process.HasExited) return await FailExitedAfterReadyAsync(process).ConfigureAwait(false);
+
+        Log($"Engine ready at {baseUrl}.");
+        return new EngineStartResult(true, baseUrl, null);
+    }
+
+    private async Task<EngineStartResult> FailExitedAfterReadyAsync(Process process)
+    {
+        var code = TryExitCode(process);
+        await StopCoreAsync().ConfigureAwait(false);
+        return new EngineStartResult(false, null,
+            $"The engine process exited right after it became ready (exit code {code?.ToString() ?? "unknown"}). " +
+            "See the Unified Console for its output.");
+    }
+
+    private static int? TryExitCode(Process process)
+    {
+        try { return process.ExitCode; }
+        catch (InvalidOperationException) { return null; }   // disposed meanwhile
+    }
+
+    // The process this engine started has exited. A start still in progress (not reported running
+    // yet) reports the exit itself. Otherwise nobody stopped it: it exited on its own (a crash, or
+    // killed from outside), so the engine is no longer running, and its handles are released.
+    internal void OnProcessExited(Process exited)
+    {
+        if (!ReferenceEquals(_process, exited) || !IsRunning) return;
+        _ = ReleaseExitedAsync(exited);
+    }
+
+    // Clears the dead process the same way a stop does (BaseUrl null, handles disposed, reported not
+    // running), under the start lock so it never races a start or a stop. Logs the exit only when it
+    // is the one that lets go: a start that got the lock first released and logged it already.
+    private async Task ReleaseExitedAsync(Process exited)
+    {
+        try
+        {
+            await _startLock.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                if (ReferenceEquals(_process, exited))
+                {
+                    LogExit(exited);
+                    await StopCoreAsync().ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                _startLock.Release();
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning(ex, "Could not release the exited engine process.");
+        }
+    }
 
     /// <summary>
     /// Asks for a fresh process on the next <see cref="EnsureRunningAsync"/>. Stops nothing now: the
@@ -76,7 +266,7 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposab
     public IDisposable BeginJob()
     {
         Interlocked.Increment(ref _activeJobs);
-        return new JobToken(this);
+        return new CountToken(() => Interlocked.Decrement(ref _activeJobs));
     }
 
     /// <summary>
@@ -86,17 +276,6 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposab
     internal static bool ShouldRestartNow(bool isRunning, bool restartPending, int activeJobs) =>
         isRunning && restartPending && activeJobs == 0;
 
-    /// <summary>Ends one job exactly once, however often it is disposed.</summary>
-    private sealed class JobToken(ManagedComfyUiEngine engine) : IDisposable
-    {
-        private int _disposed;
-
-        public void Dispose()
-        {
-            if (Interlocked.Exchange(ref _disposed, 1) == 0)
-                Interlocked.Decrement(ref engine._activeJobs);
-        }
-    }
 
     /// <summary>
     /// Starts the engine if it is not already running and waits until it answers /system_stats.
@@ -104,6 +283,7 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposab
     /// </summary>
     public async Task<EngineStartResult> EnsureRunningAsync(string installRoot, CancellationToken ct)
     {
+        var stopsBeforeWaiting = Volatile.Read(ref _stopGeneration);
         await _startLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -130,6 +310,24 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposab
                 Log("Restarting the engine so it loads the newly installed node packs or model folders...");
                 await StopCoreAsync().ConfigureAwait(false);
             }
+            else if (current is not null)
+            {
+                // A process that died since (a crash whose release has not run yet): released before
+                // the fresh start, so it never reads as running while that start runs. Logged by
+                // whichever release lets go of it, this one or the exit handler's: once.
+                LogExit(current);
+                await StopCoreAsync().ConfigureAwait(false);
+            }
+
+            // The user stopped the engine while this call waited (a confirmed Stop cancels a generation
+            // getting under way too): it is not started again behind their back.
+            if (Volatile.Read(ref _stopGeneration) != stopsBeforeWaiting)
+                return new EngineStartResult(false, null, "The engine was stopped.", StoppedByRequest: true);
+
+            // An update is changing the engine's folder: no start from it, whoever asks.
+            if (Volatile.Read(ref _maintenance) > 0)
+                return new EngineStartResult(false, null,
+                    "The Diffusion Nexus Engine is being updated. Try again when the update has finished.");
 
             // Whatever starts below is a fresh process, so a pending restart request is used up. A
             // request that arrives from here on (during the up-to-2-minute start) stays set.
@@ -158,6 +356,7 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposab
             foreach (var (name, value) in EngineEnvironment)
                 startInfo.Environment[name] = value;
 
+            ReportStarting(true);
             Log($"Starting engine on 127.0.0.1:{port}...");
             _process = Process.Start(startInfo);
             if (_process is null)
@@ -189,6 +388,7 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposab
 
             try
             {
+                WatchProcess(_process);
                 _process.OutputDataReceived += (_, e) => { if (e.Data is not null) Log(e.Data); };
                 _process.ErrorDataReceived += (_, e) => { if (e.Data is not null) Log(e.Data); };
                 _process.BeginOutputReadLine();
@@ -199,9 +399,7 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposab
                 switch (outcome.Kind)
                 {
                     case ReadinessKind.Ready:
-                        _baseUrl = baseUrl;
-                        Log($"Engine ready at {baseUrl}.");
-                        return new EngineStartResult(true, baseUrl, null);
+                        return await CompleteReadyAsync(_process, baseUrl).ConfigureAwait(false);
 
                     case ReadinessKind.ProcessExited:
                         await StopCoreAsync().ConfigureAwait(false);
@@ -211,7 +409,7 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposab
 
                     case ReadinessKind.StopRequested:
                         await StopCoreAsync().ConfigureAwait(false);
-                        return new EngineStartResult(false, null, "The engine was stopped while it was starting.");
+                        return new EngineStartResult(false, null, "The engine was stopped while it was starting.", StoppedByRequest: true);
 
                     default: // TimedOut
                         await StopCoreAsync().ConfigureAwait(false);
@@ -239,8 +437,22 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposab
         }
         finally
         {
+            ReportStarting(false);
             _startLock.Release();
         }
+    }
+
+    // One line for an engine process that exited on its own (a crash, a kill from outside).
+    private void LogExit(Process process)
+    {
+        var code = TryExitCode(process);
+        Log(code is null ? "The engine process exited." : $"The engine process exited with code {code}.");
+    }
+
+    private static bool HasExitedSafely(Process process)
+    {
+        try { return process.HasExited; }
+        catch (InvalidOperationException) { return true; }   // disposed or never started
     }
 
     /// <summary>Why the readiness poll in <see cref="WaitForReadyAsync"/> stopped.</summary>
@@ -331,6 +543,7 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposab
     /// </summary>
     public async Task StopAsync()
     {
+        NoteStopRequested();
         _stopRequested = true;
         try
         {
@@ -369,6 +582,7 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposab
         _process = null;
         _jobObject = null;
         _baseUrl = null;
+        ReportRunning(false);
 
         if (process is null)
         {

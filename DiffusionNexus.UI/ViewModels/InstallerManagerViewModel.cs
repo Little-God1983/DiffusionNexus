@@ -1422,11 +1422,30 @@ public partial class InstallerManagerViewModel : ViewModelBase
             return;
         }
 
+        // The Engine is not updated under itself: the console's Stop asks first while a generation
+        // runs on it, which an update here could not. Checked before the confirmation below, so an
+        // update that cannot run asks nothing first.
+        if (card.IsEngine && EngineInUse())
+        {
+            await ShowEngineBusyForUpdateAsync();
+            return;
+        }
+
         // Some updates are not a plain move forward (ComfyUI on the Manager's stable channel
         // switches BACK to the newest release and may set the database aside). The badge may
         // also be stale, so ask the service now and get the user's agreement to its exact text.
         if (!await ConfirmUpdateIfNeededAsync(service, card))
             return;
+
+        // No start of the Engine from the folder this update changes, whoever asks (the Canvas, a
+        // feature). Granted only with nothing running or booting from it; released as soon as the
+        // update itself ends, not when its result dialog closes.
+        using var maintenance = new ReleaseOnce(card.IsEngine && _engine is not null ? await _engine.TryBeginMaintenanceAsync() : null);
+        if (card.IsEngine && _engine is not null && !maintenance.Holds)
+        {
+            await ShowEngineBusyForUpdateAsync();
+            return;
+        }
 
         // Auto-stop the running instance before updating
         if (card.IsRunning)
@@ -1461,7 +1480,15 @@ public partial class InstallerManagerViewModel : ViewModelBase
         var updateRunning = _installActivity?.Begin(card.Name);
         try
         {
-            var result = await service.UpdateAsync(card.InstallationPath, progress);
+            UpdateResult result;
+            try
+            {
+                result = await service.UpdateAsync(card.InstallationPath, progress);
+            }
+            finally
+            {
+                maintenance.Dispose();
+            }
             if (result.Success)
             {
                 card.IsUpdateAvailable = false;
@@ -1527,6 +1554,26 @@ public partial class InstallerManagerViewModel : ViewModelBase
             InstallerUpdateStateChanged?.Invoke(this, new InstallerUpdateStateEventArgs(
                 card.Id, IsUpdating: false, IsUpdateAvailable: card.IsUpdateAvailable, UpdateSummary: null));
         }
+    }
+
+    // Running, or booting a start (no URL yet): an engine whose host can tell says so; otherwise its URL.
+    private bool EngineInUse() => _engine is Services.Engine.IManagedEngineControl control
+        ? control.IsRunning || control.IsStarting
+        : _engine?.BaseUrl is not null;
+
+    private Task ShowEngineBusyForUpdateAsync() => _dialogService.ShowMessageAsync(
+        "Diffusion Nexus Engine is in use",
+        "Stop the Engine before updating it: use Stop on its tile in the Unified Console. If it is starting, wait until it has started.");
+
+    // Disposes what it holds once, however often it is disposed: the update releases the Engine's
+    // maintenance hold as soon as it ends, and the method's end releases it on every other path.
+    private sealed class ReleaseOnce(IDisposable? held) : IDisposable
+    {
+        private IDisposable? _held = held;
+
+        public bool Holds => _held is not null;
+
+        public void Dispose() => Interlocked.Exchange(ref _held, null)?.Dispose();
     }
 
     /// <summary>

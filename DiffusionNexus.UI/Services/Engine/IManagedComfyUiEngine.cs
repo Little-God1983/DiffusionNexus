@@ -28,4 +28,26 @@ public interface IManagedComfyUiEngine
     /// waits until no job is running. Disposing the token more than once is harmless.
     /// </summary>
     IDisposable BeginJob();
+
+    /// <summary>
+    /// Marks a generation getting under way (resolving, starting, probing) until its job begins.
+    /// Counts for the console's Stop, which asks first, but not for a pending restart: the
+    /// generation that carries the restart out must not postpone it. Disposing more than once is
+    /// harmless. The default marks nothing.
+    /// </summary>
+    IDisposable BeginPreparing() => NoOp.Instance;
+
+    /// <summary>
+    /// Holds the engine for maintenance (an update changing its folder) until disposed: no start runs
+    /// meanwhile, whoever asks, and <see cref="EnsureRunningAsync"/> says why. Null, holding nothing,
+    /// while the engine runs or a start boots from that folder; a brief hold of the start lock (a call
+    /// that only checks, a stop) is waited out. The default holds nothing and grants it.
+    /// </summary>
+    Task<IDisposable?> TryBeginMaintenanceAsync() => Task.FromResult<IDisposable?>(NoOp.Instance);
+
+    private sealed class NoOp : IDisposable
+    {
+        public static readonly NoOp Instance = new();
+        public void Dispose() { }
+    }
 }

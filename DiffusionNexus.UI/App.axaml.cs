@@ -753,6 +753,9 @@ public partial class App : Application
                 sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
         services.AddSingleton<Services.Engine.IManagedComfyUiEngine>(sp =>
             sp.GetRequiredService<Services.Engine.ManagedComfyUiEngine>());
+        // The Unified Console's Engine tile (#610): the user's own Start / Stop / Restart.
+        services.AddSingleton<Services.Engine.IManagedEngineControl>(sp =>
+            sp.GetRequiredService<Services.Engine.ManagedComfyUiEngine>());
         // A changed extra_model_paths.yaml needs an Engine restart: it is read only at start-up. The
         // engine is resolved inside the callback, when it fires, not while building the resolver.
         services.AddSingleton<Services.Engine.IEngineRootResolver>(sp =>

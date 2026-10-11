@@ -20,6 +20,138 @@ public class ManagedComfyUiEngineTests
         }
     }
 
+    // #610: the console's Engine tile follows the engine, whoever started or stopped it (the Canvas
+    // starts it on demand). Reported once per change, so a repeated stop is not a second "stopped".
+    [Fact]
+    public void RunningState_IsReportedOncePerChange()
+    {
+        var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+        var seen = new List<bool>();
+        engine.StateChanged += () => seen.Add(engine.IsRunning);
+
+        engine.ReportRunning(true);
+        engine.ReportRunning(true);
+        engine.ReportRunning(false);
+        engine.ReportRunning(false);
+
+        seen.Should().Equal(true, false);
+    }
+
+    [Fact]
+    public void StartingState_IsReportedOncePerChange()
+    {
+        var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+        var seen = new List<bool>();
+        engine.StateChanged += () => seen.Add(engine.IsStarting);
+
+        engine.ReportStarting(true);
+        engine.ReportStarting(true);
+        engine.ReportStarting(false);
+
+        seen.Should().Equal(true, false);
+    }
+
+    // #621 review: a start that only resolves paths and probes the server before its job begins is a
+    // generation getting under way: Stop on the console asks first. A pending restart ignores it, or
+    // the generation that carries the restart out would postpone it forever.
+    [Fact]
+    public async Task APreparingGeneration_CountsForTheConsole_ButNotForAPendingRestart()
+    {
+        await using var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+        var running = StartStandInEngine();
+        using var observer = Process.GetProcessById(running.Id);
+        try
+        {
+            PretendRunning(engine, running, "http://127.0.0.1:51234");
+            engine.RequestRestart();
+
+            using (engine.BeginPreparing())
+            {
+                engine.HasActiveJobs.Should().BeTrue("Stop must ask: a generation is getting under way");
+                await engine.EnsureRunningAsync(NotInstalledRoot, CancellationToken.None);
+            }
+
+            observer.WaitForExit(10_000).Should().BeTrue("the preparing generation carries the restart out");
+            engine.HasActiveJobs.Should().BeFalse();
+        }
+        finally { KillQuietly(running); }
+    }
+
+    [Fact]
+    public async Task AStartAfterACrash_ReleasesTheDeadEngineFirst()
+    {
+        var logger = new Mock<IUnifiedLogger>();
+        await using var engine = new ManagedComfyUiEngine(logger.Object);
+        var exited = Process.Start(new ProcessStartInfo("cmd.exe", "/c exit 1") { UseShellExecute = false, CreateNoWindow = true })!;
+        await exited.WaitForExitAsync();
+        PretendRunning(engine, exited, "http://127.0.0.1:51234");
+        engine.ReportRunning(true);   // crashed, and its release has not run yet
+
+        await engine.EnsureRunningAsync(NotInstalledRoot, CancellationToken.None);
+
+        engine.IsRunning.Should().BeFalse("a dead engine must not read as running while the next start runs");
+        engine.BaseUrl.Should().BeNull();
+        logger.Verify(l => l.Info(It.IsAny<LogCategory>(), It.IsAny<string>(),
+            It.Is<string>(m => m.StartsWith("The engine process exited")), It.IsAny<string?>()), Times.Once,
+            "the exit handler may come too late to see it: this release reports the crash");
+    }
+
+    // An exit right after a start became ready is reported once: by the exit handler (the start has
+    // already ended its "starting" and reported running, so the exit is no longer the start's).
+    [Fact]
+    public async Task AnExitRightAfterAStartBecameReady_IsLoggedOnce()
+    {
+        var logger = new Mock<IUnifiedLogger>();
+        await using var engine = new ManagedComfyUiEngine(logger.Object);
+        var running = StartStandInEngine();
+        try
+        {
+            engine.ReportStarting(true);
+            PretendRunning(engine, running, null!);
+            engine.WatchProcess(running);
+            var handled = ExitHandlersRan(running);
+            (await engine.CompleteReadyAsync(running, "http://127.0.0.1:51234")).IsRunning.Should().BeTrue();
+
+            running.Kill(entireProcessTree: true);
+            await handled;
+            for (var i = 0; i < 50 && engine.BaseUrl is not null; i++) await Task.Delay(100);
+
+            logger.Verify(l => l.Info(It.IsAny<LogCategory>(), It.IsAny<string>(),
+                It.Is<string>(m => m.StartsWith("The engine process exited")), It.IsAny<string?>()), Times.Once);
+            engine.IsRunning.Should().BeFalse();
+        }
+        finally
+        {
+            KillQuietly(running);
+        }
+    }
+
+    [Fact]
+    public async Task StoppingAnEngineThatNeverRan_ReportsNothing()
+    {
+        var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+        var seen = new List<bool>();
+        engine.StateChanged += () => seen.Add(engine.IsRunning);
+
+        await engine.StopAsync();
+
+        seen.Should().BeEmpty();
+        engine.IsRunning.Should().BeFalse();
+    }
+
+    [Fact]
+    public void HasActiveJobs_FollowsTheJobTokens()
+    {
+        var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+        engine.HasActiveJobs.Should().BeFalse();
+
+        var job = engine.BeginJob();
+        engine.HasActiveJobs.Should().BeTrue();
+
+        job.Dispose();
+        engine.HasActiveJobs.Should().BeFalse();
+    }
+
     [Fact]
     public void BuildArguments_BindsLoopbackOnlyAndDisablesTheBrowser()
     {
@@ -158,11 +290,233 @@ public class ManagedComfyUiEngineTests
             .SetValue(engine, baseUrl);
     }
 
+    // Completes once every Exited handler subscribed before it (the engine's) has run: handlers run
+    // in subscription order, so a check made after this sees what the engine's handler did.
+    private static Task ExitHandlersRan(Process process)
+    {
+        var ran = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        process.Exited += (_, _) => ran.TrySetResult();
+        return ran.Task.WaitAsync(TimeSpan.FromSeconds(15));
+    }
+
+    // #621 review round 3: the Engine is not started from a folder an update is changing, whoever asks.
+    [Fact]
+    public async Task WhileTheEngineIsUpdated_NoStartRuns()
+    {
+        await using var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+
+        EngineStartResult result;
+        using ((await engine.TryBeginMaintenanceAsync())!)
+            result = await engine.EnsureRunningAsync(NotInstalledRoot, CancellationToken.None);
+
+        result.IsRunning.Should().BeFalse();
+        result.FailureReason.Should().Contain("being updated");
+    }
+
+    [Fact]
+    public async Task NoMaintenanceHold_UnderARunningOrStartingEngine()
+    {
+        await using var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+
+        // A start in progress: starting, holding the start lock (up to two minutes, BaseUrl still null).
+        var startLock = StartLock(engine);
+        await startLock.WaitAsync();
+        engine.ReportStarting(true);
+        try { (await engine.TryBeginMaintenanceAsync()).Should().BeNull("a start is booting from that folder"); }
+        finally
+        {
+            engine.ReportStarting(false);
+            startLock.Release();
+        }
+
+        var running = StartStandInEngine();
+        try
+        {
+            PretendRunning(engine, running, "http://127.0.0.1:51234");
+            (await engine.TryBeginMaintenanceAsync()).Should().BeNull("the engine runs from that folder");
+        }
+        finally { KillQuietly(running); }
+    }
+
+    // #621 review round 5: the start lock is also held briefly by a call that only checks (a Canvas
+    // probe of a stopped engine), a stop or a crash's release. An update then waits a moment instead of
+    // calling a stopped engine "in use".
+    [Fact]
+    public async Task TheMaintenanceHold_WaitsOutABriefHoldOfTheStartLock()
+    {
+        await using var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+        var startLock = StartLock(engine);
+        await startLock.WaitAsync();
+
+        var hold = engine.TryBeginMaintenanceAsync();
+        await Task.Delay(100);
+        startLock.Release();
+
+        using var granted = await hold;
+        granted.Should().NotBeNull("nothing runs or starts: the lock was only held for a moment");
+    }
+
+    // #621 review round 5: a confirmed Stop also cancels a generation still waiting to start the engine;
+    // otherwise it starts the engine again right after the user stopped it.
+    [Fact]
+    public async Task AStartWaitingWhenTheUserStops_DoesNotStartTheEngineAgain()
+    {
+        await using var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+        var startLock = StartLock(engine);
+        await startLock.WaitAsync();
+
+        var waiting = engine.EnsureRunningAsync(NotInstalledRoot, CancellationToken.None);
+        engine.NoteStopRequested();
+        startLock.Release();
+        var result = await waiting;
+
+        result.IsRunning.Should().BeFalse();
+        result.StoppedByRequest.Should().BeTrue("the user stopped the engine while this start waited");
+    }
+
+    // #621 review round 5: a crash is logged once, by whichever release actually lets go of it.
+    [Fact]
+    public async Task ACrashIsLoggedOnce_WhenTheNextStartReleasesItBeforeTheExitHandlersRelease()
+    {
+        var logger = new Mock<IUnifiedLogger>();
+        await using var engine = new ManagedComfyUiEngine(logger.Object);
+        var exited = Process.Start(new ProcessStartInfo("cmd.exe", "/c exit 1") { UseShellExecute = false, CreateNoWindow = true })!;
+        await exited.WaitForExitAsync();
+        PretendRunning(engine, exited, "http://127.0.0.1:51234");
+        engine.ReportRunning(true);
+        var startLock = StartLock(engine);
+        await startLock.WaitAsync();
+
+        var start = engine.EnsureRunningAsync(NotInstalledRoot, CancellationToken.None);   // queued first
+        engine.OnProcessExited(exited);                                                    // its release queued second
+        startLock.Release();
+        await start;
+        for (var i = 0; i < 50 && startLock.CurrentCount == 0; i++) await Task.Delay(50);
+        await Task.Delay(100);
+
+        logger.Verify(l => l.Info(It.IsAny<LogCategory>(), It.IsAny<string>(),
+            It.Is<string>(m => m.StartsWith("The engine process exited")), It.IsAny<string?>()), Times.Once);
+    }
+
+    private static SemaphoreSlim StartLock(ManagedComfyUiEngine engine) =>
+        (SemaphoreSlim)typeof(ManagedComfyUiEngine)
+            .GetField("_startLock", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(engine)!;
+
+    // Finding 6: a start that ends is never published as running and starting at once.
+    [Fact]
+    public async Task AReadyStart_IsNeverRunningAndStartingAtOnce()
+    {
+        await using var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+        var states = new List<(bool Running, bool Starting)>();
+        engine.StateChanged += () => states.Add((engine.IsRunning, engine.IsStarting));
+        var running = StartStandInEngine();
+        try
+        {
+            engine.ReportStarting(true);
+            PretendRunning(engine, running, null!);
+
+            var result = await engine.CompleteReadyAsync(running, "http://127.0.0.1:51234");
+
+            result.IsRunning.Should().BeTrue();
+            states.Should().NotContain((true, true), "the tile would show Starting... with Stop, Restart and Web UI");
+            engine.IsStarting.Should().BeFalse();
+        }
+        finally { KillQuietly(running); }
+    }
+
+    // #621 review round 3: the console's Stop decides "idle" under the start lock, so a generation
+    // that got under way after the console looked is not killed without asking.
+    [Fact]
+    public async Task StopIfIdle_LeavesAnEngineWithAGenerationUnderWayRunning()
+    {
+        await using var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+        var running = StartStandInEngine();
+        using var observer = Process.GetProcessById(running.Id);
+        try
+        {
+            PretendRunning(engine, running, "http://127.0.0.1:51234");
+            engine.ReportRunning(true);
+
+            using (engine.BeginPreparing())
+                (await engine.StopIfIdleAsync()).Should().BeFalse();
+            observer.HasExited.Should().BeFalse();
+
+            (await engine.StopIfIdleAsync()).Should().BeTrue();
+            observer.WaitForExit(10_000).Should().BeTrue();
+        }
+        finally { KillQuietly(running); }
+    }
+
     private static void KillQuietly(Process process)
     {
         try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
         catch (InvalidOperationException) { /* already gone */ }
         process.Dispose();
+    }
+
+    // #610 review: an engine that dies after it was ready (a crash, a kill from outside) is no longer
+    // running: the console tile must show Start again, BaseUrl must be null, and its handles released.
+    [Fact]
+    public async Task AnEngineThatExitsAfterBeingReady_ReportsNotRunning_AndLetsGoOfIt()
+    {
+        await using var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+        var seen = new List<bool>();
+        engine.StateChanged += () => seen.Add(engine.IsRunning);
+        var running = StartStandInEngine();
+        try
+        {
+            PretendRunning(engine, running, "http://127.0.0.1:51234");
+            engine.WatchProcess(running);
+            engine.ReportRunning(true);
+
+            running.Kill(entireProcessTree: true);
+            for (var i = 0; i < 50 && (engine.IsRunning || engine.BaseUrl is not null); i++) await Task.Delay(100);
+
+            engine.IsRunning.Should().BeFalse();
+            engine.BaseUrl.Should().BeNull("the interface promises null when it is not running");
+            seen.Should().Equal(true, false);
+        }
+        finally { KillQuietly(running); }
+    }
+
+    [Fact]
+    public async Task AnExitDuringStartup_IsLeftToTheStart_NotLoggedTwice()
+    {
+        var logger = new Mock<IUnifiedLogger>();
+        await using var engine = new ManagedComfyUiEngine(logger.Object);
+        var starting = StartStandInEngine();
+        try
+        {
+            PretendRunning(engine, starting, null!);   // a start in progress: not ready, not reported
+            engine.WatchProcess(starting);
+            var handled = ExitHandlersRan(starting);
+
+            starting.Kill(entireProcessTree: true);
+            await handled;
+
+            logger.Verify(l => l.Info(It.IsAny<LogCategory>(), It.IsAny<string>(),
+                It.Is<string>(m => m.StartsWith("The engine process exited")), It.IsAny<string?>()), Times.Never,
+                "the readiness poll reports a startup exit itself");
+        }
+        finally { KillQuietly(starting); }
+    }
+
+    [Fact]
+    public async Task ReadyButAlreadyGone_IsAFailedStart_NotARunningEngine()
+    {
+        await using var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+        var seen = new List<bool>();
+        engine.StateChanged += () => seen.Add(engine.IsRunning);
+        var exited = Process.Start(new ProcessStartInfo("cmd.exe", "/c exit 3") { UseShellExecute = false, CreateNoWindow = true })!;
+        await exited.WaitForExitAsync();
+        PretendRunning(engine, exited, null!);
+
+        var result = await engine.CompleteReadyAsync(exited, "http://127.0.0.1:51234");
+
+        result.IsRunning.Should().BeFalse("it answered the readiness check and died before it was reported");
+        engine.IsRunning.Should().BeFalse();
+        engine.BaseUrl.Should().BeNull();
+        seen.Should().NotContain(true);
     }
 
     [Fact]

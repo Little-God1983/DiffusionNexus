@@ -18,6 +18,104 @@ public class ManagedComfyUiBackendTests
         public string? LoadTemplateJson() => hasTemplate ? "{}" : null;
     }
 
+    // #621 review: the console's Stop and a crash's release can clear the engine's BaseUrl at any
+    // moment; the backend uses the URL its own start returned, never a property read later.
+    [Fact]
+    public async Task IsAvailable_UsesTheUrlItsStartReturned_NotOneReadLater()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "dn-engine-" + Guid.NewGuid());
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, "main.py"), "# comfy");
+        try
+        {
+            var engine = new FakeEngine { StartResult = new EngineStartResult(true, "http://127.0.0.1:9", null) };
+            var backend = new ManagedComfyUiBackend(engine, () => Task.FromResult<string?>(root), new StubTemplateSource(true));
+
+            var act = () => backend.IsAvailableAsync();
+
+            await act.Should().NotThrowAsync<ArgumentNullException>("BaseUrl was cleared after the start answered");
+            await act.Should().NotThrowAsync<NullReferenceException>();
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task Generate_IsAPreparingGeneration_BeforeItsProbeStartsTheEngine()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "dn-engine-" + Guid.NewGuid());
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, "main.py"), "# comfy");
+        try
+        {
+            var engine = new FakeEngine { StartResult = new EngineStartResult(false, null, "no venv") };
+            var backend = new ManagedComfyUiBackend(engine, () => Task.FromResult<string?>(root), new StubTemplateSource(true));
+            var request = new DiffusionRequest { ModelKey = "krea2", Prompt = "a cat", Width = 1024, Height = 1024 };
+
+            await foreach (var _ in backend.GenerateAsync(request)) { }
+
+            engine.PreparingWhenStarted.Should().Be(1, "Stop on the console must ask while the probe runs");
+            engine.Preparing.Should().Be(0, "and the mark ends with the generate");
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task IsAvailable_IsAPreparingGeneration_WhileItStartsTheEngine()
+    {
+        // The Canvas resolves its backend with this probe; a cold start makes it the longest part.
+        var root = Path.Combine(Path.GetTempPath(), "dn-engine-" + Guid.NewGuid());
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, "main.py"), "# comfy");
+        try
+        {
+            var engine = new FakeEngine { StartResult = new EngineStartResult(false, null, "no venv") };
+            var backend = new ManagedComfyUiBackend(engine, () => Task.FromResult<string?>(root), new StubTemplateSource(true));
+
+            await backend.IsAvailableAsync();
+
+            engine.PreparingWhenStarted.Should().Be(1);
+            engine.Preparing.Should().Be(0);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    private sealed class FakeEngine : IManagedEngineControl
+    {
+        public EngineStartResult StartResult { get; set; } = new(false, null, "not started");
+        public int Preparing { get; private set; }
+        public int? PreparingWhenStarted { get; private set; }
+        public string? BaseUrl => null;
+        public bool IsRunning => false;
+        public bool IsStarting => false;
+        public bool HasActiveJobs => Preparing > 0;
+        public bool IsRestartPending => false;
+#pragma warning disable CS0067
+        public event Action? StateChanged;
+#pragma warning restore CS0067
+
+        public Task<EngineStartResult> EnsureRunningAsync(string installRoot, CancellationToken ct)
+        {
+            PreparingWhenStarted = Preparing;
+            return Task.FromResult(StartResult);
+        }
+
+        public IDisposable BeginPreparing()
+        {
+            Preparing++;
+            return new Callback(() => Preparing--);
+        }
+
+        public IDisposable BeginJob() => new Callback(() => { });
+        public void RequestRestart() { }
+        public Task StopAsync() => Task.CompletedTask;
+        public Task<bool> StopIfIdleAsync() => Task.FromResult(true);
+
+        private sealed class Callback(Action onDispose) : IDisposable
+        {
+            public void Dispose() => onDispose();
+        }
+    }
+
     [Fact]
     public void DisplayName_IdentifiesTheEngine()
     {
