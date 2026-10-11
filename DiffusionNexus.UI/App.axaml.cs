@@ -512,9 +512,7 @@ public partial class App : Application
                 Serilog.Log.Information("Starting the workload catalog in the background...");
                 await CatalogStartup.RunAsync(
                     Services!.GetRequiredService<ICatalog>(),
-                    Services!.GetRequiredService<DiffusionNexus.Installer.SDK.Services.Settings.IUserSettingsRepository>(),
-                    Services!.GetRequiredService<CatalogStartupUpdater>(),
-                    Environment.GetEnvironmentVariable(CatalogChannelResolver.EnvironmentVariable),
+                    Services!.GetRequiredService<ICatalogUpdateCoordinator>(),
                     Services!.GetService<IActivityLogService>());
             }
             catch (Exception ex)
