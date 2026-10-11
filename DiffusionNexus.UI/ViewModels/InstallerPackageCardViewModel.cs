@@ -32,6 +32,7 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     private InstallerType _type;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PathDisplay))]
     private string _installationPath = string.Empty;
 
     [ObservableProperty]
@@ -109,8 +110,12 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     private bool _isEngineInstalling;
 
     // What the tile showed before the install, put back when it ends without installing.
-    private string? _versionBeforeInstall;
-    private string? _pathBeforeInstall;
+    private string _versionBeforeInstall = string.Empty;
+
+    // The folder an Engine install writes into, shown as the path while it runs. Kept apart from
+    // InstallationPath: Delete from Disk, Settings and Open Folder act on that one, never on a
+    // folder the install is still writing into.
+    private string? _installTarget;
 
     /// <summary>Live status line shown on the engine tile during install: the running step.</summary>
     [ObservableProperty]
@@ -134,8 +139,8 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     public void BeginEngineInstall(string targetFolder)
     {
         _versionBeforeInstall = VersionDisplay;
-        _pathBeforeInstall = InstallationPath;
-        InstallationPath = targetFolder;
+        _installTarget = targetFolder;
+        OnPropertyChanged(nameof(PathDisplay));
         VersionDisplay = "Installing...";
         EngineProgressPercent = 0;
         EngineStatusMessage = "Starting engine install...";
@@ -145,8 +150,9 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
 
     /// <summary>
     /// Ends the Engine install on the tile. With <paramref name="installedPath"/>, a working engine
-    /// now stands behind the row; without, the tile goes back to the row it had, its folder state
-    /// read again (the failed install may have created it). Does nothing when no install runs.
+    /// now stands behind the row; without, the tile goes back to what it showed before (the caller
+    /// re-reads the folder with <see cref="ShowDeadFolder"/>, off the UI thread). Does nothing when
+    /// no install runs.
     /// </summary>
     public void EndEngineInstall(string? installedPath)
     {
@@ -155,6 +161,8 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
         EngineStatusMessage = null;
         EngineActivity = null;
         EngineProgressPercent = 0;
+        _installTarget = null;
+        OnPropertyChanged(nameof(PathDisplay));
 
         if (installedPath is not null)
         {
@@ -165,15 +173,16 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
             return;
         }
 
-        InstallationPath = _pathBeforeInstall ?? InstallationPath;
-        VersionDisplay = _versionBeforeInstall ?? VersionDisplay;
-        if (IsMissing) ShowDeadFolder(InstallationPath);
+        VersionDisplay = _versionBeforeInstall;
     }
 
-    // A row whose folder holds no working engine: say whether the folder is gone or only incomplete.
-    private void ShowDeadFolder(string path)
+    /// <summary>
+    /// A row whose folder holds no working engine: says whether the folder is gone or only
+    /// incomplete. Takes the folder's state so callers decide where the disk is read.
+    /// </summary>
+    public void ShowDeadFolder(bool folderExists)
     {
-        var text = Directory.Exists(path) ? "Installation incomplete" : "Installation folder not found";
+        var text = folderExists ? "Installation incomplete" : "Installation folder not found";
         MissingBannerText = text;
         VersionDisplay = text;
     }
@@ -228,6 +237,9 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     /// and a red banner under a running install read as a failure (#609).
     /// </summary>
     public bool ShowMissingBanner => IsMissing && !IsEngineInstalling;
+
+    /// <summary>The path line: the folder an Engine install writes into while it runs, else the row's.</summary>
+    public string PathDisplay => _installTarget ?? InstallationPath;
 
     /// <summary>The banner's text. An Engine folder that exists but holds no working engine says so.</summary>
     [ObservableProperty]
@@ -394,7 +406,8 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
             ? new InstallerPackageCardViewModel(forCore: true)
             : new InstallerPackageCardViewModel(installed);
 
-        var looksInstalled = ManagedEngineLocator.LooksInstalled(installed?.InstallationPath);
+        var folder = ManagedEngineLocator.Probe(installed?.InstallationPath);
+        var looksInstalled = folder == EngineFolderState.Installed;
 
         card.Name = "Diffusion Nexus Engine";
         card.Type = InstallerType.ComfyUI;
@@ -403,7 +416,7 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
         card.IsMissing = installed is not null && !looksInstalled;
         card.InstallationPath = installed?.InstallationPath ?? string.Empty;
         if (card.IsMissing)
-            card.ShowDeadFolder(card.InstallationPath);
+            card.ShowDeadFolder(folderExists: folder == EngineFolderState.Incomplete);
         else
             card.VersionDisplay = looksInstalled ? "App-managed" : "Not installed";
 

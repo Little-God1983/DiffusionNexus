@@ -251,10 +251,10 @@
 
                                         <!-- Installation Path -->
                                         <TextBlock Grid.Row="1"
-                                                   Text="{Binding InstallationPath}"
+                                                   Text="{Binding PathDisplay}"
                                                    FontSize="11" Opacity="0.4"
                                                    TextTrimming="CharacterEllipsis"
-                                                   ToolTip.Tip="{Binding InstallationPath}"
+                                                   ToolTip.Tip="{Binding PathDisplay}"
                                                    Margin="0,2,0,4"/>
 
                                         <!-- Version -->
