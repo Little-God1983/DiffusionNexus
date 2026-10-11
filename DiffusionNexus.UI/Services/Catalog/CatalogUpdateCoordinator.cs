@@ -107,7 +107,6 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
     private bool _switching;
     private bool _savingAutoApply;
     private bool _applyAutomatic;
-    private bool _installRunning;
 
     public CatalogUpdateCoordinator(
         ICatalogUpdateService updates,
@@ -125,7 +124,6 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
         _installs = installs;
         _readEnvironment = readEnvironment;
         _logger = logger;
-        _installRunning = installs.Running is not null;
         _installs.Changed += OnInstallsChanged;
     }
 
@@ -201,7 +199,6 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
 
         lock (_gate)
         {
-            // Read, but no channel: the installer's file could not be read on the first start (PR #619 round 2).
             // Read without a channel (the installer's file could not be read on the first start): Stable for this
             // run, not stored, so the next start tries the copy again. Checks work: refusing them would never end
             // while that file stays unreadable, and each channel has its own folder (PR #619 round 4).
@@ -614,6 +611,19 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
             var preview = await PreviewAsync(current, target, ct).ConfigureAwait(false);
             lock (_gate) Phase = phaseBefore;
 
+            if (preview.Outcome == CatalogUpdateOutcome.RequiresNewerSoftware)
+            {
+                // That channel's release needs a newer Diffusion Nexus: following it would leave the app on a channel
+                // it can never read (PR #619 round 5). Nothing is saved; the page says why.
+                lock (_gate)
+                {
+                    LastCheck = preview;
+                    LastCheckedAt = DateTimeOffset.Now;
+                }
+                _logger?.Warn(LogCategory.General, LogSource, $"Catalog channel switch to {target} refused: its catalog v{preview.Remote?.CatalogVersion} needs a newer Diffusion Nexus");
+                return;
+            }
+
             if (ChannelSwitchWarning.For(preview) is { } warning)
             {
                 lock (_gate) PendingSwitch = new CatalogChannelSwitch(preview, warning);
@@ -664,6 +674,12 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
         try
         {
             await CommitSwitchAsync(pending.Preview, phaseBefore, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Nothing was changed: the warning stays, so the user can answer again (PR #619 round 5).
+            lock (_gate) PendingSwitch ??= pending;
+            throw;
         }
         finally
         {
@@ -808,17 +824,9 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
 
     // ----- plumbing -----
 
-    private void OnInstallsChanged()
-    {
-        var running = _installs.Running is not null;
-        bool flipped;
-        lock (_gate)
-        {
-            flipped = running != _installRunning;
-            _installRunning = running;
-        }
-        if (flipped) Raise();
-    }
+    // Every change, not only none↔some: the hold text names the install that runs now (PR #619 round 5).
+    // Begin and end are rare, so the page re-renders a handful of times per install.
+    private void OnInstallsChanged() => Raise();
 
     /// <summary>Each subscriber on its own: a throwing handler (a view gone away) must not fault a background task.</summary>
     private void Raise()

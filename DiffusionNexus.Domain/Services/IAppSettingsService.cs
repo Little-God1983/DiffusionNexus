@@ -39,9 +39,9 @@ public interface IAppSettingsService
     Task SetCatalogChannelAsync(string channel, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Saves the catalog channel only when the settings row exists; false (nothing written) without one. For the
-    /// background first-start copy (#618): on a fresh install the UI creates the row at the same time, and two
-    /// inserts of row 1 would make one of them fail.
+    /// Saves the catalog channel only when the settings row exists and holds no channel yet; false (nothing written)
+    /// otherwise. For the background first-start copy (#618): on a fresh install the UI creates the row at the same
+    /// time (two inserts of row 1 would make one fail), and a channel the user picked meanwhile is never overwritten.
     /// </summary>
     Task<bool> SetCatalogChannelIfSettingsExistAsync(string channel, CancellationToken cancellationToken = default);
 

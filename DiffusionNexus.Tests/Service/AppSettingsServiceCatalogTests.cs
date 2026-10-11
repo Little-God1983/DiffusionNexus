@@ -87,6 +87,27 @@ public sealed class AppSettingsServiceCatalogTests : IDisposable
         }
     }
 
+    // PR #619 round 5: a slow first-start copy wrote the installer's channel over one the user had just picked.
+    [Fact]
+    public async Task The_first_start_copy_never_overwrites_a_chosen_channel()
+    {
+        using (var scope = _provider.CreateScope())
+        {
+            await Service(scope).GetSettingsAsync();
+            await Service(scope).SetCatalogChannelAsync("Preview");   // the user's switch
+        }
+
+        using (var scope = _provider.CreateScope())
+        {
+            (await Service(scope).SetCatalogChannelIfSettingsExistAsync("Stable")).Should().BeFalse();
+        }
+
+        using (var scope = _provider.CreateScope())
+        {
+            (await Service(scope).GetCatalogUpdateSettingsAsync()).Channel.Should().Be("Preview");
+        }
+    }
+
     [Fact]
     public async Task A_settings_save_never_overwrites_the_catalog_settings()
     {

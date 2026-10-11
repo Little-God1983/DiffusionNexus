@@ -57,6 +57,23 @@ public sealed class CatalogPreferenceStoreTests
         finally { dir.Delete(recursive: true); }
     }
 
+    // PR #619 round 5: a valid file without this user's row (a renamed account) is "nothing saved", not unreadable.
+    [Fact]
+    public async Task A_readable_installer_file_without_this_user_starts_on_Stable_and_stores_it()
+    {
+        var dir = Directory.CreateTempSubdirectory();
+        try
+        {
+            _installerFile = Path.Combine(dir.FullName, "user_settings.json");
+            File.WriteAllText(_installerFile, "[]");
+            InstallerSaved(null);
+
+            (await Store().LoadAsync()).Channel.Should().Be("Stable");
+            _settings.Verify(s => s.SetCatalogChannelIfSettingsExistAsync("Stable", It.IsAny<CancellationToken>()), Times.Once);
+        }
+        finally { dir.Delete(recursive: true); }
+    }
+
     [Fact]
     public async Task Without_an_installer_file_the_app_starts_on_Stable_and_stores_it()
     {

@@ -216,7 +216,7 @@ public sealed partial class CatalogSettingsViewModel : ObservableObject, IDispos
             null => "Not checked yet.",
             { IsSwitchPreview: true } k when c.UpdateAvailable => $"Catalog update available – v{k.Remote?.CatalogVersion}",
             { Outcome: CatalogUpdateOutcome.UpToDate } => "Up to date.",
-            { Outcome: CatalogUpdateOutcome.UpdatesAvailable } k when !c.UpdateAvailable && c.Phase != CatalogUpdatePhase.Applying
+            { Outcome: CatalogUpdateOutcome.UpdatesAvailable } k when !c.UpdateAvailable
                 => $"Catalog v{k.Remote?.CatalogVersion} has no changes for Diffusion Nexus.",
             { Outcome: CatalogUpdateOutcome.UpdatesAvailable } k => $"Catalog update available – v{k.Remote?.CatalogVersion}",
             { Outcome: CatalogUpdateOutcome.RequiresNewerSoftware } => "This catalog update needs a newer version of Diffusion Nexus.",

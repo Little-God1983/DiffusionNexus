@@ -376,6 +376,24 @@ public sealed partial class CatalogUpdateCoordinatorTests : IDisposable
         coordinator.CanApply.Should().BeTrue();
     }
 
+    // PR #619 round 5: when one of two installs ended, the hold text kept naming it.
+    [Fact]
+    public async Task The_hold_names_the_install_that_still_runs()
+    {
+        _service.NextCheck = () => CatalogChecks.Available(7);
+        using var coordinator = Create();
+        await coordinator.CheckAsync();
+        var update = _installs.Begin("ComfyUI");
+        using var workload = _installs.Begin("Flux");
+        var changed = 0;
+        coordinator.Changed += () => changed++;
+
+        update.Dispose();
+
+        changed.Should().BeGreaterThan(0, "the page re-renders with the install that holds the apply now");
+        coordinator.ApplyBlockedReason.Should().Be("It can be applied once Flux has finished.");
+    }
+
     [Fact]
     public async Task A_failed_apply_keeps_the_error_and_apply_is_the_retry()
     {

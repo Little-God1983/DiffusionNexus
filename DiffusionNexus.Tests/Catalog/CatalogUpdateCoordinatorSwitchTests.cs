@@ -199,6 +199,44 @@ public sealed partial class CatalogUpdateCoordinatorTests
         coordinator.SwitchingTo.Should().BeNull();
     }
 
+    // PR #619 round 5: a channel whose release needs a newer app can never be read; switching to it left the app
+    // following a channel it cannot read, for good.
+    [Fact]
+    public async Task A_switch_to_a_channel_that_needs_a_newer_app_is_refused()
+    {
+        _service.NextPreview = channel => CatalogChecks.Outcome(CatalogUpdateOutcome.RequiresNewerSoftware, channel) with { Remote = CatalogChecks.Remote(9, channel) };
+        using var coordinator = Create();
+
+        await coordinator.SwitchChannelAsync(CatalogChannel.Preview);
+
+        _preferences.SavedChannels.Should().BeEmpty();
+        coordinator.Channel.Should().Be(CatalogChannel.Stable);
+        _options.Channel.Should().Be(CatalogChannel.Stable);
+        coordinator.LastCheck!.Outcome.Should().Be(CatalogUpdateOutcome.RequiresNewerSoftware);
+        coordinator.UpdateAvailable.Should().BeFalse();
+    }
+
+    // PR #619 round 5: a failed save on "Switch to …" dropped the warning; the answer could not be given again.
+    [Fact]
+    public async Task A_failed_confirmation_keeps_the_warning_for_another_try()
+    {
+        _service.NextPreview = PreviewRemovesAppWorkload;
+        using var coordinator = Create();
+        await coordinator.SwitchChannelAsync(CatalogChannel.Preview);
+        _preferences.SaveFailure = new IOException("database locked");
+
+        var act = () => coordinator.ConfirmSwitchAsync();
+
+        await act.Should().ThrowAsync<IOException>();
+        coordinator.PendingSwitch.Should().NotBeNull();
+
+        _preferences.SaveFailure = null;
+        _service.OnApply = () => WriteState(CatalogChannel.Preview, 6);
+        await coordinator.ConfirmSwitchAsync();
+        Settle(coordinator);
+        coordinator.Channel.Should().Be(CatalogChannel.Preview);
+    }
+
     [Fact]
     public async Task A_switch_into_a_missing_folder_keeps_the_last_known_state()
     {

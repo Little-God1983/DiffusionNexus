@@ -265,7 +265,8 @@ public sealed class AppSettingsService : IAppSettingsService
         ArgumentException.ThrowIfNullOrWhiteSpace(channel);
         _unitOfWork.ClearChangeTracker();
         var settings = await _unitOfWork.AppSettings.GetSettingsAsync(cancellationToken).ConfigureAwait(false);
-        if (settings is null) return false;
+        // No row (the UI creates it), or a channel chosen meanwhile (a switch during the copy, PR #619 round 5).
+        if (settings is null || settings.CatalogChannel is not null) return false;
         settings.CatalogChannel = channel.Trim();
         settings.UpdatedAt = DateTimeOffset.UtcNow;
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);

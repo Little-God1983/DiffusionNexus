@@ -72,6 +72,24 @@ public sealed class CatalogPreferenceStore(IServiceScopeFactory scopes, IUserSet
     }
 
     /// <summary>
+    /// Whether the installer's file can be read and parsed: then a missing user means "nothing saved" (a renamed
+    /// account, another user's file), not a locked or corrupt file (PR #619 round 5).
+    /// </summary>
+    private static bool IsReadableJson(string path)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var document = System.Text.Json.JsonDocument.Parse(stream);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
     /// The installer's saved channel, read-only (GetOrCreateForCurrentUserAsync would write the installer's
     /// file). Nothing usable saved: Stable. Unreadable: null (nothing is known).
     /// </summary>
@@ -83,7 +101,7 @@ public sealed class CatalogPreferenceStore(IServiceScopeFactory scopes, IUserSet
             var user = await installerSettings.GetByUserNameAsync(Environment.UserName, ct).ConfigureAwait(false);
             // The SDK's JSON repository reads a locked or corrupt file as empty instead of throwing: a file that
             // exists but yields no user is unknown, not "nothing saved" (PR #619 round 3).
-            if (user is null && installerSettingsPath is not null && File.Exists(installerSettingsPath))
+            if (user is null && installerSettingsPath is not null && File.Exists(installerSettingsPath) && !IsReadableJson(installerSettingsPath))
             {
                 logger?.Warn(LogCategory.General, LogSource, "The installer's settings could not be read; following Stable for now and copying its channel on the next start.",
                     installerSettingsPath);
