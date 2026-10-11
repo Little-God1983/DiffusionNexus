@@ -66,6 +66,7 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(ShowWorkloadsButton))]
     [NotifyPropertyChangedFor(nameof(ShowActionsPanel))]
     [NotifyPropertyChangedFor(nameof(ShowDeleteFromDiskMenuItem))]
+    [NotifyPropertyChangedFor(nameof(ShowMissingBanner))]
     private bool _isMissing;
 
     // ── Process state ──
@@ -104,7 +105,30 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     /// <summary>True while the engine install is running.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ShowEngineInstallButton))]
+    [NotifyPropertyChangedFor(nameof(ShowMissingBanner))]
     private bool _isEngineInstalling;
+
+    // The status line from before the install, put back when the install ends without installing.
+    private string? _versionBeforeInstall;
+
+    // A working engine now stands behind the row, whatever the folder state was before.
+    partial void OnIsEngineInstalledChanged(bool value)
+    {
+        if (value) IsMissing = false;
+    }
+
+    partial void OnIsEngineInstallingChanged(bool value)
+    {
+        if (value)
+        {
+            _versionBeforeInstall = VersionDisplay;
+            VersionDisplay = "Installing...";
+        }
+        else if (!IsEngineInstalled && _versionBeforeInstall is not null)
+        {
+            VersionDisplay = _versionBeforeInstall;
+        }
+    }
 
     /// <summary>Live status line shown on the engine tile during install.</summary>
     [ObservableProperty]
@@ -158,6 +182,12 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     /// database row and the settings folders that pointed into it.
     /// </summary>
     public bool ShowDeleteFromDiskMenuItem => !IsMissing;
+
+    /// <summary>
+    /// The red "Installation folder not found" banner. Not while the Engine installs into that
+    /// folder: the folder is on its way, and a red banner under a running install read as a failure (#609).
+    /// </summary>
+    public bool ShowMissingBanner => IsMissing && !IsEngineInstalling;
 
     /// <summary>Install button: engine tile, not yet installed, not currently installing.</summary>
     public bool ShowEngineInstallButton => IsEngine && !IsEngineInstalled && !IsEngineInstalling;

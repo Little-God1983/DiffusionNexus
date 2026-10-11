@@ -1089,11 +1089,10 @@ public partial class InstallerManagerViewModel : ViewModelBase
             _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
                 $"Starting base engine install into {folder}.");
 
+            // Raw log lines go to the Unified Console only (opened above). On the tile they replaced
+            // the step, and pip's package lists flooded it (#609); the tile shows the step instead.
             var logProgress = new Progress<DiffusionNexus.Installer.SDK.Services.InstallLogEntry>(entry =>
-            {
-                card.EngineStatusMessage = entry.Message;
-                _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine", entry.Message);
-            });
+                _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine", entry.Message));
 
             var stepProgress = new Progress<DiffusionNexus.Installer.SDK.Services.InstallationProgress>(p =>
             {
