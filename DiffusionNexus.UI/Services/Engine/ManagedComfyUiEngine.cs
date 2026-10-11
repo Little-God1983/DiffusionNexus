@@ -15,7 +15,7 @@ public sealed record EngineStartResult(bool IsRunning, string? BaseUrl, string? 
 /// user's own ComfyUI on 8188 is never disturbed, started on demand, and killed when the app
 /// exits. Health is confirmed against /system_stats before the engine is declared ready.
 /// </summary>
-public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposable
+public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IManagedEngineControl, IAsyncDisposable
 {
     private static readonly ILogger Logger = Serilog.Log.ForContext<ManagedComfyUiEngine>();
 
@@ -54,6 +54,10 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposab
     // Canvas availability check) does not repeat it. Reset when the request is used up.
     private bool _postponementLogged;
 
+    // 1 while the engine is reported running (ready), 0 otherwise. Changed only through
+    // ReportRunning, so RunningStateChanged fires once per change whoever starts or stops it.
+    private int _reportedRunning;
+
     public ManagedComfyUiEngine(IUnifiedLogger? unifiedLogger)
     {
         _unifiedLogger = unifiedLogger;
@@ -61,6 +65,42 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposab
 
     /// <summary>Base URL of the running engine, or null when it is not running.</summary>
     public string? BaseUrl => _baseUrl;
+
+    /// <inheritdoc />
+    public bool IsRunning => Volatile.Read(ref _reportedRunning) == 1;
+
+    /// <inheritdoc />
+    public bool HasActiveJobs => Volatile.Read(ref _activeJobs) > 0;
+
+    /// <inheritdoc />
+    public event Action<bool>? RunningStateChanged;
+
+    /// <summary>Records the running state and raises <see cref="RunningStateChanged"/> when it changed. Internal for tests.</summary>
+    internal void ReportRunning(bool running)
+    {
+        var value = running ? 1 : 0;
+        if (Interlocked.Exchange(ref _reportedRunning, value) == value) return;
+        try
+        {
+            RunningStateChanged?.Invoke(running);
+        }
+        catch (Exception ex)
+        {
+            // A subscriber's failure must never break a start or a stop.
+            Logger.Warning(ex, "A RunningStateChanged subscriber failed.");
+        }
+    }
+
+    // The process this engine started has exited. When it is still the current one, nobody stopped
+    // it: it exited on its own (a crash, or killed from outside), so the engine is no longer running.
+    private void OnProcessExited(Process exited)
+    {
+        if (!ReferenceEquals(_process, exited)) return;
+        int? code = null;
+        try { code = exited.ExitCode; } catch (InvalidOperationException) { /* disposed meanwhile */ }
+        Log(code is null ? "The engine process exited." : $"The engine process exited with code {code}.");
+        ReportRunning(false);
+    }
 
     /// <summary>
     /// Asks for a fresh process on the next <see cref="EnsureRunningAsync"/>. Stops nothing now: the
@@ -189,6 +229,9 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposab
 
             try
             {
+                var spawned = _process;
+                spawned.EnableRaisingEvents = true;
+                spawned.Exited += (_, _) => OnProcessExited(spawned);
                 _process.OutputDataReceived += (_, e) => { if (e.Data is not null) Log(e.Data); };
                 _process.ErrorDataReceived += (_, e) => { if (e.Data is not null) Log(e.Data); };
                 _process.BeginOutputReadLine();
@@ -201,6 +244,7 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposab
                     case ReadinessKind.Ready:
                         _baseUrl = baseUrl;
                         Log($"Engine ready at {baseUrl}.");
+                        ReportRunning(true);
                         return new EngineStartResult(true, baseUrl, null);
 
                     case ReadinessKind.ProcessExited:
@@ -369,6 +413,7 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IAsyncDisposab
         _process = null;
         _jobObject = null;
         _baseUrl = null;
+        ReportRunning(false);
 
         if (process is null)
         {

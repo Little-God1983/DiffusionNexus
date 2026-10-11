@@ -70,6 +70,12 @@ public partial class InstanceTabItem : ObservableObject
     public string InstallationPath { get; init; } = string.Empty;
 
     /// <summary>
+    /// True for the Diffusion Nexus Engine's row (app-managed): it has no executable, so Start, Stop
+    /// and Restart drive the managed engine instead of launching a process (#610).
+    /// </summary>
+    public bool IsEngine { get; init; }
+
+    /// <summary>
     /// True when the installation folder no longer exists on disk.
     /// </summary>
     [ObservableProperty]

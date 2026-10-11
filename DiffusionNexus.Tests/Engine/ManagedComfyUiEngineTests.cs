@@ -20,6 +20,49 @@ public class ManagedComfyUiEngineTests
         }
     }
 
+    // #610: the console's Engine tile follows the engine, whoever started or stopped it (the Canvas
+    // starts it on demand). Reported once per change, so a repeated stop is not a second "stopped".
+    [Fact]
+    public void RunningState_IsReportedOncePerChange()
+    {
+        var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+        var seen = new List<bool>();
+        engine.RunningStateChanged += seen.Add;
+
+        engine.ReportRunning(true);
+        engine.ReportRunning(true);
+        engine.ReportRunning(false);
+        engine.ReportRunning(false);
+
+        seen.Should().Equal(true, false);
+    }
+
+    [Fact]
+    public async Task StoppingAnEngineThatNeverRan_ReportsNothing()
+    {
+        var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+        var seen = new List<bool>();
+        engine.RunningStateChanged += seen.Add;
+
+        await engine.StopAsync();
+
+        seen.Should().BeEmpty();
+        engine.IsRunning.Should().BeFalse();
+    }
+
+    [Fact]
+    public void HasActiveJobs_FollowsTheJobTokens()
+    {
+        var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+        engine.HasActiveJobs.Should().BeFalse();
+
+        var job = engine.BeginJob();
+        engine.HasActiveJobs.Should().BeTrue();
+
+        job.Dispose();
+        engine.HasActiveJobs.Should().BeFalse();
+    }
+
     [Fact]
     public void BuildArguments_BindsLoopbackOnlyAndDisablesTheBrowser()
     {
