@@ -23,6 +23,11 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("ApplyCatalogUpdatesAutomatically")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false);
+
                     b.Property<int>("AutoBackupIntervalDays")
                         .HasColumnType("INTEGER");
 
@@ -38,6 +43,10 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
 
                     b.Property<bool>("BackupDatasetImagesEnabled")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("CatalogChannel")
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("CivitaiBrowserFilterJson")
                         .HasColumnType("TEXT");

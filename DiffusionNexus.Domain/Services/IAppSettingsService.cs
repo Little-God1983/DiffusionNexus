@@ -30,6 +30,18 @@ public interface IAppSettingsService
     Task<Models.ComfyUiServerConnection> GetComfyUiServerConnectionAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// The catalog channel (null = never chosen) and "apply catalog updates automatically" (#618).
+    /// Read-only: nothing is created, seeded or tracked; without a settings row it answers (null, false).
+    /// </summary>
+    Task<Models.CatalogUpdateSettings> GetCatalogUpdateSettingsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Saves the catalog channel the app follows (#618). Creates the settings row if missing.</summary>
+    Task SetCatalogChannelAsync(string channel, CancellationToken cancellationToken = default);
+
+    /// <summary>Saves "apply catalog updates automatically" (#618). Creates the settings row if missing.</summary>
+    Task SetApplyCatalogUpdatesAutomaticallyAsync(bool on, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Saves the application settings.
     /// </summary>
     /// <param name="settings">The settings to save.</param>

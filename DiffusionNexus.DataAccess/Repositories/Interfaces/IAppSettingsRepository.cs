@@ -38,6 +38,13 @@ public interface IAppSettingsRepository : IRepository<AppSettings>
     Task<Domain.Models.ComfyUiServerConnection?> GetComfyUiServerConnectionAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Reads only the catalog channel and "apply catalog updates automatically" columns (#618), untracked.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The stored values, or null if the settings row does not exist yet.</returns>
+    Task<Domain.Models.CatalogUpdateSettings?> GetCatalogUpdateSettingsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Gets the count of dataset categories.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
