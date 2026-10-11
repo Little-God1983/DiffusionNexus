@@ -179,6 +179,7 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     public void ApplyEngineFolder(EngineFolderState? folder)
     {
         _engineFolder = folder;
+        OnPropertyChanged(nameof(MissingBannerText));
         IsEngineInstalled = folder == EngineFolderState.Installed;
         IsMissing = folder is EngineFolderState.Missing or EngineFolderState.Incomplete;
         RefreshEngineStatus();
@@ -202,7 +203,6 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
             EngineFolderState.Incomplete => "Installation incomplete",
             _ => "Installation folder not found"
         };
-        if (IsMissing) MissingBannerText = VersionDisplay;
     }
 
     /// <summary>
@@ -260,8 +260,9 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     public string PathDisplay => _installTarget ?? InstallationPath;
 
     /// <summary>The banner's text. An Engine folder that exists but holds no working engine says so.</summary>
-    [ObservableProperty]
-    private string _missingBannerText = "Installation folder not found";
+    public string MissingBannerText => _engineFolder == EngineFolderState.Incomplete
+        ? "Installation incomplete"
+        : "Installation folder not found";
 
     /// <summary>Install button: engine tile, not yet installed, not currently installing.</summary>
     public bool ShowEngineInstallButton => IsEngine && !IsEngineInstalled && !IsEngineInstalling;

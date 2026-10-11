@@ -1045,6 +1045,9 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
     private const string EngineLogSource = "Diffusion Nexus Engine";
 
+    // Counts Engine installs, so progress posted by a finished install never writes the next one's tile.
+    private int _engineInstallGeneration;
+
     // An Engine install-log line into the Unified Console. Errors the SDK reports (Error, Critical)
     // count as errors there; everything else is Info. Not Warning: the SDK reports every stderr line
     // as Warning, and git and pip write ordinary progress there, so a clean install would count
@@ -1096,13 +1099,24 @@ public partial class InstallerManagerViewModel : ViewModelBase
             $"Engine installed, but could not {what}: {ex.Message}");
     }
 
-    // One line of a log message for the tile: the newest. Its last line (a traceback ends with the
-    // error, batched output with the latest step), and of that the last state a carriage return drew
-    // (git and pip redraw progress in place).
+    private static readonly char[] LineBreaks = ['\n', '\r'];
+
+    // One line of a log message for the tile: the newest, i.e. the last non-blank piece between line
+    // breaks. A traceback ends with the error, batched output with the latest step, and git and pip
+    // redraw progress in place with carriage returns. Scans backwards: batched pip output can be
+    // large, and this runs on the UI thread for every entry. Null when the message is blank.
     private static string? ActivityLine(string? message)
     {
-        var lastLine = message?.Split('\n').Select(l => l.TrimEnd('\r')).LastOrDefault(l => l.Trim().Length > 0);
-        return lastLine?.Split('\r').Select(segment => segment.Trim()).LastOrDefault(segment => segment.Length > 0);
+        if (string.IsNullOrEmpty(message)) return null;
+        var end = message.Length;
+        while (end > 0)
+        {
+            var start = message.LastIndexOfAny(LineBreaks, end - 1) + 1;
+            var piece = message.AsSpan(start, end - start).Trim();
+            if (!piece.IsEmpty) return piece.ToString();
+            end = start - 1;
+        }
+        return null;
     }
 
     /// <summary>
@@ -1145,22 +1159,27 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
             UnifiedConsolePanelRequested?.Invoke(this, EventArgs.Empty);
 
+            // Progress<T> posts its callbacks, so a report queued as the SDK returned can land after the
+            // install ended, or during the next one: it still reaches the console, but only the install
+            // that sent it, while it runs, writes the tile.
+            var generation = ++_engineInstallGeneration;
+            bool WritesTile() => generation == _engineInstallGeneration && card.IsEngineInstalling;
+
             // The full log goes to the Unified Console (opened above), errors as errors. On
             // the tile, raw lines replaced the step and pip's package lists flooded it (#609): the tile
             // keeps the step and shows one line of the latest output, so a long step still looks alive.
-            // Progress<T> posts its callbacks, so a report queued as the SDK returned can land after the
-            // install ended: it still reaches the console, but never an idle tile.
+            // A blank line (pip and git write some to stderr) keeps the line that is there.
             var logProgress = new Progress<DiffusionNexus.Installer.SDK.Services.InstallLogEntry>(entry =>
             {
                 LogEngineInstallEntry(entry);
-                if (card.IsEngineInstalling && ShowsOnEngineTile(entry.Level))
-                    card.EngineActivity = ActivityLine(entry.Message);
+                if (WritesTile() && ShowsOnEngineTile(entry.Level) && ActivityLine(entry.Message) is { } line)
+                    card.EngineActivity = line;
             });
 
             var lastStep = -1;
             var stepProgress = new Progress<DiffusionNexus.Installer.SDK.Services.InstallationProgress>(p =>
             {
-                if (!card.IsEngineInstalling) return;
+                if (!WritesTile()) return;
                 // The previous step's last line says nothing about this one.
                 if (p.StepIndex != lastStep) card.EngineActivity = null;
                 lastStep = p.StepIndex;
@@ -1288,17 +1307,25 @@ public partial class InstallerManagerViewModel : ViewModelBase
             }
             finally
             {
+                // Nothing installed: the row's folder may have changed (the install may have written
+                // into it), so read it again the way a reload would, off the UI thread (a sleeping
+                // drive must not freeze the window), and before the tile ends the install: Install
+                // comes back then, and a click must meet the folder as it is now.
+                if (installedPath is null && card.HasEngineRow)
+                {
+                    try
+                    {
+                        var rowFolder = card.InstallationPath;
+                        card.ApplyEngineFolder(await Task.Run(() => Services.Engine.ManagedEngineLocator.Probe(rowFolder)));
+                    }
+                    catch (Exception ex)
+                    {
+                        Serilog.Log.Warning(ex, "Could not read the Engine folder again after a failed install");
+                    }
+                }
+
                 card.EndEngineInstall(installedPath);
                 engineRunning?.Dispose();
-            }
-
-            // Nothing installed: the row's folder may have changed (the install may have written into
-            // it), so read it again the way a reload would, off the UI thread (a sleeping drive must
-            // not freeze the window).
-            if (installedPath is null && card.HasEngineRow)
-            {
-                var rowFolder = card.InstallationPath;
-                card.ApplyEngineFolder(await Task.Run(() => Services.Engine.ManagedEngineLocator.Probe(rowFolder)));
             }
 
             // The install is over by now, so a dialog that cannot open is logged, never thrown.
@@ -1324,17 +1351,17 @@ public partial class InstallerManagerViewModel : ViewModelBase
                 _unifiedLogger.Error(LogCategory.Installation, EngineLogSource,
                     $"Could not show the install failure: {ex.Message}", ex);
             }
-
-            // The visibility switch may have moved while we were installing — its own reload was
-            // suppressed in OnIsEngineTileVisibleChanged to avoid detaching `card` mid-install.
-            // Catch up now, after the tile has shown how the install ended.
-            if (IsEngineTileVisible != visibilityAtStart)
-                _ = LoadInstallationsCommand.ExecuteAsync(null);
         }
         finally
         {
             _isEngineInstallInFlight = false;
             engineRunning?.Dispose();
+
+            // The visibility switch may have moved while we were installing — its own reload was
+            // suppressed in OnIsEngineTileVisibleChanged to avoid detaching `card` mid-install.
+            // Catch up now, after the tile has shown how the install ended, whatever threw.
+            if (IsEngineTileVisible != visibilityAtStart)
+                _ = LoadInstallationsCommand.ExecuteAsync(null);
         }
     }
 
