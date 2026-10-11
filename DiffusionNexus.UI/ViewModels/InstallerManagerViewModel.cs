@@ -1425,7 +1425,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         // The Engine is not updated under itself: the console's Stop asks first while a generation
         // runs on it, which an update here could not. Checked before the confirmation below, so an
         // update that cannot run asks nothing first.
-        if (card.IsEngine && _engine?.BaseUrl is not null)
+        if (card.IsEngine && EngineInUse())
         {
             await ShowEngineBusyForUpdateAsync();
             return;
@@ -1440,7 +1440,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         // No start of the Engine from the folder this update changes, whoever asks (the Canvas, a
         // feature). Granted only with nothing running or booting from it; released as soon as the
         // update itself ends, not when its result dialog closes.
-        using var maintenance = new ReleaseOnce(card.IsEngine ? _engine?.TryBeginMaintenance() : null);
+        using var maintenance = new ReleaseOnce(card.IsEngine && _engine is not null ? await _engine.TryBeginMaintenanceAsync() : null);
         if (card.IsEngine && _engine is not null && !maintenance.Holds)
         {
             await ShowEngineBusyForUpdateAsync();
@@ -1555,6 +1555,11 @@ public partial class InstallerManagerViewModel : ViewModelBase
                 card.Id, IsUpdating: false, IsUpdateAvailable: card.IsUpdateAvailable, UpdateSummary: null));
         }
     }
+
+    // Running, or booting a start (no URL yet): an engine whose host can tell says so; otherwise its URL.
+    private bool EngineInUse() => _engine is Services.Engine.IManagedEngineControl control
+        ? control.IsRunning || control.IsStarting
+        : _engine?.BaseUrl is not null;
 
     private Task ShowEngineBusyForUpdateAsync() => _dialogService.ShowMessageAsync(
         "Diffusion Nexus Engine is in use",

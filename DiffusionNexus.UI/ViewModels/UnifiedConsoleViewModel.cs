@@ -832,7 +832,8 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
     /// Every Engine tab shows the engine's current state (an old build could leave two app-managed
     /// rows): running, or starting, whoever started it (this tile, the Canvas, a pending restart).
     /// Read from the engine when applied: reports from different threads can arrive out of order.
-    /// Internal for tests.
+    /// No Web UI for the app-owned Engine: work queued in that page would be invisible to Stop's
+    /// "ask first while a generation runs". Internal for tests.
     /// </summary>
     internal void ApplyEngineState()
     {
@@ -842,7 +843,7 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
         {
             tab.IsRunning = running;
             tab.IsStarting = starting;
-            tab.DetectedWebUrl = running ? _engine?.BaseUrl : null;
+            tab.DetectedWebUrl = null;
         }
         HasRunningInstances = InstanceTabs.Any(t => t.IsRunning);
     }

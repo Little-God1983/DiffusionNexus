@@ -251,10 +251,19 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
         // disk walk, a whole /object_info fetch and a /models query eight times over. Worth memoising the
         // success case, but only with an invalidation that cannot mask a genuinely stopped engine, which
         // is why it is not done here (issue #518 follow-up).
-        // A generation getting under way from here: Stop on the console's Engine tile asks first while
-        // the probe below starts the engine and checks it, before the job begins.
-        using var preparing = _engine.BeginPreparing();
-        var (available, baseUrl) = await ProbeAsync(cancellationToken).ConfigureAwait(false);
+        // A generation getting under way: Stop on the console's Engine tile asks first while the probe
+        // starts the engine and checks it, until the job begins (then the job counts instead). From the
+        // job on until the result is downloaded (or the run fails), a pending restart (new node packs or
+        // model folders) waits for it. Availability checks alone begin no job.
+        bool available;
+        string? baseUrl;
+        IDisposable? job = null;
+        using (_engine.BeginPreparing())
+        {
+            (available, baseUrl) = await ProbeAsync(cancellationToken).ConfigureAwait(false);
+            if (available) job = _engine.BeginJob();
+        }
+
         if (!available)
         {
             var reason = _missingRequirements.Count > 0
@@ -271,10 +280,7 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
             yield break;
         }
 
-        // From here until the result is downloaded (or the run fails) this is a job on the engine, so a
-        // pending restart (new node packs or model folders) waits for it. Availability checks alone
-        // begin no job.
-        using var job = _engine.BeginJob();
+        using var jobScope = job;
 
         var seed = request.Seed ?? Random.Shared.NextInt64(0, int.MaxValue);
         var startedAt = Stopwatch.GetTimestamp();

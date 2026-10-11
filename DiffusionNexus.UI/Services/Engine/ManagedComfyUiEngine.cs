@@ -65,8 +65,13 @@ public sealed class ManagedComfyUiEngine : IManagedEngineControl, IAsyncDisposab
     // console's Stop (HasActiveJobs), never for a pending restart (ShouldRestartNow reads _activeJobs).
     private int _preparing;
 
-    // Maintenance holds (TryBeginMaintenance: an update changing the engine's folder). No start while > 0.
+    // Maintenance holds (TryBeginMaintenanceAsync: an update changing the engine's folder). No start while > 0.
     private int _maintenance;
+
+    // Counts stops (the console's, the app's shutdown). A start that was waiting for the start lock when
+    // one happened does not start the engine again: the user stopped it, a generation queued behind
+    // the stop included.
+    private int _stopGeneration;
 
     public ManagedComfyUiEngine(IUnifiedLogger? unifiedLogger)
     {
@@ -96,15 +101,17 @@ public sealed class ManagedComfyUiEngine : IManagedEngineControl, IAsyncDisposab
     }
 
     /// <inheritdoc />
-    public IDisposable? TryBeginMaintenance()
+    public async Task<IDisposable?> TryBeginMaintenanceAsync()
     {
-        // Atomic with every start: a start checks the hold under the start lock, and a start that is
-        // booting holds that lock, so the hold is granted only with no start running or to come
-        // that has not seen it.
-        if (!_startLock.Wait(0)) return null;
+        if (IsRunning || IsStarting) return null;
+
+        // Atomic with every start: a start checks the hold under the start lock. A booting start holds
+        // that lock for minutes and is refused below; a brief holder (a call that only checks, a stop,
+        // a crash's release) is waited out rather than reported as "in use".
+        if (!await _startLock.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false)) return null;
         try
         {
-            if (_process is { } process && !HasExitedSafely(process)) return null;
+            if (IsStarting || (_process is { } process && !HasExitedSafely(process))) return null;
             Interlocked.Increment(ref _maintenance);
             return new CountToken(() => Interlocked.Decrement(ref _maintenance));
         }
@@ -114,6 +121,9 @@ public sealed class ManagedComfyUiEngine : IManagedEngineControl, IAsyncDisposab
         }
     }
 
+    /// <summary>A stop is under way: starts waiting for the lock now do not start the engine. Internal for tests.</summary>
+    internal void NoteStopRequested() => Interlocked.Increment(ref _stopGeneration);
+
     /// <inheritdoc />
     public async Task<bool> StopIfIdleAsync()
     {
@@ -121,6 +131,7 @@ public sealed class ManagedComfyUiEngine : IManagedEngineControl, IAsyncDisposab
         try
         {
             if (HasActiveJobs) return false;
+            NoteStopRequested();
             await StopCoreAsync().ConfigureAwait(false);
             return true;
         }
@@ -208,15 +219,15 @@ public sealed class ManagedComfyUiEngine : IManagedEngineControl, IAsyncDisposab
     // The process this engine started has exited. A start still in progress (not reported running
     // yet) reports the exit itself. Otherwise nobody stopped it: it exited on its own (a crash, or
     // killed from outside), so the engine is no longer running, and its handles are released.
-    private void OnProcessExited(Process exited)
+    internal void OnProcessExited(Process exited)
     {
         if (!ReferenceEquals(_process, exited) || !IsRunning) return;
-        LogExit(exited);
         _ = ReleaseExitedAsync(exited);
     }
 
     // Clears the dead process the same way a stop does (BaseUrl null, handles disposed, reported not
-    // running), under the start lock so it never races a start or a stop.
+    // running), under the start lock so it never races a start or a stop. Logs the exit only when it
+    // is the one that lets go: a start that got the lock first released and logged it already.
     private async Task ReleaseExitedAsync(Process exited)
     {
         try
@@ -224,7 +235,11 @@ public sealed class ManagedComfyUiEngine : IManagedEngineControl, IAsyncDisposab
             await _startLock.WaitAsync().ConfigureAwait(false);
             try
             {
-                if (ReferenceEquals(_process, exited)) await StopCoreAsync().ConfigureAwait(false);
+                if (ReferenceEquals(_process, exited))
+                {
+                    LogExit(exited);
+                    await StopCoreAsync().ConfigureAwait(false);
+                }
             }
             finally
             {
@@ -268,6 +283,7 @@ public sealed class ManagedComfyUiEngine : IManagedEngineControl, IAsyncDisposab
     /// </summary>
     public async Task<EngineStartResult> EnsureRunningAsync(string installRoot, CancellationToken ct)
     {
+        var stopsBeforeWaiting = Volatile.Read(ref _stopGeneration);
         await _startLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -297,11 +313,16 @@ public sealed class ManagedComfyUiEngine : IManagedEngineControl, IAsyncDisposab
             else if (current is not null)
             {
                 // A process that died since (a crash whose release has not run yet): released before
-                // the fresh start, so it never reads as running while that start runs. Logged here:
-                // the exit handler, if it comes later, finds a different process and says nothing.
+                // the fresh start, so it never reads as running while that start runs. Logged by
+                // whichever release lets go of it, this one or the exit handler's: once.
                 LogExit(current);
                 await StopCoreAsync().ConfigureAwait(false);
             }
+
+            // The user stopped the engine while this call waited (a confirmed Stop cancels a generation
+            // getting under way too): it is not started again behind their back.
+            if (Volatile.Read(ref _stopGeneration) != stopsBeforeWaiting)
+                return new EngineStartResult(false, null, "The engine was stopped.", StoppedByRequest: true);
 
             // An update is changing the engine's folder: no start from it, whoever asks.
             if (Volatile.Read(ref _maintenance) > 0)
@@ -421,8 +442,7 @@ public sealed class ManagedComfyUiEngine : IManagedEngineControl, IAsyncDisposab
         }
     }
 
-    // Under _startLock, as a start ends. OnProcessExited leaves the process to the start while it
-    // runs, so an exit after the start's last look (CompleteReadyAsync) and before here is handled now.
+    // One line for an engine process that exited on its own (a crash, a kill from outside).
     private void LogExit(Process process)
     {
         var code = TryExitCode(process);
@@ -523,6 +543,7 @@ public sealed class ManagedComfyUiEngine : IManagedEngineControl, IAsyncDisposab
     /// </summary>
     public async Task StopAsync()
     {
+        NoteStopRequested();
         _stopRequested = true;
         try
         {

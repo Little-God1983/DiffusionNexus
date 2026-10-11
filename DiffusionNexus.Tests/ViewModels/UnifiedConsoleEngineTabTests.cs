@@ -62,7 +62,8 @@ public class UnifiedConsoleEngineTabTests
         console.ApplyEngineState();
         first.IsRunning.Should().BeTrue();
         stale.IsRunning.Should().BeTrue();
-        first.DetectedWebUrl.Should().Be(_engine.BaseUrl);
+        first.DetectedWebUrl.Should().BeNull(
+            "no Web UI for the app-owned Engine: work queued in that page is invisible to Stop's \"ask first\"");
     }
 
     [Fact]

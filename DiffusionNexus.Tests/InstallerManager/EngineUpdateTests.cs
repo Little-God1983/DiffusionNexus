@@ -23,7 +23,7 @@ public class EngineUpdateTests
             var maintenance = 0;
             int? maintenanceDuringUpdate = null;
             var engine = new Mock<IManagedComfyUiEngine>();
-            engine.Setup(e => e.TryBeginMaintenance()).Returns(() =>
+            engine.Setup(e => e.TryBeginMaintenanceAsync()).ReturnsAsync(() =>
             {
                 maintenance++;
                 return new DisposeAction(() => maintenance--);
@@ -83,8 +83,9 @@ public class EngineUpdateTests
         try
         {
             var engine = new Mock<IManagedComfyUiEngine>();
-            engine.Setup(e => e.TryBeginMaintenance()).Returns((IDisposable?)null);
-            var service = UpdateService(onUpdate: () => { });
+            engine.Setup(e => e.TryBeginMaintenanceAsync()).ReturnsAsync((IDisposable?)null);
+            engine.As<IManagedEngineControl>().SetupGet(e => e.IsStarting).Returns(true);
+            var service = UpdateService(onUpdate: () => { }, confirmation: "This switches back to the newest release.");
             var dialog = new Mock<IDialogService>();
 
             var vm = EngineTestHarness.CreateInstallerManagerViewModel(
@@ -96,6 +97,8 @@ public class EngineUpdateTests
 
             service.Verify(s => s.UpdateAsync(It.IsAny<string>(), It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()), Times.Never);
             dialog.Verify(d => d.ShowMessageAsync(It.IsAny<string>(), It.Is<string>(m => m.Contains("Stop the Engine"))), Times.Once);
+            dialog.Verify(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Never,
+                "a starting Engine is known before the confirmation: an update that cannot run asks nothing");
         }
         finally { Directory.Delete(root, recursive: true); }
     }

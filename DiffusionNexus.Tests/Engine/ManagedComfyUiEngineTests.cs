@@ -306,7 +306,7 @@ public class ManagedComfyUiEngineTests
         await using var engine = new ManagedComfyUiEngine(unifiedLogger: null);
 
         EngineStartResult result;
-        using (engine.TryBeginMaintenance()!)
+        using ((await engine.TryBeginMaintenanceAsync())!)
             result = await engine.EnsureRunningAsync(NotInstalledRoot, CancellationToken.None);
 
         result.IsRunning.Should().BeFalse();
@@ -318,21 +318,89 @@ public class ManagedComfyUiEngineTests
     {
         await using var engine = new ManagedComfyUiEngine(unifiedLogger: null);
 
-        // A start in progress holds the start lock (up to two minutes, BaseUrl still null).
-        var startLock = (SemaphoreSlim)typeof(ManagedComfyUiEngine)
-            .GetField("_startLock", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(engine)!;
+        // A start in progress: starting, holding the start lock (up to two minutes, BaseUrl still null).
+        var startLock = StartLock(engine);
         await startLock.WaitAsync();
-        try { engine.TryBeginMaintenance().Should().BeNull("a start is booting from that folder"); }
-        finally { startLock.Release(); }
+        engine.ReportStarting(true);
+        try { (await engine.TryBeginMaintenanceAsync()).Should().BeNull("a start is booting from that folder"); }
+        finally
+        {
+            engine.ReportStarting(false);
+            startLock.Release();
+        }
 
         var running = StartStandInEngine();
         try
         {
             PretendRunning(engine, running, "http://127.0.0.1:51234");
-            engine.TryBeginMaintenance().Should().BeNull("the engine runs from that folder");
+            (await engine.TryBeginMaintenanceAsync()).Should().BeNull("the engine runs from that folder");
         }
         finally { KillQuietly(running); }
     }
+
+    // #621 review round 5: the start lock is also held briefly by a call that only checks (a Canvas
+    // probe of a stopped engine), a stop or a crash's release. An update then waits a moment instead of
+    // calling a stopped engine "in use".
+    [Fact]
+    public async Task TheMaintenanceHold_WaitsOutABriefHoldOfTheStartLock()
+    {
+        await using var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+        var startLock = StartLock(engine);
+        await startLock.WaitAsync();
+
+        var hold = engine.TryBeginMaintenanceAsync();
+        await Task.Delay(100);
+        startLock.Release();
+
+        using var granted = await hold;
+        granted.Should().NotBeNull("nothing runs or starts: the lock was only held for a moment");
+    }
+
+    // #621 review round 5: a confirmed Stop also cancels a generation still waiting to start the engine;
+    // otherwise it starts the engine again right after the user stopped it.
+    [Fact]
+    public async Task AStartWaitingWhenTheUserStops_DoesNotStartTheEngineAgain()
+    {
+        await using var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+        var startLock = StartLock(engine);
+        await startLock.WaitAsync();
+
+        var waiting = engine.EnsureRunningAsync(NotInstalledRoot, CancellationToken.None);
+        engine.NoteStopRequested();
+        startLock.Release();
+        var result = await waiting;
+
+        result.IsRunning.Should().BeFalse();
+        result.StoppedByRequest.Should().BeTrue("the user stopped the engine while this start waited");
+    }
+
+    // #621 review round 5: a crash is logged once, by whichever release actually lets go of it.
+    [Fact]
+    public async Task ACrashIsLoggedOnce_WhenTheNextStartReleasesItBeforeTheExitHandlersRelease()
+    {
+        var logger = new Mock<IUnifiedLogger>();
+        await using var engine = new ManagedComfyUiEngine(logger.Object);
+        var exited = Process.Start(new ProcessStartInfo("cmd.exe", "/c exit 1") { UseShellExecute = false, CreateNoWindow = true })!;
+        await exited.WaitForExitAsync();
+        PretendRunning(engine, exited, "http://127.0.0.1:51234");
+        engine.ReportRunning(true);
+        var startLock = StartLock(engine);
+        await startLock.WaitAsync();
+
+        var start = engine.EnsureRunningAsync(NotInstalledRoot, CancellationToken.None);   // queued first
+        engine.OnProcessExited(exited);                                                    // its release queued second
+        startLock.Release();
+        await start;
+        for (var i = 0; i < 50 && startLock.CurrentCount == 0; i++) await Task.Delay(50);
+        await Task.Delay(100);
+
+        logger.Verify(l => l.Info(It.IsAny<LogCategory>(), It.IsAny<string>(),
+            It.Is<string>(m => m.StartsWith("The engine process exited")), It.IsAny<string?>()), Times.Once);
+    }
+
+    private static SemaphoreSlim StartLock(ManagedComfyUiEngine engine) =>
+        (SemaphoreSlim)typeof(ManagedComfyUiEngine)
+            .GetField("_startLock", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(engine)!;
 
     // Finding 6: a start that ends is never published as running and starting at once.
     [Fact]

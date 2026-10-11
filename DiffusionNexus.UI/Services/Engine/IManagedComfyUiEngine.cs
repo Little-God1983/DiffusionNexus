@@ -40,9 +40,10 @@ public interface IManagedComfyUiEngine
     /// <summary>
     /// Holds the engine for maintenance (an update changing its folder) until disposed: no start runs
     /// meanwhile, whoever asks, and <see cref="EnsureRunningAsync"/> says why. Null, holding nothing,
-    /// while the engine runs or a start boots from that folder. The default holds nothing and grants it.
+    /// while the engine runs or a start boots from that folder; a brief hold of the start lock (a call
+    /// that only checks, a stop) is waited out. The default holds nothing and grants it.
     /// </summary>
-    IDisposable? TryBeginMaintenance() => NoOp.Instance;
+    Task<IDisposable?> TryBeginMaintenanceAsync() => Task.FromResult<IDisposable?>(NoOp.Instance);
 
     private sealed class NoOp : IDisposable
     {
