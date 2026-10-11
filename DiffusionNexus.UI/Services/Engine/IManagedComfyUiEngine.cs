@@ -37,6 +37,12 @@ public interface IManagedComfyUiEngine
     /// </summary>
     IDisposable BeginPreparing() => NoOp.Instance;
 
+    /// <summary>
+    /// Holds the engine for maintenance (an update changing its folder) until disposed: no start runs
+    /// meanwhile, whoever asks, and <see cref="EnsureRunningAsync"/> says why. The default holds nothing.
+    /// </summary>
+    IDisposable BeginMaintenance() => NoOp.Instance;
+
     private sealed class NoOp : IDisposable
     {
         public static readonly NoOp Instance = new();

@@ -113,9 +113,6 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
         _templateSource = templateSource;
     }
 
-    // The engine's URL from the last successful availability probe (IsAvailableAsync).
-    private string? _runningBaseUrl;
-
     public string DisplayName => "Diffusion Nexus Engine";
 
     /// <summary>
@@ -157,6 +154,16 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
 
     public async Task<bool> IsAvailableAsync(CancellationToken ct = default)
     {
+        // The Canvas resolves its backend with this probe, and a cold start makes it up to two minutes
+        // long: a generation getting under way, so Stop on the console's Engine tile asks first.
+        using var preparing = _engine.BeginPreparing();
+        return (await ProbeAsync(ct).ConfigureAwait(false)).Available;
+    }
+
+    // The availability probe; on success also the URL its start returned, kept by the caller in a
+    // local: the console's Stop or a crash's release can clear _engine.BaseUrl at any moment.
+    private async Task<(bool Available, string? BaseUrl)> ProbeAsync(CancellationToken ct)
+    {
         _missingRequirements.Clear();
 
         var installRoot = await _resolveInstallRootAsync().ConfigureAwait(false);
@@ -166,7 +173,7 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
             _installRoot = null;
             _missingRequirements.Add(
                 "The Diffusion Nexus Engine is not installed. Install it from the Installation Manager.");
-            return false;
+            return (false, null);
         }
 
         _installRoot = installRoot;
@@ -178,19 +185,15 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
         {
             _missingRequirements.Add(
                 "No text2image workflow is configured for the engine yet, so it cannot generate.");
-            return false;
+            return (false, null);
         }
 
         var start = await _engine.EnsureRunningAsync(installRoot!, ct).ConfigureAwait(false);
         if (!start.IsRunning || start.BaseUrl is null)
         {
             _missingRequirements.Add(start.FailureReason ?? "The engine could not be started.");
-            return false;
+            return (false, null);
         }
-
-        // The URL this start returned, not _engine.BaseUrl read later: the console's Stop or a crash's
-        // release can clear that at any moment.
-        _runningBaseUrl = start.BaseUrl;
 
         // The base engine install deliberately excludes every custom node (see
         // ManagedEngineInstaller) — only the Krea 2 Turbo workload installs the ones this
@@ -208,10 +211,10 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
                 "The Krea 2 Turbo workload is not installed in the engine (missing: " +
                 string.Join(", ", missingNodes) +
                 "). Install the Krea 2 Turbo workload from the Diffusion Nexus Engine tile.");
-            return false;
+            return (false, null);
         }
 
-        return true;
+        return (true, start.BaseUrl);
     }
 
     public async IAsyncEnumerable<DiffusionStreamItem> GenerateAsync(
@@ -251,7 +254,7 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
         // A generation getting under way from here: Stop on the console's Engine tile asks first while
         // the probe below starts the engine and checks it, before the job begins.
         using var preparing = _engine.BeginPreparing();
-        var available = await IsAvailableAsync(cancellationToken).ConfigureAwait(false);
+        var (available, baseUrl) = await ProbeAsync(cancellationToken).ConfigureAwait(false);
         if (!available)
         {
             var reason = _missingRequirements.Count > 0
@@ -282,7 +285,7 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
             Message = "Submitting to the Diffusion Nexus Engine…"
         });
 
-        using var wrapper = new ComfyUIWrapperService(_runningBaseUrl!);
+        using var wrapper = new ComfyUIWrapperService(baseUrl!);
 
         // NOTE(progress): IComfyUIWrapperService.WaitForCompletionAsync reports raw WebSocket event
         // text ("Executing node 62...", "Progress: 3/8") via IProgress<string>, not a typed

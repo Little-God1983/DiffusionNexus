@@ -31,7 +31,8 @@ internal static class EngineTestHarness
         Mock<IDatasetEventAggregator>? eventAggregatorMock = null,
         IManagedComfyUiEngine? engine = null,
         IReadOnlyList<string>? modelSearchRoots = null,
-        Mock<IUnifiedLogger>? loggerMock = null)
+        Mock<IUnifiedLogger>? loggerMock = null,
+        IEnumerable<IInstallerUpdateService>? updateServices = null)
     {
         var repo = new Mock<IInstallerPackageRepository>();
         repo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>()))
@@ -73,7 +74,7 @@ internal static class EngineTestHarness
             (catalogMock ?? new Mock<ICatalog>()).Object,
             new Mock<IConfigurationCheckerService>().Object,
             new Mock<IWorkloadInstallService>().Object,
-            [], (loggerMock ?? new Mock<IUnifiedLogger>()).Object,
+            updateServices ?? [], (loggerMock ?? new Mock<IUnifiedLogger>()).Object,
             engineInstaller: engineInstaller,
             engine: engine,
             engineModelPaths: modelSearchRoots is null ? null : RealSynchronizer(uow.Object, modelSearchRoots));

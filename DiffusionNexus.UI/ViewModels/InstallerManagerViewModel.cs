@@ -1428,6 +1428,15 @@ public partial class InstallerManagerViewModel : ViewModelBase
         if (!await ConfirmUpdateIfNeededAsync(service, card))
             return;
 
+        // The Engine is not updated under itself: the console's Stop asks first while a generation
+        // runs on it, which an update here could not.
+        if (card.IsEngine && _engine?.BaseUrl is not null)
+        {
+            await _dialogService.ShowMessageAsync("Diffusion Nexus Engine is running",
+                "Stop the Engine before updating it: use Stop on its tile in the Unified Console.");
+            return;
+        }
+
         // Auto-stop the running instance before updating
         if (card.IsRunning)
         {
@@ -1459,6 +1468,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         // Right before the try whose finally ends it: nothing between Begin and the try can throw, so the
         // catalog apply is never held by an update that is not running (#618 review).
         var updateRunning = _installActivity?.Begin(card.Name);
+        // No start of the Engine from the folder this update changes, whoever asks (the Canvas, a feature).
+        var maintenance = card.IsEngine ? _engine?.BeginMaintenance() : null;
         try
         {
             var result = await service.UpdateAsync(card.InstallationPath, progress);
@@ -1521,6 +1532,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
             card.IsUpdating = false;
             card.UpdateStatusMessage = null;
             updateRunning?.Dispose();
+            maintenance?.Dispose();
 
             // Safety net: always ensure subscribers know updating has stopped,
             // even if an earlier notification was missed.

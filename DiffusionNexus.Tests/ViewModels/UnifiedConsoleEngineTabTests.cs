@@ -126,6 +126,7 @@ public class UnifiedConsoleEngineTabTests
         public IDisposable BeginPreparing() => throw new NotSupportedException();
 
         public Task StopAsync() => Task.CompletedTask;
+        public Task<bool> StopIfIdleAsync() => Task.FromResult(true);
         public void RequestRestart() { }
         public IDisposable BeginJob() => throw new NotSupportedException();
     }

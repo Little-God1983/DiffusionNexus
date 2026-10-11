@@ -59,6 +59,26 @@ public class ManagedComfyUiBackendTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    [Fact]
+    public async Task IsAvailable_IsAPreparingGeneration_WhileItStartsTheEngine()
+    {
+        // The Canvas resolves its backend with this probe; a cold start makes it the longest part.
+        var root = Path.Combine(Path.GetTempPath(), "dn-engine-" + Guid.NewGuid());
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, "main.py"), "# comfy");
+        try
+        {
+            var engine = new FakeEngine { StartResult = new EngineStartResult(false, null, "no venv") };
+            var backend = new ManagedComfyUiBackend(engine, () => Task.FromResult<string?>(root), new StubTemplateSource(true));
+
+            await backend.IsAvailableAsync();
+
+            engine.PreparingWhenStarted.Should().Be(1);
+            engine.Preparing.Should().Be(0);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     private sealed class FakeEngine : IManagedEngineControl
     {
         public EngineStartResult StartResult { get; set; } = new(false, null, "not started");
@@ -88,6 +108,7 @@ public class ManagedComfyUiBackendTests
         public IDisposable BeginJob() => new Callback(() => { });
         public void RequestRestart() { }
         public Task StopAsync() => Task.CompletedTask;
+        public Task<bool> StopIfIdleAsync() => Task.FromResult(true);
 
         private sealed class Callback(Action onDispose) : IDisposable
         {

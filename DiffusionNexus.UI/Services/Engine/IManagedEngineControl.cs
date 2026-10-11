@@ -27,6 +27,13 @@ public interface IManagedEngineControl : IManagedComfyUiEngine
     /// </summary>
     event Action? StateChanged;
 
-    /// <summary>Stops the engine, a running job included. Safe to call when it is not running.</summary>
+    /// <summary>Stops the engine, a running job included, or aborts a start. Safe to call when it is not running.</summary>
     Task StopAsync();
+
+    /// <summary>
+    /// Stops the engine unless a generation runs on it or is getting under way, decided under the
+    /// start lock so a generation that arrives meanwhile either counts or waits and starts it afresh.
+    /// False when it was busy and left running.
+    /// </summary>
+    Task<bool> StopIfIdleAsync();
 }

@@ -62,9 +62,8 @@ public class EngineConsoleControlTests
     {
         _engine.Running = true;
 
-        var stopped = await Create().StopAsync();
+        await Create().StopAsync();
 
-        stopped.Should().BeTrue();
         _engine.Stops.Should().Be(1);
         _dialogs.Verify(d => d.ShowOptionsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string[]>()), Times.Never);
     }
@@ -76,9 +75,8 @@ public class EngineConsoleControlTests
         _engine.HasActiveJobs = true;
         _dialogs.Setup(d => d.ShowOptionsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string[]>())).ReturnsAsync(1);
 
-        var stopped = await Create().StopAsync();
+        await Create().StopAsync();
 
-        stopped.Should().BeFalse();
         _engine.Stops.Should().Be(0, "the user chose to keep the generation running");
         _dialogs.Verify(d => d.ShowOptionsAsync(It.IsAny<string>(),
             It.Is<string>(m => m.Contains("generation is running")), "Stop anyway", "Keep running"), Times.Once);
@@ -91,9 +89,8 @@ public class EngineConsoleControlTests
         _engine.HasActiveJobs = true;
         _dialogs.Setup(d => d.ShowOptionsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string[]>())).ReturnsAsync(0);
 
-        var stopped = await Create().StopAsync();
+        await Create().StopAsync();
 
-        stopped.Should().BeTrue();
         _engine.Stops.Should().Be(1);
     }
 
@@ -104,7 +101,7 @@ public class EngineConsoleControlTests
         _engine.HasActiveJobs = true;
         _dialogs.Setup(d => d.ShowOptionsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string[]>())).ReturnsAsync(-1);
 
-        (await Create().StopAsync()).Should().BeFalse();
+        await Create().StopAsync();
         _engine.Stops.Should().Be(0);
     }
 
@@ -115,12 +112,50 @@ public class EngineConsoleControlTests
         _engine.HasActiveJobs = true;
         var control = new EngineConsoleControl(_engine, _roots.Object, dialogs: null, _logger.Object);
 
-        (await control.StopAsync()).Should().BeFalse();
+        await control.StopAsync();
 
         _engine.Stops.Should().Be(0);
         _logger.Verify(l => l.Warn(LogCategory.InstanceManagement, "Diffusion Nexus Engine",
             It.Is<string>(m => m.Contains("generation is running")), It.IsAny<string?>()), Times.Once,
             "a button that does nothing must say why");
+    }
+
+    [Fact]
+    public async Task Stop_WhenAGenerationGetsUnderWayAfterTheCheck_AsksInsteadOfKillingIt()
+    {
+        _engine.Running = true;
+        _engine.BusyWhenStopped = true;   // idle when the console looked, busy when the engine decided
+        _dialogs.Setup(d => d.ShowOptionsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string[]>())).ReturnsAsync(1);
+
+        await Create().StopAsync();
+
+        _engine.Stops.Should().Be(0);
+        _dialogs.Verify(d => d.ShowOptionsAsync(It.IsAny<string>(), It.IsAny<string>(), "Stop anyway", "Keep running"), Times.Once);
+    }
+
+    [Fact]
+    public async Task Restart_WithAGenerationRunning_AsksAboutARestart()
+    {
+        _engine.Running = true;
+        _engine.HasActiveJobs = true;
+        _dialogs.Setup(d => d.ShowOptionsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string[]>())).ReturnsAsync(1);
+
+        await Create().RestartAsync();
+
+        _dialogs.Verify(d => d.ShowOptionsAsync("Restart the Engine?",
+            It.Is<string>(m => m.Contains("Restarting it cancels")), "Restart anyway", "Keep running"), Times.Once);
+    }
+
+    [Fact]
+    public async Task AStartTheUserStopped_IsNotAWarning()
+    {
+        _engine.StartResult = new EngineStartResult(false, null, "The engine was stopped while it was starting.", StoppedByRequest: true);
+
+        await Create().StartAsync();
+
+        _logger.Verify(l => l.Warn(It.IsAny<LogCategory>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>()), Times.Never);
+        _logger.Verify(l => l.Info(LogCategory.InstanceManagement, "Diffusion Nexus Engine",
+            It.Is<string>(m => m.Contains("stopped")), It.IsAny<string?>()), Times.Once);
     }
 
     [Fact]
@@ -182,12 +217,21 @@ public class EngineConsoleControlTests
             return Task.FromResult(StartResult);
         }
 
+        public bool BusyWhenStopped { get; set; }
+
         public Task StopAsync()
         {
             Stops++;
             Calls.Add("stop");
             Running = false;
             return Task.CompletedTask;
+        }
+
+        public async Task<bool> StopIfIdleAsync()
+        {
+            if (HasActiveJobs || BusyWhenStopped) return false;
+            await StopAsync();
+            return true;
         }
 
         public void RequestRestart() { }

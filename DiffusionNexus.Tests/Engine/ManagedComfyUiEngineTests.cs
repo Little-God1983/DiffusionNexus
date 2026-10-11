@@ -103,10 +103,11 @@ public class ManagedComfyUiEngineTests
             engine.ReportStarting(true);   // CompleteReadyAsync between its report and its re-check
             PretendRunning(engine, running, "http://127.0.0.1:51234");
             engine.WatchProcess(running);
+            var handled = ExitHandlersRan(running);
             engine.ReportRunning(true);
 
             running.Kill(entireProcessTree: true);
-            await Task.Delay(1500);
+            await handled;
 
             logger.Verify(l => l.Info(It.IsAny<LogCategory>(), It.IsAny<string>(),
                 It.Is<string>(m => m.StartsWith("The engine process exited")), It.IsAny<string?>()), Times.Never,
@@ -283,6 +284,70 @@ public class ManagedComfyUiEngineTests
             .SetValue(engine, baseUrl);
     }
 
+    // Completes once every Exited handler subscribed before it (the engine's) has run: handlers run
+    // in subscription order, so a check made after this sees what the engine's handler did.
+    private static Task ExitHandlersRan(Process process)
+    {
+        var ran = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        process.Exited += (_, _) => ran.TrySetResult();
+        return ran.Task.WaitAsync(TimeSpan.FromSeconds(15));
+    }
+
+    // #621 review round 3: the Engine is not started from a folder an update is changing, whoever asks.
+    [Fact]
+    public async Task WhileTheEngineIsUpdated_NoStartRuns()
+    {
+        await using var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+
+        EngineStartResult result;
+        using (engine.BeginMaintenance())
+            result = await engine.EnsureRunningAsync(NotInstalledRoot, CancellationToken.None);
+
+        result.IsRunning.Should().BeFalse();
+        result.FailureReason.Should().Contain("being updated");
+    }
+
+    // #621 review round 3: the console's Stop decides "idle" under the start lock, so a generation
+    // that got under way after the console looked is not killed without asking.
+    [Fact]
+    public async Task StopIfIdle_LeavesAnEngineWithAGenerationUnderWayRunning()
+    {
+        await using var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+        var running = StartStandInEngine();
+        using var observer = Process.GetProcessById(running.Id);
+        try
+        {
+            PretendRunning(engine, running, "http://127.0.0.1:51234");
+            engine.ReportRunning(true);
+
+            using (engine.BeginPreparing())
+                (await engine.StopIfIdleAsync()).Should().BeFalse();
+            observer.HasExited.Should().BeFalse();
+
+            (await engine.StopIfIdleAsync()).Should().BeTrue();
+            observer.WaitForExit(10_000).Should().BeTrue();
+        }
+        finally { KillQuietly(running); }
+    }
+
+    // #621 review round 3: a call that found the engine running (no start) leaves an exit to the
+    // exit handler, which logs it once; the end of that call must not log it a second time.
+    [Fact]
+    public async Task TheEndOfACallWithoutAStart_LeavesAnExitToTheExitHandler()
+    {
+        var logger = new Mock<IUnifiedLogger>();
+        await using var engine = new ManagedComfyUiEngine(logger.Object);
+        var exited = Process.Start(new ProcessStartInfo("cmd.exe", "/c exit 1") { UseShellExecute = false, CreateNoWindow = true })!;
+        await exited.WaitForExitAsync();
+        PretendRunning(engine, exited, "http://127.0.0.1:51234");
+        engine.ReportRunning(true);
+
+        await engine.EndStartAsync(startRan: false);
+
+        logger.Verify(l => l.Info(It.IsAny<LogCategory>(), It.IsAny<string>(),
+            It.Is<string>(m => m.StartsWith("The engine process exited")), It.IsAny<string?>()), Times.Never);
+    }
+
     private static void KillQuietly(Process process)
     {
         try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
@@ -325,9 +390,10 @@ public class ManagedComfyUiEngineTests
         {
             PretendRunning(engine, starting, null!);   // a start in progress: not ready, not reported
             engine.WatchProcess(starting);
+            var handled = ExitHandlersRan(starting);
 
             starting.Kill(entireProcessTree: true);
-            await Task.Delay(1500);
+            await handled;
 
             logger.Verify(l => l.Info(It.IsAny<LogCategory>(), It.IsAny<string>(),
                 It.Is<string>(m => m.StartsWith("The engine process exited")), It.IsAny<string?>()), Times.Never,
