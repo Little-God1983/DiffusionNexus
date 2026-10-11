@@ -10,6 +10,7 @@ using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Infrastructure;
 using DiffusionNexus.Infrastructure.Services;
 using DiffusionNexus.Installer.SDK.Catalog;
+using DiffusionNexus.Installer.SDK.Catalog.Updates;
 using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.Installer.SDK.Services.Installation;
 using DiffusionNexus.Installer.SDK.Shared.Services;
