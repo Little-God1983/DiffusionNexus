@@ -208,6 +208,70 @@ public class ManagedComfyUiEngineTests
         process.Dispose();
     }
 
+    // #610 review: an engine that dies after it was ready (a crash, a kill from outside) is no longer
+    // running: the console tile must show Start again, BaseUrl must be null, and its handles released.
+    [Fact]
+    public async Task AnEngineThatExitsAfterBeingReady_ReportsNotRunning_AndLetsGoOfIt()
+    {
+        await using var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+        var seen = new List<bool>();
+        engine.RunningStateChanged += seen.Add;
+        var running = StartStandInEngine();
+        try
+        {
+            PretendRunning(engine, running, "http://127.0.0.1:51234");
+            engine.WatchProcess(running);
+            engine.ReportRunning(true);
+
+            running.Kill(entireProcessTree: true);
+            for (var i = 0; i < 50 && (engine.IsRunning || engine.BaseUrl is not null); i++) await Task.Delay(100);
+
+            engine.IsRunning.Should().BeFalse();
+            engine.BaseUrl.Should().BeNull("the interface promises null when it is not running");
+            seen.Should().Equal(true, false);
+        }
+        finally { KillQuietly(running); }
+    }
+
+    [Fact]
+    public async Task AnExitDuringStartup_IsLeftToTheStart_NotLoggedTwice()
+    {
+        var logger = new Mock<IUnifiedLogger>();
+        await using var engine = new ManagedComfyUiEngine(logger.Object);
+        var starting = StartStandInEngine();
+        try
+        {
+            PretendRunning(engine, starting, null!);   // a start in progress: not ready, not reported
+            engine.WatchProcess(starting);
+
+            starting.Kill(entireProcessTree: true);
+            await Task.Delay(1500);
+
+            logger.Verify(l => l.Info(It.IsAny<LogCategory>(), It.IsAny<string>(),
+                It.Is<string>(m => m.StartsWith("The engine process exited")), It.IsAny<string?>()), Times.Never,
+                "the readiness poll reports a startup exit itself");
+        }
+        finally { KillQuietly(starting); }
+    }
+
+    [Fact]
+    public async Task ReadyButAlreadyGone_IsAFailedStart_NotARunningEngine()
+    {
+        await using var engine = new ManagedComfyUiEngine(unifiedLogger: null);
+        var seen = new List<bool>();
+        engine.RunningStateChanged += seen.Add;
+        var exited = Process.Start(new ProcessStartInfo("cmd.exe", "/c exit 3") { UseShellExecute = false, CreateNoWindow = true })!;
+        await exited.WaitForExitAsync();
+        PretendRunning(engine, exited, null!);
+
+        var result = await engine.CompleteReadyAsync(exited, "http://127.0.0.1:51234");
+
+        result.IsRunning.Should().BeFalse("it answered the readiness check and died before it was reported");
+        engine.IsRunning.Should().BeFalse();
+        engine.BaseUrl.Should().BeNull();
+        seen.Should().NotContain(true);
+    }
+
     [Fact]
     public async Task RequestRestart_DoesNotStopTheRunningEngine()
     {

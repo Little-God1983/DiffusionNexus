@@ -109,6 +109,21 @@ public class EngineConsoleControlTests
     }
 
     [Fact]
+    public async Task Stop_WithAGenerationRunning_AndNoDialog_SaysWhyItDidNotStop()
+    {
+        _engine.Running = true;
+        _engine.HasActiveJobs = true;
+        var control = new EngineConsoleControl(_engine, _roots.Object, dialogs: null, _logger.Object);
+
+        (await control.StopAsync()).Should().BeFalse();
+
+        _engine.Stops.Should().Be(0);
+        _logger.Verify(l => l.Warn(LogCategory.InstanceManagement, "Diffusion Nexus Engine",
+            It.Is<string>(m => m.Contains("generation is running")), It.IsAny<string?>()), Times.Once,
+            "a button that does nothing must say why");
+    }
+
+    [Fact]
     public async Task Restart_StopsThenStartsAgain()
     {
         _engine.Running = true;
@@ -172,5 +187,9 @@ public class EngineConsoleControlTests
             Running = false;
             return Task.CompletedTask;
         }
+
+        public void RequestRestart() { }
+        public bool IsRestartPending => false;
+        public IDisposable BeginJob() => throw new NotSupportedException("not used by the console control");
     }
 }

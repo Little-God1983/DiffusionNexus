@@ -47,7 +47,6 @@ public sealed class EngineConsoleControl
         }
         catch (Exception ex)
         {
-            Serilog.Log.Error(ex, "Could not start the Diffusion Nexus Engine from the console");
             _logger.Error(LogCategory.InstanceManagement, Source, $"Could not start the Engine: {ex.Message}", ex);
         }
     }
@@ -66,7 +65,6 @@ public sealed class EngineConsoleControl
         }
         catch (Exception ex)
         {
-            Serilog.Log.Error(ex, "Could not stop the Diffusion Nexus Engine from the console");
             _logger.Error(LogCategory.InstanceManagement, Source, $"Could not stop the Engine: {ex.Message}", ex);
             return false;
         }
@@ -82,7 +80,6 @@ public sealed class EngineConsoleControl
         }
         catch (Exception ex)
         {
-            Serilog.Log.Error(ex, "Could not restart the Diffusion Nexus Engine from the console");
             _logger.Error(LogCategory.InstanceManagement, Source, $"Could not restart the Engine: {ex.Message}", ex);
             return;
         }
@@ -91,11 +88,16 @@ public sealed class EngineConsoleControl
     }
 
     // With no generation running there is nothing to lose: no question. With one, the user decides;
-    // a dismissed dialog keeps it running.
+    // a dismissed dialog keeps it running. Without a dialog to ask with, it keeps running and says why.
     private async Task<bool> ConfirmStopAsync(string title)
     {
         if (!_engine.HasActiveJobs) return true;
-        if (_dialogs is null) return false;
+        if (_dialogs is null)
+        {
+            _logger.Warn(LogCategory.InstanceManagement, Source,
+                "A generation is running on the Engine, so it was not stopped. Stop it when the generation has finished.");
+            return false;
+        }
 
         var choice = await _dialogs.ShowOptionsAsync(title,
             "A generation is running on the Engine. Stopping it cancels that generation.",

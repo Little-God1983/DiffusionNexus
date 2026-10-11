@@ -91,15 +91,76 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IManagedEngine
         }
     }
 
-    // The process this engine started has exited. When it is still the current one, nobody stopped
-    // it: it exited on its own (a crash, or killed from outside), so the engine is no longer running.
+    /// <summary>Hears the started process exit (<see cref="OnProcessExited"/>). Internal for tests.</summary>
+    internal void WatchProcess(Process process)
+    {
+        process.EnableRaisingEvents = true;
+        process.Exited += (_, _) => OnProcessExited(process);
+    }
+
+    /// <summary>
+    /// The started process answered its readiness check. Under <see cref="_startLock"/>. Internal for tests.
+    /// </summary>
+    internal async Task<EngineStartResult> CompleteReadyAsync(Process process, string baseUrl)
+    {
+        // It answered, but may have died since: a dead process is never reported running. Checked
+        // again after the report, because OnProcessExited leaves a process not yet reported running
+        // to the start, so an exit between the two would otherwise go unseen.
+        if (process.HasExited) return await FailExitedAfterReadyAsync(process).ConfigureAwait(false);
+        _baseUrl = baseUrl;
+        ReportRunning(true);
+        if (process.HasExited) return await FailExitedAfterReadyAsync(process).ConfigureAwait(false);
+
+        Log($"Engine ready at {baseUrl}.");
+        return new EngineStartResult(true, baseUrl, null);
+    }
+
+    private async Task<EngineStartResult> FailExitedAfterReadyAsync(Process process)
+    {
+        var code = TryExitCode(process);
+        await StopCoreAsync().ConfigureAwait(false);
+        return new EngineStartResult(false, null,
+            $"The engine process exited right after it became ready (exit code {code?.ToString() ?? "unknown"}). " +
+            "See the Unified Console for its output.");
+    }
+
+    private static int? TryExitCode(Process process)
+    {
+        try { return process.ExitCode; }
+        catch (InvalidOperationException) { return null; }   // disposed meanwhile
+    }
+
+    // The process this engine started has exited. A start still in progress (not reported running
+    // yet) reports the exit itself. Otherwise nobody stopped it: it exited on its own (a crash, or
+    // killed from outside), so the engine is no longer running, and its handles are released.
     private void OnProcessExited(Process exited)
     {
-        if (!ReferenceEquals(_process, exited)) return;
-        int? code = null;
-        try { code = exited.ExitCode; } catch (InvalidOperationException) { /* disposed meanwhile */ }
+        if (!ReferenceEquals(_process, exited) || !IsRunning) return;
+        var code = TryExitCode(exited);
         Log(code is null ? "The engine process exited." : $"The engine process exited with code {code}.");
-        ReportRunning(false);
+        _ = ReleaseExitedAsync(exited);
+    }
+
+    // Clears the dead process the same way a stop does (BaseUrl null, handles disposed, reported not
+    // running), under the start lock so it never races a start or a stop.
+    private async Task ReleaseExitedAsync(Process exited)
+    {
+        try
+        {
+            await _startLock.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                if (ReferenceEquals(_process, exited)) await StopCoreAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                _startLock.Release();
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning(ex, "Could not release the exited engine process.");
+        }
     }
 
     /// <summary>
@@ -229,9 +290,7 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IManagedEngine
 
             try
             {
-                var spawned = _process;
-                spawned.EnableRaisingEvents = true;
-                spawned.Exited += (_, _) => OnProcessExited(spawned);
+                WatchProcess(_process);
                 _process.OutputDataReceived += (_, e) => { if (e.Data is not null) Log(e.Data); };
                 _process.ErrorDataReceived += (_, e) => { if (e.Data is not null) Log(e.Data); };
                 _process.BeginOutputReadLine();
@@ -242,10 +301,7 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IManagedEngine
                 switch (outcome.Kind)
                 {
                     case ReadinessKind.Ready:
-                        _baseUrl = baseUrl;
-                        Log($"Engine ready at {baseUrl}.");
-                        ReportRunning(true);
-                        return new EngineStartResult(true, baseUrl, null);
+                        return await CompleteReadyAsync(_process, baseUrl).ConfigureAwait(false);
 
                     case ReadinessKind.ProcessExited:
                         await StopCoreAsync().ConfigureAwait(false);

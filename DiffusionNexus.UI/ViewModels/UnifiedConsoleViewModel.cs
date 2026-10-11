@@ -604,12 +604,12 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
 
         if (tab.IsEngine)
         {
-            if (_engineControl is null || _engine?.IsRunning == true) return;
+            if (_engineControl is null || tab.IsStarting || _engine?.IsRunning == true) return;
             // Like a launched package: open the panel on this instance's output. Done here, not on
             // the running-state change, so the Canvas starting the Engine on demand opens nothing.
             PanelOpenRequested?.Invoke(this, EventArgs.Empty);
             if (SelectedInstance?.PackageId != tab.PackageId) FilterByInstance(tab);
-            _ = _engineControl.StartAsync();
+            _ = StartEngineFromTabAsync(tab, _engineControl);
             return;
         }
 
@@ -833,20 +833,40 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
         });
     }
 
-    // The Engine started or stopped, from this tile, the Canvas, the app's shutdown or on its own.
-    // No panel opening here: a start from this tile already opened it (LaunchInstance).
-    private void OnEngineRunningStateChanged(bool running)
+    // A start takes up to two minutes: the tile says so meanwhile, and offers neither Start (it
+    // would only queue behind this one) nor Update (it would change the folder the Engine starts from).
+    private static async Task StartEngineFromTabAsync(InstanceTabItem tab, Services.Engine.EngineConsoleControl control)
     {
-        Dispatcher.UIThread.Post(() =>
+        tab.IsStarting = true;
+        try
         {
-            var tab = InstanceTabs.FirstOrDefault(t => t.IsEngine);
-            if (tab is null) return;
+            await control.StartAsync();
+        }
+        finally
+        {
+            tab.IsStarting = false;
+        }
+    }
 
+    /// <summary>
+    /// Every Engine tab shows the engine's current state (an old build could leave two app-managed
+    /// rows). Read from the engine, not from the event: two reports from different threads can
+    /// arrive out of order. Internal for tests.
+    /// </summary>
+    internal void ApplyEngineState()
+    {
+        var running = _engine?.IsRunning == true;
+        foreach (var tab in InstanceTabs.Where(t => t.IsEngine))
+        {
             tab.IsRunning = running;
             tab.DetectedWebUrl = running ? _engine?.BaseUrl : null;
-            HasRunningInstances = InstanceTabs.Any(t => t.IsRunning);
-        });
+        }
+        HasRunningInstances = InstanceTabs.Any(t => t.IsRunning);
     }
+
+    // The Engine started or stopped, from this tile, the Canvas, the app's shutdown or on its own.
+    // No panel opening here: a start from this tile already opened it (LaunchInstance).
+    private void OnEngineRunningStateChanged(bool _) => Dispatcher.UIThread.Post(ApplyEngineState);
 
     private void OnInstanceWebUrlDetected(int packageId, string url)
     {

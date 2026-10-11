@@ -75,6 +75,12 @@ public partial class InstanceTabItem : ObservableObject
     /// </summary>
     public bool IsEngine { get; init; }
 
+    /// <summary>True while a start from this tab runs (the Engine takes up to two minutes).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowStartButton))]
+    [NotifyPropertyChangedFor(nameof(ShowUpdateButton))]
+    private bool _isStarting;
+
     /// <summary>
     /// True when the installation folder no longer exists on disk.
     /// </summary>
@@ -84,9 +90,9 @@ public partial class InstanceTabItem : ObservableObject
     private bool _isMissing;
 
     /// <summary>
-    /// Show the Start button when not running and not missing.
+    /// Show the Start button when not running, not missing and not starting.
     /// </summary>
-    public bool ShowStartButton => !IsRunning && !IsMissing;
+    public bool ShowStartButton => !IsRunning && !IsMissing && !IsStarting;
 
     /// <summary>
     /// Show Stop/Restart/WebUI when running.
@@ -96,7 +102,7 @@ public partial class InstanceTabItem : ObservableObject
     /// <summary>
     /// Show the Update button when an update is available, not currently updating, not running, and not missing.
     /// </summary>
-    public bool ShowUpdateButton => IsUpdateAvailable && !IsUpdating && !IsRunning && !IsMissing;
+    public bool ShowUpdateButton => IsUpdateAvailable && !IsUpdating && !IsRunning && !IsMissing && !IsStarting;
 
     /// <summary>
     /// Small logo for the tab.
