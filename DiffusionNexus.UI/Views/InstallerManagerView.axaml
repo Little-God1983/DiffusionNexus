@@ -402,7 +402,7 @@
                                                    MaxLines="1"
                                                    TextTrimming="CharacterEllipsis"
                                                    ToolTip.Tip="{Binding EngineActivity}"
-                                                   IsVisible="{Binding IsEngineInstalling}"/>
+                                                   IsVisible="{Binding EngineActivity, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
                                         <ProgressBar Minimum="0" Maximum="100"
                                                      Value="{Binding EngineProgressPercent}"
                                                      Height="4"

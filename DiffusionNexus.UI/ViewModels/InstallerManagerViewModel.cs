@@ -1045,29 +1045,17 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
     private const string EngineLogSource = "Diffusion Nexus Engine";
 
-    // An Engine install-log line into the Unified Console at the level the SDK gave it, so errors and
-    // warnings count and filter as such there. Success has no console level of its own: Info.
+    // An Engine install-log line into the Unified Console. Errors the SDK reports (Error, Critical)
+    // count as errors there; everything else is Info. Not Warning: the SDK reports every stderr line
+    // as Warning, and git and pip write ordinary progress there, so a clean install would count
+    // dozens of warnings. Not Debug: the console hides it by default, and the "Executing: ..."
+    // command is what names a step that hangs.
     private void LogEngineInstallEntry(DiffusionNexus.Installer.SDK.Services.InstallLogEntry entry)
     {
-        switch (entry.Level)
-        {
-            case SdkLogLevel.Critical:
-            case SdkLogLevel.Error:
-                _unifiedLogger.Error(LogCategory.Installation, EngineLogSource, entry.Message);
-                break;
-            case SdkLogLevel.Warning:
-                _unifiedLogger.Warn(LogCategory.Installation, EngineLogSource, entry.Message);
-                break;
-            case SdkLogLevel.Debug:
-                _unifiedLogger.Debug(LogCategory.Installation, EngineLogSource, entry.Message);
-                break;
-            case SdkLogLevel.Trace:
-                _unifiedLogger.Trace(LogCategory.Installation, EngineLogSource, entry.Message);
-                break;
-            default:
-                _unifiedLogger.Info(LogCategory.Installation, EngineLogSource, entry.Message);
-                break;
-        }
+        if (entry.Level is SdkLogLevel.Error or SdkLogLevel.Critical)
+            _unifiedLogger.Error(LogCategory.Installation, EngineLogSource, entry.Message);
+        else
+            _unifiedLogger.Info(LogCategory.Installation, EngineLogSource, entry.Message);
     }
 
     // Commands (Debug) and verbose detail (Trace) stay in the console; the rest may show on the tile.
@@ -1108,12 +1096,13 @@ public partial class InstallerManagerViewModel : ViewModelBase
             $"Engine installed, but could not {what}: {ex.Message}");
     }
 
-    // One line of a log message for the tile: its first line, and of that the last state a carriage
-    // return drew (git and pip redraw progress in place, so the last segment is the current one).
+    // One line of a log message for the tile: the newest. Its last line (a traceback ends with the
+    // error, batched output with the latest step), and of that the last state a carriage return drew
+    // (git and pip redraw progress in place).
     private static string? ActivityLine(string? message)
     {
-        var firstLine = message?.Split('\n').Select(l => l.TrimEnd('\r')).FirstOrDefault(l => l.Trim().Length > 0);
-        return firstLine?.Split('\r').Select(segment => segment.Trim()).LastOrDefault(segment => segment.Length > 0);
+        var lastLine = message?.Split('\n').Select(l => l.TrimEnd('\r')).LastOrDefault(l => l.Trim().Length > 0);
+        return lastLine?.Split('\r').Select(segment => segment.Trim()).LastOrDefault(segment => segment.Length > 0);
     }
 
     /// <summary>
@@ -1156,12 +1145,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
             UnifiedConsolePanelRequested?.Invoke(this, EventArgs.Empty);
 
-            card.BeginEngineInstall(folder);
-            engineRunning = _installActivity?.Begin("Diffusion Nexus Engine");
-            _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
-                $"Starting base engine install into {folder}.");
-
-            // The full log goes to the Unified Console (opened above), each line at its own level. On
+            // The full log goes to the Unified Console (opened above), errors as errors. On
             // the tile, raw lines replaced the step and pip's package lists flooded it (#609): the tile
             // keeps the step and shows one line of the latest output, so a long step still looks alive.
             // Progress<T> posts its callbacks, so a report queued as the SDK returned can land after the
@@ -1192,6 +1176,13 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
             try
             {
+                // Inside the try: whatever throws from here on, the finally ends the install on the
+                // tile, so it can never stay on "Installing..." with Install hidden.
+                card.BeginEngineInstall(folder);
+                engineRunning = _installActivity?.Begin("Diffusion Nexus Engine");
+                _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
+                    $"Starting base engine install into {folder}.");
+
                 var sharedRoots = await ResolveSharedModelRootsAsync();
 
                 var outcome = await _engineInstaller.InstallBaseEngineAsync(
@@ -1304,7 +1295,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
             // Nothing installed: the row's folder may have changed (the install may have written into
             // it), so read it again the way a reload would, off the UI thread (a sleeping drive must
             // not freeze the window).
-            if (installedPath is null && card.IsMissing)
+            if (installedPath is null && card.HasEngineRow)
             {
                 var rowFolder = card.InstallationPath;
                 card.ApplyEngineFolder(await Task.Run(() => Services.Engine.ManagedEngineLocator.Probe(rowFolder)));

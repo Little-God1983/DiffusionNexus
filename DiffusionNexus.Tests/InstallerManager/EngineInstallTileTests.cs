@@ -351,7 +351,7 @@ public class EngineInstallTileTests
     }
 
     [Fact]
-    public async Task LogEntries_KeepTheirLevelInTheConsole_AndTheLatestShowsAsOneActivityLine()
+    public async Task OnlyErrorsCountAsErrors_StderrAndCommandsStayInfo_AndTheLatestShowsAsOneActivityLine()
     {
         var logger = new Mock<IUnifiedLogger>();
         var gate = new TaskCompletionSource<EngineInstallOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -363,7 +363,8 @@ public class EngineInstallTileTests
                 (_, log, _, _) =>
                 {
                     log.Report(new InstallLogEntry { Message = "pip install failed", Level = SdkLogLevel.Error });
-                    log.Report(new InstallLogEntry { Message = "no GPU found", Level = SdkLogLevel.Warning });
+                    // The SDK reports every stderr line as Warning, and git writes its progress there.
+                    log.Report(new InstallLogEntry { Message = "Cloning into 'ComfyUI'...", Level = SdkLogLevel.Warning });
                     log.Report(new InstallLogEntry { Message = "Collecting torch\nDownloading torch-2.8.0.whl", Level = SdkLogLevel.Info });
                     log.Report(new InstallLogEntry { Message = "Executing: pip install torch", Level = SdkLogLevel.Debug });
                     log.Report(new InstallLogEntry { Message = "python crashed", Level = SdkLogLevel.Critical });
@@ -383,9 +384,12 @@ public class EngineInstallTileTests
         finally { SynchronizationContext.SetSynchronizationContext(previous); }
 
         logger.Verify(l => l.Error(LogCategory.Installation, "Diffusion Nexus Engine", "pip install failed", null), Times.Once);
-        logger.Verify(l => l.Warn(LogCategory.Installation, "Diffusion Nexus Engine", "no GPU found", null), Times.Once);
-        logger.Verify(l => l.Debug(LogCategory.Installation, "Diffusion Nexus Engine", "Executing: pip install torch", null), Times.Once);
-        logger.Verify(l => l.Trace(LogCategory.Installation, "Diffusion Nexus Engine", "verbose detail", null), Times.Once);
+        logger.Verify(l => l.Info(LogCategory.Installation, "Diffusion Nexus Engine", "Cloning into 'ComfyUI'...", null), Times.Once,
+            "stderr is not a problem: a clean clone must not count as warnings");
+        logger.Verify(l => l.Warn(It.IsAny<LogCategory>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>()), Times.Never);
+        logger.Verify(l => l.Info(LogCategory.Installation, "Diffusion Nexus Engine", "Executing: pip install torch", null), Times.Once,
+            "the console hides Debug by default, and the command is what names a hanging step");
+        logger.Verify(l => l.Info(LogCategory.Installation, "Diffusion Nexus Engine", "verbose detail", null), Times.Once);
         logger.Verify(l => l.Error(LogCategory.Installation, "Diffusion Nexus Engine", "python crashed", null), Times.Once);
         card.EngineActivity.Should().Be("python crashed",
             "the tile shows the latest line that is not a command or verbose detail (Debug, Trace stay in the console)");
@@ -473,7 +477,7 @@ public class EngineInstallTileTests
             .Returns<EngineInstallRequest, IProgress<InstallLogEntry>, IProgress<InstallationProgress>, CancellationToken>(
                 (_, log, _, _) =>
                 {
-                    log.Report(new InstallLogEntry { Message = "Receiving objects:   1%\rReceiving objects:  35%\rReceiving objects: 100%, done.\r\nResolving deltas" });
+                    log.Report(new InstallLogEntry { Message = "Receiving objects:   1%\rReceiving objects:  35%\rReceiving objects: 100%, done." });
                     return gate.Task;
                 });
         var vm = EngineTestHarness.CreateInstallerManagerViewModel(
@@ -517,6 +521,90 @@ public class EngineInstallTileTests
 
         cardStillShownAtDialog.Should().BeTrue("the failure belongs to the tile the user watched; the list catches up after");
         vm.InstallerCards.Any(c => c.IsEngine).Should().BeFalse("the switch ended off, and the reload did catch up");
+    }
+
+    [Fact]
+    public async Task AMultiLineEntry_ShowsItsLastLine()
+    {
+        var gate = new TaskCompletionSource<EngineInstallOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var installer = new Mock<IManagedEngineInstaller>();
+        installer.Setup(i => i.InstallBaseEngineAsync(
+                It.IsAny<EngineInstallRequest>(), It.IsAny<IProgress<InstallLogEntry>>(),
+                It.IsAny<IProgress<InstallationProgress>>(), It.IsAny<CancellationToken>()))
+            .Returns<EngineInstallRequest, IProgress<InstallLogEntry>, IProgress<InstallationProgress>, CancellationToken>(
+                (_, log, _, _) =>
+                {
+                    log.Report(new InstallLogEntry
+                    {
+                        Message = "Traceback (most recent call last):\n  File \"main.py\", line 1\nRuntimeError: CUDA error\n",
+                        Level = SdkLogLevel.Error
+                    });
+                    return gate.Task;
+                });
+        var vm = EngineTestHarness.CreateInstallerManagerViewModel(
+            [], engineInstaller: installer.Object, chosenFolder: @"C:\Engine\New", onPackageAdded: _ => { });
+        vm.IsEngineTileVisible = true;
+        await vm.LoadInstallationsCommand.ExecuteAsync(null);
+        var card = vm.InstallerCards.Single(c => c.IsEngine);
+
+        var install = StartInline(vm);
+
+        card.EngineActivity.Should().Be("RuntimeError: CUDA error", "the newest line says what is happening now");
+
+        gate.SetResult(new EngineInstallOutcome(true, false, "done", @"C:\Engine\New"));
+        await install;
+    }
+
+    [Fact]
+    public async Task InstalledEngine_FailedReinstallThatBrokeItsFolder_SaysIncomplete()
+    {
+        var root = EngineFolder(withMainPy: true);
+        try
+        {
+            var row = StaleRow();
+            row.InstallationPath = root;
+            var installer = new Mock<IManagedEngineInstaller>();
+            installer.Setup(i => i.InstallBaseEngineAsync(
+                    It.IsAny<EngineInstallRequest>(), It.IsAny<IProgress<InstallLogEntry>>(),
+                    It.IsAny<IProgress<InstallationProgress>>(), It.IsAny<CancellationToken>()))
+                .Returns(() =>
+                {
+                    File.Delete(Path.Combine(root, "main.py"));
+                    return Task.FromResult(new EngineInstallOutcome(false, false, "clone failed", null));
+                });
+            var vm = EngineTestHarness.CreateInstallerManagerViewModel(
+                [row], engineInstaller: installer.Object, chosenFolder: root, onPackageAdded: _ => { });
+            vm.IsEngineTileVisible = true;
+            await vm.LoadInstallationsCommand.ExecuteAsync(null);
+            var card = vm.InstallerCards.Single(c => c.IsEngine);
+            card.VersionDisplay.Should().Be("App-managed");
+
+            await vm.InstallEngineAsync();
+
+            card.VersionDisplay.Should().Be("Installation incomplete", "a reload would say so: the folder lost its engine");
+            card.IsEngineInstalled.Should().BeFalse();
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task StartOfInstallThatThrows_DoesNotLeaveTheTileInstalling()
+    {
+        var logger = new Mock<IUnifiedLogger>();
+        logger.Setup(l => l.Info(LogCategory.Installation, "Diffusion Nexus Engine",
+                It.Is<string>(m => m.StartsWith("Starting base engine install")), It.IsAny<string?>()))
+            .Throws(new IOException("log file locked"));
+        var vm = EngineTestHarness.CreateInstallerManagerViewModel(
+            [StaleRow()], engineInstaller: Installer(Task.FromResult(new EngineInstallOutcome(true, false, "done", @"C:\Engine\New"))),
+            chosenFolder: @"C:\Engine\New", onPackageAdded: _ => { }, loggerMock: logger);
+        vm.IsEngineTileVisible = true;
+        await vm.LoadInstallationsCommand.ExecuteAsync(null);
+        var card = vm.InstallerCards.Single(c => c.IsEngine);
+
+        try { await vm.InstallEngineAsync(); } catch (IOException) { /* how it surfaces is not the point */ }
+
+        card.IsEngineInstalling.Should().BeFalse("a tile stuck on \"Installing...\" hides Install for the rest of the session");
+        card.ShowEngineInstallButton.Should().BeTrue();
     }
 
     // Runs the install with Progress<T> callbacks inline, so reports made before the install

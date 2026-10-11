@@ -184,6 +184,9 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
         RefreshEngineStatus();
     }
 
+    /// <summary>True when an Engine row exists, whatever its folder holds.</summary>
+    public bool HasEngineRow => _engineFolder is not null;
+
     private void RefreshEngineStatus()
     {
         if (IsEngineInstalling)
