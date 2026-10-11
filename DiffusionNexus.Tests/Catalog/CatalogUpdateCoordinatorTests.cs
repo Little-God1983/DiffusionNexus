@@ -143,22 +143,22 @@ public sealed partial class CatalogUpdateCoordinatorTests : IDisposable
     // PR #619 round 2: the installer's file could not be read on the first start: the channel is a guess until
     // the copy succeeds; nothing is checked or applied on it.
     [Fact]
-    public async Task An_unknown_first_start_channel_checks_nothing_until_the_installers_channel_is_read()
+    // PR #619 round 4 (replaces round 2's "checks nothing"): a corrupt installer file stays corrupt, so refusing
+    // every check would never end (no update deadlock, ever). Stable is followed for this run and not stored;
+    // each channel has its own folder, so nothing of Preview's is touched. The next start tries the copy again.
+    public async Task An_unknown_first_start_channel_follows_Stable_for_this_run_without_storing_it()
     {
-        _preferences.Stored = new CatalogPreferences(null, true);
+        _preferences.Stored = new CatalogPreferences(null, false);
         _service.NextCheck = () => CatalogChecks.Available(7).Targeting(WorkloadTargetType.DiffusionNexusCore);
         using var coordinator = Create();
 
         await coordinator.CheckAtStartupAsync();
 
-        _service.CheckCalls.Should().Be(0);
-        _service.ApplyCalls.Should().Be(0);
-        coordinator.LastCheck!.Error.Should().Be("The catalog channel is not known yet: the installer's saved channel could not be read. Try again in a moment.");
-
-        _preferences.Stored = new CatalogPreferences("Preview", true);
-        await coordinator.CheckAsync();
-        coordinator.Channel.Should().Be(CatalogChannel.Preview);
         _service.CheckCalls.Should().Be(1);
+        coordinator.Channel.Should().Be(CatalogChannel.Stable);
+        coordinator.ChannelSource.Should().Be(CatalogChannelSource.Default);
+        coordinator.UpdateAvailable.Should().BeTrue();
+        _preferences.SavedChannels.Should().BeEmpty();
     }
 
     // PR #619 round 2: the installer applied the same release into the shared folder between the check and Apply.
@@ -169,12 +169,16 @@ public sealed partial class CatalogUpdateCoordinatorTests : IDisposable
         _service.NextApply = () => new CatalogApplyResult(CatalogSections.None, CatalogSections.None, null);
         using var coordinator = Create();
         await coordinator.CheckAsync();
+        await Task.Delay(20);
+        var appliedAfter = DateTimeOffset.Now;
 
         await coordinator.ApplyAsync();
         Settle(coordinator);
 
         coordinator.LastCheck!.Outcome.Should().Be(CatalogUpdateOutcome.UpToDate);
         coordinator.UpdateAvailable.Should().BeFalse();
+        // PR #619 round 4: "Last checked" describes the check the page shows.
+        coordinator.LastCheckedAt.Should().BeOnOrAfter(appliedAfter);
     }
 
     // PR #619 round 3: a cancelled check was logged as an error and shown as "The operation was canceled".
@@ -189,6 +193,66 @@ public sealed partial class CatalogUpdateCoordinatorTests : IDisposable
         coordinator.LastCheck.Should().BeNull();
         coordinator.Phase.Should().Be(CatalogUpdatePhase.Idle);
         _log.GetEntries().Should().NotContain(e => e.Source == "Catalog" && e.Level >= DiffusionNexus.Domain.Services.UnifiedLogging.LogLevel.Error);
+    }
+
+    // PR #619 round 4: the change lines listed workloads although only the workflows had landed.
+    [Fact]
+    public async Task A_partial_apply_logs_only_the_changes_of_the_sections_that_landed()
+    {
+        _service.NextCheck = () => CatalogChecks.Available(7, CatalogChannel.Stable,
+            [CatalogChecks.WorkloadUpdated("Upscaling-Z-Image-Turbo", "V1.6", "V1.7")],
+            [new WorkflowChange(Guid.NewGuid(), "Upscale", ["Upscaling-Z-Image-Turbo"], ChangeKind.Updated, "V1.0", "V1.1")]);
+        _service.NextApply = () => new CatalogApplyResult(CatalogSections.Workflows, CatalogSections.Workloads, "workloads/ is held");
+        using var coordinator = Create();
+        await coordinator.CheckAsync();
+
+        await coordinator.ApplyAsync();
+        Settle(coordinator);
+
+        WaitLogged(m => m.StartsWith("Catalog update incomplete"));
+        Logged.Should().Contain(m => m.StartsWith("Updated: Upscaling-Z-Image-Turbo – Upscale"));
+        Logged.Should().NotContain(m => m.StartsWith("Updated: Upscaling-Z-Image-Turbo ("));
+    }
+
+    // PR #619 round 4: failures logged as Info hid them from anyone filtering the console by warnings.
+    [Theory]
+    [InlineData(CatalogUpdateOutcome.Failed)]
+    [InlineData(CatalogUpdateOutcome.RequiresNewerSoftware)]
+    public async Task A_check_that_failed_or_needs_newer_software_is_a_warning(CatalogUpdateOutcome outcome)
+    {
+        _service.NextCheck = () => CatalogChecks.Outcome(outcome, CatalogChannel.Stable, "HTTP 503");
+        using var coordinator = Create();
+
+        await coordinator.CheckAsync();
+
+        _log.GetEntries().Should().Contain(e => e.Source == "Catalog" && e.Level == DiffusionNexus.Domain.Services.UnifiedLogging.LogLevel.Warning
+            && e.Message.StartsWith("Catalog update check: " + outcome));
+    }
+
+    // PR #619 round 4: until the first check the status read "No catalog installed yet" although one is in use.
+    [Fact]
+    public async Task Resolving_the_channel_also_reads_what_is_installed()
+    {
+        WriteState(CatalogChannel.Stable, 5);
+        using var coordinator = Create();
+
+        await coordinator.ResolveChannelAsync();
+
+        coordinator.Installed!.HighestCatalogVersion.Should().Be(5);
+    }
+
+    [Fact]
+    public async Task A_check_refused_for_unreadable_settings_is_a_warning_and_keeps_the_installed_state()
+    {
+        WriteState(CatalogChannel.Stable, 5);
+        _preferences.LoadFailure = new IOException("database locked");
+        using var coordinator = Create();
+
+        await coordinator.CheckAsync();
+
+        coordinator.Installed!.HighestCatalogVersion.Should().Be(5);
+        _log.GetEntries().Should().Contain(e => e.Source == "Catalog" && e.Level == DiffusionNexus.Domain.Services.UnifiedLogging.LogLevel.Warning
+            && e.Message.StartsWith("Catalog update check skipped"));
     }
 
     // ----- check: per-app notices (spec §4) -----

@@ -171,6 +171,9 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
         try
         {
             await EnsureChannelAsync(ct).ConfigureAwait(false);
+            // The folder now read: the page describes it before the first check (PR #619 round 4).
+            var installed = LocalCatalogState.Load(_options.InstalledCatalogPath);
+            lock (_gate) KeepInstalled(installed);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -199,7 +202,10 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
         lock (_gate)
         {
             // Read, but no channel: the installer's file could not be read on the first start (PR #619 round 2).
-            if (stored is not null) _preferencesError = stored.Channel is null ? "the installer's saved channel could not be read" : null;
+            // Read without a channel (the installer's file could not be read on the first start): Stable for this
+            // run, not stored, so the next start tries the copy again. Checks work: refusing them would never end
+            // while that file stays unreadable, and each channel has its own folder (PR #619 round 4).
+            if (stored is not null) _preferencesError = null;
             if (!_autoApplyResolved)
             {
                 AutoApply = stored?.ApplyAutomatically ?? false;
@@ -208,7 +214,7 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
             // A switch finished while the read above was awaited: its answer is newer.
             if (_channelResolved) return;
             ApplyResolution(_readEnvironment(), stored?.Channel);
-            if (stored?.Channel is not null) _channelResolved = true;
+            if (stored is not null) _channelResolved = true;
         }
     }
 
@@ -263,8 +269,11 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
             {
                 // The channel is a guess (Stable): checking it would offer Stable's release to a user who saved
                 // Preview (PR #619 round 1). Nothing is checked until the setting can be read.
+                _logger?.Warn(LogCategory.General, LogSource, $"Catalog update check skipped: the catalog channel is not known yet ({unreadable})");
+                var known = LocalCatalogState.Load(_options.InstalledCatalogPath);
                 lock (_gate)
                 {
+                    KeepInstalled(known);
                     LastCheck = FailedCheck(Channel, Installed, $"The catalog channel is not known yet: {unreadable}. Try again in a moment.");
                     LastCheckedAt = DateTimeOffset.Now;
                     Phase = CatalogUpdatePhase.Checked;
@@ -283,7 +292,9 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
                 KeepInstalled(installed);
                 Phase = CatalogUpdatePhase.Checked;
             }
-            _logger?.Info(LogCategory.General, LogSource,
+            // A failed check or one that needs a newer app is a warning: the console is filtered by level (PR #619 round 4).
+            var level = check.Outcome is CatalogUpdateOutcome.Failed or CatalogUpdateOutcome.RequiresNewerSoftware ? LogLevel.Warning : LogLevel.Info;
+            _logger?.Log(level, LogCategory.General, LogSource,
                 $"Catalog update check: {check.Outcome} (remote v{check.Remote?.CatalogVersion}, installed v{installed.HighestCatalogVersion}, " +
                 $"{check.Workloads.Count} workload / {check.Workflows.Count} workflow changes for Diffusion Nexus, " +
                 $"{check.Unfiltered!.Workloads.Count + check.Unfiltered.Workflows.Count} in the release)",
@@ -402,11 +413,15 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
                 LastApply = result;
                 KeepInstalled(installed);
                 Progress = null;
-                if (fresh is not null) LastCheck = fresh;
+                if (fresh is not null)
+                {
+                    LastCheck = fresh;
+                    LastCheckedAt = DateTimeOffset.Now;
+                }
                 // A switch whose target folder was already current applies nothing: nothing was "updated".
                 Phase = succeeded && landedSomething ? CatalogUpdatePhase.Applied : CatalogUpdatePhase.Checked;
             }
-            if (landedSomething) LogChanges(check);
+            if (landedSomething) LogChanges(check, result.Applied);
             if (succeeded)
                 _logger?.Info(LogCategory.General, LogSource, landedSomething
                     ? $"Catalog updated to v{installed.HighestCatalogVersion} ({check.Channel})."
@@ -482,10 +497,15 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
         }
     }
 
-    private void LogChanges(CatalogUpdateCheck check)
+    /// <summary>The change lines of the sections that landed only (PR #619 round 4): a workload row is not "applied" when Workloads failed.</summary>
+    private void LogChanges(CatalogUpdateCheck check, CatalogSections applied)
     {
         foreach (var row in CatalogChangeRows.Build(check))
+        {
+            var section = row.Kind == "Workflow" ? CatalogSections.Workflows : CatalogSections.Workloads;
+            if ((applied & section) == 0) continue;
             _logger?.Info(LogCategory.General, LogSource, $"{row.Change}: {row.Name} ({row.VersionText})");
+        }
     }
 
     private void TryInvalidate()

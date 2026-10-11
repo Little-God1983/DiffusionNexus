@@ -168,7 +168,7 @@ public sealed partial class CatalogUpdateCoordinatorTests
     [Fact]
     public async Task Picking_the_shown_channel_while_it_is_unknown_saves_it()
     {
-        _preferences.Stored = new CatalogPreferences(null, false);   // the installer's file could not be read
+        _preferences.LoadFailure = new IOException("database locked");   // the setting could not be read
         using var coordinator = Create();
         await coordinator.CheckAsync();
         coordinator.LastCheck!.Outcome.Should().Be(CatalogUpdateOutcome.Failed);
