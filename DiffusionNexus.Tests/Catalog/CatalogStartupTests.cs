@@ -3,8 +3,6 @@ using DiffusionNexus.Infrastructure.Services;
 using DiffusionNexus.Installer.SDK.Catalog;
 using DiffusionNexus.Installer.SDK.Catalog.Packaging;
 using DiffusionNexus.Installer.SDK.Catalog.Updates;
-using DiffusionNexus.Installer.SDK.Models.Installation;
-using DiffusionNexus.Installer.SDK.Services.Settings;
 using DiffusionNexus.UI.Services.Catalog;
 using FluentAssertions;
 using Moq;
@@ -12,15 +10,14 @@ using Moq;
 namespace DiffusionNexus.Tests.Catalog;
 
 /// <summary>
-/// The background catalog startup: channel resolution, the Unified Console report, and the update
-/// check for the resolved channel. Runs off the UI thread because <see cref="ICatalog.Source"/>
+/// The background catalog startup: the coordinator resolves the channel, the Unified Console report, then the
+/// coordinator's startup check (#618). Runs off the UI thread because <see cref="ICatalog.Source"/>
 /// blocks while the embedded seed unpacks.
 /// </summary>
 public class CatalogStartupTests
 {
     private readonly Mock<ICatalog> _catalog = new();
-    private readonly Mock<IUserSettingsRepository> _settings = new();
-    private readonly Mock<ICatalogUpdateService> _updates = new();
+    private readonly Mock<ICatalogUpdateCoordinator> _coordinator = new();
     private readonly ActivityLogService _log = new();
 
     public CatalogStartupTests()
@@ -32,67 +29,16 @@ public class CatalogStartupTests
             Workflows = new SectionState(4, "abc", DateTimeOffset.UnixEpoch)
         });
         _catalog.SetupGet(c => c.Diagnostics).Returns([]);
-        _updates.Setup(u => u.CheckAsync(It.IsAny<CatalogChannel>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((CatalogChannel c, CancellationToken _) =>
-                new CatalogUpdateCheck(CatalogUpdateOutcome.UpToDate, c, null, new LocalCatalogState(), [], [], null));
-        SavedChannel(null);
+        _coordinator.Setup(c => c.ResolveChannelAsync(It.IsAny<CancellationToken>())).ReturnsAsync(CatalogChannel.Stable);
+        _coordinator.SetupGet(c => c.ChannelSource).Returns(CatalogChannelSource.Setting);
     }
-
-    private void SavedChannel(string? channel)
-        => _settings.Setup(s => s.GetByUserNameAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(channel is null ? null : new UserSettings { UserName = Environment.UserName, CatalogChannel = channel });
-
-    private Task<(CatalogChannel Channel, CatalogChannelSource Source)> Resolve(string? env = null)
-        => CatalogStartup.ResolveChannelAsync(_settings.Object, env, _log);
 
     private void Report(CatalogChannel channel = CatalogChannel.Stable, CatalogChannelSource source = CatalogChannelSource.Default)
         => CatalogStartup.Report(_catalog.Object, channel, source, _log);
 
-    private Task Run(string? env = null)
-        => CatalogStartup.RunAsync(_catalog.Object, _settings.Object, new CatalogStartupUpdater(_updates.Object, _log), env, _log);
+    private Task Run() => CatalogStartup.RunAsync(_catalog.Object, _coordinator.Object, _log);
 
     private List<string> Messages => _log.GetEntries().Select(e => e.Message).ToList();
-
-    [Fact]
-    public async Task Follows_the_channel_the_installer_saved()
-    {
-        SavedChannel("Preview");
-
-        (await Resolve()).Should().Be((CatalogChannel.Preview, CatalogChannelSource.Setting));
-    }
-
-    [Fact]
-    public async Task Environment_channel_wins_over_the_saved_one()
-    {
-        SavedChannel("Preview");
-
-        (await Resolve(env: "stable")).Should().Be((CatalogChannel.Stable, CatalogChannelSource.Environment));
-    }
-
-    [Fact]
-    public async Task Nothing_saved_falls_back_to_Stable_as_the_default()
-    {
-        (await Resolve()).Should().Be((CatalogChannel.Stable, CatalogChannelSource.Default));
-    }
-
-    [Fact]
-    public async Task Never_writes_the_user_settings()
-    {
-        await Run();
-
-        _settings.Verify(s => s.SaveAsync(It.IsAny<UserSettings>(), It.IsAny<CancellationToken>()), Times.Never);
-        _settings.Verify(s => s.GetOrCreateForCurrentUserAsync(It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task A_failing_settings_read_falls_back_to_the_default_with_a_warning()
-    {
-        _settings.Setup(s => s.GetByUserNameAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new IOException("locked"));
-
-        (await Resolve()).Should().Be((CatalogChannel.Stable, CatalogChannelSource.Default));
-        _log.GetEntries().Should().Contain(e => e.Severity == ActivitySeverity.Warning);
-    }
 
     [Fact]
     public void Logs_where_the_catalog_came_from_and_its_versions()
@@ -179,44 +125,29 @@ public class CatalogStartupTests
     }
 
     [Fact]
-    public async Task Run_checks_the_resolved_channel()
+    public async Task Run_resolves_the_channel_before_the_catalog_is_read_then_checks()
     {
-        SavedChannel("Preview");
+        var order = new List<string>();
+        _coordinator.Setup(c => c.ResolveChannelAsync(It.IsAny<CancellationToken>()))
+                    .Callback(() => order.Add("resolve")).ReturnsAsync(CatalogChannel.Preview);
+        _catalog.SetupGet(c => c.Source).Callback(() => order.Add("read")).Returns(new CatalogSource(CatalogSourceKind.Installed, @"C:\x", false));
+        _coordinator.Setup(c => c.CheckAtStartupAsync(It.IsAny<CancellationToken>()))
+                    .Callback(() => order.Add("check")).Returns(Task.CompletedTask);
 
         await Run();
 
-        _updates.Verify(u => u.CheckAsync(CatalogChannel.Preview, It.IsAny<CancellationToken>()), Times.Once);
+        order.Should().StartWith(["resolve", "read"]).And.EndWith("check");
         _log.GetEntries().Should().Contain(e => e.Message.StartsWith("Catalog version:") && e.Details == "Following Preview (Setting)");
-    }
-
-    [Fact]
-    public async Task Run_passes_a_Default_source_through_so_the_fallback_guard_holds()
-    {
-        // Nothing saved: if RunAsync reported the source as anything but Default, Stable would be applied
-        // over this Preview catalog.
-        var previewState = new LocalCatalogState
-        {
-            Channel = CatalogChannel.Preview,
-            Workloads = new SectionState(5, "abc", DateTimeOffset.UnixEpoch) { Channel = CatalogChannel.Preview }
-        };
-        _updates.Setup(u => u.CheckAsync(It.IsAny<CatalogChannel>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((CatalogChannel c, CancellationToken _) =>
-                new CatalogUpdateCheck(CatalogUpdateOutcome.UpdatesAvailable, c, new CatalogManifest { CatalogVersion = 6 }, previewState, [], [], null));
-
-        await Run();
-
-        _updates.Verify(u => u.ApplyAsync(It.IsAny<CatalogUpdateCheck>(), It.IsAny<CatalogSections>(),
-            It.IsAny<IProgress<CatalogDownloadProgress>?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
     public async Task Run_still_checks_for_updates_when_the_catalog_report_fails()
     {
-        _catalog.SetupGet(c => c.Source).Throws(new IOException("disk on fire"));
+        _catalog.SetupGet(c => c.Source).Throws(new IOException("locked"));
 
         var act = () => Run();
 
         await act.Should().NotThrowAsync();
-        _updates.Verify(u => u.CheckAsync(CatalogChannel.Stable, It.IsAny<CancellationToken>()), Times.Once);
+        _coordinator.Verify(c => c.CheckAtStartupAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 }

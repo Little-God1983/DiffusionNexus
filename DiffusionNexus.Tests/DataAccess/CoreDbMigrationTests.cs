@@ -224,4 +224,47 @@ public class CoreDbMigrationTests
             tempDir.Delete(recursive: true);
         }
     }
+
+    /// <summary>
+    /// #618: an upgrading database gets no catalog channel (the app copies the installer's once) and
+    /// automatic updates off.
+    /// </summary>
+    [Fact]
+    public void AddCatalogUpdateSettings_ExistingRowHasNoChannelAndAutomaticUpdatesOff()
+    {
+        var tempDir = Directory.CreateTempSubdirectory();
+        var dbPath = Path.Combine(tempDir.FullName, "catalog-settings-test.db");
+        const string insertRow =
+            "INSERT INTO [AppSettings] (Id, ShowNsfw, GenerateVideoThumbnails, ShowVideoPreview, " +
+            "UseForgeStylePrompts, MergeLoraSources, DeleteEmptySourceFolders, BackupDatasetImagesEnabled, " +
+            "BackupDatabaseEnabled, AutoBackupIntervalDays, AutoBackupIntervalHours, MaxBackups, " +
+            "ComfyUiServerUrl, UpdatedAt) VALUES (1, 0, 1, 0, 1, 0, 0, 0, 1, 1, 0, 10, " +
+            "'http://127.0.0.1:8188/', datetime('now'))";
+        try
+        {
+            var options = new DbContextOptionsBuilder<DiffusionNexusCoreDbContext>()
+                .UseSqlite($"Data Source={dbPath};Pooling=False")
+                .Options;
+
+            using (var ctx = new DiffusionNexusCoreDbContext(options))
+            {
+                var migrator = ctx.GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>();
+                migrator.Migrate("20261008172424_AddComfyUiServerMode");
+                ctx.Database.ExecuteSqlRaw(insertRow);
+                ctx.Database.Migrate();
+            }
+
+            using (var ctx = new DiffusionNexusCoreDbContext(options))
+            {
+                var row = ctx.AppSettings.Single();
+                row.CatalogChannel.Should().BeNull();
+                row.ApplyCatalogUpdatesAutomatically.Should().BeFalse();
+            }
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            tempDir.Delete(recursive: true);
+        }
+    }
 }

@@ -33,6 +33,9 @@ public partial class WorkloadsViewModel : ViewModelBase
     /// </summary>
     private readonly IResourceMonitorService? _resourceMonitor;
 
+    /// <summary>Says a workload install is running, so the catalog apply waits (#618). Null in tests.</summary>
+    private readonly IInstallActivity? _installActivity;
+
     /// <summary>
     /// Cached configurations so we can pass them to the install service.
     /// </summary>
@@ -60,8 +63,10 @@ public partial class WorkloadsViewModel : ViewModelBase
         IWorkloadInstallService installService,
         string comfyUIRootPath,
         IReadOnlyList<Guid>? allowedConfigurationIds = null,
-        IResourceMonitorService? resourceMonitor = null)
+        IResourceMonitorService? resourceMonitor = null,
+        IInstallActivity? installActivity = null)
     {
+        _installActivity = installActivity;
         ArgumentNullException.ThrowIfNull(catalog);
         ArgumentNullException.ThrowIfNull(checkerService);
         ArgumentNullException.ThrowIfNull(installService);
@@ -305,6 +310,7 @@ public partial class WorkloadsViewModel : ViewModelBase
         Func<CancellationToken> skipTokenProvider,
         CancellationToken ct)
     {
+        using var running = _installActivity?.Begin(config.Name);
         var wheelNote = "";
         if (nodes.Count > 0 && config.InstallLamaCpp
             && await _installService.EnsureLlamaCppWheelAsync(_comfyUIRootPath, await _catalog.GetLamaCppWheelsAsync(ct), progress, ct)

@@ -2,6 +2,7 @@ using DiffusionNexus.Installer.SDK.Catalog;
 using DiffusionNexus.Installer.SDK.Catalog.Updates;
 using DiffusionNexus.Installer.SDK.Services.Settings;
 using DiffusionNexus.Installer.SDK.Shared.Services;
+using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.Catalog;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
@@ -21,6 +22,7 @@ public class CatalogRegistrationTests
         try
         {
             var services = new ServiceCollection();
+            services.AddSingleton<IInstallActivity, InstallActivity>();   // App registers it with the UI services
             services.AddInstallerSdkCatalog(
                 typeof(DiffusionNexus.UI.App).Assembly,
                 userSettingsPath: Path.Combine(dir, "user_settings.json"),
@@ -35,7 +37,11 @@ public class CatalogRegistrationTests
             provider.GetRequiredService<ICatalogUpdateService>().Should().NotBeNull();
             provider.GetRequiredService<IUserSettingsRepository>().Should().NotBeNull();
             provider.GetRequiredService<DismissedMessageStore>().Should().NotBeNull();
-            provider.GetRequiredService<CatalogStartupUpdater>().Should().NotBeNull();
+            // #618: the coordinator and its preference store, one process-wide instance.
+            var coordinator = provider.GetRequiredService<ICatalogUpdateCoordinator>();
+            coordinator.Should().BeSameAs(provider.GetRequiredService<ICatalogUpdateCoordinator>());
+            coordinator.Should().BeSameAs(provider.GetRequiredService<CatalogUpdateCoordinator>());
+            provider.GetRequiredService<ICatalogPreferenceStore>().Should().NotBeNull();
             var catalog = provider.GetRequiredService<ICatalog>();
 
             (await catalog.GetWorkloadsAsync()).Should().NotBeEmpty();

@@ -293,7 +293,9 @@ public sealed class DatabaseRecoveryService
                 { "SyncThumbnailConcurrency", "ALTER TABLE AppSettings ADD COLUMN SyncThumbnailConcurrency INTEGER NOT NULL DEFAULT 4" },
                 { "LoraSorterExcludedFoldersJson", "ALTER TABLE AppSettings ADD COLUMN LoraSorterExcludedFoldersJson TEXT" },
                 { "LastLibrarySyncAt", "ALTER TABLE AppSettings ADD COLUMN LastLibrarySyncAt TEXT" },
-                { "CivitaiBrowserFilterJson", "ALTER TABLE AppSettings ADD COLUMN CivitaiBrowserFilterJson TEXT" }
+                { "CivitaiBrowserFilterJson", "ALTER TABLE AppSettings ADD COLUMN CivitaiBrowserFilterJson TEXT" },
+                { "CatalogChannel", "ALTER TABLE AppSettings ADD COLUMN CatalogChannel TEXT" },
+                { "ApplyCatalogUpdatesAutomatically", "ALTER TABLE AppSettings ADD COLUMN ApplyCatalogUpdatesAutomatically INTEGER NOT NULL DEFAULT 0" }
             };
 
             foreach (var col in requiredColumns)

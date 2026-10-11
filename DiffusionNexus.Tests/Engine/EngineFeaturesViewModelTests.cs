@@ -52,9 +52,32 @@ public class EngineFeaturesViewModelTests
         }).ToList()
     };
 
-    private EngineFeaturesViewModel Sut(EngineFeature? preselect = null) =>
+    private EngineFeaturesViewModel Sut(EngineFeature? preselect = null, IInstallActivity? activity = null) =>
         new(_catalog.Object, _checker.Object, _installer.Object, Root, preselect: preselect,
-            freeSpaceProbe: _ => 412L * 1024 * 1024 * 1024);
+            freeSpaceProbe: _ => 412L * 1024 * 1024 * 1024, installActivity: activity);
+
+    // #618: the catalog apply waits while an Engine Features install runs.
+    [Fact]
+    public async Task An_install_is_reported_as_running_until_it_ends()
+    {
+        _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(1, 0, 2, 3);
+        _state[EngineFeatureCatalog.Krea2Turbo] = Result(0, 2, 0, 3);
+        var activity = new InstallActivity();
+        string? seen = null;
+        _installer.Setup(i => i.InstallSelectedAsync(It.IsAny<InstallationConfiguration>(), Root,
+                It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
+                It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
+                It.IsAny<Func<CancellationToken>?>(), It.IsAny<CancellationToken>()))
+            .Callback(() => seen = activity.Running)
+            .ReturnsAsync("done");
+        var vm = Sut(EngineFeature.InpaintOutpaint, activity);
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        await vm.InstallSelectedCommand.ExecuteAsync(null);
+
+        seen.Should().Be("Diffusion Nexus Engine features");
+        activity.Running.Should().BeNull();
+    }
 
     private EngineFeatureRowViewModel Row(EngineFeaturesViewModel vm, EngineFeature f) =>
         vm.Rows.Single(r => r.Definition.Feature == f);

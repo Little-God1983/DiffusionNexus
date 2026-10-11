@@ -1,5 +1,5 @@
 using System.Reflection;
-using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Installer.SDK.Catalog;
 using DiffusionNexus.Installer.SDK.Catalog.Updates;
 using DiffusionNexus.Installer.SDK.Services.Settings;
@@ -38,9 +38,9 @@ public static class InstallerSdkServiceCollectionExtensions
         var settingsPath = userSettingsPath ?? UserSettingsPaths.Default;
         services.AddDiffusionNexusUserSettings(settingsPath);
 
-        // The default InstalledCatalogPath (%LocalAppData%\DiffusionNexus\catalog) is shared with
-        // the 3.x installer on purpose: both apps see the same catalog. CatalogOptions.Channel stays
-        // at its default: CatalogStartup passes the installer's channel to the update check directly.
+        // SDK 2.3.0: installed catalogs live in %LocalAppData%\ITL-Shared\format-N\catalog-stable|preview\, shared
+        // with the installer; the old %LocalAppData%\DiffusionNexus\catalog is copied over once by the SDK.
+        // CatalogUpdateCoordinator is the one writer of CatalogOptions.Channel.
         services.AddDiffusionNexusCatalog(o =>
         {
             o.EmbeddedArchive = () => OpenSeed(seedAssembly, SeedArchiveResource);
@@ -50,9 +50,22 @@ public static class InstallerSdkServiceCollectionExtensions
             configure?.Invoke(o);
         });
 
-        services.AddSingleton(sp => new CatalogStartupUpdater(
+        // The app's own catalog channel and "apply automatically" (#618). The installer's user_settings.json is
+        // read once, on the first start with the columns, to copy its channel.
+        services.AddSingleton<ICatalogPreferenceStore>(sp => new CatalogPreferenceStore(
+            sp.GetRequiredService<IServiceScopeFactory>(),
+            sp.GetRequiredService<IUserSettingsRepository>(),
+            sp.GetService<IUnifiedLogger>(),
+            settingsPath));
+        services.AddSingleton<CatalogUpdateCoordinator>(sp => new CatalogUpdateCoordinator(
             sp.GetRequiredService<ICatalogUpdateService>(),
-            sp.GetService<IActivityLogService>()));
+            sp.GetRequiredService<ICatalog>(),
+            sp.GetRequiredService<CatalogOptions>(),
+            sp.GetRequiredService<ICatalogPreferenceStore>(),
+            sp.GetRequiredService<IInstallActivity>(),
+            () => Environment.GetEnvironmentVariable(CatalogChannelResolver.EnvironmentVariable),
+            sp.GetService<IUnifiedLogger>()));
+        services.AddSingleton<ICatalogUpdateCoordinator>(sp => sp.GetRequiredService<CatalogUpdateCoordinator>());
 
         // Beside user_settings.json, as in 1.x, so banners dismissed before the upgrade stay dismissed.
         services.AddSingleton(_ =>

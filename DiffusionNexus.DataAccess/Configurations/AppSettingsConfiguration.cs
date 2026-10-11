@@ -23,6 +23,8 @@ internal sealed class AppSettingsConfiguration : IEntityTypeConfiguration<AppSet
             .HasConversion<string>()
             .HasMaxLength(32)
             .HasDefaultValue(DiffusionNexus.Domain.Enums.ComfyUiServerMode.Engine);
+        entity.Property(e => e.CatalogChannel).HasMaxLength(16);
+        entity.Property(e => e.ApplyCatalogUpdatesAutomatically).HasDefaultValue(false);
 
         // Relationships
         entity.HasMany(e => e.LoraSources)

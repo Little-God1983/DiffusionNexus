@@ -234,6 +234,19 @@ public class AppSettings
     /// </summary>
     public Enums.ComfyUiServerMode ComfyUiServerMode { get; set; } = Enums.ComfyUiServerMode.Engine;
 
+    /// <summary>
+    /// The catalog channel this app follows ("Stable" or "Preview"), #618. Null until chosen: the first
+    /// start with this column copies the installer's saved channel once. Saved only by
+    /// <c>IAppSettingsService.SetCatalogChannelAsync</c>, never by a Settings save.
+    /// </summary>
+    public string? CatalogChannel { get; set; }
+
+    /// <summary>
+    /// Apply a catalog update the startup check finds without asking (#618). Off by default. Saved only by
+    /// <c>IAppSettingsService.SetApplyCatalogUpdatesAutomaticallyAsync</c>, never by a Settings save.
+    /// </summary>
+    public bool ApplyCatalogUpdatesAutomatically { get; set; }
+
     #endregion
 
     #region Timestamps

@@ -10,6 +10,7 @@ using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Infrastructure;
 using DiffusionNexus.Infrastructure.Services;
 using DiffusionNexus.Installer.SDK.Catalog;
+using DiffusionNexus.Installer.SDK.Catalog.Updates;
 using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.Installer.SDK.Services.Installation;
 using DiffusionNexus.Installer.SDK.Shared.Services;
@@ -511,9 +512,7 @@ public partial class App : Application
                 Serilog.Log.Information("Starting the workload catalog in the background...");
                 await CatalogStartup.RunAsync(
                     Services!.GetRequiredService<ICatalog>(),
-                    Services!.GetRequiredService<DiffusionNexus.Installer.SDK.Services.Settings.IUserSettingsRepository>(),
-                    Services!.GetRequiredService<CatalogStartupUpdater>(),
-                    Environment.GetEnvironmentVariable(CatalogChannelResolver.EnvironmentVariable),
+                    Services!.GetRequiredService<ICatalogUpdateCoordinator>(),
                     Services!.GetService<IActivityLogService>());
             }
             catch (Exception ex)
@@ -538,6 +537,8 @@ public partial class App : Application
 
         // UI-thread scheduler seam over Dispatcher.UIThread (testability; #437)
         services.AddSingleton<IUiScheduler, AvaloniaUiScheduler>();
+        // Which install runs right now; the catalog apply waits while one does (#618).
+        services.AddSingleton<IInstallActivity, InstallActivity>();
 
         // System-clipboard seam (testability; #438)
         services.AddSingleton<IClipboardService, AvaloniaClipboardService>();
@@ -973,7 +974,8 @@ public partial class App : Application
             sp.GetService<Civitai.ICivitaiBaseModelCatalog>(),
             sp.GetService<IBackupScheduler>(),
             engineRootResolver: sp.GetService<Services.Engine.IEngineRootResolver>(),
-            engine: sp.GetService<Services.Engine.IManagedComfyUiEngine>()));
+            engine: sp.GetService<Services.Engine.IManagedComfyUiEngine>(),
+            catalogUpdates: sp.GetService<ICatalogUpdateCoordinator>()));
 
         services.AddSingleton<ILoraUpdateChecker>(sp => new LoraUpdateChecker(
             sp.GetRequiredService<IServiceScopeFactory>(),
@@ -1071,7 +1073,8 @@ public partial class App : Application
             engineInstaller: sp.GetRequiredService<Services.Engine.IManagedEngineInstaller>(),
             resourceMonitor: sp.GetRequiredService<IResourceMonitorService>(),
             engineModelPaths: sp.GetRequiredService<Services.Engine.EngineModelPathsSynchronizer>(),
-            engine: sp.GetRequiredService<Services.Engine.IManagedComfyUiEngine>()));
+            engine: sp.GetRequiredService<Services.Engine.IManagedComfyUiEngine>(),
+            installActivity: sp.GetRequiredService<IInstallActivity>()));
         services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),

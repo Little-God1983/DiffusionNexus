@@ -92,10 +92,10 @@
     <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
     <PackageReference Include="SkiaSharp" Version="3.119.4" />
     <PackageReference Include="BitMiracle.LibTiff.NET" Version="2.4.660" />
-    <PackageReference Include="DiffusionNexus.Installer.SDK.Models" Version="2.1.0" />
-    <PackageReference Include="DiffusionNexus.Installer.SDK.Services" Version="2.1.0" />
-    <PackageReference Include="DiffusionNexus.Installer.SDK.Shared" Version="2.1.0" />
-    <PackageReference Include="DiffusionNexus.Installer.SDK.Catalog" Version="2.1.0" />
+    <PackageReference Include="DiffusionNexus.Installer.SDK.Models" Version="2.3.0" />
+    <PackageReference Include="DiffusionNexus.Installer.SDK.Services" Version="2.3.0" />
+    <PackageReference Include="DiffusionNexus.Installer.SDK.Shared" Version="2.3.0" />
+    <PackageReference Include="DiffusionNexus.Installer.SDK.Catalog" Version="2.3.0" />
     <PackageReference Include="StableDiffusion.NET.Backend.Cuda12.Windows" Version="6.0.0" />
     <PackageReference Include="WeCantSpell.Hunspell" Version="7.0.1" />
     <!-- Pin transitive dependency to fix NU1903 (GHSA-xrw6-gwf8-vvr9) -->
