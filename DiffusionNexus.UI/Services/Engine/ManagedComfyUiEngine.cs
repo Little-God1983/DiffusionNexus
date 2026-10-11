@@ -65,7 +65,7 @@ public sealed class ManagedComfyUiEngine : IManagedEngineControl, IAsyncDisposab
     // console's Stop (HasActiveJobs), never for a pending restart (ShouldRestartNow reads _activeJobs).
     private int _preparing;
 
-    // Maintenance holds (BeginMaintenance: an update changing the engine's folder). No start while > 0.
+    // Maintenance holds (TryBeginMaintenance: an update changing the engine's folder). No start while > 0.
     private int _maintenance;
 
     public ManagedComfyUiEngine(IUnifiedLogger? unifiedLogger)
@@ -96,10 +96,22 @@ public sealed class ManagedComfyUiEngine : IManagedEngineControl, IAsyncDisposab
     }
 
     /// <inheritdoc />
-    public IDisposable BeginMaintenance()
+    public IDisposable? TryBeginMaintenance()
     {
-        Interlocked.Increment(ref _maintenance);
-        return new CountToken(() => Interlocked.Decrement(ref _maintenance));
+        // Atomic with every start: a start checks the hold under the start lock, and a start that is
+        // booting holds that lock, so the hold is granted only with no start running or to come
+        // that has not seen it.
+        if (!_startLock.Wait(0)) return null;
+        try
+        {
+            if (_process is { } process && !HasExitedSafely(process)) return null;
+            Interlocked.Increment(ref _maintenance);
+            return new CountToken(() => Interlocked.Decrement(ref _maintenance));
+        }
+        finally
+        {
+            _startLock.Release();
+        }
     }
 
     /// <inheritdoc />
@@ -167,6 +179,10 @@ public sealed class ManagedComfyUiEngine : IManagedEngineControl, IAsyncDisposab
         // to the start, so an exit between the two would otherwise go unseen.
         if (process.HasExited) return await FailExitedAfterReadyAsync(process).ConfigureAwait(false);
         _baseUrl = baseUrl;
+        // Starting ends before running is reported: never both at once. From here an exit is the exit
+        // handler's to report (it leaves an engine that is not running to the start), and the check
+        // below catches one that came before the report.
+        ReportStarting(false);
         ReportRunning(true);
         if (process.HasExited) return await FailExitedAfterReadyAsync(process).ConfigureAwait(false);
 
@@ -194,7 +210,7 @@ public sealed class ManagedComfyUiEngine : IManagedEngineControl, IAsyncDisposab
     // killed from outside), so the engine is no longer running, and its handles are released.
     private void OnProcessExited(Process exited)
     {
-        if (!ReferenceEquals(_process, exited) || !IsRunning || IsStarting) return;
+        if (!ReferenceEquals(_process, exited) || !IsRunning) return;
         LogExit(exited);
         _ = ReleaseExitedAsync(exited);
     }
@@ -281,7 +297,9 @@ public sealed class ManagedComfyUiEngine : IManagedEngineControl, IAsyncDisposab
             else if (current is not null)
             {
                 // A process that died since (a crash whose release has not run yet): released before
-                // the fresh start, so it never reads as running while that start runs.
+                // the fresh start, so it never reads as running while that start runs. Logged here:
+                // the exit handler, if it comes later, finds a different process and says nothing.
+                LogExit(current);
                 await StopCoreAsync().ConfigureAwait(false);
             }
 
@@ -398,25 +416,13 @@ public sealed class ManagedComfyUiEngine : IManagedEngineControl, IAsyncDisposab
         }
         finally
         {
-            await EndStartAsync(startRan: IsStarting).ConfigureAwait(false);
+            ReportStarting(false);
             _startLock.Release();
         }
     }
 
     // Under _startLock, as a start ends. OnProcessExited leaves the process to the start while it
     // runs, so an exit after the start's last look (CompleteReadyAsync) and before here is handled now.
-    // A call that found the engine running (no start) leaves an exit to OnProcessExited, which was
-    // not deferring to it. Internal for tests.
-    internal async Task EndStartAsync(bool startRan)
-    {
-        ReportStarting(false);
-        if (startRan && IsRunning && _process is { } process && HasExitedSafely(process))
-        {
-            LogExit(process);
-            await StopCoreAsync().ConfigureAwait(false);
-        }
-    }
-
     private void LogExit(Process process)
     {
         var code = TryExitCode(process);

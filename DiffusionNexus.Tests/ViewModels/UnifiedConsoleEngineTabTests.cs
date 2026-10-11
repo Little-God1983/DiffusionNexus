@@ -14,6 +14,7 @@ namespace DiffusionNexus.Tests.ViewModels;
 public class UnifiedConsoleEngineTabTests
 {
     private readonly FakeEngine _engine = new();
+    private readonly Mock<IDialogService> _dialogs = new();
 
     private UnifiedConsoleViewModel CreateConsole()
     {
@@ -27,6 +28,7 @@ public class UnifiedConsoleEngineTabTests
         var services = new ServiceCollection()
             .AddSingleton<IManagedEngineControl>(_engine)
             .AddSingleton(roots.Object)
+            .AddSingleton(_dialogs.Object)
             .BuildServiceProvider();
 
         var console = new UnifiedConsoleViewModel(logger.Object, Mock.Of<ITaskTracker>());
@@ -86,6 +88,26 @@ public class UnifiedConsoleEngineTabTests
     }
 
     [Fact]
+    public void TheEnginesStopDialog_DoesNotGreyOutStopOnEveryOtherTab()
+    {
+        // Stop and Restart are one command each for all tabs: awaiting the Engine's dialog (or its
+        // two-minute restart) inside them would disable those buttons on every package's tab.
+        var console = CreateConsole();
+        var tab = EngineTab();
+        console.InstanceTabs.Add(tab);
+        _engine.Busy = true;
+        var answer = new TaskCompletionSource<int>();
+        _dialogs.Setup(d => d.ShowOptionsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string[]>())).Returns(answer.Task);
+
+        console.StopInstanceCommand.Execute(tab);
+        console.RestartInstanceCommand.Execute(tab);
+
+        console.StopInstanceCommand.IsRunning.Should().BeFalse("the dialog is still open");
+        console.RestartInstanceCommand.IsRunning.Should().BeFalse();
+        answer.SetResult(1);
+    }
+
+    [Fact]
     public void AnUpdatingTab_HidesStart()
     {
         var tab = EngineTab();
@@ -114,7 +136,8 @@ public class UnifiedConsoleEngineTabTests
         public bool IsRunning => Running;
         public bool IsStarting => Starting;
         public string? BaseUrl => Running ? "http://127.0.0.1:50123" : null;
-        public bool HasActiveJobs => false;
+        public bool Busy { get; set; }
+        public bool HasActiveJobs => Busy;
         public bool IsRestartPending => false;
 
 #pragma warning disable CS0067 // raising it would post to the UI dispatcher; the tests call ApplyEngineState

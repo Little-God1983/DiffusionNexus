@@ -88,7 +88,7 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
                 : discovered.TryGet(key);
     }
 
-    private readonly IManagedEngineControl _engine;
+    private readonly IManagedComfyUiEngine _engine;
     private readonly Func<Task<string?>> _resolveInstallRootAsync;
     private readonly IWorkflowTemplateSource? _templateSource;
     private readonly List<string> _missingRequirements = [];
@@ -101,7 +101,7 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
     private string? _installRoot;
 
     public ManagedComfyUiBackend(
-        IManagedEngineControl engine,
+        IManagedComfyUiEngine engine,
         Func<Task<string?>> resolveInstallRootAsync,
         IWorkflowTemplateSource? templateSource)
     {

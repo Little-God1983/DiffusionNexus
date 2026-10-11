@@ -63,7 +63,7 @@
                         <StackPanel Orientation="Horizontal" Spacing="3"><TextBlock Text="&#x25A0;" FontSize="9" VerticalAlignment="Center"/><TextBlock Text="Stop" VerticalAlignment="Center"/></StackPanel>
                       </Button>
                       <!-- Restart (when running) -->
-                      <Button Classes="inst-restart" IsVisible="{Binding ShowStopButtons}" Command="{Binding $parent[ItemsControl].((vm:UnifiedConsoleViewModel)DataContext).RestartInstanceCommand}" CommandParameter="{Binding}">
+                      <Button Classes="inst-restart" IsVisible="{Binding ShowRunningButtons}" Command="{Binding $parent[ItemsControl].((vm:UnifiedConsoleViewModel)DataContext).RestartInstanceCommand}" CommandParameter="{Binding}">
                         <StackPanel Orientation="Horizontal" Spacing="3"><TextBlock Text="&#x21BB;" FontSize="11" VerticalAlignment="Center"/><TextBlock Text="Restart" VerticalAlignment="Center"/></StackPanel>
                       </Button>
                       <!-- Open Web UI (when URL detected) -->

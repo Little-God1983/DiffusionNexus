@@ -640,7 +640,9 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
         if (tab is null || _processManager is null) return;
         if (tab.IsEngine)
         {
-            if (_engineControl is not null) await _engineControl.StopAsync();
+            // Not awaited, like Start: the command is shared by every tab, and awaiting the Engine's
+            // confirmation dialog would grey out Stop on all of them meanwhile.
+            if (_engineControl is not null) _ = _engineControl.StopAsync();
             return;
         }
         await _processManager.StopAsync(tab.PackageId);
@@ -652,7 +654,8 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
         if (tab is null || _processManager is null) return;
         if (tab.IsEngine)
         {
-            if (_engineControl is not null) await _engineControl.RestartAsync();
+            // Not awaited: a restart includes a start of up to two minutes (see StopInstanceAsync).
+            if (_engineControl is not null) _ = _engineControl.RestartAsync();
             return;
         }
         await _processManager.RestartAsync(tab.PackageId);

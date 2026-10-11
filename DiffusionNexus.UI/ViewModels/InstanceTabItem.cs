@@ -28,7 +28,7 @@ public partial class InstanceTabItem : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ShowStartButton))]
-    [NotifyPropertyChangedFor(nameof(ShowStopButtons))]
+    [NotifyPropertyChangedFor(nameof(ShowRunningButtons))]
     [NotifyPropertyChangedFor(nameof(ShowStopButton))]
     [NotifyPropertyChangedFor(nameof(ShowUpdateButton))]
     private bool _isRunning;
@@ -99,9 +99,9 @@ public partial class InstanceTabItem : ObservableObject
     public bool ShowStartButton => !IsRunning && !IsMissing && !IsStarting && !IsUpdating;
 
     /// <summary>
-    /// Show Stop/Restart/WebUI when running.
+    /// Show Restart (and the running-only controls) when running; Stop has its own ShowStopButton.
     /// </summary>
-    public bool ShowStopButtons => IsRunning;
+    public bool ShowRunningButtons => IsRunning;
 
     /// <summary>Show Stop when running, and while starting: a start can be aborted.</summary>
     public bool ShowStopButton => IsRunning || IsStarting;
