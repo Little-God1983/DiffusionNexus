@@ -539,6 +539,8 @@ public partial class App : Application
 
         // UI-thread scheduler seam over Dispatcher.UIThread (testability; #437)
         services.AddSingleton<IUiScheduler, AvaloniaUiScheduler>();
+        // Which install runs right now; the catalog apply waits while one does (#618).
+        services.AddSingleton<IInstallActivity, InstallActivity>();
 
         // System-clipboard seam (testability; #438)
         services.AddSingleton<IClipboardService, AvaloniaClipboardService>();
@@ -1072,7 +1074,8 @@ public partial class App : Application
             engineInstaller: sp.GetRequiredService<Services.Engine.IManagedEngineInstaller>(),
             resourceMonitor: sp.GetRequiredService<IResourceMonitorService>(),
             engineModelPaths: sp.GetRequiredService<Services.Engine.EngineModelPathsSynchronizer>(),
-            engine: sp.GetRequiredService<Services.Engine.IManagedComfyUiEngine>()));
+            engine: sp.GetRequiredService<Services.Engine.IManagedComfyUiEngine>(),
+            installActivity: sp.GetRequiredService<IInstallActivity>()));
         services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),

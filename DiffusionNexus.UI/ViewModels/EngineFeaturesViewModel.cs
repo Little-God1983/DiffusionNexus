@@ -29,6 +29,7 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
     private readonly IUnifiedLogger? _unifiedLogger;
     private readonly EngineFeature? _preselect;
     private readonly Func<string, long?> _freeSpaceProbe;
+    private readonly IInstallActivity? _installActivity;
     private CancellationTokenSource? _installCts;
     private bool _acceptProgress;
 
@@ -40,12 +41,14 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
         IResourceMonitorService? resourceMonitor = null,
         IUnifiedLogger? unifiedLogger = null,
         EngineFeature? preselect = null,
-        Func<string, long?>? freeSpaceProbe = null)
+        Func<string, long?>? freeSpaceProbe = null,
+        IInstallActivity? installActivity = null)
     {
         ArgumentNullException.ThrowIfNull(catalog);
         ArgumentNullException.ThrowIfNull(checker);
         ArgumentNullException.ThrowIfNull(installer);
         ArgumentException.ThrowIfNullOrWhiteSpace(engineRoot);
+        _installActivity = installActivity;
         _catalog = catalog;
         _checker = checker;
         _installer = installer;
@@ -124,6 +127,8 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
     private async Task InstallSelectedAsync()
     {
         IsInstalling = true;
+        // The catalog apply waits while this runs (#618); ends with the method, after IsInstalling is cleared.
+        using var running = _installActivity?.Begin("Diffusion Nexus Engine features");
         _acceptProgress = true;
         _installCts = new CancellationTokenSource();
         var ct = _installCts.Token;

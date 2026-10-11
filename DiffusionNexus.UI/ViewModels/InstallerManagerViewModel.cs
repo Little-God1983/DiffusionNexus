@@ -64,6 +64,9 @@ public partial class InstallerManagerViewModel : ViewModelBase
     /// </summary>
     private readonly Services.Engine.IManagedComfyUiEngine? _engine;
 
+    // Says an install is running, so the catalog apply waits (#618). Null in tests.
+    private readonly IInstallActivity? _installActivity;
+
     /// <summary>
     /// Raised when the unified console panel should be opened (e.g., during an update).
     /// </summary>
@@ -139,7 +142,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         Services.Engine.IManagedEngineInstaller? engineInstaller = null,
         IResourceMonitorService? resourceMonitor = null,
         Services.Engine.EngineModelPathsSynchronizer? engineModelPaths = null,
-        Services.Engine.IManagedComfyUiEngine? engine = null)
+        Services.Engine.IManagedComfyUiEngine? engine = null,
+        IInstallActivity? installActivity = null)
     {
         _dialogService = dialogService;
         _unitOfWork = unitOfWork;
@@ -160,6 +164,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         _resourceMonitor = resourceMonitor;
         _engineModelPaths = engineModelPaths;
         _engine = engine;
+        _installActivity = installActivity;
 
         InstallerCards.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
 
@@ -810,7 +815,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         {
             var vm = new EngineFeaturesViewModel(
                 _catalog, _checkerService, _installService, card.InstallationPath,
-                _resourceMonitor, _unifiedLogger, preselect);
+                _resourceMonitor, _unifiedLogger, preselect, installActivity: _installActivity);
             await vm.LoadCommand.ExecuteAsync(null);
 
             Serilog.Log.Information("Opening the Engine Features dialog for {Path}", card.InstallationPath);
@@ -888,7 +893,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         {
             var vm = new WorkloadsViewModel(
                 _catalog, _checkerService, _installService,
-                comfyUiRoot, resourceMonitor: _resourceMonitor);
+                comfyUiRoot, resourceMonitor: _resourceMonitor, installActivity: _installActivity);
             await vm.LoadWorkloadsCommand.ExecuteAsync(null);
 
             var dialog = new Views.Dialogs.WorkloadsDialog { DataContext = vm };
@@ -1056,6 +1061,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         if (_isEngineInstallInFlight) return;
         _isEngineInstallInFlight = true;
         var visibilityAtStart = IsEngineTileVisible;
+        // Begun when the install itself starts (not during the folder pick); ended by both finallys below.
+        IDisposable? engineRunning = null;
 
         // Outer try/finally guarantees the in-flight flag is cleared on every exit from here
         // on, including an exception from the folder picker itself — ShowOpenFolderDialogAsync
@@ -1076,6 +1083,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
             UnifiedConsolePanelRequested?.Invoke(this, EventArgs.Empty);
 
             card.IsEngineInstalling = true;
+            engineRunning = _installActivity?.Begin("Diffusion Nexus Engine");
             card.EngineProgressPercent = 0;
             card.EngineStatusMessage = "Starting engine install...";
             _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
@@ -1205,6 +1213,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
             finally
             {
                 card.IsEngineInstalling = false;
+                engineRunning?.Dispose();
                 card.EngineStatusMessage = null;
                 card.EngineProgressPercent = 0;
 
@@ -1218,6 +1227,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         finally
         {
             _isEngineInstallInFlight = false;
+            engineRunning?.Dispose();
         }
     }
 
@@ -1299,6 +1309,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         UnifiedConsolePanelRequested?.Invoke(this, EventArgs.Empty);
 
         card.IsUpdating = true;
+        var updateRunning = _installActivity?.Begin(card.Name);
         card.UpdateStatusMessage = "Starting update...";
         _unifiedLogger.Info(LogCategory.Installation, card.Name, "Starting update...");
 
@@ -1373,6 +1384,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         {
             card.IsUpdating = false;
             card.UpdateStatusMessage = null;
+            updateRunning?.Dispose();
 
             // Safety net: always ensure subscribers know updating has stopped,
             // even if an earlier notification was missed.
