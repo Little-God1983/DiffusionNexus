@@ -268,13 +268,15 @@ public sealed class AppSettingsService : IAppSettingsService
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>The settings row, tracked, created when missing. A fresh read: see GetSettingsAsync on the identity map.</summary>
+    /// <summary>
+    /// The settings row, tracked, without its child collections (one column changes); created with them only
+    /// when missing. A fresh read: see GetSettingsAsync on the identity map.
+    /// </summary>
     private async Task<AppSettings> TrackedSettingsAsync(CancellationToken cancellationToken)
     {
         _unitOfWork.ClearChangeTracker();
-        return await _unitOfWork.AppSettings
-            .GetSettingsWithIncludesAsync(cancellationToken)
-            .ConfigureAwait(false);
+        return await _unitOfWork.AppSettings.GetSettingsAsync(cancellationToken).ConfigureAwait(false)
+            ?? await _unitOfWork.AppSettings.GetSettingsWithIncludesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />

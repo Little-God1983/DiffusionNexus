@@ -120,6 +120,26 @@ public sealed partial class CatalogUpdateCoordinatorTests : IDisposable
         coordinator.AutoApply.Should().BeTrue();
     }
 
+    // PR #619 round 1: unreadable preferences resolved to Stable and offered Stable's release to a Preview user.
+    [Fact]
+    public async Task With_unreadable_preferences_no_check_runs_and_nothing_is_offered()
+    {
+        _preferences.LoadFailure = new IOException("database locked");
+        _service.NextCheck = () => CatalogChecks.Available(7);
+        using var coordinator = Create();
+
+        await coordinator.CheckAsync();
+
+        _service.CheckCalls.Should().Be(0);
+        coordinator.LastCheck!.Outcome.Should().Be(CatalogUpdateOutcome.Failed);
+        coordinator.LastCheck.Error.Should().Be("The catalog setting could not be read (database locked). Try again in a moment.");
+        coordinator.UpdateAvailable.Should().BeFalse();
+
+        _preferences.LoadFailure = null;
+        await coordinator.CheckAsync();
+        _service.CheckCalls.Should().Be(1, "the next check reads the setting again");
+    }
+
     // ----- check: per-app notices (spec §4) -----
 
     [Fact]
@@ -273,6 +293,33 @@ public sealed partial class CatalogUpdateCoordinatorTests : IDisposable
         coordinator.LastCheck!.Outcome.Should().Be(CatalogUpdateOutcome.UpToDate);
         coordinator.Phase.Should().Be(CatalogUpdatePhase.Checked);
         _catalog.Verify(c => c.Invalidate(), Times.Once);
+    }
+
+    // PR #619 round 1 (found by a full-suite flake): the phase flips to Checked before the apply task has logged
+    // and completed. An Apply click in that window was refused, a Check click joined the finished apply.
+    [Fact]
+    public async Task Apply_and_check_work_as_soon_as_the_phase_says_the_apply_ended()
+    {
+        var tail = new ManualResetEventSlim();
+        var logger = new Mock<IUnifiedLogger>();
+        logger.Setup(l => l.Warn(It.IsAny<LogCategory>(), It.IsAny<string>(), It.Is<string>(m => m.StartsWith("Catalog update incomplete")), It.IsAny<string?>()))
+              .Callback(() => tail.Wait(10_000));
+        _service.NextCheck = () => CatalogChecks.Available(7);
+        _service.NextApply = () => new CatalogApplyResult(CatalogSections.None, CatalogSections.All, "The download stalled.");
+        using var coordinator = new CatalogUpdateCoordinator(_service, _catalog.Object, _options, _preferences, _installs, () => _environment, logger.Object);
+        await coordinator.CheckAsync();
+        _ = coordinator.ApplyAsync();
+        SpinWait.SpinUntil(() => coordinator.Phase == CatalogUpdatePhase.Checked && coordinator.LastApply is not null, 10_000).Should().BeTrue();
+
+        // The first apply's task is still logging its outcome.
+        _service.NextApply = () => new CatalogApplyResult(CatalogSections.All, CatalogSections.None, null);
+        var retry = coordinator.ApplyAsync();
+        tail.Set();
+        await retry;
+        Settle(coordinator);
+
+        _service.ApplyCalls.Should().Be(2, "the page offered Apply; the click must apply");
+        coordinator.Phase.Should().Be(CatalogUpdatePhase.Applied);
     }
 
     // ----- startup (spec §6 table) -----

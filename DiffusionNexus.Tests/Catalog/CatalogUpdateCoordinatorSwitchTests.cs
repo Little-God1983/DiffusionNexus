@@ -125,29 +125,43 @@ public sealed partial class CatalogUpdateCoordinatorTests
         coordinator.Phase.Should().Be(CatalogUpdatePhase.Applied);
     }
 
+    // PR #619 round 1: a switch changes the folder ICatalog reads at once; mid-install that swaps the catalog
+    // under the running plan. The channel can be changed once the install has finished.
     [Fact]
-    public async Task A_switch_held_by_an_install_checks_the_followed_folder_in_the_background()
+    public async Task A_switch_is_refused_while_an_install_runs()
     {
-        var running = _installs.Begin("Krea-2-Turbo");
-        _service.NextPreview = channel => CatalogChecks.Outcome(CatalogUpdateOutcome.UpToDate, channel);
-        var hold = new TaskCompletionSource();
-        _service.NextCheck = () => CatalogChecks.Available(6, CatalogChannel.Preview).Targeting(WorkloadTargetType.DiffusionNexusCore);
+        using var running = _installs.Begin("Krea-2-Turbo");
         using var coordinator = Create();
-        await coordinator.ResolveChannelAsync();
-        _service.HoldCheck = hold;
 
-        var switching = coordinator.SwitchChannelAsync(CatalogChannel.Preview);
-        // The preview is held too; release it, then hold the background check.
-        hold.SetResult();
-        await switching.WaitAsync(TimeSpan.FromSeconds(5));
+        await coordinator.SwitchChannelAsync(CatalogChannel.Preview);
 
-        _service.ApplyCalls.Should().Be(0, "never swap the catalog under a running plan");
-        Settle(coordinator);
-        coordinator.LastCheck!.Outcome.Should().Be(CatalogUpdateOutcome.UpdatesAvailable, "a check of the folder now followed, not the preview");
-        coordinator.ApplyBlockedReason.Should().Be("It can be applied once Krea-2-Turbo has finished.");
+        _service.PreviewedSwitches.Should().BeEmpty();
+        _preferences.SavedChannels.Should().BeEmpty();
+        coordinator.Channel.Should().Be(CatalogChannel.Stable);
+        _options.Channel.Should().Be(CatalogChannel.Stable);
+        coordinator.ChannelChangeBlockedReason.Should().Be("The channel can be changed once Krea-2-Turbo has finished.");
 
         running.Dispose();
-        coordinator.CanApply.Should().BeTrue();
+        coordinator.ChannelChangeBlockedReason.Should().BeNull();
+    }
+
+    // PR #619 round 1: after a switch that started no apply, Check joined the background seed read and ran nothing.
+    [Fact]
+    public async Task Check_right_after_a_switch_runs_a_check()
+    {
+        var gate = new TaskCompletionSource();
+        _catalog.SetupGet(c => c.State).Returns(() => { gate.Task.Wait(); return CatalogChecks.State(5, CatalogChannel.Stable, SectionOrigin.Embedded); });
+        _service.NextPreview = channel => CatalogChecks.Outcome(CatalogUpdateOutcome.Failed, channel, "offline");
+        _service.NextCheck = () => CatalogChecks.Available(6, CatalogChannel.Preview);
+        using var coordinator = Create();
+        await coordinator.SwitchChannelAsync(CatalogChannel.Preview);
+
+        var check = coordinator.CheckAsync();
+        var done = check.Wait(5000);
+        gate.SetResult();
+
+        done.Should().BeTrue("the check does not wait for the seed read");
+        _service.CheckCalls.Should().Be(1);
     }
 
     [Fact]

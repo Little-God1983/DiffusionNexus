@@ -46,6 +46,11 @@ public interface ICatalogUpdateCoordinator
     bool CanApply { get; }
     /// <summary>Why Apply is withheld although an update is available (an install is running). Null otherwise.</summary>
     string? ApplyBlockedReason { get; }
+    /// <summary>
+    /// Why the channel cannot be changed right now (an install is running: a switch changes the folder the
+    /// catalog is read from at once). Null otherwise.
+    /// </summary>
+    string? ChannelChangeBlockedReason { get; }
     /// <summary>A switch waiting for Switch or Keep. While set, checks, applies and other switches are refused.</summary>
     CatalogChannelSwitch? PendingSwitch { get; }
 
@@ -149,6 +154,11 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
 
     public string? ApplyBlockedReason => UpdateAvailable && _installs.Running is { } name ? $"It can be applied once {name} has finished." : null;
 
+    public string? ChannelChangeBlockedReason => _installs.Running is { } name ? $"The channel can be changed once {name} has finished." : null;
+
+    /// <summary>Why the last read of the preferences failed; null once they were read.</summary>
+    private string? _preferencesError;
+
     public event Action? Changed;
 
     // ----- channel -----
@@ -180,10 +190,12 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger?.Warn(LogCategory.General, LogSource, "The catalog setting could not be read; read again on the next check. Nothing is applied automatically until it can be.", ex.Message);
+            lock (_gate) _preferencesError = ex.Message;
         }
 
         lock (_gate)
         {
+            if (stored is not null) _preferencesError = null;
             if (!_autoApplyResolved)
             {
                 AutoApply = stored?.ApplyAutomatically ?? false;
@@ -218,9 +230,11 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
                 _logger?.Info(LogCategory.General, LogSource, "Catalog check refused: a channel switch is in progress");
                 return Task.CompletedTask;
             }
-            if (_inFlight is { IsCompleted: false })
+            // By the phase, not the task: a task flips the phase under this lock, then still logs and raises
+            // before it completes. Only a running check is joined (PR #619 round 1).
+            if (Phase == CatalogUpdatePhase.Checking && _inFlight is { IsCompleted: false }) return _inFlight;
+            if (Phase == CatalogUpdatePhase.Applying)
             {
-                if (Phase != CatalogUpdatePhase.Applying) return _inFlight;
                 _logger?.Info(LogCategory.General, LogSource, "Catalog check refused: an apply is in progress");
                 return Task.CompletedTask;
             }
@@ -239,6 +253,21 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
         try
         {
             await EnsureChannelAsync(ct).ConfigureAwait(false);
+            string? unreadable;
+            lock (_gate) unreadable = !_channelResolved && ChannelSource != CatalogChannelSource.Environment ? _preferencesError : null;
+            if (unreadable is not null)
+            {
+                // The channel is a guess (Stable): checking it would offer Stable's release to a user who saved
+                // Preview (PR #619 round 1). Nothing is checked until the setting can be read.
+                lock (_gate)
+                {
+                    LastCheck = FailedCheck(Channel, Installed, $"The catalog setting could not be read ({unreadable}). Try again in a moment.");
+                    LastCheckedAt = DateTimeOffset.Now;
+                    Phase = CatalogUpdatePhase.Checked;
+                }
+                Raise();
+                return;
+            }
             _logger?.Info(LogCategory.General, LogSource, $"Catalog update check started on {Channel}");
             var check = (await _updates.CheckAsync(ct).ConfigureAwait(false)).For(_audience);
             var installed = LocalCatalogState.Load(_options.InstalledCatalogPath);
@@ -304,7 +333,7 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
         Task inFlight;
         lock (_gate)
         {
-            if (_inFlight is { IsCompleted: false })
+            if (Phase is CatalogUpdatePhase.Checking or CatalogUpdatePhase.Applying)
             {
                 _logger?.Info(LogCategory.General, LogSource, $"Catalog apply refused: an apply or check is already running (automatic {automatic})");
                 return Task.CompletedTask;
@@ -486,6 +515,12 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
                 _logger?.Info(LogCategory.General, LogSource, $"Catalog channel switch to {target} refused while {Phase}{(PendingSwitch is null ? "" : ", a switch waits for an answer")}");
                 return;
             }
+            // A switch changes the folder the catalog is read from at once: never under a running install (PR #619 round 1).
+            if (_installs.Running is { } running)
+            {
+                _logger?.Info(LogCategory.General, LogSource, $"Catalog channel switch to {target} refused: {running} is installing");
+                return;
+            }
             // Claimed with the guard so a check starting during the awaits below backs off.
             _switching = true;
             phaseBefore = Phase;
@@ -548,6 +583,12 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
             if (PendingSwitch is null || _switching)
             {
                 _logger?.Info(LogCategory.General, LogSource, "Catalog channel switch confirmed with no switch waiting; nothing to do");
+                return;
+            }
+            if (_installs.Running is { } running)
+            {
+                // The answer waits: an install started while the warning was shown.
+                _logger?.Info(LogCategory.General, LogSource, $"Catalog channel switch to {PendingSwitch.Target} waits: {running} is installing");
                 return;
             }
             pending = PendingSwitch;
@@ -656,7 +697,10 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
                     Phase = held ? CatalogUpdatePhase.Checking : CatalogUpdatePhase.Checked;
                 }
             }
-            if (!applying) _inFlight = Task.Run(() => AfterSwitchNotAppliedAsync(held), CancellationToken.None);
+            // Held (only an install that started after the guard above gets here): the folder check is the
+            // in-flight task. Not held: just the state read, which a Check or Apply must not wait for (PR #619 round 1).
+            if (held) _inFlight = Task.Run(() => AfterSwitchNotAppliedAsync(held), CancellationToken.None);
+            else if (!applying) _ = Task.Run(() => AfterSwitchNotAppliedAsync(held), CancellationToken.None);
         }
         _logger?.Info(LogCategory.General, LogSource, $"Catalog channel switched to {target}: " +
             (applying ? (preview.Outcome == CatalogUpdateOutcome.UpToDate ? "checking its folder" : $"applying v{preview.Remote?.CatalogVersion}")

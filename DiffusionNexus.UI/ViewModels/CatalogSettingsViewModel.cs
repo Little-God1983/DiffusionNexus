@@ -54,11 +54,19 @@ public sealed partial class CatalogSettingsViewModel : ObservableObject, IDispos
     partial void OnAutoApplyChanged(bool value) { if (!_refreshing) _ = SetAutoApplyAsync(value); }
 
     [RelayCommand(CanExecute = nameof(CanCheck))]
-    private Task CheckAsync() => _catalog.CheckAsync();
+    private Task CheckAsync()
+    {
+        ClearSaveError();
+        return _catalog.CheckAsync();
+    }
     private bool CanCheck() => !IsBusy && !ShowWarning;
 
     [RelayCommand(CanExecute = nameof(CanApplyNow))]
-    private Task ApplyAsync() => _catalog.ApplyAsync();
+    private Task ApplyAsync()
+    {
+        ClearSaveError();
+        return _catalog.ApplyAsync();
+    }
     private bool CanApplyNow() => _catalog.CanApply;
 
     /// <summary>
@@ -84,7 +92,19 @@ public sealed partial class CatalogSettingsViewModel : ObservableObject, IDispos
     }
 
     [RelayCommand]
-    private void KeepChannel() => _catalog.KeepChannel();
+    private void KeepChannel()
+    {
+        ClearSaveError();
+        _catalog.KeepChannel();
+    }
+
+    /// <summary>The next action replaces an old save error (PR #619 round 1: it outlived Keep, Check and Apply).</summary>
+    private void ClearSaveError()
+    {
+        if (_saveError is null) return;
+        _saveError = null;
+        Refresh();
+    }
 
     private async Task SwitchAsync(CatalogChannel target)
     {
@@ -127,8 +147,9 @@ public sealed partial class CatalogSettingsViewModel : ObservableObject, IDispos
             var busy = _catalog.Phase is CatalogUpdatePhase.Checking or CatalogUpdatePhase.Applying;
             IsBusy = busy;
             var pinned = _catalog.ChannelSource == CatalogChannelSource.Environment;
-            CanChooseChannel = !pinned && !busy && _catalog.PendingSwitch is null;
-            ChannelHint = pinned ? "Set by DIFFUSIONNEXUS_CATALOG_CHANNEL for this run." : null;
+            var blocked = _catalog.ChannelChangeBlockedReason;
+            CanChooseChannel = !pinned && !busy && _catalog.PendingSwitch is null && blocked is null;
+            ChannelHint = pinned ? "Set by DIFFUSIONNEXUS_CATALOG_CHANNEL for this run." : blocked;
             AutoApply = _catalog.AutoApply;
             CanToggleAutoApply = !busy && _catalog.PendingSwitch is null;
 

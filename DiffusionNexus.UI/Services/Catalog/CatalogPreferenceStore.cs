@@ -41,7 +41,8 @@ public sealed class CatalogPreferenceStore(IServiceScopeFactory scopes, IUserSet
         var stored = await settings.GetCatalogUpdateSettingsAsync(ct).ConfigureAwait(false);
         if (stored.Channel is not null) return new CatalogPreferences(stored.Channel, stored.ApplyAutomatically);
 
-        var copied = await InstallerChannelAsync(ct).ConfigureAwait(false);
+        // Unreadable: nothing is known, so nothing is stored; the copy is tried again on the next start (PR #619 round 1).
+        if (await InstallerChannelAsync(ct).ConfigureAwait(false) is not { } copied) return new CatalogPreferences(null, stored.ApplyAutomatically);
         try
         {
             await settings.SetCatalogChannelAsync(copied.ToString(), ct).ConfigureAwait(false);
@@ -68,9 +69,9 @@ public sealed class CatalogPreferenceStore(IServiceScopeFactory scopes, IUserSet
 
     /// <summary>
     /// The installer's saved channel, read-only (GetOrCreateForCurrentUserAsync would write the installer's
-    /// file). Unreadable or nothing usable: Stable.
+    /// file). Nothing usable saved: Stable. Unreadable: null (nothing is known).
     /// </summary>
-    private async Task<CatalogChannel> InstallerChannelAsync(CancellationToken ct)
+    private async Task<CatalogChannel?> InstallerChannelAsync(CancellationToken ct)
     {
         string? saved;
         try
@@ -79,8 +80,8 @@ public sealed class CatalogPreferenceStore(IServiceScopeFactory scopes, IUserSet
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger?.Warn(LogCategory.General, LogSource, "The installer's settings could not be read; starting on the Stable catalog channel.", ex.Message);
-            return CatalogChannel.Stable;
+            logger?.Warn(LogCategory.General, LogSource, "The installer's settings could not be read; following Stable for now and copying its channel on the next start.", ex.Message);
+            return null;
         }
 
         if (CatalogChannelResolver.TryParse(saved, out var channel))

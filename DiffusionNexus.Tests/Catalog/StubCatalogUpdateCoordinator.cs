@@ -26,6 +26,7 @@ internal sealed class StubCatalogUpdateCoordinator : ICatalogUpdateCoordinator
         Installed is { } s && (s.Workloads?.Channel ?? s.Workflows?.Channel) is { } c && c != Channel);
     public bool CanApply => UpdateAvailable && Phase == CatalogUpdatePhase.Checked && InstallRunning is null;
     public string? ApplyBlockedReason => UpdateAvailable && InstallRunning is { } n ? $"It can be applied once {n} has finished." : null;
+    public string? ChannelChangeBlockedReason => InstallRunning is { } n ? $"The channel can be changed once {n} has finished." : null;
 
     public event Action? Changed;
     public void RaiseChanged() => Changed?.Invoke();

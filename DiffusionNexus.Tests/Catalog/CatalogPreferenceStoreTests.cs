@@ -67,11 +67,13 @@ public sealed class CatalogPreferenceStoreTests
     }
 
     [Fact]
-    public async Task An_unreadable_installer_file_starts_on_Stable_and_never_writes_it()
+    public async Task An_unreadable_installer_file_stores_nothing_and_is_tried_again_next_start()
     {
         _installer.Setup(r => r.GetByUserNameAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("locked"));
 
-        (await Store().LoadAsync()).Channel.Should().Be("Stable");
+        // PR #619 round 1: storing the Stable fallback made a Preview user Stable for good.
+        (await Store().LoadAsync()).Channel.Should().BeNull("nothing is known; the coordinator follows Stable for this run only");
+        _settings.Verify(s => s.SetCatalogChannelAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         _installer.Verify(r => r.GetOrCreateForCurrentUserAsync(It.IsAny<CancellationToken>()), Times.Never);
         _installer.Verify(r => r.SaveAsync(It.IsAny<UserSettings>(), It.IsAny<CancellationToken>()), Times.Never);
     }

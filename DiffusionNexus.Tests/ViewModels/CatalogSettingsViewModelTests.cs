@@ -233,6 +233,35 @@ public sealed class CatalogSettingsViewModelTests
         Vm().OutcomeText.Should().Be(expected);
     }
 
+    // PR #619 round 1: no channel change while an install runs; the page says why.
+    [Fact]
+    public void While_an_install_runs_the_radios_are_disabled_with_a_hint()
+    {
+        _catalog.InstallRunning = "Krea-2-Turbo";
+
+        var vm = Vm();
+
+        vm.CanChooseChannel.Should().BeFalse();
+        vm.ChannelHint.Should().Be("The channel can be changed once Krea-2-Turbo has finished.");
+    }
+
+    // PR #619 round 1: a save error stayed next to "Catalog updated to v7." after Keep, Check and Apply.
+    [Fact]
+    public async Task Keep_check_and_apply_clear_the_save_error()
+    {
+        _catalog.SwitchFailure = new IOException("database locked");
+        var vm = Vm();
+        vm.IsPreview = true;
+        vm.ErrorText.Should().NotBeNull();
+
+        vm.KeepChannelCommand.Execute(null);
+        vm.ErrorText.Should().BeNull();
+
+        vm.IsPreview = true;
+        await vm.CheckCommand.ExecuteAsync(null);
+        vm.ErrorText.Should().BeNull();
+    }
+
     [Fact]
     public void Coordinator_changes_refresh_the_page()
     {
