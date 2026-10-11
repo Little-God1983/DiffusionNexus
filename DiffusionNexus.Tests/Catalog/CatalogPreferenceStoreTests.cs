@@ -24,6 +24,8 @@ public sealed class CatalogPreferenceStoreTests
         _settings.Setup(s => s.GetCatalogUpdateSettingsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(() => _stored);
         _settings.Setup(s => s.SetCatalogChannelAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
                  .Callback((string c, CancellationToken _) => _stored = _stored with { Channel = c }).Returns(Task.CompletedTask);
+        _settings.Setup(s => s.SetCatalogChannelIfSettingsExistAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                 .Callback((string c, CancellationToken _) => _stored = _stored with { Channel = c }).ReturnsAsync(true);
         _settings.Setup(s => s.SetApplyCatalogUpdatesAutomaticallyAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
                  .Callback((bool on, CancellationToken _) => _stored = _stored with { ApplyAutomatically = on }).Returns(Task.CompletedTask);
     }
@@ -47,12 +49,12 @@ public sealed class CatalogPreferenceStoreTests
         var first = await Store().LoadAsync();
 
         first.Channel.Should().Be("Preview");
-        _settings.Verify(s => s.SetCatalogChannelAsync("Preview", It.IsAny<CancellationToken>()), Times.Once);
+        _settings.Verify(s => s.SetCatalogChannelIfSettingsExistAsync("Preview", It.IsAny<CancellationToken>()), Times.Once);
         _log.GetEntries().Should().Contain(e => e.Source == "Catalog" && e.Message.Contains("installer's Preview channel"));
 
         InstallerSaved("Stable");   // the installer changes its mind later
         (await Store().LoadAsync()).Channel.Should().Be("Preview", "the copy happens once; the apps choose independently after that");
-        _settings.Verify(s => s.SetCatalogChannelAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        _settings.Verify(s => s.SetCatalogChannelIfSettingsExistAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Theory]
@@ -63,7 +65,7 @@ public sealed class CatalogPreferenceStoreTests
         InstallerSaved(installerChannel);
 
         (await Store().LoadAsync()).Channel.Should().Be("Stable");
-        _settings.Verify(s => s.SetCatalogChannelAsync("Stable", It.IsAny<CancellationToken>()), Times.Once);
+        _settings.Verify(s => s.SetCatalogChannelIfSettingsExistAsync("Stable", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -73,7 +75,7 @@ public sealed class CatalogPreferenceStoreTests
 
         // PR #619 round 1: storing the Stable fallback made a Preview user Stable for good.
         (await Store().LoadAsync()).Channel.Should().BeNull("nothing is known; the coordinator follows Stable for this run only");
-        _settings.Verify(s => s.SetCatalogChannelAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _settings.Verify(s => s.SetCatalogChannelIfSettingsExistAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         _installer.Verify(r => r.GetOrCreateForCurrentUserAsync(It.IsAny<CancellationToken>()), Times.Never);
         _installer.Verify(r => r.SaveAsync(It.IsAny<UserSettings>(), It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -83,10 +85,21 @@ public sealed class CatalogPreferenceStoreTests
     public async Task A_failed_first_save_still_follows_the_installers_channel()
     {
         InstallerSaved("Preview");
-        _settings.Setup(s => s.SetCatalogChannelAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("database locked"));
+        _settings.Setup(s => s.SetCatalogChannelIfSettingsExistAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("database locked"));
 
         (await Store().LoadAsync()).Channel.Should().Be("Preview");
         _log.GetEntries().Should().Contain(e => e.Source == "Catalog" && e.Message.Contains("could not be saved"));
+    }
+
+    // PR #619 round 2: on a fresh install the copy must not create the settings row (the UI does, at the same time).
+    [Fact]
+    public async Task Without_a_settings_row_the_copy_is_followed_for_this_run_and_saved_next_start()
+    {
+        InstallerSaved("Preview");
+        _settings.Setup(s => s.SetCatalogChannelIfSettingsExistAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
+
+        (await Store().LoadAsync()).Channel.Should().Be("Preview");
+        _settings.Verify(s => s.SetCatalogChannelAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

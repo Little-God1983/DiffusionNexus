@@ -260,6 +260,19 @@ public sealed class AppSettingsService : IAppSettingsService
     }
 
     /// <inheritdoc />
+    public async Task<bool> SetCatalogChannelIfSettingsExistAsync(string channel, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(channel);
+        _unitOfWork.ClearChangeTracker();
+        var settings = await _unitOfWork.AppSettings.GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+        if (settings is null) return false;
+        settings.CatalogChannel = channel.Trim();
+        settings.UpdatedAt = DateTimeOffset.UtcNow;
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    /// <inheritdoc />
     public async Task SetApplyCatalogUpdatesAutomaticallyAsync(bool on, CancellationToken cancellationToken = default)
     {
         var settings = await TrackedSettingsAsync(cancellationToken).ConfigureAwait(false);

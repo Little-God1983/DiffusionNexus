@@ -132,12 +132,49 @@ public sealed partial class CatalogUpdateCoordinatorTests : IDisposable
 
         _service.CheckCalls.Should().Be(0);
         coordinator.LastCheck!.Outcome.Should().Be(CatalogUpdateOutcome.Failed);
-        coordinator.LastCheck.Error.Should().Be("The catalog setting could not be read (database locked). Try again in a moment.");
+        coordinator.LastCheck.Error.Should().Be("The catalog channel is not known yet: the setting could not be read (database locked). Try again in a moment.");
         coordinator.UpdateAvailable.Should().BeFalse();
 
         _preferences.LoadFailure = null;
         await coordinator.CheckAsync();
         _service.CheckCalls.Should().Be(1, "the next check reads the setting again");
+    }
+
+    // PR #619 round 2: the installer's file could not be read on the first start: the channel is a guess until
+    // the copy succeeds; nothing is checked or applied on it.
+    [Fact]
+    public async Task An_unknown_first_start_channel_checks_nothing_until_the_installers_channel_is_read()
+    {
+        _preferences.Stored = new CatalogPreferences(null, true);
+        _service.NextCheck = () => CatalogChecks.Available(7).Targeting(WorkloadTargetType.DiffusionNexusCore);
+        using var coordinator = Create();
+
+        await coordinator.CheckAtStartupAsync();
+
+        _service.CheckCalls.Should().Be(0);
+        _service.ApplyCalls.Should().Be(0);
+        coordinator.LastCheck!.Error.Should().Be("The catalog channel is not known yet: the installer's saved channel could not be read. Try again in a moment.");
+
+        _preferences.Stored = new CatalogPreferences("Preview", true);
+        await coordinator.CheckAsync();
+        coordinator.Channel.Should().Be(CatalogChannel.Preview);
+        _service.CheckCalls.Should().Be(1);
+    }
+
+    // PR #619 round 2: the installer applied the same release into the shared folder between the check and Apply.
+    [Fact]
+    public async Task An_apply_that_finds_the_folder_already_current_offers_nothing_more()
+    {
+        _service.NextCheck = () => CatalogChecks.Available(7).Targeting(WorkloadTargetType.DiffusionNexusCore);
+        _service.NextApply = () => new CatalogApplyResult(CatalogSections.None, CatalogSections.None, null);
+        using var coordinator = Create();
+        await coordinator.CheckAsync();
+
+        await coordinator.ApplyAsync();
+        Settle(coordinator);
+
+        coordinator.LastCheck!.Outcome.Should().Be(CatalogUpdateOutcome.UpToDate);
+        coordinator.UpdateAvailable.Should().BeFalse();
     }
 
     // ----- check: per-app notices (spec §4) -----
@@ -381,6 +418,9 @@ public sealed partial class CatalogUpdateCoordinatorTests : IDisposable
 
         _service.ApplyCalls.Should().Be(0);
         Logged.Should().NotContain("Catalog update available – see Settings → Catalog");
+        // PR #619 round 2: no promise of a "next apply" that nothing offers.
+        Logged.Should().Contain("Catalog v7 changes nothing Diffusion Nexus shows; nothing to apply.");
+        Logged.Should().NotContain(m => m.Contains("next apply"));
     }
 
     // Review M6: toggle on, an install running at startup: the apply waits and the notice was missing.

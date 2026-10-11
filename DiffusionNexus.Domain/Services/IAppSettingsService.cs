@@ -38,6 +38,13 @@ public interface IAppSettingsService
     /// <summary>Saves the catalog channel the app follows (#618). Creates the settings row if missing.</summary>
     Task SetCatalogChannelAsync(string channel, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Saves the catalog channel only when the settings row exists; false (nothing written) without one. For the
+    /// background first-start copy (#618): on a fresh install the UI creates the row at the same time, and two
+    /// inserts of row 1 would make one of them fail.
+    /// </summary>
+    Task<bool> SetCatalogChannelIfSettingsExistAsync(string channel, CancellationToken cancellationToken = default);
+
     /// <summary>Saves "apply catalog updates automatically" (#618). Creates the settings row if missing.</summary>
     Task SetApplyCatalogUpdatesAutomaticallyAsync(bool on, CancellationToken cancellationToken = default);
 

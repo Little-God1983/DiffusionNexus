@@ -64,6 +64,29 @@ public sealed class AppSettingsServiceCatalogTests : IDisposable
         }
     }
 
+    // PR #619 round 2: the background first-start copy inserted row Id=1 while a UI module's GetSettingsAsync
+    // inserted it too (fresh install): one of them failed on the unique key.
+    [Fact]
+    public async Task The_first_start_copy_never_creates_the_settings_row()
+    {
+        using (var scope = _provider.CreateScope())
+        {
+            (await Service(scope).SetCatalogChannelIfSettingsExistAsync("Preview")).Should().BeFalse();
+            (await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().AppSettings.GetSettingsAsync()).Should().BeNull();
+        }
+
+        using (var scope = _provider.CreateScope())
+        {
+            await Service(scope).GetSettingsAsync();   // a UI module creates the row
+            (await Service(scope).SetCatalogChannelIfSettingsExistAsync("Preview")).Should().BeTrue();
+        }
+
+        using (var scope = _provider.CreateScope())
+        {
+            (await Service(scope).GetCatalogUpdateSettingsAsync()).Channel.Should().Be("Preview");
+        }
+    }
+
     [Fact]
     public async Task A_settings_save_never_overwrites_the_catalog_settings()
     {

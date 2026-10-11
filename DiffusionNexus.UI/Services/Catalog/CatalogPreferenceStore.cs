@@ -45,7 +45,9 @@ public sealed class CatalogPreferenceStore(IServiceScopeFactory scopes, IUserSet
         if (await InstallerChannelAsync(ct).ConfigureAwait(false) is not { } copied) return new CatalogPreferences(null, stored.ApplyAutomatically);
         try
         {
-            await settings.SetCatalogChannelAsync(copied.ToString(), ct).ConfigureAwait(false);
+            // Never creates the settings row: on a fresh install the UI creates it at the same time (PR #619 round 2).
+            if (!await settings.SetCatalogChannelIfSettingsExistAsync(copied.ToString(), ct).ConfigureAwait(false))
+                logger?.Info(LogCategory.General, LogSource, $"Following {copied} for this run; it is saved on the next start (no settings yet).");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

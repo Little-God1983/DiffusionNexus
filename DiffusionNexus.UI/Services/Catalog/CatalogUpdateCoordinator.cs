@@ -190,12 +190,13 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger?.Warn(LogCategory.General, LogSource, "The catalog setting could not be read; read again on the next check. Nothing is applied automatically until it can be.", ex.Message);
-            lock (_gate) _preferencesError = ex.Message;
+            lock (_gate) _preferencesError = $"the setting could not be read ({ex.Message})";
         }
 
         lock (_gate)
         {
-            if (stored is not null) _preferencesError = null;
+            // Read, but no channel: the installer's file could not be read on the first start (PR #619 round 2).
+            if (stored is not null) _preferencesError = stored.Channel is null ? "the installer's saved channel could not be read" : null;
             if (!_autoApplyResolved)
             {
                 AutoApply = stored?.ApplyAutomatically ?? false;
@@ -204,7 +205,7 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
             // A switch finished while the read above was awaited: its answer is newer.
             if (_channelResolved) return;
             ApplyResolution(_readEnvironment(), stored?.Channel);
-            if (stored is not null) _channelResolved = true;
+            if (stored?.Channel is not null) _channelResolved = true;
         }
     }
 
@@ -261,7 +262,7 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
                 // Preview (PR #619 round 1). Nothing is checked until the setting can be read.
                 lock (_gate)
                 {
-                    LastCheck = FailedCheck(Channel, Installed, $"The catalog setting could not be read ({unreadable}). Try again in a moment.");
+                    LastCheck = FailedCheck(Channel, Installed, $"The catalog channel is not known yet: {unreadable}. Try again in a moment.");
                     LastCheckedAt = DateTimeOffset.Now;
                     Phase = CatalogUpdatePhase.Checked;
                 }
@@ -324,7 +325,12 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
             // Refused (an install runs): the update waits on the page, and the console says where (review M6).
         }
         if (offered) _logger?.Info(LogCategory.General, LogSource, "Catalog update available – see Settings → Catalog");
-        else if (release) _logger?.Info(LogCategory.General, LogSource, "The catalog release changes nothing Diffusion Nexus shows; it lands with the next apply.");
+        else if (release)
+        {
+            int? version;
+            lock (_gate) version = LastCheck?.Remote?.CatalogVersion;
+            _logger?.Info(LogCategory.General, LogSource, $"Catalog v{version} changes nothing Diffusion Nexus shows; nothing to apply.");
+        }
     }
 
     private Task StartApply(bool automatic, CancellationToken ct)
@@ -429,10 +435,12 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
     /// </summary>
     private async Task<CatalogUpdateCheck?> AfterSwitchAsync(CatalogUpdateCheck check, CatalogSections applied, bool succeeded, LocalCatalogState installed)
     {
-        if (!check.IsSwitchPreview || applied == CatalogSections.All) return null;
+        if (applied == CatalogSections.All) return null;
+        // Landed nothing without an error: the SDK found the folder current (a switch's target folder, or the
+        // installer applied the same release into the shared folder meanwhile, PR #619 round 2).
         if (succeeded && applied == CatalogSections.None)
             return new CatalogUpdateCheck(CatalogUpdateOutcome.UpToDate, check.Channel, check.Remote, installed, [], [], null).For(_audience);
-        if (applied == CatalogSections.None) return null;
+        if (!check.IsSwitchPreview || applied == CatalogSections.None) return null;
         return await CheckFollowedAsync().ConfigureAwait(false);
     }
 
