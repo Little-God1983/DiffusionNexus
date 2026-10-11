@@ -55,8 +55,15 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IManagedEngine
     private bool _postponementLogged;
 
     // 1 while the engine is reported running (ready), 0 otherwise. Changed only through
-    // ReportRunning, so RunningStateChanged fires once per change whoever starts or stops it.
+    // ReportRunning, so StateChanged fires once per change whoever starts or stops it.
     private int _reportedRunning;
+
+    // 1 while a start runs (under _startLock: spawn and readiness wait), through ReportStarting.
+    private int _reportedStarting;
+
+    // Generations getting under way (BeginPreparing tokens not yet disposed). Counted for the
+    // console's Stop (HasActiveJobs), never for a pending restart (ShouldRestartNow reads _activeJobs).
+    private int _preparing;
 
     public ManagedComfyUiEngine(IUnifiedLogger? unifiedLogger)
     {
@@ -70,24 +77,50 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IManagedEngine
     public bool IsRunning => Volatile.Read(ref _reportedRunning) == 1;
 
     /// <inheritdoc />
-    public bool HasActiveJobs => Volatile.Read(ref _activeJobs) > 0;
+    public bool IsStarting => Volatile.Read(ref _reportedStarting) == 1;
 
     /// <inheritdoc />
-    public event Action<bool>? RunningStateChanged;
+    public bool HasActiveJobs => Volatile.Read(ref _activeJobs) + Volatile.Read(ref _preparing) > 0;
 
-    /// <summary>Records the running state and raises <see cref="RunningStateChanged"/> when it changed. Internal for tests.</summary>
-    internal void ReportRunning(bool running)
+    /// <inheritdoc />
+    public event Action? StateChanged;
+
+    /// <inheritdoc />
+    public IDisposable BeginPreparing()
     {
-        var value = running ? 1 : 0;
-        if (Interlocked.Exchange(ref _reportedRunning, value) == value) return;
+        Interlocked.Increment(ref _preparing);
+        return new CountToken(() => Interlocked.Decrement(ref _preparing));
+    }
+
+    /// <summary>Records the running state and raises <see cref="StateChanged"/> when it changed. Internal for tests.</summary>
+    internal void ReportRunning(bool running) => Report(ref _reportedRunning, running);
+
+    /// <summary>Records the starting state and raises <see cref="StateChanged"/> when it changed. Internal for tests.</summary>
+    internal void ReportStarting(bool starting) => Report(ref _reportedStarting, starting);
+
+    private void Report(ref int field, bool value)
+    {
+        var next = value ? 1 : 0;
+        if (Interlocked.Exchange(ref field, next) == next) return;
         try
         {
-            RunningStateChanged?.Invoke(running);
+            StateChanged?.Invoke();
         }
         catch (Exception ex)
         {
             // A subscriber's failure must never break a start or a stop.
-            Logger.Warning(ex, "A RunningStateChanged subscriber failed.");
+            Logger.Warning(ex, "A StateChanged subscriber failed.");
+        }
+    }
+
+    /// <summary>Runs its action once, however often it is disposed.</summary>
+    private sealed class CountToken(Action release) : IDisposable
+    {
+        private int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0) release();
         }
     }
 
@@ -135,7 +168,7 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IManagedEngine
     // killed from outside), so the engine is no longer running, and its handles are released.
     private void OnProcessExited(Process exited)
     {
-        if (!ReferenceEquals(_process, exited) || !IsRunning) return;
+        if (!ReferenceEquals(_process, exited) || !IsRunning || IsStarting) return;
         var code = TryExitCode(exited);
         Log(code is null ? "The engine process exited." : $"The engine process exited with code {code}.");
         _ = ReleaseExitedAsync(exited);
@@ -231,6 +264,12 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IManagedEngine
                 Log("Restarting the engine so it loads the newly installed node packs or model folders...");
                 await StopCoreAsync().ConfigureAwait(false);
             }
+            else if (current is not null)
+            {
+                // A process that died since (a crash whose release has not run yet): released before
+                // the fresh start, so it never reads as running while that start runs.
+                await StopCoreAsync().ConfigureAwait(false);
+            }
 
             // Whatever starts below is a fresh process, so a pending restart request is used up. A
             // request that arrives from here on (during the up-to-2-minute start) stays set.
@@ -259,6 +298,7 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IManagedEngine
             foreach (var (name, value) in EngineEnvironment)
                 startInfo.Environment[name] = value;
 
+            ReportStarting(true);
             Log($"Starting engine on 127.0.0.1:{port}...");
             _process = Process.Start(startInfo);
             if (_process is null)
@@ -339,8 +379,28 @@ public sealed class ManagedComfyUiEngine : IManagedComfyUiEngine, IManagedEngine
         }
         finally
         {
+            await EndStartAsync().ConfigureAwait(false);
             _startLock.Release();
         }
+    }
+
+    // Under _startLock, as a start ends. OnProcessExited leaves the process to the start while it
+    // runs, so an exit after the start's last look (CompleteReadyAsync) and before here is handled now.
+    private async Task EndStartAsync()
+    {
+        ReportStarting(false);
+        if (IsRunning && _process is { } process && HasExitedSafely(process))
+        {
+            var code = TryExitCode(process);
+            Log(code is null ? "The engine process exited." : $"The engine process exited with code {code}.");
+            await StopCoreAsync().ConfigureAwait(false);
+        }
+    }
+
+    private static bool HasExitedSafely(Process process)
+    {
+        try { return process.HasExited; }
+        catch (InvalidOperationException) { return true; }   // disposed or never started
     }
 
     /// <summary>Why the readiness poll in <see cref="WaitForReadyAsync"/> stopped.</summary>

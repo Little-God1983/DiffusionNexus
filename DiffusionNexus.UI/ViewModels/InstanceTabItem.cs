@@ -29,6 +29,7 @@ public partial class InstanceTabItem : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ShowStartButton))]
     [NotifyPropertyChangedFor(nameof(ShowStopButtons))]
+    [NotifyPropertyChangedFor(nameof(ShowStopButton))]
     [NotifyPropertyChangedFor(nameof(ShowUpdateButton))]
     private bool _isRunning;
 
@@ -56,6 +57,7 @@ public partial class InstanceTabItem : ObservableObject
     /// </summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ShowUpdateButton))]
+    [NotifyPropertyChangedFor(nameof(ShowStartButton))]
     private bool _isUpdating;
 
     /// <summary>
@@ -75,9 +77,10 @@ public partial class InstanceTabItem : ObservableObject
     /// </summary>
     public bool IsEngine { get; init; }
 
-    /// <summary>True while a start from this tab runs (the Engine takes up to two minutes).</summary>
+    /// <summary>True while the Engine starts (up to two minutes), whoever started it.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ShowStartButton))]
+    [NotifyPropertyChangedFor(nameof(ShowStopButton))]
     [NotifyPropertyChangedFor(nameof(ShowUpdateButton))]
     private bool _isStarting;
 
@@ -90,14 +93,18 @@ public partial class InstanceTabItem : ObservableObject
     private bool _isMissing;
 
     /// <summary>
-    /// Show the Start button when not running, not missing and not starting.
+    /// Show the Start button when not running, not missing, not starting and not being updated (a
+    /// start must not run from a folder an update is changing).
     /// </summary>
-    public bool ShowStartButton => !IsRunning && !IsMissing && !IsStarting;
+    public bool ShowStartButton => !IsRunning && !IsMissing && !IsStarting && !IsUpdating;
 
     /// <summary>
     /// Show Stop/Restart/WebUI when running.
     /// </summary>
     public bool ShowStopButtons => IsRunning;
+
+    /// <summary>Show Stop when running, and while starting: a start can be aborted.</summary>
+    public bool ShowStopButton => IsRunning || IsStarting;
 
     /// <summary>
     /// Show the Update button when an update is available, not currently updating, not running, and not missing.

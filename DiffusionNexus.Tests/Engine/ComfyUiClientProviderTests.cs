@@ -82,6 +82,38 @@ public class ComfyUiClientProviderTests
     public void ComfyUiUrl_OrDefault_FallsBackToLocal8188(string? url, string expected) =>
         ComfyUiUrl.OrDefault(url).Should().Be(expected);
 
+    // #621 review: from the start until the job begins, Stop on the console's Engine tile asks first.
+    [Fact]
+    public async Task Engine_IsAPreparingGeneration_UntilItsJobBegins()
+    {
+        Mode(ComfyUiServerMode.Engine);
+        _root.Setup(r => r.ResolveAsync(It.IsAny<CancellationToken>())).ReturnsAsync(@"C:\Engine\ComfyUI");
+        var preparing = 0;
+        int? preparingAtStart = null;
+        _engine.Setup(e => e.BeginPreparing()).Returns(() =>
+        {
+            preparing++;
+            return new DisposeAction(() => preparing--);
+        });
+        _engine.Setup(e => e.EnsureRunningAsync(@"C:\Engine\ComfyUI", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                preparingAtStart = preparing;
+                return new EngineStartResult(true, "http://127.0.0.1:51234", null);
+            });
+        _engine.Setup(e => e.BeginJob()).Returns(new DisposeAction(() => { }));
+
+        using var lease = await Sut().AcquireAsync();
+
+        preparingAtStart.Should().Be(1);
+        preparing.Should().Be(0, "the job token takes over once it begins");
+    }
+
+    private sealed class DisposeAction(Action onDispose) : IDisposable
+    {
+        public void Dispose() => onDispose();
+    }
+
     [Fact]
     public async Task Engine_StartsTheEngine_ReportsProgress_AndReturnsClientOnItsPort()
     {

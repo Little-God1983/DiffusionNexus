@@ -11,16 +11,21 @@ public interface IManagedEngineControl : IManagedComfyUiEngine
     /// <summary>True while the engine process runs and answered its readiness check.</summary>
     bool IsRunning { get; }
 
-    /// <summary>True while a job (a generation) runs on the engine.</summary>
+    /// <summary>
+    /// True while a start runs (spawn and readiness wait, up to two minutes), whoever started it: the
+    /// console, the Canvas on demand, or a pending restart carried out.
+    /// </summary>
+    bool IsStarting { get; }
+
+    /// <summary>True while a generation runs on the engine or is getting under way (<see cref="IManagedComfyUiEngine.BeginPreparing"/>).</summary>
     bool HasActiveJobs { get; }
 
     /// <summary>
-    /// Raised when the engine starts (ready) or stops, whoever caused it: the console, the Canvas
-    /// starting it on demand, the app's shutdown, or the process exiting on its own. Once per change,
-    /// on any thread. Two reports from different threads can arrive out of order, so a subscriber
-    /// reads <see cref="IsRunning"/> rather than trusting the argument.
+    /// Raised when <see cref="IsRunning"/> or <see cref="IsStarting"/> changed, whoever caused it: the
+    /// console, the Canvas, the app's shutdown, or the process exiting on its own. On any thread; reads
+    /// of the two properties give the state as of then.
     /// </summary>
-    event Action<bool>? RunningStateChanged;
+    event Action? StateChanged;
 
     /// <summary>Stops the engine, a running job included. Safe to call when it is not running.</summary>
     Task StopAsync();

@@ -88,7 +88,7 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
                 : discovered.TryGet(key);
     }
 
-    private readonly ManagedComfyUiEngine _engine;
+    private readonly IManagedEngineControl _engine;
     private readonly Func<Task<string?>> _resolveInstallRootAsync;
     private readonly IWorkflowTemplateSource? _templateSource;
     private readonly List<string> _missingRequirements = [];
@@ -101,7 +101,7 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
     private string? _installRoot;
 
     public ManagedComfyUiBackend(
-        ManagedComfyUiEngine engine,
+        IManagedEngineControl engine,
         Func<Task<string?>> resolveInstallRootAsync,
         IWorkflowTemplateSource? templateSource)
     {
@@ -112,6 +112,9 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
         _resolveInstallRootAsync = resolveInstallRootAsync;
         _templateSource = templateSource;
     }
+
+    // The engine's URL from the last successful availability probe (IsAvailableAsync).
+    private string? _runningBaseUrl;
 
     public string DisplayName => "Diffusion Nexus Engine";
 
@@ -179,11 +182,15 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
         }
 
         var start = await _engine.EnsureRunningAsync(installRoot!, ct).ConfigureAwait(false);
-        if (!start.IsRunning)
+        if (!start.IsRunning || start.BaseUrl is null)
         {
             _missingRequirements.Add(start.FailureReason ?? "The engine could not be started.");
             return false;
         }
+
+        // The URL this start returned, not _engine.BaseUrl read later: the console's Stop or a crash's
+        // release can clear that at any moment.
+        _runningBaseUrl = start.BaseUrl;
 
         // The base engine install deliberately excludes every custom node (see
         // ManagedEngineInstaller) — only the Krea 2 Turbo workload installs the ones this
@@ -191,7 +198,7 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
         // generate": install engine, select it, press Generate is the most likely first-run
         // sequence for a user who hasn't installed the workload yet, and without this check it
         // would fail with whatever raw text ComfyUI returns instead of a fixable message.
-        using var wrapper = new ComfyUIWrapperService(_engine.BaseUrl!);
+        using var wrapper = new ComfyUIWrapperService(start.BaseUrl);
         var missingNodes = await wrapper
             .CheckRequiredNodesAsync(Krea2WorkflowPatcher.RequiredCustomNodeTypes, ct)
             .ConfigureAwait(false);
@@ -241,6 +248,9 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
         // disk walk, a whole /object_info fetch and a /models query eight times over. Worth memoising the
         // success case, but only with an invalidation that cannot mask a genuinely stopped engine, which
         // is why it is not done here (issue #518 follow-up).
+        // A generation getting under way from here: Stop on the console's Engine tile asks first while
+        // the probe below starts the engine and checks it, before the job begins.
+        using var preparing = _engine.BeginPreparing();
         var available = await IsAvailableAsync(cancellationToken).ConfigureAwait(false);
         if (!available)
         {
@@ -272,7 +282,7 @@ public sealed class ManagedComfyUiBackend : IDiffusionBackend
             Message = "Submitting to the Diffusion Nexus Engine…"
         });
 
-        using var wrapper = new ComfyUIWrapperService(_engine.BaseUrl!);
+        using var wrapper = new ComfyUIWrapperService(_runningBaseUrl!);
 
         // NOTE(progress): IComfyUIWrapperService.WaitForCompletionAsync reports raw WebSocket event
         // text ("Executing node 62...", "Progress: 3/8") via IProgress<string>, not a typed

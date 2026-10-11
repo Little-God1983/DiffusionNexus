@@ -121,17 +121,23 @@ public sealed class ComfyUiClientProvider : IComfyUiClientProvider
                 "Engine restart pending; restarting it for this generate unless another job is still running.");
         }
 
-        var started = await _engine.EnsureRunningAsync(root!, ct);
-        if (!started.IsRunning || started.BaseUrl is null)
+        // A generation getting under way until its job begins: Stop on the console's Engine tile asks first.
+        EngineStartResult started;
+        IDisposable job;
+        using (_engine.BeginPreparing())
         {
-            var reason = $"Diffusion Nexus Engine failed to start: {started.FailureReason ?? "unknown reason"}";
-            Warn(EngineSource, reason);
-            throw new ComfyUiUnavailableException(reason);
-        }
+            started = await _engine.EnsureRunningAsync(root!, ct);
+            if (!started.IsRunning || started.BaseUrl is null)
+            {
+                var reason = $"Diffusion Nexus Engine failed to start: {started.FailureReason ?? "unknown reason"}";
+                Warn(EngineSource, reason);
+                throw new ComfyUiUnavailableException(reason);
+            }
 
-        // Begun after the start, so this generate may itself carry out a pending restart when it is
-        // the only job; from here on a restart waits until the lease is disposed.
-        var job = _engine.BeginJob();
+            // Begun after the start, so this generate may itself carry out a pending restart when it is
+            // the only job; from here on a restart waits until the lease is disposed.
+            job = _engine.BeginJob();
+        }
         try
         {
             Info(LogCategory.InstanceManagement, EngineSource, $"Using the Engine at {started.BaseUrl}.");

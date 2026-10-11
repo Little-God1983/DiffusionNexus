@@ -169,8 +169,10 @@ public class EngineConsoleControlTests
         public int Stops { get; private set; }
 
 #pragma warning disable CS0067 // the control does not subscribe; the console does
-        public event Action<bool>? RunningStateChanged;
+        public event Action? StateChanged;
 #pragma warning restore CS0067
+        public bool IsStarting => false;
+        public IDisposable BeginPreparing() => throw new NotSupportedException("not used by the console control");
 
         public Task<EngineStartResult> EnsureRunningAsync(string installRoot, CancellationToken ct)
         {

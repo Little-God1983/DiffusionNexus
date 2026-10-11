@@ -59,7 +59,7 @@
                       <!-- Starting (the Engine takes up to two minutes) -->
                       <TextBlock Text="Starting..." FontSize="11" Opacity="0.7" VerticalAlignment="Center" IsVisible="{Binding IsStarting}"/>
                       <!-- Stop (when running) -->
-                      <Button Classes="inst-stop" IsVisible="{Binding ShowStopButtons}" Command="{Binding $parent[ItemsControl].((vm:UnifiedConsoleViewModel)DataContext).StopInstanceCommand}" CommandParameter="{Binding}">
+                      <Button Classes="inst-stop" IsVisible="{Binding ShowStopButton}" Command="{Binding $parent[ItemsControl].((vm:UnifiedConsoleViewModel)DataContext).StopInstanceCommand}" CommandParameter="{Binding}">
                         <StackPanel Orientation="Horizontal" Spacing="3"><TextBlock Text="&#x25A0;" FontSize="9" VerticalAlignment="Center"/><TextBlock Text="Stop" VerticalAlignment="Center"/></StackPanel>
                       </Button>
                       <!-- Restart (when running) -->

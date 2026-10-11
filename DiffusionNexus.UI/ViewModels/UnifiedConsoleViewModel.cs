@@ -150,7 +150,7 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
         {
             _engineControl = new Services.Engine.EngineConsoleControl(
                 _engine, engineRoots, serviceProvider.GetService<IDialogService>(), _logger);
-            _engine.RunningStateChanged += OnEngineRunningStateChanged;
+            _engine.StateChanged += OnEngineStateChanged;
         }
 
         // Refresh the docked-instance bar when the Installer Manager adds or
@@ -562,16 +562,8 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
                         IsEngine = package.IsAppManaged
                     };
 
-                    // Restore running state if the process is still alive
-                    if (tab.IsEngine)
-                    {
-                        if (_engine?.IsRunning == true)
-                        {
-                            tab.IsRunning = true;
-                            tab.DetectedWebUrl = _engine.BaseUrl;
-                        }
-                    }
-                    else if (_processManager?.IsRunning(package.Id) == true)
+                    // Restore running state if the process is still alive (the Engine's: below)
+                    if (!tab.IsEngine && _processManager?.IsRunning(package.Id) == true)
                     {
                         tab.IsRunning = true;
                         tab.DetectedWebUrl = _processManager.GetDetectedUrl(package.Id);
@@ -580,7 +572,7 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
                     InstanceTabs.Add(tab);
                 }
                 HasInstances = InstanceTabs.Count > 0;
-                HasRunningInstances = InstanceTabs.Any(t => t.IsRunning);
+                ApplyEngineState();   // also sets HasRunningInstances
 
                 // Check for updates in the background after loading
                 _ = CheckAllForUpdatesAsync();
@@ -604,12 +596,12 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
 
         if (tab.IsEngine)
         {
-            if (_engineControl is null || tab.IsStarting || _engine?.IsRunning == true) return;
+            if (_engineControl is null || _engine?.IsStarting == true || _engine?.IsRunning == true) return;
             // Like a launched package: open the panel on this instance's output. Done here, not on
-            // the running-state change, so the Canvas starting the Engine on demand opens nothing.
+            // the state change, so the Canvas starting the Engine on demand opens nothing.
             PanelOpenRequested?.Invoke(this, EventArgs.Empty);
             if (SelectedInstance?.PackageId != tab.PackageId) FilterByInstance(tab);
-            _ = StartEngineFromTabAsync(tab, _engineControl);
+            _ = _engineControl.StartAsync();
             return;
         }
 
@@ -833,32 +825,20 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
         });
     }
 
-    // A start takes up to two minutes: the tile says so meanwhile, and offers neither Start (it
-    // would only queue behind this one) nor Update (it would change the folder the Engine starts from).
-    private static async Task StartEngineFromTabAsync(InstanceTabItem tab, Services.Engine.EngineConsoleControl control)
-    {
-        tab.IsStarting = true;
-        try
-        {
-            await control.StartAsync();
-        }
-        finally
-        {
-            tab.IsStarting = false;
-        }
-    }
-
     /// <summary>
     /// Every Engine tab shows the engine's current state (an old build could leave two app-managed
-    /// rows). Read from the engine, not from the event: two reports from different threads can
-    /// arrive out of order. Internal for tests.
+    /// rows): running, or starting, whoever started it (this tile, the Canvas, a pending restart).
+    /// Read from the engine when applied: reports from different threads can arrive out of order.
+    /// Internal for tests.
     /// </summary>
     internal void ApplyEngineState()
     {
         var running = _engine?.IsRunning == true;
+        var starting = _engine?.IsStarting == true;
         foreach (var tab in InstanceTabs.Where(t => t.IsEngine))
         {
             tab.IsRunning = running;
+            tab.IsStarting = starting;
             tab.DetectedWebUrl = running ? _engine?.BaseUrl : null;
         }
         HasRunningInstances = InstanceTabs.Any(t => t.IsRunning);
@@ -866,7 +846,7 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
 
     // The Engine started or stopped, from this tile, the Canvas, the app's shutdown or on its own.
     // No panel opening here: a start from this tile already opened it (LaunchInstance).
-    private void OnEngineRunningStateChanged(bool _) => Dispatcher.UIThread.Post(ApplyEngineState);
+    private void OnEngineStateChanged() => Dispatcher.UIThread.Post(ApplyEngineState);
 
     private void OnInstanceWebUrlDetected(int packageId, string url)
     {
@@ -897,7 +877,7 @@ public partial class UnifiedConsoleViewModel : ViewModelBase, IDisposable
         }
 
         if (_engine is not null)
-            _engine.RunningStateChanged -= OnEngineRunningStateChanged;
+            _engine.StateChanged -= OnEngineStateChanged;
 
         if (_eventAggregator is not null)
         {

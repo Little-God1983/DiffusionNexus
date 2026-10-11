@@ -64,23 +64,35 @@ public class UnifiedConsoleEngineTabTests
     }
 
     [Fact]
-    public async Task StartFromTheTile_SaysStarting_UntilTheStartEnds()
+    public void EngineTabs_ShowTheEnginesStart_WhoeverStartedIt()
     {
+        // Starting is the engine's state, not the tab's: the Canvas starting it on demand, a pending
+        // restart carried out, a Restart from the tile and a reload of the tabs all show it.
         var console = CreateConsole();
         var tab = EngineTab();
         console.InstanceTabs.Add(tab);
-        var gate = new TaskCompletionSource<EngineStartResult>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _engine.StartGate = gate.Task;
 
-        console.LaunchInstanceCommand.Execute(tab);
+        _engine.Starting = true;
+        console.ApplyEngineState();
 
-        tab.IsStarting.Should().BeTrue("a start takes up to two minutes; the tile must show it is under way");
+        tab.IsStarting.Should().BeTrue();
         tab.ShowStartButton.Should().BeFalse("a second Start would only queue behind the first");
+        tab.ShowStopButton.Should().BeTrue("a start can be aborted: the engine stops it within seconds");
 
-        gate.SetResult(new EngineStartResult(false, null, "no venv"));
-        for (var i = 0; i < 50 && tab.IsStarting; i++) await Task.Delay(20);
+        _engine.Starting = false;
+        console.ApplyEngineState();
         tab.IsStarting.Should().BeFalse();
-        tab.ShowStartButton.Should().BeTrue("the start failed: Start again is the way forward");
+        tab.ShowStartButton.Should().BeTrue();
+    }
+
+    [Fact]
+    public void AnUpdatingTab_HidesStart()
+    {
+        var tab = EngineTab();
+
+        tab.IsUpdating = true;
+
+        tab.ShowStartButton.Should().BeFalse("the Engine must not start from a folder being updated");
     }
 
     [Fact]
@@ -98,18 +110,20 @@ public class UnifiedConsoleEngineTabTests
     private sealed class FakeEngine : IManagedEngineControl
     {
         public bool Running { get; set; }
-        public Task<EngineStartResult>? StartGate { get; set; }
+        public bool Starting { get; set; }
         public bool IsRunning => Running;
+        public bool IsStarting => Starting;
         public string? BaseUrl => Running ? "http://127.0.0.1:50123" : null;
         public bool HasActiveJobs => false;
         public bool IsRestartPending => false;
 
 #pragma warning disable CS0067 // raising it would post to the UI dispatcher; the tests call ApplyEngineState
-        public event Action<bool>? RunningStateChanged;
+        public event Action? StateChanged;
 #pragma warning restore CS0067
 
         public Task<EngineStartResult> EnsureRunningAsync(string installRoot, CancellationToken ct) =>
-            StartGate ?? Task.FromResult(new EngineStartResult(true, BaseUrl, null));
+            Task.FromResult(new EngineStartResult(true, BaseUrl, null));
+        public IDisposable BeginPreparing() => throw new NotSupportedException();
 
         public Task StopAsync() => Task.CompletedTask;
         public void RequestRestart() { }

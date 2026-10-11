@@ -28,4 +28,18 @@ public interface IManagedComfyUiEngine
     /// waits until no job is running. Disposing the token more than once is harmless.
     /// </summary>
     IDisposable BeginJob();
+
+    /// <summary>
+    /// Marks a generation getting under way (resolving, starting, probing) until its job begins.
+    /// Counts for the console's Stop, which asks first, but not for a pending restart: the
+    /// generation that carries the restart out must not postpone it. Disposing more than once is
+    /// harmless. The default marks nothing.
+    /// </summary>
+    IDisposable BeginPreparing() => NoOp.Instance;
+
+    private sealed class NoOp : IDisposable
+    {
+        public static readonly NoOp Instance = new();
+        public void Dispose() { }
+    }
 }
