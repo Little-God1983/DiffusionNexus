@@ -108,35 +108,75 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(ShowMissingBanner))]
     private bool _isEngineInstalling;
 
-    // The status line from before the install, put back when the install ends without installing.
+    // What the tile showed before the install, put back when it ends without installing.
     private string? _versionBeforeInstall;
+    private string? _pathBeforeInstall;
 
-    // A working engine now stands behind the row, whatever the folder state was before.
-    partial void OnIsEngineInstalledChanged(bool value)
-    {
-        if (value) IsMissing = false;
-    }
-
-    partial void OnIsEngineInstallingChanged(bool value)
-    {
-        if (value)
-        {
-            _versionBeforeInstall = VersionDisplay;
-            VersionDisplay = "Installing...";
-        }
-        else if (!IsEngineInstalled && _versionBeforeInstall is not null)
-        {
-            VersionDisplay = _versionBeforeInstall;
-        }
-    }
-
-    /// <summary>Live status line shown on the engine tile during install.</summary>
+    /// <summary>Live status line shown on the engine tile during install: the running step.</summary>
     [ObservableProperty]
     private string? _engineStatusMessage;
+
+    /// <summary>
+    /// The latest install-log line, one line of it, under the step: shows a long step is still
+    /// working. The full log is in the Unified Console.
+    /// </summary>
+    [ObservableProperty]
+    private string? _engineActivity;
 
     /// <summary>Install progress 0-100; 0 when idle.</summary>
     [ObservableProperty]
     private double _engineProgressPercent;
+
+    /// <summary>
+    /// Shows the Engine install on the tile: the folder it goes into, "Installing...", and no
+    /// "missing" banner (#609). <see cref="EndEngineInstall"/> ends it.
+    /// </summary>
+    public void BeginEngineInstall(string targetFolder)
+    {
+        _versionBeforeInstall = VersionDisplay;
+        _pathBeforeInstall = InstallationPath;
+        InstallationPath = targetFolder;
+        VersionDisplay = "Installing...";
+        EngineProgressPercent = 0;
+        EngineStatusMessage = "Starting engine install...";
+        EngineActivity = null;
+        IsEngineInstalling = true;
+    }
+
+    /// <summary>
+    /// Ends the Engine install on the tile. With <paramref name="installedPath"/>, a working engine
+    /// now stands behind the row; without, the tile goes back to the row it had, its folder state
+    /// read again (the failed install may have created it). Does nothing when no install runs.
+    /// </summary>
+    public void EndEngineInstall(string? installedPath)
+    {
+        if (!IsEngineInstalling) return;
+        IsEngineInstalling = false;
+        EngineStatusMessage = null;
+        EngineActivity = null;
+        EngineProgressPercent = 0;
+
+        if (installedPath is not null)
+        {
+            InstallationPath = installedPath;
+            IsEngineInstalled = true;
+            IsMissing = false;
+            VersionDisplay = "App-managed";
+            return;
+        }
+
+        InstallationPath = _pathBeforeInstall ?? InstallationPath;
+        VersionDisplay = _versionBeforeInstall ?? VersionDisplay;
+        if (IsMissing) ShowDeadFolder(InstallationPath);
+    }
+
+    // A row whose folder holds no working engine: say whether the folder is gone or only incomplete.
+    private void ShowDeadFolder(string path)
+    {
+        var text = Directory.Exists(path) ? "Installation incomplete" : "Installation folder not found";
+        MissingBannerText = text;
+        VersionDisplay = text;
+    }
 
     /// <summary>
     /// True when not running, not missing, AND this is not a non-launchable
@@ -184,10 +224,14 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     public bool ShowDeleteFromDiskMenuItem => !IsMissing;
 
     /// <summary>
-    /// The red "Installation folder not found" banner. Not while the Engine installs into that
-    /// folder: the folder is on its way, and a red banner under a running install read as a failure (#609).
+    /// The red "missing" banner. Not while the Engine installs: the tile shows the install then,
+    /// and a red banner under a running install read as a failure (#609).
     /// </summary>
     public bool ShowMissingBanner => IsMissing && !IsEngineInstalling;
+
+    /// <summary>The banner's text. An Engine folder that exists but holds no working engine says so.</summary>
+    [ObservableProperty]
+    private string _missingBannerText = "Installation folder not found";
 
     /// <summary>Install button: engine tile, not yet installed, not currently installing.</summary>
     public bool ShowEngineInstallButton => IsEngine && !IsEngineInstalled && !IsEngineInstalling;
@@ -357,10 +401,11 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
         card.IsEngine = true;
         card.IsEngineInstalled = looksInstalled;
         card.IsMissing = installed is not null && !looksInstalled;
-        card.VersionDisplay = looksInstalled
-            ? "App-managed"
-            : installed is null ? "Not installed" : "Installation folder not found";
         card.InstallationPath = installed?.InstallationPath ?? string.Empty;
+        if (card.IsMissing)
+            card.ShowDeadFolder(card.InstallationPath);
+        else
+            card.VersionDisplay = looksInstalled ? "App-managed" : "Not installed";
 
         return card;
     }

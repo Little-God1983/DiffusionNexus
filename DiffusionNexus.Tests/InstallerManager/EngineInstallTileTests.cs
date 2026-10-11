@@ -1,10 +1,13 @@
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Installer.SDK.Services;
+using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.Engine;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
 using Moq;
+using SdkLogLevel = DiffusionNexus.Installer.SDK.Models.Enums.LogLevel;
 
 namespace DiffusionNexus.Tests.InstallerManager;
 
@@ -137,6 +140,176 @@ public class EngineInstallTileTests
 
         gate.SetResult(new EngineInstallOutcome(true, false, "done", @"C:\Engine\New"));
         await install;
+    }
+
+    [Fact]
+    public async Task FailedInstall_TheTileShowsTheFailureBeforeTheDialogOpens()
+    {
+        InstallerPackageCardViewModel? card = null;
+        (string? Version, bool Installing, bool Banner) atDialog = default;
+        var dialog = new Mock<IDialogService>();
+        dialog.Setup(d => d.ShowOpenFolderDialogAsync(It.IsAny<string>())).ReturnsAsync(@"C:\Engine\New");
+        dialog.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>()))
+            .Callback(() => atDialog = (card!.VersionDisplay, card.IsEngineInstalling, card.ShowMissingBanner))
+            .ReturnsAsync(false);
+        var vm = EngineTestHarness.CreateInstallerManagerViewModel(
+            [StaleRow()], engineInstaller: Installer(Task.FromResult(new EngineInstallOutcome(false, false, "pip failed", null))),
+            onPackageAdded: _ => { }, dialogMock: dialog);
+        vm.IsEngineTileVisible = true;
+        await vm.LoadInstallationsCommand.ExecuteAsync(null);
+        card = vm.InstallerCards.Single(c => c.IsEngine);
+
+        await vm.InstallEngineAsync();
+
+        atDialog.Installing.Should().BeFalse("the install is over when its failure is reported");
+        atDialog.Version.Should().Be("Installation folder not found");
+        atDialog.Banner.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task InstallThatThrows_TheTileShowsTheFailureBeforeTheMessageOpens()
+    {
+        InstallerPackageCardViewModel? card = null;
+        bool? installingAtMessage = null;
+        var dialog = new Mock<IDialogService>();
+        dialog.Setup(d => d.ShowOpenFolderDialogAsync(It.IsAny<string>())).ReturnsAsync(@"C:\Engine\New");
+        dialog.Setup(d => d.ShowMessageAsync(It.IsAny<string>(), It.IsAny<string>()))
+            .Callback(() => installingAtMessage = card!.IsEngineInstalling)
+            .Returns(Task.CompletedTask);
+        var vm = EngineTestHarness.CreateInstallerManagerViewModel(
+            [StaleRow()], engineInstaller: Installer(Task.FromException<EngineInstallOutcome>(new IOException("disk full"))),
+            onPackageAdded: _ => { }, dialogMock: dialog);
+        vm.IsEngineTileVisible = true;
+        await vm.LoadInstallationsCommand.ExecuteAsync(null);
+        card = vm.InstallerCards.Single(c => c.IsEngine);
+
+        await vm.InstallEngineAsync();
+
+        installingAtMessage.Should().BeFalse();
+        card.VersionDisplay.Should().Be("Installation folder not found");
+    }
+
+    [Fact]
+    public async Task InstalledEngine_FailedInstall_KeepsAppManaged()
+    {
+        var root = EngineFolder(withMainPy: true);
+        try
+        {
+            var row = StaleRow();
+            row.InstallationPath = root;
+            var (vm, _) = Create([row], Task.FromResult(new EngineInstallOutcome(false, false, "pip failed", null)));
+            await vm.LoadInstallationsCommand.ExecuteAsync(null);
+            var card = vm.InstallerCards.Single(c => c.IsEngine);
+            card.VersionDisplay.Should().Be("App-managed");
+
+            await vm.InstallEngineAsync();
+
+            card.VersionDisplay.Should().Be("App-managed", "a failed install must not leave the tile on \"Installing...\"");
+            card.InstallationPath.Should().Be(root);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task Reinstall_ShowsThePickedFolderWhileInstalling_AndTheRowsFolderAfterAFailure()
+    {
+        var gate = new TaskCompletionSource<EngineInstallOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (vm, _) = Create([StaleRow()], gate.Task);
+        await vm.LoadInstallationsCommand.ExecuteAsync(null);
+        var card = vm.InstallerCards.Single(c => c.IsEngine);
+
+        var install = vm.InstallEngineAsync();
+        card.InstallationPath.Should().Be(@"C:\Engine\New", "that is where the install goes");
+
+        gate.SetResult(new EngineInstallOutcome(false, false, "pip failed", null));
+        await install;
+        card.InstallationPath.Should().Be(StalePath, "nothing was installed: the row still points there");
+    }
+
+    [Fact]
+    public void FolderThatExistsWithoutAnEngine_SaysIncomplete_NotNotFound()
+    {
+        var root = EngineFolder(withMainPy: false);
+        try
+        {
+            var row = StaleRow();
+            row.InstallationPath = root;
+
+            var card = InstallerPackageCardViewModel.CreateEngineCard(row);
+
+            card.ShowMissingBanner.Should().BeTrue();
+            card.MissingBannerText.Should().Be("Installation incomplete");
+            card.VersionDisplay.Should().Be("Installation incomplete");
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void MissingFolder_SaysNotFound()
+    {
+        var card = InstallerPackageCardViewModel.CreateEngineCard(StaleRow());
+
+        card.MissingBannerText.Should().Be("Installation folder not found");
+        card.VersionDisplay.Should().Be("Installation folder not found");
+    }
+
+    [Fact]
+    public async Task LogEntries_KeepTheirLevelInTheConsole_AndTheLatestShowsAsOneActivityLine()
+    {
+        var logger = new Mock<IUnifiedLogger>();
+        var gate = new TaskCompletionSource<EngineInstallOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var installer = new Mock<IManagedEngineInstaller>();
+        installer.Setup(i => i.InstallBaseEngineAsync(
+                It.IsAny<EngineInstallRequest>(), It.IsAny<IProgress<InstallLogEntry>>(),
+                It.IsAny<IProgress<InstallationProgress>>(), It.IsAny<CancellationToken>()))
+            .Returns<EngineInstallRequest, IProgress<InstallLogEntry>, IProgress<InstallationProgress>, CancellationToken>(
+                (_, log, _, _) =>
+                {
+                    log.Report(new InstallLogEntry { Message = "pip install failed", Level = SdkLogLevel.Error });
+                    log.Report(new InstallLogEntry { Message = "no GPU found", Level = SdkLogLevel.Warning });
+                    log.Report(new InstallLogEntry { Message = "Collecting torch\nDownloading torch-2.8.0.whl", Level = SdkLogLevel.Info });
+                    log.Report(new InstallLogEntry { Message = "Executing: pip install torch", Level = SdkLogLevel.Debug });
+                    return gate.Task;
+                });
+        var vm = EngineTestHarness.CreateInstallerManagerViewModel(
+            [], engineInstaller: installer.Object, chosenFolder: @"C:\Engine\New", onPackageAdded: _ => { }, loggerMock: logger);
+        vm.IsEngineTileVisible = true;
+        await vm.LoadInstallationsCommand.ExecuteAsync(null);
+        var card = vm.InstallerCards.Single(c => c.IsEngine);
+
+        var previous = SynchronizationContext.Current;
+        SynchronizationContext.SetSynchronizationContext(new InlineSynchronizationContext());
+        Task install;
+        try { install = vm.InstallEngineAsync(); }
+        finally { SynchronizationContext.SetSynchronizationContext(previous); }
+
+        logger.Verify(l => l.Error(LogCategory.Installation, "Diffusion Nexus Engine", "pip install failed", null), Times.Once);
+        logger.Verify(l => l.Warn(LogCategory.Installation, "Diffusion Nexus Engine", "no GPU found", null), Times.Once);
+        logger.Verify(l => l.Debug(LogCategory.Installation, "Diffusion Nexus Engine", "Executing: pip install torch", null), Times.Once);
+        card.EngineActivity.Should().Be("Collecting torch",
+            "the tile shows that something is happening, one line of it; commands (Debug) stay in the console");
+
+        gate.SetResult(new EngineInstallOutcome(true, false, "done", @"C:\Engine\New"));
+        await install;
+        card.EngineActivity.Should().BeNull();
+    }
+
+    private static IManagedEngineInstaller Installer(Task<EngineInstallOutcome> outcome)
+    {
+        var installer = new Mock<IManagedEngineInstaller>();
+        installer.Setup(i => i.InstallBaseEngineAsync(
+                It.IsAny<EngineInstallRequest>(), It.IsAny<IProgress<InstallLogEntry>>(),
+                It.IsAny<IProgress<InstallationProgress>>(), It.IsAny<CancellationToken>()))
+            .Returns(outcome);
+        return installer.Object;
+    }
+
+    private static string EngineFolder(bool withMainPy)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "dn-engine-tile-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        if (withMainPy) File.WriteAllText(Path.Combine(root, "main.py"), "# ComfyUI");
+        return root;
     }
 
     private sealed class InlineSynchronizationContext : SynchronizationContext

@@ -341,7 +341,7 @@
                                         IsVisible="{Binding ShowMissingBanner}">
                                     <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
                                         <TextBlock Text="&#x26A0;" FontSize="14" Foreground="#DC3545" VerticalAlignment="Center"/>
-                                        <TextBlock Text="Installation folder not found" FontSize="13" Foreground="#DC3545" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                        <TextBlock Text="{Binding MissingBannerText}" FontSize="13" Foreground="#DC3545" FontWeight="SemiBold" VerticalAlignment="Center"/>
                                     </StackPanel>
                                 </Border>
 
@@ -394,6 +394,14 @@
                                                    MaxLines="2"
                                                    TextTrimming="CharacterEllipsis"
                                                    ToolTip.Tip="{Binding EngineStatusMessage}"
+                                                   IsVisible="{Binding IsEngineInstalling}"/>
+                                        <!-- One line of the latest install output: a long step still looks alive. -->
+                                        <TextBlock Text="{Binding EngineActivity}"
+                                                   FontSize="10"
+                                                   Opacity="0.6"
+                                                   MaxLines="1"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   ToolTip.Tip="{Binding EngineActivity}"
                                                    IsVisible="{Binding IsEngineInstalling}"/>
                                         <ProgressBar Minimum="0" Maximum="100"
                                                      Value="{Binding EngineProgressPercent}"

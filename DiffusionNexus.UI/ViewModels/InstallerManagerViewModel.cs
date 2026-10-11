@@ -1042,6 +1042,32 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
     private Task OnEngineInstallRequestedAsync(InstallerPackageCardViewModel card) => InstallEngineAsync();
 
+    // An Engine install-log line into the Unified Console at the level the SDK gave it, so errors and
+    // warnings count and filter as such there.
+    private void LogEngineInstallEntry(DiffusionNexus.Installer.SDK.Services.InstallLogEntry entry)
+    {
+        const string source = "Diffusion Nexus Engine";
+        switch (entry.Level)
+        {
+            case DiffusionNexus.Installer.SDK.Models.Enums.LogLevel.Error:
+                _unifiedLogger.Error(LogCategory.Installation, source, entry.Message);
+                break;
+            case DiffusionNexus.Installer.SDK.Models.Enums.LogLevel.Warning:
+                _unifiedLogger.Warn(LogCategory.Installation, source, entry.Message);
+                break;
+            case DiffusionNexus.Installer.SDK.Models.Enums.LogLevel.Debug:
+                _unifiedLogger.Debug(LogCategory.Installation, source, entry.Message);
+                break;
+            default:
+                _unifiedLogger.Info(LogCategory.Installation, source, entry.Message);
+                break;
+        }
+    }
+
+    // The first non-empty line of a log message, trimmed: one line fits the tile.
+    private static string? FirstLine(string? message) =>
+        message?.Split('\n', '\r').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0);
+
     /// <summary>
     /// Installs the base engine: asks for a target folder, runs the SDK install with all content
     /// excluded, and on success records it as an app-managed ComfyUI installation. Progress goes
@@ -1082,23 +1108,33 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
             UnifiedConsolePanelRequested?.Invoke(this, EventArgs.Empty);
 
-            card.IsEngineInstalling = true;
+            card.BeginEngineInstall(folder);
             engineRunning = _installActivity?.Begin("Diffusion Nexus Engine");
-            card.EngineProgressPercent = 0;
-            card.EngineStatusMessage = "Starting engine install...";
             _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
                 $"Starting base engine install into {folder}.");
 
-            // Raw log lines go to the Unified Console only (opened above). On the tile they replaced
-            // the step, and pip's package lists flooded it (#609); the tile shows the step instead.
+            // The full log goes to the Unified Console (opened above), each line at its own level. On
+            // the tile, raw lines replaced the step and pip's package lists flooded it (#609): the tile
+            // keeps the step and shows one line of the latest output, so a long step still looks alive.
+            // Commands (Debug) stay in the console.
             var logProgress = new Progress<DiffusionNexus.Installer.SDK.Services.InstallLogEntry>(entry =>
-                _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine", entry.Message));
+            {
+                LogEngineInstallEntry(entry);
+                if (entry.Level != DiffusionNexus.Installer.SDK.Models.Enums.LogLevel.Debug)
+                    card.EngineActivity = FirstLine(entry.Message);
+            });
 
             var stepProgress = new Progress<DiffusionNexus.Installer.SDK.Services.InstallationProgress>(p =>
             {
                 card.EngineProgressPercent = p.ProgressPercentage;
                 card.EngineStatusMessage = $"[{p.StepIndex + 1}/{p.TotalSteps}] {p.Message}";
             });
+
+            // Shown once the tile has ended the install: a failure dialog must not open over a tile
+            // that still says "Installing...".
+            string? failureToReport = null;
+            string? failureMessage = null;
+            string? installedPath = null;
 
             try
             {
@@ -1159,9 +1195,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
                     await _unitOfWork.SaveChangesAsync();
 
-                    card.InstallationPath = package.InstallationPath;
-                    card.IsEngineInstalled = true;
-                    card.VersionDisplay = "App-managed";
+                    installedPath = package.InstallationPath;
+                    card.EndEngineInstall(installedPath);
 
                     _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
                         $"Engine installed at {package.InstallationPath}.");
@@ -1193,13 +1228,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
                 {
                     _unifiedLogger.Error(LogCategory.Installation, "Diffusion Nexus Engine",
                         $"Engine install failed: {outcome.Message}");
-
-                    // A genuine failure (not a cancel) is worth reporting — offer the existing
-                    // feedback dialog instead of leaving the user with a dead end.
-                    var report = await _dialogService.ShowConfirmAsync("Engine install failed",
-                        $"{outcome.Message}\n\nSend a report so this can be fixed?");
-                    if (report)
-                        await _dialogService.ShowFeedbackDialogAsync();
+                    failureToReport = outcome.Message;
                 }
             }
             catch (Exception ex)
@@ -1207,20 +1236,33 @@ public partial class InstallerManagerViewModel : ViewModelBase
                 Serilog.Log.Error(ex, "Diffusion Nexus Engine install failed");
                 _unifiedLogger.Error(LogCategory.Installation, "Diffusion Nexus Engine",
                     $"Engine install failed: {ex.Message}", ex);
-                await _dialogService.ShowMessageAsync("Engine install failed", ex.Message);
+                failureMessage = ex.Message;
             }
             finally
             {
-                card.IsEngineInstalling = false;
+                // A no-op when the success path already ended it with the installed folder.
+                card.EndEngineInstall(installedPath);
                 engineRunning?.Dispose();
-                card.EngineStatusMessage = null;
-                card.EngineProgressPercent = 0;
 
                 // The visibility switch may have moved while we were installing — its own reload was
                 // suppressed in OnIsEngineTileVisibleChanged to avoid detaching `card` mid-install.
                 // Catch up now: the install has finished, so a reload can no longer orphan it.
                 if (IsEngineTileVisible != visibilityAtStart)
                     _ = LoadInstallationsCommand.ExecuteAsync(null);
+            }
+
+            if (failureToReport is not null)
+            {
+                // A genuine failure (not a cancel) is worth reporting — offer the existing
+                // feedback dialog instead of leaving the user with a dead end.
+                var report = await _dialogService.ShowConfirmAsync("Engine install failed",
+                    $"{failureToReport}\n\nSend a report so this can be fixed?");
+                if (report)
+                    await _dialogService.ShowFeedbackDialogAsync();
+            }
+            else if (failureMessage is not null)
+            {
+                await _dialogService.ShowMessageAsync("Engine install failed", failureMessage);
             }
         }
         finally
