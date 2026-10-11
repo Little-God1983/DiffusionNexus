@@ -19,12 +19,18 @@ public static class ManagedEngineLocator
     /// True when <paramref name="installRoot"/> contains a ComfyUI entry point. Used to detect
     /// an engine whose database row exists but whose folder was deleted behind the app's back.
     /// </summary>
-    public static bool LooksInstalled(string? installRoot)
+    public static bool LooksInstalled(string? installRoot) => Probe(installRoot) == EngineFolderState.Installed;
+
+    /// <summary>
+    /// What <paramref name="installRoot"/> holds, in one look at the disk: no folder, a folder
+    /// without a ComfyUI entry point (an install that did not finish), or a working engine.
+    /// </summary>
+    public static EngineFolderState Probe(string? installRoot)
     {
         if (string.IsNullOrWhiteSpace(installRoot) || !Directory.Exists(installRoot))
-            return false;
+            return EngineFolderState.Missing;
 
-        return ResolveMainPy(installRoot) is not null;
+        return ResolveMainPy(installRoot) is null ? EngineFolderState.Incomplete : EngineFolderState.Installed;
     }
 
     /// <summary>
@@ -46,4 +52,15 @@ public static class ManagedEngineLocator
         var nested = Path.Combine(installRoot, "ComfyUI", "main.py");
         return File.Exists(nested) ? nested : null;
     }
+}
+
+/// <summary>What an Engine install folder holds (<see cref="ManagedEngineLocator.Probe"/>).</summary>
+public enum EngineFolderState
+{
+    /// <summary>No folder at that path.</summary>
+    Missing,
+    /// <summary>The folder exists but holds no ComfyUI entry point.</summary>
+    Incomplete,
+    /// <summary>A ComfyUI entry point is there.</summary>
+    Installed
 }

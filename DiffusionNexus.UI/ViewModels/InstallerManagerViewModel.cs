@@ -13,6 +13,7 @@ using DiffusionNexus.UI.Services.ConfigurationChecker;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using Microsoft.Extensions.DependencyInjection;
+using SdkLogLevel = DiffusionNexus.Installer.SDK.Models.Enums.LogLevel;
 
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -1042,6 +1043,82 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
     private Task OnEngineInstallRequestedAsync(InstallerPackageCardViewModel card) => InstallEngineAsync();
 
+    private const string EngineLogSource = "Diffusion Nexus Engine";
+
+    // Counts Engine installs, so progress posted by a finished install never writes the next one's tile.
+    private int _engineInstallGeneration;
+
+    // An Engine install-log line into the Unified Console. Errors the SDK reports (Error, Critical)
+    // count as errors there; everything else is Info. Not Warning: the SDK reports every stderr line
+    // as Warning, and git and pip write ordinary progress there, so a clean install would count
+    // dozens of warnings. Not Debug: the console hides it by default, and the "Executing: ..."
+    // command is what names a step that hangs.
+    private void LogEngineInstallEntry(DiffusionNexus.Installer.SDK.Services.InstallLogEntry entry)
+    {
+        if (entry.Level is SdkLogLevel.Error or SdkLogLevel.Critical)
+            _unifiedLogger.Error(LogCategory.Installation, EngineLogSource, entry.Message);
+        else
+            _unifiedLogger.Info(LogCategory.Installation, EngineLogSource, entry.Message);
+    }
+
+    // Commands (Debug) and verbose detail (Trace) stay in the console; the rest may show on the tile.
+    private static bool ShowsOnEngineTile(SdkLogLevel level) =>
+        level is not (SdkLogLevel.Debug or SdkLogLevel.Trace);
+
+    // One step after a successful Engine install. The engine is installed and its row saved by then,
+    // so a step that throws is logged as a warning, never reported as a failed install, and the
+    // steps after it still run.
+    private async Task RunEngineFollowUpAsync(string what, Func<Task> step)
+    {
+        try
+        {
+            await step();
+        }
+        catch (Exception ex)
+        {
+            LogEngineFollowUpFailure(what, ex);
+        }
+    }
+
+    private void RunEngineFollowUp(string what, Action step)
+    {
+        try
+        {
+            step();
+        }
+        catch (Exception ex)
+        {
+            LogEngineFollowUpFailure(what, ex);
+        }
+    }
+
+    private void LogEngineFollowUpFailure(string what, Exception ex)
+    {
+        Serilog.Log.Warning(ex, "Diffusion Nexus Engine installed, but could not {What}", what);
+        _unifiedLogger.Warn(LogCategory.Installation, EngineLogSource,
+            $"Engine installed, but could not {what}: {ex.Message}");
+    }
+
+    private static readonly char[] LineBreaks = ['\n', '\r'];
+
+    // One line of a log message for the tile: the newest, i.e. the last non-blank piece between line
+    // breaks. A traceback ends with the error, batched output with the latest step, and git and pip
+    // redraw progress in place with carriage returns. Scans backwards: batched pip output can be
+    // large, and this runs on the UI thread for every entry. Null when the message is blank.
+    private static string? ActivityLine(string? message)
+    {
+        if (string.IsNullOrEmpty(message)) return null;
+        var end = message.Length;
+        while (end > 0)
+        {
+            var start = message.LastIndexOfAny(LineBreaks, end - 1) + 1;
+            var piece = message.AsSpan(start, end - start).Trim();
+            if (!piece.IsEmpty) return piece.ToString();
+            end = start - 1;
+        }
+        return null;
+    }
+
     /// <summary>
     /// Installs the base engine: asks for a target folder, runs the SDK install with all content
     /// excluded, and on success records it as an app-managed ComfyUI installation. Progress goes
@@ -1082,27 +1159,49 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
             UnifiedConsolePanelRequested?.Invoke(this, EventArgs.Empty);
 
-            card.IsEngineInstalling = true;
-            engineRunning = _installActivity?.Begin("Diffusion Nexus Engine");
-            card.EngineProgressPercent = 0;
-            card.EngineStatusMessage = "Starting engine install...";
-            _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
-                $"Starting base engine install into {folder}.");
+            // Progress<T> posts its callbacks, so a report queued as the SDK returned can land after the
+            // install ended, or during the next one: it still reaches the console, but only the install
+            // that sent it, while it runs, writes the tile.
+            var generation = ++_engineInstallGeneration;
+            bool WritesTile() => generation == _engineInstallGeneration && card.IsEngineInstalling;
 
+            // The full log goes to the Unified Console (opened above), errors as errors. On
+            // the tile, raw lines replaced the step and pip's package lists flooded it (#609): the tile
+            // keeps the step and shows one line of the latest output, so a long step still looks alive.
+            // A blank line (pip and git write some to stderr) keeps the line that is there.
             var logProgress = new Progress<DiffusionNexus.Installer.SDK.Services.InstallLogEntry>(entry =>
             {
-                card.EngineStatusMessage = entry.Message;
-                _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine", entry.Message);
+                LogEngineInstallEntry(entry);
+                if (WritesTile() && ShowsOnEngineTile(entry.Level) && ActivityLine(entry.Message) is { } line)
+                    card.EngineActivity = line;
             });
 
+            var lastStep = -1;
             var stepProgress = new Progress<DiffusionNexus.Installer.SDK.Services.InstallationProgress>(p =>
             {
+                if (!WritesTile()) return;
+                // The previous step's last line says nothing about this one.
+                if (p.StepIndex != lastStep) card.EngineActivity = null;
+                lastStep = p.StepIndex;
                 card.EngineProgressPercent = p.ProgressPercentage;
                 card.EngineStatusMessage = $"[{p.StepIndex + 1}/{p.TotalSteps}] {p.Message}";
             });
 
+            // Shown once the tile has ended the install: a failure dialog must not open over a tile
+            // that still says "Installing...".
+            string? failureToReport = null;
+            string? failureMessage = null;
+            string? installedPath = null;
+
             try
             {
+                // Inside the try: whatever throws from here on, the finally ends the install on the
+                // tile, so it can never stay on "Installing..." with Install hidden.
+                card.BeginEngineInstall(folder);
+                engineRunning = _installActivity?.Begin("Diffusion Nexus Engine");
+                _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
+                    $"Starting base engine install into {folder}.");
+
                 var sharedRoots = await ResolveSharedModelRootsAsync();
 
                 var outcome = await _engineInstaller.InstallBaseEngineAsync(
@@ -1160,11 +1259,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
                     await _unitOfWork.SaveChangesAsync();
 
-                    card.InstallationPath = package.InstallationPath;
-                    card.IsEngineInstalled = true;
-                    card.VersionDisplay = "App-managed";
-
-                    _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
+                    installedPath = package.InstallationPath;
+                    _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
                         $"Engine installed at {package.InstallationPath}.");
 
                     // The SDK's installer can only declare one shared library (its ModelBaseFolder
@@ -1172,62 +1268,100 @@ public partial class InstallerManagerViewModel : ViewModelBase
                     // with every registered folder now that the install is on disk.
                     if (_engineModelPaths is not null)
                     {
-                        var sync = await _engineModelPaths.SyncAsync(package.InstallationPath);
-                        DiffusionNexus.UI.Services.Engine.EngineModelFoldersChanged.RequestRestartIfWritten(sync, _engine, _unifiedLogger);
-                        _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
-                            sync.Roots.Count > 0
-                                ? $"Engine reads {sync.Roots.Count} model folder(s): {string.Join(" | ", sync.Roots)}"
-                                : $"No shared model folders were wired into the engine ({sync.SkipReason ?? "none registered"}); " +
-                                  "it will only use its own models folder.");
+                        await RunEngineFollowUpAsync("wire the shared model folders", async () =>
+                        {
+                            var sync = await _engineModelPaths.SyncAsync(package.InstallationPath);
+                            DiffusionNexus.UI.Services.Engine.EngineModelFoldersChanged.RequestRestartIfWritten(sync, _engine, _unifiedLogger);
+                            _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
+                                sync.Roots.Count > 0
+                                    ? $"Engine reads {sync.Roots.Count} model folder(s): {string.Join(" | ", sync.Roots)}"
+                                    : $"No shared model folders were wired into the engine ({sync.SkipReason ?? "none registered"}); " +
+                                      "it will only use its own models folder.");
+                        });
                     }
 
-                    _eventAggregator.PublishInstallerPackagesChanged(new InstallerPackagesChangedEventArgs());
+                    RunEngineFollowUp("announce the new installation",
+                        () => _eventAggregator.PublishInstallerPackagesChanged(new InstallerPackagesChangedEventArgs()));
                     // Settings' Engine status line and the editor's readiness lines re-check on this.
-                    _eventAggregator.PublishEngineChanged(new EngineChangedEventArgs());
+                    RunEngineFollowUp("tell Settings and the editor",
+                        () => _eventAggregator.PublishEngineChanged(new EngineChangedEventArgs()));
                 }
                 else if (outcome.IsCancelled)
                 {
-                    _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
+                    _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
                         "Engine install cancelled by the user. Nothing was registered.");
                 }
                 else
                 {
-                    _unifiedLogger.Error(LogCategory.Installation, "Diffusion Nexus Engine",
+                    _unifiedLogger.Error(LogCategory.Installation, EngineLogSource,
                         $"Engine install failed: {outcome.Message}");
-
-                    // A genuine failure (not a cancel) is worth reporting — offer the existing
-                    // feedback dialog instead of leaving the user with a dead end.
-                    var report = await _dialogService.ShowConfirmAsync("Engine install failed",
-                        $"{outcome.Message}\n\nSend a report so this can be fixed?");
-                    if (report)
-                        await _dialogService.ShowFeedbackDialogAsync();
+                    failureToReport = outcome.Message;
                 }
             }
             catch (Exception ex)
             {
                 Serilog.Log.Error(ex, "Diffusion Nexus Engine install failed");
-                _unifiedLogger.Error(LogCategory.Installation, "Diffusion Nexus Engine",
+                _unifiedLogger.Error(LogCategory.Installation, EngineLogSource,
                     $"Engine install failed: {ex.Message}", ex);
-                await _dialogService.ShowMessageAsync("Engine install failed", ex.Message);
+                failureMessage = ex.Message;
             }
             finally
             {
-                card.IsEngineInstalling = false;
-                engineRunning?.Dispose();
-                card.EngineStatusMessage = null;
-                card.EngineProgressPercent = 0;
+                // Nothing installed: the row's folder may have changed (the install may have written
+                // into it), so read it again the way a reload would, off the UI thread (a sleeping
+                // drive must not freeze the window), and before the tile ends the install: Install
+                // comes back then, and a click must meet the folder as it is now.
+                if (installedPath is null && card.HasEngineRow)
+                {
+                    try
+                    {
+                        var rowFolder = card.InstallationPath;
+                        card.ApplyEngineFolder(await Task.Run(() => Services.Engine.ManagedEngineLocator.Probe(rowFolder)));
+                    }
+                    catch (Exception ex)
+                    {
+                        Serilog.Log.Warning(ex, "Could not read the Engine folder again after a failed install");
+                    }
+                }
 
-                // The visibility switch may have moved while we were installing — its own reload was
-                // suppressed in OnIsEngineTileVisibleChanged to avoid detaching `card` mid-install.
-                // Catch up now: the install has finished, so a reload can no longer orphan it.
-                if (IsEngineTileVisible != visibilityAtStart)
-                    _ = LoadInstallationsCommand.ExecuteAsync(null);
+                card.EndEngineInstall(installedPath);
+                engineRunning?.Dispose();
+            }
+
+            // The install is over by now, so a dialog that cannot open is logged, never thrown.
+            try
+            {
+                if (failureToReport is not null)
+                {
+                    // A genuine failure (not a cancel) is worth reporting — offer the existing
+                    // feedback dialog instead of leaving the user with a dead end.
+                    var report = await _dialogService.ShowConfirmAsync("Engine install failed",
+                        $"{failureToReport}\n\nSend a report so this can be fixed?");
+                    if (report)
+                        await _dialogService.ShowFeedbackDialogAsync();
+                }
+                else if (failureMessage is not null)
+                {
+                    await _dialogService.ShowMessageAsync("Engine install failed", failureMessage);
+                }
+            }
+            catch (Exception ex)
+            {
+                Serilog.Log.Error(ex, "Could not show the Engine install failure");
+                _unifiedLogger.Error(LogCategory.Installation, EngineLogSource,
+                    $"Could not show the install failure: {ex.Message}", ex);
             }
         }
         finally
         {
             _isEngineInstallInFlight = false;
             engineRunning?.Dispose();
+
+            // The visibility switch may have moved while we were installing — its own reload was
+            // suppressed in OnIsEngineTileVisibleChanged to avoid detaching `card` mid-install.
+            // Catch up now, after the tile has shown how the install ended, whatever threw.
+            if (IsEngineTileVisible != visibilityAtStart)
+                _ = LoadInstallationsCommand.ExecuteAsync(null);
         }
     }
 
