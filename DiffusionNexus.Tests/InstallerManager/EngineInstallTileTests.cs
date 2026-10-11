@@ -395,6 +395,140 @@ public class EngineInstallTileTests
         card.EngineActivity.Should().BeNull();
     }
 
+    [Fact]
+    public async Task FailedReinstall_ThatLeftAComfyUiEntryPoint_ReadsTheFolderLikeAReload()
+    {
+        // The row's folder exists but holds no engine; the reinstall into it clones ComfyUI (main.py)
+        // and then fails. The tile must read the folder the way a reload would, not differently.
+        var root = EngineFolder(withMainPy: false);
+        try
+        {
+            var row = StaleRow();
+            row.InstallationPath = root;
+            var installer = new Mock<IManagedEngineInstaller>();
+            installer.Setup(i => i.InstallBaseEngineAsync(
+                    It.IsAny<EngineInstallRequest>(), It.IsAny<IProgress<InstallLogEntry>>(),
+                    It.IsAny<IProgress<InstallationProgress>>(), It.IsAny<CancellationToken>()))
+                .Returns(() =>
+                {
+                    File.WriteAllText(Path.Combine(root, "main.py"), "# ComfyUI");
+                    return Task.FromResult(new EngineInstallOutcome(false, false, "torch failed", null));
+                });
+            var vm = EngineTestHarness.CreateInstallerManagerViewModel(
+                [row], engineInstaller: installer.Object, chosenFolder: root, onPackageAdded: _ => { });
+            vm.IsEngineTileVisible = true;
+            await vm.LoadInstallationsCommand.ExecuteAsync(null);
+            var card = vm.InstallerCards.Single(c => c.IsEngine);
+            card.VersionDisplay.Should().Be("Installation incomplete");
+
+            await vm.InstallEngineAsync();
+
+            var reloaded = InstallerPackageCardViewModel.CreateEngineCard(row);
+            card.VersionDisplay.Should().Be(reloaded.VersionDisplay);
+            card.IsEngineInstalled.Should().Be(reloaded.IsEngineInstalled);
+            card.ShowMissingBanner.Should().Be(reloaded.ShowMissingBanner);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task ANewStep_ClearsThePreviousStepsActivityLine()
+    {
+        var gate = new TaskCompletionSource<EngineInstallOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var installer = new Mock<IManagedEngineInstaller>();
+        installer.Setup(i => i.InstallBaseEngineAsync(
+                It.IsAny<EngineInstallRequest>(), It.IsAny<IProgress<InstallLogEntry>>(),
+                It.IsAny<IProgress<InstallationProgress>>(), It.IsAny<CancellationToken>()))
+            .Returns<EngineInstallRequest, IProgress<InstallLogEntry>, IProgress<InstallationProgress>, CancellationToken>(
+                (_, log, steps, _) =>
+                {
+                    steps.Report(new InstallationProgress { CurrentStep = InstallationStep.PythonCheck, StepIndex = 4, TotalSteps = 13, Message = "Installing requirements" });
+                    log.Report(new InstallLogEntry { Message = "Successfully installed requests-2.32.3" });
+                    steps.Report(new InstallationProgress { CurrentStep = InstallationStep.PythonCheck, StepIndex = 5, TotalSteps = 13, Message = "Installing PyTorch..." });
+                    return gate.Task;
+                });
+        var vm = EngineTestHarness.CreateInstallerManagerViewModel(
+            [], engineInstaller: installer.Object, chosenFolder: @"C:\Engine\New", onPackageAdded: _ => { });
+        vm.IsEngineTileVisible = true;
+        await vm.LoadInstallationsCommand.ExecuteAsync(null);
+        var card = vm.InstallerCards.Single(c => c.IsEngine);
+
+        var install = StartInline(vm);
+
+        card.EngineStatusMessage.Should().Be("[6/13] Installing PyTorch...");
+        card.EngineActivity.Should().BeNull("step 5's last line says nothing about step 6");
+
+        gate.SetResult(new EngineInstallOutcome(true, false, "done", @"C:\Engine\New"));
+        await install;
+    }
+
+    [Fact]
+    public async Task OutputThatRedrawsItself_ShowsItsNewestState()
+    {
+        var gate = new TaskCompletionSource<EngineInstallOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var installer = new Mock<IManagedEngineInstaller>();
+        installer.Setup(i => i.InstallBaseEngineAsync(
+                It.IsAny<EngineInstallRequest>(), It.IsAny<IProgress<InstallLogEntry>>(),
+                It.IsAny<IProgress<InstallationProgress>>(), It.IsAny<CancellationToken>()))
+            .Returns<EngineInstallRequest, IProgress<InstallLogEntry>, IProgress<InstallationProgress>, CancellationToken>(
+                (_, log, _, _) =>
+                {
+                    log.Report(new InstallLogEntry { Message = "Receiving objects:   1%\rReceiving objects:  35%\rReceiving objects: 100%, done.\r\nResolving deltas" });
+                    return gate.Task;
+                });
+        var vm = EngineTestHarness.CreateInstallerManagerViewModel(
+            [], engineInstaller: installer.Object, chosenFolder: @"C:\Engine\New", onPackageAdded: _ => { });
+        vm.IsEngineTileVisible = true;
+        await vm.LoadInstallationsCommand.ExecuteAsync(null);
+        var card = vm.InstallerCards.Single(c => c.IsEngine);
+
+        var install = StartInline(vm);
+
+        card.EngineActivity.Should().Be("Receiving objects: 100%, done.",
+            "a carriage return redraws the line: the last state is the current one");
+
+        gate.SetResult(new EngineInstallOutcome(true, false, "done", @"C:\Engine\New"));
+        await install;
+    }
+
+    [Fact]
+    public async Task TheCatchUpReload_RunsAfterTheFailureDialog_NotUnderIt()
+    {
+        var gate = new TaskCompletionSource<EngineInstallOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
+        InstallerPackageCardViewModel? card = null;
+        InstallerManagerViewModel? vm = null;
+        bool? cardStillShownAtDialog = null;
+        var dialog = new Mock<IDialogService>();
+        dialog.Setup(d => d.ShowOpenFolderDialogAsync(It.IsAny<string>())).ReturnsAsync(@"C:\Engine\New");
+        dialog.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>()))
+            .Callback(() => cardStillShownAtDialog = vm!.InstallerCards.Contains(card!))
+            .ReturnsAsync(false);
+        vm = EngineTestHarness.CreateInstallerManagerViewModel(
+            [StaleRow()], engineInstaller: Installer(gate.Task), onPackageAdded: _ => { }, dialogMock: dialog);
+        vm.IsEngineTileVisible = true;
+        await vm.LoadInstallationsCommand.ExecuteAsync(null);
+        card = vm.InstallerCards.Single(c => c.IsEngine);
+
+        var install = vm.InstallEngineAsync();
+        vm.IsEngineTileVisible = false;   // its reload waits for the install
+        gate.SetResult(new EngineInstallOutcome(false, false, "pip failed", null));
+        await install;
+        await (vm.LoadInstallationsCommand.ExecutionTask ?? Task.CompletedTask);
+
+        cardStillShownAtDialog.Should().BeTrue("the failure belongs to the tile the user watched; the list catches up after");
+        vm.InstallerCards.Any(c => c.IsEngine).Should().BeFalse("the switch ended off, and the reload did catch up");
+    }
+
+    // Runs the install with Progress<T> callbacks inline, so reports made before the install
+    // suspends on its gate have landed when this returns.
+    private static Task StartInline(InstallerManagerViewModel vm)
+    {
+        var previous = SynchronizationContext.Current;
+        SynchronizationContext.SetSynchronizationContext(new InlineSynchronizationContext());
+        try { return vm.InstallEngineAsync(); }
+        finally { SynchronizationContext.SetSynchronizationContext(previous); }
+    }
+
     private static IManagedEngineInstaller Installer(Task<EngineInstallOutcome> outcome)
     {
         var installer = new Mock<IManagedEngineInstaller>();

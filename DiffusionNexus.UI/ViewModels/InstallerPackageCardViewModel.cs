@@ -109,12 +109,12 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(ShowMissingBanner))]
     private bool _isEngineInstalling;
 
-    // What the tile showed before the install, put back when it ends without installing.
-    private string _versionBeforeInstall = string.Empty;
+    // What the Engine row's folder holds; null when there is no row. The status line and the banner
+    // are derived from it and IsEngineInstalling (RefreshEngineStatus), never written on their own.
+    private EngineFolderState? _engineFolder;
 
     // The folder an Engine install writes into, shown as the path while it runs. Kept apart from
-    // InstallationPath: Delete from Disk, Settings and Open Folder act on that one, never on a
-    // folder the install is still writing into.
+    // InstallationPath, which stays the row's folder.
     private string? _installTarget;
 
     /// <summary>Live status line shown on the engine tile during install: the running step.</summary>
@@ -138,21 +138,19 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     /// </summary>
     public void BeginEngineInstall(string targetFolder)
     {
-        _versionBeforeInstall = VersionDisplay;
         _installTarget = targetFolder;
         OnPropertyChanged(nameof(PathDisplay));
-        VersionDisplay = "Installing...";
         EngineProgressPercent = 0;
         EngineStatusMessage = "Starting engine install...";
         EngineActivity = null;
         IsEngineInstalling = true;
+        RefreshEngineStatus();
     }
 
     /// <summary>
     /// Ends the Engine install on the tile. With <paramref name="installedPath"/>, a working engine
-    /// now stands behind the row; without, the tile goes back to what it showed before (the caller
-    /// re-reads the folder with <see cref="ShowDeadFolder"/>, off the UI thread). Does nothing when
-    /// no install runs.
+    /// now stands behind the row; without, the tile shows the row's folder as it was read last (the
+    /// caller reads it again with <see cref="ApplyEngineFolder"/>). Does nothing when no install runs.
     /// </summary>
     public void EndEngineInstall(string? installedPath)
     {
@@ -167,24 +165,41 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
         if (installedPath is not null)
         {
             InstallationPath = installedPath;
-            IsEngineInstalled = true;
-            IsMissing = false;
-            VersionDisplay = "App-managed";
+            ApplyEngineFolder(EngineFolderState.Installed);
             return;
         }
 
-        VersionDisplay = _versionBeforeInstall;
+        RefreshEngineStatus();
     }
 
     /// <summary>
-    /// A row whose folder holds no working engine: says whether the folder is gone or only
-    /// incomplete. Takes the folder's state so callers decide where the disk is read.
+    /// What the Engine row's folder holds (<see cref="ManagedEngineLocator.Probe"/>), or null when
+    /// there is no row. The one place the tile's installed / missing state is set from the disk.
     /// </summary>
-    public void ShowDeadFolder(bool folderExists)
+    public void ApplyEngineFolder(EngineFolderState? folder)
     {
-        var text = folderExists ? "Installation incomplete" : "Installation folder not found";
-        MissingBannerText = text;
-        VersionDisplay = text;
+        _engineFolder = folder;
+        IsEngineInstalled = folder == EngineFolderState.Installed;
+        IsMissing = folder is EngineFolderState.Missing or EngineFolderState.Incomplete;
+        RefreshEngineStatus();
+    }
+
+    private void RefreshEngineStatus()
+    {
+        if (IsEngineInstalling)
+        {
+            VersionDisplay = "Installing...";
+            return;
+        }
+
+        VersionDisplay = _engineFolder switch
+        {
+            null => "Not installed",
+            EngineFolderState.Installed => "App-managed",
+            EngineFolderState.Incomplete => "Installation incomplete",
+            _ => "Installation folder not found"
+        };
+        if (IsMissing) MissingBannerText = VersionDisplay;
     }
 
     /// <summary>
@@ -406,19 +421,13 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
             ? new InstallerPackageCardViewModel(forCore: true)
             : new InstallerPackageCardViewModel(installed);
 
-        var folder = ManagedEngineLocator.Probe(installed?.InstallationPath);
-        var looksInstalled = folder == EngineFolderState.Installed;
+        var folder = installed is null ? (EngineFolderState?)null : ManagedEngineLocator.Probe(installed.InstallationPath);
 
         card.Name = "Diffusion Nexus Engine";
         card.Type = InstallerType.ComfyUI;
         card.IsEngine = true;
-        card.IsEngineInstalled = looksInstalled;
-        card.IsMissing = installed is not null && !looksInstalled;
         card.InstallationPath = installed?.InstallationPath ?? string.Empty;
-        if (card.IsMissing)
-            card.ShowDeadFolder(folderExists: folder == EngineFolderState.Incomplete);
-        else
-            card.VersionDisplay = looksInstalled ? "App-managed" : "Not installed";
+        card.ApplyEngineFolder(folder);
 
         return card;
     }

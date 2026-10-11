@@ -1085,15 +1085,36 @@ public partial class InstallerManagerViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            Serilog.Log.Warning(ex, "Diffusion Nexus Engine installed, but could not {What}", what);
-            _unifiedLogger.Warn(LogCategory.Installation, EngineLogSource,
-                $"Engine installed, but could not {what}: {ex.Message}");
+            LogEngineFollowUpFailure(what, ex);
         }
     }
 
-    // The first non-empty line of a log message, trimmed: one line fits the tile.
-    private static string? FirstLine(string? message) =>
-        message?.Split('\n', '\r').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0);
+    private void RunEngineFollowUp(string what, Action step)
+    {
+        try
+        {
+            step();
+        }
+        catch (Exception ex)
+        {
+            LogEngineFollowUpFailure(what, ex);
+        }
+    }
+
+    private void LogEngineFollowUpFailure(string what, Exception ex)
+    {
+        Serilog.Log.Warning(ex, "Diffusion Nexus Engine installed, but could not {What}", what);
+        _unifiedLogger.Warn(LogCategory.Installation, EngineLogSource,
+            $"Engine installed, but could not {what}: {ex.Message}");
+    }
+
+    // One line of a log message for the tile: its first line, and of that the last state a carriage
+    // return drew (git and pip redraw progress in place, so the last segment is the current one).
+    private static string? ActivityLine(string? message)
+    {
+        var firstLine = message?.Split('\n').Select(l => l.TrimEnd('\r')).FirstOrDefault(l => l.Trim().Length > 0);
+        return firstLine?.Split('\r').Select(segment => segment.Trim()).LastOrDefault(segment => segment.Length > 0);
+    }
 
     /// <summary>
     /// Installs the base engine: asks for a target folder, runs the SDK install with all content
@@ -1137,7 +1158,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
             card.BeginEngineInstall(folder);
             engineRunning = _installActivity?.Begin("Diffusion Nexus Engine");
-            _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
+            _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
                 $"Starting base engine install into {folder}.");
 
             // The full log goes to the Unified Console (opened above), each line at its own level. On
@@ -1149,12 +1170,16 @@ public partial class InstallerManagerViewModel : ViewModelBase
             {
                 LogEngineInstallEntry(entry);
                 if (card.IsEngineInstalling && ShowsOnEngineTile(entry.Level))
-                    card.EngineActivity = FirstLine(entry.Message);
+                    card.EngineActivity = ActivityLine(entry.Message);
             });
 
+            var lastStep = -1;
             var stepProgress = new Progress<DiffusionNexus.Installer.SDK.Services.InstallationProgress>(p =>
             {
                 if (!card.IsEngineInstalling) return;
+                // The previous step's last line says nothing about this one.
+                if (p.StepIndex != lastStep) card.EngineActivity = null;
+                lastStep = p.StepIndex;
                 card.EngineProgressPercent = p.ProgressPercentage;
                 card.EngineStatusMessage = $"[{p.StepIndex + 1}/{p.TotalSteps}] {p.Message}";
             });
@@ -1225,7 +1250,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
                     await _unitOfWork.SaveChangesAsync();
 
                     installedPath = package.InstallationPath;
-                    _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
+                    _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
                         $"Engine installed at {package.InstallationPath}.");
 
                     // The SDK's installer can only declare one shared library (its ModelBaseFolder
@@ -1237,7 +1262,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
                         {
                             var sync = await _engineModelPaths.SyncAsync(package.InstallationPath);
                             DiffusionNexus.UI.Services.Engine.EngineModelFoldersChanged.RequestRestartIfWritten(sync, _engine, _unifiedLogger);
-                            _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
+                            _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
                                 sync.Roots.Count > 0
                                     ? $"Engine reads {sync.Roots.Count} model folder(s): {string.Join(" | ", sync.Roots)}"
                                     : $"No shared model folders were wired into the engine ({sync.SkipReason ?? "none registered"}); " +
@@ -1245,26 +1270,20 @@ public partial class InstallerManagerViewModel : ViewModelBase
                         });
                     }
 
-                    await RunEngineFollowUpAsync("announce the new installation", () =>
-                    {
-                        _eventAggregator.PublishInstallerPackagesChanged(new InstallerPackagesChangedEventArgs());
-                        return Task.CompletedTask;
-                    });
+                    RunEngineFollowUp("announce the new installation",
+                        () => _eventAggregator.PublishInstallerPackagesChanged(new InstallerPackagesChangedEventArgs()));
                     // Settings' Engine status line and the editor's readiness lines re-check on this.
-                    await RunEngineFollowUpAsync("tell Settings and the editor", () =>
-                    {
-                        _eventAggregator.PublishEngineChanged(new EngineChangedEventArgs());
-                        return Task.CompletedTask;
-                    });
+                    RunEngineFollowUp("tell Settings and the editor",
+                        () => _eventAggregator.PublishEngineChanged(new EngineChangedEventArgs()));
                 }
                 else if (outcome.IsCancelled)
                 {
-                    _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
+                    _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
                         "Engine install cancelled by the user. Nothing was registered.");
                 }
                 else
                 {
-                    _unifiedLogger.Error(LogCategory.Installation, "Diffusion Nexus Engine",
+                    _unifiedLogger.Error(LogCategory.Installation, EngineLogSource,
                         $"Engine install failed: {outcome.Message}");
                     failureToReport = outcome.Message;
                 }
@@ -1272,7 +1291,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
             catch (Exception ex)
             {
                 Serilog.Log.Error(ex, "Diffusion Nexus Engine install failed");
-                _unifiedLogger.Error(LogCategory.Installation, "Diffusion Nexus Engine",
+                _unifiedLogger.Error(LogCategory.Installation, EngineLogSource,
                     $"Engine install failed: {ex.Message}", ex);
                 failureMessage = ex.Message;
             }
@@ -1280,20 +1299,15 @@ public partial class InstallerManagerViewModel : ViewModelBase
             {
                 card.EndEngineInstall(installedPath);
                 engineRunning?.Dispose();
-
-                // The visibility switch may have moved while we were installing — its own reload was
-                // suppressed in OnIsEngineTileVisibleChanged to avoid detaching `card` mid-install.
-                // Catch up now: the install has finished, so a reload can no longer orphan it.
-                if (IsEngineTileVisible != visibilityAtStart)
-                    _ = LoadInstallationsCommand.ExecuteAsync(null);
             }
 
-            // Nothing installed: the row's folder may have changed (the install may have created it),
-            // so read it again, off the UI thread (a sleeping drive must not freeze the window).
+            // Nothing installed: the row's folder may have changed (the install may have written into
+            // it), so read it again the way a reload would, off the UI thread (a sleeping drive must
+            // not freeze the window).
             if (installedPath is null && card.IsMissing)
             {
                 var rowFolder = card.InstallationPath;
-                card.ShowDeadFolder(await Task.Run(() => Directory.Exists(rowFolder)));
+                card.ApplyEngineFolder(await Task.Run(() => Services.Engine.ManagedEngineLocator.Probe(rowFolder)));
             }
 
             // The install is over by now, so a dialog that cannot open is logged, never thrown.
@@ -1319,6 +1333,12 @@ public partial class InstallerManagerViewModel : ViewModelBase
                 _unifiedLogger.Error(LogCategory.Installation, EngineLogSource,
                     $"Could not show the install failure: {ex.Message}", ex);
             }
+
+            // The visibility switch may have moved while we were installing — its own reload was
+            // suppressed in OnIsEngineTileVisibleChanged to avoid detaching `card` mid-install.
+            // Catch up now, after the tile has shown how the install ended.
+            if (IsEngineTileVisible != visibilityAtStart)
+                _ = LoadInstallationsCommand.ExecuteAsync(null);
         }
         finally
         {
