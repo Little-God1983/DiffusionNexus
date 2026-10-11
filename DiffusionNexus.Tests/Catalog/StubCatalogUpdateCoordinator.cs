@@ -20,6 +20,7 @@ internal sealed class StubCatalogUpdateCoordinator : ICatalogUpdateCoordinator
     public bool AutoApply { get; set; }
     public string? InstallRunning { get; set; }
     public CatalogChannelSwitch? PendingSwitch { get; set; }
+    public CatalogChannel? SwitchingTo { get; set; }
 
     public bool LastApplyFailed => LastApply is { } r && (r.Error is not null || r.Failed != CatalogSections.None);
     public bool UpdateAvailable => CatalogUpdateOffer.Offered(LastCheck, Phase, PendingSwitch is not null, LastApplyFailed,

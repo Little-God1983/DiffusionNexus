@@ -31,7 +31,7 @@ public sealed class InstallActivity : IInstallActivity
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         var entry = new Entry(this, name);
         lock (_gate) _running.Add(entry);
-        Changed?.Invoke();
+        Raise();
         return entry;
     }
 
@@ -39,7 +39,22 @@ public sealed class InstallActivity : IInstallActivity
     {
         bool removed;
         lock (_gate) removed = _running.Remove(entry);
-        if (removed) Changed?.Invoke();
+        if (removed) Raise();
+    }
+
+    /// <summary>
+    /// Each subscriber on its own, its exceptions swallowed: a throw out of Begin would leave an install the caller
+    /// can never end, holding the catalog apply for the rest of the session (PR #619 round 3).
+    /// </summary>
+    private void Raise()
+    {
+        var handlers = Changed;
+        if (handlers is null) return;
+        foreach (var handler in handlers.GetInvocationList())
+        {
+            try { ((Action)handler)(); }
+            catch (Exception ex) { Serilog.Log.Warning(ex, "An install-activity subscriber threw"); }
+        }
     }
 
     private sealed class Entry(InstallActivity owner, string name) : IDisposable

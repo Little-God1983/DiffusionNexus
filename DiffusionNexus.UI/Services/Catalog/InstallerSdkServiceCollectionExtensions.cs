@@ -55,7 +55,8 @@ public static class InstallerSdkServiceCollectionExtensions
         services.AddSingleton<ICatalogPreferenceStore>(sp => new CatalogPreferenceStore(
             sp.GetRequiredService<IServiceScopeFactory>(),
             sp.GetRequiredService<IUserSettingsRepository>(),
-            sp.GetService<IUnifiedLogger>()));
+            sp.GetService<IUnifiedLogger>(),
+            settingsPath));
         services.AddSingleton<CatalogUpdateCoordinator>(sp => new CatalogUpdateCoordinator(
             sp.GetRequiredService<ICatalogUpdateService>(),
             sp.GetRequiredService<ICatalog>(),

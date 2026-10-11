@@ -24,6 +24,20 @@ public sealed class InstallActivityTests
         changes.Should().Be(4);
     }
 
+    // PR #619 round 3: a throwing subscriber made Begin throw after the entry was added; nothing could end it.
+    [Fact]
+    public void A_throwing_subscriber_never_leaves_an_install_running()
+    {
+        var activity = new InstallActivity();
+        activity.Changed += () => throw new InvalidOperationException("view gone");
+
+        var handle = activity.Begin("Krea-2-Turbo");
+        activity.Running.Should().Be("Krea-2-Turbo");
+        handle.Dispose();
+
+        activity.Running.Should().BeNull();
+    }
+
     [Fact]
     public void Ending_an_install_twice_counts_once()
     {

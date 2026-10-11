@@ -30,11 +30,41 @@ public sealed class CatalogPreferenceStoreTests
                  .Callback((bool on, CancellationToken _) => _stored = _stored with { ApplyAutomatically = on }).Returns(Task.CompletedTask);
     }
 
+    private string? _installerFile;
+
     private CatalogPreferenceStore Store()
     {
         var services = new ServiceCollection();
         services.AddSingleton(_settings.Object);
-        return new CatalogPreferenceStore(services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), _installer.Object, _log);
+        return new CatalogPreferenceStore(services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), _installer.Object, _log, _installerFile);
+    }
+
+    // PR #619 round 3: the SDK's JSON repository reads a locked or corrupt user_settings.json as empty instead of
+    // throwing. A file that exists but yields no user is unknown, not "nothing saved": nothing is stored.
+    [Fact]
+    public async Task An_installer_file_that_yields_no_user_is_unknown_and_stores_nothing()
+    {
+        var dir = Directory.CreateTempSubdirectory();
+        try
+        {
+            _installerFile = Path.Combine(dir.FullName, "user_settings.json");
+            File.WriteAllText(_installerFile, "[ locked or corrupt ]");
+            InstallerSaved(null);
+
+            (await Store().LoadAsync()).Channel.Should().BeNull();
+            _settings.Verify(s => s.SetCatalogChannelIfSettingsExistAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        }
+        finally { dir.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public async Task Without_an_installer_file_the_app_starts_on_Stable_and_stores_it()
+    {
+        _installerFile = Path.Combine(Path.GetTempPath(), $"no-such-{Guid.NewGuid():N}.json");
+        InstallerSaved(null);
+
+        (await Store().LoadAsync()).Channel.Should().Be("Stable");
+        _settings.Verify(s => s.SetCatalogChannelIfSettingsExistAsync("Stable", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     private void InstallerSaved(string? channel) =>

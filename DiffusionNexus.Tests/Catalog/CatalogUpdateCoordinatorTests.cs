@@ -177,6 +177,20 @@ public sealed partial class CatalogUpdateCoordinatorTests : IDisposable
         coordinator.UpdateAvailable.Should().BeFalse();
     }
 
+    // PR #619 round 3: a cancelled check was logged as an error and shown as "The operation was canceled".
+    [Fact]
+    public async Task A_cancelled_check_is_no_failure()
+    {
+        _service.NextCheck = () => throw new OperationCanceledException();
+        using var coordinator = Create();
+
+        await coordinator.CheckAsync();
+
+        coordinator.LastCheck.Should().BeNull();
+        coordinator.Phase.Should().Be(CatalogUpdatePhase.Idle);
+        _log.GetEntries().Should().NotContain(e => e.Source == "Catalog" && e.Level >= DiffusionNexus.Domain.Services.UnifiedLogging.LogLevel.Error);
+    }
+
     // ----- check: per-app notices (spec §4) -----
 
     [Fact]

@@ -53,6 +53,8 @@ public interface ICatalogUpdateCoordinator
     string? ChannelChangeBlockedReason { get; }
     /// <summary>A switch waiting for Switch or Keep. While set, checks, applies and other switches are refused.</summary>
     CatalogChannelSwitch? PendingSwitch { get; }
+    /// <summary>The channel being previewed for a switch, while the preview runs; null otherwise. The page shows its dot.</summary>
+    CatalogChannel? SwitchingTo { get; }
 
     /// <summary>Raised after every state change, on any thread. Handlers that throw are logged and skipped.</summary>
     event Action? Changed;
@@ -138,6 +140,7 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
     public CatalogApplyResult? LastApply { get; private set; }
     public bool AutoApply { get; private set; }
     public CatalogChannelSwitch? PendingSwitch { get; private set; }
+    public CatalogChannel? SwitchingTo { get; private set; }
 
     public bool LastApplyFailed { get { lock (_gate) return LastApply is { } r && (r.Error is not null || r.Failed != CatalogSections.None); } }
 
@@ -277,7 +280,7 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
                 LastCheck = check;
                 LastCheckedAt = DateTimeOffset.Now;
                 // An empty state (a channel folder that does not exist yet) describes nothing; the last known one stays.
-                if (installed.RecordsAnything() || Installed is null) Installed = installed;
+                KeepInstalled(installed);
                 Phase = CatalogUpdatePhase.Checked;
             }
             _logger?.Info(LogCategory.General, LogSource,
@@ -285,6 +288,12 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
                 $"{check.Workloads.Count} workload / {check.Workflows.Count} workflow changes for Diffusion Nexus, " +
                 $"{check.Unfiltered!.Workloads.Count + check.Unfiltered.Workflows.Count} in the release)",
                 check.Error);
+        }
+        catch (OperationCanceledException)
+        {
+            // A cancel (app shutdown) is no failure: nothing to report (PR #619 round 3).
+            _logger?.Info(LogCategory.General, LogSource, "Catalog update check cancelled");
+            lock (_gate) Phase = LastCheck is null ? CatalogUpdatePhase.Idle : CatalogUpdatePhase.Checked;
         }
         catch (Exception ex)
         {
@@ -298,6 +307,16 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
             }
         }
         Raise();
+    }
+
+    /// <summary>
+    /// Takes <paramref name="state"/> as the installed state unless it records nothing (a channel folder that does not
+    /// exist yet) and a state is known already: an empty folder is no description of what the app reads. Caller holds
+    /// <see cref="_gate"/>. One rule for every writer (PR #619 round 3).
+    /// </summary>
+    private void KeepInstalled(LocalCatalogState state)
+    {
+        if (state.RecordsAnything() || Installed is null) Installed = state;
     }
 
     /// <summary>A check that never ran, filtered like every other so <see cref="LastCheck"/> always carries the audience.</summary>
@@ -381,7 +400,7 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
             lock (_gate)
             {
                 LastApply = result;
-                if (installed.RecordsAnything() || Installed is null) Installed = installed;
+                KeepInstalled(installed);
                 Progress = null;
                 if (fresh is not null) LastCheck = fresh;
                 // A switch whose target folder was already current applies nothing: nothing was "updated".
@@ -416,7 +435,7 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
             lock (_gate)
             {
                 LastApply = new CatalogApplyResult(CatalogSections.None, CatalogSections.All, ex.Message);
-                if (installed.RecordsAnything() || Installed is null) Installed = installed;
+                KeepInstalled(installed);
                 LastCheck = fresh;
                 LastCheckedAt = DateTimeOffset.Now;
                 Progress = null;
@@ -548,12 +567,27 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
                 _logger?.Info(LogCategory.General, LogSource, $"Catalog channel {target} saved; DIFFUSIONNEXUS_CATALOG_CHANNEL keeps {current} for this run");
                 return;
             }
-            if (current == target) return;
+            if (current == target)
+            {
+                bool unknown;
+                lock (_gate) unknown = !_channelResolved;
+                if (!unknown) return;
+                // The shown channel is a guess (the preference could not be read): picking it decides it (PR #619 round 3).
+                await _preferences.SaveChannelAsync(target, ct).ConfigureAwait(false);
+                lock (_gate)
+                {
+                    ApplyResolution(_readEnvironment(), target.ToString());
+                    _channelResolved = true;
+                    _preferencesError = null;
+                }
+                return;
+            }
 
             lock (_gate)
             {
                 Phase = CatalogUpdatePhase.Checking;
                 Progress = null;
+                SwitchingTo = target;   // the page keeps the clicked dot while the preview runs (PR #619 round 3)
             }
             Raise();
 
@@ -574,6 +608,7 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
         {
             lock (_gate)
             {
+                SwitchingTo = null;
                 _switching = false;
                 // The preview's Checking ends here; a held switch's background check keeps its own.
                 if (Phase == CatalogUpdatePhase.Checking && _inFlight is not { IsCompleted: false }) Phase = phaseBefore;
@@ -678,7 +713,7 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
         {
             ApplyResolution(_readEnvironment(), target.ToString());
             _channelResolved = true;
-            if (known.RecordsAnything()) Installed = known;
+            KeepInstalled(known);
             LastApply = null;
             _applyAutomatic = false;
             Progress = null;
@@ -735,7 +770,7 @@ public sealed class CatalogUpdateCoordinator : ICatalogUpdateCoordinator, IDispo
         state ??= LocalCatalogState.Load(_options.InstalledCatalogPath);
         lock (_gate)
         {
-            if (state.RecordsAnything() || Installed is null) Installed = state;
+            KeepInstalled(state);
         }
 
         if (held)

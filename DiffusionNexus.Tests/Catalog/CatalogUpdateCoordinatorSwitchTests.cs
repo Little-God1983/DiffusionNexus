@@ -164,6 +164,41 @@ public sealed partial class CatalogUpdateCoordinatorTests
         _service.CheckCalls.Should().Be(1);
     }
 
+    // PR #619 round 3: with the channel unknown (a failed read), picking the shown channel did nothing.
+    [Fact]
+    public async Task Picking_the_shown_channel_while_it_is_unknown_saves_it()
+    {
+        _preferences.Stored = new CatalogPreferences(null, false);   // the installer's file could not be read
+        using var coordinator = Create();
+        await coordinator.CheckAsync();
+        coordinator.LastCheck!.Outcome.Should().Be(CatalogUpdateOutcome.Failed);
+
+        await coordinator.SwitchChannelAsync(CatalogChannel.Stable);
+
+        _preferences.SavedChannels.Should().Equal(CatalogChannel.Stable);
+        _service.NextCheck = () => CatalogChecks.Outcome(CatalogUpdateOutcome.UpToDate);
+        await coordinator.CheckAsync();
+        _service.CheckCalls.Should().Be(1, "the channel is known now");
+    }
+
+    // PR #619 round 3: while the preview ran, the page showed the old channel's dot.
+    [Fact]
+    public async Task While_the_preview_runs_the_target_is_shown()
+    {
+        var hold = new TaskCompletionSource();
+        _service.HoldCheck = hold;
+        _service.NextPreview = channel => CatalogChecks.Outcome(CatalogUpdateOutcome.UpToDate, channel);
+        using var coordinator = Create();
+
+        var switching = coordinator.SwitchChannelAsync(CatalogChannel.Preview);
+        SpinWait.SpinUntil(() => _service.PreviewedSwitches.Count == 1, 10_000).Should().BeTrue();
+
+        coordinator.SwitchingTo.Should().Be(CatalogChannel.Preview);
+        hold.SetResult();
+        await switching;
+        coordinator.SwitchingTo.Should().BeNull();
+    }
+
     [Fact]
     public async Task A_switch_into_a_missing_folder_keeps_the_last_known_state()
     {

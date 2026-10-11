@@ -141,7 +141,7 @@ public sealed partial class CatalogSettingsViewModel : ObservableObject, IDispos
         _refreshing = true;
         try
         {
-            var shown = _catalog.PendingSwitch?.Target ?? _catalog.Channel;
+            var shown = _catalog.PendingSwitch?.Target ?? _catalog.SwitchingTo ?? _catalog.Channel;
             IsStable = shown == CatalogChannel.Stable;
             IsPreview = shown == CatalogChannel.Preview;
             var busy = _catalog.Phase is CatalogUpdatePhase.Checking or CatalogUpdatePhase.Applying;

@@ -262,6 +262,19 @@ public sealed class CatalogSettingsViewModelTests
         vm.ErrorText.Should().BeNull();
     }
 
+    // PR #619 round 3: the clicked radio jumped back to the old channel while the preview ran.
+    [Fact]
+    public void While_a_switch_is_previewed_the_target_dot_stays()
+    {
+        _catalog.SwitchingTo = CatalogChannel.Preview;
+        _catalog.Phase = CatalogUpdatePhase.Checking;
+
+        var vm = Vm();
+
+        vm.IsPreview.Should().BeTrue();
+        vm.IsStable.Should().BeFalse();
+    }
+
     [Fact]
     public void Coordinator_changes_refresh_the_page()
     {

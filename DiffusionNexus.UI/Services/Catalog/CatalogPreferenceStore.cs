@@ -28,8 +28,10 @@ public interface ICatalogPreferenceStore
 /// <summary>
 /// A fresh DI scope per call: <see cref="IAppSettingsService"/> is transient over a scoped unit of work,
 /// and this store is held by a singleton (same rule as App.axaml.cs's other settings readers).
+/// <paramref name="installerSettingsPath"/> is the installer's user_settings.json: when it exists but yields no
+/// user, its channel is unknown (a locked or corrupt file), and nothing is stored.
 /// </summary>
-public sealed class CatalogPreferenceStore(IServiceScopeFactory scopes, IUserSettingsRepository installerSettings, IUnifiedLogger? logger = null)
+public sealed class CatalogPreferenceStore(IServiceScopeFactory scopes, IUserSettingsRepository installerSettings, IUnifiedLogger? logger = null, string? installerSettingsPath = null)
     : ICatalogPreferenceStore
 {
     private const string LogSource = "Catalog";
@@ -78,7 +80,16 @@ public sealed class CatalogPreferenceStore(IServiceScopeFactory scopes, IUserSet
         string? saved;
         try
         {
-            saved = (await installerSettings.GetByUserNameAsync(Environment.UserName, ct).ConfigureAwait(false))?.CatalogChannel;
+            var user = await installerSettings.GetByUserNameAsync(Environment.UserName, ct).ConfigureAwait(false);
+            // The SDK's JSON repository reads a locked or corrupt file as empty instead of throwing: a file that
+            // exists but yields no user is unknown, not "nothing saved" (PR #619 round 3).
+            if (user is null && installerSettingsPath is not null && File.Exists(installerSettingsPath))
+            {
+                logger?.Warn(LogCategory.General, LogSource, "The installer's settings could not be read; following Stable for now and copying its channel on the next start.",
+                    installerSettingsPath);
+                return null;
+            }
+            saved = user?.CatalogChannel;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
