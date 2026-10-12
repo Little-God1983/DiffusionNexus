@@ -205,6 +205,24 @@ public sealed class EngineFeatureRemovalTests : IDisposable
         activity.Running.Should().BeNull();
     }
 
+    // Round 2: when nothing was deleted (Cancel, nothing to remove, a catalog gap, a failed check) the rows
+    // are not checked again: only the plan's own check runs.
+    [Fact]
+    public async Task Cancel_DoesNotRecheckTheRows()
+    {
+        Answer(0);
+        var vm = Sut();
+        await vm.LoadCommand.ExecuteAsync(null);
+        _checker.Invocations.Clear();
+
+        await vm.RemoveFeatureCommand.ExecuteAsync(Row(vm, EngineFeature.InpaintOutpaint));
+
+        _checker.Verify(c => c.CheckConfigurationAsync(It.IsAny<InstallationConfiguration>(), It.IsAny<string>(),
+            It.Is<ConfigurationCheckOptions?>(o => o == null || !o.CollectAllMatches), It.IsAny<CancellationToken>()), Times.Never);
+        _checker.Verify(c => c.CheckConfigurationAsync(It.IsAny<InstallationConfiguration>(), It.IsAny<string>(),
+            It.Is<ConfigurationCheckOptions?>(o => o != null && o.CollectAllMatches), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
     [Fact]
     public async Task Cancel_DeletesNothing()
     {

@@ -290,6 +290,9 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
 
         IsRemoving = true;
         ProgressText = $"Checking {row.DisplayName}'s files…";
+        // The rows are checked again only when the remover was asked to delete: Cancel and every refusal
+        // before it changed nothing on disk.
+        var attempted = false;
         try
         {
             EngineRemovalPlan plan;
@@ -375,6 +378,7 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
             }
 
             EngineRemovalResult result;
+            attempted = true;
             using (_installActivity?.Begin("Diffusion Nexus Engine feature removal"))
                 result = await _remover.RemoveAsync(plan.NodePackFolders, files, engineRoot: _engineRoot, installActivityHeldByCaller: true);
             if (result.WasBusy)
@@ -406,8 +410,11 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
         }
         finally
         {
-            try { await CheckAllAsync(CancellationToken.None); }
-            catch (Exception ex) { Warn($"Re-check after removal failed — {ex.Message}", ex); }
+            if (attempted)
+            {
+                try { await CheckAllAsync(CancellationToken.None); }
+                catch (Exception ex) { Warn($"Re-check after removal failed — {ex.Message}", ex); }
+            }
             IsRemoving = false;
         }
     }
