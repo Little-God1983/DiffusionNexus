@@ -130,7 +130,23 @@ public static class EngineRemovalPlanner
     /// it only when <see cref="IsOfferedOutsideCopy"/> says it is this model's.
     /// </summary>
     private static IEnumerable<string> DeletableCopies(IReadOnlyList<string> engineFolders, DiffusionNexus.UI.Services.ConfigurationChecker.Models.ModelCheckResult model) =>
-        model.AllFoundPaths.Where(p => InEngine(engineFolders, p) || IsOfferedOutsideCopy(model, p));
+        model.AllFoundPaths.Where(p => InEngine(engineFolders, p) ? IsEngineCopy(model, p) : IsOfferedOutsideCopy(model, p));
+
+    /// <summary>
+    /// A copy inside the Engine is this model's when it sits directly in the model's category folder
+    /// (aliases count): the checker matches by name in every folder under <c>models\</c>, so a same-named
+    /// file in another category (an earlier Core download) is not it. A model without a category keeps
+    /// every Engine copy.
+    /// </summary>
+    private static bool IsEngineCopy(DiffusionNexus.UI.Services.ConfigurationChecker.Models.ModelCheckResult model, string path) =>
+        string.IsNullOrWhiteSpace(model.Category) || InCategoryFolder(model.Category, path);
+
+    private static bool InCategoryFolder(string category, string path)
+    {
+        var folder = Path.GetFileName(Path.GetDirectoryName(path));
+        return string.Equals(folder, category, StringComparison.OrdinalIgnoreCase)
+            || (CategoryAliases.TryGetValue(category, out var alias) && string.Equals(folder, alias, StringComparison.OrdinalIgnoreCase));
+    }
 
     /// <summary>Whether <paramref name="path"/> lies in one of the Engine's own folders (<see cref="ManagedEngineLocator.OwnFolders"/>).</summary>
     private static bool InEngine(IReadOnlyList<string> engineFolders, string path) =>
@@ -152,10 +168,7 @@ public static class EngineRemovalPlanner
     private static bool IsOfferedOutsideCopy(DiffusionNexus.UI.Services.ConfigurationChecker.Models.ModelCheckResult model, string path)
     {
         if (string.IsNullOrWhiteSpace(model.Category)) return false;
-        var folder = Path.GetFileName(Path.GetDirectoryName(path));
-        var inCategory = string.Equals(folder, model.Category, StringComparison.OrdinalIgnoreCase)
-            || (CategoryAliases.TryGetValue(model.Category, out var alias) && string.Equals(folder, alias, StringComparison.OrdinalIgnoreCase));
-        return inCategory
+        return InCategoryFolder(model.Category, path)
             && DiffusionNexus.UI.Services.ConfigurationChecker.ConfigurationCheckerService.DeriveConfiguredFileName(model.Name, Path.GetFileName(path)) is null;
     }
 
@@ -192,7 +205,9 @@ public static class EngineRemovalPlanner
         if (IsLinkedBelow(engineRoot, models)) return null;
 
         var declared = new HashSet<string>(
-            checks.SelectMany(c => c.Results).SelectMany(r => r.ModelResults).SelectMany(m => m.AllFoundPaths).Select(Key),
+            // A same-named file in another category folder is not the feature's (see IsEngineCopy).
+            checks.SelectMany(c => c.Results).SelectMany(r => r.ModelResults)
+                .SelectMany(m => m.AllFoundPaths.Where(p => IsEngineCopy(m, p))).Select(Key),
             StringComparer.OrdinalIgnoreCase);
         var options = new EnumerationOptions
         {

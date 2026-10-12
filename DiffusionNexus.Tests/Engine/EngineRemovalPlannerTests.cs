@@ -283,6 +283,60 @@ public class EngineRemovalPlannerTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    private static EngineFeatureCheck OneModel(string name, string category, params string[] copies) =>
+        Check(EngineFeature.BatchUpscale, "Batch Upscale", Result([], [copies]) with
+        {
+            ModelResults = [new ModelCheckResult
+            {
+                Id = Guid.NewGuid(), Name = name, IsInstalled = true, SearchedPaths = [], Category = category,
+                FoundAtPath = copies[0], AllFoundPaths = copies
+            }]
+        });
+
+    // R3-2: the checker matches by name in every folder under models\, so an earlier Core download in
+    // models\controlnet with the same name is not this vae model's file: not deleted, not counted.
+    [Fact]
+    public void Feature_AnEngineCopyInAnotherCategoryFolder_IsNotTheFeatures()
+    {
+        var other = Root + @"\models\controlnet\ae.safetensors";
+        var mine = Root + @"\models\vae\ae.safetensors";
+        var checks = new[] { OneModel("ae", "vae", other, mine) };
+
+        var plan = EngineRemovalPlanner.PlanFeatureRemoval(Root, checks, EngineFeature.BatchUpscale, Size);
+
+        plan.EngineModels.Select(f => f.Path).Should().Equal(mine);
+        plan.EngineBytes.Should().Be(1000);
+    }
+
+    // R3-2: such a copy is one no feature declares, so Uninstall counts it with the other model files.
+    [Fact]
+    public void Uninstall_AnEngineCopyInAnotherCategoryFolder_CountsAsUnclaimed()
+    {
+        var root = Directory.CreateTempSubdirectory("dn-unclaimed-category-").FullName;
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "main.py"), "");
+            var other = Write(root, @"models\controlnet\ae.safetensors", 30);
+            var mine = Write(root, @"models\vae\ae.safetensors", 10);
+
+            EngineRemovalPlanner.PlanUninstallUnclaimedModels(root, [OneModel("ae", "vae", other, mine)])
+                .Should().Be(new ModelFileTotal(1, 30));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    // R3-2: ComfyUI's legacy folder names count inside the Engine too.
+    [Theory]
+    [InlineData("diffusion_models", "unet")]
+    [InlineData("text_encoders", "clip")]
+    public void Feature_AnEngineCopyInALegacyAliasFolder_IsTheFeatures(string category, string folder)
+    {
+        var copy = Root + $@"\models\{folder}\m.safetensors";
+
+        EngineRemovalPlanner.PlanFeatureRemoval(Root, [OneModel("m", category, copy)], EngineFeature.BatchUpscale, Size)
+            .EngineModels.Select(f => f.Path).Should().Equal(copy);
+    }
+
     [Fact]
     public void Feature_AFolderNamedLikeTheEngineButBesideIt_IsOutside()
     {
