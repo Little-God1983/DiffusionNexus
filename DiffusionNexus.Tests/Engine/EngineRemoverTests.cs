@@ -169,4 +169,65 @@ public sealed class EngineRemoverTests : IDisposable
         result.WasBusy.Should().BeFalse();
         Directory.Exists(folder).Should().BeFalse();
     }
+
+    [Fact]
+    public async Task ADirectoryThatIsItselfAJunction_LosesTheLinkOnly()
+    {
+        var engine = Folder("Engine");
+        var library = Folder("Library");
+        var link = Path.Combine(engine, "custom_nodes");
+        Junction(link, library);
+
+        var result = await new EngineRemover(_engine.Object, null).RemoveAsync([link], [], engine);
+
+        result.Failed.Should().BeEmpty();
+        Directory.Exists(link).Should().BeFalse();
+        File.Exists(Path.Combine(library, "f.txt")).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task AFolderUnderAJunctionedParentInsideTheEngine_IsRefused_AndKept()
+    {
+        var engine = Folder("Engine");
+        var library = Folder("Library");
+        Directory.CreateDirectory(Path.Combine(library, "pack"));
+        File.WriteAllText(Path.Combine(library, "pack", "node.py"), "x");
+        Junction(Path.Combine(engine, "custom_nodes"), library);
+        var pack = Path.Combine(engine, "custom_nodes", "pack");
+
+        var result = await new EngineRemover(_engine.Object, null).RemoveAsync([pack], [], engine);
+
+        result.Failed.Should().ContainSingle().Which.Path.Should().Be(pack);
+        File.Exists(Path.Combine(library, "pack", "node.py")).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task AnEngineUnderALinkedParent_IsDeletedNormally()
+    {
+        var real = Folder("Real");
+        Directory.CreateDirectory(Path.Combine(real, "Engine", "sub"));
+        File.WriteAllText(Path.Combine(real, "Engine", "sub", "a.bin"), "x");
+        File.WriteAllText(Path.Combine(real, "Engine", "b.bin"), "x");
+        var linked = Path.Combine(_temp.FullName, "Linked");
+        Junction(linked, real);
+        var engine = Path.Combine(linked, "Engine");
+
+        var result = await new EngineRemover(_engine.Object, null).RemoveAsync(
+            [Path.Combine(engine, "sub")], [Path.Combine(engine, "b.bin")], engine);
+
+        result.Failed.Should().BeEmpty();
+        Directory.Exists(Path.Combine(real, "Engine", "sub")).Should().BeFalse();
+        File.Exists(Path.Combine(real, "Engine", "b.bin")).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ARelativePath_IsRefused()
+    {
+        var fs = new Mock<IRemovalFileSystem>();
+
+        var result = await new EngineRemover(_engine.Object, null, fileSystem: fs.Object).RemoveAsync(["."], ["b.bin"]);
+
+        result.Failed.Should().HaveCount(2).And.OnlyContain(f => f.Reason.Contains("not a full path"));
+        fs.VerifyNoOtherCalls();
+    }
 }

@@ -11,14 +11,21 @@ public interface IRemovalFileSystem
 }
 
 /// <summary>
-/// Deletes without following junctions or symlinks: a link inside the Engine that points at the
-/// user's library is removed, the files behind it stay. Read-only flags (git packs) are cleared first.
+/// Deletes without following junctions or symlinks: a link (the folder itself or one found inside it)
+/// that points at the user's library is removed, the files behind it stay. Read-only flags (git packs) are cleared first.
 /// </summary>
 public sealed class RemovalFileSystem : IRemovalFileSystem
 {
     public void DeleteDirectory(string path)
     {
-        // An explicit walk: a junction or symlink is removed as a link, never entered.
+        // A directory that is itself a junction or symlink loses the link only, never its target.
+        if (File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
+        {
+            Directory.Delete(path, recursive: false);
+            return;
+        }
+
+        // An explicit walk: a junction or symlink inside is removed as a link, never entered.
         foreach (var entry in Directory.EnumerateFileSystemEntries(path))
         {
             var attributes = File.GetAttributes(entry);
@@ -60,6 +67,7 @@ public sealed record EngineRemovalResult(string? BusyReason, IReadOnlyList<Remov
 /// </summary>
 public sealed class EngineRemover
 {
+    private const string NotFullPath = "not a full path; nothing was deleted";
     private const string LogSource = "Diffusion Nexus Engine";
     private static readonly ILogger Logger = Log.ForContext<EngineRemover>();
 
@@ -91,9 +99,12 @@ public sealed class EngineRemover
     /// <summary>
     /// Deletes <paramref name="directories"/> then <paramref name="files"/>. Missing paths are skipped;
     /// each path that fails is reported and the rest still goes. Drive roots are never deleted, and a
-    /// file reached through a junction or symlink is refused (it lives elsewhere).
+    /// item reached through a junction or symlink is refused (it lives elsewhere), and relative paths are
+    /// refused. A directory that is itself a link loses the link only. With <paramref name="engineRoot"/>,
+    /// only the segments strictly inside it are checked for links, and only for items inside it.
     /// </summary>
-    public async Task<EngineRemovalResult> RemoveAsync(IReadOnlyList<string> directories, IReadOnlyList<string> files)
+    public async Task<EngineRemovalResult> RemoveAsync(
+        IReadOnlyList<string> directories, IReadOnlyList<string> files, string? engineRoot = null)
     {
         if (BusyReason() is { } busy) return Refuse(busy);
 
@@ -113,7 +124,7 @@ public sealed class EngineRemover
 
         using (hold)
         {
-            var failed = await Task.Run(() => Delete(directories, files));
+            var failed = await Task.Run(() => Delete(directories, files, engineRoot));
             Info(failed.Count == 0
                 ? $"Removal finished: {directories.Count} folder(s) and {files.Count} file(s)."
                 : $"Removal finished with {failed.Count} item(s) not deleted.");
@@ -121,7 +132,8 @@ public sealed class EngineRemover
         }
     }
 
-    private List<RemovalFailure> Delete(IReadOnlyList<string> directories, IReadOnlyList<string> files)
+    private List<RemovalFailure> Delete(
+        IReadOnlyList<string> directories, IReadOnlyList<string> files, string? engineRoot)
     {
         var failed = new List<RemovalFailure>();
 
@@ -134,14 +146,37 @@ public sealed class EngineRemover
                 continue;
             }
 
+            if (!Path.IsPathFullyQualified(directory))
+            {
+                failed.Add(new RemovalFailure(directory, NotFullPath));
+                Warn($"Refused to delete {directory}: it is not a full path.");
+                continue;
+            }
+
             if (!Directory.Exists(directory)) continue;
-            Try(directory, () => _fileSystem.DeleteDirectory(directory), failed);
+            if (IsReachedThroughLink(directory, engineRoot))
+            {
+                failed.Add(new RemovalFailure(directory, "reached through a link; the folder lives elsewhere and was not deleted"));
+                Warn($"Refused to delete {directory}: it is reached through a junction or symlink.");
+                continue;
+            }
+
+            var isLink = IsLink(directory);
+            Try(directory, () => _fileSystem.DeleteDirectory(directory), failed,
+                isLink ? $"Removed link {directory}; its target was not touched" : null);
         }
 
         foreach (var file in files)
         {
+            if (!Path.IsPathFullyQualified(file))
+            {
+                failed.Add(new RemovalFailure(file, NotFullPath));
+                Warn($"Refused to delete {file}: it is not a full path.");
+                continue;
+            }
+
             if (!File.Exists(file)) continue;
-            if (IsReachedThroughLink(file))
+            if (IsReachedThroughLink(file, engineRoot))
             {
                 failed.Add(new RemovalFailure(file, "reached through a link; the file lives elsewhere and was not deleted"));
                 Warn($"Refused to delete {file}: it is reached through a junction or symlink.");
@@ -154,12 +189,12 @@ public sealed class EngineRemover
         return failed;
     }
 
-    private void Try(string path, Action delete, List<RemovalFailure> failed)
+    private void Try(string path, Action delete, List<RemovalFailure> failed, string? successMessage = null)
     {
         try
         {
             delete();
-            Info($"Deleted {path}");
+            Info(successMessage ?? $"Deleted {path}");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -175,15 +210,23 @@ public sealed class EngineRemover
     }
 
     /// <summary>
-    /// True when any ancestor directory of the file (its parent up to, excluding, the drive root) is a
-    /// junction or symlink. The file itself being a link is fine: deleting it removes only the link.
+    /// True when an ancestor directory of the item is a junction or symlink: from its parent up to, excluding,
+    /// the drive root, or, when <paramref name="engineRoot"/> is given and holds the item, up to, excluding,
+    /// that root (a link at or above the root blocks nothing; items outside it are not checked). The item
+    /// itself being a link is fine: deleting it removes only the link.
     /// </summary>
-    private static bool IsReachedThroughLink(string file)
+    private static bool IsReachedThroughLink(string file, string? engineRoot)
     {
         try
         {
             var full = Path.GetFullPath(file);
             var root = Path.GetPathRoot(full);
+            if (engineRoot is not null)
+            {
+                if (!FolderPathMatch.Contains(engineRoot, full)) return false;
+                root = Path.GetFullPath(engineRoot).TrimEnd('\\', '/');
+                if (string.Equals(full.TrimEnd('\\', '/'), root, StringComparison.OrdinalIgnoreCase)) return false;
+            }
             for (var dir = Path.GetDirectoryName(full);
                  !string.IsNullOrEmpty(dir) && !string.Equals(dir, root, StringComparison.OrdinalIgnoreCase);
                  dir = Path.GetDirectoryName(dir))
@@ -197,6 +240,12 @@ public sealed class EngineRemover
         {
             return true; // cannot tell: do not delete
         }
+    }
+
+    private static bool IsLink(string directory)
+    {
+        try { return new DirectoryInfo(directory).Attributes.HasFlag(FileAttributes.ReparsePoint); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
     }
 
     private EngineRemovalResult Refuse(string reason)
