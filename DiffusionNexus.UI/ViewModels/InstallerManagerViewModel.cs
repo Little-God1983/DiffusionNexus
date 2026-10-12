@@ -1247,7 +1247,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
     /// The models of the Engine's present features that sit in the user's own folders, and the model
     /// files in the Engine's models folder that no feature declares. A check that fails (corrupt catalog,
     /// checker error) falls through to no outside models and unknown (null) unclaimed ones: the uninstall
-    /// still runs.
+    /// still runs. The unclaimed ones are also unknown when the catalog lacks a feature's workload.
     /// </summary>
     private async Task<(IReadOnlyList<Services.Engine.PlannedFile> Outside, Services.Engine.ModelFileTotal? Unclaimed)> PlanFeatureModelsAsync(
         string root, Services.Engine.EngineFolderState folder)
@@ -1256,9 +1256,19 @@ public partial class InstallerManagerViewModel : ViewModelBase
         try
         {
             var checks = await Services.Engine.EngineFeatureChecks.LoadAsync(_catalog, _checkerService, root, CancellationToken.None);
+
+            // A feature the catalog does not describe has unknown files: counting the model files no
+            // feature uses would count its files too, so that count is left unknown.
+            var unknown = checks.Where(c => !c.IsComplete).Select(c => c.DisplayName).ToList();
+            if (unknown.Count > 0)
+                _unifiedLogger.Warn(LogCategory.Installation, EngineLogSource,
+                    $"The catalog has no description of {string.Join(", ", unknown)}; the model files no Engine feature uses are not counted.");
+
             return await Task.Run(() => (
                 Services.Engine.EngineRemovalPlanner.PlanUninstallOutsideModels(root, checks),
-                (Services.Engine.ModelFileTotal?)Services.Engine.EngineRemovalPlanner.PlanUninstallUnclaimedModels(root, checks)));
+                unknown.Count > 0
+                    ? null
+                    : (Services.Engine.ModelFileTotal?)Services.Engine.EngineRemovalPlanner.PlanUninstallUnclaimedModels(root, checks)));
         }
         catch (Exception ex)
         {

@@ -293,9 +293,10 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
         try
         {
             EngineRemovalPlan plan;
+            IReadOnlyList<EngineFeatureCheck> checks;
             try
             {
-                var checks = await EngineFeatureChecks.LoadAsync(_catalog, _checker, _engineRoot, CancellationToken.None);
+                checks = await EngineFeatureChecks.LoadAsync(_catalog, _checker, _engineRoot, CancellationToken.None);
                 plan = await Task.Run(() => EngineRemovalPlanner.PlanFeatureRemoval(_engineRoot, checks, row.Definition.Feature));
             }
             catch (Exception ex)
@@ -308,7 +309,18 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
                 return;
             }
 
-            Info($"{row.DisplayName}: remove plan — {plan.NodePackFolders.Count} node pack(s), {plan.EngineModels.Count} Engine model(s) " +
+            // Another feature the catalog does not describe could share any of these files: delete nothing.
+            var unknown = checks.Where(c => c.Feature != row.Definition.Feature && !c.IsComplete).Select(c => c.DisplayName).ToList();
+            if (unknown.Count > 0)
+            {
+                ProgressText = null;
+                Warn($"{row.DisplayName}: nothing was removed — the catalog has no description of {string.Join(", ", unknown)}, " +
+                     "so the files it shares are unknown.");
+                await _dialogs.ShowMessageAsync(EngineRemovalMessages.FeatureTitle, EngineRemovalMessages.CatalogLacks(unknown));
+                return;
+            }
+
+            Info($"{row.DisplayName}: remove plan —{plan.NodePackFolders.Count} node pack(s), {plan.EngineModels.Count} Engine model(s) " +
                  $"({EngineRemovalMessages.FormatSize(plan.EngineBytes)}), {plan.OutsideModels.Count} in your own folders, " +
                  $"{plan.Kept.Count} kept ({string.Join(", ", plan.Kept.Select(k => $"{k.Name} for {k.NeededBy}"))})" +
                  (plan.RemovedWithIt.Count > 0

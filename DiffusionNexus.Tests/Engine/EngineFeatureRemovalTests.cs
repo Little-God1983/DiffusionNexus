@@ -252,6 +252,30 @@ public sealed class EngineFeatureRemovalTests : IDisposable
         row.Status.Should().Be(EngineFeatureStatus.Installed);
     }
 
+    // A feature whose workload the catalog lacks has unknown files: it could share any of the target's,
+    // so nothing is deleted and the user is told which feature and what to do.
+    [Fact]
+    public async Task AnotherFeaturesWorkloadMissingFromTheCatalog_DeletesNothing_AndNamesTheFeature()
+    {
+        Answer(1);
+        var vm = Sut();
+        await vm.LoadCommand.ExecuteAsync(null);
+        var row = Row(vm, EngineFeature.InpaintOutpaint);
+        _catalog.Setup(c => c.GetWorkloadAsync(EngineFeatureCatalog.OutpaintingQwen2512, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((InstallationConfiguration?)null);
+
+        await vm.RemoveFeatureCommand.ExecuteAsync(row);
+
+        _fs.VerifyNoOtherCalls();
+        _dialog.Verify(d => d.ShowOptionsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string[]>()), Times.Never);
+        _dialog.Verify(d => d.ShowMessageAsync(EngineRemovalMessages.FeatureTitle,
+            "The catalog has no description of Outpaint Vision, so the app cannot tell which files Outpaint Vision shares. " +
+            "Update the catalog or switch its channel, then try again. Uninstall Engine still works."));
+        _log.Verify(l => l.Warn(LogCategory.Installation, "Diffusion Nexus Engine",
+            It.Is<string>(m => m.Contains("Outpaint Vision") && m.Contains("catalog")), It.IsAny<string?>()));
+        vm.DidRemove.Should().BeFalse();
+    }
+
     // Only the user's own copies, and "only what's in the Engine": nothing to delete, the remover is not called.
     [Fact]
     public async Task EngineOnly_WithNothingInTheEngine_LeavesEverything_AndSaysSo()

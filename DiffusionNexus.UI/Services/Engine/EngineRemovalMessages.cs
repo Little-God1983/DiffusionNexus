@@ -65,6 +65,17 @@ public static class EngineRemovalMessages
         return text.ToString();
     }
 
+    /// <summary>Other features whose workloads the catalog lacks: which files they share is unknown, so nothing is removed.</summary>
+    public static string CatalogLacks(IReadOnlyList<string> featureNames)
+    {
+        var names = featureNames.Count == 1
+            ? featureNames[0]
+            : string.Join(", ", featureNames.Take(featureNames.Count - 1)) + " and " + featureNames[^1];
+        var sharer = featureNames.Count == 1 ? $"{names} shares" : "they share";
+        return $"The catalog has no description of {names}, so the app cannot tell which files {sharer}. " +
+               "Update the catalog or switch its channel, then try again. Uninstall Engine still works.";
+    }
+
     public static string CheckFailed(string featureName, string reason) =>
         $"The files of {featureName} could not be checked ({reason}), so nothing was removed. " +
         "Try again; the Unified Console has the details.";

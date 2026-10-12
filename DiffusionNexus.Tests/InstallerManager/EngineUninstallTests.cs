@@ -389,6 +389,16 @@ public sealed class EngineUninstallTests : IDisposable
 
     // C2(b): a model no feature declares (a Core download that landed in the Engine's models folder) is
     // named in the question: it goes with the Engine.
+    /// <summary>A catalog that knows every Engine workload except <paramref name="missing"/>.</summary>
+    private static Mock<ICatalog> CatalogWithout(params Guid[] missing)
+    {
+        var catalog = new Mock<ICatalog>();
+        catalog.Setup(c => c.GetWorkloadAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid id, CancellationToken _) =>
+                missing.Contains(id) ? null : new InstallationConfiguration { Id = id, Name = id.ToString() });
+        return catalog;
+    }
+
     [Fact]
     public async Task ModelsNoFeatureUses_AreNamedInTheQuestion()
     {
@@ -396,13 +406,37 @@ public sealed class EngineUninstallTests : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(core)!);
         File.WriteAllBytes(core, new byte[2 * 1024 * 1024]);
         Answer(0);
-        var (vm, card) = await CreateAsync();
+        // Every feature's workload is known (the checker finds nothing of them), so the count is exact.
+        var (vm, card) = await CreateAsync(catalog: CatalogWithout());
 
         await vm.UninstallEngineAsync(card);
 
         _dialog.Verify(d => d.ShowOptionsAsync(It.IsAny<string>(),
             It.Is<string>(m => m.Contains("It also holds 1 other model file (2 MB) that no Engine feature uses")),
             It.IsAny<string[]>()), Times.Once);
+    }
+
+    // A workload the catalog lacks has unknown files: counting "model files no feature uses" would
+    // overcount them, so that line is left out; the uninstall itself is unchanged.
+    [Fact]
+    public async Task AWorkloadMissingFromTheCatalog_SaysNothingAboutModelsNoFeatureUses()
+    {
+        var core = Path.Combine(_root, "models", "checkpoints", "core-download.safetensors");
+        Directory.CreateDirectory(Path.GetDirectoryName(core)!);
+        File.WriteAllBytes(core, new byte[10]);
+        var logger = new Mock<IUnifiedLogger>();
+        Answer(1);
+        var (vm, card) = await CreateAsync(catalog: CatalogWithout(EngineFeatureCatalog.Krea2Turbo), logger: logger);
+
+        await vm.UninstallEngineAsync(card);
+
+        _dialog.Verify(d => d.ShowOptionsAsync(It.IsAny<string>(),
+            It.Is<string>(m => m.StartsWith("Uninstall the Diffusion Nexus Engine?") && !m.Contains("no Engine feature uses")),
+            It.IsAny<string[]>()), Times.Once);
+        logger.Verify(l => l.Warn(LogCategory.Installation, "Diffusion Nexus Engine",
+            It.Is<string>(m => m.Contains("Canvas · Krea 2 Turbo") && m.Contains("catalog")), It.IsAny<string?>()), Times.Once);
+        Directory.Exists(_root).Should().BeFalse("the uninstall still runs");
+        _removedRows.Should().ContainSingle();
     }
 
     // C2(b): when the feature check fails, the app does not guess which models are unclaimed.
