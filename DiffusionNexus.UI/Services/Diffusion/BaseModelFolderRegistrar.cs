@@ -21,6 +21,7 @@ namespace DiffusionNexus.UI.Services.Diffusion;
 ///
 /// Runs when a package is added in the Installer Manager and as an idempotent startup
 /// backfill for already-registered packages. Registration never claims the default flag.
+/// The app-managed Engine contributes only its own models folder.
 /// </summary>
 public sealed class BaseModelFolderRegistrar
 {
@@ -106,6 +107,15 @@ public sealed class BaseModelFolderRegistrar
         if (string.IsNullOrWhiteSpace(package.InstallationPath) || !Directory.Exists(package.InstallationPath))
         {
             return [];
+        }
+
+        // The Engine reads every user library through its yaml; those belong to the user, and
+        // registering them for the Engine re-linked them to its row on every start. Its own
+        // models folder, where its feature downloads land, is the one root it owns.
+        if (package.IsAppManaged)
+        {
+            var models = Engine.ManagedEngineLocator.ModelsFolder(package.InstallationPath);
+            return Directory.Exists(models) ? [models] : [];
         }
 
         if (package.Type == InstallerType.ComfyUI)

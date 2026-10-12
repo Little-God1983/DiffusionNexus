@@ -33,7 +33,8 @@ internal static class EngineTestHarness
         IReadOnlyList<string>? modelSearchRoots = null,
         Mock<IUnifiedLogger>? loggerMock = null,
         IEnumerable<IInstallerUpdateService>? updateServices = null,
-        Mock<IAppSettingsRepository>? appSettingsMock = null)
+        Mock<IAppSettingsRepository>? appSettingsMock = null,
+        BaseModelFolderRegistrar? registrar = null)
     {
         var repo = new Mock<IInstallerPackageRepository>();
         repo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>()))
@@ -82,6 +83,7 @@ internal static class EngineTestHarness
             updateServices ?? [], (loggerMock ?? new Mock<IUnifiedLogger>()).Object,
             engineInstaller: engineInstaller,
             engine: engine,
+            baseModelFolderRegistrar: registrar,
             engineModelPaths: modelSearchRoots is null ? null : RealSynchronizer(uow.Object, modelSearchRoots));
     }
 

@@ -1,5 +1,7 @@
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Services;
+using DiffusionNexus.UI.Services.Diffusion;
 using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.Engine;
@@ -10,6 +12,44 @@ namespace DiffusionNexus.Tests.InstallerManager;
 
 public class EngineInstallFlowTests
 {
+    [Fact]
+    public async Task SuccessfulInstall_RegistersTheEnginesModelsFolder_RightAway()
+    {
+        var temp = Directory.CreateTempSubdirectory("dn-engine-install-").FullName;
+        var root = Path.Combine(temp, "Engine"); // chosen while it does not exist yet, as a real pick would be
+        try
+        {
+            var installer = new Mock<IManagedEngineInstaller>();
+            installer.Setup(i => i.InstallBaseEngineAsync(
+                    It.IsAny<EngineInstallRequest>(), It.IsAny<IProgress<InstallLogEntry>>(),
+                    It.IsAny<IProgress<InstallationProgress>>(), It.IsAny<CancellationToken>()))
+                .Callback(() =>
+                {
+                    Directory.CreateDirectory(root);
+                    File.WriteAllText(Path.Combine(root, "main.py"), "");
+                })
+                .ReturnsAsync(new EngineInstallOutcome(true, false, "done", root));
+            var settings = new Mock<IAppSettingsService>();
+            var registered = new List<string>();
+            settings.Setup(s => s.AddBaseModelFolderAsync(It.IsAny<string>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()))
+                .Callback<string, int?, CancellationToken>((p, _, _) => registered.Add(p))
+                .ReturnsAsync(true);
+            var aggregator = new Mock<IDatasetEventAggregator>();
+            var vm = EngineTestHarness.CreateInstallerManagerViewModel(
+                [], engineInstaller: installer.Object, chosenFolder: root, onPackageAdded: _ => { },
+                eventAggregatorMock: aggregator, registrar: new BaseModelFolderRegistrar(settings.Object));
+            vm.IsEngineTileVisible = true;
+            await vm.LoadInstallationsCommand.ExecuteAsync(null);
+
+            await vm.InstallEngineAsync();
+
+            registered.Should().Equal(Path.Combine(root, "models"));
+            aggregator.Verify(a => a.PublishSettingsSaved(It.IsAny<SettingsSavedEventArgs>()), Times.Once,
+                "Settings → Base Model Folders reloads and shows the new folder");
+        }
+        finally { Directory.Delete(temp, recursive: true); }
+    }
+
     [Fact]
     public async Task SuccessfulInstall_PersistsAnAppManagedComfyUiRow()
     {

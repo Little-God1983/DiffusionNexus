@@ -1280,6 +1280,24 @@ public partial class InstallerManagerViewModel : ViewModelBase
                         });
                     }
 
+                    // Its models folder, where feature downloads land, is a Base Model Folder from the
+                    // start: Settings shows it and the app's model features read it without a restart.
+                    if (_baseModelFolderRegistrar is not null)
+                    {
+                        var registeredPackage = package;
+                        await RunEngineFollowUpAsync("register the Engine's models folder", async () =>
+                        {
+                            var modelsFolder = Services.Engine.ManagedEngineLocator.ModelsFolder(registeredPackage.InstallationPath);
+                            Directory.CreateDirectory(modelsFolder);
+                            if (await _baseModelFolderRegistrar.EnsureRegisteredAsync([registeredPackage]) > 0)
+                            {
+                                _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
+                                    $"Registered the Engine's models folder as a Base Model Folder: {modelsFolder}");
+                                _eventAggregator.PublishSettingsSaved(new SettingsSavedEventArgs());
+                            }
+                        });
+                    }
+
                     RunEngineFollowUp("announce the new installation",
                         () => _eventAggregator.PublishInstallerPackagesChanged(new InstallerPackagesChangedEventArgs()));
                     // Settings' Engine status line and the editor's readiness lines re-check on this.
