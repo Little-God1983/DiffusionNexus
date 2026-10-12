@@ -184,6 +184,27 @@ public sealed class EngineFeatureRemovalTests : IDisposable
         seen.Should().Be("Checking Inpaint & Outpaint's files…");
     }
 
+    // Round 2: while files are deleted the removal holds an install-activity handle, so a catalog apply or
+    // another install waits; the remover does not refuse itself over that handle. Released afterwards.
+    [Fact]
+    public async Task WhileDeleting_TheRemovalHoldsAnInstallActivityHandle()
+    {
+        Answer(1);
+        var activity = new InstallActivity();
+        string? runningWhileDeleting = null;
+        _fs.Setup(f => f.DeleteFile(It.IsAny<string>())).Callback(() => runningWhileDeleting ??= activity.Running);
+        var vm = new EngineFeaturesViewModel(_catalog.Object, _checker.Object, new Mock<IWorkloadInstallService>().Object, _root,
+            unifiedLogger: _log.Object, freeSpaceProbe: _ => 0, installActivity: activity, dialogs: _dialog.Object,
+            remover: new EngineRemover(null, activity, fileSystem: _fs.Object));
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        await vm.RemoveFeatureCommand.ExecuteAsync(Row(vm, EngineFeature.InpaintOutpaint));
+
+        runningWhileDeleting.Should().Be("Diffusion Nexus Engine feature removal");
+        _fs.Verify(f => f.DeleteFile(_unet), Times.Once);
+        activity.Running.Should().BeNull();
+    }
+
     [Fact]
     public async Task Cancel_DeletesNothing()
     {

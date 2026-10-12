@@ -363,7 +363,20 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
             Info($"{row.DisplayName}: removing ({(choice == RemovalChoice.Everything ? "your own folders' copies too" : "only what's in the Engine")}).");
             ProgressText = $"Removing {row.DisplayName}…";
 
-            var result = await _remover.RemoveAsync(plan.NodePackFolders, files, engineRoot: _engineRoot);
+            // While files are deleted a catalog apply or another install waits (#618). An install that started
+            // while the question was open still refuses the removal: checked right before the handle is taken,
+            // with no await between, so the remover can skip the installs (its own handle would read as one).
+            if (_remover.BusyReason() is { } busyNow)
+            {
+                ProgressText = null;
+                Info($"{row.DisplayName}: removal refused, the Engine is busy ({busyNow}). Nothing was changed.");
+                await _dialogs.ShowMessageAsync(EngineRemovalMessages.FeatureTitle, EngineRemovalMessages.Busy(busyNow));
+                return;
+            }
+
+            EngineRemovalResult result;
+            using (_installActivity?.Begin("Diffusion Nexus Engine feature removal"))
+                result = await _remover.RemoveAsync(plan.NodePackFolders, files, engineRoot: _engineRoot, installActivityHeldByCaller: true);
             if (result.WasBusy)
             {
                 ProgressText = null;
