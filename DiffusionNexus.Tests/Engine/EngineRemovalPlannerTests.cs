@@ -325,6 +325,38 @@ public class EngineRemovalPlannerTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    // R3-3: models\loras inside the Engine is a junction to the user's library. A copy found through it is
+    // the user's file behind a link: it is not planned as an Engine deletion and its size is not counted.
+    [Fact]
+    public void Feature_AnEngineCopyReachedThroughALink_IsNotPlanned()
+    {
+        var root = Directory.CreateTempSubdirectory("dn-planner-linked-").FullName;
+        var library = Directory.CreateTempSubdirectory("dn-planner-linked-lib-").FullName;
+        var link = Path.Combine(root, "models", "loras");
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "main.py"), "");
+            Directory.CreateDirectory(Path.Combine(root, "models"));
+            Write(library, "style.safetensors", 50);
+            Junction(link, library);
+            var throughLink = Path.Combine(link, "style.safetensors");
+            var engineVae = Write(root, @"models\vae\ae.safetensors", 1);
+            var feature = OneModel("style", "loras", throughLink);
+            var checks = new[] { feature with { Results = [.. feature.Results, Result([], [[engineVae]])] } };
+
+            var plan = EngineRemovalPlanner.PlanFeatureRemoval(root, checks, EngineFeature.BatchUpscale, Size);
+
+            plan.EngineModels.Select(f => f.Path).Should().Equal(engineVae);
+            plan.OutsideModels.Should().BeEmpty();
+        }
+        finally
+        {
+            if (Directory.Exists(link)) Directory.Delete(link); // the link only, before the trees
+            Directory.Delete(root, recursive: true);
+            Directory.Delete(library, recursive: true);
+        }
+    }
+
     // R3-2: ComfyUI's legacy folder names count inside the Engine too.
     [Theory]
     [InlineData("diffusion_models", "unet")]

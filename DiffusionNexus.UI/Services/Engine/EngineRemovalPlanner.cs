@@ -80,7 +80,7 @@ public static class EngineRemovalPlanner
         }
 
         foreach (var path in target.Results.SelectMany(r => r.ModelResults)
-                     .Where(m => m.IsInstalled && !m.IsPlaceholder).SelectMany(m => DeletableCopies(engineFolders, m)))
+                     .Where(m => m.IsInstalled && !m.IsPlaceholder).SelectMany(m => DeletableCopies(engineRoot, engineFolders, m)))
         {
             if (!seen.Add(Key(path))) continue;
             if (modelOwners.TryGetValue(Key(path), out var owner))
@@ -129,8 +129,12 @@ public static class EngineRemovalPlanner
     /// The copies of a model a removal may delete: every copy inside the Engine folder, and a copy outside
     /// it only when <see cref="IsOfferedOutsideCopy"/> says it is this model's.
     /// </summary>
-    private static IEnumerable<string> DeletableCopies(IReadOnlyList<string> engineFolders, DiffusionNexus.UI.Services.ConfigurationChecker.Models.ModelCheckResult model) =>
-        model.AllFoundPaths.Where(p => InEngine(engineFolders, p) ? IsEngineCopy(model, p) : IsOfferedOutsideCopy(model, p));
+    private static IEnumerable<string> DeletableCopies(string engineRoot, IReadOnlyList<string> engineFolders, DiffusionNexus.UI.Services.ConfigurationChecker.Models.ModelCheckResult model) =>
+        model.AllFoundPaths.Where(p => InEngine(engineFolders, p)
+            // A copy reached through a link inside the Engine (models\loras → D:\Loras) is the user's file
+            // behind the link: the remover would refuse it, so it is neither planned nor counted.
+            ? IsEngineCopy(model, p) && !IsLinkedBelow(engineRoot, Path.GetDirectoryName(p)!)
+            : IsOfferedOutsideCopy(model, p));
 
     /// <summary>
     /// A copy inside the Engine is this model's when it sits directly in the model's category folder
@@ -231,6 +235,7 @@ public static class EngineRemovalPlanner
              current is not null && !string.Equals(current.FullName, top, StringComparison.OrdinalIgnoreCase);
              current = current.Parent)
         {
+            if (!current.Exists) continue; // a folder that is not there is no link
             try
             {
                 if (current.Attributes.HasFlag(FileAttributes.ReparsePoint)) return true;
