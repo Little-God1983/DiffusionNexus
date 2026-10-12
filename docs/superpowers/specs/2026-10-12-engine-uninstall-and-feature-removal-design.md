@@ -80,9 +80,11 @@ folder and leaves rows outside it alone.
 2. **Plan.** The app works out what would be deleted:
    - the Engine folder: custom nodes, Python environment and every model inside it, with its size;
    - the models of every Installed or Partial feature that sit **outside** the Engine folder, in one
-     of the user's model folders (see *Finding a feature's files*). Features that are not installed
-     contribute nothing, so a file the user has for their own reasons is never listed because of a
-     feature they never installed.
+     of the user's model folders (see *Finding a feature's files*). Features that read as not installed
+     contribute nothing. A feature reads as Partial as soon as one of its files is found, so the user's
+     own copy of a common file (for example their own `ae.safetensors`) can make a feature they never
+     installed read as Partial, and that copy is then listed. Deleting it is always an explicit choice:
+     **Delete only what's in the Diffusion Nexus Engine** leaves every listed file where it is.
 3. **Confirm.**
    - No outside models: *"Uninstall the Diffusion Nexus Engine? This deletes <folder> (<size>):
      the Engine, its features and the models it downloaded. Your own model folders are not
@@ -106,9 +108,12 @@ folder and leaves rows outside it alone.
    caller holds its own handle (`installActivityHeldByCaller`) so it does not refuse itself; a running
    generation still refuses. A refusal, a failure or an error ends the state and releases the handle.
 5. **Run**, under `TryBeginMaintenanceAsync` so nothing can start the Engine meanwhile:
-   - stop the Engine (`IManagedEngineControl.StopAsync`);
-   - delete the Engine folder (the same force delete Delete from Disk uses), then the chosen outside
-     models;
+   - stop the Engine if it runs (`IManagedEngineControl.StopIfIdleAsync`); a generation that is
+     running makes the removal refuse as busy, and nothing is deleted;
+   - delete the Engine folder with `EngineRemover`'s own walk (not Delete from Disk's force delete):
+     read-only flags are cleared, a junction or symlink found inside is removed as a link and never
+     entered, and an entry that cannot be deleted is reported while the walk goes on; then the chosen
+     outside models;
    - remove the Base Model Folder rows whose path lies inside the Engine folder (by path, never by
      package id, so a user folder that a past backfill linked to the Engine survives); Generation
      Galleries and LoRA sources inside the Engine folder are forgotten the same way (the startup
@@ -122,9 +127,11 @@ folder and leaves rows outside it alone.
    was a junction or symlink, only the link went: the user is told so, with the folder the files stay
    in (or "the folder it pointed to" when the target cannot be read), and the console logs it.
 
-**Deletion safety.** A folder that is itself a junction or symlink loses only the link. A file or
-folder reached through a link inside the Engine folder (for example `ComfyUI\models\loras` pointing at
-`D:\Models\loras`) is refused and reported, never followed. Drive roots, blank and relative paths are
+**Deletion safety.** A folder that is itself a junction or symlink loses only the link. A link found
+inside the Engine while a folder is deleted (for example `ComfyUI\models\loras` pointing at
+`D:\Models\loras`) is removed as a link, never entered, so the files behind it stay. A file or folder
+listed for deletion that is reached through a link inside the Engine folder is refused and reported,
+never followed. Drive roots, blank and relative paths are
 never deleted. Link checks are scoped to the Engine folder: a link above it does not block.
 
 **Corrupted row.** An Engine row whose path is blank, relative or a drive root is only forgotten:
@@ -228,8 +235,13 @@ removes it. Fixing the catalog entry is separate work.
 - `EngineRemovalPlanner` + its plan record (node packs to delete, Engine models to delete,
   outside models, kept items with the feature that keeps them, sizes).
 - `EngineRemover` (`Services\Engine\`): busy check, stop, maintenance hold, delete. One `RemoveAsync`
-  serves Uninstall Engine and Remove feature. File deletion goes through an injectable seam
-  (`IRemovalFileSystem`) so tests can simulate locked files. The registrations, the row, the server
+  serves Uninstall Engine and Remove feature (`installActivityHeldByCaller` for the uninstall, which
+  holds its own install-activity handle). File deletion goes through an injectable seam
+  (`IRemovalFileSystem`, whose `DeleteDirectory` returns the entries it could not delete) so tests can
+  simulate locked files; `InstallerManagerViewModel` takes the same seam for the uninstall. The link,
+  drive and relative-path checks stay in `EngineRemover`.
+- `ModelFolderCatalog.GetDownloadTargetsAsync`: leaves out folders inside an app-managed install
+  (reads the installer packages through an optional `IUnitOfWork`); `GetSearchRootsAsync` unchanged. The registrations, the row, the server
   mode and the events are the uninstall flow's job: `UninstallEngineAsync` and `ForgetEngineAsync` in
   `InstallerManagerViewModel`.
 - `EngineRemovalPlanner` and `EngineRemovalMessages` (`Services\Engine\`): the plan and the wording.
@@ -254,15 +266,24 @@ failure with its reason, and the end result.
 
 Unit tests (temp folders, fakes for the engine control, install activity, settings and dialogs):
 - Planner: a node pack or model shared with another installed feature is kept and named; one shared
-  only with a not-installed feature is deleted; every copy is found, not just the first; inside vs
+  only with a not-installed feature is deleted; overlapping features (one's files a subset of the
+  other's) can both be removed in either order, and a feature present only through the removed
+  one's files is named as going with it; Uninstall counts the model files in the Engine's models
+  folder that no feature declares; every copy is found, not just the first; inside vs
   outside the Engine; all quant names probed; Uninstall plans the whole folder plus outside models.
 - `EngineRemover` (and the uninstall flow): refuses while a job runs or an install is active, and changes nothing; stops the
   Engine before deleting; "only Engine" never touches outside files; "all" deletes them; a locked
-  file keeps the row and reports the file; a missing folder removes the row; Base Model Folder rows
+  file keeps the row and reports the file; a locked file in the middle of a folder is reported and
+  everything else in the folder is deleted; the tile shows "Uninstalling..." and the Features dialog
+  refuses while the uninstall runs; an Engine folder that is a junction loses only the link and the
+  user is told where the files stay; a failure outside the Engine folder does not keep the row; a missing folder removes the row; Base Model Folder rows
   are removed by path, and a user folder linked to the Engine row survives; server mode switches
   only when it was Engine.
 - Registrar: the app-managed row registers only its own models folder and never re-links an existing
   user folder.
+- `ModelFolderCatalog`: with only the Engine's folder registered the default download target is the
+  LocalAppData fallback; with a user folder too, the user folder is the default and the Engine's is
+  not offered; search roots still include the Engine's folder.
 - `WorkloadInstallService`: with `modelsRootOverride`, a model's destination is under it.
 - Card: Settings and Make Default disabled with tooltips on the Engine; Uninstall shown for installed,
   incomplete and missing Engine; Remove/Delete hidden on the Engine only.
