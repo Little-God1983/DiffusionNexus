@@ -63,7 +63,10 @@ public sealed class EngineFeatureRemovalTests : IDisposable
         CustomNodeResults = nodes.Select(n => new CustomNodeCheckResult
             { Id = Guid.NewGuid(), Name = Path.GetFileName(n), Url = "u", IsInstalled = true, ExpectedPath = n }).ToList(),
         ModelResults = models.Select(m => new ModelCheckResult
-            { Id = Guid.NewGuid(), Name = Path.GetFileName(m), IsInstalled = true, SearchedPaths = [], FoundAtPath = m, AllFoundPaths = [m] }).ToList()
+            {
+                Id = Guid.NewGuid(), Name = Path.GetFileName(m), IsInstalled = true, SearchedPaths = [], FoundAtPath = m, AllFoundPaths = [m],
+                Category = Path.GetFileName(Path.GetDirectoryName(m)) // each file sits in its category folder
+            }).ToList()
     };
 
     // Nothing on disk. Not Result([], []): a check with no items reads as Installed (nothing missing).
@@ -77,7 +80,8 @@ public sealed class EngineFeatureRemovalTests : IDisposable
     {
         var library = Directory.CreateTempSubdirectory("dn-user-lib-").FullName;
         _userLibraries.Add(library);
-        var path = Path.Combine(library, "ae.safetensors");
+        var path = Path.Combine(library, "vae", "ae.safetensors");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, "x");
         return path;
     }

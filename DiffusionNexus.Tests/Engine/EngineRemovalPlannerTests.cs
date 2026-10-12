@@ -23,6 +23,9 @@ public class EngineRemovalPlannerTests
         {
             Id = Guid.NewGuid(), Name = paths.Length > 0 ? Path.GetFileName(paths[0]) : "missing",
             IsInstalled = paths.Length > 0, SearchedPaths = [],
+            // The folder the last copy sits in (the user's copy, where a fixture has one), so a copy outside
+            // the Engine is in its category folder.
+            Category = paths.Length > 0 ? Path.GetFileName(Path.GetDirectoryName(paths[^1])) : null,
             FoundAtPath = paths.FirstOrDefault() ?? "", AllFoundPaths = paths
         }).ToList()
     };
@@ -273,7 +276,7 @@ public class EngineRemovalPlannerTests
     {
         var checks = new[]
         {
-            Check(EngineFeature.BatchUpscale, "Batch Upscale", Result([(Usdu, true)], [[EngineUpscaler, UserAe]])),
+            Check(EngineFeature.BatchUpscale, "Batch Upscale", Result([(Usdu, true)], [[Root + @"\models\vae\ae.safetensors", UserAe]])),
             Check(EngineFeature.Canvas, "Canvas · Krea 2 Turbo", Result([], [Array.Empty<string>()])),
         };
 

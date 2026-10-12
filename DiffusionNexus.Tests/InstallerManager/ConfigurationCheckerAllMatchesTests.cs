@@ -83,8 +83,10 @@ public sealed class ConfigurationCheckerAllMatchesTests : IDisposable
         return config;
     }
 
+    // Round 2 (A2): the removal check searches the same names as the readiness check, so what it reads as
+    // installed agrees with the Features dialog. Which copies may be deleted is the planner's decision.
     [Fact]
-    public async Task CollectAllMatches_SearchesTheConfiguredName_NotTheGenericUrlName()
+    public async Task CollectAllMatches_SearchesTheSameNamesAsTheReadinessCheck_AndReportsTheCategory()
     {
         var (repo, generic, configured) = GenericNamedLibraryFile();
         File.WriteAllText(configured, "x");
@@ -93,9 +95,21 @@ public sealed class ConfigurationCheckerAllMatchesTests : IDisposable
             GenericNameConfig(), repo, new ConfigurationCheckOptions { CollectAllMatches = true });
 
         var model = result.ModelResults.Single();
-        model.AllFoundPaths.Should().Equal([configured],
-            "the installer renames the download to its configured name, so a generic-named file elsewhere is someone else's");
-        model.AllFoundPaths.Should().NotContain(generic);
+        model.AllFoundPaths.Should().BeEquivalentTo([configured, generic]);
+        model.Category.Should().Be("controlnet");
+    }
+
+    [Fact]
+    public async Task CollectAllMatches_WithOnlyTheUrlNamedCopy_IsInstalled_LikeTheReadinessCheck()
+    {
+        var (repo, generic, _) = GenericNamedLibraryFile();
+
+        var result = await new ConfigurationCheckerService().CheckConfigurationAsync(
+            GenericNameConfig(), repo, new ConfigurationCheckOptions { CollectAllMatches = true });
+
+        var model = result.ModelResults.Single();
+        model.IsInstalled.Should().BeTrue();
+        model.AllFoundPaths.Should().Equal(generic);
     }
 
     [Fact]

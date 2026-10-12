@@ -240,10 +240,15 @@ installed).
   <X>, so the app cannot tell which files <X> shares. Update the catalog or switch its channel, then try
   again. Uninstall Engine still works."*). Uninstall Engine then leaves out the count of model files no
   feature uses (it would count that feature's files too).
-- **Names searched for removal:** when every copy is collected, a URL-derived name that the installer
-  renames to its configured name (`<Name><ext>`) is replaced by that name, not searched beside it: a
-  generic HuggingFace name (`diffusion_pytorch_model.safetensors`) found in the user's library belongs to
-  some other model. The readiness check still searches both.
+- **Copies in the user's own folders:** the removal check searches the same names as the readiness
+  check, so what it reads as installed (and so which features are fully installed and protect files)
+  agrees with the Features dialog. A copy outside the Engine folder is offered for deletion (Remove…'s
+  list and Uninstall's) only when it sits directly in a folder named like the model's category, the last
+  segment of its destination (`models/vae` → `vae`; ComfyUI's legacy `unet` ↔ `diffusion_models` and
+  `clip` ↔ `text_encoders` count), and under a name the installer leaves on disk: not a URL-derived name
+  the installer renames to `<Name><ext>` (a generic `diffusion_pytorch_model.safetensors` belongs to some
+  other model). Any other outside copy is neither listed nor deleted, but still counts as installed.
+  Copies inside the Engine folder are always the Engine's.
 
 Known gap: a model whose catalog URL does not carry its file name (Krea 2 Turbo's Identity Edit LoRA,
 `…/api/download/models/3139172?fileId=…`, which the checker expects as `3139172`) is not found by

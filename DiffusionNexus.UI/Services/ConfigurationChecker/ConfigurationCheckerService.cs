@@ -329,8 +329,7 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
         List<string> modelSearchPaths,
         ConfigurationCheckOptions options)
     {
-        var (fileNames, isVramScoped, scopedProfile) = ResolveExpectedFileNames(
-            model, options.SelectedVramGb, onlyNamesLeftOnDisk: options.CollectAllMatches);
+        var (fileNames, isVramScoped, scopedProfile) = ResolveExpectedFileNames(model, options.SelectedVramGb);
 
         var searchedPaths = new List<string>();
         var found = new List<string>();
@@ -366,6 +365,7 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
             IsInstalled = model.IsPlaceholder || !string.IsNullOrEmpty(foundPath),
             IsPlaceholder = model.IsPlaceholder,
             IsFindableByName = fileNames.Any(Path.HasExtension),
+            Category = CategoryOf(model.Destination),
             IsVramProfileScoped = isVramScoped,
             ScopedVramProfile = scopedProfile,
             HasVramProfiles = hasVramProfiles,
@@ -373,6 +373,14 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
             FoundAtPath = foundPath,
             AllFoundPaths = found
         };
+    }
+
+    /// <summary>The last segment of a model destination (<c>models/vae</c> → <c>vae</c>); null when there is none.</summary>
+    private static string? CategoryOf(string? destination)
+    {
+        if (string.IsNullOrWhiteSpace(destination)) return null;
+        var category = Path.GetFileName(destination.Replace('/', '\\').TrimEnd('\\'));
+        return string.IsNullOrWhiteSpace(category) ? null : category;
     }
 
     /// <summary>
@@ -419,13 +427,9 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
     /// <summary>
     /// Determines which file names to look for on disk.
     /// When VRAM profiles are in use, only the best-matching quant variant is expected.
-    /// With <paramref name="onlyNamesLeftOnDisk"/> (removal: every match is collected), a URL-derived
-    /// name the installer renames to its configured name is replaced by that name rather than kept
-    /// beside it: a generic HuggingFace name like <c>diffusion_pytorch_model.safetensors</c> found
-    /// elsewhere belongs to some other model.
     /// </summary>
     private static (List<string> FileNames, bool IsVramScoped, VramProfile? ScopedProfile)
-        ResolveExpectedFileNames(ModelDownload model, int selectedVramGb, bool onlyNamesLeftOnDisk = false)
+        ResolveExpectedFileNames(ModelDownload model, int selectedVramGb)
     {
         var enabledLinks = model.DownloadLinks?.Where(l => l.Enabled).ToList() ?? [];
 
@@ -448,8 +452,8 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
 
                 if (fileNames.Count > 0)
                 {
-                    AppendConfiguredFileNames(fileNames, model.Name, onlyNamesLeftOnDisk);
-                    return (fileNames.Distinct(StringComparer.OrdinalIgnoreCase).ToList(), true, scopedProfile);
+                    AppendConfiguredFileNames(fileNames, model.Name);
+                    return (fileNames, true, scopedProfile);
                 }
             }
         }
@@ -474,7 +478,7 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
             }
         }
 
-        AppendConfiguredFileNames(allFileNames, model.Name, onlyNamesLeftOnDisk);
+        AppendConfiguredFileNames(allFileNames, model.Name);
 
         return (allFileNames.Distinct(StringComparer.OrdinalIgnoreCase).ToList(), false, null);
     }
@@ -484,25 +488,19 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
     /// extensions found in the existing URL-derived file names. This handles the
     /// common case where HuggingFace uses generic names like
     /// <c>diffusion_pytorch_model.safetensors</c> instead of the configured model name.
-    /// With <paramref name="replaceUrlNames"/>, each URL name that has a configured name is dropped:
-    /// the installer's rename (<c>WorkloadInstallService.TryRenameToConfiguredName</c>) leaves only the
-    /// configured name on disk.
     /// </summary>
-    private static void AppendConfiguredFileNames(List<string> fileNames, string modelName, bool replaceUrlNames = false)
+    private static void AppendConfiguredFileNames(List<string> fileNames, string modelName)
     {
         if (string.IsNullOrWhiteSpace(modelName)) return;
 
         foreach (var urlFileName in fileNames.ToList())
         {
             var configuredName = DeriveConfiguredFileName(modelName, urlFileName);
-            if (configuredName is null)
-                continue;
-
-            if (replaceUrlNames)
-                fileNames.Remove(urlFileName);
-
-            if (!fileNames.Contains(configuredName, StringComparer.OrdinalIgnoreCase))
+            if (configuredName is not null &&
+                !fileNames.Contains(configuredName, StringComparer.OrdinalIgnoreCase))
+            {
                 fileNames.Add(configuredName);
+            }
         }
     }
 

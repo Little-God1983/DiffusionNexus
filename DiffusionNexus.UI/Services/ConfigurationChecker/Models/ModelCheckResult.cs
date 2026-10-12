@@ -46,6 +46,12 @@ public sealed record ModelCheckResult
     /// </summary>
     public bool IsFindableByName { get; init; } = true;
 
+    /// <summary>
+    /// The model's category folder: the last segment of its destination (<c>models/vae</c> → <c>vae</c>),
+    /// or null when it has none. Removal offers a copy outside the Engine only from a folder of this name.
+    /// </summary>
+    public string? Category { get; init; }
+
     /// <summary>All paths that were searched.</summary>
     public required IReadOnlyList<string> SearchedPaths { get; init; }
 

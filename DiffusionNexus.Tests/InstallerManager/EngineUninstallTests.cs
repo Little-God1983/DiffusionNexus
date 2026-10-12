@@ -375,7 +375,8 @@ public sealed class EngineUninstallTests : IDisposable
         var library = Directory.CreateTempSubdirectory("dn-engine-user-lib-").FullName;
         try
         {
-            var userModel = Path.Combine(library, "ae.safetensors");
+            var userModel = Path.Combine(library, "vae", "ae.safetensors");
+            Directory.CreateDirectory(Path.GetDirectoryName(userModel)!);
             File.WriteAllText(userModel, "x");
             var catalog = new Mock<ICatalog>();
             catalog.Setup(c => c.GetWorkloadAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
@@ -390,7 +391,7 @@ public sealed class EngineUninstallTests : IDisposable
                     CustomNodeResults = [],
                     ModelResults = [new ModelCheckResult
                     {
-                        Id = Guid.NewGuid(), Name = "ae", IsInstalled = true, SearchedPaths = [],
+                        Id = Guid.NewGuid(), Name = "ae", IsInstalled = true, SearchedPaths = [], Category = "vae",
                         FoundAtPath = userModel, AllFoundPaths = [userModel]
                     }]
                 });
