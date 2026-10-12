@@ -10,11 +10,11 @@ public partial class EngineFeaturesDialog : Window
     public EngineFeaturesDialog()
     {
         AvaloniaXamlLoader.Load(this);
-        // Closing mid-install would orphan the download; the Close button is disabled meanwhile,
-        // and the window's own close box is refused the same way.
+        // Closing mid-install would orphan the download, and mid-removal would lose its outcome; the
+        // Close button is disabled meanwhile, and the window's own close box is refused the same way.
         Closing += (_, e) =>
         {
-            if (DataContext is ViewModels.EngineFeaturesViewModel { IsInstalling: true })
+            if (DataContext is ViewModels.EngineFeaturesViewModel { IsBusy: true })
                 e.Cancel = true;
         };
     }

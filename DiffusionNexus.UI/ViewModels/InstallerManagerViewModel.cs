@@ -816,7 +816,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         {
             var vm = new EngineFeaturesViewModel(
                 _catalog, _checkerService, _installService, card.InstallationPath,
-                _resourceMonitor, _unifiedLogger, preselect, installActivity: _installActivity);
+                _resourceMonitor, _unifiedLogger, preselect, installActivity: _installActivity,
+                dialogs: _dialogService, remover: CreateEngineRemover());
             await vm.LoadCommand.ExecuteAsync(null);
 
             Serilog.Log.Information("Opening the Engine Features dialog for {Path}", card.InstallationPath);
@@ -852,6 +853,12 @@ public partial class InstallerManagerViewModel : ViewModelBase
                     _unifiedLogger.Info(LogCategory.InstanceManagement, "Diffusion Nexus Engine", kept);
                 }
 
+                // Lets an open Inpaint/Outpaint panel and Settings' Engine status re-check.
+                _eventAggregator.PublishEngineChanged(new EngineChangedEventArgs());
+            }
+
+            if (vm.DidRemove && !vm.DidInstall)
+            {
                 // Lets an open Inpaint/Outpaint panel and Settings' Engine status re-check.
                 _eventAggregator.PublishEngineChanged(new EngineChangedEventArgs());
             }

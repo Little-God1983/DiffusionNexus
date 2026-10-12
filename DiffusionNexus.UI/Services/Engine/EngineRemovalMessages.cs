@@ -60,6 +60,10 @@ public static class EngineRemovalMessages
         return text.ToString();
     }
 
+    public static string CheckFailed(string featureName, string reason) =>
+        $"The files of {featureName} could not be checked ({reason}), so nothing was removed. " +
+        "Try again; the Unified Console has the details.";
+
     public static string Uninstall(string folder, long folderBytes, IReadOnlyList<PlannedFile> outside)
     {
         var text = new StringBuilder("Uninstall the Diffusion Nexus Engine?");
