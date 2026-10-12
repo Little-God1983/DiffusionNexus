@@ -230,4 +230,33 @@ public sealed class EngineRemoverTests : IDisposable
         result.Failed.Should().HaveCount(2).And.OnlyContain(f => f.Reason.Contains("not a full path"));
         fs.VerifyNoOtherCalls();
     }
+
+    [Fact]
+    public async Task ARelativeEngineRoot_IsIgnored_AndLinksAreStillChecked()
+    {
+        var engine = Folder("Engine");
+        var library = Folder("Library");
+        Junction(Path.Combine(engine, "models"), library);
+        var viaLink = Path.Combine(engine, "models", "f.txt");
+
+        var result = await new EngineRemover(_engine.Object, null).RemoveAsync([], [viaLink], "Engine");
+
+        result.Failed.Should().ContainSingle().Which.Path.Should().Be(viaLink);
+        File.Exists(Path.Combine(library, "f.txt")).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task AJunctionDirectoryWithATrailingSeparator_LosesTheLinkOnly()
+    {
+        var engine = Folder("Engine");
+        var library = Folder("Library");
+        var link = Path.Combine(engine, "custom_nodes");
+        Junction(link, library);
+
+        var result = await new EngineRemover(_engine.Object, null).RemoveAsync([link + Path.DirectorySeparatorChar], [], engine);
+
+        result.Failed.Should().BeEmpty();
+        Directory.Exists(link).Should().BeFalse();
+        File.Exists(Path.Combine(library, "f.txt")).Should().BeTrue();
+    }
 }

@@ -137,18 +137,25 @@ public sealed class EngineRemover
     {
         var failed = new List<RemovalFailure>();
 
-        foreach (var directory in directories)
+        if (engineRoot is not null && !Path.IsPathFullyQualified(engineRoot))
         {
+            Warn($"Ignored the Engine root '{engineRoot}': not a full path; links are checked up to the drive.");
+            engineRoot = null;
+        }
+
+        foreach (var listed in directories)
+        {
+            var directory = Path.TrimEndingDirectorySeparator(listed);
             if (IsDriveRoot(directory))
             {
-                failed.Add(new RemovalFailure(directory, "a drive is never deleted"));
+                failed.Add(new RemovalFailure(listed, "a drive is never deleted"));
                 Warn($"Refused to delete {directory}: it is a drive.");
                 continue;
             }
 
             if (!Path.IsPathFullyQualified(directory))
             {
-                failed.Add(new RemovalFailure(directory, NotFullPath));
+                failed.Add(new RemovalFailure(listed, NotFullPath));
                 Warn($"Refused to delete {directory}: it is not a full path.");
                 continue;
             }
@@ -156,7 +163,7 @@ public sealed class EngineRemover
             if (!Directory.Exists(directory)) continue;
             if (IsReachedThroughLink(directory, engineRoot))
             {
-                failed.Add(new RemovalFailure(directory, "reached through a link; the folder lives elsewhere and was not deleted"));
+                failed.Add(new RemovalFailure(listed, "reached through a link; the folder lives elsewhere and was not deleted"));
                 Warn($"Refused to delete {directory}: it is reached through a junction or symlink.");
                 continue;
             }
@@ -166,11 +173,12 @@ public sealed class EngineRemover
                 isLink ? $"Removed link {directory}; its target was not touched" : null);
         }
 
-        foreach (var file in files)
+        foreach (var listedFile in files)
         {
+            var file = Path.TrimEndingDirectorySeparator(listedFile);
             if (!Path.IsPathFullyQualified(file))
             {
-                failed.Add(new RemovalFailure(file, NotFullPath));
+                failed.Add(new RemovalFailure(listedFile, NotFullPath));
                 Warn($"Refused to delete {file}: it is not a full path.");
                 continue;
             }
@@ -178,7 +186,7 @@ public sealed class EngineRemover
             if (!File.Exists(file)) continue;
             if (IsReachedThroughLink(file, engineRoot))
             {
-                failed.Add(new RemovalFailure(file, "reached through a link; the file lives elsewhere and was not deleted"));
+                failed.Add(new RemovalFailure(listedFile, "reached through a link; the file lives elsewhere and was not deleted"));
                 Warn($"Refused to delete {file}: it is reached through a junction or symlink.");
                 continue;
             }
