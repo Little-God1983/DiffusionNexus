@@ -29,14 +29,18 @@ public sealed class ImageDescriber
     private readonly IComfyUIWrapperService _client;
     private readonly string _workflowPath;
     private readonly string _config;
+    private readonly string? _userPrompt;
     private readonly Random _random = new();
 
-    public ImageDescriber(IComfyUIWrapperService client, string modelPath, string projectorPath, string? workflowPath = null)
+    /// <param name="userPrompt">What to ask Qwen3-VL; null keeps the workflow's own question.</param>
+    public ImageDescriber(IComfyUIWrapperService client, string modelPath, string projectorPath, string? workflowPath = null,
+        string? userPrompt = null)
     {
         ArgumentNullException.ThrowIfNull(client);
         _client = client;
         _workflowPath = workflowPath ?? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, WorkflowRelativePath);
         _config = QwenVlGguf.BuildConfig(modelPath, projectorPath);
+        _userPrompt = userPrompt;
     }
 
     /// <summary>
@@ -97,6 +101,8 @@ public sealed class ImageDescriber
                 node["inputs"]!["unload_all_models"] = freeComfyModels;
                 node["inputs"]!["seed"] = seed;
                 node["inputs"]!["config_override"] = _config;
+                if (_userPrompt is not null)
+                    node["inputs"]!["user_prompt"] = _userPrompt;
             },
         };
     }

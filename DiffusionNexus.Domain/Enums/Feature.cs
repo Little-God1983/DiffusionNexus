@@ -40,7 +40,7 @@ public enum Feature
 
     /// <summary>
     /// Image outpainting with vision-model auto-prompt (Qwen3-VL describes the surroundings).
-    /// Workflow: <c>Qwen-Image-2512-outpaint-Vision.json</c>
+    /// Workflows: <c>Qwen3-VL-Describe.json</c>, then <c>Qwen-Image-2512-outpaint-nonVision.json</c>.
     /// </summary>
     OutpaintVision
 }

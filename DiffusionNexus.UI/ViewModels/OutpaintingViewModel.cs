@@ -28,7 +28,8 @@ public enum OutpaintWarningLevel
 /// but supports two modes:
 /// <list type="bullet">
 ///   <item><description>nonVision – uses the user-supplied positive prompt.</description></item>
-///   <item><description>Vision – uses a Qwen3-VL VQA node to auto-describe the surroundings/background.</description></item>
+///   <item><description>Vision – Qwen3-VL first describes the surroundings/background in a job of its own
+///   (<see cref="ImageDescriber"/>), then the same workflow runs with that description as the prompt (#616).</description></item>
 /// </list>
 /// </summary>
 public partial class OutpaintingViewModel : ObservableObject
@@ -40,15 +41,18 @@ public partial class OutpaintingViewModel : ObservableObject
     private readonly IComfyUiClientProvider? _clientProvider;
     private readonly IDatasetEventAggregator? _eventAggregator;
 
-    private const string OutpaintNonVisionWorkflowPath = "Assets/Workflows/Qwen-Image-2512-outpaint-nonVision.json";
-    private const string OutpaintVisionWorkflowPath = "Assets/Workflows/Qwen-Image-2512-outpaint-Vision.json";
+    private const string OutpaintWorkflowPath = "Assets/Workflows/Qwen-Image-2512-outpaint-nonVision.json";
     private const string LoadImageNodeId = "16";
     private const string PositivePromptNodeId = "5";
     private const string NegativePromptNodeId = "8";
     private const string KSamplerNodeId = "11";
     private const string UnetLoaderNodeId = "15";
     private const string ImagePadNodeId = "26";
-    private const string VisionNodeId = "256";
+
+    /// <summary>What Generate (Vision) asks Qwen3-VL: the area the outpaint extends, not the subject.</summary>
+    internal const string SurroundingsPrompt =
+        "Describe the surroundings and the background of the image, not the subject. " +
+        "Write one paragraph of plain prose, no lists and no headings.";
 
     private const string UnetLoaderGGUFNodeType = "UnetLoaderGGUF";
     private const string QwenImageGGUFPrefix = "qwen-image-2512-";
@@ -758,15 +762,9 @@ public partial class OutpaintingViewModel : ObservableObject
                 return;
             }
 
-            Status = "Queuing outpainting workflow...";
-
-            var workflowRelativePath = useVision
-                ? OutpaintVisionWorkflowPath
-                : OutpaintNonVisionWorkflowPath;
-
             var workflowPath = Path.Combine(
                 AppDomain.CurrentDomain.BaseDirectory,
-                workflowRelativePath);
+                OutpaintWorkflowPath);
 
             if (!File.Exists(workflowPath))
             {
@@ -812,16 +810,8 @@ public partial class OutpaintingViewModel : ObservableObject
                 }
             };
 
-            // Only override the positive prompt for nonVision; the Vision workflow
-            // wires the positive prompt to the Qwen3-VL node's output.
-            if (!useVision)
-            {
-                overrides[PositivePromptNodeId] = node =>
-                {
-                    node["inputs"]!["text"] = _positivePrompt;
-                };
-            }
-            else
+            var positivePrompt = _positivePrompt;
+            if (useVision)
             {
                 // The GGUF node takes the model files as paths; the readiness check found them. Generate
                 // is clickable before the first check finished, so a missing answer is checked once more.
@@ -837,41 +827,38 @@ public partial class OutpaintingViewModel : ObservableObject
                     return;
                 }
 
-                var visionConfig = QwenVlGguf.BuildConfig(modelPath, projectorPath);
                 EmitGenerate($"Vision model: {modelPath}");
-                overrides[VisionNodeId] = node =>
-                {
-                    // The GGUF node's seed input tops out at 0xFFFFFFFF; the KSampler's 63-bit seed is rejected.
-                    node["inputs"]!["seed"] = QwenVlGguf.Seed(seed);
-                    node["inputs"]!["config_override"] = visionConfig;
-                };
-            }
+                Status = "Describing the surroundings with Qwen3-VL...";
 
-            var promptId = await comfy.QueueWorkflowAsync(workflowPath, overrides);
-            EmitGenerate($"Prompt queued ({promptId}).");
-
-            Status = "Generating (this may take a while)...";
-            // ComfyUI reports the Qwen3-VL step only as "Executing node 256…"; name it.
-            var visionNodeStatus = $"Executing node {VisionNodeId}...";
-            var progress = new Progress<string>(msg => Status =
-                useVision && msg == visionNodeStatus ? "Describing the surroundings with Qwen3-VL..." : msg);
-            await comfy.WaitForCompletionAsync(promptId, progress);
-
-            Status = "Downloading result...";
-            var result = await comfy.GetResultAsync(promptId);
-
-            // The prompt the Vision result came from: what Qwen3-VL wrote (ShowText's output).
-            if (useVision)
-            {
-                var description = result.Texts.FirstOrDefault(t => !string.IsNullOrWhiteSpace(t));
+                // Its own job before the outpaint (#616): the node reports a failed inference as its text, and
+                // inside the outpaint workflow that text became the prompt of a "successful" result. A failure
+                // now throws ImageDescriptionFailedException before anything is generated.
+                var description = await DescribeSurroundingsAsync(comfy, uploadedFilename, modelPath, projectorPath);
                 if (description is not null)
-                    EmitGenerate($"Vision description: {description.Trim()}");
+                    EmitGenerate($"Vision description: {description}");
                 else
                 {
                     Logger.Warning("Outpaint: Vision returned no description");
                     _unifiedLogger?.Warn(LogCategory.General, LogSource, "Vision returned no description.");
                 }
+                positivePrompt = description ?? string.Empty;
             }
+
+            overrides[PositivePromptNodeId] = node =>
+            {
+                node["inputs"]!["text"] = positivePrompt;
+            };
+
+            Status = "Queuing outpainting workflow...";
+            var promptId = await comfy.QueueWorkflowAsync(workflowPath, overrides);
+            EmitGenerate($"Prompt queued ({promptId}).");
+
+            Status = "Generating (this may take a while)...";
+            var progress = new Progress<string>(msg => Status = msg);
+            await comfy.WaitForCompletionAsync(promptId, progress);
+
+            Status = "Downloading result...";
+            var result = await comfy.GetResultAsync(promptId);
 
             if (result.Images.Count > 0)
             {
@@ -891,6 +878,16 @@ public partial class OutpaintingViewModel : ObservableObject
             ProgressDisplayText = ex.Message;
             StatusMessageChanged?.Invoke(this, ex.Message);
             _unifiedLogger?.Warn(LogCategory.General, LogSource, ex.Message);
+        }
+        catch (ImageDescriptionFailedException ex)
+        {
+            // Qwen3-VL could not describe the image (CUDA out of memory, a model file that will not load).
+            // Nothing was generated.
+            Logger.Error(ex, "Outpaint: Qwen3-VL could not describe the image");
+            _unifiedLogger?.Error(LogCategory.General, LogSource, $"Qwen3-VL could not describe the image: {ex.Message}", ex);
+            HasError = true;
+            ProgressDisplayText = "Qwen3-VL could not describe the image – see the Unified Console";
+            StatusMessageChanged?.Invoke(this, $"Qwen3-VL could not describe the image: {ex.Message}");
         }
         catch (ComfyUIExecutionException ex)
         {
@@ -937,6 +934,29 @@ public partial class OutpaintingViewModel : ObservableObject
         {
             lease?.Dispose();
             OnFinished();
+        }
+    }
+
+    /// <summary>
+    /// What Qwen3-VL sees around the subject, or null when it wrote nothing. The job unloads ComfyUI's own
+    /// models first (llama.cpp allocates outside ComfyUI's memory manager, which would not make room for it)
+    /// and unloads Qwen3-VL when it has answered (<c>direct_clean</c>), so the outpaint gets the GPU.
+    /// </summary>
+    /// <exception cref="ImageDescriptionFailedException">The node reported a failed inference.</exception>
+    private static async Task<string?> DescribeSurroundingsAsync(
+        IComfyUIWrapperService comfy, string uploadedImage, string modelPath, string projectorPath)
+    {
+        var describer = new ImageDescriber(comfy, modelPath, projectorPath, userPrompt: SurroundingsPrompt);
+        try
+        {
+            return await describer.DescribeAsync(uploadedImage, keepLoaded: false, CancellationToken.None, freeComfyModels: true);
+        }
+        catch (ComfyUIExecutionException ex) when (!ImageDescriber.NodesBeforeTheDescriber.Contains(ex.NodeType)
+                                                   && !ImageDescriber.NodesAfterTheDescriber.Contains(ex.NodeType))
+        {
+            // The node may have died holding the model: free it before the error is reported.
+            await describer.FreeAsync(uploadedImage);
+            throw;
         }
     }
 

@@ -82,6 +82,21 @@ public class ImageDescriberTests
         node["inputs"]!["unload_all_models"]!.GetValue<bool>().Should().Be(expected);
     }
 
+    // #616: Outpaint Vision asks about the surroundings; Batch Upscale keeps the workflow's own question.
+    [Theory]
+    [InlineData("Describe the background.", "Describe the background.")]
+    [InlineData(null, "the workflow's question")]
+    public async Task Describe_AsksTheGivenQuestion_OrKeepsTheWorkflows(string? userPrompt, string expected)
+    {
+        var sut = new ImageDescriber(_client.Object, @"D:\m\model.gguf", @"D:\m\mmproj.gguf", userPrompt: userPrompt);
+
+        await sut.DescribeAsync("up.png", keepLoaded: false, CancellationToken.None);
+
+        var node = JsonNode.Parse("""{"inputs":{"mode":"","seed":0,"config_override":"","user_prompt":"the workflow's question"}}""")!;
+        _queued.Single()["3"](node);
+        node["inputs"]!["user_prompt"]!.GetValue<string>().Should().Be(expected);
+    }
+
     // The free-up job reuses the loaded model (same config) and unloads it after answering.
     [Fact]
     public async Task Free_QueuesOneDirectCleanJob_WithTheSameConfig()
