@@ -352,4 +352,45 @@ public sealed class CivitaiDownloadQueueOutcomeMappingTests : IDisposable
         job.Status.Should().Be(JobStatus.Failed);
         job.StatusMessage.Should().Be("Download service unavailable.");
     }
+
+    private static CivitaiModelVersion TwoFiles(int id) => Version(id) with
+    {
+        Files =
+        [
+            new CivitaiModelFile { Name = "new-primary.safetensors", Primary = true, Hashes = new CivitaiFileHashes { SHA256 = "FF00" } },
+            new CivitaiModelFile { Name = "queued.safetensors", Primary = false, Hashes = new CivitaiFileHashes { SHA256 = "aabbcc" } }
+        ]
+    };
+
+    [Fact]
+    public async Task Download_FetchesTheFileWhoseHashTheJobExpects_NotTheCurrentPrimary()
+    {
+        // PR #624 review: a waitlist entry followed by hash (#617) can land on a version whose
+        // primary is another file — the job's file must be the one downloaded.
+        var downloader = new FakeDownloader();
+        var queue = Queue(downloader);
+        var job = NewJob(expectedSha256: "AABBCC");
+        job.CivitaiVersion = TwoFiles(1);
+        queue.Jobs.Add(job);
+
+        await queue.StartAllAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        downloader.LastRequest!.File!.Name.Should().Be("queued.safetensors");
+    }
+
+    [Fact]
+    public async Task Download_ExpectedHashNoLongerInTheVersion_FallsBackToThePrimary()
+    {
+        var downloader = new FakeDownloader();
+        var queue = Queue(downloader);
+        var job = NewJob(expectedSha256: "DEADBEEF");
+        job.CivitaiVersion = TwoFiles(1);
+        queue.Jobs.Add(job);
+
+        await queue.StartAllAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        downloader.LastRequest!.File!.Name.Should().Be("new-primary.safetensors");
+    }
 }

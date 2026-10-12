@@ -662,9 +662,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
 
         // The file the user waitlisted, by hash, before whatever is primary now: a version the
         // waitlist followed by hash (#617) can carry a new primary file next to it.
-        var primary = freshVersion?.Files.FirstOrDefault(f => entry.ExpectedSha256 is not null
-                          && string.Equals(f.Hashes?.SHA256, entry.ExpectedSha256, StringComparison.OrdinalIgnoreCase))
-                      ?? CivitaiVersionFiles.PickPrimary(freshVersion);
+        var primary = CivitaiVersionFiles.PickBySha256OrPrimary(freshVersion, entry.ExpectedSha256);
         var job = new CivitaiDownloadJob
         {
             ModelId = entry.ModelId,
@@ -1122,10 +1120,13 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             // File is passed explicitly (rather than left for the downloader to re-pick) so the
             // whole job runs against ONE pick. It is NOT the enqueue-time snapshot, though: after a
             // restart-rehydration civVersion is re-fetched and this pick is fresh, so only
-            // FileNameOverride still comes from the persisted job. job.ExpectedSha256 can therefore
-            // describe a file this run is not fetching — which is why the digest the queue records
-            // below comes from outcome.VerifiedSha256 and never from that snapshot.
-            var primaryFile = CivitaiVersionFiles.PickPrimary(civVersion);
+            // FileNameOverride still comes from the persisted job. The pick prefers the file whose
+            // hash the job expects (a waitlist entry followed by hash, #617, can sit on a version
+            // whose primary is another file) and falls back to the primary when the version no
+            // longer carries it — so job.ExpectedSha256 can still describe a file this run is not
+            // fetching, which is why the digest the queue records below comes from
+            // outcome.VerifiedSha256 and never from that snapshot.
+            var primaryFile = CivitaiVersionFiles.PickBySha256OrPrimary(civVersion, job.ExpectedSha256);
             var request = new DownloadRequest(civVersion!, targetDir, DownloadTrigger.BrowseQueue)
             {
                 File = primaryFile,

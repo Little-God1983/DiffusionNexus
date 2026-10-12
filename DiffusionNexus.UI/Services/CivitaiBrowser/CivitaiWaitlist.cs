@@ -257,8 +257,7 @@ public sealed class CivitaiWaitlist : ObservableObject
             return (null, $"The model version no longer exists on Civitai, and looking for its file elsewhere failed: {ex.Message}");
         }
 
-        var file = moved?.Files.FirstOrDefault(f =>
-            string.Equals(f.Hashes?.SHA256, entry.ExpectedSha256, StringComparison.OrdinalIgnoreCase));
+        var file = CivitaiVersionFiles.FindBySha256(moved, entry.ExpectedSha256);
         if (moved is null || file is null)
         {
             _logger?.Info(LogCategory.Download, "CivitaiWaitlist",
@@ -274,7 +273,7 @@ public sealed class CivitaiWaitlist : ObservableObject
         {
             _logger?.Info(LogCategory.Download, "CivitaiWaitlist",
                 $"Version {entry.VersionId} was republished as version {moved.Id}, which is already waitlisted: {entry.ModelName} — {entry.VersionName}");
-            return (null, $"Civitai moved this file to \"{where}\", which is already on your waitlist.");
+            return (null, $"This version is gone; the same file is on Civitai as \"{where}\", which is already on your waitlist.");
         }
 
         _logger?.Info(LogCategory.Download, "CivitaiWaitlist",
@@ -284,8 +283,10 @@ public sealed class CivitaiWaitlist : ObservableObject
         entry.VersionId = moved.Id;
         entry.FileName = file.Name;
         entry.DownloadUrl = file.DownloadUrl ?? moved.DownloadUrl ?? entry.DownloadUrl;
-        entry.IsNsfw = moved.Model?.Nsfw ?? entry.IsNsfw;
-        entry.MovedNote = $"Civitai moved this file to \"{where}\".";
+        // Only ever upgrade: IsNsfw came from the wider card policy (gallery levels), and
+        // civitai.red shows SFW pages too, while civitai.com hides NSFW ones.
+        entry.IsNsfw |= moved.Model?.Nsfw == true;
+        entry.MovedNote = $"This version is gone; the same file is now on Civitai as \"{where}\".";
         return (moved, null);
     }
 

@@ -267,6 +267,24 @@ public sealed class CivitaiWaitlistRefreshTests : IDisposable
     }
 
     [Fact]
+    public async Task VersionGone_FollowedToAnSfwModel_KeepsNsfwRouting()
+    {
+        // PR #624 review: IsNsfw at add time comes from the wider card policy (gallery levels),
+        // so a model-level nsfw=false must not route a known-NSFW entry to civitai.com.
+        var wl = new CivitaiWaitlist(_client.Object, null, persistPathOverride: Path.Combine(_tempDir, "nsfw.json"));
+        wl.TryAdd(866273, "Facial FLUX/KREA2", "Concept", isNsfw: true,
+            Hashed(CivitaiWaitlistTests.Version(3289193, Now.AddDays(-1)), 3289193, "old.safetensors", Sha), Now);
+        var entry = wl.Entries.Single();
+        ClientReturns(null);
+        HashLookupReturns(Moved() with { Model = new CivitaiVersionModelInfo { Name = "Cum_Everywhere_Krea2", Nsfw = false } });
+
+        await wl.RefreshEntryAsync(entry, apiKey: null, utcNow: Now);
+
+        entry.VersionId.Should().Be(3271224);
+        entry.IsNsfw.Should().BeTrue();
+    }
+
+    [Fact]
     public async Task VersionLookup404_HashFindsTheSameVersion_JudgesIt()
     {
         var wl = CreateWithHashedEntry(out var entry, Path.Combine(_tempDir, "same-id.json"));
