@@ -133,7 +133,10 @@ Engine folder only (the failure is logged).
 
 **Partial failure.** If some files can't be deleted (locked by another program, access denied), the
 app keeps the Engine row and its Base Model Folder, so the tile shows "Installation incomplete" and
-Uninstall Engine stays available for another try. The message lists what could not be deleted.
+Uninstall Engine stays available for another try. The message lists what could not be deleted. One
+locked entry does not stop the rest: the folder walk goes on past it (IOException,
+UnauthorizedAccessException), every entry that could not be deleted is reported on its own, and a
+folder that stays only because something in it failed is not reported again.
 Outside models that failed to delete are listed the same way. A missing folder is not a failure: the
 row and registrations are removed and the user is told the folder was already gone.
 

@@ -6,7 +6,12 @@ namespace DiffusionNexus.UI.Services.Engine;
 /// <summary>Deletes for <see cref="EngineRemover"/>; a seam so tests can simulate failures.</summary>
 public interface IRemovalFileSystem
 {
-    void DeleteDirectory(string path);
+    /// <summary>
+    /// Deletes the folder and everything in it. An entry that cannot be deleted (locked, access denied)
+    /// is skipped and returned, and the rest still goes. May throw when the folder itself cannot be read.
+    /// </summary>
+    IReadOnlyList<RemovalFailure> DeleteDirectory(string path);
+
     void DeleteFile(string path);
 }
 
@@ -16,34 +21,71 @@ public interface IRemovalFileSystem
 /// </summary>
 public sealed class RemovalFileSystem : IRemovalFileSystem
 {
-    public void DeleteDirectory(string path)
+    public IReadOnlyList<RemovalFailure> DeleteDirectory(string path)
     {
         // A directory that is itself a junction or symlink loses the link only, never its target.
         if (File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
         {
             Directory.Delete(path, recursive: false);
+            return [];
+        }
+
+        var failures = new List<RemovalFailure>();
+        DeleteTree(path, failures);
+        return failures;
+    }
+
+    /// <summary>
+    /// An explicit walk: a junction or symlink inside is removed as a link, never entered. A locked entry
+    /// is recorded and the walk goes on; a folder that stays only because something in it failed is not
+    /// recorded again.
+    /// </summary>
+    private static void DeleteTree(string folder, List<RemovalFailure> failures)
+    {
+        var before = failures.Count;
+        List<string> entries;
+        try
+        {
+            entries = Directory.EnumerateFileSystemEntries(folder).ToList();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            failures.Add(new RemovalFailure(folder, ex.Message));
             return;
         }
 
-        // An explicit walk: a junction or symlink inside is removed as a link, never entered.
-        foreach (var entry in Directory.EnumerateFileSystemEntries(path))
+        foreach (var entry in entries)
         {
-            var attributes = File.GetAttributes(entry);
-            if (attributes.HasFlag(FileAttributes.Directory))
+            try
             {
-                if (attributes.HasFlag(FileAttributes.ReparsePoint))
-                    Directory.Delete(entry, recursive: false);
+                var attributes = File.GetAttributes(entry);
+                if (attributes.HasFlag(FileAttributes.Directory))
+                {
+                    if (attributes.HasFlag(FileAttributes.ReparsePoint))
+                        Directory.Delete(entry, recursive: false);
+                    else
+                        DeleteTree(entry, failures);
+                }
                 else
-                    DeleteDirectory(entry);
+                {
+                    File.SetAttributes(entry, FileAttributes.Normal);
+                    File.Delete(entry);
+                }
             }
-            else
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                File.SetAttributes(entry, FileAttributes.Normal);
-                File.Delete(entry);
+                failures.Add(new RemovalFailure(entry, ex.Message));
             }
         }
 
-        Directory.Delete(path, recursive: false);
+        try
+        {
+            Directory.Delete(folder, recursive: false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            if (failures.Count == before) failures.Add(new RemovalFailure(folder, ex.Message));
+        }
     }
 
     public void DeleteFile(string path)
@@ -174,8 +216,23 @@ public sealed class EngineRemover
             }
 
             var isLink = IsLink(directory);
-            Try(directory, () => _fileSystem.DeleteDirectory(directory), failed,
-                isLink ? $"Removed link {directory}; its target was not touched" : null);
+            try
+            {
+                // The walk goes on past what it cannot delete; each such entry is reported on its own.
+                var inside = _fileSystem.DeleteDirectory(directory) ?? [];
+                if (inside.Count == 0)
+                    Info(isLink ? $"Removed link {directory}; its target was not touched" : $"Deleted {directory}");
+                foreach (var failure in inside)
+                {
+                    failed.Add(failure);
+                    Warn($"Could not delete {failure.Path}: {failure.Reason}");
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                failed.Add(new RemovalFailure(directory, ex.Message));
+                Warn($"Could not delete {directory}: {ex.Message}");
+            }
         }
 
         foreach (var listedFile in files)
@@ -202,12 +259,12 @@ public sealed class EngineRemover
         return failed;
     }
 
-    private void Try(string path, Action delete, List<RemovalFailure> failed, string? successMessage = null)
+    private void Try(string path, Action delete, List<RemovalFailure> failed)
     {
         try
         {
             delete();
-            Info(successMessage ?? $"Deleted {path}");
+            Info($"Deleted {path}");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

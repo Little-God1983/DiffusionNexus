@@ -135,6 +135,34 @@ public sealed class EngineRemoverTests : IDisposable
         File.Exists(b).Should().BeFalse();
     }
 
+    // I2: one locked file in the middle of a folder does not stop the walk: everything else goes, the
+    // locked file is reported (once, not also its parent folders), and the folder stays only around it.
+    [Fact]
+    public async Task ALockedFileInTheMiddleOfAFolder_IsReported_AndEverythingElseIsDeleted()
+    {
+        var engine = Path.Combine(_temp.FullName, "Engine");
+        var nodes = Path.Combine(engine, "custom_nodes");
+        Directory.CreateDirectory(Path.Combine(nodes, "c_pack"));
+        Directory.CreateDirectory(Path.Combine(engine, "z_models"));
+        var a = Path.Combine(nodes, "a.py");
+        var b = Path.Combine(nodes, "b.py");
+        var c = Path.Combine(nodes, "c_pack", "node.py");
+        var d = Path.Combine(nodes, "d.py");
+        var z = Path.Combine(engine, "z_models", "m.safetensors");
+        foreach (var file in new[] { a, b, c, d, z }) File.WriteAllText(file, "x");
+        File.SetAttributes(d, FileAttributes.ReadOnly);
+
+        EngineRemovalResult result;
+        using (new FileStream(b, FileMode.Open, FileAccess.Read, FileShare.None))
+            result = await new EngineRemover(_engine.Object, null).RemoveAsync([engine], [], engine);
+
+        result.Failed.Should().ContainSingle().Which.Path.Should().Be(b);
+        File.Exists(b).Should().BeTrue();
+        foreach (var gone in new[] { a, c, d, z }) File.Exists(gone).Should().BeFalse(gone);
+        Directory.Exists(Path.Combine(nodes, "c_pack")).Should().BeFalse();
+        Directory.Exists(Path.Combine(engine, "z_models")).Should().BeFalse();
+    }
+
     // Review focus 2: a corrupted row must never delete a drive.
     [Fact]
     public async Task ADriveRoot_IsRefused()
