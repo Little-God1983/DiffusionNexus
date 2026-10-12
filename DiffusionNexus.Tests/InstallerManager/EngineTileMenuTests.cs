@@ -1,5 +1,6 @@
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.UI.Services.Engine;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
 
@@ -24,7 +25,6 @@ public class EngineTileMenuTests
         card.MakeDefaultCommand.CanExecute(null).Should().BeFalse();
         card.MakeDefaultTooltip.Should().Be(
             "The Engine runs in the background for Diffusion Nexus features, so it can't be your default ComfyUI.");
-        card.OpenFolderCommand.CanExecute(null).Should().BeTrue();
     }
 
     [Fact]
@@ -53,6 +53,38 @@ public class EngineTileMenuTests
         card.MakeDefaultCommand.CanExecute(null).Should().BeFalse();
         card.SettingsTooltip.Should().Contain("built into the app");
         card.OpenFolderTooltip.Should().Contain("built into the app");
+    }
+
+    [Fact]
+    public void Engine_OpenFolder_NoRow_IsGreyed_WithReason()
+    {
+        var card = InstallerPackageCardViewModel.CreateEngineCard(null);
+
+        card.OpenFolderCommand.CanExecute(null).Should().BeFalse();
+        card.OpenFolderTooltip.Should().Be("The Diffusion Nexus Engine is not installed, so there is no folder to open.");
+    }
+
+    [Fact]
+    public void Engine_OpenFolder_MissingFolder_IsGreyed_WithReason()
+    {
+        var card = InstallerPackageCardViewModel.CreateEngineCard(EngineRow(@"C:\Nowhere\Engine"));
+        card.ApplyEngineFolder(EngineFolderState.Missing);
+
+        card.OpenFolderCommand.CanExecute(null).Should().BeFalse();
+        card.OpenFolderTooltip.Should().Be("The Engine's folder is gone. Use Uninstall Engine to remove it from the app, or install it again.");
+    }
+
+    [Theory]
+    [InlineData(EngineFolderState.Installed)]
+    [InlineData(EngineFolderState.Incomplete)]
+    public void Engine_OpenFolder_ExistingFolder_IsEnabled(EngineFolderState state)
+    {
+        var card = InstallerPackageCardViewModel.CreateEngineCard(EngineRow(@"C:\Nowhere\Engine"));
+        card.ApplyEngineFolder(EngineFolderState.Missing);
+        card.ApplyEngineFolder(state);
+
+        card.OpenFolderCommand.CanExecute(null).Should().BeTrue();
+        card.OpenFolderTooltip.Should().BeNull();
     }
 
     [Fact]

@@ -232,33 +232,33 @@
                                                 <Button.Flyout>
                                                     <MenuFlyout Placement="BottomEdgeAlignedRight">
                                                         <MenuItem Header="Settings"
-                                                                Command="{Binding OpenSettingsCommand}"
-                                                                ToolTip.Tip="{Binding SettingsTooltip}"
-                                                                ToolTip.ShowOnDisabled="True"/>
-                                                      <MenuItem Header="Open Folder"
-                                                                Command="{Binding OpenFolderCommand}"
-                                                                ToolTip.Tip="{Binding OpenFolderTooltip}"
-                                                                ToolTip.ShowOnDisabled="True"/>
-                                                      <MenuItem Header="Make Default"
-                                                                Command="{Binding MakeDefaultCommand}"
-                                                                ToolTip.Tip="{Binding MakeDefaultTooltip}"
-                                                                ToolTip.ShowOnDisabled="True"/>
-                                                      <Separator/>
-                                                      <MenuItem Header="Remove"
-                                                                Command="{Binding RemoveCommand}"
-                                                                IsVisible="{Binding ShowRemoveMenuItem}"
-                                                                ToolTip.Tip="{Binding RemoveTooltip}"
-                                                                ToolTip.ShowOnDisabled="True"/>
-                                                      <MenuItem Header="Delete from Disk"
-                                                                Command="{Binding DeleteFromDiskCommand}"
-                                                                IsVisible="{Binding ShowDeleteFromDiskMenuItem}"
-                                                                ToolTip.Tip="{Binding DeleteFromDiskTooltip}"
-                                                                ToolTip.ShowOnDisabled="True"
-                                                                Foreground="#DC3545"/>
-                                                      <MenuItem Header="Uninstall Engine…"
-                                                                Command="{Binding UninstallEngineCommand}"
-                                                                IsVisible="{Binding ShowEngineUninstallMenuItem}"
-                                                                Foreground="#DC3545"/>
+                                                                  Command="{Binding OpenSettingsCommand}"
+                                                                  ToolTip.Tip="{Binding SettingsTooltip}"
+                                                                  ToolTip.ShowOnDisabled="True"/>
+                                                        <MenuItem Header="Open Folder"
+                                                                  Command="{Binding OpenFolderCommand}"
+                                                                  ToolTip.Tip="{Binding OpenFolderTooltip}"
+                                                                  ToolTip.ShowOnDisabled="True"/>
+                                                        <MenuItem Header="Make Default"
+                                                                  Command="{Binding MakeDefaultCommand}"
+                                                                  ToolTip.Tip="{Binding MakeDefaultTooltip}"
+                                                                  ToolTip.ShowOnDisabled="True"/>
+                                                        <Separator/>
+                                                        <MenuItem Header="Remove"
+                                                                  Command="{Binding RemoveCommand}"
+                                                                  IsVisible="{Binding ShowRemoveMenuItem}"
+                                                                  ToolTip.Tip="{Binding RemoveTooltip}"
+                                                                  ToolTip.ShowOnDisabled="True"/>
+                                                        <MenuItem Header="Delete from Disk"
+                                                                  Command="{Binding DeleteFromDiskCommand}"
+                                                                  IsVisible="{Binding ShowDeleteFromDiskMenuItem}"
+                                                                  ToolTip.Tip="{Binding DeleteFromDiskTooltip}"
+                                                                  ToolTip.ShowOnDisabled="True"
+                                                                  Foreground="#DC3545"/>
+                                                        <MenuItem Header="Uninstall Engine…"
+                                                                  Command="{Binding UninstallEngineCommand}"
+                                                                  IsVisible="{Binding ShowEngineUninstallMenuItem}"
+                                                                  Foreground="#DC3545"/>
                                                     </MenuFlyout>
                                                 </Button.Flyout>
                                             </Button>

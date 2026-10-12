@@ -208,6 +208,8 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
         _engineFolder = folder;
         OnPropertyChanged(nameof(HasEngineRow));
         OnPropertyChanged(nameof(ShowEngineUninstallMenuItem));
+        OnPropertyChanged(nameof(OpenFolderTooltip));
+        OpenFolderCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(MissingBannerText));
         IsEngineInstalled = folder == EngineFolderState.Installed;
         IsMissing = folder is EngineFolderState.Missing or EngineFolderState.Incomplete;
@@ -316,10 +318,16 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
         : IsCore ? "This is built into the app, so it can't be a default installation."
         : null;
 
-    private bool CanOpenFolder() => !IsCore;
+    // The Engine's folder can be opened when it exists: not with no row, not when the row's folder is gone.
+    private bool CanOpenFolder() => !IsCore && (!IsEngine || (HasEngineRow && _engineFolder != EngineFolderState.Missing));
 
     /// <summary>Why Open Folder is greyed out; null where it is not.</summary>
-    public string? OpenFolderTooltip => IsCore ? "This is built into the app, so there is no folder to open." : null;
+    public string? OpenFolderTooltip =>
+        IsCore ? "This is built into the app, so there is no folder to open."
+        : !IsEngine ? null
+        : !HasEngineRow ? "The Diffusion Nexus Engine is not installed, so there is no folder to open."
+        : _engineFolder == EngineFolderState.Missing ? "The Engine's folder is gone. Use Uninstall Engine to remove it from the app, or install it again."
+        : null;
 
     /// <summary>
     /// The red "missing" banner. Not while the Engine installs: the tile shows the install then,
