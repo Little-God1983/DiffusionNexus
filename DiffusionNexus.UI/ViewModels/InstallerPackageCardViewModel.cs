@@ -255,10 +255,12 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     public bool ShowDeleteFromDiskMenuItem => !IsMissing;
 
     /// <summary>
-    /// Remove and Delete from Disk are greyed out on the Engine tile (#612). Remove would drop the
-    /// Engine's row and leave its files, so the app would call it not installed. Delete from Disk asks
-    /// the process manager whether the install runs, and that does not know the Engine's process, so
-    /// it would delete a running Engine's folder. Uninstalling the Engine needs its own feature.
+    /// Remove and Delete from Disk are greyed out on the Engine tile (#612). The Engine card does not
+    /// wire either handler, so both items did nothing, and the ordinary handlers must not be wired to
+    /// it: Remove would drop the Engine's row and leave its files, so the app would call it not
+    /// installed, and Delete from Disk asks the process manager whether the install runs, which does
+    /// not know the Engine's process, so it would delete a running Engine's folder. Uninstalling the
+    /// Engine needs its own feature.
     /// </summary>
     private bool CanRemoveOrDelete() => !IsEngine;
 

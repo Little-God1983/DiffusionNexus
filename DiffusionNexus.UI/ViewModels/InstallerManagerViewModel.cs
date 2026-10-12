@@ -1374,6 +1374,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
     internal const string EngineOfferMessage =
         "The Diffusion Nexus Engine is installed. Use it from now on?\n\n" +
         "Inpaint, Outpaint (also with Vision) and Batch Upscale will run on it instead of your own ComfyUI. " +
+        "Each one needs its feature installed on the Engine first: Installation Manager → Diffusion Nexus Engine → Features.\n\n" +
         "You can change this any time in Settings → ComfyUI Server.";
 
     internal const string KeepMyComfyUiOption = "Keep my ComfyUI";
@@ -1409,7 +1410,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
             await unitOfWork.SaveChangesAsync();
 
             _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
-                "Server set to the Diffusion Nexus Engine: Inpaint, Outpaint and Batch Upscale run on it now.");
+                "Server set to the Diffusion Nexus Engine: Inpaint, Outpaint (also with Vision) and Batch Upscale run on it now.");
             _eventAggregator.PublishSettingsSaved(new SettingsSavedEventArgs());
         }
         finally

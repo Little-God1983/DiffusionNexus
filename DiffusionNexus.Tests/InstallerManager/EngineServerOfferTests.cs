@@ -76,7 +76,8 @@ public class EngineServerOfferTests
         _events.Verify(e => e.PublishSettingsSaved(It.IsAny<SettingsSavedEventArgs>()), Times.Once,
             "Settings and the editor's readiness lines re-check on SettingsSaved, as after a save in Settings");
         _logger.Verify(l => l.Info(LogCategory.Installation, "Diffusion Nexus Engine",
-            It.Is<string>(m => m.StartsWith("Server set to the Diffusion Nexus Engine")), null), Times.Once);
+            It.Is<string>(m => m.StartsWith("Server set to the Diffusion Nexus Engine")
+                               && m.Contains("Outpaint (also with Vision)") && m.Contains("Batch Upscale")), null), Times.Once);
     }
 
     [Fact]
@@ -94,6 +95,8 @@ public class EngineServerOfferTests
 
         message.Should().Contain("Inpaint").And.Contain("Outpaint (also with Vision)").And.Contain("Batch Upscale")
             .And.Contain("Settings → ComfyUI Server");
+        message.Should().Contain("Diffusion Nexus Engine → Features",
+            "the base install carries no features; the user must know they are installed separately");
         options.Should().Equal("Keep my ComfyUI", "Use the Engine");
     }
 
