@@ -48,6 +48,14 @@ When the Engine install finishes, its models folder is registered in Settings �
 linked to the Engine, never as the starred default. Today this happens only on the next app start,
 through the startup backfill.
 
+The app reads that folder like any other (search roots), but it is **never a download target** for
+Diffusion Nexus Core models: `ModelFolderCatalog.GetDownloadTargetsAsync` (and so every caller of the
+default download root) leaves out each enabled folder whose path lies inside an app-managed install,
+starred or not. By path, not by the row's package link, because an old backfill linked the user's own
+libraries to the Engine row. A blank, relative or drive-root Engine path filters nothing, and a failing
+package read offers every folder. With no folder left, the LocalAppData fallback is the default. Without
+this, a user with no other folder downloaded Core models into the Engine, and Uninstall deleted them.
+
 Only that one folder is registered for the Engine. Today the backfill registers every root of the
 Engine's `extra_model_paths.yaml` and re-links the user's own folders (for example `D:\Models`) to the
 Engine row (`AppSettingsService.AddBaseModelFolderAsync` re-links an existing row to the latest
@@ -79,6 +87,11 @@ folder and leaves rows outside it alone.
    - No outside models: *"Uninstall the Diffusion Nexus Engine? This deletes <folder> (<size>):
      the Engine, its features and the models it downloaded. Your own model folders are not
      touched."* → **Uninstall** / **Cancel**.
+   - Model files in the Engine's models folder that no Engine feature declares (not among any
+     feature check's found model paths; model extensions only, junctions not entered), when there are
+     any: *"It also holds <n> other model file(s) (<size>) that no Engine feature uses, for example
+     ones another part of the app downloaded there. They are deleted with the Engine."* Skipped when the
+     feature check failed: the app does not guess.
    - Outside models found: the same text plus *"Some models the Engine's features use are in your
      own model folders. Other programs (ComfyUI, A1111, …) may use them too:"*, then a list of each
      file with its folder and size, then **Delete only what's in the Diffusion Nexus Engine** /

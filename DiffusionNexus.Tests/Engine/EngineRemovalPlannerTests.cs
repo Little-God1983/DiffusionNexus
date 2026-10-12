@@ -185,6 +185,65 @@ public class EngineRemovalPlannerTests
         EngineRemovalPlanner.PlanUninstallOutsideModels(Root, checks, Size).Should().HaveCount(1);
     }
 
+    // C2: model files in the Engine's models folder that no feature declares (a Core download that landed
+    // there) are counted, so the uninstall question can say they go with the Engine. ComfyUI's own
+    // placeholders and configs are not model files; a junction into the user's library is not entered.
+    [Fact]
+    public void Uninstall_CountsModelFilesNoFeatureDeclares()
+    {
+        var root = Directory.CreateTempSubdirectory("dn-unclaimed-").FullName;
+        var library = Directory.CreateTempSubdirectory("dn-unclaimed-lib-").FullName;
+        var link = Path.Combine(root, "models", "loras");
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "main.py"), "");
+            var featureModel = Write(root, @"models\vae\ae.safetensors", 10);
+            Write(root, @"models\checkpoints\core-download.safetensors", 100);
+            Write(root, @"models\diffusion_models\sub\other.gguf", 50);
+            Write(root, @"models\checkpoints\put_checkpoints_here", 0);
+            Write(root, @"models\configs\v1-inference.yaml", 5);
+            Write(library, @"my-lora.safetensors", 7);
+            Junction(link, library);
+
+            var checks = new[] { Check(EngineFeature.BatchUpscale, "Batch Upscale", Result([], [[featureModel.ToUpperInvariant()]])) };
+
+            EngineRemovalPlanner.PlanUninstallUnclaimedModels(root, checks).Should().Be(new ModelFileTotal(2, 150));
+        }
+        finally
+        {
+            if (Directory.Exists(link)) Directory.Delete(link); // the link only, before the trees
+            Directory.Delete(root, recursive: true);
+            Directory.Delete(library, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Uninstall_NoModelsFolder_CountsNothing()
+    {
+        var root = Directory.CreateTempSubdirectory("dn-unclaimed-").FullName;
+        try
+        {
+            EngineRemovalPlanner.PlanUninstallUnclaimedModels(root, []).Should().Be(new ModelFileTotal(0, 0));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    private static string Write(string root, string relative, int bytes)
+    {
+        var path = Path.Combine(root, relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(path, new byte[bytes]);
+        return path;
+    }
+
+    private static void Junction(string link, string target)
+    {
+        using var mklink = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+            "cmd", $"/c mklink /J \"{link}\" \"{target}\"") { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true })!;
+        mklink.WaitForExit();
+        Directory.Exists(link).Should().BeTrue("the junction must exist for this test");
+    }
+
     [Theory]
     [InlineData(@"C:\Engine\ComfyUI", true)]
     [InlineData(@"C:\Engine\ComfyUI\", true)]

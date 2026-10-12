@@ -72,6 +72,26 @@ public class EngineRemovalMessagesTests
         text.Should().Contain("Your own model folders are not touched.");
     }
 
+    // C2: model files no feature declares (a Core download that landed in the Engine) are named as going too.
+    [Fact]
+    public void Uninstall_WithModelsNoFeatureUses_SaysTheyAreDeletedWithTheEngine()
+    {
+        var text = EngineRemovalMessages.Uninstall(@"C:\E", 6L * 1024 * 1024 * 1024, [], new ModelFileTotal(3, 2L * 1024 * 1024 * 1024));
+
+        text.Should().Contain("It also holds 3 other model files (2.0 GB) that no Engine feature uses, " +
+                              "for example ones another part of the app downloaded there. They are deleted with the Engine.");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Uninstall_WithoutModelsNoFeatureUses_SaysNothingAboutThem(bool unknown)
+    {
+        var text = EngineRemovalMessages.Uninstall(@"C:\E", 1, [], unknown ? null : new ModelFileTotal(0, 0));
+
+        text.Should().NotContain("no Engine feature uses");
+    }
+
     [Fact]
     public void UninstallUnsafeFolder_SaysNothingOnDiskIsTouched()
     {

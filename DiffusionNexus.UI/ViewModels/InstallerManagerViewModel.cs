@@ -1086,6 +1086,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
                 ? await Task.Run(() => Services.Engine.ManagedEngineLocator.Probe(root))
                 : Services.Engine.EngineFolderState.Missing;
             IReadOnlyList<Services.Engine.PlannedFile> outside = [];
+            Services.Engine.ModelFileTotal? unclaimed = null;
             long folderBytes = 0;
             if (!safeRoot)
             {
@@ -1095,20 +1096,23 @@ public partial class InstallerManagerViewModel : ViewModelBase
             }
             else if (folder != Services.Engine.EngineFolderState.Missing)
             {
-                outside = await PlanOutsideModelsAsync(root, folder);
+                (outside, unclaimed) = await PlanFeatureModelsAsync(root, folder);
                 folderBytes = await Task.Run(() => Services.Engine.EngineRemovalPlanner.FolderSize(root));
             }
 
             _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
                 $"Uninstall planned: {root} ({Services.Engine.EngineRemovalMessages.FormatSize(folderBytes)}, {(safeRoot ? folder : "unsafe folder")}); " +
-                $"{outside.Count} model(s) of its features sit in your own folders.");
+                $"{outside.Count} model(s) of its features sit in your own folders" +
+                (unclaimed is { Count: > 0 }
+                    ? $"; {unclaimed.Count} model file(s) ({Services.Engine.EngineRemovalMessages.FormatSize(unclaimed.Bytes)}) in its models folder no feature uses."
+                    : "."));
 
             var hasOutside = outside.Count > 0;
             var message = !safeRoot
                 ? Services.Engine.EngineRemovalMessages.UninstallUnsafeFolder(root)
                 : folder == Services.Engine.EngineFolderState.Missing
                     ? Services.Engine.EngineRemovalMessages.UninstallMissingFolder(root)
-                    : Services.Engine.EngineRemovalMessages.Uninstall(root, folderBytes, outside);
+                    : Services.Engine.EngineRemovalMessages.Uninstall(root, folderBytes, outside, unclaimed);
             var choice = Services.Engine.EngineRemovalMessages.ToChoice(
                 await _dialogService.ShowOptionsAsync(Services.Engine.EngineRemovalMessages.UninstallTitle, message,
                     Services.Engine.EngineRemovalMessages.UninstallOptions(hasOutside)),
@@ -1183,24 +1187,28 @@ public partial class InstallerManagerViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// The models of the Engine's present features that sit in the user's own folders. A check that
-    /// fails (corrupt catalog, checker error) falls through to none: the uninstall still runs.
+    /// The models of the Engine's present features that sit in the user's own folders, and the model
+    /// files in the Engine's models folder that no feature declares. A check that fails (corrupt catalog,
+    /// checker error) falls through to no outside models and unknown (null) unclaimed ones: the uninstall
+    /// still runs.
     /// </summary>
-    private async Task<IReadOnlyList<Services.Engine.PlannedFile>> PlanOutsideModelsAsync(
+    private async Task<(IReadOnlyList<Services.Engine.PlannedFile> Outside, Services.Engine.ModelFileTotal? Unclaimed)> PlanFeatureModelsAsync(
         string root, Services.Engine.EngineFolderState folder)
     {
-        if (folder != Services.Engine.EngineFolderState.Installed) return [];
+        if (folder != Services.Engine.EngineFolderState.Installed) return ([], null);
         try
         {
             var checks = await Services.Engine.EngineFeatureChecks.LoadAsync(_catalog, _checkerService, root, CancellationToken.None);
-            return await Task.Run(() => Services.Engine.EngineRemovalPlanner.PlanUninstallOutsideModels(root, checks));
+            return await Task.Run(() => (
+                Services.Engine.EngineRemovalPlanner.PlanUninstallOutsideModels(root, checks),
+                (Services.Engine.ModelFileTotal?)Services.Engine.EngineRemovalPlanner.PlanUninstallUnclaimedModels(root, checks)));
         }
         catch (Exception ex)
         {
             Serilog.Log.Warning(ex, "Engine uninstall: feature check failed");
             _unifiedLogger.Warn(LogCategory.Installation, EngineLogSource,
                 $"Could not check which models the Engine's features use: {ex.Message}; uninstalling the Engine folder only.");
-            return [];
+            return ([], null);
         }
     }
 

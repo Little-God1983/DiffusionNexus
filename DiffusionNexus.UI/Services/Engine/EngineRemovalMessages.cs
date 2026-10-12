@@ -67,12 +67,19 @@ public static class EngineRemovalMessages
         $"The files of {featureName} could not be checked ({reason}), so nothing was removed. " +
         "Try again; the Unified Console has the details.";
 
-    public static string Uninstall(string folder, long folderBytes, IReadOnlyList<PlannedFile> outside)
+    /// <param name="unclaimed">
+    /// Model files in the Engine's models folder that no feature declares; null when the feature check
+    /// failed and they are not known.
+    /// </param>
+    public static string Uninstall(string folder, long folderBytes, IReadOnlyList<PlannedFile> outside, ModelFileTotal? unclaimed = null)
     {
         var text = new StringBuilder("Uninstall the Diffusion Nexus Engine?");
         text.Append($"\n\nThis deletes {folder} ({FormatSize(folderBytes)}): the Engine, its features and the models it downloaded.");
         if (outside.Count == 0)
             text.Append(" Your own model folders are not touched.");
+        if (unclaimed is { Count: > 0 })
+            text.Append($"\n\nIt also holds {Count(unclaimed.Count, "other model file")} ({FormatSize(unclaimed.Bytes)}) that no Engine feature uses, " +
+                        "for example ones another part of the app downloaded there. They are deleted with the Engine.");
         AppendOutside(text, "Some models the Engine's features use are in your own model folders.", outside);
         return text.ToString();
     }

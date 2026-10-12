@@ -3,6 +3,9 @@ namespace DiffusionNexus.UI.Services.Engine;
 /// <summary>A file a removal would delete, with its size.</summary>
 public sealed record PlannedFile(string Path, long Bytes);
 
+/// <summary>A number of files and their total size.</summary>
+public sealed record ModelFileTotal(int Count, long Bytes);
+
 /// <summary>An item a removal keeps because another installed feature still uses it.</summary>
 public sealed record KeptItem(string Name, string Path, string NeededBy);
 
@@ -99,6 +102,34 @@ public static class EngineRemovalPlanner
             .DistinctBy(Key, StringComparer.OrdinalIgnoreCase)
             .Select(p => new PlannedFile(p, sizeOf(p)))
             .ToList();
+    }
+
+    /// <summary>
+    /// The model files in the Engine's own models folder that no Engine feature declares (a Core download
+    /// that landed there, a file the user put there). Uninstall deletes them with the Engine.
+    /// </summary>
+    /// <remarks>
+    /// Only model files count (<see cref="DiffusionNexus.Domain.Utilities.ModelFileExtensions.Recognized"/>),
+    /// so ComfyUI's own <c>put_*_here</c> placeholders and <c>configs</c> are not reported; a junction or
+    /// symlink inside is not entered (the uninstall removes it as a link).
+    /// </remarks>
+    public static ModelFileTotal PlanUninstallUnclaimedModels(string engineRoot, IReadOnlyList<EngineFeatureCheck> checks)
+    {
+        var models = ManagedEngineLocator.ModelsFolder(engineRoot);
+        if (!Directory.Exists(models)) return new ModelFileTotal(0, 0);
+
+        var declared = new HashSet<string>(
+            checks.SelectMany(c => c.Results).SelectMany(r => r.ModelResults).SelectMany(m => m.AllFoundPaths).Select(Key),
+            StringComparer.OrdinalIgnoreCase);
+        var options = new EnumerationOptions
+        {
+            RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint
+        };
+        var unclaimed = new DirectoryInfo(models).EnumerateFiles("*", options)
+            .Where(f => DiffusionNexus.Domain.Utilities.ModelFileExtensions.Matches(f.Name, DiffusionNexus.Domain.Utilities.ModelFileExtensions.Recognized))
+            .Where(f => !declared.Contains(Key(f.FullName)))
+            .ToList();
+        return new ModelFileTotal(unclaimed.Count, unclaimed.Sum(f => f.Length));
     }
 
     /// <summary>

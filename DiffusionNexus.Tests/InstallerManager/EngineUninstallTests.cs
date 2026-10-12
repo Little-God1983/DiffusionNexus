@@ -216,6 +216,44 @@ public sealed class EngineUninstallTests : IDisposable
         _dialog.Verify(d => d.ShowMessageAsync("Error", It.IsAny<string>()), Times.Never);
     }
 
+    // C2(b): a model no feature declares (a Core download that landed in the Engine's models folder) is
+    // named in the question: it goes with the Engine.
+    [Fact]
+    public async Task ModelsNoFeatureUses_AreNamedInTheQuestion()
+    {
+        var core = Path.Combine(_root, "models", "checkpoints", "core-download.safetensors");
+        Directory.CreateDirectory(Path.GetDirectoryName(core)!);
+        File.WriteAllBytes(core, new byte[2 * 1024 * 1024]);
+        Answer(0);
+        var (vm, card) = await CreateAsync();
+
+        await vm.UninstallEngineAsync(card);
+
+        _dialog.Verify(d => d.ShowOptionsAsync(It.IsAny<string>(),
+            It.Is<string>(m => m.Contains("It also holds 1 other model file (2 MB) that no Engine feature uses")),
+            It.IsAny<string[]>()), Times.Once);
+    }
+
+    // C2(b): when the feature check fails, the app does not guess which models are unclaimed.
+    [Fact]
+    public async Task FeatureCheckThrows_SaysNothingAboutModelsNoFeatureUses()
+    {
+        var core = Path.Combine(_root, "models", "checkpoints", "core-download.safetensors");
+        Directory.CreateDirectory(Path.GetDirectoryName(core)!);
+        File.WriteAllBytes(core, new byte[10]);
+        var catalog = new Mock<ICatalog>();
+        catalog.Setup(c => c.GetWorkloadAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("catalog is corrupt"));
+        Answer(0);
+        var (vm, card) = await CreateAsync(catalog: catalog);
+
+        await vm.UninstallEngineAsync(card);
+
+        _dialog.Verify(d => d.ShowOptionsAsync(It.IsAny<string>(),
+            It.Is<string>(m => m.StartsWith("Uninstall the Diffusion Nexus Engine?") && !m.Contains("no Engine feature uses")),
+            It.IsAny<string[]>()), Times.Once);
+    }
+
     [Fact]
     public async Task ALockedFileInTheEngine_KeepsTheRow_AndSaysWhy()
     {
