@@ -88,13 +88,26 @@ folder and leaves rows outside it alone.
    - delete the Engine folder (the same force delete Delete from Disk uses), then the chosen outside
      models;
    - remove the Base Model Folder rows whose path lies inside the Engine folder (by path, never by
-     package id, so a user folder that a past backfill linked to the Engine survives);
+     package id, so a user folder that a past backfill linked to the Engine survives); Generation
+     Galleries and LoRA sources inside the Engine folder are forgotten the same way (the startup
+     outputs registrar can link the Engine's `output` folder as a gallery);
    - remove the Engine row (its other Base Model Folder links are set to null by the existing FK);
    - if Settings → ComfyUI Server is set to the Engine, switch it to the custom URL, keeping the
      saved URL;
    - publish `InstallerPackagesChanged`, `EngineChanged` and `SettingsSaved`.
 5. **Result.** The tile goes back to "Not installed" with its Install button. The editor's features
    and Settings already report "not installed" from the folder probe.
+
+**Deletion safety.** A folder that is itself a junction or symlink loses only the link. A file or
+folder reached through a link inside the Engine folder (for example `ComfyUI\models\loras` pointing at
+`D:\Models\loras`) is refused and reported, never followed. Drive roots, blank and relative paths are
+never deleted. Link checks are scoped to the Engine folder: a link above it does not block.
+
+**Corrupted row.** An Engine row whose path is blank, relative or a drive root is only forgotten:
+nothing is sized or deleted, and the settings entries stay as they are.
+
+**Model check fails.** If checking which models the features use fails, Uninstall continues with the
+Engine folder only (the failure is logged).
 
 **Partial failure.** If some files can't be deleted (locked by another program, access denied), the
 app keeps the Engine row and its Base Model Folder, so the tile shows "Installation incomplete" and
@@ -105,8 +118,8 @@ row and registrations are removed and the user is told the folder was already go
 ### Remove a feature
 
 The Features dialog shows **Remove…** on every row that is Installed or Partial. It is disabled while
-the dialog installs, with the Engine busy, or with an install running (same busy check as above,
-shown as the tooltip).
+the dialog itself installs or removes. Clicking it while the Engine is busy (a generation or another
+install) says why and changes nothing.
 
 1. **Plan.** For the feature's workload(s):
    - **Custom nodes:** each node pack folder under the Engine's `custom_nodes` that **no other
@@ -130,13 +143,18 @@ shown as the tooltip).
    published, so an open Inpaint/Outpaint panel re-checks its readiness. Files that could not be
    deleted are listed in the message and the Unified Console.
 
+If checking which models the feature uses fails, Remove… says the files could not be checked and
+changes nothing. If every file of the feature is needed by another installed feature, it says so and
+changes nothing. Choosing "only what's in the Engine" when nothing of the feature is in the Engine
+leaves everything as it is and says so.
+
 Python packages that a feature installed into the Engine's environment (its `requirements.txt`, the
 llama-cpp-python wheel) stay; the catalog does not list them, so they cannot be removed safely.
 Uninstall Engine removes them with the environment.
 
 ## Finding a feature's files
 
-`EngineFeatureRemovalPlanner` (new, `Services\Engine\`) turns a set of features into a removal plan.
+`EngineRemovalPlanner` (`Services\Engine\`) turns a set of features into a removal plan.
 Inputs: the Engine install root, the feature(s) to remove, every Engine feature's workload(s) from the
 catalog, and the configuration check of every feature (so the planner knows which other features are
 installed).
@@ -168,20 +186,26 @@ removes it. Fixing the catalog entry is separate work.
   `EngineFeaturesViewModel` passes `<repo>\models`.
 - `BaseModelFolderRegistrar.ResolveModelRoots`: for an `IsAppManaged` package, only `<repo>\models`.
   Called right after a successful Engine install as well as by the startup backfill.
-- `EngineFeatureRemovalPlanner` + its plan record (node packs to delete, Engine models to delete,
+- `EngineRemovalPlanner` + its plan record (node packs to delete, Engine models to delete,
   outside models, kept items with the feature that keeps them, sizes).
-- `EngineRemovalService` (new, `Services\Engine\`): busy check, maintenance lock, stop, delete,
-  registrations, row, server mode, events. One method for Uninstall Engine, one for Remove feature.
-  File deletion goes through an injectable seam so tests can simulate locked files.
-- A confirm dialog (`EngineRemovalDialog`) for both flows: message, optional "your model folders"
-  list with path and size, kept list, and the two or three buttons. Checks
-  `DiffusionNexus.UI/REUSABLES.md` first for an existing list/confirm dialog to build on.
+- `EngineRemover` (`Services\Engine\`): busy check, stop, maintenance hold, delete. One `RemoveAsync`
+  serves Uninstall Engine and Remove feature. File deletion goes through an injectable seam
+  (`IRemovalFileSystem`) so tests can simulate locked files. The registrations, the row, the server
+  mode and the events are the uninstall flow's job: `UninstallEngineAsync` and `ForgetEngineAsync` in
+  `InstallerManagerViewModel`.
+- `EngineRemovalPlanner` and `EngineRemovalMessages` (`Services\Engine\`): the plan and the wording.
+  `EngineFeatureChecks` loads the disk check of every feature for the planner.
+- Confirmation goes through `IDialogService.ShowOptionsAsync` (Cancel first, the safe choice last), so
+  there is no new dialog; the text, with the "your model folders" list (path and size) and the kept
+  list, comes from `EngineRemovalMessages`.
 - `InstallerPackageCardViewModel`: `ShowEngineUninstallMenuItem`, Settings and Make Default
   `CanExecute` false on the Engine with the tooltips above, Remove and Delete from Disk hidden on the
-  Engine.
+  Engine. Open Folder is greyed with a reason when the Engine has no row or its folder is missing. The
+  Core tile gets the same treatment: Settings, Open Folder and Make Default greyed with "built into
+  the app" tooltips.
 - `InstallerManagerViewModel.CreateEngineCard`: wires Open Folder and Uninstall.
-- `EngineFeatureRowViewModel` / `EngineFeaturesViewModel`: Remove command, busy tooltip, re-check
-  after removal.
+- `EngineFeatureRowViewModel` / `EngineFeaturesViewModel`: Remove command (`RemoveFeatureAsync`),
+  re-check after removal. The Features dialog's Close is disabled while a removal runs.
 
 Every step logs to the Unified Console (category Installation, source "Diffusion Nexus Engine"):
 plan (counts, sizes, kept items with reasons), the user's choice, each deleted folder or file, each
@@ -193,7 +217,7 @@ Unit tests (temp folders, fakes for the engine control, install activity, settin
 - Planner: a node pack or model shared with another installed feature is kept and named; one shared
   only with a not-installed feature is deleted; every copy is found, not just the first; inside vs
   outside the Engine; all quant names probed; Uninstall plans the whole folder plus outside models.
-- Removal service: refuses while a job runs or an install is active, and changes nothing; stops the
+- `EngineRemover` (and the uninstall flow): refuses while a job runs or an install is active, and changes nothing; stops the
   Engine before deleting; "only Engine" never touches outside files; "all" deletes them; a locked
   file keeps the row and reports the file; a missing folder removes the row; Base Model Folder rows
   are removed by path, and a user folder linked to the Engine row survives; server mode switches
