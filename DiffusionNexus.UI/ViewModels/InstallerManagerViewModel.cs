@@ -1029,8 +1029,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Builds the static "Diffusion Nexus Engine" tile. Wires the install handler and, once
-    /// the engine exists, the workloads handler. Visibility is controlled by
+    /// Builds the static "Diffusion Nexus Engine" tile. Wires install, Features, Open Folder and Uninstall Engine. Visibility is controlled by
     /// <see cref="IsEngineTileVisible"/>.
     /// </summary>
     private InstallerPackageCardViewModel CreateEngineCard(InstallerPackage? enginePackage)
@@ -1038,6 +1037,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         var card = InstallerPackageCardViewModel.CreateEngineCard(enginePackage);
         card.EngineInstallRequested += OnEngineInstallRequestedAsync;
         card.WorkloadsRequested += OnWorkloadsRequestedAsync;
+        card.OpenFolderRequested += OnOpenFolderRequested;
         return card;
     }
 

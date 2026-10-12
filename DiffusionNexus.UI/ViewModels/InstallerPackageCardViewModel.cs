@@ -33,6 +33,15 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(DeleteFromDiskTooltip))]
     [NotifyCanExecuteChangedFor(nameof(RemoveCommand))]
     [NotifyCanExecuteChangedFor(nameof(DeleteFromDiskCommand))]
+    [NotifyPropertyChangedFor(nameof(SettingsTooltip))]
+    [NotifyPropertyChangedFor(nameof(MakeDefaultTooltip))]
+    [NotifyPropertyChangedFor(nameof(OpenFolderTooltip))]
+    [NotifyPropertyChangedFor(nameof(ShowRemoveMenuItem))]
+    [NotifyPropertyChangedFor(nameof(ShowDeleteFromDiskMenuItem))]
+    [NotifyPropertyChangedFor(nameof(ShowEngineUninstallMenuItem))]
+    [NotifyCanExecuteChangedFor(nameof(OpenSettingsCommand))]
+    [NotifyCanExecuteChangedFor(nameof(MakeDefaultCommand))]
+    [NotifyCanExecuteChangedFor(nameof(OpenFolderCommand))]
     private InstallerType _type;
 
     [ObservableProperty]
@@ -103,6 +112,15 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(DeleteFromDiskTooltip))]
     [NotifyCanExecuteChangedFor(nameof(RemoveCommand))]
     [NotifyCanExecuteChangedFor(nameof(DeleteFromDiskCommand))]
+    [NotifyPropertyChangedFor(nameof(SettingsTooltip))]
+    [NotifyPropertyChangedFor(nameof(MakeDefaultTooltip))]
+    [NotifyPropertyChangedFor(nameof(OpenFolderTooltip))]
+    [NotifyPropertyChangedFor(nameof(ShowRemoveMenuItem))]
+    [NotifyPropertyChangedFor(nameof(ShowDeleteFromDiskMenuItem))]
+    [NotifyPropertyChangedFor(nameof(ShowEngineUninstallMenuItem))]
+    [NotifyCanExecuteChangedFor(nameof(OpenSettingsCommand))]
+    [NotifyCanExecuteChangedFor(nameof(MakeDefaultCommand))]
+    [NotifyCanExecuteChangedFor(nameof(OpenFolderCommand))]
     private bool _isEngine;
 
     /// <summary>True when the engine has been installed (a backing row exists on disk).</summary>
@@ -115,6 +133,7 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ShowEngineInstallButton))]
     [NotifyPropertyChangedFor(nameof(ShowMissingBanner))]
+    [NotifyPropertyChangedFor(nameof(ShowEngineUninstallMenuItem))]
     private bool _isEngineInstalling;
 
     // What the Engine row's folder holds; null when there is no row. The status line and the banner
@@ -187,6 +206,8 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     public void ApplyEngineFolder(EngineFolderState? folder)
     {
         _engineFolder = folder;
+        OnPropertyChanged(nameof(HasEngineRow));
+        OnPropertyChanged(nameof(ShowEngineUninstallMenuItem));
         OnPropertyChanged(nameof(MissingBannerText));
         IsEngineInstalled = folder == EngineFolderState.Installed;
         IsMissing = folder is EngineFolderState.Missing or EngineFolderState.Incomplete;
@@ -256,29 +277,49 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     /// only honest action for a stale row is the plain "Remove", which drops the
     /// database row and the settings folders that pointed into it.
     /// </summary>
-    public bool ShowDeleteFromDiskMenuItem => !IsMissing;
+    public bool ShowDeleteFromDiskMenuItem => !IsMissing && !IsEngine;
+
+    /// <summary>Remove drops a row; the Engine is uninstalled with its own item instead.</summary>
+    public bool ShowRemoveMenuItem => !IsEngine;
 
     /// <summary>
-    /// Remove and Delete from Disk are greyed out on the Engine tile (#612). The Engine card does not
-    /// wire either handler, so both items did nothing, and the ordinary handlers must not be wired to
-    /// it: Remove would drop the Engine's row and leave its files, so the app would call it not
-    /// installed, and Delete from Disk asks the process manager whether the install runs, which does
-    /// not know the Engine's process, so it would delete a running Engine's folder. Uninstalling the
-    /// Engine needs its own feature. The Core card has no row and nothing on disk to act on.
+    /// Uninstall Engine: whenever the Engine has a row (installed, incomplete or missing folder), and not
+    /// while it installs.
+    /// </summary>
+    public bool ShowEngineUninstallMenuItem => IsEngine && HasEngineRow && !IsEngineInstalling;
+
+    /// <summary>
+    /// The ordinary Remove and Delete from Disk never act on the Engine (it has Uninstall Engine) nor on
+    /// Core (no row, nothing on disk).
     /// </summary>
     private bool CanRemoveOrDelete() => !IsEngine && !IsCore;
 
-    /// <summary>Why Remove is greyed out; null where it is not. True whether or not the Engine is installed.</summary>
-    public string? RemoveTooltip =>
-        IsEngine ? "The app manages the Diffusion Nexus Engine, so it can't be removed from this list."
-        : IsCore ? "This is built into the app, so there is nothing to remove."
-        : null;
+    /// <summary>Why Remove is greyed out; null where it is not.</summary>
+    public string? RemoveTooltip => IsCore ? "This is built into the app, so there is nothing to remove." : null;
 
     /// <summary>Why Delete from Disk is greyed out; null where it is not.</summary>
-    public string? DeleteFromDiskTooltip =>
-        IsEngine ? "The app manages the Diffusion Nexus Engine. Deleting it from here is not supported: a running Engine must be stopped first."
-        : IsCore ? "This is built into the app, so there is nothing on disk to delete."
+    public string? DeleteFromDiskTooltip => IsCore ? "This is built into the app, so there is nothing on disk to delete." : null;
+
+    private bool CanOpenSettings() => !IsEngine && !IsCore;
+
+    /// <summary>The gear's and the menu item's tooltip: why Settings is greyed out, else "Settings".</summary>
+    public string SettingsTooltip =>
+        IsEngine ? "The app manages the Diffusion Nexus Engine's settings. To install it somewhere else, uninstall it and install it again."
+        : IsCore ? "This is built into the app: it has no settings of its own."
+        : "Settings";
+
+    private bool CanMakeDefault() => !IsEngine && !IsCore;
+
+    /// <summary>Why Make Default is greyed out; null where it is not.</summary>
+    public string? MakeDefaultTooltip =>
+        IsEngine ? "The Engine runs in the background for Diffusion Nexus features, so it can't be your default ComfyUI."
+        : IsCore ? "This is built into the app, so it can't be a default installation."
         : null;
+
+    private bool CanOpenFolder() => !IsCore;
+
+    /// <summary>Why Open Folder is greyed out; null where it is not.</summary>
+    public string? OpenFolderTooltip => IsCore ? "This is built into the app, so there is no folder to open." : null;
 
     /// <summary>
     /// The red "missing" banner. Not while the Engine installs: the tile shows the install then,
@@ -376,6 +417,9 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     /// Raised when the user presses Install on the engine tile.
     /// </summary>
     public event Func<InstallerPackageCardViewModel, Task>? EngineInstallRequested;
+
+    /// <summary>Raised when the user chose Uninstall Engine on the Engine tile.</summary>
+    public event Func<InstallerPackageCardViewModel, Task>? EngineUninstallRequested;
 
     /// <summary>
     /// Logo image resolved from the installer type.
@@ -543,14 +587,14 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
             await WorkloadsRequested.Invoke(this);
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanOpenSettings))]
     private async Task OpenSettingsAsync()
     {
         if (SettingsRequested is not null)
             await SettingsRequested.Invoke(this);
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanMakeDefault))]
     private async Task MakeDefaultAsync()
     {
         if (MakeDefaultRequested is not null)
@@ -571,7 +615,7 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
             await DeleteFromDiskRequested.Invoke(this);
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanOpenFolder))]
     private void OpenFolder()
     {
         OpenFolderRequested?.Invoke(this);
@@ -589,5 +633,12 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     {
         if (EngineInstallRequested is not null)
             await EngineInstallRequested.Invoke(this);
+    }
+
+    [RelayCommand]
+    private async Task UninstallEngineAsync()
+    {
+        if (EngineUninstallRequested is not null)
+            await EngineUninstallRequested.Invoke(this);
     }
 }

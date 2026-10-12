@@ -178,24 +178,14 @@ public class EngineServerOfferTests
     }
 
     [Fact]
-    public void EngineTile_GreysOutRemoveAndDeleteFromDisk_AndSaysWhy()
+    public void EngineTile_HidesRemoveAndDeleteFromDisk_ItHasUninstallInstead()
     {
         var card = InstallerPackageCardViewModel.CreateEngineCard(null);
 
         card.RemoveCommand.CanExecute(null).Should().BeFalse();
         card.DeleteFromDiskCommand.CanExecute(null).Should().BeFalse();
-        card.RemoveTooltip.Should().Contain("The app manages the Diffusion Nexus Engine");
-        card.DeleteFromDiskTooltip.Should().Contain("must be stopped first");
-    }
-
-    // Review round 2: the tooltip claimed files on disk on a tile with no Engine installed.
-    [Fact]
-    public void EngineTile_NotInstalled_TooltipsClaimNoInstall()
-    {
-        var card = InstallerPackageCardViewModel.CreateEngineCard(null);
-
-        card.RemoveTooltip.Should().NotContain("files on disk");
-        card.DeleteFromDiskTooltip.Should().NotContain("left broken");
+        card.ShowRemoveMenuItem.Should().BeFalse();
+        card.ShowDeleteFromDiskMenuItem.Should().BeFalse();
     }
 
     // Review round 2: the Core card shares the ⋮ menu, and its Remove and Delete were wired to nothing.
