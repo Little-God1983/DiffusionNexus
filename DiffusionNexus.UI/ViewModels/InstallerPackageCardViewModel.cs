@@ -134,7 +134,39 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(ShowEngineInstallButton))]
     [NotifyPropertyChangedFor(nameof(ShowMissingBanner))]
     [NotifyPropertyChangedFor(nameof(ShowEngineUninstallMenuItem))]
+    [NotifyPropertyChangedFor(nameof(ShowEngineStatusMessage))]
     private bool _isEngineInstalling;
+
+    /// <summary>
+    /// True while Uninstall Engine deletes and forgets the Engine: Features, Install and Uninstall are
+    /// hidden then, and the status line says what runs.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowEngineInstallButton))]
+    [NotifyPropertyChangedFor(nameof(ShowEngineWorkloadsButton))]
+    [NotifyPropertyChangedFor(nameof(ShowEngineUninstallMenuItem))]
+    [NotifyPropertyChangedFor(nameof(ShowEngineStatusMessage))]
+    private bool _isEngineUninstalling;
+
+    /// <summary>The status line under the Engine's buttons: while it installs or uninstalls.</summary>
+    public bool ShowEngineStatusMessage => IsEngineInstalling || IsEngineUninstalling;
+
+    /// <summary>Shows the Engine uninstall on the tile. <see cref="EndEngineUninstall"/> ends it.</summary>
+    public void BeginEngineUninstall()
+    {
+        EngineStatusMessage = "Stopping the Engine and deleting its folder...";
+        IsEngineUninstalling = true;
+        RefreshEngineStatus();
+    }
+
+    /// <summary>Ends the Engine uninstall on the tile; it shows the folder as it was read last.</summary>
+    public void EndEngineUninstall()
+    {
+        if (!IsEngineUninstalling) return;
+        IsEngineUninstalling = false;
+        EngineStatusMessage = null;
+        RefreshEngineStatus();
+    }
 
     // What the Engine row's folder holds; null when there is no row. The status line and the banner
     // are derived from it and IsEngineInstalling (RefreshEngineStatus), never written on their own.
@@ -227,6 +259,12 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
             return;
         }
 
+        if (IsEngineUninstalling)
+        {
+            VersionDisplay = "Uninstalling...";
+            return;
+        }
+
         VersionDisplay = _engineFolder switch
         {
             null => "Not installed",
@@ -286,9 +324,9 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
 
     /// <summary>
     /// Uninstall Engine: whenever the Engine has a row (installed, incomplete or missing folder), and not
-    /// while it installs.
+    /// while it installs or uninstalls.
     /// </summary>
-    public bool ShowEngineUninstallMenuItem => IsEngine && HasEngineRow && !IsEngineInstalling;
+    public bool ShowEngineUninstallMenuItem => IsEngine && HasEngineRow && !IsEngineInstalling && !IsEngineUninstalling;
 
     /// <summary>
     /// The ordinary Remove and Delete from Disk never act on the Engine (it has Uninstall Engine) nor on
@@ -343,11 +381,11 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
         ? "Installation incomplete"
         : "Installation folder not found";
 
-    /// <summary>Install button: engine tile, not yet installed, not currently installing.</summary>
-    public bool ShowEngineInstallButton => IsEngine && !IsEngineInstalled && !IsEngineInstalling;
+    /// <summary>Install button: engine tile, not yet installed, not currently installing or uninstalling.</summary>
+    public bool ShowEngineInstallButton => IsEngine && !IsEngineInstalled && !IsEngineInstalling && !IsEngineUninstalling;
 
-    /// <summary>Workloads button on the engine tile: only once the engine exists.</summary>
-    public bool ShowEngineWorkloadsButton => IsEngine && IsEngineInstalled;
+    /// <summary>Workloads button on the engine tile: only once the engine exists, and not while it is uninstalled.</summary>
+    public bool ShowEngineWorkloadsButton => IsEngine && IsEngineInstalled && !IsEngineUninstalling;
 
     /// <summary>
     /// True when the bottom action panel (Launch + Workloads container) should

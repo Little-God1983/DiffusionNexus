@@ -34,7 +34,8 @@ internal static class EngineTestHarness
         Mock<IUnifiedLogger>? loggerMock = null,
         IEnumerable<IInstallerUpdateService>? updateServices = null,
         Mock<IAppSettingsRepository>? appSettingsMock = null,
-        BaseModelFolderRegistrar? registrar = null)
+        BaseModelFolderRegistrar? registrar = null,
+        IInstallActivity? installActivity = null)
     {
         var repo = new Mock<IInstallerPackageRepository>();
         repo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>()))
@@ -84,7 +85,8 @@ internal static class EngineTestHarness
             engineInstaller: engineInstaller,
             engine: engine,
             baseModelFolderRegistrar: registrar,
-            engineModelPaths: modelSearchRoots is null ? null : RealSynchronizer(uow.Object, modelSearchRoots));
+            engineModelPaths: modelSearchRoots is null ? null : RealSynchronizer(uow.Object, modelSearchRoots),
+            installActivity: installActivity);
     }
 
     // The synchronizer is sealed, so tests drive the real one: it writes extra_model_paths.yaml into

@@ -96,7 +96,16 @@ folder and leaves rows outside it alone.
      own model folders. Other programs (ComfyUI, A1111, …) may use them too:"*, then a list of each
      file with its folder and size, then **Delete only what's in the Diffusion Nexus Engine** /
      **Delete these models too** / **Cancel**.
-4. **Run**, under `TryBeginMaintenanceAsync` so nothing can start the Engine meanwhile:
+4. **Uninstalling state.** From the confirmation through the forget step the tile shows
+   *"Uninstalling..."* with a status line, hides Features, Install and Uninstall Engine, and the
+   Features dialog (from the tile or the editor's "Install …" link) refuses to open, says why and
+   logs it: its yaml sync and installs would write into the folder being deleted. The uninstall holds
+   an `IInstallActivity` handle ("Diffusion Nexus Engine uninstall") for that time, so a catalog apply
+   or another install waits. The installs are checked once more right before the handle is taken (an
+   install started while the question was open refuses the uninstall), and the remover is told the
+   caller holds its own handle (`installActivityHeldByCaller`) so it does not refuse itself; a running
+   generation still refuses. A refusal, a failure or an error ends the state and releases the handle.
+5. **Run**, under `TryBeginMaintenanceAsync` so nothing can start the Engine meanwhile:
    - stop the Engine (`IManagedEngineControl.StopAsync`);
    - delete the Engine folder (the same force delete Delete from Disk uses), then the chosen outside
      models;
@@ -108,7 +117,7 @@ folder and leaves rows outside it alone.
    - if Settings → ComfyUI Server is set to the Engine, switch it to the custom URL, keeping the
      saved URL;
    - publish `InstallerPackagesChanged`, `EngineChanged` and `SettingsSaved`.
-5. **Result.** The tile goes back to "Not installed" with its Install button. The editor's features
+6. **Result.** The tile goes back to "Not installed" with its Install button. The editor's features
    and Settings already report "not installed" from the folder probe.
 
 **Deletion safety.** A folder that is itself a junction or symlink loses only the link. A file or

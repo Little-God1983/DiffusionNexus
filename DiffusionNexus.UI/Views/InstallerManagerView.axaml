@@ -410,7 +410,7 @@
                                                    MaxLines="2"
                                                    TextTrimming="CharacterEllipsis"
                                                    ToolTip.Tip="{Binding EngineStatusMessage}"
-                                                   IsVisible="{Binding IsEngineInstalling}"/>
+                                                   IsVisible="{Binding ShowEngineStatusMessage}"/>
                                         <!-- One line of the latest install output: a long step still looks alive. -->
                                         <TextBlock Text="{Binding EngineActivity}"
                                                    FontSize="10"

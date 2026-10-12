@@ -89,9 +89,10 @@ public sealed class EngineRemover
     }
 
     /// <summary>Why nothing may be removed right now, or null.</summary>
-    public string? BusyReason()
+    /// <param name="includeInstalls">False when the caller already checked the installs and now holds its own install-activity handle.</param>
+    public string? BusyReason(bool includeInstalls = true)
     {
-        if (_installActivity?.Running is { } running) return $"{running} is being installed";
+        if (includeInstalls && _installActivity?.Running is { } running) return $"{running} is being installed";
         if (_engine is { HasActiveJobs: true }) return "a generation is running on it";
         return null;
     }
@@ -102,11 +103,15 @@ public sealed class EngineRemover
     /// item reached through a junction or symlink is refused (it lives elsewhere), and relative paths are
     /// refused. A directory that is itself a link loses the link only. With <paramref name="engineRoot"/>,
     /// only the segments strictly inside it are checked for links, and only for items inside it.
+    /// With <paramref name="installActivityHeldByCaller"/>, the caller checked the installs itself right
+    /// before taking its own install-activity handle (Uninstall Engine), so that handle does not make the
+    /// removal refuse itself; a running generation still does.
     /// </summary>
     public async Task<EngineRemovalResult> RemoveAsync(
-        IReadOnlyList<string> directories, IReadOnlyList<string> files, string? engineRoot = null)
+        IReadOnlyList<string> directories, IReadOnlyList<string> files, string? engineRoot = null,
+        bool installActivityHeldByCaller = false)
     {
-        if (BusyReason() is { } busy) return Refuse(busy);
+        if (BusyReason(includeInstalls: !installActivityHeldByCaller) is { } busy) return Refuse(busy);
 
         IDisposable? hold = null;
         if (_engine is not null)

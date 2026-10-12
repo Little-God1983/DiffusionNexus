@@ -54,13 +54,15 @@ public sealed class EngineUninstallTests : IDisposable
         ExecutablePath = string.Empty
     };
 
+    private readonly InstallActivity _installActivity = new();
+
     private async Task<(InstallerManagerViewModel Vm, InstallerPackageCardViewModel Card)> CreateAsync(
         string? path = null, Mock<ICatalog>? catalog = null, Mock<IUnifiedLogger>? logger = null)
     {
         var vm = EngineTestHarness.CreateInstallerManagerViewModel(
             [Row(path)], dialogMock: _dialog, engine: _engine.Object, appSettingsMock: _settingsRepo,
             eventAggregatorMock: _events, onPackageRemoved: p => _removedRows.Add(p),
-            catalogMock: catalog, loggerMock: logger);
+            catalogMock: catalog, loggerMock: logger, installActivity: _installActivity);
         vm.IsEngineTileVisible = true;
         await vm.LoadInstallationsCommand.ExecuteAsync(null);
         return (vm, vm.InstallerCards.Single(c => c.IsEngine));
@@ -214,6 +216,91 @@ public sealed class EngineUninstallTests : IDisposable
             It.Is<string>(m => m.Contains("Could not check which models") && m.Contains("catalog is corrupt")),
             It.IsAny<string?>()), Times.Once);
         _dialog.Verify(d => d.ShowMessageAsync("Error", It.IsAny<string>()), Times.Never);
+    }
+
+    // I1: while the Engine folder is deleted the tile says so, offers no Features / Install / Uninstall, the
+    // Features dialog refuses to open, and the uninstall holds an install-activity handle (without
+    // refusing itself over it). Afterwards the handle is released.
+    [Fact]
+    public async Task WhileDeleting_TheTileShowsUninstalling_FeaturesRefuse_AndTheActivityIsHeld()
+    {
+        Answer(1);
+        var hold = new TaskCompletionSource<IDisposable?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _engine.Setup(e => e.TryBeginMaintenanceAsync()).Returns(hold.Task);
+        var logger = new Mock<IUnifiedLogger>();
+        var (vm, card) = await CreateAsync(logger: logger);
+        var presented = false;
+        vm.EngineFeaturesDialogPresenter = _ => { presented = true; return Task.CompletedTask; };
+
+        var uninstall = vm.UninstallEngineAsync(card);
+        await WaitUntilAsync(() => card.IsEngineUninstalling);
+
+        card.VersionDisplay.Should().Be("Uninstalling...");
+        card.ShowEngineStatusMessage.Should().BeTrue();
+        card.EngineStatusMessage.Should().NotBeNullOrWhiteSpace();
+        card.ShowEngineWorkloadsButton.Should().BeFalse();
+        card.ShowEngineInstallButton.Should().BeFalse();
+        card.ShowEngineUninstallMenuItem.Should().BeFalse();
+        _installActivity.Running.Should().Be("Diffusion Nexus Engine uninstall");
+
+        await vm.OpenEngineFeaturesAsync();
+        presented.Should().BeFalse();
+        _dialog.Verify(d => d.ShowMessageAsync("Diffusion Nexus Engine", It.Is<string>(m => m.Contains("being uninstalled"))), Times.Once);
+        logger.Verify(l => l.Info(LogCategory.Installation, "Diffusion Nexus Engine",
+            It.Is<string>(m => m.Contains("being uninstalled")), It.IsAny<string?>()), Times.Once);
+
+        hold.SetResult(new Mock<IDisposable>().Object);
+        await uninstall;
+
+        Directory.Exists(_root).Should().BeFalse("the uninstall did not refuse itself over its own activity handle");
+        _removedRows.Should().ContainSingle();
+        _installActivity.Running.Should().BeNull();
+    }
+
+    // I1: a refused uninstall (the Engine started meanwhile) ends the uninstalling state and releases the handle.
+    [Fact]
+    public async Task RefusedWhileDeleting_EndsTheUninstallingState()
+    {
+        Answer(1);
+        _engine.Setup(e => e.TryBeginMaintenanceAsync()).ReturnsAsync((IDisposable?)null);
+        var (vm, card) = await CreateAsync();
+
+        await vm.UninstallEngineAsync(card);
+
+        card.IsEngineUninstalling.Should().BeFalse();
+        card.ShowEngineWorkloadsButton.Should().BeTrue();
+        card.ShowEngineUninstallMenuItem.Should().BeTrue();
+        card.VersionDisplay.Should().Be("App-managed");
+        _installActivity.Running.Should().BeNull();
+        Directory.Exists(_root).Should().BeTrue();
+    }
+
+    // I1: an install that started while the question was open still refuses the uninstall.
+    [Fact]
+    public async Task AnInstallStartedWhileAsking_RefusesTheUninstall()
+    {
+        IDisposable? other = null;
+        _dialog.Setup(d => d.ShowOptionsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string[]>()))
+            .ReturnsAsync(() => { other = _installActivity.Begin("Outpaint Vision"); return 1; });
+        var (vm, card) = await CreateAsync();
+
+        await vm.UninstallEngineAsync(card);
+        other?.Dispose();
+
+        Directory.Exists(_root).Should().BeTrue();
+        _removedRows.Should().BeEmpty();
+        _dialog.Verify(d => d.ShowMessageAsync(It.IsAny<string>(), It.Is<string>(m => m.Contains("Outpaint Vision is being installed"))), Times.Once);
+        card.IsEngineUninstalling.Should().BeFalse();
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!condition())
+        {
+            if (DateTime.UtcNow > deadline) throw new TimeoutException("condition not reached");
+            await Task.Delay(10);
+        }
     }
 
     // C2(b): a model no feature declares (a Core download that landed in the Engine's models folder) is

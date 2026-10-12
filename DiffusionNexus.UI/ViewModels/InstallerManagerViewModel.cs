@@ -796,6 +796,17 @@ public partial class InstallerManagerViewModel : ViewModelBase
     /// </summary>
     public async Task OpenEngineFeaturesAsync(Services.Engine.EngineFeature? preselect = null)
     {
+        // Its yaml sync and installs would write into the folder being deleted.
+        if (_engineUninstallRunning)
+        {
+            const string refused = "Features dialog not opened: the Diffusion Nexus Engine is being uninstalled.";
+            Serilog.Log.Information(refused);
+            _unifiedLogger.Info(LogCategory.Installation, EngineLogSource, refused);
+            await _dialogService.ShowMessageAsync("Diffusion Nexus Engine",
+                "The Diffusion Nexus Engine is being uninstalled, so its features can't be opened.");
+            return;
+        }
+
         var card = InstallerCards.FirstOrDefault(c => c.IsEngine);
         if (card is null || !card.IsEngineInstalled || string.IsNullOrWhiteSpace(card.InstallationPath))
         {
@@ -1066,6 +1077,15 @@ public partial class InstallerManagerViewModel : ViewModelBase
     {
         if (_engineUninstallRunning) return;
         _engineUninstallRunning = true;
+        IDisposable? uninstallActivity = null;
+
+        // Ends the tile's "Uninstalling..." state and releases the install-activity handle (both twice is fine).
+        void EndUninstall()
+        {
+            uninstallActivity?.Dispose();
+            card.EndEngineUninstall();
+        }
+
         try
         {
             var remover = CreateEngineRemover();
@@ -1129,6 +1149,22 @@ public partial class InstallerManagerViewModel : ViewModelBase
                     ? "Uninstalling the Engine and the listed models in your own folders."
                     : "Uninstalling the Engine; your own model folders stay as they are.");
 
+            // From here to the forget step the tile shows the uninstall and offers no Features, Install or
+            // Uninstall, and the Features dialog refuses to open. An install that started while the question
+            // was open still refuses the uninstall: checked right before the handle is taken, with no await
+            // between, so the remover can skip the installs (its own handle would read as one).
+            card.BeginEngineUninstall();
+            if (remover.BusyReason() is { } busyNow)
+            {
+                EndUninstall();
+                _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
+                    $"Uninstall refused: the Engine is busy ({busyNow}). Nothing was changed.");
+                await _dialogService.ShowMessageAsync(Services.Engine.EngineRemovalMessages.UninstallTitle,
+                    Services.Engine.EngineRemovalMessages.Busy(busyNow));
+                return;
+            }
+            uninstallActivity = _installActivity?.Begin("Diffusion Nexus Engine uninstall");
+
             // An unsafe root never reaches the remover: nothing is stopped, held or deleted.
             var result = new Services.Engine.EngineRemovalResult(null, []);
             if (safeRoot)
@@ -1137,11 +1173,12 @@ public partial class InstallerManagerViewModel : ViewModelBase
                     ? outside.Select(f => f.Path).ToList()
                     : [];
                 IReadOnlyList<string> directories = folder == Services.Engine.EngineFolderState.Missing ? [] : [root];
-                result = await remover.RemoveAsync(directories, files, engineRoot: root);
+                result = await remover.RemoveAsync(directories, files, engineRoot: root, installActivityHeldByCaller: true);
             }
 
             if (result.WasBusy)
             {
+                EndUninstall();
                 await _dialogService.ShowMessageAsync(Services.Engine.EngineRemovalMessages.UninstallTitle,
                     Services.Engine.EngineRemovalMessages.Busy(result.BusyReason!));
                 return;
@@ -1153,6 +1190,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
             {
                 _unifiedLogger.Warn(LogCategory.Installation, EngineLogSource,
                     "The Engine was not fully uninstalled; it stays registered so Uninstall Engine can be tried again.");
+                EndUninstall();
                 card.ApplyEngineFolder(await Task.Run(() => Services.Engine.ManagedEngineLocator.Probe(root)));
                 _eventAggregator.PublishEngineChanged(new EngineChangedEventArgs());
                 await _dialogService.ShowMessageAsync(Services.Engine.EngineRemovalMessages.UninstallTitle,
@@ -1166,6 +1204,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
             var index = InstallerCards.IndexOf(card);
             if (index >= 0) InstallerCards[index] = CreateEngineCard(null);
+            EndUninstall();
             _eventAggregator.PublishInstallerPackagesChanged(new InstallerPackagesChangedEventArgs());
             _eventAggregator.PublishEngineChanged(new EngineChangedEventArgs());
 
@@ -1177,11 +1216,13 @@ public partial class InstallerManagerViewModel : ViewModelBase
         {
             Serilog.Log.Error(ex, "Engine uninstall failed");
             _unifiedLogger.Error(LogCategory.Installation, EngineLogSource, $"Uninstall failed: {ex.Message}", ex);
+            EndUninstall();
             await ShowEngineFolderAsItIsAsync(card);
             await _dialogService.ShowMessageAsync("Error", $"Uninstalling the Engine failed: {ex.Message}");
         }
         finally
         {
+            EndUninstall();
             _engineUninstallRunning = false;
         }
     }

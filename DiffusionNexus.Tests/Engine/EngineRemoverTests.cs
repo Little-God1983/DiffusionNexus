@@ -70,6 +70,26 @@ public sealed class EngineRemoverTests : IDisposable
         result.BusyReason.Should().Contain("Diffusion Nexus Engine features");
     }
 
+    // I1: Uninstall Engine checks the installs itself and then holds its own handle; that handle must not
+    // make the removal refuse itself. A running generation still does.
+    [Fact]
+    public async Task TheCallersOwnInstallActivity_DoesNotRefuse_AGenerationStillDoes()
+    {
+        var activity = new InstallActivity();
+        using var _ = activity.Begin("Diffusion Nexus Engine uninstall");
+        var folder = Folder("Engine");
+
+        var result = await new EngineRemover(_engine.Object, activity).RemoveAsync([folder], [], installActivityHeldByCaller: true);
+
+        result.WasBusy.Should().BeFalse();
+        Directory.Exists(folder).Should().BeFalse();
+
+        var other = Folder("Engine2");
+        _engine.SetupGet(e => e.HasActiveJobs).Returns(true);
+        (await new EngineRemover(_engine.Object, activity).RemoveAsync([other], [], installActivityHeldByCaller: true))
+            .BusyReason.Should().Be("a generation is running on it");
+    }
+
     [Fact]
     public async Task ARunningIdleEngine_IsStoppedFirst_ThenDeletedUnderTheHold()
     {
