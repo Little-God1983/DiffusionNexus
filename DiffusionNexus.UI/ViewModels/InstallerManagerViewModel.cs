@@ -68,6 +68,9 @@ public partial class InstallerManagerViewModel : ViewModelBase
     // Says an install is running, so the catalog apply waits (#618). Null in tests.
     private readonly IInstallActivity? _installActivity;
 
+    // Test seam for the Engine's removals (locked or failing files); null uses the real file system.
+    private readonly Services.Engine.IRemovalFileSystem? _removalFileSystem;
+
     /// <summary>
     /// Raised when the unified console panel should be opened (e.g., during an update).
     /// </summary>
@@ -144,7 +147,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         IResourceMonitorService? resourceMonitor = null,
         Services.Engine.EngineModelPathsSynchronizer? engineModelPaths = null,
         Services.Engine.IManagedComfyUiEngine? engine = null,
-        IInstallActivity? installActivity = null)
+        IInstallActivity? installActivity = null,
+        Services.Engine.IRemovalFileSystem? removalFileSystem = null)
     {
         _dialogService = dialogService;
         _unitOfWork = unitOfWork;
@@ -166,6 +170,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         _engineModelPaths = engineModelPaths;
         _engine = engine;
         _installActivity = installActivity;
+        _removalFileSystem = removalFileSystem;
 
         InstallerCards.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
 
@@ -1066,7 +1071,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
     private bool _engineUninstallRunning;
 
     private Services.Engine.EngineRemover CreateEngineRemover() =>
-        new(_engine as Services.Engine.IManagedEngineControl, _installActivity, _unifiedLogger);
+        new(_engine as Services.Engine.IManagedEngineControl, _installActivity, _unifiedLogger, _removalFileSystem);
 
     /// <summary>
     /// Uninstall Engine: refuses while busy, shows what goes (and the models in the user's own folders,
@@ -1167,6 +1172,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
             // An unsafe root never reaches the remover: nothing is stopped, held or deleted.
             var result = new Services.Engine.EngineRemovalResult(null, []);
+            // An Engine folder that is itself a junction or symlink loses only the link; the user is told after.
+            var rootLink = safeRoot && folder != Services.Engine.EngineFolderState.Missing ? EngineRootLink(root) : (false, null);
             if (safeRoot)
             {
                 IReadOnlyList<string> files = choice == Services.Engine.RemovalChoice.Everything
@@ -1208,9 +1215,18 @@ public partial class InstallerManagerViewModel : ViewModelBase
             _eventAggregator.PublishInstallerPackagesChanged(new InstallerPackagesChangedEventArgs());
             _eventAggregator.PublishEngineChanged(new EngineChangedEventArgs());
 
+            var done = "The Diffusion Nexus Engine was uninstalled.";
+            if (rootLink.IsLink)
+            {
+                done = Services.Engine.EngineRemovalMessages.UninstalledLinkOnly(root, rootLink.Target);
+                _unifiedLogger.Info(LogCategory.Installation, EngineLogSource, done);
+            }
+
             if (result.Failed.Count > 0)
                 await _dialogService.ShowMessageAsync(Services.Engine.EngineRemovalMessages.UninstallTitle,
-                    Services.Engine.EngineRemovalMessages.Failures("The Diffusion Nexus Engine was uninstalled.", result.Failed));
+                    Services.Engine.EngineRemovalMessages.Failures(done, result.Failed));
+            else if (rootLink.IsLink)
+                await _dialogService.ShowMessageAsync(Services.Engine.EngineRemovalMessages.UninstallTitle, done);
         }
         catch (Exception ex)
         {
@@ -1257,6 +1273,25 @@ public partial class InstallerManagerViewModel : ViewModelBase
     /// After an uninstall that failed partway (the folder may already be gone), shows the tile what the
     /// disk holds now. Best effort: a failure here must not hide the original error.
     /// </summary>
+    /// <summary>
+    /// Whether the Engine folder is itself a junction or symlink, and the folder it points to (null when
+    /// that cannot be read). Unreadable attributes count as no link: the remover checks again.
+    /// </summary>
+    private static (bool IsLink, string? Target) EngineRootLink(string root)
+    {
+        try
+        {
+            var info = new DirectoryInfo(Path.TrimEndingDirectorySeparator(root));
+            if (!info.Attributes.HasFlag(FileAttributes.ReparsePoint)) return (false, null);
+            try { return (true, info.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? info.LinkTarget); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return (true, null); }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return (false, null);
+        }
+    }
+
     private async Task ShowEngineFolderAsItIsAsync(InstallerPackageCardViewModel card)
     {
         try
@@ -1565,6 +1600,11 @@ public partial class InstallerManagerViewModel : ViewModelBase
                                 _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
                                     $"Registered the Engine's models folder as a Base Model Folder: {modelsFolder}");
                                 _eventAggregator.PublishSettingsSaved(new SettingsSavedEventArgs());
+                            }
+                            else
+                            {
+                                _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
+                                    "The Engine's models folder was already registered.");
                             }
                         });
                     }

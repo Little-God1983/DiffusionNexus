@@ -46,7 +46,7 @@ installed stable and preview catalogs.
 
 When the Engine install finishes, its models folder is registered in Settings → Base Model Folders,
 linked to the Engine, never as the starred default. Today this happens only on the next app start,
-through the startup backfill.
+through the startup backfill. When it was already registered, the Unified Console says so.
 
 The app reads that folder like any other (search roots), but it is **never a download target** for
 Diffusion Nexus Core models: `ModelFolderCatalog.GetDownloadTargetsAsync` (and so every caller of the
@@ -118,7 +118,9 @@ folder and leaves rows outside it alone.
      saved URL;
    - publish `InstallerPackagesChanged`, `EngineChanged` and `SettingsSaved`.
 6. **Result.** The tile goes back to "Not installed" with its Install button. The editor's features
-   and Settings already report "not installed" from the folder probe.
+   and Settings already report "not installed" from the folder probe. When the Engine folder itself
+   was a junction or symlink, only the link went: the user is told so, with the folder the files stay
+   in (or "the folder it pointed to" when the target cannot be read), and the console logs it.
 
 **Deletion safety.** A folder that is itself a junction or symlink loses only the link. A file or
 folder reached through a link inside the Engine folder (for example `ComfyUI\models\loras` pointing at
@@ -146,7 +148,8 @@ The Features dialog shows **Remove…** on every row that is Installed or Partia
 the dialog itself installs or removes. Clicking it while the Engine is busy (a generation or another
 install) says why and changes nothing.
 
-1. **Plan.** For the feature's workload(s):
+1. **Plan.** The dialog shows *"Checking <feature>'s files…"* while it works out, for the feature's
+   workload(s):
    - **Custom nodes:** each node pack folder under the Engine's `custom_nodes` that **no other
      installed feature** uses. A pack another installed feature needs is kept.
    - **Models:** every copy of each of the feature's model files, wherever it is found (all quant
@@ -162,7 +165,9 @@ install) says why and changes nothing.
      pack(s) and <n> model(s) (<size>) from the Diffusion Nexus Engine."* → **Remove** / **Cancel**.
    - Some are in the user's own model folders: the same warning and list as for the Engine uninstall,
      then **Delete only what's in the Diffusion Nexus Engine** / **Delete all models of this feature,
-     wherever they are** / **Cancel**.
+     wherever they are** / **Cancel**. When nothing of the feature is in the Engine (no node pack, no
+     Engine model), the counting sentence is replaced by *"Nothing of it is in the Diffusion Nexus
+     Engine's own folder."*
 3. **Run**, under `TryBeginMaintenanceAsync`: stop the Engine if it runs (ComfyUI holds its node
    packs' Python modules and memory-maps loaded models, so Windows refuses to delete them), delete
    the node pack folders, then the models. The Engine starts again on the next use.

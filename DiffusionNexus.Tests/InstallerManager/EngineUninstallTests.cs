@@ -4,7 +4,10 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Installer.SDK.Catalog;
+using DiffusionNexus.Installer.SDK.Models.Configuration;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.ConfigurationChecker;
+using DiffusionNexus.UI.Services.ConfigurationChecker.Models;
 using DiffusionNexus.UI.Services.Engine;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
@@ -57,12 +60,14 @@ public sealed class EngineUninstallTests : IDisposable
     private readonly InstallActivity _installActivity = new();
 
     private async Task<(InstallerManagerViewModel Vm, InstallerPackageCardViewModel Card)> CreateAsync(
-        string? path = null, Mock<ICatalog>? catalog = null, Mock<IUnifiedLogger>? logger = null)
+        string? path = null, Mock<ICatalog>? catalog = null, Mock<IUnifiedLogger>? logger = null,
+        Mock<IConfigurationCheckerService>? checker = null, IRemovalFileSystem? fileSystem = null)
     {
         var vm = EngineTestHarness.CreateInstallerManagerViewModel(
             [Row(path)], dialogMock: _dialog, engine: _engine.Object, appSettingsMock: _settingsRepo,
             eventAggregatorMock: _events, onPackageRemoved: p => _removedRows.Add(p),
-            catalogMock: catalog, loggerMock: logger, installActivity: _installActivity);
+            catalogMock: catalog, loggerMock: logger, installActivity: _installActivity,
+            checkerMock: checker, removalFileSystem: fileSystem);
         vm.IsEngineTileVisible = true;
         await vm.LoadInstallationsCommand.ExecuteAsync(null);
         return (vm, vm.InstallerCards.Single(c => c.IsEngine));
@@ -291,6 +296,85 @@ public sealed class EngineUninstallTests : IDisposable
         _removedRows.Should().BeEmpty();
         _dialog.Verify(d => d.ShowMessageAsync(It.IsAny<string>(), It.Is<string>(m => m.Contains("Outpaint Vision is being installed"))), Times.Once);
         card.IsEngineUninstalling.Should().BeFalse();
+    }
+
+    // Minor: an Engine folder that is itself a junction loses only the link; the user is told the files
+    // behind it stay, and where, and the console says so too.
+    [Fact]
+    public async Task AJunctionRoot_LosesTheLinkOnly_AndTheUserIsToldWhereTheFilesStay()
+    {
+        var temp = Directory.CreateTempSubdirectory("dn-engine-linked-root-").FullName;
+        var target = Path.Combine(temp, "RealEngine");
+        var link = Path.Combine(temp, "Engine");
+        Directory.CreateDirectory(target);
+        File.WriteAllText(Path.Combine(target, "main.py"), "");
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/c mklink /J \"{link}\" \"{target}\"")
+                { CreateNoWindow = true, UseShellExecute = false })!.WaitForExit();
+            Directory.Exists(link).Should().BeTrue("the test needs the junction");
+            var logger = new Mock<IUnifiedLogger>();
+            Answer(1);
+            var (vm, card) = await CreateAsync(link, logger: logger);
+
+            await vm.UninstallEngineAsync(card);
+
+            Directory.Exists(link).Should().BeFalse("the link is removed");
+            File.Exists(Path.Combine(target, "main.py")).Should().BeTrue("the files behind the link stay");
+            _removedRows.Should().ContainSingle();
+            _dialog.Verify(d => d.ShowMessageAsync(EngineRemovalMessages.UninstallTitle,
+                It.Is<string>(m => m.Contains("only the link was removed") && m.Contains(target))), Times.Once);
+            logger.Verify(l => l.Info(LogCategory.Installation, "Diffusion Nexus Engine",
+                It.Is<string>(m => m.Contains("only the link was removed") && m.Contains(target)), It.IsAny<string?>()), Times.Once);
+        }
+        finally
+        {
+            if (Directory.Exists(link)) Directory.Delete(link); // the link only, before the tree
+            Directory.Delete(temp, recursive: true);
+        }
+    }
+
+    // Minor: a model in the user's own folder that could not be deleted does not keep the Engine row.
+    [Fact]
+    public async Task AFailureOutsideTheEngineFolder_DoesNotKeepTheRow()
+    {
+        var library = Directory.CreateTempSubdirectory("dn-engine-user-lib-").FullName;
+        try
+        {
+            var userModel = Path.Combine(library, "ae.safetensors");
+            File.WriteAllText(userModel, "x");
+            var catalog = new Mock<ICatalog>();
+            catalog.Setup(c => c.GetWorkloadAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((Guid id, CancellationToken _) => new InstallationConfiguration { Id = id, Name = id.ToString() });
+            var checker = new Mock<IConfigurationCheckerService>();
+            checker.Setup(c => c.CheckConfigurationAsync(It.IsAny<InstallationConfiguration>(), _root,
+                    It.IsAny<ConfigurationCheckOptions?>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new ConfigurationCheckResult
+                {
+                    OverallStatus = ConfigurationStatus.Full, CustomNodesStatus = ConfigurationStatus.Full,
+                    ModelsStatus = ConfigurationStatus.Full, InstallationType = ComfyUIInstallationType.Manual,
+                    CustomNodeResults = [],
+                    ModelResults = [new ModelCheckResult
+                    {
+                        Id = Guid.NewGuid(), Name = "ae", IsInstalled = true, SearchedPaths = [],
+                        FoundAtPath = userModel, AllFoundPaths = [userModel]
+                    }]
+                });
+            var fs = new Mock<IRemovalFileSystem>();
+            fs.Setup(f => f.DeleteDirectory(_root)).Returns([]);
+            fs.Setup(f => f.DeleteFile(userModel)).Throws(new IOException("in use by another process"));
+            Answer(1); // "Delete these models too"
+            var (vm, card) = await CreateAsync(catalog: catalog, checker: checker, fileSystem: fs.Object);
+
+            await vm.UninstallEngineAsync(card);
+
+            fs.Verify(f => f.DeleteFile(userModel), Times.Once);
+            _removedRows.Should().ContainSingle().Which.Id.Should().Be(7);
+            vm.InstallerCards.Single(c => c.IsEngine).ShowEngineInstallButton.Should().BeTrue();
+            _dialog.Verify(d => d.ShowMessageAsync(EngineRemovalMessages.UninstallTitle,
+                It.Is<string>(m => m.StartsWith("The Diffusion Nexus Engine was uninstalled.") && m.Contains(userModel) && m.Contains("in use"))), Times.Once);
+        }
+        finally { Directory.Delete(library, recursive: true); }
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)

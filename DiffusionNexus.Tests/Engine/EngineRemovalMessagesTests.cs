@@ -52,6 +52,19 @@ public class EngineRemovalMessagesTests
         text.Should().Contain("Python packages");
     }
 
+    // Minor: nothing of the feature in the Engine (only the user's own copies): no "0 packs and 0 models" sentence.
+    [Fact]
+    public void FeatureRemoval_NothingInTheEngine_SaysSoInsteadOfCountingZeros()
+    {
+        var plan = new EngineRemovalPlan([], [], [new PlannedFile(@"D:\Models\vae\ae.safetensors", 300L * 1024 * 1024)], [], []);
+
+        var text = EngineRemovalMessages.FeatureRemoval("Batch Upscale", plan);
+
+        text.Should().NotContain("0 custom node packs");
+        text.Should().Contain("Nothing of it is in the Diffusion Nexus Engine's own folder.");
+        text.Should().Contain(@"D:\Models\vae\ae.safetensors (300 MB)");
+    }
+
     // C1: a feature present only through this feature's files goes with it; the question says so.
     [Fact]
     public void FeatureRemoval_NamesTheFeaturesThatGoWithIt()
@@ -90,6 +103,19 @@ public class EngineRemovalMessagesTests
         var text = EngineRemovalMessages.Uninstall(@"C:\E", 1, [], unknown ? null : new ModelFileTotal(0, 0));
 
         text.Should().NotContain("no Engine feature uses");
+    }
+
+    // Minor: an Engine folder that is itself a link loses only the link; the result names where the files stay.
+    [Theory]
+    [InlineData(@"D:\Real\Engine", @"D:\Real\Engine")]
+    [InlineData(null, "the folder it pointed to")]
+    public void UninstalledLinkOnly_SaysTheFilesBehindTheLinkStay(string? target, string expected)
+    {
+        var text = EngineRemovalMessages.UninstalledLinkOnly(@"C:\E", target);
+
+        text.Should().Contain(@"C:\E");
+        text.Should().Contain("only the link was removed");
+        text.Should().Contain($"the files behind it stay in {expected}");
     }
 
     [Fact]

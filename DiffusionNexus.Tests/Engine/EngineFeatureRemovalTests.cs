@@ -161,6 +161,25 @@ public sealed class EngineFeatureRemovalTests : IDisposable
         _fs.Verify(f => f.DeleteFile(userCopy), Times.Once);
     }
 
+    // Minor: while the removal plan's check runs, the dialog says what it is doing.
+    [Fact]
+    public async Task WhilePlanning_TheProgressSaysTheFilesAreChecked()
+    {
+        Answer(0);
+        EngineFeaturesViewModel? vm = null;
+        string? seen = null;
+        _checker.Setup(c => c.CheckConfigurationAsync(It.IsAny<InstallationConfiguration>(), _root,
+                It.Is<ConfigurationCheckOptions?>(o => o != null && o.CollectAllMatches), It.IsAny<CancellationToken>()))
+            .Callback(() => seen ??= vm?.ProgressText)
+            .ReturnsAsync((InstallationConfiguration c, string _, ConfigurationCheckOptions? _, CancellationToken _) => _state[c.Id]);
+        vm = Sut();
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        await vm.RemoveFeatureCommand.ExecuteAsync(Row(vm, EngineFeature.InpaintOutpaint));
+
+        seen.Should().Be("Checking Inpaint & Outpaint's files…");
+    }
+
     [Fact]
     public async Task Cancel_DeletesNothing()
     {

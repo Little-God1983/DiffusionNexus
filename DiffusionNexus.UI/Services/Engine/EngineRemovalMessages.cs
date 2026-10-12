@@ -37,8 +37,10 @@ public static class EngineRemovalMessages
     public static string FeatureRemoval(string featureName, EngineRemovalPlan plan)
     {
         var text = new StringBuilder($"Remove {featureName}?");
-        text.Append($"\n\nThis deletes {Count(plan.NodePackFolders.Count, "custom node pack")} and " +
-                    $"{Count(plan.EngineModels.Count, "model")} ({FormatSize(plan.EngineBytes)}) from the Diffusion Nexus Engine.");
+        text.Append(plan.NodePackFolders.Count == 0 && plan.EngineModels.Count == 0
+            ? "\n\nNothing of it is in the Diffusion Nexus Engine's own folder."
+            : $"\n\nThis deletes {Count(plan.NodePackFolders.Count, "custom node pack")} and " +
+              $"{Count(plan.EngineModels.Count, "model")} ({FormatSize(plan.EngineBytes)}) from the Diffusion Nexus Engine.");
 
         foreach (var name in plan.RemovedWithIt)
             text.Append($"\n\n{name} uses only files of this feature, so it is removed too.");
@@ -83,6 +85,11 @@ public static class EngineRemovalMessages
         AppendOutside(text, "Some models the Engine's features use are in your own model folders.", outside);
         return text.ToString();
     }
+
+    /// <summary>The Engine folder was itself a junction or symlink: only the link went, its target's files stay.</summary>
+    public static string UninstalledLinkOnly(string folder, string? target) =>
+        $"The Diffusion Nexus Engine was uninstalled. Its folder {folder} was a link to another folder, so only the link was removed: " +
+        $"the files behind it stay in {target ?? "the folder it pointed to"}. Delete them there if you no longer need them.";
 
     public static string UninstallMissingFolder(string folder) =>
         $"Uninstall the Diffusion Nexus Engine?\n\nIts folder {folder} is already gone. The app forgets the Engine and its model folder in Settings.";

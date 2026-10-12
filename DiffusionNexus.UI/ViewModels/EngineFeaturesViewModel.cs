@@ -289,6 +289,7 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
         }
 
         IsRemoving = true;
+        ProgressText = $"Checking {row.DisplayName}'s files…";
         try
         {
             EngineRemovalPlan plan;
@@ -300,6 +301,7 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
             catch (Exception ex)
             {
                 // Runtime checks fall through, never block: without a plan nothing is deleted, the dialog stays usable.
+                ProgressText = null;
                 Warn($"{row.DisplayName}: the feature's files could not be checked — {ex.Message}. Nothing was removed.", ex);
                 await _dialogs.ShowMessageAsync(EngineRemovalMessages.FeatureTitle,
                     EngineRemovalMessages.CheckFailed(row.DisplayName, ex.Message));
@@ -312,6 +314,7 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
                  (plan.RemovedWithIt.Count > 0
                      ? $"; goes with it, using only its files: {string.Join(", ", plan.RemovedWithIt)}."
                      : "."));
+            ProgressText = null;
 
             if (!plan.HasAnythingToDelete)
             {
