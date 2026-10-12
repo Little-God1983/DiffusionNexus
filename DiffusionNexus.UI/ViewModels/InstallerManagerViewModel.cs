@@ -1351,6 +1351,10 @@ public partial class InstallerManagerViewModel : ViewModelBase
                 _unifiedLogger.Error(LogCategory.Installation, EngineLogSource,
                     $"Could not show the install failure: {ex.Message}", ex);
             }
+
+            // Asked once the tile shows the finished install, like the failure dialog above.
+            if (installedPath is not null)
+                await RunEngineFollowUpAsync("offer the Engine as the Server", OfferEngineAsServerAsync);
         }
         finally
         {
@@ -1362,6 +1366,55 @@ public partial class InstallerManagerViewModel : ViewModelBase
             // Catch up now, after the tile has shown how the install ended, whatever threw.
             if (IsEngineTileVisible != visibilityAtStart)
                 _ = LoadInstallationsCommand.ExecuteAsync(null);
+        }
+    }
+
+    internal const string EngineOfferTitle = "Use the Diffusion Nexus Engine?";
+
+    internal const string EngineOfferMessage =
+        "The Diffusion Nexus Engine is installed. Use it from now on?\n\n" +
+        "Inpaint, Outpaint (also with Vision) and Batch Upscale will run on it instead of your own ComfyUI. " +
+        "You can change this any time in Settings → ComfyUI Server.";
+
+    internal const string KeepMyComfyUiOption = "Keep my ComfyUI";
+    internal const string UseTheEngineOption = "Use the Engine";
+
+    /// <summary>
+    /// After a successful Engine install, asks whether the Server setting should move to the Engine
+    /// (#612). Not asked when it already is the Engine: a fresh database starts there, and no settings
+    /// row reads as the Engine too. "Use the Engine" saves the setting and publishes
+    /// <see cref="SettingsSavedEventArgs"/>, as a save in Settings does, so open panels re-check.
+    /// </summary>
+    private async Task OfferEngineAsServerAsync()
+    {
+        var (unitOfWork, owned) = RentUnitOfWork();
+        try
+        {
+            var mode = await unitOfWork.AppSettings.GetComfyUiServerModeAsync();
+            if ((mode ?? ComfyUiServerMode.Engine) == ComfyUiServerMode.Engine) return;
+
+            // The dialog's last option is the primary one. Closing it keeps the setting.
+            var choice = await _dialogService.ShowOptionsAsync(
+                EngineOfferTitle, EngineOfferMessage, KeepMyComfyUiOption, UseTheEngineOption);
+            if (choice != 1)
+            {
+                _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
+                    "Kept your own ComfyUI as the Server. Change it any time in Settings → ComfyUI Server.");
+                return;
+            }
+
+            var settings = await unitOfWork.AppSettings.GetSettingsAsync();
+            if (settings is null) return;
+            settings.ComfyUiServerMode = ComfyUiServerMode.Engine;
+            await unitOfWork.SaveChangesAsync();
+
+            _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
+                "Server set to the Diffusion Nexus Engine: Inpaint, Outpaint and Batch Upscale run on it now.");
+            _eventAggregator.PublishSettingsSaved(new SettingsSavedEventArgs());
+        }
+        finally
+        {
+            if (owned) unitOfWork.Dispose();
         }
     }
 

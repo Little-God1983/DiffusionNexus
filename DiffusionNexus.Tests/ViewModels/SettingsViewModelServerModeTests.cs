@@ -215,6 +215,64 @@ public class SettingsViewModelServerModeTests
         _events.Verify(e => e.PublishNavigateToEngineFeatures(It.IsAny<NavigateToEngineFeaturesEventArgs>()), Times.Once);
     }
 
+    // #612: the Engine install's question saves the Server outside this page. A later Save here
+    // writes every field, so the page must take the new value or it writes the old one back.
+
+    private async Task<(SettingsViewModel Vm, DatasetEventAggregator Events)> LoadedThenStoredAsEngineAsync()
+    {
+        var stored = new AppSettings { Id = 1, ComfyUiServerMode = ComfyUiServerMode.CustomUrl };
+        _settings.Setup(s => s.GetSettingsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(() => stored);
+        var events = new DatasetEventAggregator();
+        var vm = new SettingsViewModel(_settings.Object, new Mock<ISecureStorage>().Object,
+            eventAggregator: events, uiScheduler: new ImmediateUiScheduler());
+        await vm.LoadCommand.ExecuteAsync(null);
+        stored = new AppSettings { Id = 1, ComfyUiServerMode = ComfyUiServerMode.Engine };
+        return (vm, events);
+    }
+
+    [Fact]
+    public async Task ExternalSettingsSaved_TakesTheStoredServer_WithoutMarkingChanges()
+    {
+        var (vm, events) = await LoadedThenStoredAsEngineAsync();
+
+        events.PublishSettingsSaved(new SettingsSavedEventArgs());
+
+        vm.ComfyUiServerMode.Should().Be(ComfyUiServerMode.Engine);
+        vm.SelectedServerModeOption!.Mode.Should().Be(ComfyUiServerMode.Engine);
+        vm.IsCustomUrlMode.Should().BeFalse();
+        vm.HasChanges.Should().BeFalse("the page shows what is stored; nothing is waiting to be saved");
+    }
+
+    [Fact]
+    public async Task ExternalSettingsSaved_KeepsOtherUnsavedChangesMarked()
+    {
+        var (vm, events) = await LoadedThenStoredAsEngineAsync();
+        vm.ComfyUiServerUrl = "http://127.0.0.1:8189";
+        vm.HasChanges.Should().BeTrue();
+
+        events.PublishSettingsSaved(new SettingsSavedEventArgs());
+
+        vm.ComfyUiServerMode.Should().Be(ComfyUiServerMode.Engine);
+        vm.HasChanges.Should().BeTrue("the URL edit is still unsaved");
+    }
+
+    [Fact]
+    public async Task ExternalSettingsSaved_DoesNotOverwriteAServerPickedAndNotSaved()
+    {
+        var stored = new AppSettings { Id = 1, ComfyUiServerMode = ComfyUiServerMode.Engine };
+        _settings.Setup(s => s.GetSettingsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(() => stored);
+        var events = new DatasetEventAggregator();
+        var vm = new SettingsViewModel(_settings.Object, new Mock<ISecureStorage>().Object,
+            eventAggregator: events, uiScheduler: new ImmediateUiScheduler());
+        await vm.LoadCommand.ExecuteAsync(null);
+        vm.SelectedServerModeOption = vm.ServerModeOptions.Single(o => o.Mode == ComfyUiServerMode.CustomUrl);
+
+        events.PublishSettingsSaved(new SettingsSavedEventArgs());
+
+        vm.ComfyUiServerMode.Should().Be(ComfyUiServerMode.CustomUrl, "the user's own pick waits for Save");
+        vm.HasChanges.Should().BeTrue();
+    }
+
     // #606 code review 2 (G4). Importing settings rewrites Server mode and URL in the database; an
     // open Inpaint/Outpaint panel only re-checks its readiness line on SettingsSaved.
 

@@ -384,6 +384,7 @@ public partial class SettingsViewModel : BusyViewModelBase, IModuleActivationAwa
             // Map settings to view model
             ComfyUiServerUrl = settings.ComfyUiServerUrl;
             ComfyUiServerMode = settings.ComfyUiServerMode;
+            _storedServerMode = settings.ComfyUiServerMode;
             OnPropertyChanged(nameof(SelectedServerModeOption));
             ShowNsfw = settings.ShowNsfw;
             GenerateVideoThumbnails = settings.GenerateVideoThumbnails;
@@ -494,6 +495,18 @@ public partial class SettingsViewModel : BusyViewModelBase, IModuleActivationAwa
     private async Task ReloadCollectionsAsync()
     {
         var settings = await _settingsService.GetSettingsAsync();
+
+        // Another part of the app may have saved the Server (the Engine install's question, #612).
+        // Take it, or the next Save here would write the old one back; but not over a choice made in
+        // the dropdown and not saved yet, and without counting it as an unsaved change.
+        if (ComfyUiServerMode == _storedServerMode && ComfyUiServerMode != settings.ComfyUiServerMode)
+        {
+            var hadChanges = HasChanges;
+            ComfyUiServerMode = settings.ComfyUiServerMode;
+            OnPropertyChanged(nameof(SelectedServerModeOption));
+            HasChanges = hadChanges;
+        }
+        _storedServerMode = settings.ComfyUiServerMode;
 
         // Reload LoRA sources — also unhook FavoriteSelected so we don't leak
         // subscriptions on every reload.
@@ -1593,6 +1606,9 @@ public partial class SettingsViewModel : BusyViewModelBase, IModuleActivationAwa
     [NotifyPropertyChangedFor(nameof(IsCustomUrlMode))]
     [NotifyCanExecuteChangedFor(nameof(TestComfyUiConnectionCommand))]
     private ComfyUiServerMode _comfyUiServerMode = ComfyUiServerMode.Engine;
+
+    // The Server as last read from or saved to the database.
+    private ComfyUiServerMode _storedServerMode = ComfyUiServerMode.Engine;
 
     /// <summary>The URL row and Test Connection are only active for a custom URL.</summary>
     public bool IsCustomUrlMode => ComfyUiServerMode == ComfyUiServerMode.CustomUrl;
