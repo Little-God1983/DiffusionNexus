@@ -57,7 +57,7 @@ public static class EngineFeatureCatalog
     /// </summary>
     public static readonly Guid UpscalingZImageTurboVision = Guid.Parse("FE2E7606-AC36-470E-A7C5-7F8CC23ECC98");
 
-    /// <summary>Krea 2 Turbo — the first Engine workload, and the Engine's torch source.</summary>
+    /// <summary>Krea 2 Turbo — the Canvas feature's workload.</summary>
     public static readonly Guid Krea2Turbo = Guid.Parse("E79C079A-2FD7-4FE7-8086-23731092555D");
 
     /// <summary>Rows in display order.</summary>
