@@ -47,6 +47,20 @@ public static class ManagedEngineLocator
     }
 
     /// <summary>
+    /// True when <paramref name="installRoot"/> looks like an Engine folder: a ComfyUI entry point, or at
+    /// least one of the folders an Engine install has (<c>venv</c>, <c>custom_nodes</c>, <c>comfy</c>,
+    /// <c>ComfyUI</c>). A half-deleted Engine still has some of them; a folder with none is not deleted.
+    /// </summary>
+    public static bool LooksLikeEngine(string? installRoot)
+    {
+        if (string.IsNullOrWhiteSpace(installRoot) || !Directory.Exists(installRoot)) return false;
+        return ResolveMainPy(installRoot) is not null
+            || EngineMarkerFolders.Any(name => Directory.Exists(Path.Combine(installRoot, name)));
+    }
+
+    private static readonly string[] EngineMarkerFolders = ["venv", "custom_nodes", "comfy", "ComfyUI"];
+
+    /// <summary>
     /// Resolves the ComfyUI entry point (main.py) under <paramref name="installRoot"/>, or null
     /// when neither supported layout has one. The single source of truth for "where is main.py" —
     /// both <see cref="LooksInstalled"/> and <c>ManagedComfyUiEngine</c> (which needs the actual

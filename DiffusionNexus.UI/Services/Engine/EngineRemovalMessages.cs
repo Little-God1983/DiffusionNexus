@@ -126,6 +126,11 @@ public static class EngineRemovalMessages
         $"Uninstall the Diffusion Nexus Engine?\n\nIts recorded folder \"{folder}\" is not a folder the app can safely delete, " +
         "so nothing on disk is touched. The app only forgets the Engine; the folders listed in Settings stay as they are.";
 
+    public static string UninstallNotAnEngine(string folder) =>
+        $"Uninstall the Diffusion Nexus Engine?\n\nIts recorded folder {folder} does not look like a Diffusion Nexus Engine " +
+        "(no ComfyUI, no venv, no custom_nodes), so it is left as it is and nothing on disk is touched. " +
+        "The app only forgets the Engine; the folders listed in Settings stay as they are.";
+
     public static string Busy(string reason) =>
         $"The Diffusion Nexus Engine is busy ({reason}). Wait until it finishes, then try again.";
 

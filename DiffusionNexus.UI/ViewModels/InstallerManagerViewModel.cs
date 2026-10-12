@@ -1110,13 +1110,28 @@ public partial class InstallerManagerViewModel : ViewModelBase
             var folder = safeRoot
                 ? await Task.Run(() => Services.Engine.ManagedEngineLocator.Probe(root))
                 : Services.Engine.EngineFolderState.Missing;
+            // A folder that does not look like an Engine (a user-picked folder, a corrupted row) is never
+            // deleted either: it is treated like an unsafe root.
+            var notAnEngine = safeRoot && folder != Services.Engine.EngineFolderState.Missing
+                && !await Task.Run(() => Services.Engine.ManagedEngineLocator.LooksLikeEngine(root));
+            if (notAnEngine)
+            {
+                safeRoot = false;
+                folder = Services.Engine.EngineFolderState.Missing;
+            }
             IReadOnlyList<Services.Engine.PlannedFile> outside = [];
             Services.Engine.ModelFileTotal? unclaimed = null;
             long folderBytes = 0;
             // An Engine folder that is itself a junction or symlink loses only the link: nothing behind it is
             // sized or counted, the question says so and the user is told again after.
             var rootLink = safeRoot && folder != Services.Engine.EngineFolderState.Missing ? EngineRootLink(root) : (false, null);
-            if (!safeRoot)
+            if (notAnEngine)
+            {
+                _unifiedLogger.Warn(LogCategory.Installation, EngineLogSource,
+                    $"Uninstall: the recorded Engine folder {root} does not look like a Diffusion Nexus Engine " +
+                    "(no main.py, venv, custom_nodes, comfy or ComfyUI). Nothing on disk will be touched; the app only forgets the Engine.");
+            }
+            else if (!safeRoot)
             {
                 _unifiedLogger.Warn(LogCategory.Installation, EngineLogSource,
                     $"Uninstall: the recorded Engine folder \"{root}\" is not a folder the app can safely delete " +
@@ -1132,14 +1147,16 @@ public partial class InstallerManagerViewModel : ViewModelBase
             }
 
             _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
-                $"Uninstall planned: {root} ({(rootLink.IsLink ? $"a link to {rootLink.Target ?? "another folder"}; only the link is removed" : Services.Engine.EngineRemovalMessages.FormatSize(folderBytes))}, {(safeRoot ? folder : "unsafe folder")}); " +
+                $"Uninstall planned: {root} ({(rootLink.IsLink ? $"a link to {rootLink.Target ?? "another folder"}; only the link is removed" : Services.Engine.EngineRemovalMessages.FormatSize(folderBytes))}, {(notAnEngine ? "not an Engine folder" : safeRoot ? folder : "unsafe folder")}); " +
                 $"{outside.Count} model(s) of its features sit in your own folders" +
                 (unclaimed is { Count: > 0 }
                     ? $"; {unclaimed.Count} model file(s) ({Services.Engine.EngineRemovalMessages.FormatSize(unclaimed.Bytes)}) in its models folder no feature uses."
                     : "."));
 
             var hasOutside = outside.Count > 0;
-            var message = !safeRoot
+            var message = notAnEngine
+                ? Services.Engine.EngineRemovalMessages.UninstallNotAnEngine(root)
+                : !safeRoot
                 ? Services.Engine.EngineRemovalMessages.UninstallUnsafeFolder(root)
                 : folder == Services.Engine.EngineFolderState.Missing
                     ? Services.Engine.EngineRemovalMessages.UninstallMissingFolder(root)
@@ -1213,7 +1230,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
                 return;
             }
 
-            await ForgetEngineAsync(root);
+            await ForgetEngineAsync(root, sweepSettings: !notAnEngine);
 
             var index = InstallerCards.IndexOf(card);
             if (index >= 0) InstallerCards[index] = CreateEngineCard(null);
@@ -1327,16 +1344,17 @@ public partial class InstallerManagerViewModel : ViewModelBase
     /// Drops what pointed at the Engine: settings folders whose path lies inside it (by path: an old
     /// startup backfill linked the user's own libraries to the Engine row), the app-managed row(s), and
     /// the Engine as ComfyUI Server (switched to the custom URL, which keeps its saved address). With a
-    /// root that is not a safe Engine folder (blank, relative, a drive) no settings folder is swept by it.
+    /// root that is not a safe Engine folder (blank, relative, a drive), or with <paramref name="sweepSettings"/>
+    /// false (a folder that did not look like an Engine), no settings folder is swept by it.
     /// </summary>
-    private async Task ForgetEngineAsync(string engineRoot)
+    private async Task ForgetEngineAsync(string engineRoot, bool sweepSettings = true)
     {
         var (unitOfWork, owned) = RentUnitOfWork();
         try
         {
             var settings = await unitOfWork.AppSettings.GetSettingsWithIncludesAsync();
             var removed = 0;
-            if (Services.Engine.EngineRemovalPlanner.IsSafeEngineRoot(engineRoot))
+            if (sweepSettings && Services.Engine.EngineRemovalPlanner.IsSafeEngineRoot(engineRoot))
             {
                 foreach (var row in settings.BaseModelFolders.Where(f => FolderPathMatch.Contains(engineRoot, f.FolderPath)).ToList())
                 { unitOfWork.AppSettings.RemoveBaseModelFolder(row); removed++; }

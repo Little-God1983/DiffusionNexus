@@ -188,6 +188,38 @@ public sealed class EngineUninstallTests : IDisposable
         AssertForgottenWithoutTouchingAnything(@"Engine\ComfyUI");
     }
 
+    // Round 2: a row holding a folder that does not look like an Engine (no main.py, no venv, custom_nodes,
+    // comfy or ComfyUI folder) is never deleted: the app only forgets the Engine and says why.
+    [Fact]
+    public async Task AFolderThatDoesNotLookLikeAnEngine_IsLeftAsItIs_AndTheEngineIsForgotten()
+    {
+        var unrelated = Directory.CreateTempSubdirectory("dn-engine-not-an-engine-").FullName;
+        try
+        {
+            File.WriteAllText(Path.Combine(unrelated, "holiday.jpg"), "x");
+            Directory.CreateDirectory(Path.Combine(unrelated, "models"));
+            File.WriteAllText(Path.Combine(unrelated, "models", "my.safetensors"), "x");
+            _settings.BaseModelFolders.Add(new BaseModelFolder { Id = 9, FolderPath = Path.Combine(unrelated, "models") });
+            var logger = new Mock<IUnifiedLogger>();
+            Answer(1);
+            var (vm, card) = await CreateAsync(unrelated, logger: logger);
+
+            await vm.UninstallEngineAsync(card);
+
+            File.Exists(Path.Combine(unrelated, "holiday.jpg")).Should().BeTrue();
+            File.Exists(Path.Combine(unrelated, "models", "my.safetensors")).Should().BeTrue();
+            _engine.Verify(e => e.TryBeginMaintenanceAsync(), Times.Never, "the remover is never asked to delete anything");
+            _removedRows.Should().ContainSingle().Which.Id.Should().Be(7);
+            _settingsRepo.Verify(r => r.RemoveBaseModelFolder(It.IsAny<BaseModelFolder>()), Times.Never);
+            _dialog.Verify(d => d.ShowOptionsAsync(EngineRemovalMessages.UninstallTitle,
+                It.Is<string>(m => m.Contains(unrelated) && m.Contains("does not look like a Diffusion Nexus Engine")),
+                It.Is<string[]>(o => o.SequenceEqual(new[] { "Cancel", "Uninstall" }))), Times.Once);
+            logger.Verify(l => l.Warn(LogCategory.Installation, "Diffusion Nexus Engine",
+                It.Is<string>(m => m.Contains(unrelated) && m.Contains("does not look like a Diffusion Nexus Engine")), It.IsAny<string?>()), Times.Once);
+        }
+        finally { Directory.Delete(unrelated, recursive: true); }
+    }
+
     private void AssertForgottenWithoutTouchingAnything(string recordedFolder)
     {
         _dialog.Verify(d => d.ShowOptionsAsync(It.IsAny<string>(),
