@@ -1261,7 +1261,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         if (folder != Services.Engine.EngineFolderState.Installed) return ([], null);
         try
         {
-            var checks = await Services.Engine.EngineFeatureChecks.LoadAsync(_catalog, _checkerService, root, CancellationToken.None);
+            // The disk check is synchronous file I/O over every feature and folder: off the UI thread.
+            var checks = await Task.Run(() => Services.Engine.EngineFeatureChecks.LoadAsync(_catalog, _checkerService, root, CancellationToken.None));
 
             // A feature the catalog does not describe has unknown files: counting the model files no
             // feature uses would count its files too, so that count is left unknown.

@@ -296,7 +296,8 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
             IReadOnlyList<EngineFeatureCheck> checks;
             try
             {
-                checks = await EngineFeatureChecks.LoadAsync(_catalog, _checker, _engineRoot, CancellationToken.None);
+                // The disk check is synchronous file I/O over every feature and folder: off the UI thread.
+                checks = await Task.Run(() => EngineFeatureChecks.LoadAsync(_catalog, _checker, _engineRoot, CancellationToken.None));
                 plan = await Task.Run(() => EngineRemovalPlanner.PlanFeatureRemoval(_engineRoot, checks, row.Definition.Feature));
             }
             catch (Exception ex)
@@ -320,7 +321,7 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
                 return;
             }
 
-            Info($"{row.DisplayName}: remove plan —{plan.NodePackFolders.Count} node pack(s), {plan.EngineModels.Count} Engine model(s) " +
+            Info($"{row.DisplayName}: remove plan — {plan.NodePackFolders.Count} node pack(s), {plan.EngineModels.Count} Engine model(s) " +
                  $"({EngineRemovalMessages.FormatSize(plan.EngineBytes)}), {plan.OutsideModels.Count} in your own folders, " +
                  $"{plan.Kept.Count} kept ({string.Join(", ", plan.Kept.Select(k => $"{k.Name} for {k.NeededBy}"))})" +
                  (plan.RemovedWithIt.Count > 0
