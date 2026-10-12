@@ -87,6 +87,26 @@ public class EngineRemovalMessagesTests
         text.Should().NotContain("removed too");
     }
 
+    // R3-4: nothing deletable and nothing kept (its copies are in the user's folders and not offered): the
+    // "needed by another installed feature" text would be false.
+    [Fact]
+    public void NothingToRemove_WithNothingKept_SaysTheFilesAreInTheUsersFolders()
+    {
+        var text = EngineRemovalMessages.NothingToRemove("Batch Upscale", new EngineRemovalPlan([], [], [], [], []));
+
+        text.Should().Be("Nothing of Batch Upscale can be removed here: its files are in your own model folders, " +
+                         "which the app only deletes when they sit in the model's category folder under the name the app downloads.");
+    }
+
+    [Fact]
+    public void NothingToRemove_WithKeptItems_NamesWhoNeedsThem()
+    {
+        var plan = new EngineRemovalPlan([], [], [], [new KeptItem("ae.safetensors", @"C:\E\models\vae\ae.safetensors", "Canvas")], []);
+
+        EngineRemovalMessages.NothingToRemove("Batch Upscale", plan).Should().Be(
+            "Nothing of Batch Upscale can be deleted: every file it uses is needed by another installed feature.\n• ae.safetensors (used by Canvas)");
+    }
+
     [Fact]
     public void Uninstall_WithoutOutsideModels_SaysTheUsersFoldersAreNotTouched()
     {

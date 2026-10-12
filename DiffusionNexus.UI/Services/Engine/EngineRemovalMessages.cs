@@ -61,6 +61,11 @@ public static class EngineRemovalMessages
 
     public static string NothingToRemove(string featureName, EngineRemovalPlan plan)
     {
+        // Nothing kept: its copies are the user's own and not offered (wrong folder or name, or behind a link).
+        if (plan.Kept.Count == 0)
+            return $"Nothing of {featureName} can be removed here: its files are in your own model folders, " +
+                   "which the app only deletes when they sit in the model's category folder under the name the app downloads.";
+
         var text = new StringBuilder($"Nothing of {featureName} can be deleted: every file it uses is needed by another installed feature.");
         foreach (var item in plan.Kept)
             text.Append($"\n• {item.Name} (used by {item.NeededBy})");
