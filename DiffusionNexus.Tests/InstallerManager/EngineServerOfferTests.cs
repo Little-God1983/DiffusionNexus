@@ -29,8 +29,6 @@ public class EngineServerOfferTests
     private InstallerManagerViewModel Create(ComfyUiServerMode? storedMode, bool installSucceeds = true)
     {
         _stored = storedMode is null ? null : new AppSettings { Id = 1, ComfyUiServerMode = storedMode.Value };
-        _appSettings.Setup(r => r.GetComfyUiServerModeAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => _stored?.ComfyUiServerMode);
         _appSettings.Setup(r => r.GetSettingsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(() => _stored);
         _dialog.Setup(d => d.ShowOpenFolderDialogAsync(It.IsAny<string>())).ReturnsAsync(@"C:\Engine\New");
 

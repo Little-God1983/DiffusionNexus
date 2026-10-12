@@ -1391,8 +1391,10 @@ public partial class InstallerManagerViewModel : ViewModelBase
         var (unitOfWork, owned) = RentUnitOfWork();
         try
         {
-            var mode = await unitOfWork.AppSettings.GetComfyUiServerModeAsync();
-            if ((mode ?? ComfyUiServerMode.Engine) == ComfyUiServerMode.Engine) return;
+            // One read: the row the answer is saved to. The dialog is modal, so nothing in the app writes
+            // the settings while it is open.
+            var settings = await unitOfWork.AppSettings.GetSettingsAsync();
+            if (settings is null || settings.ComfyUiServerMode == ComfyUiServerMode.Engine) return;
 
             // The dialog's last option is the primary one. Closing it keeps the setting.
             var choice = await _dialogService.ShowOptionsAsync(
@@ -1404,8 +1406,6 @@ public partial class InstallerManagerViewModel : ViewModelBase
                 return;
             }
 
-            var settings = await unitOfWork.AppSettings.GetSettingsAsync();
-            if (settings is null) return;
             settings.ComfyUiServerMode = ComfyUiServerMode.Engine;
             await unitOfWork.SaveChangesAsync();
 
