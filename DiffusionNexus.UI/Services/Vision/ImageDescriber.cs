@@ -60,8 +60,10 @@ public sealed class ImageDescriber
         // The node catches its own inference errors (a model that will not load, CUDA out of memory) and
         // returns them as its text, after unloading everything.
         if (text is not null && text.StartsWith(InferenceFailedPrefix, StringComparison.Ordinal))
-            throw new ImageDescriptionFailedException(text[InferenceFailedPrefix.Length..]
-                .Replace("Check console for details.", "").Trim());
+        {
+            var reason = text[InferenceFailedPrefix.Length..].Replace("Check console for details.", "").Trim();
+            throw new ImageDescriptionFailedException(reason.Length > 0 ? reason : "no reason given, see the ComfyUI console");
+        }
         return text;
     }
 

@@ -766,11 +766,15 @@ public partial class OutpaintingViewModel : ObservableObject
                 AppDomain.CurrentDomain.BaseDirectory,
                 OutpaintWorkflowPath);
 
-            if (!File.Exists(workflowPath))
+            // Vision runs the describe workflow first: a missing file must not read as "is the Engine running?".
+            var missingWorkflow = new[] { workflowPath }
+                .Concat(useVision ? [Path.Combine(AppDomain.CurrentDomain.BaseDirectory, ImageDescriber.WorkflowRelativePath)] : [])
+                .FirstOrDefault(path => !File.Exists(path));
+            if (missingWorkflow is not null)
             {
                 HasError = true;
                 ProgressDisplayText = "Outpainting workflow file missing";
-                StatusMessageChanged?.Invoke(this, $"Outpainting workflow not found: {workflowPath}");
+                StatusMessageChanged?.Invoke(this, $"Outpainting workflow not found: {missingWorkflow}");
                 return;
             }
 
@@ -938,27 +942,17 @@ public partial class OutpaintingViewModel : ObservableObject
     }
 
     /// <summary>
-    /// What Qwen3-VL sees around the subject, or null when it wrote nothing. The job unloads ComfyUI's own
-    /// models first (llama.cpp allocates outside ComfyUI's memory manager, which would not make room for it)
-    /// and unloads Qwen3-VL when it has answered (<c>direct_clean</c>), so the outpaint gets the GPU.
+    /// What Qwen3-VL sees around the subject, or null when it wrote nothing. Unloads Qwen3-VL when it has
+    /// answered (<c>direct_clean</c>), so the outpaint gets the GPU. ComfyUI's own models stay loaded, as in
+    /// the single Vision workflow before #616: unloading them would make every Vision run load Qwen-Image again.
+    /// No free-up job after a node crash: nothing runs after it in this Generate, and the next describe job
+    /// (same config, <c>direct_clean</c>) unloads a model the crash left behind.
     /// </summary>
     /// <exception cref="ImageDescriptionFailedException">The node reported a failed inference.</exception>
-    private static async Task<string?> DescribeSurroundingsAsync(
-        IComfyUIWrapperService comfy, string uploadedImage, string modelPath, string projectorPath)
-    {
-        var describer = new ImageDescriber(comfy, modelPath, projectorPath, userPrompt: SurroundingsPrompt);
-        try
-        {
-            return await describer.DescribeAsync(uploadedImage, keepLoaded: false, CancellationToken.None, freeComfyModels: true);
-        }
-        catch (ComfyUIExecutionException ex) when (!ImageDescriber.NodesBeforeTheDescriber.Contains(ex.NodeType)
-                                                   && !ImageDescriber.NodesAfterTheDescriber.Contains(ex.NodeType))
-        {
-            // The node may have died holding the model: free it before the error is reported.
-            await describer.FreeAsync(uploadedImage);
-            throw;
-        }
-    }
+    private static Task<string?> DescribeSurroundingsAsync(
+        IComfyUIWrapperService comfy, string uploadedImage, string modelPath, string projectorPath) =>
+        new ImageDescriber(comfy, modelPath, projectorPath, userPrompt: SurroundingsPrompt)
+            .DescribeAsync(uploadedImage, keepLoaded: false, CancellationToken.None);
 
     private void OnFinished()
     {

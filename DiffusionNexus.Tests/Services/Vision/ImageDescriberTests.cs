@@ -70,6 +70,19 @@ public class ImageDescriberTests
         (await act.Should().ThrowAsync<ImageDescriptionFailedException>()).Which.Message.Should().Contain("CUDA out of memory");
     }
 
+    // PR #623 review: an error text without a reason left "could not describe the image: " with nothing after it.
+    [Fact]
+    public async Task Describe_InferenceFailedTextWithoutAReason_SaysNoReasonWasGiven()
+    {
+        _client.Setup(c => c.GetResultAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => { var r = new ComfyUIResult(); r.Texts.Add("❌ Inference failed:\nCheck console for details."); return r; });
+
+        var act = () => Sut().DescribeAsync("up.png", keepLoaded: false, CancellationToken.None);
+
+        (await act.Should().ThrowAsync<ImageDescriptionFailedException>()).Which.Message
+            .Should().Be("no reason given, see the ComfyUI console");
+    }
+
     [Theory]
     [InlineData(true, true)]
     [InlineData(false, false)]

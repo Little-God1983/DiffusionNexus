@@ -218,7 +218,7 @@ public class OutpaintVisionDescriptionTests : IDisposable
     }
 
     [Fact]
-    public async Task VisionRun_AsksForTheSurroundings_UnloadsComfyUIsModelsFirst_AndFreesQwen3VLAfterwards()
+    public async Task VisionRun_AsksForTheSurroundings_KeepsComfyUIsModels_AndFreesQwen3VLAfterwards()
     {
         var (client, queued) = ClientRecordingJobs();
 
@@ -226,8 +226,8 @@ public class OutpaintVisionDescriptionTests : IDisposable
 
         var node = AppliedDescribeNode(queued[0]);
         node["inputs"]!["user_prompt"]!.GetValue<string>().Should().Be(OutpaintingViewModel.SurroundingsPrompt);
-        node["inputs"]!["unload_all_models"]!.GetValue<bool>().Should().BeTrue(
-            "llama.cpp allocates outside ComfyUI's memory manager; a model left from the last outpaint would not make room");
+        node["inputs"]!["unload_all_models"]!.GetValue<bool>().Should().BeFalse(
+            "as in the old Vision workflow: unloading would make every Vision run load Qwen-Image again (PR #623 review)");
         node["inputs"]!["mode"]!.GetValue<string>().Should().Be("direct_clean", "the outpaint needs the GPU next");
     }
 
@@ -258,7 +258,7 @@ public class OutpaintVisionDescriptionTests : IDisposable
     }
 
     [Fact]
-    public async Task VisionRun_DescriberNodeFails_FreesQwen3VL_AndDoesNotOutpaint()
+    public async Task VisionRun_DescriberNodeFails_NamesTheNode_AndDoesNotOutpaint()
     {
         var (client, queued) = ClientRecordingJobs();
         client.Setup(c => c.WaitForCompletionAsync("p1", It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()))
@@ -267,9 +267,9 @@ public class OutpaintVisionDescriptionTests : IDisposable
 
         await vm.ProcessOutpaintAsync(TempImage(), useVision: true, 64, 0, 64, 0);
 
-        queued.Select(j => j.Workflow).Should().Equal([DescribeWorkflow, DescribeWorkflow],
-            "the second describe job is the direct_clean free-up; no outpaint runs");
-        AppliedDescribeNode(queued[1])["inputs"]!["mode"]!.GetValue<string>().Should().Be("direct_clean");
+        // No free-up job (PR #623 review): it kept the panel busy up to 2 minutes, and nothing runs after it
+        // in this Generate; the next describe job (direct_clean, same config) unloads Qwen3-VL.
+        queued.Select(j => j.Workflow).Should().Equal([DescribeWorkflow], "no outpaint runs");
         vm.HasError.Should().BeTrue();
         vm.ProgressDisplayText.Should().Be("Failed in the ComfyUI node SimpleQwenVLggufV2 – see the Unified Console");
     }
