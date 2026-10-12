@@ -29,6 +29,19 @@ downloaded again. Only where new downloads go changes.
 
 The Installer Manager's **Workloads** button on the user's own ComfyUI installs is unchanged.
 
+### The Engine's base is the blank ComfyUI workload
+
+The Engine is built from the catalog workload **Blank ComfyUI + Manager + Triton & SageAttention**
+(`1F0A3AEF-15D9-4B8A-80DC-B03F318E414F`) instead of Krea-2-Turbo (`E79C079A-…`) with all its content
+stripped. Owner ruling 2026-10-12. Both declare the same environment (Python 3.12, its own `venv`,
+torch 2.11.0 + CUDA 13.0, Triton and SageAttention), so the Engine it installs is the same as today
+and existing Engines and features are unaffected; the Engine simply no longer reads as "Krea". Its
+one node pack, ComfyUI-Manager, stays excluded like every node pack today (the Engine runs headless).
+The Canvas feature keeps installing the Krea 2 Turbo workload, Manager included.
+
+The workload is in the app's embedded catalog seed (`DiffusionNexus.UI\Assets\Catalog`) and in the
+installed stable and preview catalogs.
+
 ### The Engine's models folder is a Base Model Folder
 
 When the Engine install finishes, its models folder is registered in Settings → Base Model Folders,
@@ -148,6 +161,8 @@ removes it. Fixing the catalog entry is separate work.
 
 ## Pieces
 
+- `ManagedEngineInstaller.BaseConfigurationId` → `1F0A3AEF-15D9-4B8A-80DC-B03F318E414F`; its doc
+  comments and `ManagedEngineInstallerTests` follow.
 - `WorkloadInstallService.InstallSelectedAsync`: new optional `modelsRootOverride`. When set, it is
   the base folder for model downloads instead of the first `extra_model_paths.yaml` root.
   `EngineFeaturesViewModel` passes `<repo>\models`.
@@ -190,6 +205,8 @@ Unit tests (temp folders, fakes for the engine control, install activity, settin
   incomplete and missing Engine; Remove/Delete hidden on the Engine only.
 
 Manual smoke on the BenQ monitor, against a real Engine:
+0. Fresh Engine install → built from the blank workload (Unified Console names it), `venv` present,
+   torch 2.11.0 + cu130 read back, no custom nodes.
 1. Install a feature → its models land in `<Engine>\ComfyUI\models`; Settings lists that folder as a
    Base Model Folder linked to the Engine.
 2. Remove Batch Upscale with Batch Upscale Vision installed → shared models and node packs kept and
