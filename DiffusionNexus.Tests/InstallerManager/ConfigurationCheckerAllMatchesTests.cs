@@ -53,6 +53,63 @@ public sealed class ConfigurationCheckerAllMatchesTests : IDisposable
         model.FoundAtPath.Should().Be(model.AllFoundPaths[0]);
     }
 
+    /// <summary>
+    /// An Engine whose yaml lists a category folder of the user's library, where another ControlNet keeps
+    /// a file with the same generic HuggingFace name the feature's URL has.
+    /// </summary>
+    private (string Repo, string GenericInLibrary, string ConfiguredInEngine) GenericNamedLibraryFile()
+    {
+        var repo = Path.Combine(_temp.FullName, "Engine");
+        var library = Path.Combine(_temp.FullName, "Library");
+        Directory.CreateDirectory(Path.Combine(repo, "models", "controlnet"));
+        Directory.CreateDirectory(Path.Combine(library, "controlnet", "OtherNet"));
+        File.WriteAllText(Path.Combine(repo, "main.py"), "");
+        File.WriteAllText(Path.Combine(repo, "extra_model_paths.yaml"),
+            $"dn_models_1:\n    base_path: {library.Replace('\\', '/')}\n    controlnet: controlnet/\n");
+        var generic = Path.Combine(library, "controlnet", "OtherNet", "diffusion_pytorch_model.safetensors");
+        var configured = Path.Combine(repo, "models", "controlnet", "InstantX-Union.safetensors");
+        File.WriteAllText(generic, "other");
+        return (repo, generic, configured);
+    }
+
+    private static InstallationConfiguration GenericNameConfig()
+    {
+        var config = new InstallationConfiguration { Name = "t" };
+        config.ModelDownloads.Add(new ModelDownload
+        {
+            Name = "InstantX-Union", Destination = "models/controlnet",
+            DownloadLinks = [new ModelDownloadLink { Url = "https://huggingface.co/x/resolve/main/diffusion_pytorch_model.safetensors" }]
+        });
+        return config;
+    }
+
+    [Fact]
+    public async Task CollectAllMatches_SearchesTheConfiguredName_NotTheGenericUrlName()
+    {
+        var (repo, generic, configured) = GenericNamedLibraryFile();
+        File.WriteAllText(configured, "x");
+
+        var result = await new ConfigurationCheckerService().CheckConfigurationAsync(
+            GenericNameConfig(), repo, new ConfigurationCheckOptions { CollectAllMatches = true });
+
+        var model = result.ModelResults.Single();
+        model.AllFoundPaths.Should().Equal([configured],
+            "the installer renames the download to its configured name, so a generic-named file elsewhere is someone else's");
+        model.AllFoundPaths.Should().NotContain(generic);
+    }
+
+    [Fact]
+    public async Task Default_StillFindsTheGenericUrlName()
+    {
+        var (repo, generic, _) = GenericNamedLibraryFile();
+
+        var result = await new ConfigurationCheckerService().CheckConfigurationAsync(GenericNameConfig(), repo);
+
+        var model = result.ModelResults.Single();
+        model.IsInstalled.Should().BeTrue();
+        model.FoundAtPath.Should().Be(generic);
+    }
+
     [Fact]
     public async Task Default_StopsAtTheFirstCopy()
     {

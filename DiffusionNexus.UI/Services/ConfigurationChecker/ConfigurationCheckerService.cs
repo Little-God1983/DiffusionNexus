@@ -329,7 +329,8 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
         List<string> modelSearchPaths,
         ConfigurationCheckOptions options)
     {
-        var (fileNames, isVramScoped, scopedProfile) = ResolveExpectedFileNames(model, options.SelectedVramGb);
+        var (fileNames, isVramScoped, scopedProfile) = ResolveExpectedFileNames(
+            model, options.SelectedVramGb, onlyNamesLeftOnDisk: options.CollectAllMatches);
 
         var searchedPaths = new List<string>();
         var found = new List<string>();
@@ -417,9 +418,13 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
     /// <summary>
     /// Determines which file names to look for on disk.
     /// When VRAM profiles are in use, only the best-matching quant variant is expected.
+    /// With <paramref name="onlyNamesLeftOnDisk"/> (removal: every match is collected), a URL-derived
+    /// name the installer renames to its configured name is replaced by that name rather than kept
+    /// beside it: a generic HuggingFace name like <c>diffusion_pytorch_model.safetensors</c> found
+    /// elsewhere belongs to some other model.
     /// </summary>
     private static (List<string> FileNames, bool IsVramScoped, VramProfile? ScopedProfile)
-        ResolveExpectedFileNames(ModelDownload model, int selectedVramGb)
+        ResolveExpectedFileNames(ModelDownload model, int selectedVramGb, bool onlyNamesLeftOnDisk = false)
     {
         var enabledLinks = model.DownloadLinks?.Where(l => l.Enabled).ToList() ?? [];
 
@@ -442,8 +447,8 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
 
                 if (fileNames.Count > 0)
                 {
-                    AppendConfiguredFileNames(fileNames, model.Name);
-                    return (fileNames, true, scopedProfile);
+                    AppendConfiguredFileNames(fileNames, model.Name, onlyNamesLeftOnDisk);
+                    return (fileNames.Distinct(StringComparer.OrdinalIgnoreCase).ToList(), true, scopedProfile);
                 }
             }
         }
@@ -468,7 +473,7 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
             }
         }
 
-        AppendConfiguredFileNames(allFileNames, model.Name);
+        AppendConfiguredFileNames(allFileNames, model.Name, onlyNamesLeftOnDisk);
 
         return (allFileNames.Distinct(StringComparer.OrdinalIgnoreCase).ToList(), false, null);
     }
@@ -478,19 +483,25 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
     /// extensions found in the existing URL-derived file names. This handles the
     /// common case where HuggingFace uses generic names like
     /// <c>diffusion_pytorch_model.safetensors</c> instead of the configured model name.
+    /// With <paramref name="replaceUrlNames"/>, each URL name that has a configured name is dropped:
+    /// the installer's rename (<c>WorkloadInstallService.TryRenameToConfiguredName</c>) leaves only the
+    /// configured name on disk.
     /// </summary>
-    private static void AppendConfiguredFileNames(List<string> fileNames, string modelName)
+    private static void AppendConfiguredFileNames(List<string> fileNames, string modelName, bool replaceUrlNames = false)
     {
         if (string.IsNullOrWhiteSpace(modelName)) return;
 
         foreach (var urlFileName in fileNames.ToList())
         {
             var configuredName = DeriveConfiguredFileName(modelName, urlFileName);
-            if (configuredName is not null &&
-                !fileNames.Contains(configuredName, StringComparer.OrdinalIgnoreCase))
-            {
+            if (configuredName is null)
+                continue;
+
+            if (replaceUrlNames)
+                fileNames.Remove(urlFileName);
+
+            if (!fileNames.Contains(configuredName, StringComparer.OrdinalIgnoreCase))
                 fileNames.Add(configuredName);
-            }
         }
     }
 
