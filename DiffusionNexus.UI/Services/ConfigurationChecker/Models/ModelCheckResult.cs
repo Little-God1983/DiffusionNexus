@@ -44,4 +44,10 @@ public sealed record ModelCheckResult
 
     /// <summary>The path where the file was found, or empty if missing.</summary>
     public string FoundAtPath { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Every existing file for this model, first = <see cref="FoundAtPath"/>. Holds at most one
+    /// entry unless <see cref="ConfigurationCheckOptions.CollectAllMatches"/> was set.
+    /// </summary>
+    public IReadOnlyList<string> AllFoundPaths { get; init; } = [];
 }

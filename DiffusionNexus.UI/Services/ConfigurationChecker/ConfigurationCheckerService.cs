@@ -332,70 +332,29 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
         var (fileNames, isVramScoped, scopedProfile) = ResolveExpectedFileNames(model, options.SelectedVramGb);
 
         var searchedPaths = new List<string>();
-        var foundPath = string.Empty;
+        var found = new List<string>();
 
         foreach (var fileName in fileNames)
         {
-            if (!string.IsNullOrEmpty(foundPath))
+            foreach (var candidate in CandidatePaths(configuration, model, repositoryPath, modelSearchPaths, options, fileName))
             {
-                break;
-            }
-
-            // 1. Check model's explicit destination
-            if (!string.IsNullOrWhiteSpace(model.Destination))
-            {
-                var destinationDir = ModelDestinationResolver.Resolve(
-                    configuration, model, repositoryPath, options.ModelBaseFolder, options.FolderPathOverrides);
-                var explicitPath = Path.Combine(destinationDir, fileName);
-                searchedPaths.Add(explicitPath);
-
-                if (File.Exists(explicitPath))
-                {
-                    foundPath = explicitPath;
-                    break;
-                }
-            }
-
-            // 2. Search all model search paths
-            foreach (var basePath in modelSearchPaths)
-            {
-                var directPath = Path.Combine(basePath, fileName);
-                searchedPaths.Add(directPath);
-                if (File.Exists(directPath))
-                {
-                    foundPath = directPath;
-                    break;
-                }
-
-                if (!Directory.Exists(basePath))
-                {
+                searchedPaths.Add(candidate);
+                if (!File.Exists(candidate))
                     continue;
-                }
 
-                try
-                {
-                    foreach (var subDir in Directory.EnumerateDirectories(basePath))
-                    {
-                        var subPath = Path.Combine(subDir, fileName);
-                        searchedPaths.Add(subPath);
-                        if (File.Exists(subPath))
-                        {
-                            foundPath = subPath;
-                            break;
-                        }
-                    }
-                }
-                catch (UnauthorizedAccessException)
-                {
-                    // Skip inaccessible directories
-                }
+                var full = Path.GetFullPath(candidate);
+                if (!found.Contains(full, StringComparer.OrdinalIgnoreCase))
+                    found.Add(full);
 
-                if (!string.IsNullOrEmpty(foundPath))
-                {
+                if (!options.CollectAllMatches)
                     break;
-                }
             }
+
+            if (found.Count > 0 && !options.CollectAllMatches)
+                break;
         }
+
+        var foundPath = found.Count > 0 ? found[0] : string.Empty;
 
         var hasVramProfiles = model.DownloadLinks?.Any(l => l.Enabled && l.VramProfile.HasValue) ?? false;
 
@@ -409,8 +368,50 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
             ScopedVramProfile = scopedProfile,
             HasVramProfiles = hasVramProfiles,
             SearchedPaths = searchedPaths,
-            FoundAtPath = foundPath
+            FoundAtPath = foundPath,
+            AllFoundPaths = found
         };
+    }
+
+    /// <summary>
+    /// Where a file named <paramref name="fileName"/> may sit, in search order: the model's explicit
+    /// destination, then each search folder and its direct subfolders.
+    /// </summary>
+    private static IEnumerable<string> CandidatePaths(
+        InstallationConfiguration configuration,
+        ModelDownload model,
+        string repositoryPath,
+        List<string> modelSearchPaths,
+        ConfigurationCheckOptions options,
+        string fileName)
+    {
+        if (!string.IsNullOrWhiteSpace(model.Destination))
+        {
+            var destinationDir = ModelDestinationResolver.Resolve(
+                configuration, model, repositoryPath, options.ModelBaseFolder, options.FolderPathOverrides);
+            yield return Path.Combine(destinationDir, fileName);
+        }
+
+        foreach (var basePath in modelSearchPaths)
+        {
+            yield return Path.Combine(basePath, fileName);
+
+            if (!Directory.Exists(basePath))
+                continue;
+
+            List<string> subDirs;
+            try
+            {
+                subDirs = Directory.EnumerateDirectories(basePath).ToList();
+            }
+            catch (UnauthorizedAccessException)
+            {
+                continue; // Skip inaccessible directories
+            }
+
+            foreach (var subDir in subDirs)
+                yield return Path.Combine(subDir, fileName);
+        }
     }
 
     /// <summary>

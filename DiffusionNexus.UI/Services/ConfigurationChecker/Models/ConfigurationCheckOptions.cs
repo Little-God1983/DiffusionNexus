@@ -22,4 +22,11 @@ public sealed record ConfigurationCheckOptions
     /// Optional folder path overrides from user settings.
     /// </summary>
     public Dictionary<string, string>? FolderPathOverrides { get; init; }
+
+    /// <summary>
+    /// Report every copy of each model (all candidate names, all search folders) in
+    /// <see cref="ModelCheckResult.AllFoundPaths"/> instead of stopping at the first. Removal needs
+    /// it; readiness checks leave it off for speed.
+    /// </summary>
+    public bool CollectAllMatches { get; init; }
 }
