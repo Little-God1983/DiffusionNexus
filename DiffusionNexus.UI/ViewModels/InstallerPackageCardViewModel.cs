@@ -29,6 +29,10 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     private string _versionDisplay = string.Empty;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(RemoveTooltip))]
+    [NotifyPropertyChangedFor(nameof(DeleteFromDiskTooltip))]
+    [NotifyCanExecuteChangedFor(nameof(RemoveCommand))]
+    [NotifyCanExecuteChangedFor(nameof(DeleteFromDiskCommand))]
     private InstallerType _type;
 
     [ObservableProperty]
@@ -260,18 +264,20 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     /// it: Remove would drop the Engine's row and leave its files, so the app would call it not
     /// installed, and Delete from Disk asks the process manager whether the install runs, which does
     /// not know the Engine's process, so it would delete a running Engine's folder. Uninstalling the
-    /// Engine needs its own feature.
+    /// Engine needs its own feature. The Core card has no row and nothing on disk to act on.
     /// </summary>
-    private bool CanRemoveOrDelete() => !IsEngine;
+    private bool CanRemoveOrDelete() => !IsEngine && !IsCore;
 
-    /// <summary>Why Remove is greyed out; null where it is not.</summary>
-    public string? RemoveTooltip => IsEngine
-        ? "The app manages the Diffusion Nexus Engine. Removing it here would forget the install and leave its files on disk."
+    /// <summary>Why Remove is greyed out; null where it is not. True whether or not the Engine is installed.</summary>
+    public string? RemoveTooltip =>
+        IsEngine ? "The app manages the Diffusion Nexus Engine, so it can't be removed from this list."
+        : IsCore ? "This is built into the app, so there is nothing to remove."
         : null;
 
     /// <summary>Why Delete from Disk is greyed out; null where it is not.</summary>
-    public string? DeleteFromDiskTooltip => IsEngine
-        ? "The app manages the Diffusion Nexus Engine. Deleting it here would not stop it first, and a running Engine would be left broken."
+    public string? DeleteFromDiskTooltip =>
+        IsEngine ? "The app manages the Diffusion Nexus Engine. Deleting it from here is not supported: a running Engine must be stopped first."
+        : IsCore ? "This is built into the app, so there is nothing on disk to delete."
         : null;
 
     /// <summary>
