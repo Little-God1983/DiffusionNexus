@@ -26,14 +26,14 @@
     <Grid Margin="16" RowDefinitions="Auto,Auto,*,Auto,Auto">
         <TextBlock Grid.Row="0" Text="Diffusion Nexus Engine · Features" FontSize="18" FontWeight="Bold" Foreground="White"/>
         <TextBlock Grid.Row="1" Margin="0,4,0,12" FontSize="12" Opacity="0.7" TextWrapping="Wrap"
-                   Text="Choose what the Engine should be able to do. The required node packs and models are installed into the Engine only. Shared files are downloaded once."/>
+                   Text="Choose what the Engine should be able to do. The required node packs and models are installed into the Engine only. Shared files are downloaded once. Remove… deletes a feature's files that no other installed feature needs."/>
 
         <ScrollViewer Grid.Row="2">
             <ItemsControl ItemsSource="{Binding Rows}">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="vm:EngineFeatureRowViewModel">
                         <Border BorderBrush="#2A2A2A" BorderThickness="0,0,0,1" Padding="4,10">
-                            <Grid ColumnDefinitions="32,*,220,170">
+                            <Grid ColumnDefinitions="32,*,200,150,96">
                                 <CheckBox Grid.Column="0" VerticalAlignment="Top"
                                           IsChecked="{Binding IsSelected, Mode=TwoWay}"
                                           IsEnabled="{Binding IsSelectable}"/>
@@ -43,6 +43,11 @@
                                 </StackPanel>
                                 <TextBlock Grid.Column="2" Text="{Binding NeedsText}" FontSize="11" Opacity="0.65"/>
                                 <TextBlock Grid.Column="3" Text="{Binding StatusText}" FontWeight="SemiBold" Foreground="#CCC"/>
+                                <Button Grid.Column="4" Content="Remove…" HorizontalAlignment="Right" VerticalAlignment="Top"
+                                        Classes="close-btn" Padding="10,4"
+                                        IsVisible="{Binding CanRemove}"
+                                        Command="{Binding $parent[ItemsControl].((vm:EngineFeaturesViewModel)DataContext).RemoveFeatureCommand}"
+                                        CommandParameter="{Binding}"/>
                             </Grid>
                         </Border>
                     </DataTemplate>
@@ -51,7 +56,7 @@
         </ScrollViewer>
 
         <StackPanel Grid.Row="3" Spacing="4" Margin="0,8,0,0" IsVisible="{Binding ProgressText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
-            <ProgressBar IsIndeterminate="True" Height="4" IsVisible="{Binding IsInstalling}"/>
+            <ProgressBar IsIndeterminate="True" Height="4" IsVisible="{Binding IsBusy}"/>
             <TextBlock Text="{Binding ProgressText}" FontSize="12" Opacity="0.8" TextWrapping="Wrap"/>
         </StackPanel>
 
@@ -59,7 +64,7 @@
             <TextBlock Grid.Column="0" Text="{Binding FooterText}" FontSize="12" Opacity="0.7" VerticalAlignment="Center"/>
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
                 <Button Classes="close-btn" Content="Cancel" Command="{Binding CancelInstallCommand}" IsVisible="{Binding IsInstalling}"/>
-                <Button Classes="close-btn" Content="Close" Click="OnClose" IsEnabled="{Binding !IsInstalling}"/>
+                <Button Classes="close-btn" Content="Close" Click="OnClose" IsEnabled="{Binding !IsBusy}"/>
                 <Button Classes="primary-btn" Content="Install selected" Command="{Binding InstallSelectedCommand}"/>
             </StackPanel>
         </Grid>

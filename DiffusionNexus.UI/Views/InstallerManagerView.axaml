@@ -232,14 +232,21 @@
                                                 <Button.Flyout>
                                                     <MenuFlyout Placement="BottomEdgeAlignedRight">
                                                         <MenuItem Header="Settings"
-                                                                  Command="{Binding OpenSettingsCommand}"/>
+                                                                  Command="{Binding OpenSettingsCommand}"
+                                                                  ToolTip.Tip="{Binding SettingsTooltip}"
+                                                                  ToolTip.ShowOnDisabled="True"/>
                                                         <MenuItem Header="Open Folder"
-                                                                  Command="{Binding OpenFolderCommand}"/>
+                                                                  Command="{Binding OpenFolderCommand}"
+                                                                  ToolTip.Tip="{Binding OpenFolderTooltip}"
+                                                                  ToolTip.ShowOnDisabled="True"/>
                                                         <MenuItem Header="Make Default"
-                                                                  Command="{Binding MakeDefaultCommand}"/>
+                                                                  Command="{Binding MakeDefaultCommand}"
+                                                                  ToolTip.Tip="{Binding MakeDefaultTooltip}"
+                                                                  ToolTip.ShowOnDisabled="True"/>
                                                         <Separator/>
                                                         <MenuItem Header="Remove"
                                                                   Command="{Binding RemoveCommand}"
+                                                                  IsVisible="{Binding ShowRemoveMenuItem}"
                                                                   ToolTip.Tip="{Binding RemoveTooltip}"
                                                                   ToolTip.ShowOnDisabled="True"/>
                                                         <MenuItem Header="Delete from Disk"
@@ -247,6 +254,10 @@
                                                                   IsVisible="{Binding ShowDeleteFromDiskMenuItem}"
                                                                   ToolTip.Tip="{Binding DeleteFromDiskTooltip}"
                                                                   ToolTip.ShowOnDisabled="True"
+                                                                  Foreground="#DC3545"/>
+                                                        <MenuItem Header="Uninstall Engine…"
+                                                                  Command="{Binding UninstallEngineCommand}"
+                                                                  IsVisible="{Binding ShowEngineUninstallMenuItem}"
                                                                   Foreground="#DC3545"/>
                                                     </MenuFlyout>
                                                 </Button.Flyout>
@@ -285,7 +296,8 @@
                                                        IsVisible="{Binding IsDefault}"/>
                                             <Button Classes="icon-btn"
                                                     Command="{Binding OpenSettingsCommand}"
-                                                    ToolTip.Tip="Settings">
+                                                    ToolTip.Tip="{Binding SettingsTooltip}"
+                                                    ToolTip.ShowOnDisabled="True">
                                                 <TextBlock Text="&#x2699;" FontSize="16"/>
                                             </Button>
                                         </StackPanel>
@@ -398,7 +410,7 @@
                                                    MaxLines="2"
                                                    TextTrimming="CharacterEllipsis"
                                                    ToolTip.Tip="{Binding EngineStatusMessage}"
-                                                   IsVisible="{Binding IsEngineInstalling}"/>
+                                                   IsVisible="{Binding ShowEngineStatusMessage}"/>
                                         <!-- One line of the latest install output: a long step still looks alive. -->
                                         <TextBlock Text="{Binding EngineActivity}"
                                                    FontSize="10"

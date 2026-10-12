@@ -174,6 +174,45 @@ public class EngineWorkloadsRequestTests
     }
 
     [Theory]
+    [InlineData(true, false, 1)]  // a removal alone: panels re-check
+    [InlineData(true, true, 1)]   // removed and installed: one notice, not two
+    [InlineData(false, false, 0)]
+    public async Task FeaturesDialog_AfterARemoval_PublishesEngineChangedOnce_WithoutARestart(
+        bool didRemove, bool didInstall, int expectedNotices)
+    {
+        var root = Directory.CreateTempSubdirectory().FullName;
+        File.WriteAllText(Path.Combine(root, "main.py"), "");
+        try
+        {
+            var packages = new List<InstallerPackage>
+            {
+                new() { Id = 1, Name = "Diffusion Nexus Engine", InstallationPath = root, ExecutablePath = Path.Combine(root, "main.py"), Type = InstallerType.ComfyUI, IsAppManaged = true }
+            };
+            var aggregator = new Mock<IDatasetEventAggregator>();
+            var engine = new Mock<IManagedComfyUiEngine>();
+            var vm = EngineTestHarness.CreateInstallerManagerViewModel(
+                packages: packages, eventAggregatorMock: aggregator, engine: engine.Object);
+            vm.EngineFeaturesDialogPresenter = features =>
+            {
+                features.DidRemove = didRemove;
+                features.DidInstall = didInstall;
+                return Task.CompletedTask;
+            };
+            await vm.LoadInstallationsCommand.ExecuteAsync(null);
+            aggregator.Invocations.Clear();
+
+            await vm.OpenEngineFeaturesAsync();
+
+            aggregator.Verify(a => a.PublishEngineChanged(It.IsAny<EngineChangedEventArgs>()), Times.Exactly(expectedNotices));
+            engine.Verify(e => e.RequestRestart(), Times.Never);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Theory]
     [InlineData(false, 1)] // the file did not match the folder list: rewritten -> restart requested
     [InlineData(true, 0)]  // already up to date: nothing changed for a running Engine
     public async Task FeaturesDialog_PreDialogModelPathSync_AsksTheEngineToRestart_OnlyWhenItRewroteTheFile(

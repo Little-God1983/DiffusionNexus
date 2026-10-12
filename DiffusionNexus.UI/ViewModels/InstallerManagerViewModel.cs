@@ -68,6 +68,9 @@ public partial class InstallerManagerViewModel : ViewModelBase
     // Says an install is running, so the catalog apply waits (#618). Null in tests.
     private readonly IInstallActivity? _installActivity;
 
+    // Test seam for the Engine's removals (locked or failing files); null uses the real file system.
+    private readonly Services.Engine.IRemovalFileSystem? _removalFileSystem;
+
     /// <summary>
     /// Raised when the unified console panel should be opened (e.g., during an update).
     /// </summary>
@@ -144,7 +147,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         IResourceMonitorService? resourceMonitor = null,
         Services.Engine.EngineModelPathsSynchronizer? engineModelPaths = null,
         Services.Engine.IManagedComfyUiEngine? engine = null,
-        IInstallActivity? installActivity = null)
+        IInstallActivity? installActivity = null,
+        Services.Engine.IRemovalFileSystem? removalFileSystem = null)
     {
         _dialogService = dialogService;
         _unitOfWork = unitOfWork;
@@ -166,6 +170,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         _engineModelPaths = engineModelPaths;
         _engine = engine;
         _installActivity = installActivity;
+        _removalFileSystem = removalFileSystem;
 
         InstallerCards.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
 
@@ -796,6 +801,17 @@ public partial class InstallerManagerViewModel : ViewModelBase
     /// </summary>
     public async Task OpenEngineFeaturesAsync(Services.Engine.EngineFeature? preselect = null)
     {
+        // Its yaml sync and installs would write into the folder being deleted.
+        if (_engineUninstallRunning)
+        {
+            const string refused = "Features dialog not opened: the Diffusion Nexus Engine is being uninstalled.";
+            Serilog.Log.Information(refused);
+            _unifiedLogger.Info(LogCategory.Installation, EngineLogSource, refused);
+            await _dialogService.ShowMessageAsync("Diffusion Nexus Engine",
+                "The Diffusion Nexus Engine is being uninstalled, so its features can't be opened.");
+            return;
+        }
+
         var card = InstallerCards.FirstOrDefault(c => c.IsEngine);
         if (card is null || !card.IsEngineInstalled || string.IsNullOrWhiteSpace(card.InstallationPath))
         {
@@ -816,7 +832,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
         {
             var vm = new EngineFeaturesViewModel(
                 _catalog, _checkerService, _installService, card.InstallationPath,
-                _resourceMonitor, _unifiedLogger, preselect, installActivity: _installActivity);
+                _resourceMonitor, _unifiedLogger, preselect, installActivity: _installActivity,
+                dialogs: _dialogService, remover: CreateEngineRemover());
             await vm.LoadCommand.ExecuteAsync(null);
 
             Serilog.Log.Information("Opening the Engine Features dialog for {Path}", card.InstallationPath);
@@ -852,6 +869,12 @@ public partial class InstallerManagerViewModel : ViewModelBase
                     _unifiedLogger.Info(LogCategory.InstanceManagement, "Diffusion Nexus Engine", kept);
                 }
 
+                // Lets an open Inpaint/Outpaint panel and Settings' Engine status re-check.
+                _eventAggregator.PublishEngineChanged(new EngineChangedEventArgs());
+            }
+
+            if (vm.DidRemove && !vm.DidInstall)
+            {
                 // Lets an open Inpaint/Outpaint panel and Settings' Engine status re-check.
                 _eventAggregator.PublishEngineChanged(new EngineChangedEventArgs());
             }
@@ -1029,8 +1052,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Builds the static "Diffusion Nexus Engine" tile. Wires the install handler and, once
-    /// the engine exists, the workloads handler. Visibility is controlled by
+    /// Builds the static "Diffusion Nexus Engine" tile. Wires install, Features, Open Folder and Uninstall Engine. Visibility is controlled by
     /// <see cref="IsEngineTileVisible"/>.
     /// </summary>
     private InstallerPackageCardViewModel CreateEngineCard(InstallerPackage? enginePackage)
@@ -1038,10 +1060,377 @@ public partial class InstallerManagerViewModel : ViewModelBase
         var card = InstallerPackageCardViewModel.CreateEngineCard(enginePackage);
         card.EngineInstallRequested += OnEngineInstallRequestedAsync;
         card.WorkloadsRequested += OnWorkloadsRequestedAsync;
+        card.OpenFolderRequested += OnOpenFolderRequested;
+        card.EngineUninstallRequested += UninstallEngineAsync;
         return card;
     }
 
     private Task OnEngineInstallRequestedAsync(InstallerPackageCardViewModel card) => InstallEngineAsync();
+
+    // One uninstall at a time: a second click while the first asks or deletes does nothing.
+    private bool _engineUninstallRunning;
+
+    private Services.Engine.EngineRemover CreateEngineRemover() =>
+        new(_engine as Services.Engine.IManagedEngineControl, _installActivity, _unifiedLogger, _removalFileSystem);
+
+    /// <summary>
+    /// Uninstall Engine: refuses while busy, shows what goes (and the models in the user's own folders,
+    /// with the choice to delete those too), stops the Engine, deletes its folder, then forgets it:
+    /// settings folders inside it (by path), its row, and the Engine as ComfyUI Server.
+    /// </summary>
+    internal async Task UninstallEngineAsync(InstallerPackageCardViewModel card)
+    {
+        if (_engineUninstallRunning) return;
+        _engineUninstallRunning = true;
+        IDisposable? uninstallActivity = null;
+
+        // Ends the tile's "Uninstalling..." state and releases the install-activity handle (both twice is fine).
+        void EndUninstall()
+        {
+            uninstallActivity?.Dispose();
+            card.EndEngineUninstall();
+        }
+
+        try
+        {
+            var remover = CreateEngineRemover();
+            if (remover.BusyReason() is { } busy)
+            {
+                _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
+                    $"Uninstall refused: the Engine is busy ({busy}). Nothing was changed.");
+                await _dialogService.ShowMessageAsync(Services.Engine.EngineRemovalMessages.UninstallTitle,
+                    Services.Engine.EngineRemovalMessages.Busy(busy));
+                return;
+            }
+
+            var root = card.InstallationPath;
+
+            // A corrupted row (blank, relative, a drive) is never sized, checked or deleted: the app only forgets it.
+            var safeRoot = Services.Engine.EngineRemovalPlanner.IsSafeEngineRoot(root);
+            var folder = safeRoot
+                ? await Task.Run(() => Services.Engine.ManagedEngineLocator.Probe(root))
+                : Services.Engine.EngineFolderState.Missing;
+            // A folder that does not look like an Engine (a user-picked folder, a corrupted row) is never
+            // deleted either: it is treated like an unsafe root.
+            var notAnEngine = safeRoot && folder != Services.Engine.EngineFolderState.Missing
+                && !await Task.Run(() => Services.Engine.ManagedEngineLocator.LooksLikeEngine(root));
+            if (notAnEngine)
+            {
+                safeRoot = false;
+                folder = Services.Engine.EngineFolderState.Missing;
+            }
+            IReadOnlyList<Services.Engine.PlannedFile> outside = [];
+            Services.Engine.ModelFileTotal? unclaimed = null;
+            long folderBytes = 0;
+            // An Engine folder that is itself a junction or symlink loses only the link: nothing behind it is
+            // sized or counted, the question says so and the user is told again after.
+            var rootLink = safeRoot && folder != Services.Engine.EngineFolderState.Missing ? EngineRootLink(root) : (false, null);
+            if (notAnEngine)
+            {
+                _unifiedLogger.Warn(LogCategory.Installation, EngineLogSource,
+                    $"Uninstall: the recorded Engine folder {root} does not look like a Diffusion Nexus Engine " +
+                    "(no main.py, venv, custom_nodes, comfy or ComfyUI). Nothing on disk will be touched; the app only forgets the Engine.");
+            }
+            else if (!safeRoot)
+            {
+                _unifiedLogger.Warn(LogCategory.Installation, EngineLogSource,
+                    $"Uninstall: the recorded Engine folder \"{root}\" is not a folder the app can safely delete " +
+                    "(blank, not a full path, or a drive). Nothing on disk will be touched; the app only forgets the Engine.");
+            }
+            // The nested layout (the user picked a folder; the Engine is its ComfyUI clone and venv in it):
+            // only those parts and the install log go, then the folder itself only if nothing else is in it.
+            var nested = safeRoot && folder != Services.Engine.EngineFolderState.Missing && !rootLink.IsLink
+                && await Task.Run(() => Services.Engine.ManagedEngineLocator.IsNestedLayout(root));
+            IReadOnlyList<string> engineDirectories = [root];
+            IReadOnlyList<string> engineFiles = [];
+            if (nested)
+            {
+                engineDirectories = Services.Engine.ManagedEngineLocator.NestedEngineFolders(root).Where(Directory.Exists).ToList();
+                engineFiles = Services.Engine.ManagedEngineLocator.NestedEngineFiles(root).Where(File.Exists).ToList();
+            }
+
+            if (safeRoot && folder != Services.Engine.EngineFolderState.Missing)
+            {
+                (outside, unclaimed) = await PlanFeatureModelsAsync(root, folder);
+                if (rootLink.IsLink)
+                    unclaimed = null;
+                else
+                    folderBytes = await Task.Run(() =>
+                        engineDirectories.Sum(Services.Engine.EngineRemovalPlanner.FolderSize) +
+                        engineFiles.Sum(f => new FileInfo(f).Length));
+            }
+
+            _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
+                $"Uninstall planned: {(nested ? $"the Engine's parts of {root} ({string.Join(", ", engineDirectories.Concat(engineFiles))})" : root)} " +
+                $"({(rootLink.IsLink ? $"a link to {rootLink.Target ?? "another folder"}; only the link is removed" : Services.Engine.EngineRemovalMessages.FormatSize(folderBytes))}, {(notAnEngine ? "not an Engine folder" : safeRoot ? folder : "unsafe folder")}); " +
+                $"{outside.Count} model(s) of its features sit in your own folders" +
+                (unclaimed is { Count: > 0 }
+                    ? $"; {unclaimed.Count} model file(s) ({Services.Engine.EngineRemovalMessages.FormatSize(unclaimed.Bytes)}) in its models folder no feature uses."
+                    : "."));
+
+            var hasOutside = outside.Count > 0;
+            var message = notAnEngine
+                ? Services.Engine.EngineRemovalMessages.UninstallNotAnEngine(root)
+                : !safeRoot
+                ? Services.Engine.EngineRemovalMessages.UninstallUnsafeFolder(root)
+                : folder == Services.Engine.EngineFolderState.Missing
+                    ? Services.Engine.EngineRemovalMessages.UninstallMissingFolder(root)
+                    : rootLink.IsLink
+                        ? Services.Engine.EngineRemovalMessages.UninstallLink(root, rootLink.Target, outside)
+                        : Services.Engine.EngineRemovalMessages.Uninstall(root, folderBytes, outside, unclaimed,
+                            nested ? engineDirectories.Concat(engineFiles).ToList() : null);
+            var choice = Services.Engine.EngineRemovalMessages.ToChoice(
+                await _dialogService.ShowOptionsAsync(Services.Engine.EngineRemovalMessages.UninstallTitle, message,
+                    Services.Engine.EngineRemovalMessages.UninstallOptions(hasOutside)),
+                hasOutside);
+            if (choice == Services.Engine.RemovalChoice.Cancel)
+            {
+                _unifiedLogger.Info(LogCategory.Installation, EngineLogSource, "Uninstall cancelled. Nothing was changed.");
+                return;
+            }
+
+            _unifiedLogger.Info(LogCategory.Installation, EngineLogSource, !safeRoot
+                ? "Forgetting the Engine without touching its recorded folder."
+                : choice == Services.Engine.RemovalChoice.Everything
+                    ? "Uninstalling the Engine and the listed models in your own folders."
+                    : "Uninstalling the Engine; your own model folders stay as they are.");
+
+            // From here to the forget step the tile shows the uninstall and offers no Features, Install or
+            // Uninstall, and the Features dialog refuses to open. An install that started while the question
+            // was open still refuses the uninstall: checked right before the handle is taken, with no await
+            // between, so the remover can skip the installs (its own handle would read as one).
+            card.BeginEngineUninstall();
+            if (remover.BusyReason() is { } busyNow)
+            {
+                EndUninstall();
+                _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
+                    $"Uninstall refused: the Engine is busy ({busyNow}). Nothing was changed.");
+                await _dialogService.ShowMessageAsync(Services.Engine.EngineRemovalMessages.UninstallTitle,
+                    Services.Engine.EngineRemovalMessages.Busy(busyNow));
+                return;
+            }
+            uninstallActivity = _installActivity?.Begin("Diffusion Nexus Engine uninstall");
+
+            // An unsafe root never reaches the remover: nothing is stopped, held or deleted.
+            var result = new Services.Engine.EngineRemovalResult(null, []);
+            if (safeRoot)
+            {
+                var missing = folder == Services.Engine.EngineFolderState.Missing;
+                IReadOnlyList<string> files = (missing ? [] : engineFiles)
+                    .Concat(choice == Services.Engine.RemovalChoice.Everything ? outside.Select(f => f.Path) : [])
+                    .ToList();
+                IReadOnlyList<string> directories = missing ? [] : engineDirectories;
+                result = await remover.RemoveAsync(directories, files, engineRoot: root, installActivityHeldByCaller: true);
+            }
+
+            // A failure inside what the uninstall deletes as the Engine (not a model in the user's own folder).
+            bool IsEnginePart(string path) => (nested ? engineDirectories.Concat(engineFiles) : [root]).Any(part => FolderPathMatch.Contains(part, path));
+
+            // Nested layout: the folder itself goes only when nothing but the Engine was in it.
+            var leftInRoot = 0;
+            var rootDeleted = !nested;
+            if (nested && !result.WasBusy && !result.Failed.Any(f => IsEnginePart(f.Path)))
+            {
+                try
+                {
+                    leftInRoot = Directory.Exists(root) ? Directory.EnumerateFileSystemEntries(root).Count() : 0;
+                    if (leftInRoot == 0 && Directory.Exists(root)) Directory.Delete(root, recursive: false);
+                    rootDeleted = leftInRoot == 0;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    _unifiedLogger.Warn(LogCategory.Installation, EngineLogSource, $"The emptied Engine folder {root} could not be deleted: {ex.Message}");
+                }
+                _unifiedLogger.Info(LogCategory.Installation, EngineLogSource, rootDeleted
+                    ? $"Deleted the emptied Engine folder {root}."
+                    : $"Left in {root}: {leftInRoot} other item(s) that are not part of the Engine.");
+            }
+
+            if (result.WasBusy)
+            {
+                EndUninstall();
+                await _dialogService.ShowMessageAsync(Services.Engine.EngineRemovalMessages.UninstallTitle,
+                    Services.Engine.EngineRemovalMessages.Busy(result.BusyReason!));
+                return;
+            }
+
+            // Anything of the Engine folder left: keep the row so Uninstall stays on the tile for another try.
+            // A file outside it (a model in the user's own folder) that could not go does not keep the row.
+            if (result.Failed.Any(f => IsEnginePart(f.Path)))
+            {
+                _unifiedLogger.Warn(LogCategory.Installation, EngineLogSource,
+                    "The Engine was not fully uninstalled; it stays registered so Uninstall Engine can be tried again.");
+                EndUninstall();
+                card.ApplyEngineFolder(await Task.Run(() => Services.Engine.ManagedEngineLocator.Probe(root)));
+                _eventAggregator.PublishEngineChanged(new EngineChangedEventArgs());
+                await _dialogService.ShowMessageAsync(Services.Engine.EngineRemovalMessages.UninstallTitle,
+                    Services.Engine.EngineRemovalMessages.Failures(
+                        "The Diffusion Nexus Engine was not fully uninstalled. Close the programs that use these files, then choose Uninstall Engine again.",
+                        result.Failed));
+                return;
+            }
+
+            // Settings folders are forgotten only inside what was deleted.
+            IReadOnlyList<string> swept = notAnEngine ? []
+                : nested ? [.. Services.Engine.ManagedEngineLocator.NestedEngineFolders(root), .. rootDeleted ? new[] { root } : []]
+                : [root];
+            await ForgetEngineAsync(swept);
+
+            var index = InstallerCards.IndexOf(card);
+            if (index >= 0) InstallerCards[index] = CreateEngineCard(null);
+            EndUninstall();
+            _eventAggregator.PublishInstallerPackagesChanged(new InstallerPackagesChangedEventArgs());
+            _eventAggregator.PublishEngineChanged(new EngineChangedEventArgs());
+
+            var done = "The Diffusion Nexus Engine was uninstalled.";
+            if (rootLink.IsLink)
+            {
+                done = Services.Engine.EngineRemovalMessages.UninstalledLinkOnly(root, rootLink.Target);
+                _unifiedLogger.Info(LogCategory.Installation, EngineLogSource, done);
+            }
+
+            if (leftInRoot > 0)
+                done += "\n\n" + Services.Engine.EngineRemovalMessages.LeftInFolder(root, leftInRoot);
+
+            if (result.Failed.Count > 0)
+                await _dialogService.ShowMessageAsync(Services.Engine.EngineRemovalMessages.UninstallTitle,
+                    Services.Engine.EngineRemovalMessages.Failures(done, result.Failed));
+            else if (rootLink.IsLink || leftInRoot > 0)
+                await _dialogService.ShowMessageAsync(Services.Engine.EngineRemovalMessages.UninstallTitle, done);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Engine uninstall failed");
+            _unifiedLogger.Error(LogCategory.Installation, EngineLogSource, $"Uninstall failed: {ex.Message}", ex);
+            EndUninstall();
+            await ShowEngineFolderAsItIsAsync(card);
+            await _dialogService.ShowMessageAsync("Error", $"Uninstalling the Engine failed: {ex.Message}");
+        }
+        finally
+        {
+            EndUninstall();
+            _engineUninstallRunning = false;
+        }
+    }
+
+    /// <summary>
+    /// The models of the Engine's present features that sit in the user's own folders, and the model
+    /// files in the Engine's models folder that no feature declares. A check that fails (corrupt catalog,
+    /// checker error) falls through to no outside models and unknown (null) unclaimed ones: the uninstall
+    /// still runs. The unclaimed ones are also unknown when the catalog lacks a feature's workload.
+    /// </summary>
+    private async Task<(IReadOnlyList<Services.Engine.PlannedFile> Outside, Services.Engine.ModelFileTotal? Unclaimed)> PlanFeatureModelsAsync(
+        string root, Services.Engine.EngineFolderState folder)
+    {
+        if (folder != Services.Engine.EngineFolderState.Installed) return ([], null);
+        try
+        {
+            // The disk check is synchronous file I/O over every feature and folder: off the UI thread.
+            var checks = await Task.Run(() => Services.Engine.EngineFeatureChecks.LoadAsync(_catalog, _checkerService, root, CancellationToken.None));
+
+            // A feature the catalog does not describe has unknown files: counting the model files no
+            // feature uses would count its files too, so that count is left unknown.
+            var unknown = checks.Where(c => !c.IsComplete).Select(c => c.DisplayName).ToList();
+            if (unknown.Count > 0)
+                _unifiedLogger.Warn(LogCategory.Installation, EngineLogSource,
+                    $"The catalog has no description of {string.Join(", ", unknown)}; the model files no Engine feature uses are not counted.");
+
+            return await Task.Run(() => (
+                Services.Engine.EngineRemovalPlanner.PlanUninstallOutsideModels(root, checks),
+                unknown.Count > 0
+                    ? null
+                    : Services.Engine.EngineRemovalPlanner.PlanUninstallUnclaimedModels(root, checks)));
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Engine uninstall: feature check failed");
+            _unifiedLogger.Warn(LogCategory.Installation, EngineLogSource,
+                $"Could not check which models the Engine's features use: {ex.Message}; uninstalling the Engine folder only.");
+            return ([], null);
+        }
+    }
+
+    /// <summary>
+    /// Whether the Engine folder is itself a junction or symlink, and the folder it points to (null when
+    /// that cannot be read). Unreadable attributes count as no link: the remover checks again.
+    /// </summary>
+    private static (bool IsLink, string? Target) EngineRootLink(string root)
+    {
+        try
+        {
+            var info = new DirectoryInfo(Path.TrimEndingDirectorySeparator(root));
+            if (!info.Attributes.HasFlag(FileAttributes.ReparsePoint)) return (false, null);
+            try { return (true, info.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? info.LinkTarget); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return (true, null); }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return (false, null);
+        }
+    }
+
+    /// <summary>
+    /// After an uninstall that failed partway (the folder may already be gone), shows the tile what the
+    /// disk holds now. Best effort: a failure here must not hide the original error.
+    /// </summary>
+    private async Task ShowEngineFolderAsItIsAsync(InstallerPackageCardViewModel card)
+    {
+        try
+        {
+            var path = card.InstallationPath;
+            card.ApplyEngineFolder(await Task.Run(() => Services.Engine.ManagedEngineLocator.Probe(path)));
+            _eventAggregator.PublishEngineChanged(new EngineChangedEventArgs());
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Engine uninstall: could not re-check the Engine folder");
+        }
+    }
+
+    /// <summary>
+    /// Drops what pointed at the Engine: settings folders whose path lies inside it (by path: an old
+    /// startup backfill linked the user's own libraries to the Engine row), the app-managed row(s), and
+    /// the Engine as ComfyUI Server (switched to the custom URL, which keeps its saved address). Only the
+    /// <paramref name="sweptFolders"/> are swept: the whole Engine folder in the direct layout, only the
+    /// deleted ComfyUI clone and venv in the nested one (the folder itself only when it was deleted), none
+    /// for a folder that did not look like an Engine. A folder that is not a safe Engine folder (blank,
+    /// relative, a drive) never sweeps anything.
+    /// </summary>
+    private async Task ForgetEngineAsync(IReadOnlyList<string> sweptFolders)
+    {
+        var (unitOfWork, owned) = RentUnitOfWork();
+        try
+        {
+            var settings = await unitOfWork.AppSettings.GetSettingsWithIncludesAsync();
+            var removed = 0;
+            var swept = sweptFolders.Where(Services.Engine.EngineRemovalPlanner.IsSafeEngineRoot).ToList();
+            bool Inside(string? path) => swept.Any(folder => FolderPathMatch.Contains(folder, path));
+            foreach (var row in settings.BaseModelFolders.Where(f => Inside(f.FolderPath)).ToList())
+            { unitOfWork.AppSettings.RemoveBaseModelFolder(row); removed++; }
+            foreach (var row in settings.ImageGalleries.Where(g => Inside(g.FolderPath)).ToList())
+            { unitOfWork.AppSettings.RemoveImageGallery(row); removed++; }
+            foreach (var row in settings.LoraSources.Where(s => Inside(s.FolderPath)).ToList())
+            { unitOfWork.AppSettings.RemoveLoraSource(row); removed++; }
+
+            var switched = settings.ComfyUiServerMode == ComfyUiServerMode.Engine;
+            if (switched) settings.ComfyUiServerMode = ComfyUiServerMode.CustomUrl;
+
+            foreach (var package in (await unitOfWork.InstallerPackages.GetAllAsync()).Where(p => p.IsAppManaged).ToList())
+                unitOfWork.InstallerPackages.Remove(package);
+
+            await unitOfWork.SaveChangesAsync();
+
+            _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
+                $"Engine uninstalled: forgot {removed} settings folder(s) inside it" +
+                (switched ? "; ComfyUI Server switched to the custom URL." : "."));
+            if (removed > 0 || switched)
+                _eventAggregator.PublishSettingsSaved(new SettingsSavedEventArgs());
+        }
+        finally
+        {
+            if (owned) unitOfWork.Dispose();
+        }
+    }
 
     private const string EngineLogSource = "Diffusion Nexus Engine";
 
@@ -1277,6 +1666,29 @@ public partial class InstallerManagerViewModel : ViewModelBase
                                     ? $"Engine reads {sync.Roots.Count} model folder(s): {string.Join(" | ", sync.Roots)}"
                                     : $"No shared model folders were wired into the engine ({sync.SkipReason ?? "none registered"}); " +
                                       "it will only use its own models folder.");
+                        });
+                    }
+
+                    // Its models folder, where feature downloads land, is a Base Model Folder from the
+                    // start: Settings shows it and the app's model features read it without a restart.
+                    if (_baseModelFolderRegistrar is not null)
+                    {
+                        var registeredPackage = package;
+                        await RunEngineFollowUpAsync("register the Engine's models folder", async () =>
+                        {
+                            var modelsFolder = Services.Engine.ManagedEngineLocator.ModelsFolder(registeredPackage.InstallationPath);
+                            Directory.CreateDirectory(modelsFolder);
+                            if (await _baseModelFolderRegistrar.EnsureRegisteredAsync([registeredPackage]) > 0)
+                            {
+                                _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
+                                    $"Registered the Engine's models folder as a Base Model Folder: {modelsFolder}");
+                                _eventAggregator.PublishSettingsSaved(new SettingsSavedEventArgs());
+                            }
+                            else
+                            {
+                                _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
+                                    "The Engine's models folder was already registered.");
+                            }
                         });
                     }
 

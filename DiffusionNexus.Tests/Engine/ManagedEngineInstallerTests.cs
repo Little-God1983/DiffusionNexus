@@ -24,12 +24,12 @@ public class ManagedEngineInstallerTests
         public void Report(T value) => Reports.Add(value);
     }
 
-    private static InstallationConfiguration BuildKreaConfiguration()
+    private static InstallationConfiguration BuildBaseConfiguration()
     {
         var config = new InstallationConfiguration
         {
             Id = Guid.Parse(ManagedEngineInstaller.BaseConfigurationId),
-            Name = "Krea-2-Turbo"
+            Name = "Blank ComfyUI + Manager + Triton & SageAttention"
         };
         config.ModelDownloads.Add(new ModelDownload { Id = Guid.NewGuid(), Name = "Krea2 GGUF" });
         config.ModelDownloads.Add(new ModelDownload { Id = Guid.NewGuid(), Name = "qwen_image_vae" });
@@ -82,10 +82,17 @@ public class ManagedEngineInstallerTests
         Mock<IInstallationCoordinator> coordinator, Mock<ICatalog> repo)
         => new(coordinator.Object, repo.Object, new Mock<IUserPromptService>().Object);
 
+    // Owner ruling 2026-10-12: the Engine is the blank ComfyUI workload, not Krea-2-Turbo stripped bare.
+    [Fact]
+    public void TheEngineIsBuiltFromTheBlankComfyUiWorkload()
+    {
+        ManagedEngineInstaller.BaseConfigurationId.Should().Be("1F0A3AEF-15D9-4B8A-80DC-B03F318E414F");
+    }
+
     [Fact]
     public async Task InstallBaseEngine_ExcludesEveryPieceOfContent()
     {
-        var config = BuildKreaConfiguration();
+        var config = BuildBaseConfiguration();
         var (coordinator, repo) = Mocks(config);
         InstallationOptions? captured = null;
 
@@ -114,7 +121,7 @@ public class ManagedEngineInstallerTests
     [Fact]
     public async Task InstallBaseEngine_NeverCreatesShortcuts()
     {
-        var config = BuildKreaConfiguration();
+        var config = BuildBaseConfiguration();
         var (coordinator, repo) = Mocks(config);
         InstallationOptions? captured = null;
 
@@ -141,7 +148,7 @@ public class ManagedEngineInstallerTests
     [Fact]
     public async Task InstallBaseEngine_StopsWhenTheGpuGateBlocks()
     {
-        var config = BuildKreaConfiguration();
+        var config = BuildBaseConfiguration();
         var (coordinator, repo) = Mocks(config);
         coordinator.Setup(c => c.EvaluateGpuGateAsync(
                 It.IsAny<InstallationConfiguration>(), It.IsAny<IUserPromptService>(),
@@ -164,7 +171,7 @@ public class ManagedEngineInstallerTests
     [Fact]
     public async Task InstallBaseEngine_SetsCpuTorchWhenTheUserAcceptsTheCpuOnlyOffer()
     {
-        var config = BuildKreaConfiguration();
+        var config = BuildBaseConfiguration();
         var (coordinator, repo) = Mocks(config);
         InstallationOptions? captured = null;
 
@@ -203,7 +210,7 @@ public class ManagedEngineInstallerTests
         // Exercises the LogEntryLevel -> Models.Enums.LogLevel bridge in ManagedEngineInstaller's
         // LogAction: the two enums live in separate SDK assemblies with no shared source of
         // truth, so this pins the mapping runs and lands correctly instead of being dead code.
-        var config = BuildKreaConfiguration();
+        var config = BuildBaseConfiguration();
         var (coordinator, repo) = Mocks(config);
         var logSink = new CapturingProgress<InstallLogEntry>();
 
@@ -272,7 +279,7 @@ public class ManagedEngineInstallerTests
         // installer does not control and has already drifted from an earlier assumption once.
         // Rather than restate a pairing as guaranteed, the resolved configuration.Torch values
         // must be logged at install start so the truth is readable at runtime.
-        var config = BuildKreaConfiguration();
+        var config = BuildBaseConfiguration();
         config.Torch = new TorchSettings { TorchVersion = "2.8.0", CudaVersion = "12.8" };
         var (coordinator, repo) = Mocks(config);
         var logSink = new CapturingProgress<InstallLogEntry>();
@@ -292,7 +299,7 @@ public class ManagedEngineInstallerTests
     {
         // The SDK 2.x catalog ships "rootDirectory": "" and the SDK validates it before any
         // download ("Installation root directory is required.").
-        var config = BuildKreaConfiguration();
+        var config = BuildBaseConfiguration();
         config.Paths.RootDirectory = "";
         var (coordinator, repo) = Mocks(config);
         var rootAtPreChecks = "<unset>";
@@ -328,7 +335,7 @@ public class ManagedEngineInstallerTests
     [Fact]
     public async Task InstallBaseEngine_ReportsCancellationDistinctlyFromFailure()
     {
-        var config = BuildKreaConfiguration();
+        var config = BuildBaseConfiguration();
         var (coordinator, repo) = Mocks(config);
         coordinator.Setup(c => c.InstallAsync(
                 It.IsAny<InstallationConfiguration>(), It.IsAny<string>(), It.IsAny<InstallationOptions>(),

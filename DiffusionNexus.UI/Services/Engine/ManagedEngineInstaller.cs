@@ -10,8 +10,9 @@ namespace DiffusionNexus.UI.Services.Engine;
 /// <summary>
 /// Drives the SDK's installation coordinator to produce a bare, app-owned ComfyUI.
 ///
-/// The base engine is built from the Krea-2-Turbo configuration with every model, custom node
-/// and workflow excluded. No torch settings are authored here — the engine simply inherits
+/// The base engine is built from the "Blank ComfyUI + Manager + Triton &amp; SageAttention" workload
+/// with its one node pack (ComfyUI-Manager) excluded, like every model, node and workflow: the
+/// Engine runs headless. No torch settings are authored here — the engine simply inherits
 /// whatever <c>configuration.Torch</c> declares for that catalog entry, whatever it happens to be
 /// pinned to at install time. Do not restate a specific CUDA/torch pairing here as guaranteed: it
 /// is catalog data, not something this class controls, and it has already drifted from an earlier
@@ -23,8 +24,12 @@ public sealed class ManagedEngineInstaller : IManagedEngineInstaller
 {
     private static readonly ILogger Logger = Log.ForContext<ManagedEngineInstaller>();
 
-    /// <summary>Catalog id of the configuration that defines the engine base (Krea-2-Turbo).</summary>
-    public const string BaseConfigurationId = "E79C079A-2FD7-4FE7-8086-23731092555D";
+    /// <summary>
+    /// Catalog id of the workload that defines the engine base: "Blank ComfyUI + Manager + Triton &amp;
+    /// SageAttention" (owner ruling 2026-10-12; was Krea-2-Turbo with all content stripped, which declares
+    /// the same Python, venv, torch, CUDA, Triton and SageAttention).
+    /// </summary>
+    public const string BaseConfigurationId = "1F0A3AEF-15D9-4B8A-80DC-B03F318E414F";
 
     private readonly IInstallationCoordinator _coordinator;
     private readonly ICatalog _catalog;

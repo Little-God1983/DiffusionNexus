@@ -76,4 +76,24 @@ public class ManagedEngineLocatorTests
             Directory.Delete(root, recursive: true);
         }
     }
+
+    [Fact]
+    public void ModelsFolder_IsNextToMainPy_ForANestedLayout()
+    {
+        var root = Directory.CreateTempSubdirectory("dn-engine-models-").FullName;
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(root, "ComfyUI"));
+            File.WriteAllText(Path.Combine(root, "ComfyUI", "main.py"), "");
+
+            ManagedEngineLocator.ModelsFolder(root).Should().Be(Path.Combine(root, "ComfyUI", "models"));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void ModelsFolder_IsUnderTheRoot_ForADirectLayout()
+    {
+        ManagedEngineLocator.ModelsFolder(@"C:\Engine\ComfyUI").Should().Be(@"C:\Engine\ComfyUI\models");
+    }
 }

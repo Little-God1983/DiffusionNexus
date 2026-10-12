@@ -1,3 +1,5 @@
+using DiffusionNexus.UI.Services.ConfigurationChecker;
+
 namespace DiffusionNexus.UI.Services.Engine;
 
 /// <summary>
@@ -16,6 +18,17 @@ public static class ManagedEngineLocator
         "DiffusionNexus", "Engine", "ComfyUI");
 
     /// <summary>
+    /// The Engine's own models folder: <c>models</c> in the ComfyUI repository, resolved the way the
+    /// workload installer and the checker resolve it. Feature downloads land here (owner ruling
+    /// 2026-10-12), so a file inside it is one the Engine downloaded.
+    /// </summary>
+    public static string ModelsFolder(string installRoot)
+    {
+        var type = ConfigurationCheckerService.DetectInstallationType(installRoot);
+        return Path.Combine(ConfigurationCheckerService.GetRepositoryPath(installRoot, type), "models");
+    }
+
+    /// <summary>
     /// True when <paramref name="installRoot"/> contains a ComfyUI entry point. Used to detect
     /// an engine whose database row exists but whose folder was deleted behind the app's back.
     /// </summary>
@@ -32,6 +45,53 @@ public static class ManagedEngineLocator
 
         return ResolveMainPy(installRoot) is null ? EngineFolderState.Incomplete : EngineFolderState.Installed;
     }
+
+    /// <summary>
+    /// True when <paramref name="installRoot"/> looks like an Engine folder: a ComfyUI entry point, or at
+    /// least one of the folders an Engine install has (<c>venv</c>, <c>custom_nodes</c>, <c>comfy</c>,
+    /// <c>ComfyUI</c>). A half-deleted Engine still has some of them; a folder with none is not deleted.
+    /// </summary>
+    public static bool LooksLikeEngine(string? installRoot)
+    {
+        if (string.IsNullOrWhiteSpace(installRoot) || !Directory.Exists(installRoot)) return false;
+        return ResolveMainPy(installRoot) is not null
+            || EngineMarkerFolders.Any(name => Directory.Exists(Path.Combine(installRoot, name)));
+    }
+
+    private static readonly string[] EngineMarkerFolders = ["venv", "custom_nodes", "comfy", "ComfyUI"];
+
+    /// <summary>
+    /// The nested layout: the recorded folder is one the user picked, with the Engine's ComfyUI clone
+    /// (<c>ComfyUI\</c>) and possibly a <c>venv\</c> inside it, and no ComfyUI entry point at its own root.
+    /// A half-deleted nested Engine (a retry) still has one of the two. The direct layout (main.py at the
+    /// root) is the clone itself.
+    /// </summary>
+    public static bool IsNestedLayout(string installRoot) =>
+        !File.Exists(Path.Combine(installRoot, "main.py"))
+        && (Directory.Exists(Path.Combine(installRoot, "ComfyUI")) || Directory.Exists(Path.Combine(installRoot, "venv")));
+
+    /// <summary>
+    /// The entries at the root of a nested-layout Engine that the base install creates: the ComfyUI clone
+    /// (which holds the SDK's venv, its models, custom nodes, launcher scripts and extra_model_paths.yaml),
+    /// a <c>venv</c> next to it, and the SDK's <c>install.log</c> (written to the install root).
+    /// </summary>
+    public static IReadOnlyList<string> NestedEngineFolders(string installRoot) =>
+        [Path.Combine(installRoot, "ComfyUI"), Path.Combine(installRoot, "venv")];
+
+    /// <inheritdoc cref="NestedEngineFolders"/>
+    public static IReadOnlyList<string> NestedEngineFiles(string installRoot) =>
+        [Path.Combine(installRoot, "install.log")];
+
+    /// <summary>
+    /// The folders that hold the Engine's own files: the root in the direct layout, the ComfyUI clone and
+    /// venv in the nested one (anything else in that folder is the user's).
+    /// </summary>
+    public static IReadOnlyList<string> OwnFolders(string installRoot) =>
+        IsNestedLayout(installRoot) ? NestedEngineFolders(installRoot) : [installRoot];
+
+    /// <summary>Whether <paramref name="path"/> lies in one of the Engine's own folders (<see cref="OwnFolders"/>).</summary>
+    public static bool IsEngineFile(string installRoot, string path) =>
+        OwnFolders(installRoot).Any(folder => FolderPathMatch.Contains(folder, path));
 
     /// <summary>
     /// Resolves the ComfyUI entry point (main.py) under <paramref name="installRoot"/>, or null

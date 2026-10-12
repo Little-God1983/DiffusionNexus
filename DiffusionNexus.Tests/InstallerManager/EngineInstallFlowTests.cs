@@ -1,5 +1,7 @@
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Services;
+using DiffusionNexus.UI.Services.Diffusion;
 using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.Engine;
@@ -10,6 +12,80 @@ namespace DiffusionNexus.Tests.InstallerManager;
 
 public class EngineInstallFlowTests
 {
+    [Fact]
+    public async Task SuccessfulInstall_RegistersTheEnginesModelsFolder_RightAway()
+    {
+        var temp = Directory.CreateTempSubdirectory("dn-engine-install-").FullName;
+        var root = Path.Combine(temp, "Engine"); // chosen while it does not exist yet, as a real pick would be
+        try
+        {
+            var installer = new Mock<IManagedEngineInstaller>();
+            installer.Setup(i => i.InstallBaseEngineAsync(
+                    It.IsAny<EngineInstallRequest>(), It.IsAny<IProgress<InstallLogEntry>>(),
+                    It.IsAny<IProgress<InstallationProgress>>(), It.IsAny<CancellationToken>()))
+                .Callback(() =>
+                {
+                    Directory.CreateDirectory(root);
+                    File.WriteAllText(Path.Combine(root, "main.py"), "");
+                })
+                .ReturnsAsync(new EngineInstallOutcome(true, false, "done", root));
+            var settings = new Mock<IAppSettingsService>();
+            var registered = new List<string>();
+            settings.Setup(s => s.AddBaseModelFolderAsync(It.IsAny<string>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()))
+                .Callback<string, int?, CancellationToken>((p, _, _) => registered.Add(p))
+                .ReturnsAsync(true);
+            var aggregator = new Mock<IDatasetEventAggregator>();
+            var vm = EngineTestHarness.CreateInstallerManagerViewModel(
+                [], engineInstaller: installer.Object, chosenFolder: root, onPackageAdded: _ => { },
+                eventAggregatorMock: aggregator, registrar: new BaseModelFolderRegistrar(settings.Object));
+            vm.IsEngineTileVisible = true;
+            await vm.LoadInstallationsCommand.ExecuteAsync(null);
+
+            await vm.InstallEngineAsync();
+
+            registered.Should().Equal(Path.Combine(root, "models"));
+            aggregator.Verify(a => a.PublishSettingsSaved(It.IsAny<SettingsSavedEventArgs>()), Times.Once,
+                "Settings → Base Model Folders reloads and shows the new folder");
+        }
+        finally { Directory.Delete(temp, recursive: true); }
+    }
+
+    // Minor: the registration follow-up logs when it added nothing, so the console never goes silent on it.
+    [Fact]
+    public async Task SuccessfulInstall_ModelsFolderAlreadyRegistered_SaysSo()
+    {
+        var temp = Directory.CreateTempSubdirectory("dn-engine-install-").FullName;
+        var root = Path.Combine(temp, "Engine");
+        try
+        {
+            var installer = new Mock<IManagedEngineInstaller>();
+            installer.Setup(i => i.InstallBaseEngineAsync(
+                    It.IsAny<EngineInstallRequest>(), It.IsAny<IProgress<InstallLogEntry>>(),
+                    It.IsAny<IProgress<InstallationProgress>>(), It.IsAny<CancellationToken>()))
+                .Callback(() =>
+                {
+                    Directory.CreateDirectory(root);
+                    File.WriteAllText(Path.Combine(root, "main.py"), "");
+                })
+                .ReturnsAsync(new EngineInstallOutcome(true, false, "done", root));
+            var settings = new Mock<IAppSettingsService>();
+            settings.Setup(s => s.AddBaseModelFolderAsync(It.IsAny<string>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(false); // already there
+            var logger = new Mock<DiffusionNexus.Domain.Services.UnifiedLogging.IUnifiedLogger>();
+            var vm = EngineTestHarness.CreateInstallerManagerViewModel(
+                [], engineInstaller: installer.Object, chosenFolder: root, onPackageAdded: _ => { },
+                registrar: new BaseModelFolderRegistrar(settings.Object), loggerMock: logger);
+            vm.IsEngineTileVisible = true;
+            await vm.LoadInstallationsCommand.ExecuteAsync(null);
+
+            await vm.InstallEngineAsync();
+
+            logger.Verify(l => l.Info(DiffusionNexus.Domain.Services.UnifiedLogging.LogCategory.Installation, "Diffusion Nexus Engine",
+                "The Engine's models folder was already registered.", It.IsAny<string?>()), Times.Once);
+        }
+        finally { Directory.Delete(temp, recursive: true); }
+    }
+
     [Fact]
     public async Task SuccessfulInstall_PersistsAnAppManagedComfyUiRow()
     {

@@ -23,6 +23,7 @@ public sealed partial class EngineFeatureRowViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsSelectable))]
+    [NotifyPropertyChangedFor(nameof(CanRemove))]
     private EngineFeatureStatus _status = EngineFeatureStatus.Checking;
 
     [ObservableProperty] private string _statusText = "Checking…";
@@ -41,6 +42,9 @@ public sealed partial class EngineFeatureRowViewModel : ObservableObject
 
     /// <summary>Installed rows stay ticked and locked; rows mid-check or mid-install are locked too.</summary>
     public bool IsSelectable => Status is EngineFeatureStatus.Partial or EngineFeatureStatus.NotInstalled or EngineFeatureStatus.Error;
+
+    /// <summary>Remove… shows on rows with something of the feature on disk.</summary>
+    public bool CanRemove => Status is EngineFeatureStatus.Installed or EngineFeatureStatus.Partial;
 
     /// <summary>Latest check per workload, kept for the install step.</summary>
     internal List<(InstallationConfiguration Config, ConfigurationCheckResult Result)> Checks { get; } = [];

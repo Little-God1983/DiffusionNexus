@@ -30,6 +30,8 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
     private readonly EngineFeature? _preselect;
     private readonly Func<string, long?> _freeSpaceProbe;
     private readonly IInstallActivity? _installActivity;
+    private readonly IDialogService? _dialogs;
+    private readonly EngineRemover? _remover;
     private CancellationTokenSource? _installCts;
     private bool _acceptProgress;
 
@@ -42,7 +44,9 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
         IUnifiedLogger? unifiedLogger = null,
         EngineFeature? preselect = null,
         Func<string, long?>? freeSpaceProbe = null,
-        IInstallActivity? installActivity = null)
+        IInstallActivity? installActivity = null,
+        IDialogService? dialogs = null,
+        EngineRemover? remover = null)
     {
         ArgumentNullException.ThrowIfNull(catalog);
         ArgumentNullException.ThrowIfNull(checker);
@@ -57,6 +61,8 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
         _unifiedLogger = unifiedLogger;
         _preselect = preselect;
         _freeSpaceProbe = freeSpaceProbe ?? ProbeFreeSpace;
+        _dialogs = dialogs;
+        _remover = remover;
 
         foreach (var definition in EngineFeatureCatalog.All)
         {
@@ -67,6 +73,7 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
                 {
                     UpdateFooter();
                     InstallSelectedCommand.NotifyCanExecuteChanged();
+                    RemoveFeatureCommand.NotifyCanExecuteChanged();
                 }
             };
             Rows.Add(row);
@@ -79,7 +86,18 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(InstallSelectedCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RemoveFeatureCommand))]
+    [NotifyPropertyChangedFor(nameof(IsBusy))]
     private bool _isInstalling;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(InstallSelectedCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RemoveFeatureCommand))]
+    [NotifyPropertyChangedFor(nameof(IsBusy))]
+    private bool _isRemoving;
+
+    /// <summary>An install or a removal runs: the dialog keeps Close disabled and shows the progress bar.</summary>
+    public bool IsBusy => IsInstalling || IsRemoving;
 
     [ObservableProperty] private string? _progressText;
     [ObservableProperty] private string _footerText = string.Empty;
@@ -97,6 +115,9 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
     /// its own. Internal setter is a test seam.
     /// </summary>
     public bool DidInstallNodePacks { get; internal set; }
+
+    /// <summary>True once a removal deleted something, so the caller tells open panels to re-check. Internal setter is a test seam.</summary>
+    public bool DidRemove { get; internal set; }
 
     private IEnumerable<EngineFeatureRowViewModel> RowsToInstall =>
         Rows.Where(r => r.IsSelected && r.IsSelectable);
@@ -121,7 +142,7 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
         }
     }
 
-    private bool CanInstallSelected() => !IsInstalling && RowsToInstall.Any();
+    private bool CanInstallSelected() => !IsInstalling && !IsRemoving && RowsToInstall.Any();
 
     [RelayCommand(CanExecute = nameof(CanInstallSelected))]
     private async Task InstallSelectedAsync()
@@ -196,6 +217,7 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
                                 ProgressText = $"{row.DisplayName}: downloading {d.FileName} {d.DownloadedSizeText} / {d.TotalSizeText} {d.SpeedText}";
                         }),
                         skipDownloadTokenProvider: null,
+                        modelsRootOverride: ManagedEngineLocator.ModelsFolder(_engineRoot),
                         ct);
 
                     Info($"{row.DisplayName}: {summary}");
@@ -247,6 +269,158 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
 
     [RelayCommand]
     private void CancelInstall() => _installCts?.Cancel();
+
+    private bool CanRemoveFeature(EngineFeatureRowViewModel? row) =>
+        row is { CanRemove: true } && !IsInstalling && !IsRemoving && _remover is not null && _dialogs is not null;
+
+    /// <summary>
+    /// Remove…: plans what goes (node packs and models no other installed feature uses), asks — with the
+    /// user's own folders' copies listed and optional — then stops the Engine and deletes.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanRemoveFeature))]
+    private async Task RemoveFeatureAsync(EngineFeatureRowViewModel row)
+    {
+        if (_remover is null || _dialogs is null) return;
+        if (_remover.BusyReason() is { } busy)
+        {
+            Info($"{row.DisplayName}: removal refused, the Engine is busy ({busy}). Nothing was changed.");
+            await _dialogs.ShowMessageAsync(EngineRemovalMessages.FeatureTitle, EngineRemovalMessages.Busy(busy));
+            return;
+        }
+
+        IsRemoving = true;
+        ProgressText = $"Checking {row.DisplayName}'s files…";
+        // The rows are checked again only when the remover was asked to delete: Cancel and every refusal
+        // before it changed nothing on disk.
+        var attempted = false;
+        try
+        {
+            EngineRemovalPlan plan;
+            IReadOnlyList<EngineFeatureCheck> checks;
+            try
+            {
+                // The disk check is synchronous file I/O over every feature and folder: off the UI thread.
+                checks = await Task.Run(() => EngineFeatureChecks.LoadAsync(_catalog, _checker, _engineRoot, CancellationToken.None));
+                plan = await Task.Run(() => EngineRemovalPlanner.PlanFeatureRemoval(_engineRoot, checks, row.Definition.Feature));
+            }
+            catch (Exception ex)
+            {
+                // Runtime checks fall through, never block: without a plan nothing is deleted, the dialog stays usable.
+                ProgressText = null;
+                Warn($"{row.DisplayName}: the feature's files could not be checked — {ex.Message}. Nothing was removed.", ex);
+                await _dialogs.ShowMessageAsync(EngineRemovalMessages.FeatureTitle,
+                    EngineRemovalMessages.CheckFailed(row.DisplayName, ex.Message));
+                return;
+            }
+
+            // Another feature the catalog does not describe could share any of these files: delete nothing.
+            var unknown = checks.Where(c => c.Feature != row.Definition.Feature && !c.IsComplete).Select(c => c.DisplayName).ToList();
+            if (unknown.Count > 0)
+            {
+                ProgressText = null;
+                Warn($"{row.DisplayName}: nothing was removed — the catalog has no description of {string.Join(", ", unknown)}, " +
+                     "so the files it shares are unknown.");
+                await _dialogs.ShowMessageAsync(EngineRemovalMessages.FeatureTitle, EngineRemovalMessages.CatalogLacks(unknown));
+                return;
+            }
+
+            Info($"{row.DisplayName}: remove plan — {plan.NodePackFolders.Count} node pack(s), {plan.EngineModels.Count} Engine model(s) " +
+                 $"({EngineRemovalMessages.FormatSize(plan.EngineBytes)}), {plan.OutsideModels.Count} in your own folders, " +
+                 $"{plan.Kept.Count} kept ({string.Join(", ", plan.Kept.Select(k => $"{k.Name} for {k.NeededBy}"))})" +
+                 (plan.RemovedWithIt.Count > 0
+                     ? $"; goes with it, using only its files: {string.Join(", ", plan.RemovedWithIt)}"
+                     : "") +
+                 (plan.LeftPartial.Count > 0
+                     ? $"; left partly installed: {string.Join(", ", plan.LeftPartial)}"
+                     : "") +
+                 (plan.RemovedIfEverything.Count > 0
+                     ? $"; goes with it only if your own copies are deleted too: {string.Join(", ", plan.RemovedIfEverything.Select(r => r.Name))}"
+                     : "") + ".");
+            ProgressText = null;
+
+            if (!plan.HasAnythingToDelete)
+            {
+                await _dialogs.ShowMessageAsync(EngineRemovalMessages.FeatureTitle, EngineRemovalMessages.NothingToRemove(row.DisplayName, plan));
+                return;
+            }
+
+            var hasOutside = plan.OutsideModels.Count > 0;
+            var choice = EngineRemovalMessages.ToChoice(
+                await _dialogs.ShowOptionsAsync(EngineRemovalMessages.FeatureTitle,
+                    EngineRemovalMessages.FeatureRemoval(row.DisplayName, plan), EngineRemovalMessages.FeatureOptions(hasOutside)),
+                hasOutside);
+            if (choice == RemovalChoice.Cancel)
+            {
+                Info($"{row.DisplayName}: removal cancelled. Nothing was changed.");
+                return;
+            }
+
+            // Only the user's own copies are left, and the user chose to keep them: nothing to delete.
+            if (choice == RemovalChoice.EngineOnly && plan.NodePackFolders.Count == 0 && plan.EngineModels.Count == 0)
+            {
+                ProgressText = $"Nothing of {row.DisplayName} is in the Engine; your own files were left as they are.";
+                Info(ProgressText);
+                return;
+            }
+
+            var files = plan.EngineModels.Select(f => f.Path)
+                .Concat(choice == RemovalChoice.Everything ? plan.OutsideModels.Select(f => f.Path) : [])
+                .ToList();
+            Info($"{row.DisplayName}: removing ({(choice == RemovalChoice.Everything ? "your own folders' copies too" : "only what's in the Engine")}).");
+            ProgressText = $"Removing {row.DisplayName}…";
+
+            // While files are deleted a catalog apply or another install waits (#618). An install that started
+            // while the question was open still refuses the removal: checked right before the handle is taken,
+            // with no await between, so the remover can skip the installs (its own handle would read as one).
+            if (_remover.BusyReason() is { } busyNow)
+            {
+                ProgressText = null;
+                Info($"{row.DisplayName}: removal refused, the Engine is busy ({busyNow}). Nothing was changed.");
+                await _dialogs.ShowMessageAsync(EngineRemovalMessages.FeatureTitle, EngineRemovalMessages.Busy(busyNow));
+                return;
+            }
+
+            EngineRemovalResult result;
+            attempted = true;
+            using (_installActivity?.Begin("Diffusion Nexus Engine feature removal"))
+                result = await _remover.RemoveAsync(plan.NodePackFolders, files, engineRoot: _engineRoot, installActivityHeldByCaller: true);
+            if (result.WasBusy)
+            {
+                ProgressText = null;
+                await _dialogs.ShowMessageAsync(EngineRemovalMessages.FeatureTitle, EngineRemovalMessages.Busy(result.BusyReason!));
+                return;
+            }
+
+            DidRemove = true;
+            if (result.Failed.Count == 0)
+            {
+                ProgressText = $"Removed {row.DisplayName}.";
+                Info(ProgressText);
+            }
+            else
+            {
+                ProgressText = $"Removed {row.DisplayName} with problems: {result.Failed.Count} item(s) could not be deleted. See the Unified Console.";
+                Warn(ProgressText);
+                await _dialogs.ShowMessageAsync(EngineRemovalMessages.FeatureTitle,
+                    EngineRemovalMessages.Failures($"{row.DisplayName} was not removed completely.", result.Failed));
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "Engine feature removal failed");
+            _unifiedLogger?.Error(LogCategory.Installation, LogSource, "Feature removal failed", ex);
+            ProgressText = $"Remove failed: {ex.Message}";
+        }
+        finally
+        {
+            if (attempted)
+            {
+                try { await CheckAllAsync(CancellationToken.None); }
+                catch (Exception ex) { Warn($"Re-check after removal failed — {ex.Message}", ex); }
+            }
+            IsRemoving = false;
+        }
+    }
 
     /// <summary>
     /// A workload whose node packs run GGUF models (Outpaint Vision's Qwen3-VL node) gets the prebuilt

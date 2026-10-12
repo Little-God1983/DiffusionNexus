@@ -32,6 +32,23 @@ public sealed class BaseModelFolderRegistrarTests : IDisposable
     private static InstallerPackage Package(string installPath, InstallerType type, int id = 5)
         => new() { Id = id, Name = "Test", InstallationPath = installPath, ExecutablePath = "run.bat", Type = type };
 
+    // The Engine's yaml lists every user library so it can read them. Registering those for the Engine
+    // re-linked D:\Models to the Engine row on every start; only its own models folder belongs to it.
+    [Fact]
+    public void ResolveModelRoots_AppManagedEngine_IsOnlyItsOwnModelsFolder()
+    {
+        var engine = Dir("Engine", "ComfyUI");
+        File.WriteAllText(Path.Combine(engine, "main.py"), "# comfy");
+        var models = Dir("Engine", "ComfyUI", "models");
+        var library = Dir("UserLibrary");
+        File.WriteAllText(Path.Combine(engine, "extra_model_paths.yaml"),
+            $"dn_models_1:\n    base_path: {library.Replace('\\', '/')}\n");
+        var package = Package(engine, InstallerType.ComfyUI);
+        package.IsAppManaged = true;
+
+        BaseModelFolderRegistrar.ResolveModelRoots(package).Should().Equal(models);
+    }
+
     [Fact]
     public void ResolveModelRoots_ComfyUI_IncludesModelsDir_And_ExtraModelPathsYamlRoots()
     {

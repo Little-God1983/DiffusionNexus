@@ -323,7 +323,7 @@ public partial class WorkloadsViewModel : ViewModelBase
         return wheelNote + await _installService.InstallSelectedAsync(
             config, _comfyUIRootPath,
             nodes, models,
-            vramGb, progress, downloadProgress, skipTokenProvider, ct);
+            vramGb, progress, downloadProgress, skipTokenProvider, cancellationToken: ct);
     }
 
     /// <summary>

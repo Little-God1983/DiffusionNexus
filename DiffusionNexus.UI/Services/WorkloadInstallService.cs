@@ -49,6 +49,7 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
         IProgress<WorkloadInstallProgress>? progress = null,
         IProgress<DownloadProgress>? downloadProgress = null,
         Func<CancellationToken>? skipDownloadTokenProvider = null,
+        string? modelsRootOverride = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(configuration);
@@ -177,8 +178,8 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
             var modelLookup = (configuration.ModelDownloads ?? [])
                 .ToDictionary(m => m.Id);
 
-            // Resolve model base folder from extra_model_paths.yaml if available
-            var extraBasePath = ResolveExtraModelBasePath(repositoryPath);
+            // The Engine downloads into its own models folder; other installs into their yaml's first library.
+            var extraBasePath = ResolveModelBaseFolder(repositoryPath, modelsRootOverride);
 
             foreach (var modelResult in selectedModels)
             {
@@ -1101,6 +1102,13 @@ public sealed class WorkloadInstallService : IWorkloadInstallService
     }
 
     #endregion
+
+    /// <summary>
+    /// Where model downloads go: <paramref name="modelsRootOverride"/> when given, else the first
+    /// <c>base_path</c> of the install's extra_model_paths.yaml (null: relative to the repository).
+    /// </summary>
+    internal static string? ResolveModelBaseFolder(string repositoryPath, string? modelsRootOverride) =>
+        string.IsNullOrWhiteSpace(modelsRootOverride) ? ResolveExtraModelBasePath(repositoryPath) : modelsRootOverride;
 
     /// <summary>
     /// Reads the <c>extra_model_paths.yaml</c> from the repository root and returns
