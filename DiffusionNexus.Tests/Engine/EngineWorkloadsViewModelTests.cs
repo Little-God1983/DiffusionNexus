@@ -171,9 +171,9 @@ public class EngineWorkloadsViewModelTests
         installer.Setup(i => i.InstallSelectedAsync(It.IsAny<InstallationConfiguration>(), @"C:\ComfyUI",
                 It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
                 It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
-                It.IsAny<Func<CancellationToken>?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<Func<CancellationToken>?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Callback((InstallationConfiguration _, string _, IReadOnlyList<CustomNodeCheckResult> n, IReadOnlyList<ModelCheckResult> _,
-                int _, IProgress<WorkloadInstallProgress>? _, IProgress<DownloadProgress>? _, Func<CancellationToken>? _, CancellationToken _) =>
+                int _, IProgress<WorkloadInstallProgress>? _, IProgress<DownloadProgress>? _, Func<CancellationToken>? _, string? _, CancellationToken _) =>
             { order.Add("nodes"); nodesPassed.Add(n); })
             .ReturnsAsync("done");
         var vm = new WorkloadsViewModel(catalog.Object, new Mock<IConfigurationCheckerService>().Object,

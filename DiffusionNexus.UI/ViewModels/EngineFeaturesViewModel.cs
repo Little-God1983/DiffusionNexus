@@ -196,6 +196,7 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
                                 ProgressText = $"{row.DisplayName}: downloading {d.FileName} {d.DownloadedSizeText} / {d.TotalSizeText} {d.SpeedText}";
                         }),
                         skipDownloadTokenProvider: null,
+                        modelsRootOverride: ManagedEngineLocator.ModelsFolder(_engineRoot),
                         ct);
 
                     Info($"{row.DisplayName}: {summary}");

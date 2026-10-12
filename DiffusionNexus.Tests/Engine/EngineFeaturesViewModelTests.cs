@@ -67,7 +67,7 @@ public class EngineFeaturesViewModelTests
         _installer.Setup(i => i.InstallSelectedAsync(It.IsAny<InstallationConfiguration>(), Root,
                 It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
                 It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
-                It.IsAny<Func<CancellationToken>?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<Func<CancellationToken>?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Callback(() => seen = activity.Running)
             .ReturnsAsync("done");
         var vm = Sut(EngineFeature.InpaintOutpaint, activity);
@@ -192,9 +192,9 @@ public class EngineFeaturesViewModelTests
         _installer.Setup(i => i.InstallSelectedAsync(It.IsAny<InstallationConfiguration>(), Root,
                 It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
                 It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
-                It.IsAny<Func<CancellationToken>?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<Func<CancellationToken>?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Callback((InstallationConfiguration _, string _, IReadOnlyList<CustomNodeCheckResult> n, IReadOnlyList<ModelCheckResult> m,
-                int _, IProgress<WorkloadInstallProgress>? _, IProgress<DownloadProgress>? _, Func<CancellationToken>? _, CancellationToken _) =>
+                int _, IProgress<WorkloadInstallProgress>? _, IProgress<DownloadProgress>? _, Func<CancellationToken>? _, string? _, CancellationToken _) =>
             { nodes = n; models = m; })
             .ReturnsAsync("done");
 
@@ -204,12 +204,12 @@ public class EngineFeaturesViewModelTests
             It.Is<InstallationConfiguration>(c => c.Id == EngineFeatureCatalog.InpaintingQwen2512), Root,
             It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
             It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
-            It.IsAny<Func<CancellationToken>?>(), It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<Func<CancellationToken>?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
         _installer.Verify(i => i.InstallSelectedAsync(
             It.Is<InstallationConfiguration>(c => c.Id == EngineFeatureCatalog.Krea2Turbo), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
             It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
-            It.IsAny<Func<CancellationToken>?>(), It.IsAny<CancellationToken>()), Times.Never, "installed rows are not reinstalled");
+            It.IsAny<Func<CancellationToken>?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never, "installed rows are not reinstalled");
         nodes.Should().HaveCount(1).And.OnlyContain(n => !n.IsInstalled);
         models.Should().HaveCount(2, "the model that arrived after load must not be downloaded again")
             .And.OnlyContain(m => !m.IsInstalled);
@@ -226,7 +226,7 @@ public class EngineFeaturesViewModelTests
         _installer.Setup(i => i.InstallSelectedAsync(It.IsAny<InstallationConfiguration>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
                 It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
-                It.IsAny<Func<CancellationToken>?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<Func<CancellationToken>?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Callback(() => _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(0, 1, 0, 5))
             .ReturnsAsync("done");
 
@@ -246,7 +246,7 @@ public class EngineFeaturesViewModelTests
         _installer.Setup(i => i.InstallSelectedAsync(It.IsAny<InstallationConfiguration>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
                 It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
-                It.IsAny<Func<CancellationToken>?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<Func<CancellationToken>?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("HF returned 503"));
 
         await vm.InstallSelectedCommand.ExecuteAsync(null);
@@ -263,7 +263,7 @@ public class EngineFeaturesViewModelTests
         _installer.Setup(i => i.InstallSelectedAsync(It.IsAny<InstallationConfiguration>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
                 It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
-                It.IsAny<Func<CancellationToken>?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<Func<CancellationToken>?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Callback(() => onInstall?.Invoke())
             .ReturnsAsync(summary);
 
@@ -340,7 +340,7 @@ public class EngineFeaturesViewModelTests
         _installer.Setup(i => i.InstallSelectedAsync(It.IsAny<InstallationConfiguration>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
                 It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
-                It.IsAny<Func<CancellationToken>?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<Func<CancellationToken>?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Callback(() => _checker.Setup(c => c.CheckConfigurationAsync(It.IsAny<InstallationConfiguration>(), Root,
                     It.IsAny<ConfigurationCheckOptions?>(), It.IsAny<CancellationToken>()))
                 .ThrowsAsync(new OperationCanceledException()))
@@ -393,7 +393,7 @@ public class EngineFeaturesViewModelTests
         _installer.Setup(i => i.InstallSelectedAsync(It.IsAny<InstallationConfiguration>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
                 It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
-                It.IsAny<Func<CancellationToken>?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<Func<CancellationToken>?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Callback(() => { order.Add("nodes"); _state[EngineFeatureCatalog.OutpaintingQwen2512] = Result(0, 3, 0, 7); })
             .ReturnsAsync("2 node(s) installed");
 
@@ -419,9 +419,9 @@ public class EngineFeaturesViewModelTests
         _installer.Setup(i => i.InstallSelectedAsync(It.IsAny<InstallationConfiguration>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
                 It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
-                It.IsAny<Func<CancellationToken>?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<Func<CancellationToken>?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Callback((InstallationConfiguration _, string _, IReadOnlyList<CustomNodeCheckResult> n, IReadOnlyList<ModelCheckResult> _,
-                int _, IProgress<WorkloadInstallProgress>? _, IProgress<DownloadProgress>? _, Func<CancellationToken>? _, CancellationToken _) =>
+                int _, IProgress<WorkloadInstallProgress>? _, IProgress<DownloadProgress>? _, Func<CancellationToken>? _, string? _, CancellationToken _) =>
                 nodesPassed.Add(n))
             .ReturnsAsync("1 model(s) downloaded");
 
@@ -442,9 +442,9 @@ public class EngineFeaturesViewModelTests
         _installer.Setup(i => i.InstallSelectedAsync(It.IsAny<InstallationConfiguration>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
                 It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
-                It.IsAny<Func<CancellationToken>?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<Func<CancellationToken>?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Callback((InstallationConfiguration _, string _, IReadOnlyList<CustomNodeCheckResult> n, IReadOnlyList<ModelCheckResult> _,
-                int _, IProgress<WorkloadInstallProgress>? _, IProgress<DownloadProgress>? _, Func<CancellationToken>? _, CancellationToken _) =>
+                int _, IProgress<WorkloadInstallProgress>? _, IProgress<DownloadProgress>? _, Func<CancellationToken>? _, string? _, CancellationToken _) =>
                 nodesPassed.Add(n))
             .ReturnsAsync("2 node(s) installed");
 
@@ -491,9 +491,9 @@ public class EngineFeaturesViewModelTests
         _installer.Setup(i => i.InstallSelectedAsync(It.IsAny<InstallationConfiguration>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
                 It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
-                It.IsAny<Func<CancellationToken>?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<Func<CancellationToken>?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Callback((InstallationConfiguration _, string _, IReadOnlyList<CustomNodeCheckResult> _, IReadOnlyList<ModelCheckResult> _,
-                int _, IProgress<WorkloadInstallProgress>? p, IProgress<DownloadProgress>? _, Func<CancellationToken>? _, CancellationToken _) =>
+                int _, IProgress<WorkloadInstallProgress>? p, IProgress<DownloadProgress>? _, Func<CancellationToken>? _, string? _, CancellationToken _) =>
             { captured = p; _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(0, 1, 0, 5); })
             .ReturnsAsync("1 node(s) installed, 5 model(s) downloaded");
         var vm = Sut(EngineFeature.InpaintOutpaint);
@@ -505,5 +505,28 @@ public class EngineFeaturesViewModelTests
         await Task.Delay(100); // Progress<T> posts the report; give it time to land
 
         vm.ProgressText.Should().StartWith("Done.");
+    }
+
+    // Owner ruling 2026-10-12: Engine features download into the Engine, so its files can be told apart.
+    [Fact]
+    public async Task Install_DownloadsIntoTheEnginesOwnModelsFolder()
+    {
+        _state[EngineFeatureCatalog.InpaintingQwen2512] = Result(0, 1, 2, 3);
+        _state[EngineFeatureCatalog.Krea2Turbo] = Result(0, 2, 0, 3);
+        string? passed = null;
+        _installer.Setup(i => i.InstallSelectedAsync(It.IsAny<InstallationConfiguration>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<CustomNodeCheckResult>>(), It.IsAny<IReadOnlyList<ModelCheckResult>>(),
+                It.IsAny<int>(), It.IsAny<IProgress<WorkloadInstallProgress>?>(), It.IsAny<IProgress<DownloadProgress>?>(),
+                It.IsAny<Func<CancellationToken>?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback((InstallationConfiguration _, string _, IReadOnlyList<CustomNodeCheckResult> _, IReadOnlyList<ModelCheckResult> _,
+                int _, IProgress<WorkloadInstallProgress>? _, IProgress<DownloadProgress>? _, Func<CancellationToken>? _, string? root, CancellationToken _) =>
+                passed = root)
+            .ReturnsAsync("2 model(s) downloaded");
+        var vm = Sut(EngineFeature.InpaintOutpaint);
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        await vm.InstallSelectedCommand.ExecuteAsync(null);
+
+        passed.Should().Be(@"C:\Engine\ComfyUI\models");
     }
 }

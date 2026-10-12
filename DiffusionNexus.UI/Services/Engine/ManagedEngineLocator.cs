@@ -1,3 +1,5 @@
+using DiffusionNexus.UI.Services.ConfigurationChecker;
+
 namespace DiffusionNexus.UI.Services.Engine;
 
 /// <summary>
@@ -14,6 +16,17 @@ public static class ManagedEngineLocator
     public static string DefaultInstallRoot { get; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "DiffusionNexus", "Engine", "ComfyUI");
+
+    /// <summary>
+    /// The Engine's own models folder: <c>models</c> in the ComfyUI repository, resolved the way the
+    /// workload installer and the checker resolve it. Feature downloads land here (owner ruling
+    /// 2026-10-12), so a file inside it is one the Engine downloaded.
+    /// </summary>
+    public static string ModelsFolder(string installRoot)
+    {
+        var type = ConfigurationCheckerService.DetectInstallationType(installRoot);
+        return Path.Combine(ConfigurationCheckerService.GetRepositoryPath(installRoot, type), "models");
+    }
 
     /// <summary>
     /// True when <paramref name="installRoot"/> contains a ComfyUI entry point. Used to detect
