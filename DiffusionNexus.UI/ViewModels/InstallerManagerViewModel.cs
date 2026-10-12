@@ -1113,6 +1113,9 @@ public partial class InstallerManagerViewModel : ViewModelBase
             IReadOnlyList<Services.Engine.PlannedFile> outside = [];
             Services.Engine.ModelFileTotal? unclaimed = null;
             long folderBytes = 0;
+            // An Engine folder that is itself a junction or symlink loses only the link: nothing behind it is
+            // sized or counted, the question says so and the user is told again after.
+            var rootLink = safeRoot && folder != Services.Engine.EngineFolderState.Missing ? EngineRootLink(root) : (false, null);
             if (!safeRoot)
             {
                 _unifiedLogger.Warn(LogCategory.Installation, EngineLogSource,
@@ -1122,11 +1125,14 @@ public partial class InstallerManagerViewModel : ViewModelBase
             else if (folder != Services.Engine.EngineFolderState.Missing)
             {
                 (outside, unclaimed) = await PlanFeatureModelsAsync(root, folder);
-                folderBytes = await Task.Run(() => Services.Engine.EngineRemovalPlanner.FolderSize(root));
+                if (rootLink.IsLink)
+                    unclaimed = null;
+                else
+                    folderBytes = await Task.Run(() => Services.Engine.EngineRemovalPlanner.FolderSize(root));
             }
 
             _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
-                $"Uninstall planned: {root} ({Services.Engine.EngineRemovalMessages.FormatSize(folderBytes)}, {(safeRoot ? folder : "unsafe folder")}); " +
+                $"Uninstall planned: {root} ({(rootLink.IsLink ? $"a link to {rootLink.Target ?? "another folder"}; only the link is removed" : Services.Engine.EngineRemovalMessages.FormatSize(folderBytes))}, {(safeRoot ? folder : "unsafe folder")}); " +
                 $"{outside.Count} model(s) of its features sit in your own folders" +
                 (unclaimed is { Count: > 0 }
                     ? $"; {unclaimed.Count} model file(s) ({Services.Engine.EngineRemovalMessages.FormatSize(unclaimed.Bytes)}) in its models folder no feature uses."
@@ -1137,7 +1143,9 @@ public partial class InstallerManagerViewModel : ViewModelBase
                 ? Services.Engine.EngineRemovalMessages.UninstallUnsafeFolder(root)
                 : folder == Services.Engine.EngineFolderState.Missing
                     ? Services.Engine.EngineRemovalMessages.UninstallMissingFolder(root)
-                    : Services.Engine.EngineRemovalMessages.Uninstall(root, folderBytes, outside, unclaimed);
+                    : rootLink.IsLink
+                        ? Services.Engine.EngineRemovalMessages.UninstallLink(root, rootLink.Target, outside)
+                        : Services.Engine.EngineRemovalMessages.Uninstall(root, folderBytes, outside, unclaimed);
             var choice = Services.Engine.EngineRemovalMessages.ToChoice(
                 await _dialogService.ShowOptionsAsync(Services.Engine.EngineRemovalMessages.UninstallTitle, message,
                     Services.Engine.EngineRemovalMessages.UninstallOptions(hasOutside)),
@@ -1172,8 +1180,6 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
             // An unsafe root never reaches the remover: nothing is stopped, held or deleted.
             var result = new Services.Engine.EngineRemovalResult(null, []);
-            // An Engine folder that is itself a junction or symlink loses only the link; the user is told after.
-            var rootLink = safeRoot && folder != Services.Engine.EngineFolderState.Missing ? EngineRootLink(root) : (false, null);
             if (safeRoot)
             {
                 IReadOnlyList<string> files = choice == Services.Engine.RemovalChoice.Everything

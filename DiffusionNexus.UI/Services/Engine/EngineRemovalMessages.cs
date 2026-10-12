@@ -97,6 +97,21 @@ public static class EngineRemovalMessages
         return text.ToString();
     }
 
+    /// <summary>
+    /// The question when the Engine folder is itself a junction or symlink: only the link goes, so no size
+    /// and no count of the files behind it (none of them is deleted).
+    /// </summary>
+    public static string UninstallLink(string folder, string? target, IReadOnlyList<PlannedFile> outside)
+    {
+        var text = new StringBuilder("Uninstall the Diffusion Nexus Engine?");
+        text.Append($"\n\nIts folder {folder} is a link to {target ?? "another folder"}, so only the link is removed: " +
+                    $"the files it points to stay {(target is null ? "where they are" : $"in {target}")}.");
+        if (outside.Count == 0)
+            text.Append(" Your own model folders are not touched.");
+        AppendOutside(text, "Some models the Engine's features use are in your own model folders.", outside);
+        return text.ToString();
+    }
+
     /// <summary>The Engine folder was itself a junction or symlink: only the link went, its target's files stay.</summary>
     public static string UninstalledLinkOnly(string folder, string? target) =>
         $"The Diffusion Nexus Engine was uninstalled. Its folder {folder} was a link to another folder, so only the link was removed: " +

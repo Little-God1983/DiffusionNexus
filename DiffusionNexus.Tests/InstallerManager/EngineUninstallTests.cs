@@ -334,6 +334,40 @@ public sealed class EngineUninstallTests : IDisposable
         }
     }
 
+    // An Engine folder that is itself a junction: the question says only the link goes and where the
+    // files stay, without a size or a count of model files read through the link (none of them is deleted).
+    [Fact]
+    public async Task AJunctionRoot_TheQuestionSaysOnlyTheLinkGoes_WithoutSizeOrUnclaimedCount()
+    {
+        var temp = Directory.CreateTempSubdirectory("dn-engine-linked-ask-").FullName;
+        var target = Path.Combine(temp, "RealEngine");
+        var link = Path.Combine(temp, "Engine");
+        Directory.CreateDirectory(Path.Combine(target, "models", "checkpoints"));
+        File.WriteAllText(Path.Combine(target, "main.py"), "");
+        File.WriteAllBytes(Path.Combine(target, "models", "checkpoints", "core-download.safetensors"), new byte[3 * 1024 * 1024]);
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/c mklink /J \"{link}\" \"{target}\"")
+                { CreateNoWindow = true, UseShellExecute = false })!.WaitForExit();
+            Directory.Exists(link).Should().BeTrue("the test needs the junction");
+            Answer(0);
+            var (vm, card) = await CreateAsync(link, catalog: CatalogWithout());
+
+            await vm.UninstallEngineAsync(card);
+
+            _dialog.Verify(d => d.ShowOptionsAsync(EngineRemovalMessages.UninstallTitle,
+                It.Is<string>(m => m.Contains("only the link is removed") && m.Contains(target)
+                                   && !m.Contains(" MB") && !m.Contains("no Engine feature uses")),
+                It.IsAny<string[]>()), Times.Once);
+            File.Exists(Path.Combine(target, "main.py")).Should().BeTrue("cancelled");
+        }
+        finally
+        {
+            if (Directory.Exists(link)) Directory.Delete(link); // the link only, before the tree
+            Directory.Delete(temp, recursive: true);
+        }
+    }
+
     // Minor: a model in the user's own folder that could not be deleted does not keep the Engine row.
     [Fact]
     public async Task AFailureOutsideTheEngineFolder_DoesNotKeepTheRow()
