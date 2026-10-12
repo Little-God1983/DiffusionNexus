@@ -186,6 +186,49 @@ public sealed class ModelFolderCatalogTests : IDisposable
         (await sut.GetSearchRootsAsync()).Should().Contain(engineModels);
     }
 
+    // The catalog is resolved once, so its unit of work is one long-lived DbContext: EF throws when a second
+    // operation starts on it. Two concurrent calls must both read the packages and both leave the Engine out.
+    [Fact]
+    public async Task DownloadTargets_TwoConcurrentCalls_BothLeaveTheEngineFolderOut()
+    {
+        var engine = Dir("Engine");
+        var user = Dir("UserModels");
+        _settings
+            .Setup(s => s.GetEnabledBaseModelFoldersAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new BaseModelFolder { FolderPath = Path.Combine(engine, "models"), Order = 0, InstallerPackageId = 7 },
+                new BaseModelFolder { FolderPath = user, Order = 1 }]);
+        var inside = 0;
+        var packages = new Mock<IInstallerPackageRepository>();
+        packages.Setup(p => p.GetAllAsync(It.IsAny<CancellationToken>())).Returns(async () =>
+        {
+            if (Interlocked.Increment(ref inside) > 1)
+            {
+                Interlocked.Decrement(ref inside);
+                throw new InvalidOperationException("A second operation was started on this context instance before a previous operation completed.");
+            }
+            try
+            {
+                await Task.Delay(100);
+                return (IReadOnlyList<InstallerPackage>)
+                [
+                    new InstallerPackage { Id = 7, Name = "Diffusion Nexus Engine", InstallationPath = engine, IsAppManaged = true, ExecutablePath = string.Empty }
+                ];
+            }
+            finally { Interlocked.Decrement(ref inside); }
+        });
+        var unitOfWork = new Mock<IUnitOfWork>();
+        unitOfWork.Setup(u => u.InstallerPackages).Returns(packages.Object);
+        var sut = new ModelFolderCatalog(_settings.Object, unitOfWork.Object);
+
+        var results = await Task.WhenAll(
+            Task.Run(() => sut.GetDownloadTargetsAsync()),
+            Task.Run(() => sut.GetDownloadTargetsAsync()));
+
+        foreach (var targets in results)
+            targets.Select(t => t.Path).Should().Equal(user, ModelFolderCatalog.FallbackRoot);
+    }
+
     // Runtime checks fall through: a failing package read leaves the targets as they were.
     [Fact]
     public async Task DownloadTargets_PackagesCannotBeRead_AllFoldersAreOffered()

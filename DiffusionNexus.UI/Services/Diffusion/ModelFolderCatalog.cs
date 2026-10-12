@@ -27,6 +27,10 @@ public sealed class ModelFolderCatalog : IModelFolderCatalog
 
     private readonly IUnitOfWork? _unitOfWork;
 
+    // The catalog is resolved once, so _unitOfWork is one long-lived DbContext: a second read started
+    // while one runs makes EF throw, and the filter would fail open. One package read at a time.
+    private readonly SemaphoreSlim _packagesLock = new(1, 1);
+
     /// <param name="settingsService">The Base Model Folders.</param>
     /// <param name="unitOfWork">
     /// Reads the installer packages, so folders inside the app-managed Engine are never a download
@@ -111,6 +115,7 @@ public sealed class ModelFolderCatalog : IModelFolderCatalog
     private async Task<IReadOnlyList<string>> AppManagedRootsAsync(CancellationToken cancellationToken)
     {
         if (_unitOfWork is null) return [];
+        await _packagesLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             _unitOfWork.ClearChangeTracker();
@@ -128,6 +133,10 @@ public sealed class ModelFolderCatalog : IModelFolderCatalog
         {
             Logger.Warning(ex, "Could not read the installer packages; every enabled model folder is offered as a download target");
             return [];
+        }
+        finally
+        {
+            _packagesLock.Release();
         }
     }
 
