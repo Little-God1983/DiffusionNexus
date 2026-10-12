@@ -42,7 +42,14 @@ public partial class CivitaiWaitlistEntry : ObservableObject
     public string? PreviewImageUrl { get; init; }
 
     /// <summary>Routes "open on Civitai" to civitai.red (full page for NSFW) vs civitai.com.</summary>
-    public bool IsNsfw { get; init; }
+    public bool IsNsfw { get; set; }
+
+    /// <summary>
+    /// Set when a re-check followed this file to a new version (#617). The card keeps the
+    /// names the user added it under, so this note is what explains the new Civitai link;
+    /// it is shown on every later successful re-check, not only the one that moved it.
+    /// </summary>
+    public string? MovedNote { get; set; }
 
     public DateTimeOffset AddedAt { get; init; }
 

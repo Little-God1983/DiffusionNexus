@@ -660,7 +660,11 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             return null;
         }
 
-        var primary = CivitaiVersionFiles.PickPrimary(freshVersion);
+        // The file the user waitlisted, by hash, before whatever is primary now: a version the
+        // waitlist followed by hash (#617) can carry a new primary file next to it.
+        var primary = freshVersion?.Files.FirstOrDefault(f => entry.ExpectedSha256 is not null
+                          && string.Equals(f.Hashes?.SHA256, entry.ExpectedSha256, StringComparison.OrdinalIgnoreCase))
+                      ?? CivitaiVersionFiles.PickPrimary(freshVersion);
         var job = new CivitaiDownloadJob
         {
             ModelId = entry.ModelId,

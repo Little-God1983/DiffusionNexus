@@ -101,7 +101,7 @@ public sealed class CivitaiWaitlistRefreshTests : IDisposable
     private CivitaiWaitlist CreateWithHashedEntry(out CivitaiWaitlistEntry entry, string path)
     {
         var wl = new CivitaiWaitlist(_client.Object, null, persistPathOverride: path);
-        wl.TryAdd(866273, "Facial FLUX/KREA2", "Concept", isNsfw: true,
+        wl.TryAdd(866273, "Facial FLUX/KREA2", "Concept", isNsfw: false,
             Hashed(CivitaiWaitlistTests.Version(3289193, Now.AddDays(-1)), 3289193, "old.safetensors", Sha), Now);
         entry = wl.Entries.Single();
         return wl;
@@ -127,7 +127,7 @@ public sealed class CivitaiWaitlistRefreshTests : IDisposable
         {
             ModelId = 2893208,
             Name = "V1_Krea2",
-            Model = new CivitaiVersionModelInfo { Name = "Cum_Everywhere_Krea2" }
+            Model = new CivitaiVersionModelInfo { Name = "Cum_Everywhere_Krea2", Nsfw = true }
         };
 
     private void HashLookupReturns(CivitaiModelVersion? version) =>
@@ -151,6 +151,7 @@ public sealed class CivitaiWaitlistRefreshTests : IDisposable
         entry.FileName.Should().Be("new.safetensors");
         entry.DownloadUrl.Should().Be("https://civitai.example/api/download/models/3271224?fileId=1");
         entry.StatusDetail.Should().Contain("Cum_Everywhere_Krea2").And.Contain("V1_Krea2");
+        entry.IsNsfw.Should().BeTrue("Open on Civitai must route by the model the entry now points at");
         _client.Verify(c => c.GetModelVersionByHashAsync(Sha, "key", It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -223,6 +224,61 @@ public sealed class CivitaiWaitlistRefreshTests : IDisposable
         restored.VersionId.Should().Be(3271224);
         restored.ModelId.Should().Be(2893208);
         restored.DownloadUrl.Should().Be("https://civitai.example/api/download/models/3271224?fileId=1");
+        restored.IsNsfw.Should().BeTrue();
+        restored.StatusDetail.Should().Contain("Cum_Everywhere_Krea2");
+    }
+
+    [Fact]
+    public async Task VersionGone_FollowedFile_KeepsTheMoveNoteOnTheNextUpdate()
+    {
+        // Review #624: the card keeps the old names, so without the note the globe button
+        // would open a model the user never added, with nothing explaining why.
+        var wl = CreateWithHashedEntry(out var entry, Path.Combine(_tempDir, "note.json"));
+        _client.Setup(c => c.GetModelVersionAsync(3289193, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+               .ReturnsAsync((CivitaiModelVersion?)null);
+        _client.Setup(c => c.GetModelVersionAsync(3271224, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+               .ReturnsAsync(Moved());
+        HashLookupReturns(Moved());
+
+        await wl.RefreshEntryAsync(entry, apiKey: null, utcNow: Now);
+        await wl.RefreshEntryAsync(entry, apiKey: null, utcNow: Now);
+
+        entry.Status.Should().Be(WaitlistEntryStatus.Available);
+        entry.StatusDetail.Should().Contain("Cum_Everywhere_Krea2");
+    }
+
+    [Fact]
+    public async Task VersionGone_HashLookupFails_StaysUnavailableNotCheckFailed()
+    {
+        // Review #624: CheckFailed promotes to "Available now" once the old deadline has passed
+        // (CreateWithHashedEntry's deadline is yesterday) — wrong for a version known to 404.
+        var wl = CreateWithHashedEntry(out var entry, Path.Combine(_tempDir, "hash-error.json"));
+        ClientReturns(null);
+        _client.Setup(c => c.GetModelVersionByHashAsync(Sha, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+               .ThrowsAsync(new HttpRequestException("429 cooldown"));
+
+        await wl.RefreshEntryAsync(entry, apiKey: null, utcNow: Now);
+        wl.RefreshAvailability(Now);
+
+        entry.Status.Should().Be(WaitlistEntryStatus.Unavailable);
+        entry.IsAvailable.Should().BeFalse();
+        entry.StatusDetail.Should().Contain("429 cooldown");
+        entry.LastCheckedAt.Should().Be(Now);
+    }
+
+    [Fact]
+    public async Task VersionLookup404_HashFindsTheSameVersion_JudgesIt()
+    {
+        var wl = CreateWithHashedEntry(out var entry, Path.Combine(_tempDir, "same-id.json"));
+        ClientReturns(null);
+        HashLookupReturns(Hashed(CivitaiWaitlistTests.Version(3289193, Now.AddDays(3)), 3289193, "old.safetensors", Sha));
+
+        await wl.RefreshEntryAsync(entry, apiKey: null, utcNow: Now);
+
+        entry.Status.Should().Be(WaitlistEntryStatus.Waiting);
+        entry.EarlyAccessDeadline.Should().Be(Now.AddDays(3));
+        entry.VersionId.Should().Be(3289193);
+        entry.StatusDetail.Should().BeNull();
     }
 
     [Fact]

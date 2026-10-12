@@ -177,31 +177,31 @@ public sealed class CivitaiWaitlist : ObservableObject
             _apiCache?.InvalidateVersion(entry.VersionId);
             version = await _civitaiClient.GetModelVersionAsync(entry.VersionId, apiKey, ct);
 
-            string? movedNote = null;
+            string? deadNote = null;
             if (version is null)
-                (version, movedNote) = await FindRepublishedAsync(entry, apiKey, ct);
+                (version, deadNote) = await FindRepublishedAsync(entry, apiKey, ct);
 
             if (version is null)
             {
                 entry.Status = WaitlistEntryStatus.Unavailable;
-                entry.StatusDetail = movedNote ?? "The model version no longer exists on Civitai.";
+                entry.StatusDetail = deadNote ?? "The model version no longer exists on Civitai.";
             }
             else if (version.IsPermanentlyPaid())
             {
                 entry.Status = WaitlistEntryStatus.PermanentlyPaid;
-                entry.StatusDetail = movedNote;
+                entry.StatusDetail = entry.MovedNote;
             }
             else if (version.IsEarlyAccessActive(now))
             {
                 entry.EarlyAccessDeadline = version.EarlyAccessDeadline ?? version.PaidAccess?.EndsAt;
                 entry.Status = WaitlistEntryStatus.Waiting;
-                entry.StatusDetail = movedNote;
+                entry.StatusDetail = entry.MovedNote;
             }
             else
             {
                 entry.EarlyAccessDeadline = version.EarlyAccessDeadline;
                 entry.Status = WaitlistEntryStatus.Available;
-                entry.StatusDetail = movedNote;
+                entry.StatusDetail = entry.MovedNote;
             }
             entry.LastCheckedAt = now;
             _logger?.Info(LogCategory.Download, "CivitaiWaitlist",
@@ -235,23 +235,39 @@ public sealed class CivitaiWaitlist : ObservableObject
     /// under a new version, even in another model (#617), so before calling the entry dead
     /// look the file up by the SHA256 captured at add time. A hit re-points the entry at the
     /// new version, which the caller then judges like any re-checked version. Returns the
-    /// version to judge (null = dead) and the note to show under the entry.
+    /// version to judge, or null plus an optional note for an entry that is dead.
     /// </summary>
-    private async Task<(CivitaiModelVersion? Version, string? Note)> FindRepublishedAsync(
+    private async Task<(CivitaiModelVersion? Version, string? DeadNote)> FindRepublishedAsync(
         CivitaiWaitlistEntry entry, string? apiKey, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(entry.ExpectedSha256)) return (null, null);
 
-        _apiCache?.InvalidateHash(entry.ExpectedSha256);
-        var moved = await _civitaiClient!.GetModelVersionByHashAsync(entry.ExpectedSha256, apiKey, ct);
+        CivitaiModelVersion? moved;
+        try
+        {
+            _apiCache?.InvalidateHash(entry.ExpectedSha256);
+            moved = await _civitaiClient!.GetModelVersionByHashAsync(entry.ExpectedSha256, apiKey, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The version itself 404'd, so this is not a CheckFailed: that status promotes to
+            // "Available now" once the old deadline passes. Dead until the next Update retries.
+            _logger?.Warn(LogCategory.Download, "CivitaiWaitlist",
+                $"Version {entry.VersionId} is gone; looking its file up by hash failed: {ex.Message}");
+            return (null, $"The model version no longer exists on Civitai, and looking for its file elsewhere failed: {ex.Message}");
+        }
+
         var file = moved?.Files.FirstOrDefault(f =>
             string.Equals(f.Hashes?.SHA256, entry.ExpectedSha256, StringComparison.OrdinalIgnoreCase));
-        if (moved is null || file is null || moved.Id == entry.VersionId)
+        if (moved is null || file is null)
         {
             _logger?.Info(LogCategory.Download, "CivitaiWaitlist",
                 $"Version {entry.VersionId} is gone and its file is not on Civitai under another version: {entry.ModelName} — {entry.VersionName}");
             return (null, null);
         }
+
+        // The id endpoint 404'd but the hash endpoint serves the same version: it exists.
+        if (moved.Id == entry.VersionId) return (moved, null);
 
         var where = $"{moved.Model?.Name ?? $"model {moved.ModelId}"} — {moved.Name}";
         if (Entries.Any(e => e != entry && e.VersionId == moved.Id))
@@ -268,7 +284,9 @@ public sealed class CivitaiWaitlist : ObservableObject
         entry.VersionId = moved.Id;
         entry.FileName = file.Name;
         entry.DownloadUrl = file.DownloadUrl ?? moved.DownloadUrl ?? entry.DownloadUrl;
-        return (moved, $"Civitai moved this file to \"{where}\".");
+        entry.IsNsfw = moved.Model?.Nsfw ?? entry.IsNsfw;
+        entry.MovedNote = $"Civitai moved this file to \"{where}\".";
+        return (moved, null);
     }
 
     /// <summary>"Update all" — re-checks every entry (gated to 3 concurrent), then persists.</summary>
@@ -367,7 +385,8 @@ public sealed class CivitaiWaitlist : ObservableObject
                 EarlyAccessDeadline = e.EarlyAccessDeadline,
                 LastCheckedAt = e.LastCheckedAt,
                 Status = e.Status,
-                StatusDetail = e.StatusDetail
+                StatusDetail = e.StatusDetail,
+                MovedNote = e.MovedNote
             }).ToList();
             File.WriteAllText(GetPersistPath(), JsonSerializer.Serialize(snapshot));
         }
@@ -408,7 +427,8 @@ public sealed class CivitaiWaitlist : ObservableObject
                     EarlyAccessDeadline = p.EarlyAccessDeadline,
                     LastCheckedAt = p.LastCheckedAt,
                     Status = p.Status,
-                    StatusDetail = p.StatusDetail
+                    StatusDetail = p.StatusDetail,
+                    MovedNote = p.MovedNote
                 };
                 Entries.Add(entry);
             }
@@ -444,6 +464,7 @@ public sealed class CivitaiWaitlist : ObservableObject
         public WaitlistEntryStatus Status { get; set; }
 
         public string? StatusDetail { get; set; }
+        public string? MovedNote { get; set; }
     }
 
     #endregion
