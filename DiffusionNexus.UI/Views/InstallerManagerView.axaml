@@ -239,10 +239,14 @@
                                                                   Command="{Binding MakeDefaultCommand}"/>
                                                         <Separator/>
                                                         <MenuItem Header="Remove"
-                                                                  Command="{Binding RemoveCommand}"/>
+                                                                  Command="{Binding RemoveCommand}"
+                                                                  ToolTip.Tip="{Binding RemoveTooltip}"
+                                                                  ToolTip.ShowOnDisabled="True"/>
                                                         <MenuItem Header="Delete from Disk"
                                                                   Command="{Binding DeleteFromDiskCommand}"
                                                                   IsVisible="{Binding ShowDeleteFromDiskMenuItem}"
+                                                                  ToolTip.Tip="{Binding DeleteFromDiskTooltip}"
+                                                                  ToolTip.ShowOnDisabled="True"
                                                                   Foreground="#DC3545"/>
                                                     </MenuFlyout>
                                                 </Button.Flyout>

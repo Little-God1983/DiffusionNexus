@@ -29,6 +29,10 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     private string _versionDisplay = string.Empty;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(RemoveTooltip))]
+    [NotifyPropertyChangedFor(nameof(DeleteFromDiskTooltip))]
+    [NotifyCanExecuteChangedFor(nameof(RemoveCommand))]
+    [NotifyCanExecuteChangedFor(nameof(DeleteFromDiskCommand))]
     private InstallerType _type;
 
     [ObservableProperty]
@@ -95,6 +99,10 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(ShowActionsPanel))]
     [NotifyPropertyChangedFor(nameof(ShowEngineInstallButton))]
     [NotifyPropertyChangedFor(nameof(ShowEngineWorkloadsButton))]
+    [NotifyPropertyChangedFor(nameof(RemoveTooltip))]
+    [NotifyPropertyChangedFor(nameof(DeleteFromDiskTooltip))]
+    [NotifyCanExecuteChangedFor(nameof(RemoveCommand))]
+    [NotifyCanExecuteChangedFor(nameof(DeleteFromDiskCommand))]
     private bool _isEngine;
 
     /// <summary>True when the engine has been installed (a backing row exists on disk).</summary>
@@ -249,6 +257,28 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     /// database row and the settings folders that pointed into it.
     /// </summary>
     public bool ShowDeleteFromDiskMenuItem => !IsMissing;
+
+    /// <summary>
+    /// Remove and Delete from Disk are greyed out on the Engine tile (#612). The Engine card does not
+    /// wire either handler, so both items did nothing, and the ordinary handlers must not be wired to
+    /// it: Remove would drop the Engine's row and leave its files, so the app would call it not
+    /// installed, and Delete from Disk asks the process manager whether the install runs, which does
+    /// not know the Engine's process, so it would delete a running Engine's folder. Uninstalling the
+    /// Engine needs its own feature. The Core card has no row and nothing on disk to act on.
+    /// </summary>
+    private bool CanRemoveOrDelete() => !IsEngine && !IsCore;
+
+    /// <summary>Why Remove is greyed out; null where it is not. True whether or not the Engine is installed.</summary>
+    public string? RemoveTooltip =>
+        IsEngine ? "The app manages the Diffusion Nexus Engine, so it can't be removed from this list."
+        : IsCore ? "This is built into the app, so there is nothing to remove."
+        : null;
+
+    /// <summary>Why Delete from Disk is greyed out; null where it is not.</summary>
+    public string? DeleteFromDiskTooltip =>
+        IsEngine ? "The app manages the Diffusion Nexus Engine. Deleting it from here is not supported: a running Engine must be stopped first."
+        : IsCore ? "This is built into the app, so there is nothing on disk to delete."
+        : null;
 
     /// <summary>
     /// The red "missing" banner. Not while the Engine installs: the tile shows the install then,
@@ -527,14 +557,14 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
             await MakeDefaultRequested.Invoke(this);
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanRemoveOrDelete))]
     private async Task RemoveAsync()
     {
         if (RemoveRequested is not null)
             await RemoveRequested.Invoke(this);
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanRemoveOrDelete))]
     private async Task DeleteFromDiskAsync()
     {
         if (DeleteFromDiskRequested is not null)

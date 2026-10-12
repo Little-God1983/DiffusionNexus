@@ -32,7 +32,8 @@ internal static class EngineTestHarness
         IManagedComfyUiEngine? engine = null,
         IReadOnlyList<string>? modelSearchRoots = null,
         Mock<IUnifiedLogger>? loggerMock = null,
-        IEnumerable<IInstallerUpdateService>? updateServices = null)
+        IEnumerable<IInstallerUpdateService>? updateServices = null,
+        Mock<IAppSettingsRepository>? appSettingsMock = null)
     {
         var repo = new Mock<IInstallerPackageRepository>();
         repo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>()))
@@ -58,6 +59,10 @@ internal static class EngineTestHarness
             appSettingsRepo.Setup(r => r.GetSettingsWithIncludesAsync(It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new AppSettings { BaseModelFolders = baseModelFolders.ToList() });
             uow.Setup(u => u.AppSettings).Returns(appSettingsRepo.Object);
+        }
+        else if (appSettingsMock is not null)
+        {
+            uow.Setup(u => u.AppSettings).Returns(appSettingsMock.Object);
         }
 
         // Only apply the default chosenFolder stub when the caller didn't bring their own dialog
