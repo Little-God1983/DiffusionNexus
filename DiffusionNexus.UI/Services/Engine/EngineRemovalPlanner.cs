@@ -82,6 +82,19 @@ public static class EngineRemovalPlanner
             .ToList();
     }
 
+    /// <summary>
+    /// False for a recorded Engine folder the app must never delete, size or sweep settings by: blank,
+    /// not a full path, or a drive (or network share) root. A corrupted row can hold any of these.
+    /// </summary>
+    public static bool IsSafeEngineRoot(string? root)
+    {
+        if (string.IsNullOrWhiteSpace(root) || !Path.IsPathFullyQualified(root)) return false;
+        var full = FolderPathMatch.Normalize(root);
+        if (full is null) return false;
+        var driveRoot = Path.GetPathRoot(full)?.TrimEnd('\\', '/');
+        return !string.Equals(driveRoot, full.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>Total size of the files under <paramref name="folder"/>, not following junctions; 0 when it is gone.</summary>
     public static long FolderSize(string folder)
     {

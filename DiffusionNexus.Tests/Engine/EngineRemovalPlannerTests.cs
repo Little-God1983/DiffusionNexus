@@ -116,4 +116,21 @@ public class EngineRemovalPlannerTests
 
         EngineRemovalPlanner.PlanUninstallOutsideModels(Root, checks, Size).Should().HaveCount(1);
     }
+
+    [Theory]
+    [InlineData(@"C:\Engine\ComfyUI", true)]
+    [InlineData(@"C:\Engine\ComfyUI\", true)]
+    [InlineData(@"D:\", false)]
+    [InlineData(@"D:", false)]
+    [InlineData(@"D:/", false)]
+    [InlineData(@"\\server\share", false)]
+    [InlineData(@"\\server\share\", false)]
+    [InlineData(@"\\server\share\Engine", true)]
+    [InlineData(@"Engine\ComfyUI", false)]
+    [InlineData(@"\Engine\ComfyUI", false)]
+    [InlineData("", false)]
+    [InlineData("   ", false)]
+    [InlineData(null, false)]
+    public void IsSafeEngineRoot_RefusesBlankRelativeAndDriveRoots(string? root, bool safe) =>
+        EngineRemovalPlanner.IsSafeEngineRoot(root).Should().Be(safe);
 }

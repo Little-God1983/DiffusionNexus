@@ -60,4 +60,14 @@ public class EngineRemovalMessagesTests
         text.Should().Contain(@"This deletes C:\E (6.0 GB)");
         text.Should().Contain("Your own model folders are not touched.");
     }
+
+    [Fact]
+    public void UninstallUnsafeFolder_SaysNothingOnDiskIsTouched()
+    {
+        var text = EngineRemovalMessages.UninstallUnsafeFolder(@"D:\");
+
+        text.Should().StartWith("Uninstall the Diffusion Nexus Engine?");
+        text.Should().Contain("\"D:\\\" is not a folder the app can safely delete");
+        text.Should().Contain("nothing on disk is touched");
+    }
 }

@@ -73,6 +73,10 @@ public static class EngineRemovalMessages
     public static string UninstallMissingFolder(string folder) =>
         $"Uninstall the Diffusion Nexus Engine?\n\nIts folder {folder} is already gone. The app forgets the Engine and its model folder in Settings.";
 
+    public static string UninstallUnsafeFolder(string folder) =>
+        $"Uninstall the Diffusion Nexus Engine?\n\nIts recorded folder \"{folder}\" is not a folder the app can safely delete, " +
+        "so nothing on disk is touched. The app only forgets the Engine; the folders listed in Settings stay as they are.";
+
     public static string Busy(string reason) =>
         $"The Diffusion Nexus Engine is busy ({reason}). Wait until it finishes, then try again.";
 
