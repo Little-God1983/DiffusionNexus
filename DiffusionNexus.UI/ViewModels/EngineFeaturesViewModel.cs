@@ -325,8 +325,11 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
                  $"({EngineRemovalMessages.FormatSize(plan.EngineBytes)}), {plan.OutsideModels.Count} in your own folders, " +
                  $"{plan.Kept.Count} kept ({string.Join(", ", plan.Kept.Select(k => $"{k.Name} for {k.NeededBy}"))})" +
                  (plan.RemovedWithIt.Count > 0
-                     ? $"; goes with it, using only its files: {string.Join(", ", plan.RemovedWithIt)}."
-                     : "."));
+                     ? $"; goes with it, using only its files: {string.Join(", ", plan.RemovedWithIt)}"
+                     : "") +
+                 (plan.LeftPartial.Count > 0
+                     ? $"; left partly installed: {string.Join(", ", plan.LeftPartial)}"
+                     : "") + ".");
             ProgressText = null;
 
             if (!plan.HasAnythingToDelete)

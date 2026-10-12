@@ -44,6 +44,8 @@ public static class EngineRemovalMessages
 
         foreach (var name in plan.RemovedWithIt)
             text.Append($"\n\n{name} uses only files of this feature, so it is removed too.");
+        foreach (var name in plan.LeftPartial)
+            text.Append($"\n\n{name} loses its files except those another feature keeps; it will show as Partial.");
 
         if (plan.Kept.Count > 0)
         {

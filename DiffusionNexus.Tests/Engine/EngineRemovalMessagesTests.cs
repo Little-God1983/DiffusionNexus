@@ -75,6 +75,18 @@ public class EngineRemovalMessagesTests
             "Inpaint & Outpaint uses only files of this feature, so it is removed too.");
     }
 
+    // A feature that loses this feature's files but keeps some another feature needs is not "removed too".
+    [Fact]
+    public void FeatureRemoval_NamesTheFeaturesLeftPartlyInstalled()
+    {
+        var plan = new EngineRemovalPlan([@"C:\E\custom_nodes\ComfyUI-GGUF"], [], [], [], []) { LeftPartial = ["Inpaint & Outpaint"] };
+
+        var text = EngineRemovalMessages.FeatureRemoval("Outpaint Vision", plan);
+
+        text.Should().Contain("Inpaint & Outpaint loses its files except those another feature keeps; it will show as Partial.");
+        text.Should().NotContain("removed too");
+    }
+
     [Fact]
     public void Uninstall_WithoutOutsideModels_SaysTheUsersFoldersAreNotTouched()
     {

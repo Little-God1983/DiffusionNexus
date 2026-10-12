@@ -122,6 +122,27 @@ public class EngineRemovalPlannerTests
         plan.Kept.Should().BeEmpty();
     }
 
+    // E: Inpaint & Outpaint's files are a subset of Outpaint Vision's, but Canvas keeps the shared VAE.
+    // Removing Outpaint Vision leaves Inpaint & Outpaint with that VAE: partly installed, not removed too.
+    [Fact]
+    public void SubsetFeature_WithAFileAThirdFeatureKeeps_IsLeftPartial_NotRemovedWithIt()
+    {
+        var krea = Root + @"\models\diffusion_models\krea2_turbo-Q4_K_S.gguf";
+        var checks = new[]
+        {
+            Check(EngineFeature.InpaintOutpaint, "Inpaint & Outpaint", Result([(Gguf, true)], [[EngineVae], [EngineUnet]])),
+            Check(EngineFeature.OutpaintVision, "Outpaint Vision", Result([(Gguf, true), (VlNode, true)], [[EngineVae], [EngineUnet], [EngineVl]])),
+            Check(EngineFeature.Canvas, "Canvas · Krea 2 Turbo", Result([], [[EngineVae], [krea]])),
+        };
+
+        var plan = EngineRemovalPlanner.PlanFeatureRemoval(Root, checks, EngineFeature.OutpaintVision, Size);
+
+        plan.Kept.Should().Equal(new KeptItem("qwen_image_vae.safetensors", EngineVae, "Canvas · Krea 2 Turbo"));
+        plan.EngineModels.Select(f => f.Path).Should().BeEquivalentTo([EngineUnet, EngineVl]);
+        plan.RemovedWithIt.Should().BeEmpty();
+        plan.LeftPartial.Should().Equal("Inpaint & Outpaint");
+    }
+
     [Fact]
     public void Feature_SharedOnlyWithAFeatureThatIsNotInstalled_IsDeleted()
     {

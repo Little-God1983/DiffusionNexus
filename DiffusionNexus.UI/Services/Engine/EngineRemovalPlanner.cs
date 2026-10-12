@@ -11,7 +11,7 @@ public sealed record KeptItem(string Name, string Path, string NeededBy);
 
 /// <summary>
 /// What removing one feature deletes, keeps, and asks about. <paramref name="RemovedWithIt"/> names the
-/// features that read as present only through this feature's files, so they go with it.
+/// features that read as present only through this feature's files and keep none of them, so they go with it.
 /// </summary>
 public sealed record EngineRemovalPlan(
     IReadOnlyList<string> NodePackFolders,
@@ -20,6 +20,12 @@ public sealed record EngineRemovalPlan(
     IReadOnlyList<KeptItem> Kept,
     IReadOnlyList<string> RemovedWithIt)
 {
+    /// <summary>
+    /// Features that protect nothing and lose some of their files to this removal but not all: a file of
+    /// theirs another feature keeps stays. They show as Partial afterwards.
+    /// </summary>
+    public IReadOnlyList<string> LeftPartial { get; init; } = [];
+
     public long EngineBytes => EngineModels.Sum(f => f.Bytes);
 
     public bool HasAnythingToDelete => NodePackFolders.Count > 0 || EngineModels.Count > 0 || OutsideModels.Count > 0;
@@ -46,7 +52,6 @@ public static class EngineRemovalPlanner
         var targetPaths = new HashSet<string>(OwnPaths(target).Select(Key), StringComparer.OrdinalIgnoreCase);
         var present = checks.Where(c => c.Feature != feature && c.IsPresent).ToList();
         var others = present.Where(c => OwnPaths(c).Any(p => !targetPaths.Contains(Key(p)))).ToList();
-        var removedWithIt = present.Except(others).Select(c => c.DisplayName).ToList();
 
         var nodeOwners = Owners(others, c => c.Results
             .SelectMany(r => r.CustomNodeResults).Where(n => n.IsInstalled).Select(n => n.ExpectedPath));
@@ -80,7 +85,19 @@ public static class EngineRemovalPlanner
                 outside.Add(new PlannedFile(path, sizeOf(path)));
         }
 
-        return new EngineRemovalPlan(nodePacks, engineModels, outside, kept, removedWithIt);
+        // A feature that protects nothing goes with the target only when none of its files is kept; one that
+        // keeps a file another feature needs is left partly installed; one that loses nothing is not named.
+        var keptPaths = new HashSet<string>(kept.Select(k => Key(k.Path)), StringComparer.OrdinalIgnoreCase);
+        var removedWithIt = new List<string>();
+        var leftPartial = new List<string>();
+        foreach (var check in present.Except(others))
+        {
+            var paths = OwnPaths(check).Select(Key).ToList();
+            if (paths.All(keptPaths.Contains)) continue;
+            (paths.Any(keptPaths.Contains) ? leftPartial : removedWithIt).Add(check.DisplayName);
+        }
+
+        return new EngineRemovalPlan(nodePacks, engineModels, outside, kept, removedWithIt) { LeftPartial = leftPartial };
     }
 
     /// <summary>A feature's files on disk that a removal of it would delete: installed node packs and every copy of its (non-placeholder) models.</summary>
