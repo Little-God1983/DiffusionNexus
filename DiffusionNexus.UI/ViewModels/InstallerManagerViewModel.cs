@@ -1287,10 +1287,6 @@ public partial class InstallerManagerViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// After an uninstall that failed partway (the folder may already be gone), shows the tile what the
-    /// disk holds now. Best effort: a failure here must not hide the original error.
-    /// </summary>
-    /// <summary>
     /// Whether the Engine folder is itself a junction or symlink, and the folder it points to (null when
     /// that cannot be read). Unreadable attributes count as no link: the remover checks again.
     /// </summary>
@@ -1309,6 +1305,10 @@ public partial class InstallerManagerViewModel : ViewModelBase
         }
     }
 
+    /// <summary>
+    /// After an uninstall that failed partway (the folder may already be gone), shows the tile what the
+    /// disk holds now. Best effort: a failure here must not hide the original error.
+    /// </summary>
     private async Task ShowEngineFolderAsItIsAsync(InstallerPackageCardViewModel card)
     {
         try
