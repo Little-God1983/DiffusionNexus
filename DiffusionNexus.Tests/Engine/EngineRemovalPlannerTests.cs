@@ -261,6 +261,28 @@ public class EngineRemovalPlannerTests
         plan.OutsideModels.Should().Equal(new PlannedFile(UserAe, 1000));
     }
 
+    // R3-1: in the nested layout the Engine's files are its ComfyUI clone (and venv); the user's own library
+    // next to them in the folder they picked is theirs: listed and optional, never an Engine deletion.
+    [Fact]
+    public void Feature_NestedLayout_ACopyBesideTheEnginesParts_IsTheUsers()
+    {
+        var root = Directory.CreateTempSubdirectory("dn-planner-nested-").FullName;
+        try
+        {
+            Write(root, @"ComfyUI\main.py", 0);
+            var engineCopy = Write(root, @"ComfyUI\models\vae\ae.safetensors", 1);
+            var userCopy = Write(root, @"MyModels\vae\ae.safetensors", 1);
+            var checks = new[] { Check(EngineFeature.BatchUpscale, "Batch Upscale", Result([], [[engineCopy, userCopy]])) };
+
+            var plan = EngineRemovalPlanner.PlanFeatureRemoval(root, checks, EngineFeature.BatchUpscale, Size);
+
+            plan.EngineModels.Select(f => f.Path).Should().Equal(engineCopy);
+            plan.OutsideModels.Select(f => f.Path).Should().Equal(userCopy);
+            EngineRemovalPlanner.PlanUninstallOutsideModels(root, checks, Size).Select(f => f.Path).Should().Equal(userCopy);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     [Fact]
     public void Feature_AFolderNamedLikeTheEngineButBesideIt_IsOutside()
     {

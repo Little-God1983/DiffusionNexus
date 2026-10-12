@@ -134,6 +134,27 @@ listed for deletion that is reached through a link inside the Engine folder is r
 never followed. Drive roots, blank and relative paths are
 never deleted. Link checks are scoped to the Engine folder: a link above it does not block.
 
+**Nested layout.** The Engine row can hold a folder the user picked (for example `D:\AI`) with the
+Engine's ComfyUI clone inside it (`D:\AI\ComfyUI\main.py`) rather than the clone itself. That folder
+may hold the user's own things too (their model libraries, another ComfyUI). The nested layout is a
+folder with no `main.py` at its root but a `ComfyUI\` or `venv\` in it (a half-deleted nested Engine, on
+a retry, still has one of them); a folder with `main.py` at its root is the clone itself and is deleted
+whole as above. In the nested layout only the Engine's own entries go: `ComfyUI\` (the clone, which
+holds the SDK's venv, models, custom nodes, launcher script and `extra_model_paths.yaml`), a `venv\`
+next to it, and the SDK's `install.log` (written to the install root). The question lists them
+(*"This deletes the Engine's parts of <folder> (<size>): …"*, the size counting only those, then
+*"Anything else in <folder> stays; the folder itself is deleted only if nothing else is left in it."*).
+The folder itself is deleted only when it is empty afterwards; otherwise the result says *"Left in
+<folder>: <n> other item(s) that are not part of the Engine."* Settings folders are forgotten only
+inside what was deleted (`ComfyUI\` and `venv\`, the whole folder only when it went). A failure keeps
+the row only when it is inside those parts. Remove feature treats the same parts as the Engine: a model
+copy elsewhere in that folder is one of the user's own (listed and optional), never an Engine deletion.
+
+**Not an Engine.** A recorded folder that has none of `main.py` (at the root or under `ComfyUI\`),
+`venv`, `custom_nodes`, `comfy` or `ComfyUI` is only forgotten, like a corrupted row: nothing is
+deleted, no settings entry is swept, and the question says the folder did not look like a Diffusion
+Nexus Engine.
+
 **Corrupted row.** An Engine row whose path is blank, relative or a drive root is only forgotten:
 nothing is sized or deleted, and the settings entries stay as they are.
 

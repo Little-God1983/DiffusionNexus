@@ -220,6 +220,95 @@ public sealed class EngineUninstallTests : IDisposable
         finally { Directory.Delete(unrelated, recursive: true); }
     }
 
+    /// <summary>
+    /// The nested layout: the row holds the folder the user picked, with the Engine's ComfyUI clone and
+    /// venv inside it and the install log next to them.
+    /// </summary>
+    private static string NestedEngine(string root)
+    {
+        Directory.CreateDirectory(Path.Combine(root, "ComfyUI", "models", "vae"));
+        File.WriteAllText(Path.Combine(root, "ComfyUI", "main.py"), "");
+        File.WriteAllText(Path.Combine(root, "ComfyUI", "models", "vae", "ae.safetensors"), "x");
+        Directory.CreateDirectory(Path.Combine(root, "venv", "Scripts"));
+        File.WriteAllText(Path.Combine(root, "venv", "Scripts", "python.exe"), "x");
+        File.WriteAllText(Path.Combine(root, "install.log"), "x");
+        return root;
+    }
+
+    // R3-1: an Engine installed into a folder the user picked (D:\AI) that also holds the user's own models.
+    // Only the Engine's parts go; the user's folder and its settings row stay; the root stays because it is
+    // not empty, and the user is told what was left.
+    [Fact]
+    public async Task NestedEngine_InAFolderWithTheUsersOwnFiles_DeletesOnlyTheEnginesParts()
+    {
+        var root = NestedEngine(Directory.CreateTempSubdirectory("dn-engine-nested-").FullName);
+        try
+        {
+            var userModels = Path.Combine(root, "MyModels");
+            Directory.CreateDirectory(userModels);
+            File.WriteAllText(Path.Combine(userModels, "my-lora.safetensors"), "mine");
+            _settings.BaseModelFolders.Add(new BaseModelFolder { Id = 20, FolderPath = userModels });
+            _settings.BaseModelFolders.Add(new BaseModelFolder { Id = 21, FolderPath = Path.Combine(root, "ComfyUI", "models"), InstallerPackageId = 7 });
+            Answer(1);
+            var (vm, card) = await CreateAsync(root);
+
+            await vm.UninstallEngineAsync(card);
+
+            Directory.Exists(Path.Combine(root, "ComfyUI")).Should().BeFalse();
+            Directory.Exists(Path.Combine(root, "venv")).Should().BeFalse();
+            File.Exists(Path.Combine(root, "install.log")).Should().BeFalse();
+            File.Exists(Path.Combine(userModels, "my-lora.safetensors")).Should().BeTrue("the user's own files are not the Engine's");
+            _removedRows.Should().ContainSingle().Which.Id.Should().Be(7);
+            _settingsRepo.Verify(r => r.RemoveBaseModelFolder(It.Is<BaseModelFolder>(f => f.Id == 20)), Times.Never);
+            _settingsRepo.Verify(r => r.RemoveBaseModelFolder(It.Is<BaseModelFolder>(f => f.Id == 21)), Times.Once);
+            _dialog.Verify(d => d.ShowOptionsAsync(EngineRemovalMessages.UninstallTitle,
+                It.Is<string>(m => m.Contains(Path.Combine(root, "ComfyUI")) && m.Contains(Path.Combine(root, "venv"))
+                                   && !m.Contains($"This deletes {root} (")),
+                It.IsAny<string[]>()), Times.Once);
+            _dialog.Verify(d => d.ShowMessageAsync(EngineRemovalMessages.UninstallTitle,
+                It.Is<string>(m => m.Contains($"Left in {root}: 1 other item that is not part of the Engine."))), Times.Once);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
+    }
+
+    // R3-1: a nested Engine alone in its folder: its parts go, and the then empty folder too.
+    [Fact]
+    public async Task NestedEngine_Alone_TheEmptyRootIsDeletedToo()
+    {
+        var root = NestedEngine(Directory.CreateTempSubdirectory("dn-engine-nested-alone-").FullName);
+        try
+        {
+            Answer(1);
+            var (vm, card) = await CreateAsync(root);
+
+            await vm.UninstallEngineAsync(card);
+
+            Directory.Exists(root).Should().BeFalse();
+            _removedRows.Should().ContainSingle();
+            _dialog.Verify(d => d.ShowMessageAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
+    }
+
+    // R3-1: a half-deleted nested Engine (a retry after a failure) still has its venv: the retry deletes it.
+    [Fact]
+    public async Task NestedEngine_HalfDeleted_TheRetryDeletesWhatIsLeft()
+    {
+        var root = NestedEngine(Directory.CreateTempSubdirectory("dn-engine-nested-retry-").FullName);
+        try
+        {
+            Directory.Delete(Path.Combine(root, "ComfyUI"), recursive: true);
+            Answer(1);
+            var (vm, card) = await CreateAsync(root);
+
+            await vm.UninstallEngineAsync(card);
+
+            Directory.Exists(root).Should().BeFalse();
+            _removedRows.Should().ContainSingle();
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
+    }
+
     private void AssertForgottenWithoutTouchingAnything(string recordedFolder)
     {
         _dialog.Verify(d => d.ShowOptionsAsync(It.IsAny<string>(),

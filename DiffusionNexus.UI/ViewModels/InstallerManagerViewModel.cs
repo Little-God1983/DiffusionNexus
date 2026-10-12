@@ -1137,17 +1137,32 @@ public partial class InstallerManagerViewModel : ViewModelBase
                     $"Uninstall: the recorded Engine folder \"{root}\" is not a folder the app can safely delete " +
                     "(blank, not a full path, or a drive). Nothing on disk will be touched; the app only forgets the Engine.");
             }
-            else if (folder != Services.Engine.EngineFolderState.Missing)
+            // The nested layout (the user picked a folder; the Engine is its ComfyUI clone and venv in it):
+            // only those parts and the install log go, then the folder itself only if nothing else is in it.
+            var nested = safeRoot && folder != Services.Engine.EngineFolderState.Missing && !rootLink.IsLink
+                && await Task.Run(() => Services.Engine.ManagedEngineLocator.IsNestedLayout(root));
+            IReadOnlyList<string> engineDirectories = [root];
+            IReadOnlyList<string> engineFiles = [];
+            if (nested)
+            {
+                engineDirectories = Services.Engine.ManagedEngineLocator.NestedEngineFolders(root).Where(Directory.Exists).ToList();
+                engineFiles = Services.Engine.ManagedEngineLocator.NestedEngineFiles(root).Where(File.Exists).ToList();
+            }
+
+            if (safeRoot && folder != Services.Engine.EngineFolderState.Missing)
             {
                 (outside, unclaimed) = await PlanFeatureModelsAsync(root, folder);
                 if (rootLink.IsLink)
                     unclaimed = null;
                 else
-                    folderBytes = await Task.Run(() => Services.Engine.EngineRemovalPlanner.FolderSize(root));
+                    folderBytes = await Task.Run(() =>
+                        engineDirectories.Sum(Services.Engine.EngineRemovalPlanner.FolderSize) +
+                        engineFiles.Sum(f => new FileInfo(f).Length));
             }
 
             _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
-                $"Uninstall planned: {root} ({(rootLink.IsLink ? $"a link to {rootLink.Target ?? "another folder"}; only the link is removed" : Services.Engine.EngineRemovalMessages.FormatSize(folderBytes))}, {(notAnEngine ? "not an Engine folder" : safeRoot ? folder : "unsafe folder")}); " +
+                $"Uninstall planned: {(nested ? $"the Engine's parts of {root} ({string.Join(", ", engineDirectories.Concat(engineFiles))})" : root)} " +
+                $"({(rootLink.IsLink ? $"a link to {rootLink.Target ?? "another folder"}; only the link is removed" : Services.Engine.EngineRemovalMessages.FormatSize(folderBytes))}, {(notAnEngine ? "not an Engine folder" : safeRoot ? folder : "unsafe folder")}); " +
                 $"{outside.Count} model(s) of its features sit in your own folders" +
                 (unclaimed is { Count: > 0 }
                     ? $"; {unclaimed.Count} model file(s) ({Services.Engine.EngineRemovalMessages.FormatSize(unclaimed.Bytes)}) in its models folder no feature uses."
@@ -1162,7 +1177,8 @@ public partial class InstallerManagerViewModel : ViewModelBase
                     ? Services.Engine.EngineRemovalMessages.UninstallMissingFolder(root)
                     : rootLink.IsLink
                         ? Services.Engine.EngineRemovalMessages.UninstallLink(root, rootLink.Target, outside)
-                        : Services.Engine.EngineRemovalMessages.Uninstall(root, folderBytes, outside, unclaimed);
+                        : Services.Engine.EngineRemovalMessages.Uninstall(root, folderBytes, outside, unclaimed,
+                            nested ? engineDirectories.Concat(engineFiles).ToList() : null);
             var choice = Services.Engine.EngineRemovalMessages.ToChoice(
                 await _dialogService.ShowOptionsAsync(Services.Engine.EngineRemovalMessages.UninstallTitle, message,
                     Services.Engine.EngineRemovalMessages.UninstallOptions(hasOutside)),
@@ -1199,11 +1215,35 @@ public partial class InstallerManagerViewModel : ViewModelBase
             var result = new Services.Engine.EngineRemovalResult(null, []);
             if (safeRoot)
             {
-                IReadOnlyList<string> files = choice == Services.Engine.RemovalChoice.Everything
-                    ? outside.Select(f => f.Path).ToList()
-                    : [];
-                IReadOnlyList<string> directories = folder == Services.Engine.EngineFolderState.Missing ? [] : [root];
+                var missing = folder == Services.Engine.EngineFolderState.Missing;
+                IReadOnlyList<string> files = (missing ? [] : engineFiles)
+                    .Concat(choice == Services.Engine.RemovalChoice.Everything ? outside.Select(f => f.Path) : [])
+                    .ToList();
+                IReadOnlyList<string> directories = missing ? [] : engineDirectories;
                 result = await remover.RemoveAsync(directories, files, engineRoot: root, installActivityHeldByCaller: true);
+            }
+
+            // A failure inside what the uninstall deletes as the Engine (not a model in the user's own folder).
+            bool IsEnginePart(string path) => (nested ? engineDirectories.Concat(engineFiles) : [root]).Any(part => FolderPathMatch.Contains(part, path));
+
+            // Nested layout: the folder itself goes only when nothing but the Engine was in it.
+            var leftInRoot = 0;
+            var rootDeleted = !nested;
+            if (nested && !result.WasBusy && !result.Failed.Any(f => IsEnginePart(f.Path)))
+            {
+                try
+                {
+                    leftInRoot = Directory.Exists(root) ? Directory.EnumerateFileSystemEntries(root).Count() : 0;
+                    if (leftInRoot == 0 && Directory.Exists(root)) Directory.Delete(root, recursive: false);
+                    rootDeleted = leftInRoot == 0;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    _unifiedLogger.Warn(LogCategory.Installation, EngineLogSource, $"The emptied Engine folder {root} could not be deleted: {ex.Message}");
+                }
+                _unifiedLogger.Info(LogCategory.Installation, EngineLogSource, rootDeleted
+                    ? $"Deleted the emptied Engine folder {root}."
+                    : $"Left in {root}: {leftInRoot} other item(s) that are not part of the Engine.");
             }
 
             if (result.WasBusy)
@@ -1216,7 +1256,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
             // Anything of the Engine folder left: keep the row so Uninstall stays on the tile for another try.
             // A file outside it (a model in the user's own folder) that could not go does not keep the row.
-            if (result.Failed.Any(f => FolderPathMatch.Contains(root, f.Path)))
+            if (result.Failed.Any(f => IsEnginePart(f.Path)))
             {
                 _unifiedLogger.Warn(LogCategory.Installation, EngineLogSource,
                     "The Engine was not fully uninstalled; it stays registered so Uninstall Engine can be tried again.");
@@ -1230,7 +1270,11 @@ public partial class InstallerManagerViewModel : ViewModelBase
                 return;
             }
 
-            await ForgetEngineAsync(root, sweepSettings: !notAnEngine);
+            // Settings folders are forgotten only inside what was deleted.
+            IReadOnlyList<string> swept = notAnEngine ? []
+                : nested ? [.. Services.Engine.ManagedEngineLocator.NestedEngineFolders(root), .. rootDeleted ? new[] { root } : []]
+                : [root];
+            await ForgetEngineAsync(swept);
 
             var index = InstallerCards.IndexOf(card);
             if (index >= 0) InstallerCards[index] = CreateEngineCard(null);
@@ -1245,10 +1289,13 @@ public partial class InstallerManagerViewModel : ViewModelBase
                 _unifiedLogger.Info(LogCategory.Installation, EngineLogSource, done);
             }
 
+            if (leftInRoot > 0)
+                done += "\n\n" + Services.Engine.EngineRemovalMessages.LeftInFolder(root, leftInRoot);
+
             if (result.Failed.Count > 0)
                 await _dialogService.ShowMessageAsync(Services.Engine.EngineRemovalMessages.UninstallTitle,
                     Services.Engine.EngineRemovalMessages.Failures(done, result.Failed));
-            else if (rootLink.IsLink)
+            else if (rootLink.IsLink || leftInRoot > 0)
                 await _dialogService.ShowMessageAsync(Services.Engine.EngineRemovalMessages.UninstallTitle, done);
         }
         catch (Exception ex)
@@ -1343,26 +1390,27 @@ public partial class InstallerManagerViewModel : ViewModelBase
     /// <summary>
     /// Drops what pointed at the Engine: settings folders whose path lies inside it (by path: an old
     /// startup backfill linked the user's own libraries to the Engine row), the app-managed row(s), and
-    /// the Engine as ComfyUI Server (switched to the custom URL, which keeps its saved address). With a
-    /// root that is not a safe Engine folder (blank, relative, a drive), or with <paramref name="sweepSettings"/>
-    /// false (a folder that did not look like an Engine), no settings folder is swept by it.
+    /// the Engine as ComfyUI Server (switched to the custom URL, which keeps its saved address). Only the
+    /// <paramref name="sweptFolders"/> are swept: the whole Engine folder in the direct layout, only the
+    /// deleted ComfyUI clone and venv in the nested one (the folder itself only when it was deleted), none
+    /// for a folder that did not look like an Engine. A folder that is not a safe Engine folder (blank,
+    /// relative, a drive) never sweeps anything.
     /// </summary>
-    private async Task ForgetEngineAsync(string engineRoot, bool sweepSettings = true)
+    private async Task ForgetEngineAsync(IReadOnlyList<string> sweptFolders)
     {
         var (unitOfWork, owned) = RentUnitOfWork();
         try
         {
             var settings = await unitOfWork.AppSettings.GetSettingsWithIncludesAsync();
             var removed = 0;
-            if (sweepSettings && Services.Engine.EngineRemovalPlanner.IsSafeEngineRoot(engineRoot))
-            {
-                foreach (var row in settings.BaseModelFolders.Where(f => FolderPathMatch.Contains(engineRoot, f.FolderPath)).ToList())
-                { unitOfWork.AppSettings.RemoveBaseModelFolder(row); removed++; }
-                foreach (var row in settings.ImageGalleries.Where(g => FolderPathMatch.Contains(engineRoot, g.FolderPath)).ToList())
-                { unitOfWork.AppSettings.RemoveImageGallery(row); removed++; }
-                foreach (var row in settings.LoraSources.Where(s => FolderPathMatch.Contains(engineRoot, s.FolderPath)).ToList())
-                { unitOfWork.AppSettings.RemoveLoraSource(row); removed++; }
-            }
+            var swept = sweptFolders.Where(Services.Engine.EngineRemovalPlanner.IsSafeEngineRoot).ToList();
+            bool Inside(string? path) => swept.Any(folder => FolderPathMatch.Contains(folder, path));
+            foreach (var row in settings.BaseModelFolders.Where(f => Inside(f.FolderPath)).ToList())
+            { unitOfWork.AppSettings.RemoveBaseModelFolder(row); removed++; }
+            foreach (var row in settings.ImageGalleries.Where(g => Inside(g.FolderPath)).ToList())
+            { unitOfWork.AppSettings.RemoveImageGallery(row); removed++; }
+            foreach (var row in settings.LoraSources.Where(s => Inside(s.FolderPath)).ToList())
+            { unitOfWork.AppSettings.RemoveLoraSource(row); removed++; }
 
             var switched = settings.ComfyUiServerMode == ComfyUiServerMode.Engine;
             if (switched) settings.ComfyUiServerMode = ComfyUiServerMode.CustomUrl;

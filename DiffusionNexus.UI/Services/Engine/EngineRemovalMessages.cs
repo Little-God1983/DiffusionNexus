@@ -86,10 +86,24 @@ public static class EngineRemovalMessages
     /// Model files in the Engine's models folder that no feature declares; null when the feature check
     /// failed and they are not known.
     /// </param>
-    public static string Uninstall(string folder, long folderBytes, IReadOnlyList<PlannedFile> outside, ModelFileTotal? unclaimed = null)
+    /// <param name="parts">
+    /// The nested layout (the Engine sits in a folder the user picked): only these entries of
+    /// <paramref name="folder"/> are deleted, and <paramref name="folderBytes"/> is their size. Null: the
+    /// whole folder is the Engine.
+    /// </param>
+    public static string Uninstall(string folder, long folderBytes, IReadOnlyList<PlannedFile> outside, ModelFileTotal? unclaimed = null,
+        IReadOnlyList<string>? parts = null)
     {
         var text = new StringBuilder("Uninstall the Diffusion Nexus Engine?");
-        text.Append($"\n\nThis deletes {folder} ({FormatSize(folderBytes)}): the Engine, its features and the models it downloaded.");
+        if (parts is null)
+            text.Append($"\n\nThis deletes {folder} ({FormatSize(folderBytes)}): the Engine, its features and the models it downloaded.");
+        else
+        {
+            text.Append($"\n\nThis deletes the Engine's parts of {folder} ({FormatSize(folderBytes)}): the Engine, its features and the models it downloaded.");
+            foreach (var part in parts)
+                text.Append($"\n• {part}");
+            text.Append($"\nAnything else in {folder} stays; the folder itself is deleted only if nothing else is left in it.");
+        }
         if (outside.Count == 0)
             text.Append(" Your own model folders are not touched.");
         if (unclaimed is { Count: > 0 })
@@ -113,6 +127,10 @@ public static class EngineRemovalMessages
         AppendOutside(text, "Some models the Engine's features use are in your own model folders.", outside);
         return text.ToString();
     }
+
+    /// <summary>After a nested-layout uninstall: what stayed in the folder the user picked.</summary>
+    public static string LeftInFolder(string folder, int count) =>
+        $"Left in {folder}: {count} other item{(count == 1 ? " that is" : "s that are")} not part of the Engine.";
 
     /// <summary>The Engine folder was itself a junction or symlink: only the link went, its target's files stay.</summary>
     public static string UninstalledLinkOnly(string folder, string? target) =>

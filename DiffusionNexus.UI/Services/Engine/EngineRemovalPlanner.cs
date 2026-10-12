@@ -45,6 +45,8 @@ public static class EngineRemovalPlanner
     {
         sizeOf ??= FileSize;
         var target = checks.Single(c => c.Feature == feature);
+        // In the nested layout only the ComfyUI clone and venv are the Engine's; the rest of the folder is the user's.
+        var engineFolders = ManagedEngineLocator.OwnFolders(engineRoot);
 
         // An owner must be fully installed and present on its own. A Partial feature does not work, so it
         // protects nothing: otherwise features each removed once (each left with files the others share)
@@ -78,12 +80,12 @@ public static class EngineRemovalPlanner
         }
 
         foreach (var path in target.Results.SelectMany(r => r.ModelResults)
-                     .Where(m => m.IsInstalled && !m.IsPlaceholder).SelectMany(m => DeletableCopies(engineRoot, m)))
+                     .Where(m => m.IsInstalled && !m.IsPlaceholder).SelectMany(m => DeletableCopies(engineFolders, m)))
         {
             if (!seen.Add(Key(path))) continue;
             if (modelOwners.TryGetValue(Key(path), out var owner))
                 kept.Add(new KeptItem(System.IO.Path.GetFileName(path), path, owner));
-            else if (FolderPathMatch.Contains(engineRoot, path))
+            else if (InEngine(engineFolders, path))
                 engineModels.Add(new PlannedFile(path, sizeOf(path)));
             else
                 outside.Add(new PlannedFile(path, sizeOf(path)));
@@ -127,8 +129,12 @@ public static class EngineRemovalPlanner
     /// The copies of a model a removal may delete: every copy inside the Engine folder, and a copy outside
     /// it only when <see cref="IsOfferedOutsideCopy"/> says it is this model's.
     /// </summary>
-    private static IEnumerable<string> DeletableCopies(string engineRoot, DiffusionNexus.UI.Services.ConfigurationChecker.Models.ModelCheckResult model) =>
-        model.AllFoundPaths.Where(p => FolderPathMatch.Contains(engineRoot, p) || IsOfferedOutsideCopy(model, p));
+    private static IEnumerable<string> DeletableCopies(IReadOnlyList<string> engineFolders, DiffusionNexus.UI.Services.ConfigurationChecker.Models.ModelCheckResult model) =>
+        model.AllFoundPaths.Where(p => InEngine(engineFolders, p) || IsOfferedOutsideCopy(model, p));
+
+    /// <summary>Whether <paramref name="path"/> lies in one of the Engine's own folders (<see cref="ManagedEngineLocator.OwnFolders"/>).</summary>
+    private static bool InEngine(IReadOnlyList<string> engineFolders, string path) =>
+        engineFolders.Any(folder => FolderPathMatch.Contains(folder, path));
 
     // ComfyUI's legacy folder names, either way round.
     private static readonly Dictionary<string, string> CategoryAliases = new(StringComparer.OrdinalIgnoreCase)
@@ -158,10 +164,11 @@ public static class EngineRemovalPlanner
         string engineRoot, IReadOnlyList<EngineFeatureCheck> checks, Func<string, long>? sizeOf = null)
     {
         sizeOf ??= FileSize;
+        var engineFolders = ManagedEngineLocator.OwnFolders(engineRoot);
         return checks.Where(c => c.IsPresent)
             .SelectMany(c => c.Results).SelectMany(r => r.ModelResults)
             .Where(m => m.IsInstalled && !m.IsPlaceholder)
-            .SelectMany(m => m.AllFoundPaths.Where(p => !FolderPathMatch.Contains(engineRoot, p) && IsOfferedOutsideCopy(m, p)))
+            .SelectMany(m => m.AllFoundPaths.Where(p => !InEngine(engineFolders, p) && IsOfferedOutsideCopy(m, p)))
             .DistinctBy(Key, StringComparer.OrdinalIgnoreCase)
             .Select(p => new PlannedFile(p, sizeOf(p)))
             .ToList();
