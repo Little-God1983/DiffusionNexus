@@ -26,21 +26,30 @@ public enum WaitlistEntryStatus
 /// </summary>
 public partial class CivitaiWaitlistEntry : ObservableObject
 {
-    public int ModelId { get; init; }
-    public int VersionId { get; init; }
+    // ModelId, VersionId, FileName and DownloadUrl are settable: a re-check re-points them when
+    // the creator deleted this version and republished the same file under a new one (#617).
+    public int ModelId { get; set; }
+    public int VersionId { get; set; }
     public string ModelName { get; init; } = string.Empty;
     public string VersionName { get; init; } = string.Empty;
     public string BaseModel { get; init; } = string.Empty;
     public string Category { get; init; } = string.Empty;
-    public string FileName { get; init; } = string.Empty;
-    public string DownloadUrl { get; init; } = string.Empty;
+    public string FileName { get; set; } = string.Empty;
+    public string DownloadUrl { get; set; } = string.Empty;
     public string SizeDisplay { get; init; } = string.Empty;
     public long SizeBytes { get; init; }
     public string? ExpectedSha256 { get; init; }
     public string? PreviewImageUrl { get; init; }
 
     /// <summary>Routes "open on Civitai" to civitai.red (full page for NSFW) vs civitai.com.</summary>
-    public bool IsNsfw { get; init; }
+    public bool IsNsfw { get; set; }
+
+    /// <summary>
+    /// Set when a re-check followed this file to a new version (#617). The card keeps the
+    /// names the user added it under, so this note is what explains the new Civitai link;
+    /// it is shown on every later successful re-check, not only the one that moved it.
+    /// </summary>
+    public string? MovedNote { get; set; }
 
     public DateTimeOffset AddedAt { get; init; }
 

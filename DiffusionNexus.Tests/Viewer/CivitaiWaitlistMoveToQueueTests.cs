@@ -58,6 +58,70 @@ public sealed class CivitaiWaitlistMoveToQueueTests : IDisposable
     }
 
     [Fact]
+    public async Task ReadyEntry_VersionRepublishedUnderNewId_QueuesTheNewVersion()
+    {
+        // Issue #617: version 602 was deleted, the same file lives on as version 700.
+        const string sha = "AABBCC";
+        static CivitaiModelVersion WithFile(CivitaiModelVersion v) => v with
+        {
+            Files = [new CivitaiModelFile
+            {
+                Name = $"f{v.Id}.safetensors", Primary = true,
+                DownloadUrl = $"https://civitai.example/api/download/models/{v.Id}",
+                Hashes = new CivitaiFileHashes { SHA256 = sha }
+            }]
+        };
+        var wl = Waitlist(_client.Object);
+        wl.TryAdd(77, "Test LoRA", "Concept", false, WithFile(CivitaiWaitlistTests.Version(602, Now.AddMinutes(-5))), Now);
+        _client.Setup(c => c.GetModelVersionAsync(602, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+               .ReturnsAsync((CivitaiModelVersion?)null);
+        _client.Setup(c => c.GetModelVersionByHashAsync(sha, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+               .ReturnsAsync(WithFile(FreeVersion(700)) with { ModelId = 88 });
+        var queue = Queue();
+
+        var moved = await wl.MoveReadyToQueueAsync(queue, apiKey: null, utcNow: Now);
+
+        moved.Should().Be(1);
+        wl.Entries.Should().BeEmpty();
+        var job = queue.Jobs.Single();
+        job.VersionId.Should().Be(700);
+        job.ModelId.Should().Be(88);
+        job.DownloadUrl.Should().Be("https://civitai.example/api/download/models/700");
+    }
+
+    [Fact]
+    public async Task ReadyEntry_RepublishedAsNonPrimaryFile_QueuesTheWaitlistedFile()
+    {
+        // Review #624: the new version has a new primary file next to ours — the job must
+        // download the file the entry followed by hash, not whatever is primary now.
+        const string sha = "AABBCC";
+        var wl = Waitlist(_client.Object);
+        wl.TryAdd(77, "Test LoRA", "Concept", false, CivitaiWaitlistTests.Version(603, Now.AddMinutes(-5)) with
+        {
+            Files = [new CivitaiModelFile { Name = "ours.safetensors", Primary = true, Hashes = new CivitaiFileHashes { SHA256 = sha } }]
+        }, Now);
+        _client.Setup(c => c.GetModelVersionAsync(603, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+               .ReturnsAsync((CivitaiModelVersion?)null);
+        _client.Setup(c => c.GetModelVersionByHashAsync(sha, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+               .ReturnsAsync(FreeVersion(701) with
+               {
+                   Files =
+                   [
+                       new CivitaiModelFile { Name = "new-fp8.safetensors", Primary = true, DownloadUrl = "https://civitai.example/fp8", Hashes = new CivitaiFileHashes { SHA256 = "FF00" } },
+                       new CivitaiModelFile { Name = "ours-renamed.safetensors", Primary = false, DownloadUrl = "https://civitai.example/ours", Hashes = new CivitaiFileHashes { SHA256 = sha.ToLowerInvariant() } }
+                   ]
+               });
+        var queue = Queue();
+
+        await wl.MoveReadyToQueueAsync(queue, apiKey: null, utcNow: Now);
+
+        var job = queue.Jobs.Single();
+        job.FileName.Should().Be("ours-renamed.safetensors");
+        job.DownloadUrl.Should().Be("https://civitai.example/ours");
+        job.ExpectedSha256.Should().Be(sha.ToLowerInvariant());
+    }
+
+    [Fact]
     public async Task ReadyEntry_StillGatedAfterReVerify_StaysWithCorrectedDeadline()
     {
         var wl = Waitlist(_client.Object);
