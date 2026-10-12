@@ -636,7 +636,7 @@
           <Border Padding="16">
             <StackPanel Spacing="12">
 
-              <TextBlock Text="Which ComfyUI runs Inpaint and Outpaint in the Image Editor."
+              <TextBlock Text="Which ComfyUI runs Inpaint and Outpaint (also with Vision) in the Image Editor, and Batch Upscale."
                          FontSize="12" Opacity="0.7"/>
 
               <!-- Server -->

@@ -1601,7 +1601,7 @@ public partial class SettingsViewModel : BusyViewModelBase, IModuleActivationAwa
         new(ComfyUiServerMode.CustomUrl, "Custom URL"),
     ];
 
-    /// <summary>Which ComfyUI runs Inpaint and Outpaint.</summary>
+    /// <summary>Which ComfyUI runs Inpaint, Outpaint (also with Vision) and Batch Upscale.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsCustomUrlMode))]
     [NotifyCanExecuteChangedFor(nameof(TestComfyUiConnectionCommand))]
