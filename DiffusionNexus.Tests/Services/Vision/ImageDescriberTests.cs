@@ -80,7 +80,21 @@ public class ImageDescriberTests
         var act = () => Sut().DescribeAsync("up.png", keepLoaded: false, CancellationToken.None);
 
         (await act.Should().ThrowAsync<ImageDescriptionFailedException>()).Which.Message
-            .Should().Be("no reason given, see the ComfyUI console");
+            .Should().Be("no reason given");
+    }
+
+    // PR #623 review round 2: older builds of the pack (9bdf94c, March 2026) return "[ERROR] …" as the text.
+    [Theory]
+    [InlineData("[ERROR] Model inference failed. Check console for details.", "Model inference failed.")]
+    [InlineData("[ERROR] Unexpected error in inference pipeline: CUDA out of memory", "Unexpected error in inference pipeline: CUDA out of memory")]
+    public async Task Describe_OlderPacksErrorText_Throws_WithTheReason(string text, string reason)
+    {
+        _client.Setup(c => c.GetResultAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => { var r = new ComfyUIResult(); r.Texts.Add(text); return r; });
+
+        var act = () => Sut().DescribeAsync("up.png", keepLoaded: false, CancellationToken.None);
+
+        (await act.Should().ThrowAsync<ImageDescriptionFailedException>()).Which.Message.Should().Be(reason);
     }
 
     [Theory]

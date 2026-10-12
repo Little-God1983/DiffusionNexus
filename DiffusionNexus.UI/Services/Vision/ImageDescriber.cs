@@ -59,15 +59,17 @@ public sealed class ImageDescriber
 
         // The node catches its own inference errors (a model that will not load, CUDA out of memory) and
         // returns them as its text, after unloading everything.
-        if (text is not null && text.StartsWith(InferenceFailedPrefix, StringComparison.Ordinal))
+        // Older builds of the pack (9bdf94c, March 2026) return "[ERROR] …" instead.
+        var prefix = FailurePrefixes.FirstOrDefault(p => text?.StartsWith(p, StringComparison.Ordinal) == true);
+        if (prefix is not null)
         {
-            var reason = text[InferenceFailedPrefix.Length..].Replace("Check console for details.", "").Trim();
-            throw new ImageDescriptionFailedException(reason.Length > 0 ? reason : "no reason given, see the ComfyUI console");
+            var reason = text![prefix.Length..].Replace("Check console for details.", "").Trim();
+            throw new ImageDescriptionFailedException(reason.Length > 0 ? reason : "no reason given");
         }
         return text;
     }
 
-    private const string InferenceFailedPrefix = "❌ Inference failed:";
+    private static readonly string[] FailurePrefixes = ["❌ Inference failed:", "[ERROR]"];
 
     /// <summary>How long <see cref="FreeAsync"/> waits for its job: it runs after Cancel, so nothing else can stop it.</summary>
     public TimeSpan FreeTimeout { get; set; } = TimeSpan.FromMinutes(2);

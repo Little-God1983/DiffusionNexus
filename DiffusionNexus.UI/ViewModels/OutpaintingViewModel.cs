@@ -767,9 +767,10 @@ public partial class OutpaintingViewModel : ObservableObject
                 OutpaintWorkflowPath);
 
             // Vision runs the describe workflow first: a missing file must not read as "is the Engine running?".
-            var missingWorkflow = new[] { workflowPath }
-                .Concat(useVision ? [Path.Combine(AppDomain.CurrentDomain.BaseDirectory, ImageDescriber.WorkflowRelativePath)] : [])
-                .FirstOrDefault(path => !File.Exists(path));
+            var describeWorkflowPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, ImageDescriber.WorkflowRelativePath);
+            var missingWorkflow = !File.Exists(workflowPath) ? workflowPath
+                : useVision && !File.Exists(describeWorkflowPath) ? describeWorkflowPath
+                : null;
             if (missingWorkflow is not null)
             {
                 HasError = true;
@@ -942,17 +943,30 @@ public partial class OutpaintingViewModel : ObservableObject
     }
 
     /// <summary>
-    /// What Qwen3-VL sees around the subject, or null when it wrote nothing. Unloads Qwen3-VL when it has
-    /// answered (<c>direct_clean</c>), so the outpaint gets the GPU. ComfyUI's own models stay loaded, as in
-    /// the single Vision workflow before #616: unloading them would make every Vision run load Qwen-Image again.
-    /// No free-up job after a node crash: nothing runs after it in this Generate, and the next describe job
-    /// (same config, <c>direct_clean</c>) unloads a model the crash left behind.
+    /// What Qwen3-VL sees around the subject, or null when it wrote nothing. The job unloads ComfyUI's own
+    /// models first (llama.cpp allocates outside ComfyUI's memory manager, so the last outpaint's Qwen-Image
+    /// would not make room: #616's out-of-memory case; ComfyUI keeps them in RAM, so the outpaint moves them
+    /// back rather than reading them from disk) and unloads Qwen3-VL when it has answered (<c>direct_clean</c>).
     /// </summary>
     /// <exception cref="ImageDescriptionFailedException">The node reported a failed inference.</exception>
-    private static Task<string?> DescribeSurroundingsAsync(
-        IComfyUIWrapperService comfy, string uploadedImage, string modelPath, string projectorPath) =>
-        new ImageDescriber(comfy, modelPath, projectorPath, userPrompt: SurroundingsPrompt)
-            .DescribeAsync(uploadedImage, keepLoaded: false, CancellationToken.None);
+    private async Task<string?> DescribeSurroundingsAsync(
+        IComfyUIWrapperService comfy, string uploadedImage, string modelPath, string projectorPath)
+    {
+        var describer = new ImageDescriber(comfy, modelPath, projectorPath, userPrompt: SurroundingsPrompt);
+        try
+        {
+            return await describer.DescribeAsync(uploadedImage, keepLoaded: false, CancellationToken.None, freeComfyModels: true);
+        }
+        catch (ComfyUIExecutionException ex) when (!ImageDescriber.NodesBeforeTheDescriber.Contains(ex.NodeType)
+                                                   && !ImageDescriber.NodesAfterTheDescriber.Contains(ex.NodeType))
+        {
+            // The node may have died holding Qwen3-VL, and the next run may be an Inpaint with no describe job
+            // to unload it. A direct_clean job with the same config reuses and unloads it, as Batch Upscale does.
+            Status = "Freeing Qwen3-VL after the failure...";
+            await describer.FreeAsync(uploadedImage);
+            throw;
+        }
+    }
 
     private void OnFinished()
     {
@@ -1014,6 +1028,7 @@ public partial class OutpaintingViewModel : ObservableObject
         {
             _ when status.StartsWith("Preparing", StringComparison.OrdinalIgnoreCase) => 5,
             _ when status.StartsWith("Uploading", StringComparison.OrdinalIgnoreCase) => 10,
+            _ when status.StartsWith("Describing", StringComparison.OrdinalIgnoreCase) => 12,
             _ when status.StartsWith("Queuing", StringComparison.OrdinalIgnoreCase) => 15,
             _ when status.StartsWith("Generating", StringComparison.OrdinalIgnoreCase) => 20,
             _ when status.StartsWith("Executing", StringComparison.OrdinalIgnoreCase) => 25,

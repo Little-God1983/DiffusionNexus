@@ -218,7 +218,7 @@ public class OutpaintVisionDescriptionTests : IDisposable
     }
 
     [Fact]
-    public async Task VisionRun_AsksForTheSurroundings_KeepsComfyUIsModels_AndFreesQwen3VLAfterwards()
+    public async Task VisionRun_AsksForTheSurroundings_UnloadsComfyUIsModelsFirst_AndFreesQwen3VLAfterwards()
     {
         var (client, queued) = ClientRecordingJobs();
 
@@ -226,9 +226,25 @@ public class OutpaintVisionDescriptionTests : IDisposable
 
         var node = AppliedDescribeNode(queued[0]);
         node["inputs"]!["user_prompt"]!.GetValue<string>().Should().Be(OutpaintingViewModel.SurroundingsPrompt);
-        node["inputs"]!["unload_all_models"]!.GetValue<bool>().Should().BeFalse(
-            "as in the old Vision workflow: unloading would make every Vision run load Qwen-Image again (PR #623 review)");
+        node["inputs"]!["unload_all_models"]!.GetValue<bool>().Should().BeTrue(
+            "llama.cpp allocates outside ComfyUI's memory manager; the last outpaint's Qwen-Image would not make room (#616's OOM)");
         node["inputs"]!["mode"]!.GetValue<string>().Should().Be("direct_clean", "the outpaint needs the GPU next");
+    }
+
+    // PR #623 review round 2: the describe step had no progress value, so the bar sat at the upload's 10%.
+    [Fact]
+    public async Task VisionRun_WhileDescribing_TheProgressBarHasMovedPastTheUpload()
+    {
+        var (client, _) = ClientRecordingJobs();
+        var vm = VisionSut(client.Object);
+        double? atDescribe = null;
+        client.Setup(c => c.WaitForCompletionAsync("p1", It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()))
+            .Callback(() => atDescribe = vm.OutpaintProgress)
+            .Returns(Task.CompletedTask);
+
+        await vm.ProcessOutpaintAsync(TempImage(), useVision: true, 64, 0, 64, 0);
+
+        atDescribe.Should().Be(12);
     }
 
     [Fact]
@@ -258,18 +274,24 @@ public class OutpaintVisionDescriptionTests : IDisposable
     }
 
     [Fact]
-    public async Task VisionRun_DescriberNodeFails_NamesTheNode_AndDoesNotOutpaint()
+    public async Task VisionRun_DescriberNodeFails_FreesQwen3VL_NamesTheNode_AndDoesNotOutpaint()
     {
         var (client, queued) = ClientRecordingJobs();
         client.Setup(c => c.WaitForCompletionAsync("p1", It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new ComfyUIExecutionException("SimpleQwenVLggufV2", "llama_decode returned -3"));
         var vm = VisionSut(client.Object);
+        string? statusAtFree = null;
+        client.Setup(c => c.WaitForCompletionAsync("p2", It.IsAny<IProgress<string>?>(), It.IsAny<CancellationToken>()))
+            .Callback(() => statusAtFree = vm.Status)
+            .Returns(Task.CompletedTask);
 
         await vm.ProcessOutpaintAsync(TempImage(), useVision: true, 64, 0, 64, 0);
 
-        // No free-up job (PR #623 review): it kept the panel busy up to 2 minutes, and nothing runs after it
-        // in this Generate; the next describe job (direct_clean, same config) unloads Qwen3-VL.
-        queued.Select(j => j.Workflow).Should().Equal([DescribeWorkflow], "no outpaint runs");
+        // The crashed node may hold Qwen3-VL, and the user's next run may be an Inpaint with no describe job
+        // to unload it (review round 2), so a direct_clean job frees it, under a status that says so.
+        queued.Select(j => j.Workflow).Should().Equal([DescribeWorkflow, DescribeWorkflow], "no outpaint runs");
+        AppliedDescribeNode(queued[1])["inputs"]!["mode"]!.GetValue<string>().Should().Be("direct_clean");
+        statusAtFree.Should().Be("Freeing Qwen3-VL after the failure...");
         vm.HasError.Should().BeTrue();
         vm.ProgressDisplayText.Should().Be("Failed in the ComfyUI node SimpleQwenVLggufV2 – see the Unified Console");
     }
