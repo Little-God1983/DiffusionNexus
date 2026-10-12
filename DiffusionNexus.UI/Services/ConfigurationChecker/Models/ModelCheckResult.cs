@@ -39,6 +39,13 @@ public sealed record ModelCheckResult
     /// </summary>
     public bool HasVramProfiles { get; init; }
 
+    /// <summary>
+    /// False when none of the names searched for is a file name: the download URL carries none (a Civitai
+    /// <c>…/api/download/models/3139172?fileId=…</c>), so the file is saved under the server's name and
+    /// cannot be found by name. Not finding such a model says nothing about whether it is on disk.
+    /// </summary>
+    public bool IsFindableByName { get; init; } = true;
+
     /// <summary>All paths that were searched.</summary>
     public required IReadOnlyList<string> SearchedPaths { get; init; }
 

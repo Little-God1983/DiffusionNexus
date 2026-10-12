@@ -35,7 +35,8 @@ public sealed record EngineRemovalPlan(
 /// Turns disk checks into removal plans. A file inside the Engine folder is one the Engine downloaded
 /// (feature downloads land in its models folder); anything else is in one of the user's own folders.
 /// A node pack or model that another feature also uses is kept, matched by full path, when that feature
-/// is present on its own: it has at least one file on disk that is not one of the removed feature's.
+/// is fully installed and present on its own: it has at least one file on disk that is not one of the
+/// removed feature's. A Partial feature protects nothing.
 /// </summary>
 public static class EngineRemovalPlanner
 {
@@ -45,13 +46,14 @@ public static class EngineRemovalPlanner
         sizeOf ??= FileSize;
         var target = checks.Single(c => c.Feature == feature);
 
-        // An owner must be present on its own: a feature whose files on disk are all the target's own
-        // (its files are a subset of the target's, e.g. Inpaint & Outpaint inside Outpaint Vision) reads as
-        // present only because of the target, and goes with it. Otherwise two such features would each
-        // keep the shared files for the other, and neither could ever be removed.
+        // An owner must be fully installed and present on its own. A Partial feature does not work, so it
+        // protects nothing: otherwise features each removed once (each left with files the others share)
+        // would keep those files for one another and none could ever be removed. A feature whose files on
+        // disk are all the target's own (a subset, e.g. Inpaint & Outpaint inside Outpaint Vision) reads as
+        // present only because of the target and goes with it, for the same reason.
         var targetPaths = new HashSet<string>(OwnPaths(target).Select(Key), StringComparer.OrdinalIgnoreCase);
         var present = checks.Where(c => c.Feature != feature && c.IsPresent).ToList();
-        var others = present.Where(c => OwnPaths(c).Any(p => !targetPaths.Contains(Key(p)))).ToList();
+        var others = present.Where(c => IsFullyInstalled(c) && OwnPaths(c).Any(p => !targetPaths.Contains(Key(p)))).ToList();
 
         var nodeOwners = Owners(others, c => c.Results
             .SelectMany(r => r.CustomNodeResults).Where(n => n.IsInstalled).Select(n => n.ExpectedPath));
@@ -85,20 +87,32 @@ public static class EngineRemovalPlanner
                 outside.Add(new PlannedFile(path, sizeOf(path)));
         }
 
-        // A feature that protects nothing goes with the target only when none of its files is kept; one that
-        // keeps a file another feature needs is left partly installed; one that loses nothing is not named.
+        // A feature that protects nothing and loses every file it has goes with the target; one that keeps a
+        // file (another feature needs it, or it is the feature's own) is left partly installed; one that
+        // loses nothing is not named.
         var keptPaths = new HashSet<string>(kept.Select(k => Key(k.Path)), StringComparer.OrdinalIgnoreCase);
         var removedWithIt = new List<string>();
         var leftPartial = new List<string>();
         foreach (var check in present.Except(others))
         {
             var paths = OwnPaths(check).Select(Key).ToList();
-            if (paths.All(keptPaths.Contains)) continue;
-            (paths.Any(keptPaths.Contains) ? leftPartial : removedWithIt).Add(check.DisplayName);
+            var lost = paths.Where(p => targetPaths.Contains(p) && !keptPaths.Contains(p)).ToList();
+            if (lost.Count == 0) continue;
+            (lost.Count == paths.Count ? removedWithIt : leftPartial).Add(check.DisplayName);
         }
 
         return new EngineRemovalPlan(nodePacks, engineModels, outside, kept, removedWithIt) { LeftPartial = leftPartial };
     }
+
+    /// <summary>
+    /// Every workload of the feature is in the catalog and nothing of it is missing: every node pack and
+    /// every (non-placeholder) model is on disk. A model the checker cannot find by name (its download URL
+    /// carries no file name) is not counted as missing: not finding it says nothing.
+    /// </summary>
+    private static bool IsFullyInstalled(EngineFeatureCheck check) =>
+        check.IsComplete && check.Results.Count > 0 && check.Results.All(r =>
+            r.CustomNodeResults.All(n => n.IsInstalled) &&
+            r.ModelResults.All(m => m.IsInstalled || m.IsPlaceholder || !m.IsFindableByName));
 
     /// <summary>A feature's files on disk that a removal of it would delete: installed node packs and every copy of its (non-placeholder) models.</summary>
     private static IEnumerable<string> OwnPaths(EngineFeatureCheck check) =>

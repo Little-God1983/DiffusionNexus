@@ -143,6 +143,93 @@ public class EngineRemovalPlannerTests
         plan.LeftPartial.Should().Equal("Inpaint & Outpaint");
     }
 
+    // H: the shipping catalog's three overlapping features. Outpaint Vision and Batch Upscale Vision share the
+    // Qwen3-VL node and model, Outpaint Vision and Canvas the VAE, Batch Upscale Vision and Canvas
+    // 4x-UltraSharp and Ultimate SD Upscale; each has a file of its own. With a Partial feature still
+    // protecting, removing each once left {VL, vae}, {VL, 4x, USDU}, {vae, 4x, USDU}, each keeping the others'
+    // files, and every further Remove said nothing could be deleted. Only a fully installed feature protects.
+    private static readonly string ZImage = Root + @"\models\diffusion_models\z_image_turbo_bf16.safetensors";
+    private static readonly string Krea = Root + @"\models\diffusion_models\krea2_turbo-Q4_K_S.gguf";
+
+    private static readonly (EngineFeature Feature, string Name, string[] Nodes, string[] Models)[] Shipping =
+    [
+        (EngineFeature.OutpaintVision, "Outpaint Vision", [VlNode], [EngineVl, EngineVae, EngineUnet]),
+        (EngineFeature.BatchUpscaleVision, "Batch Upscale Vision", [VlNode, Usdu], [EngineVl, EngineUpscaler, ZImage]),
+        (EngineFeature.Canvas, "Canvas · Krea 2 Turbo", [Usdu], [EngineVae, EngineUpscaler, Krea]),
+    ];
+
+    /// <summary>Each feature as the checker sees it with only <paramref name="onDisk"/> on disk.</summary>
+    private static EngineFeatureCheck[] ChecksFor(HashSet<string> onDisk) => Shipping.Select(f => Check(f.Feature, f.Name,
+        Result(f.Nodes.Select(n => (n, onDisk.Contains(n))), f.Models.Select(m => onDisk.Contains(m) ? new[] { m } : [])))).ToArray();
+
+    [Theory]
+    [InlineData(EngineFeature.OutpaintVision, EngineFeature.BatchUpscaleVision, EngineFeature.Canvas)]
+    [InlineData(EngineFeature.Canvas, EngineFeature.BatchUpscaleVision, EngineFeature.OutpaintVision)]
+    [InlineData(EngineFeature.BatchUpscaleVision, EngineFeature.OutpaintVision, EngineFeature.Canvas)]
+    public void ThreeOverlappingFeatures_RemovedOnceEach_LeaveNothingBehind(EngineFeature first, EngineFeature second, EngineFeature third)
+    {
+        var onDisk = new HashSet<string>(Shipping.SelectMany(f => f.Nodes.Concat(f.Models)), StringComparer.OrdinalIgnoreCase);
+
+        foreach (var target in new[] { first, second, third })
+        {
+            var plan = EngineRemovalPlanner.PlanFeatureRemoval(Root, ChecksFor(onDisk), target, Size);
+            plan.HasAnythingToDelete.Should().BeTrue($"removing {target} must delete something");
+            onDisk.ExceptWith(plan.NodePackFolders.Concat(plan.EngineModels.Select(f => f.Path)));
+        }
+
+        onDisk.Should().BeEmpty("every file of the three features was removable");
+    }
+
+    // H: a fully installed feature protects what it shares; a Partial one protects nothing, loses the
+    // shared file and is named as left Partial (it keeps a file of its own).
+    [Fact]
+    public void APartialFeature_ProtectsNothing_AndIsNamedAsLeftPartial()
+    {
+        var checks = new[]
+        {
+            Check(EngineFeature.OutpaintVision, "Outpaint Vision", Result([(VlNode, true)], [[EngineVl], [EngineVae], [EngineUnet]])),
+            // Batch Upscale Vision lacks its upscaler: Partial.
+            Check(EngineFeature.BatchUpscaleVision, "Batch Upscale Vision", Result([(VlNode, true), (Usdu, true)], [[EngineVl], [], [ZImage]])),
+            // Canvas is fully installed and shares the VAE.
+            Check(EngineFeature.Canvas, "Canvas · Krea 2 Turbo", Result([], [[EngineVae], [Krea]])),
+        };
+
+        var plan = EngineRemovalPlanner.PlanFeatureRemoval(Root, checks, EngineFeature.OutpaintVision, Size);
+
+        plan.NodePackFolders.Should().Equal(VlNode);
+        plan.EngineModels.Select(f => f.Path).Should().BeEquivalentTo([EngineVl, EngineUnet]);
+        plan.Kept.Should().Equal(new KeptItem("qwen_image_vae.safetensors", EngineVae, "Canvas · Krea 2 Turbo"));
+        plan.LeftPartial.Should().Equal("Batch Upscale Vision");
+        plan.RemovedWithIt.Should().BeEmpty();
+    }
+
+    // H with the known gap: a model whose download URL carries no file name (Krea 2 Turbo's Identity Edit
+    // LoRA) is never found by name. It does not make an otherwise complete feature Partial, so Canvas
+    // keeps protecting the VAE it shares.
+    [Fact]
+    public void AModelTheCheckerCannotFindByName_DoesNotStopAFeatureFromProtecting()
+    {
+        var canvas = Result([], [[EngineVae], [Krea]]);
+        canvas = canvas with
+        {
+            ModelResults = [.. canvas.ModelResults, new ModelCheckResult
+            {
+                Id = Guid.NewGuid(), Name = "Krea 2 Identity Edit", IsInstalled = false, IsFindableByName = false,
+                SearchedPaths = [Root + @"\models\loras\3139172"]
+            }]
+        };
+        var checks = new[]
+        {
+            Check(EngineFeature.InpaintOutpaint, "Inpaint & Outpaint", Result([(Gguf, true)], [[EngineVae], [EngineUnet]])),
+            Check(EngineFeature.Canvas, "Canvas · Krea 2 Turbo", canvas),
+        };
+
+        var plan = EngineRemovalPlanner.PlanFeatureRemoval(Root, checks, EngineFeature.InpaintOutpaint, Size);
+
+        plan.Kept.Should().Equal(new KeptItem("qwen_image_vae.safetensors", EngineVae, "Canvas · Krea 2 Turbo"));
+        plan.EngineModels.Select(f => f.Path).Should().Equal(EngineUnet);
+    }
+
     [Fact]
     public void Feature_SharedOnlyWithAFeatureThatIsNotInstalled_IsDeleted()
     {

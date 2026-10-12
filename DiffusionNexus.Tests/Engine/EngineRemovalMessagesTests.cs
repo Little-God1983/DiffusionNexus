@@ -83,7 +83,7 @@ public class EngineRemovalMessagesTests
 
         var text = EngineRemovalMessages.FeatureRemoval("Outpaint Vision", plan);
 
-        text.Should().Contain("Inpaint & Outpaint loses its files except those another feature keeps; it will show as Partial.");
+        text.Should().Contain("Inpaint & Outpaint loses the files it shares with this feature, except those another feature keeps; it will show as Partial.");
         text.Should().NotContain("removed too");
     }
 

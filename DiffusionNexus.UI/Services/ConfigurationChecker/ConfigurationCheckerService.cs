@@ -365,6 +365,7 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
             Name = model.Name,
             IsInstalled = model.IsPlaceholder || !string.IsNullOrEmpty(foundPath),
             IsPlaceholder = model.IsPlaceholder,
+            IsFindableByName = fileNames.Any(Path.HasExtension),
             IsVramProfileScoped = isVramScoped,
             ScopedVramProfile = scopedProfile,
             HasVramProfiles = hasVramProfiles,

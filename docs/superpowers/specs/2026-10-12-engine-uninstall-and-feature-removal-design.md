@@ -163,8 +163,10 @@ install) says why and changes nothing.
      names, all search folders; not just the first match). A file that **another installed feature**
      also uses is kept, matched by the full path the checker found (the same file has a different id in
      each workload).
-   - "Another installed feature" means one present on its own (see *Used by another feature* below);
-     a feature present only through this feature's files goes with it and is named in the question.
+   - "Another installed feature" means one fully installed and present on its own (see *Used by
+     another feature* below); a Partial feature protects nothing. A feature present only through this
+     feature's files goes with it and is named in the question; one that loses some files but keeps
+     others is named as left Partial.
    - Kept items are listed with the feature that still needs them: *"Kept: qwen_image_vae.safetensors
      (used by Outpaint Vision)."*
 2. **Confirm.**
@@ -208,15 +210,40 @@ installed).
 - **Inside or outside:** a file is the Engine's when its full path lies inside the Engine install
   root (`FolderPathMatch`); everything else is the user's.
 - **"Used by another feature":** a model or node pack (matched by full path) also used by a feature that
-  is not being removed and is **present on its own**: it has at least one installed node pack or
-  (non-placeholder) model file on disk that is not one of the removed feature's own files. A feature
-  whose files on disk are all the removed feature's (Inpaint & Outpaint inside Outpaint Vision, Batch
-  Upscale inside Batch Upscale Vision) reads as present only through them, protects nothing and goes
-  with it; the confirmation names it (*"Inpaint & Outpaint uses only files of this feature, so it is
-  removed too."*). Without this rule two such features kept the shared files for each other and neither
-  could ever be removed. So with both installed, removing the small one first keeps everything (the big
-  one needs it) and removing the big one next deletes the shared files; removing the big one first
-  deletes the shared files at once. For Uninstall Engine, nothing is kept: every feature goes.
+  is not being removed, is **fully installed** (every workload in the catalog, no node pack and no
+  non-placeholder model missing) and is **present on its own**: it has at least one installed node pack
+  or (non-placeholder) model file on disk that is not one of the removed feature's own files. A model
+  the checker cannot find by name (its download URL carries no file name, see the known gap below) does
+  not count as missing.
+  - A **Partial** feature protects nothing: it does not work as it is. Without this rule features that
+    were each removed once (Outpaint Vision, Batch Upscale Vision and Canvas, left with {Qwen3-VL, VAE},
+    {Qwen3-VL, 4x-UltraSharp, Ultimate SD Upscale} and {VAE, 4x-UltraSharp, Ultimate SD Upscale}) kept
+    the shared files for one another, and every further Remove said nothing could be deleted. A Partial
+    feature that loses some of its files is named in the confirmation (*"Batch Upscale Vision loses the
+    files it shares with this feature, except those another feature keeps; it will show as Partial."*).
+  - A feature whose files on disk are all the removed feature's (Inpaint & Outpaint inside Outpaint
+    Vision, Batch Upscale inside Batch Upscale Vision) reads as present only through them, protects
+    nothing and goes with it; the confirmation names it (*"Inpaint & Outpaint uses only files of this
+    feature, so it is removed too."*). When a third feature keeps one of its files, it is named as left
+    Partial instead (the sentence above). Without this rule two such features kept the shared files for
+    each other and neither could ever be removed.
+  - So with both of a subset pair installed, removing the small one first keeps everything (the big one
+    needs it) and removing the big one next deletes the shared files; removing the big one first deletes
+    the shared files at once. A removal that deletes a file leaves the removed feature Partial, so it
+    protects nothing afterwards: when every feature has a file of its own (Outpaint Vision, Batch Upscale
+    Vision and Canvas do), removing each once, in any order, removes every file. A feature with no file
+    of its own (the subset features above) whose files are all needed by other fully installed features
+    keeps everything until one of those is removed.
+    For Uninstall Engine, nothing is kept: every feature goes.
+- **Catalog gaps:** when the catalog has no description of another feature's workload, which files that
+  feature shares is unknown, so Remove… deletes nothing and says so (*"The catalog has no description of
+  <X>, so the app cannot tell which files <X> shares. Update the catalog or switch its channel, then try
+  again. Uninstall Engine still works."*). Uninstall Engine then leaves out the count of model files no
+  feature uses (it would count that feature's files too).
+- **Names searched for removal:** when every copy is collected, a URL-derived name that the installer
+  renames to its configured name (`<Name><ext>`) is replaced by that name, not searched beside it: a
+  generic HuggingFace name (`diffusion_pytorch_model.safetensors`) found in the user's library belongs to
+  some other model. The readiness check still searches both.
 
 Known gap: a model whose catalog URL does not carry its file name (Krea 2 Turbo's Identity Edit LoRA,
 `…/api/download/models/3139172?fileId=…`, which the checker expects as `3139172`) is not found by
@@ -268,7 +295,10 @@ Unit tests (temp folders, fakes for the engine control, install activity, settin
 - Planner: a node pack or model shared with another installed feature is kept and named; one shared
   only with a not-installed feature is deleted; overlapping features (one's files a subset of the
   other's) can both be removed in either order, and a feature present only through the removed
-  one's files is named as going with it; Uninstall counts the model files in the Engine's models
+  one's files is named as going with it (or as left Partial when a third feature keeps one of its
+  files); a Partial feature protects nothing, so Outpaint Vision, Batch Upscale Vision and Canvas
+  removed once each, in several orders, leave nothing behind, while a model the checker cannot find
+  by name does not make a feature Partial; Uninstall counts the model files in the Engine's models
   folder that no feature declares; every copy is found, not just the first; inside vs
   outside the Engine; all quant names probed; Uninstall plans the whole folder plus outside models.
 - `EngineRemover` (and the uninstall flow): refuses while a job runs or an install is active, and changes nothing; stops the

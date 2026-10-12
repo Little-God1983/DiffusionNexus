@@ -110,6 +110,28 @@ public sealed class ConfigurationCheckerAllMatchesTests : IDisposable
         model.FoundAtPath.Should().Be(generic);
     }
 
+    // A download URL without a file name (Civitai's …/models/3139172?fileId=…) gives no name to search for:
+    // the file is saved under the server's name, so not finding it says nothing.
+    [Fact]
+    public async Task AModelWhoseUrlCarriesNoFileName_IsNotFindableByName()
+    {
+        var (repo, _, _) = TwoCopies();
+        var config = Config();
+        config.ModelDownloads.Add(new ModelDownload
+        {
+            Name = "Krea 2 Identity Edit", Destination = "models/loras",
+            DownloadLinks = [new ModelDownloadLink { Url = "https://civitai.com/api/download/models/3139172?fileId=3019297" }]
+        });
+
+        var result = await new ConfigurationCheckerService().CheckConfigurationAsync(
+            config, repo, new ConfigurationCheckOptions { CollectAllMatches = true });
+
+        result.ModelResults.Single(m => m.Name == "ae").IsFindableByName.Should().BeTrue();
+        var lora = result.ModelResults.Single(m => m.Name == "Krea 2 Identity Edit");
+        lora.IsInstalled.Should().BeFalse();
+        lora.IsFindableByName.Should().BeFalse();
+    }
+
     [Fact]
     public async Task Default_StopsAtTheFirstCopy()
     {
