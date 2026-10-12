@@ -328,6 +328,35 @@ public class EngineRemovalPlannerTests
         }
     }
 
+    // Round 2: when the Engine's models folder (or a folder between it and the Engine root) is a link to the
+    // user's library, only the link goes with the Engine: the files behind it are not counted.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Uninstall_ALinkedModelsFolder_IsNotCounted(bool portableLayout)
+    {
+        var root = Directory.CreateTempSubdirectory("dn-unclaimed-linked-").FullName;
+        var library = Directory.CreateTempSubdirectory("dn-unclaimed-linked-lib-").FullName;
+        var repo = portableLayout ? Path.Combine(root, "ComfyUI") : root;
+        // Portable: the ComfyUI folder itself is the link; otherwise the models folder is.
+        var link = portableLayout ? repo : Path.Combine(root, "models");
+        try
+        {
+            Write(library, portableLayout ? "main.py" : "unused.txt", 0);
+            Write(library, portableLayout ? @"models\checkpoints\mine.safetensors" : @"checkpoints\mine.safetensors", 100);
+            if (!portableLayout) File.WriteAllText(Path.Combine(root, "main.py"), "");
+            Junction(link, library);
+
+            EngineRemovalPlanner.PlanUninstallUnclaimedModels(root, []).Should().BeNull();
+        }
+        finally
+        {
+            if (Directory.Exists(link)) Directory.Delete(link); // the link only, before the trees
+            Directory.Delete(root, recursive: true);
+            Directory.Delete(library, recursive: true);
+        }
+    }
+
     [Fact]
     public void Uninstall_NoModelsFolder_CountsNothing()
     {

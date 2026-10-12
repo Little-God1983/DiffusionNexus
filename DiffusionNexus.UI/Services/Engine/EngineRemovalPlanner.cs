@@ -174,12 +174,15 @@ public static class EngineRemovalPlanner
     /// <remarks>
     /// Only model files count (<see cref="DiffusionNexus.Domain.Utilities.ModelFileExtensions.Recognized"/>),
     /// so ComfyUI's own <c>put_*_here</c> placeholders and <c>configs</c> are not reported; a junction or
-    /// symlink inside is not entered (the uninstall removes it as a link).
+    /// symlink inside is not entered (the uninstall removes it as a link). Null (not known) when the models
+    /// folder, or a folder between it and the Engine root, is itself a link: only the link goes, so the
+    /// files behind it are not the Engine's to count.
     /// </remarks>
-    public static ModelFileTotal PlanUninstallUnclaimedModels(string engineRoot, IReadOnlyList<EngineFeatureCheck> checks)
+    public static ModelFileTotal? PlanUninstallUnclaimedModels(string engineRoot, IReadOnlyList<EngineFeatureCheck> checks)
     {
         var models = ManagedEngineLocator.ModelsFolder(engineRoot);
         if (!Directory.Exists(models)) return new ModelFileTotal(0, 0);
+        if (IsLinkedBelow(engineRoot, models)) return null;
 
         var declared = new HashSet<string>(
             checks.SelectMany(c => c.Results).SelectMany(r => r.ModelResults).SelectMany(m => m.AllFoundPaths).Select(Key),
@@ -193,6 +196,29 @@ public static class EngineRemovalPlanner
             .Where(f => !declared.Contains(Key(f.FullName)))
             .ToList();
         return new ModelFileTotal(unclaimed.Count, unclaimed.Sum(f => f.Length));
+    }
+
+    /// <summary>
+    /// Whether <paramref name="folder"/> or any folder between it and <paramref name="root"/> (the root
+    /// itself not included) is a junction or symlink. Unreadable attributes count as a link.
+    /// </summary>
+    private static bool IsLinkedBelow(string root, string folder)
+    {
+        var top = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+        for (var current = new DirectoryInfo(Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder)));
+             current is not null && !string.Equals(current.FullName, top, StringComparison.OrdinalIgnoreCase);
+             current = current.Parent)
+        {
+            try
+            {
+                if (current.Attributes.HasFlag(FileAttributes.ReparsePoint)) return true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>

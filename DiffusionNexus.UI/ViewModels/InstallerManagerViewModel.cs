@@ -1292,7 +1292,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
                 Services.Engine.EngineRemovalPlanner.PlanUninstallOutsideModels(root, checks),
                 unknown.Count > 0
                     ? null
-                    : (Services.Engine.ModelFileTotal?)Services.Engine.EngineRemovalPlanner.PlanUninstallUnclaimedModels(root, checks)));
+                    : Services.Engine.EngineRemovalPlanner.PlanUninstallUnclaimedModels(root, checks)));
         }
         catch (Exception ex)
         {
