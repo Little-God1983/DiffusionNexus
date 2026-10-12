@@ -29,14 +29,18 @@ public sealed class ImageDescriber
     private readonly IComfyUIWrapperService _client;
     private readonly string _workflowPath;
     private readonly string _config;
+    private readonly string? _userPrompt;
     private readonly Random _random = new();
 
-    public ImageDescriber(IComfyUIWrapperService client, string modelPath, string projectorPath, string? workflowPath = null)
+    /// <param name="userPrompt">What to ask Qwen3-VL; null keeps the workflow's own question.</param>
+    public ImageDescriber(IComfyUIWrapperService client, string modelPath, string projectorPath, string? workflowPath = null,
+        string? userPrompt = null)
     {
         ArgumentNullException.ThrowIfNull(client);
         _client = client;
         _workflowPath = workflowPath ?? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, WorkflowRelativePath);
         _config = QwenVlGguf.BuildConfig(modelPath, projectorPath);
+        _userPrompt = userPrompt;
     }
 
     /// <summary>
@@ -55,13 +59,17 @@ public sealed class ImageDescriber
 
         // The node catches its own inference errors (a model that will not load, CUDA out of memory) and
         // returns them as its text, after unloading everything.
-        if (text is not null && text.StartsWith(InferenceFailedPrefix, StringComparison.Ordinal))
-            throw new ImageDescriptionFailedException(text[InferenceFailedPrefix.Length..]
-                .Replace("Check console for details.", "").Trim());
+        // Older builds of the pack (9bdf94c, March 2026) return "[ERROR] …" instead.
+        var prefix = FailurePrefixes.FirstOrDefault(p => text?.StartsWith(p, StringComparison.Ordinal) == true);
+        if (prefix is not null)
+        {
+            var reason = text![prefix.Length..].Replace("Check console for details.", "").Trim();
+            throw new ImageDescriptionFailedException(reason.Length > 0 ? reason : "no reason given");
+        }
         return text;
     }
 
-    private const string InferenceFailedPrefix = "❌ Inference failed:";
+    private static readonly string[] FailurePrefixes = ["❌ Inference failed:", "[ERROR]"];
 
     /// <summary>How long <see cref="FreeAsync"/> waits for its job: it runs after Cancel, so nothing else can stop it.</summary>
     public TimeSpan FreeTimeout { get; set; } = TimeSpan.FromMinutes(2);
@@ -97,6 +105,8 @@ public sealed class ImageDescriber
                 node["inputs"]!["unload_all_models"] = freeComfyModels;
                 node["inputs"]!["seed"] = seed;
                 node["inputs"]!["config_override"] = _config;
+                if (_userPrompt is not null)
+                    node["inputs"]!["user_prompt"] = _userPrompt;
             },
         };
     }

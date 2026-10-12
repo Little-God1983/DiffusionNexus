@@ -64,7 +64,7 @@ public static class FeatureRegistry
             "Outpaint (Qwen-2512)",
             WorkloadConfigurationId: OutpaintWorkloadId),
 
-        // Outpaint + Vision — Qwen-Image-2512-outpaint-Vision.json
+        // Outpaint + Vision — Qwen3-VL-Describe.json, then Qwen-Image-2512-outpaint-nonVision.json
         // Shares the Outpaint workload; the SDK workload already includes Qwen3-VL pieces.
         [Feature.OutpaintVision] = new FeatureRequirements(
             Feature.OutpaintVision,

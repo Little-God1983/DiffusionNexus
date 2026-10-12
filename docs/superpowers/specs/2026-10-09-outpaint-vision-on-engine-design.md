@@ -3,6 +3,12 @@
 Milestone 2, "Editor on the Diffusion Nexus Engine": the editor's ComfyUI features run on the app-owned
 embedded ComfyUI with their existing workflows, so no user-run ComfyUI is needed. Builds on #606.
 
+> **Superseded in part by #616 (PR #623):** Generate (Vision) no longer runs
+> `Qwen-Image-2512-outpaint-Vision.json` (deleted). It runs `Qwen3-VL-Describe.json` first, asking about the
+> surroundings, then `Qwen-Image-2512-outpaint-nonVision.json` with the description as the prompt, so a
+> failed description ("❌ Inference failed: …") stops the run instead of becoming the prompt. What this spec
+> says about node 256 inside the outpaint workflow is history.
+
 ## What changes for the user
 
 - **Installation Manager → Engine → Features** has a new row, **Outpaint Vision**. It installs the

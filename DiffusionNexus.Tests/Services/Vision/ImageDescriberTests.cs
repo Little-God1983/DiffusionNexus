@@ -70,6 +70,33 @@ public class ImageDescriberTests
         (await act.Should().ThrowAsync<ImageDescriptionFailedException>()).Which.Message.Should().Contain("CUDA out of memory");
     }
 
+    // PR #623 review: an error text without a reason left "could not describe the image: " with nothing after it.
+    [Fact]
+    public async Task Describe_InferenceFailedTextWithoutAReason_SaysNoReasonWasGiven()
+    {
+        _client.Setup(c => c.GetResultAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => { var r = new ComfyUIResult(); r.Texts.Add("❌ Inference failed:\nCheck console for details."); return r; });
+
+        var act = () => Sut().DescribeAsync("up.png", keepLoaded: false, CancellationToken.None);
+
+        (await act.Should().ThrowAsync<ImageDescriptionFailedException>()).Which.Message
+            .Should().Be("no reason given");
+    }
+
+    // PR #623 review round 2: older builds of the pack (9bdf94c, March 2026) return "[ERROR] …" as the text.
+    [Theory]
+    [InlineData("[ERROR] Model inference failed. Check console for details.", "Model inference failed.")]
+    [InlineData("[ERROR] Unexpected error in inference pipeline: CUDA out of memory", "Unexpected error in inference pipeline: CUDA out of memory")]
+    public async Task Describe_OlderPacksErrorText_Throws_WithTheReason(string text, string reason)
+    {
+        _client.Setup(c => c.GetResultAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => { var r = new ComfyUIResult(); r.Texts.Add(text); return r; });
+
+        var act = () => Sut().DescribeAsync("up.png", keepLoaded: false, CancellationToken.None);
+
+        (await act.Should().ThrowAsync<ImageDescriptionFailedException>()).Which.Message.Should().Be(reason);
+    }
+
     [Theory]
     [InlineData(true, true)]
     [InlineData(false, false)]
@@ -80,6 +107,21 @@ public class ImageDescriberTests
         var node = JsonNode.Parse("""{"inputs":{"mode":"","seed":0,"config_override":"","unload_all_models":false}}""")!;
         _queued.Single()["3"](node);
         node["inputs"]!["unload_all_models"]!.GetValue<bool>().Should().Be(expected);
+    }
+
+    // #616: Outpaint Vision asks about the surroundings; Batch Upscale keeps the workflow's own question.
+    [Theory]
+    [InlineData("Describe the background.", "Describe the background.")]
+    [InlineData(null, "the workflow's question")]
+    public async Task Describe_AsksTheGivenQuestion_OrKeepsTheWorkflows(string? userPrompt, string expected)
+    {
+        var sut = new ImageDescriber(_client.Object, @"D:\m\model.gguf", @"D:\m\mmproj.gguf", userPrompt: userPrompt);
+
+        await sut.DescribeAsync("up.png", keepLoaded: false, CancellationToken.None);
+
+        var node = JsonNode.Parse("""{"inputs":{"mode":"","seed":0,"config_override":"","user_prompt":"the workflow's question"}}""")!;
+        _queued.Single()["3"](node);
+        node["inputs"]!["user_prompt"]!.GetValue<string>().Should().Be(expected);
     }
 
     // The free-up job reuses the loaded model (same config) and unloads it after answering.
