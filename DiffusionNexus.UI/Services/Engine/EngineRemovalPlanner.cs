@@ -6,12 +6,16 @@ public sealed record PlannedFile(string Path, long Bytes);
 /// <summary>An item a removal keeps because another installed feature still uses it.</summary>
 public sealed record KeptItem(string Name, string Path, string NeededBy);
 
-/// <summary>What removing one feature deletes, keeps, and asks about.</summary>
+/// <summary>
+/// What removing one feature deletes, keeps, and asks about. <paramref name="RemovedWithIt"/> names the
+/// features that read as present only through this feature's files, so they go with it.
+/// </summary>
 public sealed record EngineRemovalPlan(
     IReadOnlyList<string> NodePackFolders,
     IReadOnlyList<PlannedFile> EngineModels,
     IReadOnlyList<PlannedFile> OutsideModels,
-    IReadOnlyList<KeptItem> Kept)
+    IReadOnlyList<KeptItem> Kept,
+    IReadOnlyList<string> RemovedWithIt)
 {
     public long EngineBytes => EngineModels.Sum(f => f.Bytes);
 
@@ -21,7 +25,8 @@ public sealed record EngineRemovalPlan(
 /// <summary>
 /// Turns disk checks into removal plans. A file inside the Engine folder is one the Engine downloaded
 /// (feature downloads land in its models folder); anything else is in one of the user's own folders.
-/// A node pack or model that another present feature also uses is kept, matched by full path.
+/// A node pack or model that another feature also uses is kept, matched by full path, when that feature
+/// is present on its own: it has at least one file on disk that is not one of the removed feature's.
 /// </summary>
 public static class EngineRemovalPlanner
 {
@@ -30,7 +35,15 @@ public static class EngineRemovalPlanner
     {
         sizeOf ??= FileSize;
         var target = checks.Single(c => c.Feature == feature);
-        var others = checks.Where(c => c.Feature != feature && c.IsPresent).ToList();
+
+        // An owner must be present on its own: a feature whose files on disk are all the target's own
+        // (its files are a subset of the target's, e.g. Inpaint & Outpaint inside Outpaint Vision) reads as
+        // present only because of the target, and goes with it. Otherwise two such features would each
+        // keep the shared files for the other, and neither could ever be removed.
+        var targetPaths = new HashSet<string>(OwnPaths(target).Select(Key), StringComparer.OrdinalIgnoreCase);
+        var present = checks.Where(c => c.Feature != feature && c.IsPresent).ToList();
+        var others = present.Where(c => OwnPaths(c).Any(p => !targetPaths.Contains(Key(p)))).ToList();
+        var removedWithIt = present.Except(others).Select(c => c.DisplayName).ToList();
 
         var nodeOwners = Owners(others, c => c.Results
             .SelectMany(r => r.CustomNodeResults).Where(n => n.IsInstalled).Select(n => n.ExpectedPath));
@@ -64,8 +77,14 @@ public static class EngineRemovalPlanner
                 outside.Add(new PlannedFile(path, sizeOf(path)));
         }
 
-        return new EngineRemovalPlan(nodePacks, engineModels, outside, kept);
+        return new EngineRemovalPlan(nodePacks, engineModels, outside, kept, removedWithIt);
     }
+
+    /// <summary>A feature's files on disk that a removal of it would delete: installed node packs and every copy of its (non-placeholder) models.</summary>
+    private static IEnumerable<string> OwnPaths(EngineFeatureCheck check) =>
+        check.Results.SelectMany(r => r.CustomNodeResults).Where(n => n.IsInstalled).Select(n => n.ExpectedPath)
+            .Concat(check.Results.SelectMany(r => r.ModelResults)
+                .Where(m => m.IsInstalled && !m.IsPlaceholder).SelectMany(m => m.AllFoundPaths));
 
     /// <summary>Models of present features that sit outside the Engine folder, each once.</summary>
     public static IReadOnlyList<PlannedFile> PlanUninstallOutsideModels(

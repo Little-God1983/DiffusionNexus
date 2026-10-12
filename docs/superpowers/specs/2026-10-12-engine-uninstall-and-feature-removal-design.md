@@ -126,8 +126,10 @@ install) says why and changes nothing.
      installed feature** uses. A pack another installed feature needs is kept.
    - **Models:** every copy of each of the feature's model files, wherever it is found (all quant
      names, all search folders; not just the first match). A file that **another installed feature**
-     also uses is kept, matched by category and file name (the same file has a different id in each
-     workload).
+     also uses is kept, matched by the full path the checker found (the same file has a different id in
+     each workload).
+   - "Another installed feature" means one present on its own (see *Used by another feature* below);
+     a feature present only through this feature's files goes with it and is named in the question.
    - Kept items are listed with the feature that still needs them: *"Kept: qwen_image_vae.safetensors
      (used by Outpaint Vision)."*
 2. **Confirm.**
@@ -168,9 +170,16 @@ installed).
   `ConfigurationCheckerService`, not copied.
 - **Inside or outside:** a file is the Engine's when its full path lies inside the Engine install
   root (`FolderPathMatch`); everything else is the user's.
-- **"Used by another feature":** a model or node pack also declared by a feature that is still
-  Installed or Partial and is not being removed. For Uninstall Engine, nothing is kept: every feature
-  goes.
+- **"Used by another feature":** a model or node pack (matched by full path) also used by a feature that
+  is not being removed and is **present on its own**: it has at least one installed node pack or
+  (non-placeholder) model file on disk that is not one of the removed feature's own files. A feature
+  whose files on disk are all the removed feature's (Inpaint & Outpaint inside Outpaint Vision, Batch
+  Upscale inside Batch Upscale Vision) reads as present only through them, protects nothing and goes
+  with it; the confirmation names it (*"Inpaint & Outpaint uses only files of this feature, so it is
+  removed too."*). Without this rule two such features kept the shared files for each other and neither
+  could ever be removed. So with both installed, removing the small one first keeps everything (the big
+  one needs it) and removing the big one next deletes the shared files; removing the big one first
+  deletes the shared files at once. For Uninstall Engine, nothing is kept: every feature goes.
 
 Known gap: a model whose catalog URL does not carry its file name (Krea 2 Turbo's Identity Edit LoRA,
 `…/api/download/models/3139172?fileId=…`, which the checker expects as `3139172`) is not found by

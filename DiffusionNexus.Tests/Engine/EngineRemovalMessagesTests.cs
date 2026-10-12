@@ -39,7 +39,8 @@ public class EngineRemovalMessagesTests
             [@"C:\E\custom_nodes\ComfyUI-GGUF"],
             [new PlannedFile(@"C:\E\models\unet\a.gguf", 2L * 1024 * 1024 * 1024)],
             [new PlannedFile(@"D:\Models\vae\ae.safetensors", 300L * 1024 * 1024)],
-            [new KeptItem("qwen_image_vae.safetensors", @"C:\E\models\vae\qwen_image_vae.safetensors", "Outpaint Vision")]);
+            [new KeptItem("qwen_image_vae.safetensors", @"C:\E\models\vae\qwen_image_vae.safetensors", "Outpaint Vision")],
+            []);
 
         var text = EngineRemovalMessages.FeatureRemoval("Inpaint & Outpaint", plan);
 
@@ -49,6 +50,16 @@ public class EngineRemovalMessagesTests
         text.Should().Contain("Other programs (ComfyUI, A1111, …) may use them too");
         text.Should().Contain(@"D:\Models\vae\ae.safetensors (300 MB)");
         text.Should().Contain("Python packages");
+    }
+
+    // C1: a feature present only through this feature's files goes with it; the question says so.
+    [Fact]
+    public void FeatureRemoval_NamesTheFeaturesThatGoWithIt()
+    {
+        var plan = new EngineRemovalPlan([@"C:\E\custom_nodes\ComfyUI-GGUF"], [], [], [], ["Inpaint & Outpaint"]);
+
+        EngineRemovalMessages.FeatureRemoval("Outpaint Vision", plan).Should().Contain(
+            "Inpaint & Outpaint uses only files of this feature, so it is removed too.");
     }
 
     [Fact]

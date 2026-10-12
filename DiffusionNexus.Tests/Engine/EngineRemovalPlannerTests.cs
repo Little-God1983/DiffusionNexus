@@ -35,14 +35,17 @@ public class EngineRemovalPlannerTests
     private const string EngineUnet = Root + @"\models\diffusion_models\qwen-image-Q4_K_S.gguf";
     private const string UserAe = @"D:\Models\vae\ae.safetensors";
     private const string EngineUpscaler = Root + @"\models\upscale_models\4x-UltraSharp.pth";
+    private const string VlNode = Root + @"\custom_nodes\ComfyUI_Simple_Qwen3-VL-gguf";
+    private const string EngineVl = Root + @"\models\text_encoders\Qwen3-VL-8B-Q4_K_M.gguf";
 
     [Fact]
     public void Feature_SharedNodePackAndModel_AreKept_AndNamed()
     {
+        // Outpaint Vision has a node pack of its own, so it is installed on its own and needs the shared files.
         var checks = new[]
         {
             Check(EngineFeature.InpaintOutpaint, "Inpaint & Outpaint", Result([(Gguf, true)], [[EngineVae], [EngineUnet]])),
-            Check(EngineFeature.OutpaintVision, "Outpaint Vision", Result([(Gguf, true)], [[EngineVae]])),
+            Check(EngineFeature.OutpaintVision, "Outpaint Vision", Result([(Gguf, true), (VlNode, true)], [[EngineVae]])),
         };
 
         var plan = EngineRemovalPlanner.PlanFeatureRemoval(Root, checks, EngineFeature.InpaintOutpaint, Size);
@@ -52,6 +55,71 @@ public class EngineRemovalPlannerTests
         plan.Kept.Should().BeEquivalentTo([
             new KeptItem("ComfyUI-GGUF", Gguf, "Outpaint Vision"),
             new KeptItem("qwen_image_vae.safetensors", EngineVae, "Outpaint Vision")]);
+    }
+
+    // C1: Inpaint & Outpaint's files are a subset of Outpaint Vision's. Removing the small one first keeps
+    // everything (Vision has files of its own and needs the shared ones); removing Vision next must then
+    // delete the shared files, because Inpaint & Outpaint has nothing of its own to need them for.
+    [Fact]
+    public void SubsetPair_SmallFirst_KeepsTheSharedFiles_ThenRemovingTheBigOneDeletesThem()
+    {
+        var checks = new[]
+        {
+            Check(EngineFeature.InpaintOutpaint, "Inpaint & Outpaint", Result([(Gguf, true)], [[EngineVae], [EngineUnet]])),
+            Check(EngineFeature.OutpaintVision, "Outpaint Vision", Result([(Gguf, true), (VlNode, true)], [[EngineVae], [EngineUnet], [EngineVl]])),
+        };
+
+        var first = EngineRemovalPlanner.PlanFeatureRemoval(Root, checks, EngineFeature.InpaintOutpaint, Size);
+        first.HasAnythingToDelete.Should().BeFalse("every file of Inpaint & Outpaint is one Outpaint Vision needs");
+        first.Kept.Should().HaveCount(3).And.OnlyContain(k => k.NeededBy == "Outpaint Vision");
+
+        // Nothing was deleted, so the disk (and the checks) are the same for the second removal.
+        var second = EngineRemovalPlanner.PlanFeatureRemoval(Root, checks, EngineFeature.OutpaintVision, Size);
+
+        second.NodePackFolders.Should().BeEquivalentTo([Gguf, VlNode]);
+        second.EngineModels.Select(f => f.Path).Should().BeEquivalentTo([EngineVae, EngineUnet, EngineVl]);
+        second.Kept.Should().BeEmpty();
+        second.RemovedWithIt.Should().Equal("Inpaint & Outpaint");
+    }
+
+    // C1, the other order: removing the big one first deletes the shared files too (the small one has
+    // nothing of its own), and the plan names the feature that goes with it; then the small one is gone.
+    [Fact]
+    public void SubsetPair_BigFirst_DeletesTheSharedFiles_AndNamesTheFeatureThatGoesWithIt()
+    {
+        var checks = new[]
+        {
+            Check(EngineFeature.BatchUpscale, "Batch Upscale", Result([(Usdu, true)], [[EngineUpscaler]])),
+            Check(EngineFeature.BatchUpscaleVision, "Batch Upscale Vision", Result([(Usdu, true), (VlNode, true)], [[EngineUpscaler], [EngineVl]])),
+        };
+
+        var plan = EngineRemovalPlanner.PlanFeatureRemoval(Root, checks, EngineFeature.BatchUpscaleVision, Size);
+
+        plan.NodePackFolders.Should().BeEquivalentTo([Usdu, VlNode]);
+        plan.EngineModels.Select(f => f.Path).Should().BeEquivalentTo([EngineUpscaler, EngineVl]);
+        plan.Kept.Should().BeEmpty();
+        plan.RemovedWithIt.Should().Equal("Batch Upscale");
+    }
+
+    // C1, the dead end the earlier rule left behind (big one removed first, shared files kept): both
+    // features present on the same shared files only. Each named the other as the owner, so neither could
+    // ever be removed. Now the second removal, of either one, deletes them.
+    [Theory]
+    [InlineData(EngineFeature.InpaintOutpaint)]
+    [InlineData(EngineFeature.OutpaintVision)]
+    public void TwoFeaturesOnTheSameSharedFilesOnly_EitherRemovalDeletesThem(EngineFeature target)
+    {
+        var checks = new[]
+        {
+            Check(EngineFeature.InpaintOutpaint, "Inpaint & Outpaint", Result([(Gguf, true)], [[EngineVae], [EngineUnet]])),
+            Check(EngineFeature.OutpaintVision, "Outpaint Vision", Result([(Gguf, true), (VlNode, false)], [[EngineVae], [EngineUnet], []])),
+        };
+
+        var plan = EngineRemovalPlanner.PlanFeatureRemoval(Root, checks, target, Size);
+
+        plan.NodePackFolders.Should().Equal(Gguf);
+        plan.EngineModels.Select(f => f.Path).Should().BeEquivalentTo([EngineVae, EngineUnet]);
+        plan.Kept.Should().BeEmpty();
     }
 
     [Fact]

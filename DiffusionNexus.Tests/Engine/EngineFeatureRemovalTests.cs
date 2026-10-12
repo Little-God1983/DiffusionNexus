@@ -116,7 +116,9 @@ public sealed class EngineFeatureRemovalTests : IDisposable
     [Fact]
     public async Task Remove_KeepsWhatAnotherInstalledFeatureUses()
     {
-        _state[EngineFeatureCatalog.OutpaintingQwen2512] = Result([_gguf], [_vae]);
+        // Outpaint Vision has a model of its own, so it is installed on its own and needs the shared files.
+        _state[EngineFeatureCatalog.OutpaintingQwen2512] =
+            Result([_gguf], [_vae, Path.Combine(_root, "models", "text_encoders", "Qwen3-VL-8B.gguf")]);
         Answer(1);
         var vm = Sut();
         await vm.LoadCommand.ExecuteAsync(null);

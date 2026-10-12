@@ -40,6 +40,9 @@ public static class EngineRemovalMessages
         text.Append($"\n\nThis deletes {Count(plan.NodePackFolders.Count, "custom node pack")} and " +
                     $"{Count(plan.EngineModels.Count, "model")} ({FormatSize(plan.EngineBytes)}) from the Diffusion Nexus Engine.");
 
+        foreach (var name in plan.RemovedWithIt)
+            text.Append($"\n\n{name} uses only files of this feature, so it is removed too.");
+
         if (plan.Kept.Count > 0)
         {
             text.Append("\n\nKept, because another installed feature needs it:");

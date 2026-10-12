@@ -308,7 +308,10 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
 
             Info($"{row.DisplayName}: remove plan — {plan.NodePackFolders.Count} node pack(s), {plan.EngineModels.Count} Engine model(s) " +
                  $"({EngineRemovalMessages.FormatSize(plan.EngineBytes)}), {plan.OutsideModels.Count} in your own folders, " +
-                 $"{plan.Kept.Count} kept ({string.Join(", ", plan.Kept.Select(k => $"{k.Name} for {k.NeededBy}"))}).");
+                 $"{plan.Kept.Count} kept ({string.Join(", ", plan.Kept.Select(k => $"{k.Name} for {k.NeededBy}"))})" +
+                 (plan.RemovedWithIt.Count > 0
+                     ? $"; goes with it, using only its files: {string.Join(", ", plan.RemovedWithIt)}."
+                     : "."));
 
             if (!plan.HasAnythingToDelete)
             {
