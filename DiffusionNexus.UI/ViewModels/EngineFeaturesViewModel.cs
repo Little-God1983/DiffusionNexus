@@ -332,6 +332,9 @@ public sealed partial class EngineFeaturesViewModel : ViewModelBase
                      : "") +
                  (plan.LeftPartial.Count > 0
                      ? $"; left partly installed: {string.Join(", ", plan.LeftPartial)}"
+                     : "") +
+                 (plan.RemovedIfEverything.Count > 0
+                     ? $"; goes with it only if your own copies are deleted too: {string.Join(", ", plan.RemovedIfEverything.Select(r => r.Name))}"
                      : "") + ".");
             ProgressText = null;
 

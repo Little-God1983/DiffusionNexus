@@ -6,6 +6,13 @@ public sealed record PlannedFile(string Path, long Bytes);
 /// <summary>A number of files and their total size.</summary>
 public sealed record ModelFileTotal(int Count, long Bytes);
 
+/// <summary>
+/// A feature removed with another one only when the user's own copies are deleted too.
+/// <paramref name="PartialWithEngineOnly"/>: it also loses Engine files, so with "only what's in the
+/// Engine" it shows as Partial; otherwise it stays as it is.
+/// </summary>
+public sealed record ConditionalRemoval(string Name, bool PartialWithEngineOnly);
+
 /// <summary>An item a removal keeps because another installed feature still uses it.</summary>
 public sealed record KeptItem(string Name, string Path, string NeededBy);
 
@@ -25,6 +32,12 @@ public sealed record EngineRemovalPlan(
     /// theirs another feature keeps stays. They show as Partial afterwards.
     /// </summary>
     public IReadOnlyList<string> LeftPartial { get; init; } = [];
+
+    /// <summary>
+    /// Features that use only this feature's files but rely on a copy in the user's own folders: they go
+    /// too only when the user deletes all models. With "only what's in the Engine" they keep that copy.
+    /// </summary>
+    public IReadOnlyList<ConditionalRemoval> RemovedIfEverything { get; init; } = [];
 
     public long EngineBytes => EngineModels.Sum(f => f.Bytes);
 
@@ -96,17 +109,28 @@ public static class EngineRemovalPlanner
         // loses nothing is not named.
         var deleted = new HashSet<string>(
             nodePacks.Concat(engineModels.Concat(outside).Select(f => f.Path)).Select(Key), StringComparer.OrdinalIgnoreCase);
+        // One that goes only when the user's own copies are deleted too is named conditionally.
+        var outsidePaths = new HashSet<string>(outside.Select(f => Key(f.Path)), StringComparer.OrdinalIgnoreCase);
         var removedWithIt = new List<string>();
         var leftPartial = new List<string>();
+        var removedIfEverything = new List<ConditionalRemoval>();
         foreach (var check in present.Except(others))
         {
             var paths = FoundPaths(check).Select(Key).ToList();
             var lost = paths.Where(deleted.Contains).ToList();
             if (lost.Count == 0) continue;
-            (lost.Count == paths.Count ? removedWithIt : leftPartial).Add(check.DisplayName);
+            if (lost.Count < paths.Count)
+                leftPartial.Add(check.DisplayName);
+            else if (lost.Any(outsidePaths.Contains))
+                removedIfEverything.Add(new ConditionalRemoval(check.DisplayName, PartialWithEngineOnly: lost.Any(p => !outsidePaths.Contains(p))));
+            else
+                removedWithIt.Add(check.DisplayName);
         }
 
-        return new EngineRemovalPlan(nodePacks, engineModels, outside, kept, removedWithIt) { LeftPartial = leftPartial };
+        return new EngineRemovalPlan(nodePacks, engineModels, outside, kept, removedWithIt)
+        {
+            LeftPartial = leftPartial, RemovedIfEverything = removedIfEverything
+        };
     }
 
     /// <summary>

@@ -44,6 +44,9 @@ public static class EngineRemovalMessages
 
         foreach (var name in plan.RemovedWithIt)
             text.Append($"\n\n{name} uses only files of this feature, so it is removed too.");
+        foreach (var removal in plan.RemovedIfEverything)
+            text.Append($"\n\n{removal.Name} uses only files of this feature: it is removed too if you delete all models; " +
+                        $"with “only what's in the Engine” {(removal.PartialWithEngineOnly ? "it shows as Partial" : "it stays as it is")}.");
         foreach (var name in plan.LeftPartial)
             text.Append($"\n\n{name} loses the files it shares with this feature, except those another feature keeps; it will show as Partial.");
 

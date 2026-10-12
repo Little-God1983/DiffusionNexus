@@ -357,6 +357,26 @@ public class EngineRemovalPlannerTests
         }
     }
 
+    // R3-5: Batch Upscale uses only Batch Upscale Vision's files, but its upscaler is a copy in the user's
+    // folder. It goes too only if the user deletes all models; with "only what's in the Engine" it keeps
+    // that copy and shows as Partial.
+    [Fact]
+    public void ASubsetFeatureRelyingOnAnOfferedOutsideCopy_IsRemovedOnlyWithEverything()
+    {
+        const string userUpscaler = @"D:\Models\upscale_models\4x-UltraSharp.pth";
+        var checks = new[]
+        {
+            Check(EngineFeature.BatchUpscale, "Batch Upscale", Result([(Usdu, true)], [[userUpscaler]])),
+            Check(EngineFeature.BatchUpscaleVision, "Batch Upscale Vision", Result([(Usdu, true), (VlNode, true)], [[userUpscaler], [EngineVl]])),
+        };
+
+        var plan = EngineRemovalPlanner.PlanFeatureRemoval(Root, checks, EngineFeature.BatchUpscaleVision, Size);
+
+        plan.OutsideModels.Select(f => f.Path).Should().Equal(userUpscaler);
+        plan.RemovedWithIt.Should().BeEmpty();
+        plan.RemovedIfEverything.Should().Equal(new ConditionalRemoval("Batch Upscale", PartialWithEngineOnly: true));
+    }
+
     // R3-2: ComfyUI's legacy folder names count inside the Engine too.
     [Theory]
     [InlineData("diffusion_models", "unet")]

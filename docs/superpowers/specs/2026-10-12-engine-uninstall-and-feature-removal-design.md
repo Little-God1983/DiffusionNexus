@@ -269,7 +269,15 @@ installed).
   `clip` ↔ `text_encoders` count), and under a name the installer leaves on disk: not a URL-derived name
   the installer renames to `<Name><ext>` (a generic `diffusion_pytorch_model.safetensors` belongs to some
   other model). Any other outside copy is neither listed nor deleted, but still counts as installed.
-  Copies inside the Engine folder are always the Engine's.
+  A copy inside the Engine is the feature's only in the model's category folder (aliases count): a
+  same-named file in another category (an earlier Core download) is neither deleted with the feature
+  nor left out of Uninstall's count of model files no feature uses. A copy reached through a link
+  inside the Engine (`models\loras` → `D:\Loras`) is the user's file behind the link: it is neither
+  planned nor counted. When nothing of a feature can be removed and nothing is kept for another
+  feature, Remove… says its files are in the user's own folders. A feature that uses only the removed
+  feature's files but relies on a copy in the user's folders is named conditionally: *"<C> uses only
+  files of this feature: it is removed too if you delete all models; with “only what's in the Engine”
+  it shows as Partial."* (or *"it stays as it is"* when it loses no Engine file).
 
 Known gap: a model whose catalog URL does not carry its file name (Krea 2 Turbo's Identity Edit LoRA,
 `…/api/download/models/3139172?fileId=…`, which the checker expects as `3139172`) is not found by

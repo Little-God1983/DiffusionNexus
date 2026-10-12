@@ -87,6 +87,25 @@ public class EngineRemovalMessagesTests
         text.Should().NotContain("removed too");
     }
 
+    // R3-5: a feature that goes only when the user's own copies are deleted too is named conditionally.
+    [Fact]
+    public void FeatureRemoval_NamesAFeatureRemovedOnlyWithEverything_Conditionally()
+    {
+        var plan = new EngineRemovalPlan([@"C:\E\custom_nodes\ComfyUI_UltimateSDUpscale"], [],
+            [new PlannedFile(@"D:\Models\upscale_models\4x-UltraSharp.pth", 1)], [], [])
+        {
+            RemovedIfEverything = [new ConditionalRemoval("Batch Upscale", true), new ConditionalRemoval("Canvas", false)]
+        };
+
+        var text = EngineRemovalMessages.FeatureRemoval("Batch Upscale Vision", plan);
+
+        text.Should().Contain("Batch Upscale uses only files of this feature: it is removed too if you delete all models; " +
+                              "with “only what's in the Engine” it shows as Partial.");
+        text.Should().Contain("Canvas uses only files of this feature: it is removed too if you delete all models; " +
+                              "with “only what's in the Engine” it stays as it is.");
+        text.Should().NotContain("so it is removed too");
+    }
+
     // R3-4: nothing deletable and nothing kept (its copies are in the user's folders and not offered): the
     // "needed by another installed feature" text would be false.
     [Fact]
