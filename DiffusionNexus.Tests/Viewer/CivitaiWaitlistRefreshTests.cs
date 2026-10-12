@@ -285,18 +285,35 @@ public sealed class CivitaiWaitlistRefreshTests : IDisposable
     }
 
     [Fact]
-    public async Task VersionLookup404_HashFindsTheSameVersion_JudgesIt()
+    public async Task VersionLookup404_HashFindsTheSameVersion_StaysUnavailable()
     {
+        // PR #624 review round 3: the queue runner re-resolves a restored job by version id, so a
+        // version the id endpoint refuses would become a failed job instead of an honest red card.
         var wl = CreateWithHashedEntry(out var entry, Path.Combine(_tempDir, "same-id.json"));
         ClientReturns(null);
         HashLookupReturns(Hashed(CivitaiWaitlistTests.Version(3289193, Now.AddDays(3)), 3289193, "old.safetensors", Sha));
 
         await wl.RefreshEntryAsync(entry, apiKey: null, utcNow: Now);
 
-        entry.Status.Should().Be(WaitlistEntryStatus.Waiting);
-        entry.EarlyAccessDeadline.Should().Be(Now.AddDays(3));
+        entry.Status.Should().Be(WaitlistEntryStatus.Unavailable);
         entry.VersionId.Should().Be(3289193);
-        entry.StatusDetail.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task FollowedVersionGoneToo_TheNoteStillExplainsTheLink()
+    {
+        // PR #624 review round 3: the card shows the original names while the globe opens the
+        // followed model, so the dead-again note must keep saying where the entry points.
+        var wl = CreateWithHashedEntry(out var entry, Path.Combine(_tempDir, "dead-again.json"));
+        ClientReturns(null);
+        HashLookupReturns(Moved());
+        await wl.RefreshEntryAsync(entry, apiKey: null, utcNow: Now);
+        HashLookupReturns(null);
+
+        await wl.RefreshEntryAsync(entry, apiKey: null, utcNow: Now);
+
+        entry.Status.Should().Be(WaitlistEntryStatus.Unavailable);
+        entry.StatusDetail.Should().Contain("Cum_Everywhere_Krea2").And.Contain("no longer exists");
     }
 
     [Fact]

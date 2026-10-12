@@ -184,7 +184,10 @@ public sealed class CivitaiWaitlist : ObservableObject
             if (version is null)
             {
                 entry.Status = WaitlistEntryStatus.Unavailable;
-                entry.StatusDetail = deadNote ?? "The model version no longer exists on Civitai.";
+                // A followed entry keeps saying where its link points: the card shows the old names.
+                entry.StatusDetail = deadNote ?? (entry.MovedNote is { } moved
+                    ? $"{moved} That version no longer exists either."
+                    : "The model version no longer exists on Civitai.");
             }
             else if (version.IsPermanentlyPaid())
             {
@@ -258,15 +261,14 @@ public sealed class CivitaiWaitlist : ObservableObject
         }
 
         var file = CivitaiVersionFiles.FindBySha256(moved, entry.ExpectedSha256);
-        if (moved is null || file is null)
+        // The same id from the hash index is no rescue: a queued job is re-resolved by version id,
+        // and the id endpoint just said this version does not exist.
+        if (moved is null || file is null || moved.Id == entry.VersionId)
         {
             _logger?.Info(LogCategory.Download, "CivitaiWaitlist",
                 $"Version {entry.VersionId} is gone and its file is not on Civitai under another version: {entry.ModelName} — {entry.VersionName}");
             return (null, null);
         }
-
-        // The id endpoint 404'd but the hash endpoint serves the same version: it exists.
-        if (moved.Id == entry.VersionId) return (moved, null);
 
         var where = $"{moved.Model?.Name ?? $"model {moved.ModelId}"} — {moved.Name}";
         if (Entries.Any(e => e != entry && e.VersionId == moved.Id))
