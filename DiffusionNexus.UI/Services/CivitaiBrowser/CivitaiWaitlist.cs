@@ -148,7 +148,8 @@ public sealed class CivitaiWaitlist : ObservableObject
     /// <summary>
     /// Re-checks one entry against the API and applies the outcome matrix:
     /// still gated → deadline updated (creators extend early access); free →
-    /// Available; permanent → flagged (never auto-removed); 404 → Unavailable;
+    /// Available; permanent → flagged (never auto-removed); 404 → the same file republished
+    /// under a new version is followed (<see cref="FindRepublishedAsync"/>), else Unavailable;
     /// network error → CheckFailed with old data kept. Returns the fetched
     /// version so move-to-queue can reuse it without a second fetch.
     /// </summary>
@@ -176,27 +177,31 @@ public sealed class CivitaiWaitlist : ObservableObject
             _apiCache?.InvalidateVersion(entry.VersionId);
             version = await _civitaiClient.GetModelVersionAsync(entry.VersionId, apiKey, ct);
 
+            string? movedNote = null;
+            if (version is null)
+                (version, movedNote) = await FindRepublishedAsync(entry, apiKey, ct);
+
             if (version is null)
             {
                 entry.Status = WaitlistEntryStatus.Unavailable;
-                entry.StatusDetail = "The model version no longer exists on Civitai.";
+                entry.StatusDetail = movedNote ?? "The model version no longer exists on Civitai.";
             }
             else if (version.IsPermanentlyPaid())
             {
                 entry.Status = WaitlistEntryStatus.PermanentlyPaid;
-                entry.StatusDetail = null;
+                entry.StatusDetail = movedNote;
             }
             else if (version.IsEarlyAccessActive(now))
             {
                 entry.EarlyAccessDeadline = version.EarlyAccessDeadline ?? version.PaidAccess?.EndsAt;
                 entry.Status = WaitlistEntryStatus.Waiting;
-                entry.StatusDetail = null;
+                entry.StatusDetail = movedNote;
             }
             else
             {
                 entry.EarlyAccessDeadline = version.EarlyAccessDeadline;
                 entry.Status = WaitlistEntryStatus.Available;
-                entry.StatusDetail = null;
+                entry.StatusDetail = movedNote;
             }
             entry.LastCheckedAt = now;
             _logger?.Info(LogCategory.Download, "CivitaiWaitlist",
@@ -223,6 +228,47 @@ public sealed class CivitaiWaitlist : ObservableObject
 
         entry.RefreshAvailability(utcNow);
         return version;
+    }
+
+    /// <summary>
+    /// The version id 404'd. Creators sometimes delete a version and publish the same file
+    /// under a new version, even in another model (#617), so before calling the entry dead
+    /// look the file up by the SHA256 captured at add time. A hit re-points the entry at the
+    /// new version, which the caller then judges like any re-checked version. Returns the
+    /// version to judge (null = dead) and the note to show under the entry.
+    /// </summary>
+    private async Task<(CivitaiModelVersion? Version, string? Note)> FindRepublishedAsync(
+        CivitaiWaitlistEntry entry, string? apiKey, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(entry.ExpectedSha256)) return (null, null);
+
+        _apiCache?.InvalidateHash(entry.ExpectedSha256);
+        var moved = await _civitaiClient!.GetModelVersionByHashAsync(entry.ExpectedSha256, apiKey, ct);
+        var file = moved?.Files.FirstOrDefault(f =>
+            string.Equals(f.Hashes?.SHA256, entry.ExpectedSha256, StringComparison.OrdinalIgnoreCase));
+        if (moved is null || file is null || moved.Id == entry.VersionId)
+        {
+            _logger?.Info(LogCategory.Download, "CivitaiWaitlist",
+                $"Version {entry.VersionId} is gone and its file is not on Civitai under another version: {entry.ModelName} — {entry.VersionName}");
+            return (null, null);
+        }
+
+        var where = $"{moved.Model?.Name ?? $"model {moved.ModelId}"} — {moved.Name}";
+        if (Entries.Any(e => e != entry && e.VersionId == moved.Id))
+        {
+            _logger?.Info(LogCategory.Download, "CivitaiWaitlist",
+                $"Version {entry.VersionId} was republished as version {moved.Id}, which is already waitlisted: {entry.ModelName} — {entry.VersionName}");
+            return (null, $"Civitai moved this file to \"{where}\", which is already on your waitlist.");
+        }
+
+        _logger?.Info(LogCategory.Download, "CivitaiWaitlist",
+            $"Followed a republished file: {entry.ModelName} — {entry.VersionName} is now {where}",
+            $"Old: model {entry.ModelId}, version {entry.VersionId}\nNew: model {moved.ModelId}, version {moved.Id}\nSHA256: {entry.ExpectedSha256}\nFile: {file.Name}");
+        entry.ModelId = moved.ModelId;
+        entry.VersionId = moved.Id;
+        entry.FileName = file.Name;
+        entry.DownloadUrl = file.DownloadUrl ?? moved.DownloadUrl ?? entry.DownloadUrl;
+        return (moved, $"Civitai moved this file to \"{where}\".");
     }
 
     /// <summary>"Update all" — re-checks every entry (gated to 3 concurrent), then persists.</summary>
