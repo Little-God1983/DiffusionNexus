@@ -866,15 +866,20 @@ public partial class ColorFixerViewModel : ObservableObject
     /// <summary>
     /// Encodes the image in the format its file extension names, the way ImageSharp's
     /// <c>Save(path)</c> picked its encoder. JPEG and WebP use quality 75, ImageSharp's default.
+    /// SkiaSharp has no BMP, GIF or TIFF encoder (its <c>Encode</c> returns null for them), so
+    /// those files are refused with a clear message rather than silently rewritten as PNG under
+    /// the old extension; the per-item catch in the callers reports it against the item.
     /// </summary>
     private static void SaveByExtension(SKBitmap image, string path)
     {
-        var (format, quality) = Path.GetExtension(path).ToLowerInvariant() switch
+        var extension = Path.GetExtension(path).ToLowerInvariant();
+        var (format, quality) = extension switch
         {
             ".jpg" or ".jpeg" => (SKEncodedImageFormat.Jpeg, 75),
             ".webp" => (SKEncodedImageFormat.Webp, 75),
-            ".bmp" => (SKEncodedImageFormat.Bmp, 100),
-            _ => (SKEncodedImageFormat.Png, 100),
+            ".png" => (SKEncodedImageFormat.Png, 100),
+            _ => throw new NotSupportedException(
+                $"Cannot write {extension} files: the image library only encodes PNG, JPEG and WebP. Convert the file to one of those first."),
         };
 
         using var skImage = SKImage.FromBitmap(image);
