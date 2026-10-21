@@ -61,29 +61,30 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Avalonia" Version="11.3.13" />
+    <PackageReference Include="Avalonia" Version="11.3.22" />
     <PackageReference Include="Avalonia.Controls.PanAndZoom" Version="11.3.0" />
-    <PackageReference Include="Avalonia.Desktop" Version="11.3.13" />
-    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.13" />
-    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.13" />
-    <PackageReference Include="Avalonia.Diagnostics" Version="11.3.13">
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.22" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.22" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.22" />
+    <PackageReference Include="Avalonia.Diagnostics" Version="11.3.22">
       <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
       <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>none</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="Avalonia.Skia" Version="11.3.13" />
-    <PackageReference Include="Avalonia.Controls.ColorPicker" Version="11.3.13" />
+    <PackageReference Include="Avalonia.Skia" Version="11.3.22" />
+    <PackageReference Include="Avalonia.Controls.ColorPicker" Version="11.3.22" />
+    <!-- DataGrid's newest 11.3.x build is 11.3.13 (the next release is 12.x); it runs against 11.3.22 core. -->
     <PackageReference Include="Avalonia.Controls.DataGrid" Version="11.3.13" />
     <!-- ItemsRepeater + UniformGridLayout power the virtualizing LoRA-viewer tile grid
          (only the tiles inside the viewport are realized, so 2K+ LoRAs open instantly
          and scroll smoothly). These types are NOT in core Avalonia 11.3.x; they ship in
          this standalone package, whose newest 11.x release is 11.1.5 (Avalonia published
-         no 11.2/11.3 build of it). 11.1.5 resolves and runs against 11.3.13 core — the
+         no 11.2/11.3 build of it). 11.1.5 resolves and runs against 11.3.22 core — the
          combo every 11.3.x consumer of ItemsRepeater necessarily uses. -->
     <PackageReference Include="Avalonia.Controls.ItemsRepeater" Version="11.1.5" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.10">
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.*">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
