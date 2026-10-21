@@ -572,7 +572,7 @@ public partial class ColorFixerViewModel : ObservableObject
             {
                 using var image = SkiaPixels.LoadRgba(item.FilePath);
                 ApplyColorCorrection(image, item.Detail, _tintRemoval / 100.0, _brightness / 100.0, _contrast / 100.0);
-                SaveByExtension(image, item.FilePath);
+                ImageFileWriter.Write(image, item.FilePath);
             });
 
             item.IsFixed = true;
@@ -614,7 +614,7 @@ public partial class ColorFixerViewModel : ObservableObject
                 var tempPath = Path.Combine(Path.GetTempPath(), "DiffusionNexus_ColorFixer",
                     $"{Path.GetFileNameWithoutExtension(item.FilePath)}_preview_{DateTime.UtcNow.Ticks}{Path.GetExtension(item.FilePath)}");
                 Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
-                SaveByExtension(corrected, tempPath);
+                ImageFileWriter.Write(corrected, tempPath);
 
                 double score = EstimateScore(corrected);
                 return (tempPath, score);
@@ -862,32 +862,6 @@ public partial class ColorFixerViewModel : ObservableObject
     }
 
     private static byte ClampByte(float value) => (byte)Math.Clamp((int)Math.Round(value), 0, 255);
-
-    /// <summary>
-    /// Encodes the image in the format its file extension names, the way ImageSharp's
-    /// <c>Save(path)</c> picked its encoder. JPEG and WebP use quality 75, ImageSharp's default.
-    /// SkiaSharp has no BMP, GIF or TIFF encoder (its <c>Encode</c> returns null for them), so
-    /// those files are refused with a clear message rather than silently rewritten as PNG under
-    /// the old extension; the per-item catch in the callers reports it against the item.
-    /// </summary>
-    private static void SaveByExtension(SKBitmap image, string path)
-    {
-        var extension = Path.GetExtension(path).ToLowerInvariant();
-        var (format, quality) = extension switch
-        {
-            ".jpg" or ".jpeg" => (SKEncodedImageFormat.Jpeg, 75),
-            ".webp" => (SKEncodedImageFormat.Webp, 75),
-            ".png" => (SKEncodedImageFormat.Png, 100),
-            _ => throw new NotSupportedException(
-                $"Cannot write {extension} files: the image library only encodes PNG, JPEG and WebP. Convert the file to one of those first."),
-        };
-
-        using var skImage = SKImage.FromBitmap(image);
-        using var data = skImage.Encode(format, quality)
-            ?? throw new InvalidOperationException($"Encoding {path} as {format} failed.");
-        using var file = File.Create(path);
-        data.SaveTo(file);
-    }
 
     /// <summary>
     /// Estimates the color distribution score for a corrected image using the same

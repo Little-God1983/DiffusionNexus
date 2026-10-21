@@ -27,6 +27,8 @@
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.*" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.*" />
     <PackageReference Include="SkiaSharp" Version="3.119.4" />
+    <!-- TIFF writing for ImageFileWriter; the UI already ships this for the image editor. -->
+    <PackageReference Include="BitMiracle.LibTiff.NET" Version="2.4.660" />
     <!-- FFMpegCore (MIT) replaced Xabe.FFmpeg (CC BY-NC-SA 3.0). Xabe's licence permits
          non-commercial use only and has no open-source carve-out, which conflicts with
          this project's MIT grant: publish.ps1 embeds the library into the shipped
