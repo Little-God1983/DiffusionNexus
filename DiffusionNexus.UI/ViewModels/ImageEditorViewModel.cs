@@ -1011,6 +1011,12 @@ public partial class ImageEditorViewModel : ObservableObject
         var newPath = ResolveSavePath(result);
         if (newPath is null) return;
 
+        if (result.Destination != SaveAsDestination.LayeredTiff && DescribeUnwritableFormat(newPath) is { } unwritable)
+        {
+            StatusMessage = unwritable;
+            return;
+        }
+
         if (File.Exists(newPath))
         {
             var extension = result.Destination == SaveAsDestination.LayeredTiff
@@ -1060,31 +1066,36 @@ public partial class ImageEditorViewModel : ObservableObject
     }
 
     /// <summary>
-    /// The status line after a save or export that returned false. A GIF can never be written (no
-    /// encoder, and Save, Save As New and Export keep the extension), so it says why and what to
-    /// do instead; anything else gets <paramref name="otherwise"/>.
+    /// The status line after a save or export that returned false: why the format cannot be
+    /// written (<see cref="DescribeUnwritableFormat"/>), otherwise <paramref name="otherwise"/>.
     /// </summary>
     internal static string DescribeSaveFailure(string path, string otherwise = "Failed to save image.")
-        => IsGif(path)
-            ? "Can't save GIF files: there is no GIF encoder. Use Save / Export > Export as PNG instead."
-            : otherwise;
+        => DescribeUnwritableFormat(path) ?? otherwise;
+
+    /// <summary>
+    /// Why the canvas cannot be saved under <paramref name="path"/>'s extension, or null. Save, Save
+    /// As New beside the original and Export keep the original's extension, and two formats the
+    /// editor opens cannot be written that way: GIF has no encoder, and a TIFF would get one
+    /// flattened PNG under its .tif name (the layers are written only by the layered TIFF export).
+    /// </summary>
+    internal static string? DescribeUnwritableFormat(string path)
+        => Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".gif" => "Can't save GIF files: there is no GIF encoder. Use Save / Export > Export as PNG instead.",
+            ".tif" or ".tiff" => "Can't save TIFF files this way: the layers would be flattened into a PNG with a .tif name. Use Save / Export > Export as Layered TIFF instead.",
+            _ => null,
+        };
 
     /// <summary>
     /// Why Save cannot write over <paramref name="path"/>, or null. Asked before the confirmation, so
-    /// nobody confirms a save that cannot happen: a GIF has no encoder, and an animation would be
-    /// replaced by the one frame the editor shows.
+    /// nobody confirms a save that cannot happen: the format cannot be written, or an animation
+    /// would be replaced by the one frame the editor shows.
     /// </summary>
     internal static string? DescribeOverwriteRefusal(string path)
-    {
-        if (IsGif(path))
-            return DescribeSaveFailure(path);
-        return SkiaPixels.IsAnimated(path)
-            ? $"Can't save over {Path.GetFileName(path)}: it is animated, and saving would keep only the first frame. Use Save / Export > Export as PNG instead."
-            : null;
-    }
-
-    private static bool IsGif(string path)
-        => string.Equals(Path.GetExtension(path), ".gif", StringComparison.OrdinalIgnoreCase);
+        => DescribeUnwritableFormat(path)
+            ?? (SkiaPixels.IsAnimated(path)
+                ? $"Can't save over {Path.GetFileName(path)}: it is animated, and saving would keep only the first frame. Use Save / Export > Export as PNG instead."
+                : null);
 
     private async Task ExecuteSaveOverwriteAsync()
     {
@@ -1123,10 +1134,10 @@ public partial class ImageEditorViewModel : ObservableObject
     {
         if (CurrentImagePath is null || SaveImageFunc is null || ShowSaveFileDialogFunc is null) return;
 
-        // The export keeps the original's format, and a GIF cannot be written: say so before the picker.
-        if (IsGif(CurrentImagePath))
+        // The export keeps the original's format: when that cannot be written, say so before the picker.
+        if (DescribeUnwritableFormat(CurrentImagePath) is { } unwritable)
         {
-            StatusMessage = DescribeSaveFailure(CurrentImagePath);
+            StatusMessage = unwritable;
             return;
         }
 

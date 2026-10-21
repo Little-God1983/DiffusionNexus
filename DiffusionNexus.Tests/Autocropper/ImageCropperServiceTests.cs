@@ -635,6 +635,22 @@ public class ImageCropperServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task WhenTheTargetFolderIsTheSourceFolderThenAnAnimatedWebpIsKept()
+    {
+        // Not overwrite mode by name, but the output still lands on the source file.
+        var folder = Path.Combine(_testDirectory, "AnimatedWebpSameFolder");
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, "wide.webp");
+        var webp = TestImageFiles.AnimatedWebp(16, 8);
+        File.WriteAllBytes(path, webp);
+
+        var result = await _service.ProcessImagesAsync(folder, folder + Path.DirectorySeparatorChar, [Ratio1x1]);
+
+        result.FailedCount.Should().Be(1);
+        File.ReadAllBytes(path).Should().Equal(webp);
+    }
+
+    [Fact]
     public async Task WhenCroppingAnAnimatedWebpIntoATargetFolderThenTheOutputIsACroppedStill()
     {
         // The original stays as it is, so a still of the first frame is a fine result here

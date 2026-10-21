@@ -225,7 +225,7 @@ public sealed class ImageCropperService : IImageCropperService
         // Save the result
         try
         {
-            SaveBitmap(finalBitmap, sourcePath, outputFolder, overwriteMode);
+            SaveBitmap(finalBitmap, sourcePath, outputFolder);
         }
         finally
         {
@@ -290,7 +290,7 @@ public sealed class ImageCropperService : IImageCropperService
         // Save the result
         try
         {
-            SaveBitmap(finalBitmap, sourcePath, outputFolder, overwriteMode);
+            SaveBitmap(finalBitmap, sourcePath, outputFolder);
         }
         finally
         {
@@ -500,20 +500,23 @@ public sealed class ImageCropperService : IImageCropperService
     /// ImageFileWriter encodes completely before it touches a file and swaps the result in, so a
     /// format Skia cannot encode (GIF: SKBitmap.Encode used to return false here and the empty
     /// output replaced the original) throws and leaves the original untouched; the caller counts
-    /// the image as failed. An animated source is refused in overwrite mode too: Skia decoded only
-    /// its first frame, so the result would replace the animation with a still. Into another
-    /// folder that still is fine, the original stays. No metadata is carried: the crop is chosen
-    /// on the stored, unrotated pixels, so a carried EXIF orientation would show it transposed.
+    /// the image as failed. An animated source is refused too when the output lands on it (overwrite
+    /// mode, or a target folder that is the source folder): Skia decoded only its first frame, so
+    /// the result would replace the animation with a still. Anywhere else that still is fine, the
+    /// original stays. No metadata is carried: the crop is chosen on the stored, unrotated pixels,
+    /// so a carried EXIF orientation would show it transposed.
     /// </summary>
-    private static void SaveBitmap(SKBitmap bitmap, string sourcePath, string outputFolder, bool overwriteMode)
+    private static void SaveBitmap(SKBitmap bitmap, string sourcePath, string outputFolder)
     {
-        if (overwriteMode && SkiaPixels.IsAnimated(sourcePath))
+        string outputPath = Path.Combine(outputFolder, Path.GetFileName(sourcePath));
+        bool replacesSource = string.Equals(
+            Path.GetFullPath(outputPath), Path.GetFullPath(sourcePath), StringComparison.OrdinalIgnoreCase);
+        if (replacesSource && SkiaPixels.IsAnimated(sourcePath))
         {
             throw new NotSupportedException(
                 $"{Path.GetFileName(sourcePath)} is animated; overwriting it would keep only the first frame.");
         }
 
-        string outputPath = Path.Combine(outputFolder, Path.GetFileName(sourcePath));
         ImageFileWriter.Write(bitmap, outputPath, lossyQuality: 100);
     }
 

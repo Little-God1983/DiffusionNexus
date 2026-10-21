@@ -7,8 +7,9 @@ using Moq;
 namespace DiffusionNexus.Tests.ViewModels;
 
 /// <summary>
-/// What the editor says when the canvas cannot be written in the original's format, and that it
-/// says it before the user picks a file or confirms an overwrite.
+/// What the editor says when the canvas cannot be written in the original's format (GIF has no
+/// encoder; a TIFF would be written as one flat PNG under the .tif name), and that it says it
+/// before the user picks a file or confirms an overwrite.
 /// </summary>
 public sealed class ImageEditorSaveMessageTests : IDisposable
 {
@@ -27,34 +28,58 @@ public sealed class ImageEditorSaveMessageTests : IDisposable
         message.Should().Contain("Export as PNG", "that menu entry is the editor's way to a format it can write");
     }
 
+    [Theory]
+    [InlineData("layers.tif")]
+    [InlineData("layers.TIFF")]
+    public void DescribeSaveFailure_Tiff_PointsToTheLayeredTiffExport(string name)
+        => ImageEditorViewModel.DescribeSaveFailure(name).Should().Contain("Export as Layered TIFF");
+
     [Fact]
     public void DescribeSaveFailure_OtherFormats_KeepTheGenericMessage()
         => ImageEditorViewModel.DescribeSaveFailure(Path.Combine("C:", "data", "photo.png")).Should().Be("Failed to save image.");
 
-    [Fact]
-    public async Task Export_OfAGif_SaysWhyBeforeThePicker()
+    [Theory]
+    [InlineData("anim.gif")]
+    [InlineData("layers.tif")]
+    public async Task Export_OfAnUnwritableFormat_SaysWhyBeforeThePicker(string name)
     {
-        // Export keeps the original's format, so a GIF original can never be exported this way.
-        var gif = Path.Combine(_tempDir.FullName, "anim.gif");
-        var (sut, asked, saves) = CreateSut(gif);
+        // Export keeps the original's format, which the editor cannot write for these.
+        var path = Path.Combine(_tempDir.FullName, name);
+        var (sut, asked, saves) = CreateSut(path);
 
         await sut.ExportCommand.ExecuteAsync(null);
 
-        sut.StatusMessage.Should().Be(ImageEditorViewModel.DescribeSaveFailure(gif));
+        sut.StatusMessage.Should().Be(ImageEditorViewModel.DescribeSaveFailure(path));
         asked.Should().BeEmpty("nobody should pick a place for a file that cannot be written");
         saves.Should().BeEmpty();
     }
 
-    [Fact]
-    public async Task SaveOverwrite_OfAGif_SaysWhyBeforeTheConfirmation()
+    [Theory]
+    [InlineData("anim.gif")]
+    [InlineData("layers.tif")]
+    public async Task SaveOverwrite_OfAnUnwritableFormat_SaysWhyBeforeTheConfirmation(string name)
     {
-        var gif = Path.Combine(_tempDir.FullName, "anim.gif");
-        var (sut, asked, saves) = CreateSut(gif);
+        var path = Path.Combine(_tempDir.FullName, name);
+        var (sut, asked, saves) = CreateSut(path);
 
         await sut.SaveOverwriteCommand.ExecuteAsync(null);
 
-        sut.StatusMessage.Should().Be(ImageEditorViewModel.DescribeSaveFailure(gif));
+        sut.StatusMessage.Should().Be(ImageEditorViewModel.DescribeSaveFailure(path));
         asked.Should().BeEmpty();
+        saves.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task SaveAsNew_OfATiffBesideTheOriginal_WritesNothing()
+    {
+        // Save As New beside the original keeps the extension: the flat PNG would be named .tif.
+        var path = Path.Combine(_tempDir.FullName, "layers.tif");
+        var (sut, _, saves) = CreateSut(path);
+        sut.SaveAsDialogRequested += () => Task.FromResult(SaveAsResult.Success("copy", ImageRatingStatus.Unrated));
+
+        await sut.SaveAsNewCommand.ExecuteAsync(null);
+
+        sut.StatusMessage.Should().Be(ImageEditorViewModel.DescribeSaveFailure(path));
         saves.Should().BeEmpty();
     }
 
