@@ -46,7 +46,6 @@ public class ThirdPartyNoticesTests
     [InlineData("LibVLCSharp")]
     [InlineData("VideoLAN.LibVLC.Windows")]
     [InlineData("HPPH.SkiaSharp")]
-    [InlineData("SixLabors.ImageSharp")]
     [InlineData("Avalonia.Fonts.Inter")]
     [InlineData("SkiaSharp.NativeAssets.Win32")]
     [InlineData("HarfBuzzSharp.NativeAssets.Win32")]

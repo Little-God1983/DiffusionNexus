@@ -3,10 +3,9 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels.Tabs;
+using DiffusionNexus.Service.Services.Imaging;
 using Serilog;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
+using SkiaSharp;
 
 namespace DiffusionNexus.UI.ViewModels.Dialogs;
 
@@ -487,7 +486,7 @@ public partial class ColorFixerViewModel : ObservableObject
 
         var (bestTint, bestBright, bestContrast) = await Task.Run(() =>
         {
-            using var image = Image.Load<Rgba32>(item.FilePath);
+            using var image = SkiaPixels.LoadRgba(item.FilePath);
 
             // Score that accounts for both quality and amount of correction applied.
             // Penalizes high slider values so the optimizer prefers gentle fixes.
@@ -511,7 +510,7 @@ public partial class ColorFixerViewModel : ObservableObject
                 {
                     for (int co = 0; co <= 100; co += 20)
                     {
-                        using var clone = image.Clone();
+                        using var clone = image.Copy();
                         ApplyColorCorrection(clone, item.Detail, t / 100.0, br / 100.0, co / 100.0);
                         double raw = EstimateScore(clone);
                         double effective = EffectiveScore(raw, t, br, co);
@@ -536,7 +535,7 @@ public partial class ColorFixerViewModel : ObservableObject
                 {
                     for (int co = (int)Math.Max(0, bContrast - 15); co <= Math.Min(100, bContrast + 15); co += 5)
                     {
-                        using var clone = image.Clone();
+                        using var clone = image.Copy();
                         ApplyColorCorrection(clone, item.Detail, t / 100.0, br / 100.0, co / 100.0);
                         double raw = EstimateScore(clone);
                         double effective = EffectiveScore(raw, t, br, co);
@@ -561,7 +560,7 @@ public partial class ColorFixerViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Applies automated color correction to a single image using ImageSharp.
+    /// Applies automated color correction to a single image using SkiaSharp.
     /// Routes to issue-specific algorithms based on the detail string from the analyzer.
     /// </summary>
     private async Task ApplyColorFixAsync(ColorFixerImageItem item)
@@ -571,9 +570,9 @@ public partial class ColorFixerViewModel : ObservableObject
         {
             await Task.Run(() =>
             {
-                using var image = Image.Load<Rgba32>(item.FilePath);
+                using var image = SkiaPixels.LoadRgba(item.FilePath);
                 ApplyColorCorrection(image, item.Detail, _tintRemoval / 100.0, _brightness / 100.0, _contrast / 100.0);
-                image.Save(item.FilePath);
+                SaveByExtension(image, item.FilePath);
             });
 
             item.IsFixed = true;
@@ -607,15 +606,15 @@ public partial class ColorFixerViewModel : ObservableObject
         {
             var (previewPath, estimatedScore) = await Task.Run<(string, double)>(() =>
             {
-                using var image = Image.Load<Rgba32>(item.FilePath);
+                using var image = SkiaPixels.LoadRgba(item.FilePath);
 
-                using var corrected = image.Clone();
+                using var corrected = image.Copy();
                 ApplyColorCorrection(corrected, item.Detail, _tintRemoval / 100.0, _brightness / 100.0, _contrast / 100.0);
 
                 var tempPath = Path.Combine(Path.GetTempPath(), "DiffusionNexus_ColorFixer",
                     $"{Path.GetFileNameWithoutExtension(item.FilePath)}_preview_{DateTime.UtcNow.Ticks}{Path.GetExtension(item.FilePath)}");
                 Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
-                corrected.Save(tempPath);
+                SaveByExtension(corrected, tempPath);
 
                 double score = EstimateScore(corrected);
                 return (tempPath, score);
@@ -644,7 +643,7 @@ public partial class ColorFixerViewModel : ObservableObject
     /// <param name="tintRemoval">Tint removal strength 0.0–1.0.</param>
     /// <param name="brightness">Brightness adjustment strength 0.0–1.0.</param>
     /// <param name="contrast">Contrast adjustment strength 0.0–1.0.</param>
-    private static void ApplyColorCorrection(Image<Rgba32> image, string detail, double tintRemoval, double brightness, double contrast)
+    private static void ApplyColorCorrection(SKBitmap image, string detail, double tintRemoval, double brightness, double contrast)
     {
         if (tintRemoval > 0.001)
         {
@@ -666,7 +665,7 @@ public partial class ColorFixerViewModel : ObservableObject
     /// then applying per-pixel white balance that specifically targets the cast color.
     /// Unlike gray-world, this preserves natural color variation while neutralizing the tint.
     /// </summary>
-    private static void ApplyColorCastCorrection(Image<Rgba32> image, double strength)
+    private static void ApplyColorCastCorrection(SKBitmap image, double strength)
     {
         // Step 1: Build hue histogram to find the dominant cast hue
         const int hueBins = 12;
@@ -674,29 +673,23 @@ public partial class ColorFixerViewModel : ObservableObject
         long totalR = 0, totalG = 0, totalB = 0, pixelCount = 0;
         long saturatedPixelCount = 0;
 
-        image.ProcessPixelRows(accessor =>
+        var pixels = image.GetPixelSpan();
+        for (int i = 0; i < pixels.Length; i += 4)
         {
-            for (int y = 0; y < accessor.Height; y++)
-            {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < row.Length; x++)
-                {
-                    var p = row[x];
-                    totalR += p.R;
-                    totalG += p.G;
-                    totalB += p.B;
-                    pixelCount++;
+            byte r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
+            totalR += r;
+            totalG += g;
+            totalB += b;
+            pixelCount++;
 
-                    RgbToHsv(p.R, p.G, p.B, out float h, out float s, out _);
-                    if (s > 0.15f)
-                    {
-                        int bin = Math.Clamp((int)(h / 360f * hueBins), 0, hueBins - 1);
-                        hueCounts[bin]++;
-                        saturatedPixelCount++;
-                    }
-                }
+            RgbToHsv(r, g, b, out float h, out float s, out _);
+            if (s > 0.15f)
+            {
+                int bin = Math.Clamp((int)(h / 360f * hueBins), 0, hueBins - 1);
+                hueCounts[bin]++;
+                saturatedPixelCount++;
             }
-        });
+        }
 
         if (pixelCount == 0) return;
 
@@ -731,38 +724,31 @@ public partial class ColorFixerViewModel : ObservableObject
         const float maxEffect = 0.4f;
         float userStrength = (float)strength * maxEffect;
 
-        image.ProcessPixelRows(accessor =>
+        for (int i = 0; i < pixels.Length; i += 4)
         {
-            for (int y = 0; y < accessor.Height; y++)
+            byte r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
+
+            RgbToHsv(r, g, b, out float pixelHue, out float pixelSat, out _);
+
+            // Only correct pixels near the cast hue; leave others mostly untouched
+            float hueProximity = 1.0f;
+            if (pixelSat > 0.15f)
             {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < row.Length; x++)
-                {
-                    ref var pixel = ref row[x];
-
-                    RgbToHsv(pixel.R, pixel.G, pixel.B, out float pixelHue, out float pixelSat, out _);
-
-                    // Only correct pixels near the cast hue; leave others mostly untouched
-                    float hueProximity = 1.0f;
-                    if (pixelSat > 0.15f)
-                    {
-                        float hueDist = HueDistance(pixelHue, dominantHue);
-                        // Full correction within 45° of cast; tapers to 10% at 180°
-                        hueProximity = Math.Clamp(1.0f - hueDist / 180f * 0.9f, 0.1f, 1.0f);
-                    }
-
-                    float pixelStrength = userStrength * hueProximity * (float)Math.Min(castDominance, 1.0);
-
-                    float newR = pixel.R * (1f + pixelStrength * (scaleR - 1f));
-                    float newG = pixel.G * (1f + pixelStrength * (scaleG - 1f));
-                    float newB = pixel.B * (1f + pixelStrength * (scaleB - 1f));
-
-                    pixel.R = ClampByte(newR);
-                    pixel.G = ClampByte(newG);
-                    pixel.B = ClampByte(newB);
-                }
+                float hueDist = HueDistance(pixelHue, dominantHue);
+                // Full correction within 45° of cast; tapers to 10% at 180°
+                hueProximity = Math.Clamp(1.0f - hueDist / 180f * 0.9f, 0.1f, 1.0f);
             }
-        });
+
+            float pixelStrength = userStrength * hueProximity * (float)Math.Min(castDominance, 1.0);
+
+            float newR = r * (1f + pixelStrength * (scaleR - 1f));
+            float newG = g * (1f + pixelStrength * (scaleG - 1f));
+            float newB = b * (1f + pixelStrength * (scaleB - 1f));
+
+            pixels[i] = ClampByte(newR);
+            pixels[i + 1] = ClampByte(newG);
+            pixels[i + 2] = ClampByte(newB);
+        }
     }
 
     /// <summary>
@@ -773,26 +759,19 @@ public partial class ColorFixerViewModel : ObservableObject
     /// <param name="brightnessStrength">Brightness adjustment 0.0–1.0.</param>
     /// <param name="contrastStrength">Contrast stretch strength 0.0–1.0.</param>
     /// <param name="brighten">True to brighten dark images, false to darken bright images.</param>
-    private static void ApplyBrightnessCorrection(Image<Rgba32> image, double brightnessStrength, double contrastStrength, bool brighten)
+    private static void ApplyBrightnessCorrection(SKBitmap image, double brightnessStrength, double contrastStrength, bool brighten)
     {
         // Build luminance histogram
         var histogram = new int[256];
         long pixelCount = 0;
 
-        image.ProcessPixelRows(accessor =>
+        var pixels = image.GetPixelSpan();
+        for (int i = 0; i < pixels.Length; i += 4)
         {
-            for (int y = 0; y < accessor.Height; y++)
-            {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < row.Length; x++)
-                {
-                    var p = row[x];
-                    int lum = (int)(0.299 * p.R + 0.587 * p.G + 0.114 * p.B);
-                    histogram[Math.Clamp(lum, 0, 255)]++;
-                    pixelCount++;
-                }
-            }
-        });
+            int lum = (int)(0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2]);
+            histogram[Math.Clamp(lum, 0, 255)]++;
+            pixelCount++;
+        }
 
         if (pixelCount == 0) return;
 
@@ -836,20 +815,12 @@ public partial class ColorFixerViewModel : ObservableObject
         }
 
         // Apply LUT
-        image.ProcessPixelRows(accessor =>
+        for (int i = 0; i < pixels.Length; i += 4)
         {
-            for (int y = 0; y < accessor.Height; y++)
-            {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < row.Length; x++)
-                {
-                    ref var pixel = ref row[x];
-                    pixel.R = lut[pixel.R];
-                    pixel.G = lut[pixel.G];
-                    pixel.B = lut[pixel.B];
-                }
-            }
-        });
+            pixels[i] = lut[pixels[i]];
+            pixels[i + 1] = lut[pixels[i + 1]];
+            pixels[i + 2] = lut[pixels[i + 2]];
+        }
     }
 
     /// <summary>Converts RGB (0-255) to HSV (H: 0-360, S: 0-1, V: 0-1).</summary>
@@ -893,10 +864,31 @@ public partial class ColorFixerViewModel : ObservableObject
     private static byte ClampByte(float value) => (byte)Math.Clamp((int)Math.Round(value), 0, 255);
 
     /// <summary>
+    /// Encodes the image in the format its file extension names, the way ImageSharp's
+    /// <c>Save(path)</c> picked its encoder. JPEG and WebP use quality 75, ImageSharp's default.
+    /// </summary>
+    private static void SaveByExtension(SKBitmap image, string path)
+    {
+        var (format, quality) = Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".jpg" or ".jpeg" => (SKEncodedImageFormat.Jpeg, 75),
+            ".webp" => (SKEncodedImageFormat.Webp, 75),
+            ".bmp" => (SKEncodedImageFormat.Bmp, 100),
+            _ => (SKEncodedImageFormat.Png, 100),
+        };
+
+        using var skImage = SKImage.FromBitmap(image);
+        using var data = skImage.Encode(format, quality)
+            ?? throw new InvalidOperationException($"Encoding {path} as {format} failed.");
+        using var file = File.Create(path);
+        data.SaveTo(file);
+    }
+
+    /// <summary>
     /// Estimates the color distribution score for a corrected image using the same
     /// thresholds as <c>ColorDistributionAnalyzer</c>: color cast (−25), very dark (−10), very bright (−10).
     /// </summary>
-    private static double EstimateScore(Image<Rgba32> image)
+    private static double EstimateScore(SKBitmap image)
     {
         const int hueBins = 12;
         const double grayscaleThreshold = 0.1;
@@ -906,28 +898,21 @@ public partial class ColorFixerViewModel : ObservableObject
         double satSum = 0, valSum = 0;
         long totalPixels = 0, saturatedPixels = 0;
 
-        image.ProcessPixelRows(accessor =>
+        var pixels = image.GetPixelSpan();
+        for (int i = 0; i < pixels.Length; i += 4)
         {
-            for (int y = 0; y < accessor.Height; y++)
-            {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < row.Length; x++)
-                {
-                    var p = row[x];
-                    RgbToHsv(p.R, p.G, p.B, out float h, out float s, out float v);
-                    satSum += s;
-                    valSum += v;
-                    totalPixels++;
+            RgbToHsv(pixels[i], pixels[i + 1], pixels[i + 2], out float h, out float s, out float v);
+            satSum += s;
+            valSum += v;
+            totalPixels++;
 
-                    if (s >= minSatForHue)
-                    {
-                        int bin = Math.Clamp((int)(h / 360f * hueBins), 0, hueBins - 1);
-                        hueCounts[bin]++;
-                        saturatedPixels++;
-                    }
-                }
+            if (s >= minSatForHue)
+            {
+                int bin = Math.Clamp((int)(h / 360f * hueBins), 0, hueBins - 1);
+                hueCounts[bin]++;
+                saturatedPixels++;
             }
-        });
+        }
 
         if (totalPixels == 0) return 100;
 

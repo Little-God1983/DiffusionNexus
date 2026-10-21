@@ -9,7 +9,7 @@ using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Service.Services.DatasetQuality;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels.Dialogs;
-using SixLabors.ImageSharp;
+using SkiaSharp;
 using Serilog;
 
 namespace DiffusionNexus.UI.ViewModels.Tabs;
@@ -637,8 +637,9 @@ public class ImageQualityTabViewModel : ObservableObject, IDialogServiceAware
 
             try
             {
-                var imgInfo = Image.Identify(path);
-                return (imgInfo.Width, imgInfo.Height, info.Length);
+                using var codec = SKCodec.Create(path)
+                    ?? throw new InvalidDataException($"Not a decodable image: {path}");
+                return (codec.Info.Width, codec.Info.Height, info.Length);
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
