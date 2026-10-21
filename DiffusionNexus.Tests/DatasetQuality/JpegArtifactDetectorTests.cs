@@ -2,9 +2,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
 using FluentAssertions;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Jpeg;
-using SixLabors.ImageSharp.PixelFormats;
+using DiffusionNexus.Service.Services.Imaging;
 
 namespace DiffusionNexus.Tests.DatasetQuality;
 
@@ -174,46 +172,39 @@ public class JpegArtifactDetectorTests : IDisposable
     private string CreateJpegImage(string fileName, int width, int height, int quality)
     {
         string path = Path.Combine(_tempDir, fileName);
-        using var image = new Image<Rgb24>(width, height);
-
         // Create a non-trivial pattern to make compression artifacts more realistic
-        image.ProcessPixelRows(accessor =>
+        var rgba = new byte[width * height * 4];
+        for (int y = 0; y < height; y++)
         {
-            for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
             {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < width; x++)
-                {
-                    byte r = (byte)((x * 255) / Math.Max(width - 1, 1));
-                    byte g = (byte)((y * 255) / Math.Max(height - 1, 1));
-                    byte b = (byte)(((x + y) * 127) / Math.Max(width + height - 2, 1));
-                    row[x] = new Rgb24(r, g, b);
-                }
+                int p = (y * width + x) * 4;
+                rgba[p] = (byte)((x * 255) / Math.Max(width - 1, 1));
+                rgba[p + 1] = (byte)((y * 255) / Math.Max(height - 1, 1));
+                rgba[p + 2] = (byte)(((x + y) * 127) / Math.Max(width + height - 2, 1));
+                rgba[p + 3] = 255;
             }
-        });
-
-        var encoder = new JpegEncoder { Quality = quality };
-        image.Save(path, encoder);
+        }
+        using var bmp = SkiaPixels.FromRgbaBytes(rgba, width, height);
+        SkiaPixels.SaveJpeg(bmp, path, quality);
         return path;
     }
 
     private string CreatePngImage(string fileName, int width, int height)
     {
         string path = Path.Combine(_tempDir, fileName);
-        using var image = new Image<L8>(width, height);
-        image.ProcessPixelRows(accessor =>
+        var rgba = new byte[width * height * 4];
+        for (int y = 0; y < height; y++)
         {
-            for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
             {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < width; x++)
-                {
-                    byte val = (byte)((x + y) * 255 / (width + height));
-                    row[x] = new L8(val);
-                }
+                byte val = (byte)((x + y) * 255 / (width + height));
+                int p = (y * width + x) * 4;
+                rgba[p] = val; rgba[p + 1] = val; rgba[p + 2] = val; rgba[p + 3] = 255;
             }
-        });
-        image.SaveAsPng(path);
+        }
+        using var bmp = SkiaPixels.FromRgbaBytes(rgba, width, height);
+        SkiaPixels.SavePng(bmp, path);
         return path;
     }
 }

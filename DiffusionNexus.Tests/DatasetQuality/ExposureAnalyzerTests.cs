@@ -2,8 +2,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
 using FluentAssertions;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
+using DiffusionNexus.Service.Services.Imaging;
 
 namespace DiffusionNexus.Tests.DatasetQuality;
 
@@ -187,25 +186,36 @@ public class ExposureAnalyzerTests : IDisposable
     private string CreateUniform(string fileName, int width, int height, byte value)
     {
         string path = Path.Combine(_tempDir, fileName);
-        using var image = new Image<L8>(width, height, new L8(value));
-        image.SaveAsPng(path);
+        var rgba = new byte[width * height * 4];
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                byte val = value;
+                int p = (y * width + x) * 4;
+                rgba[p] = val; rgba[p + 1] = val; rgba[p + 2] = val; rgba[p + 3] = 255;
+            }
+        }
+        using var bmp = SkiaPixels.FromRgbaBytes(rgba, width, height);
+        SkiaPixels.SavePng(bmp, path);
         return path;
     }
 
     private string CreateHorizontalRamp(string fileName, int width, int height)
     {
         string path = Path.Combine(_tempDir, fileName);
-        using var image = new Image<L8>(width, height);
-        image.ProcessPixelRows(accessor =>
+        var rgba = new byte[width * height * 4];
+        for (int y = 0; y < height; y++)
         {
-            for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
             {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < width; x++)
-                    row[x] = new L8((byte)(x * 255 / Math.Max(width - 1, 1)));
+                byte val = (byte)(x * 255 / Math.Max(width - 1, 1));
+                int p = (y * width + x) * 4;
+                rgba[p] = val; rgba[p + 1] = val; rgba[p + 2] = val; rgba[p + 3] = 255;
             }
-        });
-        image.SaveAsPng(path);
+        }
+        using var bmp = SkiaPixels.FromRgbaBytes(rgba, width, height);
+        SkiaPixels.SavePng(bmp, path);
         return path;
     }
 
@@ -217,17 +227,18 @@ public class ExposureAnalyzerTests : IDisposable
     {
         string path = Path.Combine(_tempDir, fileName);
         int splitCol = (int)Math.Round(width * leftFraction);
-        using var image = new Image<L8>(width, height);
-        image.ProcessPixelRows(accessor =>
+        var rgba = new byte[width * height * 4];
+        for (int y = 0; y < height; y++)
         {
-            for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
             {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < width; x++)
-                    row[x] = new L8(x < splitCol ? leftValue : rightValue);
+                byte val = x < splitCol ? leftValue : rightValue;
+                int p = (y * width + x) * 4;
+                rgba[p] = val; rgba[p + 1] = val; rgba[p + 2] = val; rgba[p + 3] = 255;
             }
-        });
-        image.SaveAsPng(path);
+        }
+        using var bmp = SkiaPixels.FromRgbaBytes(rgba, width, height);
+        SkiaPixels.SavePng(bmp, path);
         return path;
     }
 }

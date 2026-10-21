@@ -2,8 +2,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
 using FluentAssertions;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
+using DiffusionNexus.Service.Services.Imaging;
 
 namespace DiffusionNexus.Tests.DatasetQuality;
 
@@ -191,43 +190,31 @@ public class ColorDistributionAnalyzerTests : IDisposable
     private string CreateGrayscaleImage(string fileName, int width, int height)
     {
         string path = Path.Combine(_tempDir, fileName);
-        using var image = new Image<Rgba32>(width, height);
-
-        image.ProcessPixelRows(accessor =>
+        var rgba = new byte[width * height * 4];
+        for (int y = 0; y < height; y++)
         {
-            for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
             {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < width; x++)
-                {
-                    byte val = (byte)((x * 255) / Math.Max(width - 1, 1));
-                    row[x] = new Rgba32(val, val, val, 255);
-                }
+                byte val = (byte)((x * 255) / Math.Max(width - 1, 1));
+                int p = (y * width + x) * 4;
+                rgba[p] = val; rgba[p + 1] = val; rgba[p + 2] = val; rgba[p + 3] = 255;
             }
-        });
-
-        image.SaveAsPng(path);
+        }
+        using var bmp = SkiaPixels.FromRgbaBytes(rgba, width, height);
+        SkiaPixels.SavePng(bmp, path);
         return path;
     }
 
     private string CreateColorImage(string fileName, int width, int height, byte r, byte g, byte b)
     {
         string path = Path.Combine(_tempDir, fileName);
-        using var image = new Image<Rgba32>(width, height);
-
-        image.ProcessPixelRows(accessor =>
+        var rgba = new byte[width * height * 4];
+        for (int p = 0; p < rgba.Length; p += 4)
         {
-            for (int y = 0; y < height; y++)
-            {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < width; x++)
-                {
-                    row[x] = new Rgba32(r, g, b, 255);
-                }
-            }
-        });
-
-        image.SaveAsPng(path);
+            rgba[p] = r; rgba[p + 1] = g; rgba[p + 2] = b; rgba[p + 3] = 255;
+        }
+        using var bmp = SkiaPixels.FromRgbaBytes(rgba, width, height);
+        SkiaPixels.SavePng(bmp, path);
         return path;
     }
 }

@@ -1,9 +1,7 @@
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
+using DiffusionNexus.Service.Services.Imaging;
 
 namespace DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
 
@@ -275,16 +273,7 @@ public sealed class ColorDistributionAnalyzer : IImageQualityCheck
     /// </summary>
     internal static ImageColorData AnalyzeImage(string filePath)
     {
-        using var image = Image.Load<Rgba32>(filePath);
-
-        if (image.Width > MaxAnalysisSize || image.Height > MaxAnalysisSize)
-        {
-            image.Mutate(x => x.Resize(new ResizeOptions
-            {
-                Size = new Size(MaxAnalysisSize, MaxAnalysisSize),
-                Mode = ResizeMode.Max
-            }));
-        }
+        using var image = SkiaPixels.LoadRgba(filePath, MaxAnalysisSize);
 
         int width = image.Width;
         int height = image.Height;
@@ -295,34 +284,31 @@ public sealed class ColorDistributionAnalyzer : IImageQualityCheck
         var hueCounts = new long[HueBins];
         long saturatedPixels = 0;
 
-        image.ProcessPixelRows(accessor =>
+        var pixels = image.GetPixelSpan();
+        for (int y = 0; y < height; y++)
         {
-            for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
             {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < width; x++)
+                int p = (y * width + x) * 4;
+                RgbToHsv(pixels[p], pixels[p + 1], pixels[p + 2], out double h, out double s, out double v);
+
+                int hBin = Math.Clamp((int)(h / 360.0 * HueBins), 0, HueBins - 1);
+                int sBin = Math.Clamp((int)(s * SaturationBins), 0, SaturationBins - 1);
+                int vBin = Math.Clamp((int)(v * ValueBins), 0, ValueBins - 1);
+
+                histogram[(hBin * SaturationBins * ValueBins) + (sBin * ValueBins) + vBin]++;
+
+                satSum += s;
+                valSum += v;
+                totalPixels++;
+
+                if (s >= MinSaturationForHue)
                 {
-                    var pixel = row[x];
-                    RgbToHsv(pixel.R, pixel.G, pixel.B, out double h, out double s, out double v);
-
-                    int hBin = Math.Clamp((int)(h / 360.0 * HueBins), 0, HueBins - 1);
-                    int sBin = Math.Clamp((int)(s * SaturationBins), 0, SaturationBins - 1);
-                    int vBin = Math.Clamp((int)(v * ValueBins), 0, ValueBins - 1);
-
-                    histogram[(hBin * SaturationBins * ValueBins) + (sBin * ValueBins) + vBin]++;
-
-                    satSum += s;
-                    valSum += v;
-                    totalPixels++;
-
-                    if (s >= MinSaturationForHue)
-                    {
-                        hueCounts[hBin]++;
-                        saturatedPixels++;
-                    }
+                    hueCounts[hBin]++;
+                    saturatedPixels++;
                 }
             }
-        });
+        }
 
         if (totalPixels == 0)
         {

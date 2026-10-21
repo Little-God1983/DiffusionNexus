@@ -2,8 +2,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
 using FluentAssertions;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
+using DiffusionNexus.Service.Services.Imaging;
 
 namespace DiffusionNexus.Tests.DatasetQuality;
 
@@ -179,40 +178,38 @@ public class DuplicateDetectorTests : IDisposable
     private string CreateSolidColorImage(string fileName, int width, int height, byte grayValue)
     {
         string path = Path.Combine(_tempDir, fileName);
-        using var image = new Image<L8>(width, height);
-        image.ProcessPixelRows(accessor =>
+        var rgba = new byte[width * height * 4];
+        for (int y = 0; y < height; y++)
         {
-            for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
             {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < width; x++)
-                    row[x] = new L8(grayValue);
+                byte val = grayValue;
+                int p = (y * width + x) * 4;
+                rgba[p] = val; rgba[p + 1] = val; rgba[p + 2] = val; rgba[p + 3] = 255;
             }
-        });
-        image.SaveAsPng(path);
+        }
+        using var bmp = SkiaPixels.FromRgbaBytes(rgba, width, height);
+        SkiaPixels.SavePng(bmp, path);
         return path;
     }
 
     private string CreatePatternedImage(string fileName, int width, int height, bool horizontal)
     {
         string path = Path.Combine(_tempDir, fileName);
-        using var image = new Image<L8>(width, height);
-        image.ProcessPixelRows(accessor =>
+        var rgba = new byte[width * height * 4];
+        for (int y = 0; y < height; y++)
         {
-            for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
             {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < width; x++)
-                {
-                    // Create strongly different frequency patterns
-                    byte val = horizontal
-                        ? (byte)((x * 7 + y * 3) % 256)
-                        : (byte)((y * 11 + x) % 256);
-                    row[x] = new L8(val);
-                }
+                byte val = horizontal // strongly different frequency patterns
+                    ? (byte)((x * 7 + y * 3) % 256)
+                    : (byte)((y * 11 + x) % 256);
+                int p = (y * width + x) * 4;
+                rgba[p] = val; rgba[p + 1] = val; rgba[p + 2] = val; rgba[p + 3] = 255;
             }
-        });
-        image.SaveAsPng(path);
+        }
+        using var bmp = SkiaPixels.FromRgbaBytes(rgba, width, height);
+        SkiaPixels.SavePng(bmp, path);
         return path;
     }
 }
