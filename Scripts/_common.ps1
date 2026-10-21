@@ -446,11 +446,14 @@ function Get-DataDir {
 # Points the fixed path at the folder just published: creates the junction, or retargets the one an
 # earlier build made. A real folder of that name is left alone and reported - the shortcut then has to
 # point at the versioned folder directly. Returns $true when the link now points at the target.
+# A junction cannot be retargeted, only deleted and made again; when making it fails, the old one is
+# put back, so the Start Menu entry and every taskbar pin still open the previous version.
 function Set-CurrentLink {
     param([string]$InstallRoot, [string]$Target)
     $linkPath = Get-CurrentLinkPath $InstallRoot
     $target   = (Resolve-FullPath $Target).TrimEnd('\')
 
+    $existingTarget = $null
     if (Test-Path -LiteralPath $linkPath) {
         $existingTarget = Get-DirectoryLinkTarget $linkPath
         if (-not $existingTarget) {
@@ -461,7 +464,23 @@ function Set-CurrentLink {
         Remove-DirectoryLink $linkPath
     }
 
-    New-Item -ItemType Junction -Path $linkPath -Target $target | Out-Null
+    try { New-Item -ItemType Junction -Path $linkPath -Target $target | Out-Null }
+    catch {
+        $reason = $_.Exception.Message
+        $state  = "$linkPath is gone, so the Start Menu entry cannot start DiffusionNexus until a build succeeds."
+        if ($existingTarget) {
+            try {
+                New-Item -ItemType Junction -Path $linkPath -Target $existingTarget | Out-Null
+                $state = "$linkPath still opens the previous version."
+            }
+            catch { }
+        }
+        Fail "Could not point $linkPath at $target - $reason" @(
+            $state,
+            "$target is published but not current; the next run of this commit rebuilds it.",
+            "Close whatever holds $linkPath (a virus scanner, an Explorer window inside it), then run the build again."
+        )
+    }
     return $true
 }
 
@@ -521,23 +540,12 @@ function Set-MappingsLink {
     }
 }
 
-# Unlinks the outputs junction of every older version folder nothing runs from, so deleting an old
-# version by hand can never reach the shared images. A version still running keeps its link: the
-# app there may be saving an image right now. Returns the folders it could not unlink.
-function Remove-SupersededOutputsLinks {
-    param([string]$InstallRoot, [string]$Current)
-    $kept = @()
-    foreach ($dir in @(Get-ChildItem -LiteralPath $InstallRoot -Directory -Force -ErrorAction SilentlyContinue)) {
-        if (-not (Test-VersionFolderName $dir.Name)) { continue }
-        if ($dir.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
-        if (Test-SamePath $dir.FullName $Current) { continue }
-        if (-not (Test-OurInstall $dir.FullName)) { continue }
-        $link = Join-Path $dir.FullName $OutputsName
-        if (-not (Get-DirectoryLinkTarget $link)) { continue }
-        if (@(Get-AppProcess $dir.FullName).Count -gt 0) { $kept += $dir.FullName; continue }
-        Remove-DirectoryLink $link
-    }
-    return $kept
+# True when the exe was started through a directory link - the Start Menu's E:\StableVersion\DiffusionNexus.
+# Windows reports the path as it was started, and the app looks for the files beside its exe through
+# that same path, so once the link moves, those files come from the version it points at.
+function Test-StartedThroughLink {
+    param([string]$ExecutablePath)
+    return [bool](Get-DirectoryLinkTarget ([System.IO.Path]::GetDirectoryName((Resolve-FullPath $ExecutablePath))))
 }
 
 # Directory.Build.props is hand-written XML with comments in it, so it is read as one string and

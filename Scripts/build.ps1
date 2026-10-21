@@ -165,6 +165,11 @@ $previousDir = Get-DirectoryLinkTarget (Get-CurrentLinkPath $InstallRoot)
 
 $buildFailedHints = @("Scroll up for the first error.")
 if ($stable) { $buildFailedHints += "The stable root is as it was; the current version is unchanged." }
+# Once the folder is claimed, it holds a part of a build. It is never made current, and only this
+# script's marker is on it, so the next run can clean it.
+$publishFailedHints = @("Scroll up for the first error.")
+if ($stable) { $publishFailedHints += "The current version is unchanged. $InstallDir holds a part of this build; the next run of this commit cleans it." }
+else         { $publishFailedHints += "$InstallDir holds a part of this build; run the build again with -Clean." }
 
 # --- build and test ----------------------------------------------------------------------
 # PowerShell unwraps a one-element array from an `if`, and splatting a plain string with @ hands
@@ -236,11 +241,11 @@ dotnet publish $UiProject --configuration Release --runtime win-x64 --self-conta
     -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true `
     -p:DebugType=None -p:DebugSymbols=false @versionArgs
 if ($LASTEXITCODE -ne 0) {
-    Fail "The publish failed (exit code $LASTEXITCODE)." $buildFailedHints
+    Fail "The publish failed (exit code $LASTEXITCODE)." $publishFailedHints
 }
 
 if (-not (Test-Path -LiteralPath (Join-Path $InstallDir $AppExeName))) {
-    Fail "The publish reported success but $AppExeName is missing from $InstallDir." $buildFailedHints
+    Fail "The publish reported success but $AppExeName is missing from $InstallDir." $publishFailedHints
 }
 
 $removed = Remove-PublishLeftovers $InstallDir
@@ -251,7 +256,7 @@ if ($removed -gt 0) { Write-Note "removed $removed build leftovers publish.ps1 s
 foreach ($name in 'THIRD-PARTY-NOTICES.txt', 'LICENSE') {
     $source = Join-Path $RepoRoot $name
     if (-not (Test-Path -LiteralPath $source)) {
-        Fail "$name is missing from the repository root." $buildFailedHints
+        Fail "$name is missing from the repository root." $publishFailedHints
     }
     Copy-Item -LiteralPath $source -Destination (Join-Path $InstallDir $name) -Force
 }
@@ -305,12 +310,8 @@ if ($stable) {
         Write-Note "right-click it in the Start Menu and choose 'Pin to taskbar'"
     }
 
-    # An older version folder with its outputs link still in it would take the shared images along
-    # if it were ever deleted with a tool that follows links.
-    foreach ($dir in @(Remove-SupersededOutputsLinks -InstallRoot $InstallRoot -Current $InstallDir)) {
-        Write-Warn "$dir still links to the shared outputs because DiffusionNexus runs from it; the next build unlinks it - do not delete that folder before"
-    }
-
+    # Older version folders keep their outputs link: one started by hand for a rollback still saves
+    # its images into the shared folder. Deleting such a folder deletes the link, not the images.
     $running = @(Get-AppProcess -AnyVersion -InstallRoot $InstallRoot)
 }
 
@@ -320,7 +321,13 @@ Write-Host ""
 if ($stable) { Write-Host "  Build complete - DiffusionNexus $version" -ForegroundColor Green }
 else         { Write-Host "  Build complete - DiffusionNexus $version (one-off)" -ForegroundColor Green }
 foreach ($proc in $running) {
-    Write-Warn "DiffusionNexus is still running from $($proc.ExecutablePath) (PID $($proc.ProcessId)) - the old version; restart it for $version"
+    if (Test-StartedThroughLink $proc.ExecutablePath) {
+        Write-Warn ("DiffusionNexus (PID $($proc.ProcessId)) was started through $([System.IO.Path]::GetDirectoryName($proc.ExecutablePath)), which now leads to $version. " +
+            "It keeps the old version in memory but loads files it opens later - video, workflows, dictionaries - from the new folder. Restart it soon.")
+    }
+    else {
+        Write-Warn "DiffusionNexus is still running from $($proc.ExecutablePath) (PID $($proc.ProcessId)) - the old version; restart it for $version"
+    }
 }
 if ($stable -and -not $NoShortcut) { Write-Host "  Start it from the Start Menu (Diffusion Nexus), or: " -NoNewline }
 else                               { Write-Host "  Start it: " -NoNewline }

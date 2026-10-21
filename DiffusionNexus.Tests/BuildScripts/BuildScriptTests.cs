@@ -288,6 +288,25 @@ public sealed class BuildScriptHelperTests : BuildScriptTestBase
     }
 
     [Fact]
+    public void ACurrentLinkThatCannotBeRemade_KeepsPointingAtTheOldVersion()
+    {
+        // The old link is deleted before the new one is made. When the new one fails - a virus
+        // scanner, access denied - the Start Menu entry and every taskbar pin would lead nowhere.
+        using var temp = new TempFolder();
+        var root = Directory.CreateDirectory(Path.Combine(temp.Path, "root")).FullName;
+        var old = Directory.CreateDirectory(Path.Combine(root, "DiffusionNexus-0.11.0.8")).FullName;
+        var link = Path.Combine(root, "DiffusionNexus");
+
+        var result = Pwsh.RunCommon(
+            $"New-Item -ItemType Junction -Path '{link}' -Target '{old}' | Out-Null; " +
+            $"Set-CurrentLink '{root}' '{Path.Combine(root, "no|such|folder")}'");
+
+        result.ExitCode.Should().Be(1, result.Output);
+        result.Output.Should().Contain("still opens the previous version");
+        new DirectoryInfo(link).LinkTarget.Should().Be(old);
+    }
+
+    [Fact]
     public void ARunningApp_IsFoundByItsRealFolder_HoweverItWasStarted()
     {
         // The real lookup, with stand-ins that keep running: copies of ping.exe under the app's name.
@@ -476,39 +495,56 @@ public sealed class BuildScriptRunTests : BuildScriptTestBase
     }
 
     [Fact]
-    public void ANewCommit_GetsANewFolder_AndTheOldOneLetsGoOfTheSharedOutputs()
+    public void ANewCommit_GetsANewFolder_AndTheOldOneStillSavesIntoTheSharedOutputs()
     {
-        // The old folder stays for a rollback, but without its link into the images: a delete of it
-        // that follows links must not reach them. The images themselves are untouched.
+        // The old folder stays for a rollback. Started from there by hand, Canvas saves next to its
+        // exe - which has to stay the shared folder, or the rollback's images end up in a folder the
+        // next clean-up deletes.
         using var repo = new FakeRepo();
         repo.Build(before: "$env:FAKE_COMMIT_COUNT = '100'").ExitCode.Should().Be(0);
         var old = repo.VersionFolder("0.11.0.100");
-        var image = Path.Combine(old, "outputs", "canvas-0001.png");
-        File.WriteAllText(image, "an image");
 
         var result = repo.Build(before: "$env:FAKE_COMMIT_COUNT = '101'");
 
         result.ExitCode.Should().Be(0, result.Output);
         repo.CurrentLinkTarget.Should().Be(repo.VersionFolder("0.11.0.101"));
         File.Exists(Path.Combine(old, ExeName)).Should().BeTrue();
-        Directory.Exists(Path.Combine(old, "outputs")).Should().BeFalse();
-        File.ReadAllText(Path.Combine(repo.VersionFolder("0.11.0.101"), "outputs", "canvas-0001.png")).Should().Be("an image");
+        File.WriteAllText(Path.Combine(old, "outputs", "rollback-0001.png"), "an image");
+        File.ReadAllText(Path.Combine(repo.DataDir, "outputs", "rollback-0001.png")).Should().Be("an image");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AnAppStartedThroughTheCurrentLink_IsToldItNowLoadsTheNewVersionsFiles(bool throughTheLink)
+    {
+        // The Start Menu starts the exe through E:\StableVersion\DiffusionNexus. Once that link points
+        // at the new folder, every file the running app opens beside its exe later - LibVLC, the LGPL
+        // assemblies, workflows - comes from the new version. "Still running the old version" is not
+        // what it does, so the build has to say what it does.
+        using var repo = new FakeRepo();
+        repo.Build(before: "$env:FAKE_COMMIT_COUNT = '100'").ExitCode.Should().Be(0);
+        var exe = Path.Combine(throughTheLink ? repo.CurrentLink : repo.VersionFolder("0.11.0.100"), ExeName);
+
+        var result = repo.Build(before: $"$env:FAKE_COMMIT_COUNT = '101'; $env:FAKE_RUNNING_FROM = '{exe}'");
+
+        result.ExitCode.Should().Be(0, result.Output);
+        result.Output.Contains("was started through").Should().Be(throughTheLink, result.Output);
+        result.Output.Contains("is still running from").Should().Be(!throughTheLink, result.Output);
     }
 
     [Fact]
-    public void AnOldVersionStillRunning_KeepsItsLinkToTheSharedOutputs()
+    public void AFailedPublish_DoesNotClaimTheStableRootIsUntouched()
     {
-        // It may be saving an image right now. The build says so, and the next one unlinks it.
+        // The folder was claimed before the publish, so a publish that stops half-way leaves it behind.
         using var repo = new FakeRepo();
-        repo.Build(before: "$env:FAKE_COMMIT_COUNT = '100'").ExitCode.Should().Be(0);
-        var old = repo.VersionFolder("0.11.0.100");
 
-        var result = repo.Build(before: $"$env:FAKE_COMMIT_COUNT = '101'; $env:FAKE_RUNNING_FROM = '{Path.Combine(old, ExeName)}'");
+        var result = repo.Build(before: "$env:FAKE_PUBLISH_FAILS = '1'");
 
-        result.ExitCode.Should().Be(0, result.Output);
-        new DirectoryInfo(Path.Combine(old, "outputs")).LinkTarget.Should().NotBeNull();
-        result.Output.Should().Contain($"{old} still links to the shared outputs");
-        result.Output.Should().Contain("DiffusionNexus is still running from");
+        result.ExitCode.Should().Be(1);
+        result.Output.Should().NotContain("The stable root is as it was");
+        result.Output.Should().Contain("the next run of this commit cleans it");
+        repo.CurrentLinkTarget.Should().BeNull();
     }
 
     [Fact]
@@ -899,13 +935,15 @@ public abstract class BuildScriptTestBase
                 Write-FakeCall ((@("dotnet", $args[0], (Split-Path -Leaf $args[1])) + $versions) -join ' ')
                 if ($args[0] -ne 'publish') { return }
                 $out = $args[[array]::IndexOf($args, '--output') + 1]
+                if ($env:FAKE_PUBLISH_FAILS) { New-Item -ItemType File -Path (Join-Path $out 'half.dll') -Force | Out-Null; $global:LASTEXITCODE = 1; return }
                 New-Item -ItemType File -Path (Join-Path $out $AppExeName) -Force | Out-Null
             }
             function Write-StartMenuShortcut { param([string]$InstallDir) Write-FakeCall "shortcut $InstallDir"; return 'fake.lnk' }
             function Get-AppProcess {
                 param([string]$InstallDir, [switch]$AnyVersion, [string]$InstallRoot)
                 if (-not $env:FAKE_RUNNING_FROM) { return @() }
-                if (-not $AnyVersion -and $env:FAKE_RUNNING_FROM -ine (Join-Path (Resolve-FullPath $InstallDir) $AppExeName)) { return @() }
+                # As the real lookup: through a link, the folder the link leads to right now.
+                if (-not $AnyVersion -and -not (Test-SamePath $env:FAKE_RUNNING_FROM (Join-Path (Resolve-FullPath $InstallDir) $AppExeName))) { return @() }
                 return @([pscustomobject]@{ ProcessId = 4242; ExecutablePath = $env:FAKE_RUNNING_FROM })
             }
             if ($env:FAKE_LINK_FAILS) { function Set-CurrentLink { throw 'the junction could not be made' } }

@@ -45,10 +45,16 @@ To raise `Major.Minor.Build`, change `Directory.Build.props` in a PR.
 
 ### A running DiffusionNexus
 
-It is not closed, because it may be in the middle of a download or a generation. It keeps running
-the version it was started from, and the script says so at the end. Restart it for the new one.
-The one exception is a one-off build into a folder DiffusionNexus is running from: that build
-refuses to start until you close it.
+It is not closed, because it may be in the middle of a download or a generation. The script says
+at the end what it found:
+
+- **Started from the Start Menu** (through `E:\StableVersion\DiffusionNexus`): that link now leads
+  to the new version. The app keeps the old version in memory, but files it opens later from beside
+  its exe (video, workflows, dictionaries) come from the new folder. Restart it soon.
+- **Started from a version folder directly**: it keeps running that version. Restart it for the
+  new one.
+
+A one-off build into a folder DiffusionNexus is running from refuses to start until you close it.
 
 ### Your data
 
@@ -57,9 +63,9 @@ same ones. Two things the app writes next to its exe are shared through
 `E:\StableVersion\DiffusionNexus-data`:
 
 - **`outputs`**: the images Diffusion Canvas saves. Each version folder has an `outputs` junction
-  to `DiffusionNexus-data\outputs`. When a new version becomes current, the older version folders
-  lose their link, so deleting an old version can never reach your images. A version that is still
-  running keeps its link until the next build.
+  to `DiffusionNexus-data\outputs`, and older versions keep theirs, so an old version started by
+  hand for a rollback still saves into the shared folder. Deleting an old version folder deletes
+  the junction, not your images (the tests check this in PowerShell 7 and Windows PowerShell 5.1).
 - **`mappings.xml`**: LoRA sort's custom tag mappings. A file link needs admin rights, so this is a
   hard link: one file under two names. The new version starts with what the current one has, and
   from then on a save in either is seen by both. If you deleted all mappings in the current
