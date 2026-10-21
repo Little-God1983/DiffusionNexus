@@ -1,5 +1,6 @@
 using BitMiracle.LibTiff.Classic;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Service.Services.Imaging;
 using SkiaSharp;
 
 namespace DiffusionNexus.UI.ImageEditor;
@@ -10,10 +11,23 @@ namespace DiffusionNexus.UI.ImageEditor;
 /// <c>ReadRGBAImageOriented</c> reader so arbitrary third-party TIFFs (tiled, planar,
 /// compressed, palette, CMYK, etc.) load correctly — not just app-written ones.
 /// All operations report progress/errors through the optional <see cref="IUnifiedLogger"/>.
+/// <para>
+/// Saves encode the whole file in memory and then swap it over the target, so a failure part-way
+/// (or a stack with nothing to write) leaves an existing file as it was. Save on an opened TIFF
+/// writes over the user's original, so a truncated file there would lose every layer.
+/// </para>
 /// </summary>
 public static class TiffExporter
 {
     private const string LogSource = "TiffExporter";
+
+    /// <summary>Whether <paramref name="filePath"/> has a TIFF extension (.tif or .tiff, any case).</summary>
+    public static bool IsTiffPath(string? filePath)
+    {
+        var extension = Path.GetExtension(filePath);
+        return string.Equals(extension, ".tif", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(extension, ".tiff", StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>
     /// Saves layers to a multi-page TIFF file.
@@ -36,27 +50,30 @@ public static class TiffExporter
 
         try
         {
-            using var tiff = Tiff.Open(filePath, "w");
-            if (tiff == null)
+            var pagesWritten = 0;
+            var bytes = EncodeInMemory(filePath, tiff =>
             {
-                logger?.Error(LogCategory.General, LogSource, $"SaveLayeredTiff: Tiff.Open returned null for {filePath}");
+                for (var pageIndex = 0; pageIndex < layers.Count; pageIndex++)
+                {
+                    var layer = layers[pageIndex];
+                    if (layer.Bitmap == null)
+                        continue;
+
+                    WritePage(tiff, layer.Bitmap, CreateLayerMetadata(layer, pageIndex, layers.Width, layers.Height), pageIndex, layers.Count);
+                    pagesWritten++;
+                }
+            });
+
+            if (pagesWritten == 0)
+            {
+                logger?.Warn(LogCategory.General, LogSource, "SaveLayeredTiff: no layer has pixels; nothing written.", filePath);
                 return false;
             }
 
-            var pagesWritten = 0;
-            for (var pageIndex = 0; pageIndex < layers.Count; pageIndex++)
-            {
-                var layer = layers[pageIndex];
-                if (layer.Bitmap == null)
-                    continue;
-
-                WritePage(tiff, layer.Bitmap, CreateLayerMetadata(layer, pageIndex, layers.Width, layers.Height), pageIndex, layers.Count);
-                pagesWritten++;
-            }
-
+            ImageFileWriter.ReplaceAtomically(filePath, bytes);
             logger?.Info(LogCategory.General, LogSource,
                 $"Saved {pagesWritten}-page TIFF.", filePath);
-            return pagesWritten > 0;
+            return true;
         }
         catch (Exception ex)
         {
@@ -79,14 +96,8 @@ public static class TiffExporter
 
         try
         {
-            using var tiff = Tiff.Open(filePath, "w");
-            if (tiff == null)
-            {
-                logger?.Error(LogCategory.General, LogSource, $"SaveFlattenedTiff: Tiff.Open returned null for {filePath}");
-                return false;
-            }
-
-            WritePage(tiff, bitmap, metadata: null, pageIndex: 0, pageCount: 1);
+            var bytes = EncodeInMemory(filePath, tiff => WritePage(tiff, bitmap, metadata: null, pageIndex: 0, pageCount: 1));
+            ImageFileWriter.ReplaceAtomically(filePath, bytes);
             logger?.Info(LogCategory.General, LogSource, "Saved flattened TIFF.", filePath);
             return true;
         }
@@ -98,12 +109,32 @@ public static class TiffExporter
     }
 
     /// <summary>
+    /// Runs <paramref name="write"/> against a TIFF held in memory and returns the finished file.
+    /// </summary>
+    /// <param name="name">The target path, for LibTiff's messages only; nothing is opened there.</param>
+    private static byte[] EncodeInMemory(string name, Action<Tiff> write)
+    {
+        using var buffer = new MemoryStream();
+        using (var tiff = Tiff.ClientOpen(name, "w", buffer, new TiffStream())
+            ?? throw new IOException($"LibTiff could not start a TIFF for {name}."))
+        {
+            write(tiff);
+        }
+        // Disposing the Tiff flushes the last directory and closes the stream; ToArray still works.
+        return buffer.ToArray();
+    }
+
+    /// <summary>
     /// Writes a single RGBA page (8-bit, LZW, straight/unassociated alpha) to an open TIFF.
+    /// Throws when LibTiff reports a failure (it returns false rather than throwing), so a broken
+    /// page never reaches the file.
     /// </summary>
     private static void WritePage(Tiff tiff, SKBitmap bitmap, string? metadata, int pageIndex, int pageCount)
     {
         var width = bitmap.Width;
         var height = bitmap.Height;
+        if (width <= 0 || height <= 0)
+            throw new InvalidOperationException($"Page {pageIndex} is {width}x{height}: there are no pixels to write.");
 
         tiff.SetField(TiffTag.IMAGEWIDTH, width);
         tiff.SetField(TiffTag.IMAGELENGTH, height);
@@ -142,10 +173,12 @@ public static class TiffExporter
                 rowData[dataOffset + 2] = pixel.Blue;
                 rowData[dataOffset + 3] = pixel.Alpha;
             }
-            tiff.WriteScanline(rowData, row);
+            if (!tiff.WriteScanline(rowData, row))
+                throw new IOException($"LibTiff could not write row {row} of page {pageIndex}.");
         }
 
-        tiff.WriteDirectory();
+        if (!tiff.WriteDirectory())
+            throw new IOException($"LibTiff could not finish page {pageIndex}.");
     }
 
     /// <summary>

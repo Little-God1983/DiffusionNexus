@@ -1309,7 +1309,7 @@ public class ImageEditorControl : Control
     {
         var logger = _editorCore.Logger;
 
-        if (IsTiffPath(filePath))
+        if (ImageEditor.TiffExporter.IsTiffPath(filePath))
         {
             logger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditorControl",
                 "Loading TIFF as layers.", filePath);
@@ -1327,15 +1327,6 @@ public class ImageEditorControl : Control
                 $"Failed to load image into the editor: {filePath}");
         }
         return loaded;
-    }
-
-    private static bool IsTiffPath(string? filePath)
-    {
-        if (string.IsNullOrEmpty(filePath))
-            return false;
-        var ext = System.IO.Path.GetExtension(filePath);
-        return string.Equals(ext, ".tif", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(ext, ".tiff", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

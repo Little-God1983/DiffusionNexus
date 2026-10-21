@@ -8,8 +8,8 @@ namespace DiffusionNexus.Tests.ViewModels;
 
 /// <summary>
 /// What the editor says when the canvas cannot be written in the original's format (GIF has no
-/// encoder; a TIFF would be written as one flat PNG under the .tif name), and that it says it
-/// before the user picks a file or confirms an overwrite.
+/// encoder), and that it says it before the user picks a file or confirms an overwrite. A TIFF
+/// is written: as a layered TIFF by the editor core (#640).
 /// </summary>
 public sealed class ImageEditorSaveMessageTests : IDisposable
 {
@@ -31,8 +31,8 @@ public sealed class ImageEditorSaveMessageTests : IDisposable
     [Theory]
     [InlineData("layers.tif")]
     [InlineData("layers.TIFF")]
-    public void DescribeSaveFailure_Tiff_PointsToTheLayeredTiffExport(string name)
-        => ImageEditorViewModel.DescribeSaveFailure(name).Should().Contain("Export as Layered TIFF");
+    public void DescribeUnwritableFormat_Tiff_IsWritable(string name)
+        => ImageEditorViewModel.DescribeUnwritableFormat(name).Should().BeNull();
 
     [Fact]
     public void DescribeSaveFailure_OtherFormats_KeepTheGenericMessage()
@@ -40,7 +40,6 @@ public sealed class ImageEditorSaveMessageTests : IDisposable
 
     [Theory]
     [InlineData("anim.gif")]
-    [InlineData("layers.tif")]
     public async Task Export_OfAnUnwritableFormat_SaysWhyBeforeThePicker(string name)
     {
         // Export keeps the original's format, which the editor cannot write for these.
@@ -56,7 +55,6 @@ public sealed class ImageEditorSaveMessageTests : IDisposable
 
     [Theory]
     [InlineData("anim.gif")]
-    [InlineData("layers.tif")]
     public async Task SaveOverwrite_OfAnUnwritableFormat_SaysWhyBeforeTheConfirmation(string name)
     {
         var path = Path.Combine(_tempDir.FullName, name);
@@ -70,17 +68,41 @@ public sealed class ImageEditorSaveMessageTests : IDisposable
     }
 
     [Fact]
-    public async Task SaveAsNew_OfATiffBesideTheOriginal_WritesNothing()
+    public async Task SaveOverwrite_OfATiff_WritesTheTiff()
     {
-        // Save As New beside the original keeps the extension: the flat PNG would be named .tif.
         var path = Path.Combine(_tempDir.FullName, "layers.tif");
-        var (sut, _, saves) = CreateSut(path);
+        var (sut, asked, saves) = CreateSut(path, saveSucceeds: true);
+
+        await sut.SaveOverwriteCommand.ExecuteAsync(null);
+
+        asked.Should().Equal("overwrite");
+        saves.Should().Equal(path);
+        sut.StatusMessage.Should().Be("Image saved");
+    }
+
+    [Fact]
+    public async Task Export_OfATiff_WritesATiff()
+    {
+        var path = Path.Combine(_tempDir.FullName, "layers.tif");
+        var (sut, asked, saves) = CreateSut(path, saveSucceeds: true);
+
+        await sut.ExportCommand.ExecuteAsync(null);
+
+        asked.Should().Equal("Export Image");
+        saves.Should().ContainSingle().Which.Should().EndWith(".tif");
+    }
+
+    [Fact]
+    public async Task SaveAsNew_OfATiffBesideTheOriginal_WritesATiff()
+    {
+        var path = Path.Combine(_tempDir.FullName, "layers.tif");
+        var (sut, _, saves) = CreateSut(path, saveSucceeds: true);
         sut.SaveAsDialogRequested += () => Task.FromResult(SaveAsResult.Success("copy", ImageRatingStatus.Unrated));
 
         await sut.SaveAsNewCommand.ExecuteAsync(null);
 
-        sut.StatusMessage.Should().Be(ImageEditorViewModel.DescribeSaveFailure(path));
-        saves.Should().BeEmpty();
+        saves.Should().Equal(Path.Combine(_tempDir.FullName, "copy.tif"));
+        sut.StatusMessage.Should().Be("Saved as: copy.tif");
     }
 
     [Fact]
@@ -101,7 +123,7 @@ public sealed class ImageEditorSaveMessageTests : IDisposable
     }
 
     /// <summary>An editor on <paramref name="path"/> that records every picker, confirmation and save.</summary>
-    private static (ImageEditorViewModel Sut, List<string> Asked, List<string> Saves) CreateSut(string path)
+    private static (ImageEditorViewModel Sut, List<string> Asked, List<string> Saves) CreateSut(string path, bool saveSucceeds = false)
     {
         var asked = new List<string>();
         var saves = new List<string>();
@@ -109,7 +131,7 @@ public sealed class ImageEditorSaveMessageTests : IDisposable
         sut.LoadImage(path);
         sut.ShowSaveFileDialogFunc = (title, _, _) => { asked.Add(title); return Task.FromResult<string?>(path); };
         sut.SaveOverwriteConfirmRequested += () => { asked.Add("overwrite"); return Task.FromResult(true); };
-        sut.SaveImageFunc = (target, _) => { saves.Add(target); return false; };
+        sut.SaveImageFunc = (target, _) => { saves.Add(target); return saveSucceeds; };
         return (sut, asked, saves);
     }
 }

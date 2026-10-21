@@ -97,4 +97,53 @@ public class ImageEditorCoreSaveFormatTests : IDisposable
 
         ShouldStartWith(path, PngMagic);
     }
+
+    [Fact]
+    public void WhenSavingOverAnOpenedLayeredTiffThenEveryLayerIsKept()
+    {
+        // Save on an opened layered TIFF wrote one flattened PNG under the .tif name (#640).
+        var path = PathFor("layers.tif");
+        using (var stack = new LayerStack(40, 30))
+        {
+            using (var bg = new SKBitmap(40, 30)) { bg.Erase(SKColors.Red); stack.AddLayerFromBitmap(bg, "background"); }
+            using (var small = new SKBitmap(8, 6)) { small.Erase(SKColors.Blue); stack.AddLayerFromBitmap(small, "moved", new SKPointI(5, 7)); }
+            TiffExporter.SaveLayeredTiff(stack, path).Should().BeTrue();
+        }
+        _sut.LoadLayeredTiff(path).Should().BeTrue();
+        _sut.AddLayer("added");
+
+        _sut.SaveImage(path).Should().BeTrue();
+
+        IsTiff(path).Should().BeTrue("a .tif must hold TIFF data, not a PNG");
+        Directory.GetFiles(_tempDir.FullName).Should().ContainSingle("no temporary file may be left behind");
+        using var reloaded = TiffExporter.LoadLayeredTiff(path)!;
+        reloaded.Width.Should().Be(40);
+        reloaded.Height.Should().Be(30);
+        Enumerable.Range(0, reloaded.Count).Select(i => reloaded[i].Name).Should().Equal("background", "moved", "added");
+        reloaded[1].Bounds.Should().Be(new SKRectI(5, 7, 13, 13));
+        reloaded[1].Bitmap!.GetPixel(0, 0).Should().Be(SKColors.Blue);
+    }
+
+    [Theory]
+    [InlineData("flat.tif")]
+    [InlineData("flat.TIFF")]
+    public void WhenSavingATiffOutsideLayerModeThenTheImageIsOnePage(string fileName)
+    {
+        var path = PathFor(fileName);
+        _sut.DisableLayerMode();
+
+        _sut.SaveImage(path).Should().BeTrue();
+
+        IsTiff(path).Should().BeTrue();
+        using var reloaded = TiffExporter.LoadLayeredTiff(path)!;
+        reloaded.Count.Should().Be(1);
+        reloaded[0].Bitmap!.GetPixel(10, 10).Should().Be(SKColors.Teal);
+    }
+
+    private static bool IsTiff(string path)
+    {
+        var header = File.ReadAllBytes(path).Take(4).ToArray();
+        return header.SequenceEqual(new byte[] { 0x49, 0x49, 0x2A, 0x00 })   // "II*" little-endian
+            || header.SequenceEqual(new byte[] { 0x4D, 0x4D, 0x00, 0x2A });  // "MM*" big-endian
+    }
 }
