@@ -54,6 +54,20 @@ public class TiffExporterOffsetTests : IDisposable
     }
 
     [Fact]
+    public void SaveFlattenedTiff_ThatFails_LeavesTheExistingFileAsItWas()
+    {
+        // Save on an opened TIFF writes over the original; a failed write must not truncate it.
+        using (var good = new SKBitmap(4, 4)) { good.Erase(SKColors.Green); TiffExporter.SaveFlattenedTiff(good, _path).Should().BeTrue(); }
+        var original = File.ReadAllBytes(_path);
+
+        using var empty = new SKBitmap();
+        TiffExporter.SaveFlattenedTiff(empty, _path).Should().BeFalse();
+
+        File.ReadAllBytes(_path).Should().Equal(original);
+        Directory.GetFiles(Path.GetDirectoryName(_path)!, $".{Path.GetFileName(_path)}.*").Should().BeEmpty();
+    }
+
+    [Fact]
     public void SaveAndLoad_KeepsOffsetsSizesAndCanvas()
     {
         using var stack = new LayerStack(40, 30);

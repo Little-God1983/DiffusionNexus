@@ -1074,17 +1074,13 @@ public partial class ImageEditorViewModel : ObservableObject
 
     /// <summary>
     /// Why the canvas cannot be saved under <paramref name="path"/>'s extension, or null. Save, Save
-    /// As New beside the original and Export keep the original's extension, and two formats the
-    /// editor opens cannot be written that way: GIF has no encoder, and a TIFF would get one
-    /// flattened PNG under its .tif name (the layers are written only by the layered TIFF export).
+    /// As New beside the original and Export keep the original's extension, and GIF, which the
+    /// editor opens, has no encoder. (A TIFF is written as a layered TIFF by the editor core.)
     /// </summary>
     internal static string? DescribeUnwritableFormat(string path)
-        => Path.GetExtension(path).ToLowerInvariant() switch
-        {
-            ".gif" => "Can't save GIF files: there is no GIF encoder. Use Save / Export > Export as PNG instead.",
-            ".tif" or ".tiff" => "Can't save TIFF files this way: the layers would be flattened into a PNG with a .tif name. Use Save / Export > Export as Layered TIFF instead.",
-            _ => null,
-        };
+        => string.Equals(Path.GetExtension(path), ".gif", StringComparison.OrdinalIgnoreCase)
+            ? "Can't save GIF files: there is no GIF encoder. Use Save / Export > Export as PNG instead."
+            : null;
 
     /// <summary>
     /// Why Save cannot write over <paramref name="path"/>, or null. Asked before the confirmation, so

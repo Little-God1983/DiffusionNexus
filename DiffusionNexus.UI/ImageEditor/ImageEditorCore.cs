@@ -1141,7 +1141,8 @@ public partial class ImageEditorCore : IDisposable
     /// <summary>
     /// Saves the current working image to a file.
     /// If in layer mode, flattens all layers before saving.
-    /// Delegates file I/O to DocumentService.
+    /// Delegates file I/O to DocumentService. A .tif / .tiff path with no explicit format is
+    /// written by <see cref="SaveTiff"/> instead, keeping the layers.
     /// </summary>
     /// <param name="filePath">The file path to save to.</param>
     /// <param name="format">
@@ -1159,6 +1160,15 @@ public partial class ImageEditorCore : IDisposable
     public bool SaveImage(string filePath, SKEncodedImageFormat? format = null, int quality = 95, SKColor? fillColor = null)
     {
         FileLogger.LogEntry($"filePath={filePath}, format={format?.ToString() ?? "(from extension)"}, quality={quality}, fill={fillColor?.ToString() ?? "(none)"}");
+
+        // Skia has no TIFF encoder, so the extension fallback below would put PNG bytes under the
+        // .tif name and flatten the layers of the TIFF the user opened (#640).
+        if (format is null && TiffExporter.IsTiffPath(filePath))
+        {
+            var savedTiff = SaveTiff(filePath);
+            FileLogger.LogExit(savedTiff.ToString());
+            return savedTiff;
+        }
 
         var bitmapToSave = GetBitmapToSave(out var needsDispose);
 
@@ -2028,6 +2038,21 @@ public partial class ImageEditorCore : IDisposable
             return false;
 
         return TiffExporter.SaveLayeredTiff(_layers, filePath, Logger);
+    }
+
+    /// <summary>
+    /// Writes the canvas as a TIFF: every layer as its own page while layer mode is on, as
+    /// <see cref="SaveLayeredTiff"/> does, otherwise the image as one page. Save on an opened TIFF
+    /// ends up here, so the file keeps the layers it was opened with.
+    /// </summary>
+    /// <param name="filePath">Output file path.</param>
+    /// <returns>True if saved successfully.</returns>
+    public bool SaveTiff(string filePath)
+    {
+        if (_isLayerMode && _layers is { Count: > 0 } layers)
+            return TiffExporter.SaveLayeredTiff(layers, filePath, Logger);
+
+        return _workingBitmap is { } working && TiffExporter.SaveFlattenedTiff(working, filePath, Logger);
     }
 
     /// <summary>
