@@ -38,7 +38,8 @@
     branch's build. The build is stamped <props version>-oneoff.g<commit> so it cannot be mistaken
     for a stable one. Must be outside the repo and outside the stable root, and must be empty or a
     folder this script published a one-off build into before - a folder holding anything else is
-    refused untouched. It shares the outputs and mappings.xml of the stable versions.
+    refused untouched. It saves into the shared outputs, and gets a copy of the stable version's
+    mappings.xml: a change there stays in the one-off build.
 
 .PARAMETER Clean
     With -InstallDir: wipe that folder before publishing. Only ever a folder carrying our install
@@ -272,8 +273,9 @@ Write-Ok "published to $InstallDir"
 Write-Step "Linking the shared data"
 Set-OutputsLink -InstallDir $InstallDir -DataDir $DataDir
 Write-Ok "$OutputsName -> $(Join-Path $DataDir $OutputsName)"
-switch (Set-MappingsLink -InstallDir $InstallDir -DataDir $DataDir -PreviousDir $previousDir) {
+switch (Set-MappingsLink -InstallDir $InstallDir -DataDir $DataDir -PreviousDir $previousDir -CopyOnly:(-not $stable)) {
     'linked'   { Write-Ok "$MappingsName shared with $(Join-Path $DataDir $MappingsName)" }
+    'one-off copy' { Write-Ok "$MappingsName copied from the stable version - changes in this one-off build stay here" }
     'copied'   { Write-Warn "$MappingsName copied, not shared: $InstallDir is on another drive than $DataDir, so a change there stays there" }
     'own copy' { Write-Warn "$InstallDir already has a $MappingsName of its own - left as it is, not shared" }
     default    { Write-Note "no $MappingsName in the current version - nothing to carry over" }
@@ -321,7 +323,7 @@ Write-Host ""
 if ($stable) { Write-Host "  Build complete - DiffusionNexus $version" -ForegroundColor Green }
 else         { Write-Host "  Build complete - DiffusionNexus $version (one-off)" -ForegroundColor Green }
 foreach ($proc in $running) {
-    if (Test-StartedThroughLink $proc.ExecutablePath) {
+    if (Test-StartedThroughLink $proc.ExecutablePath -LeadsTo $InstallDir) {
         Write-Warn ("DiffusionNexus (PID $($proc.ProcessId)) was started through $([System.IO.Path]::GetDirectoryName($proc.ExecutablePath)), which now leads to $version. " +
             "It keeps the old version in memory but loads files it opens later - video, workflows, dictionaries - from the new folder. Restart it soon.")
     }

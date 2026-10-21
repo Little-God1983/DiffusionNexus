@@ -69,7 +69,8 @@ same ones. Two things the app writes next to its exe are shared through
 - **`mappings.xml`**: LoRA sort's custom tag mappings. A file link needs admin rights, so this is a
   hard link: one file under two names. The new version starts with what the current one has, and
   from then on a save in either is seen by both. If you deleted all mappings in the current
-  version, the new one starts without them too.
+  version, the new one starts without them too. If there is no current version to ask (the
+  `DiffusionNexus` link is missing or its folder was deleted), the new one gets the shared file.
 
 Start the app from the Start Menu or through `E:\StableVersion\DiffusionNexus`. Diffusion Canvas
 registers its outputs folder in the Generation Gallery by the path the app was started from, so a
@@ -87,7 +88,7 @@ to force the wait.
 
 | Parameter | What it does |
 |---|---|
-| `-InstallDir <path>` | A one-off build into a folder of your own, from any branch. Stamped `<props version>-oneoff.g<commit>`. Must be outside the repo and the stable root. No shortcut is written and the current link does not move. It shares the outputs and `mappings.xml` of the stable versions. |
+| `-InstallDir <path>` | A one-off build into a folder of your own, from any branch. Stamped `<props version>-oneoff.g<commit>`. Must be outside the repo and the stable root. No shortcut is written and the current link does not move. It saves into the shared outputs and gets a copy of the stable `mappings.xml`, so unmerged code never writes the file the stable versions read. |
 | `-Clean` | With `-InstallDir`: wipe that folder first (only if it carries the marker). |
 | `-SkipTests` | Skip the test run (for when you just ran it). |
 | `-NoShortcut` | Leave the Start Menu shortcut as it is. |

@@ -65,7 +65,7 @@ function Resolve-FullPath {
 # the number whenever the C# changes, or a window that ran an older copy keeps using that one. The
 # C# is kept to what Windows PowerShell 5.1 compiles.
 function Get-PathInfoType {
-    $name = 'DiffusionNexus.BuildScripts.PathInfoV2'
+    $name = 'DiffusionNexus.BuildScripts.PathInfoV3'
     if (-not ($name -as [type])) {
         Add-Type -TypeDefinition @'
 using System;
@@ -75,9 +75,12 @@ using Microsoft.Win32.SafeHandles;
 
 namespace DiffusionNexus.BuildScripts
 {
-    public static class PathInfoV2
+    public static class PathInfoV3
     {
-        [StructLayout(LayoutKind.Sequential)]
+        // Pack = 4: the FILETIMEs in BY_HANDLE_FILE_INFORMATION are two DWORDs, aligned on 4 bytes.
+        // As 8-aligned longs every later field moved, the volume serial read as 0, and C:\ and E:\
+        // got the same ID.
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
         private struct FileInformation
         {
             public uint Attributes;
@@ -511,14 +514,23 @@ function Set-OutputsLink {
 # one file under two names, which the app's StreamWriter rewrites in place. What the version the
 # Start Menu opened last has is the truth: if its mappings.xml is not the shared one yet - the first
 # build, or the app recreated the file after "delete all mappings" - its content becomes the shared
-# one. A version without the file gets none, so deleted mappings stay deleted. Returns what happened.
+# one. A version without the file gets none, so deleted mappings stay deleted. With no current
+# version to ask - the link is gone, or its folder was deleted - the shared file is all there is.
+# A one-off (-CopyOnly) is unmerged code: it gets a copy and never touches the shared file.
+# Returns what happened.
 function Set-MappingsLink {
-    param([string]$InstallDir, [string]$DataDir, [string]$PreviousDir)
+    param([string]$InstallDir, [string]$DataDir, [string]$PreviousDir, [switch]$CopyOnly)
     $shared = Join-Path $DataDir $MappingsName
     $own    = Join-Path $InstallDir $MappingsName
-    $before = if ($PreviousDir) { Join-Path $PreviousDir $MappingsName } else { $null }
+    $asked  = $PreviousDir -and (Test-Path -LiteralPath $PreviousDir -PathType Container)
+    $before = if ($asked) { Join-Path $PreviousDir $MappingsName } else { $shared }
 
-    if (-not $before -or -not (Test-Path -LiteralPath $before -PathType Leaf)) { return 'none yet' }
+    if (-not (Test-Path -LiteralPath $before -PathType Leaf)) { return 'none yet' }
+    if ($CopyOnly) {
+        if (Test-Path -LiteralPath $own) { return 'own copy' }
+        Copy-Item -LiteralPath $before -Destination $own
+        return 'one-off copy'
+    }
     if (-not (Test-SamePath $before $shared)) {
         New-Item -ItemType Directory -Path $DataDir -Force | Out-Null
         # Written into the existing file, not copied over it, so every hard link to it sees the change.
@@ -540,12 +552,15 @@ function Set-MappingsLink {
     }
 }
 
-# True when the exe was started through a directory link - the Start Menu's E:\StableVersion\DiffusionNexus.
+# True when the exe was started through a directory link that now leads to $LeadsTo - the Start Menu's
+# E:\StableVersion\DiffusionNexus once it points at the new build. A link of the user's own that did
+# not move does not count.
 # Windows reports the path as it was started, and the app looks for the files beside its exe through
 # that same path, so once the link moves, those files come from the version it points at.
 function Test-StartedThroughLink {
-    param([string]$ExecutablePath)
-    return [bool](Get-DirectoryLinkTarget ([System.IO.Path]::GetDirectoryName((Resolve-FullPath $ExecutablePath))))
+    param([string]$ExecutablePath, [string]$LeadsTo)
+    $target = Get-DirectoryLinkTarget ([System.IO.Path]::GetDirectoryName((Resolve-FullPath $ExecutablePath)))
+    return [bool]$target -and (Test-SamePath $target $LeadsTo)
 }
 
 # Directory.Build.props is hand-written XML with comments in it, so it is read as one string and

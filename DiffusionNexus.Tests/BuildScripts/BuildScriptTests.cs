@@ -288,6 +288,24 @@ public sealed class BuildScriptHelperTests : BuildScriptTestBase
     }
 
     [Fact]
+    public void AFolderId_CarriesTheRealVolumeSerial()
+    {
+        // BY_HANDLE_FILE_INFORMATION packs its FILETIMEs on 4 bytes. Declared as 8-aligned longs,
+        // every field after them moved, the serial read as 0 and C:\ and E:\ got the same ID - so
+        // folders on two drives could pass for one.
+        using var temp = new TempFolder();
+        var drive = temp.Path[..2];
+
+        var result = Pwsh.RunCommon(
+            $"(Get-FolderId '{temp.Path}').Split(':')[0]; " +
+            $"(Get-CimInstance Win32_LogicalDisk -Filter \"DeviceID='{drive}'\").VolumeSerialNumber");
+
+        var lines = Lines(result.Output);
+        lines.Should().HaveCount(2, result.Output);
+        lines[0].Should().BeEquivalentTo(lines[1]);
+    }
+
+    [Fact]
     public void ACurrentLinkThatCannotBeRemade_KeepsPointingAtTheOldVersion()
     {
         // The old link is deleted before the new one is made. When the new one fails - a virus
@@ -586,6 +604,60 @@ public sealed class BuildScriptRunTests : BuildScriptTestBase
 
         result.ExitCode.Should().Be(0, result.Output);
         File.Exists(Path.Combine(repo.VersionFolder("0.11.0.102"), "mappings.xml")).Should().BeFalse();
+    }
+
+    [Fact]
+    public void WithNoCurrentVersionToAsk_TheSharedMappingsAreStillCarriedOn()
+    {
+        // The current link is gone (a remake that failed twice) or its folder was deleted by hand.
+        // "No current version" is not "the current version has no mappings": the shared file is all
+        // there is, and dropping it would lose the mappings for every later version.
+        using var repo = new FakeRepo();
+        repo.Build(before: "$env:FAKE_COMMIT_COUNT = '100'").ExitCode.Should().Be(0);
+        File.WriteAllText(Path.Combine(repo.VersionFolder("0.11.0.100"), "mappings.xml"), "<kept />");
+        repo.Build(before: "$env:FAKE_COMMIT_COUNT = '101'").ExitCode.Should().Be(0);
+        Directory.Delete(repo.CurrentLink);
+
+        var result = repo.Build(before: "$env:FAKE_COMMIT_COUNT = '102'");
+
+        result.ExitCode.Should().Be(0, result.Output);
+        File.ReadAllText(Path.Combine(repo.VersionFolder("0.11.0.102"), "mappings.xml")).Should().Be("<kept />");
+    }
+
+    [Fact]
+    public void AOneOffBuild_GetsACopyOfTheMappings_AndNeverWritesTheStableOnes()
+    {
+        // A one-off is unmerged code. Through a hard link, its saves - a changed format, a save bug -
+        // would land in the file every stable version reads.
+        using var repo = new FakeRepo();
+        repo.Build(before: "$env:FAKE_COMMIT_COUNT = '100'").ExitCode.Should().Be(0);
+        var stable = Path.Combine(repo.VersionFolder("0.11.0.100"), "mappings.xml");
+        File.WriteAllText(stable, "<stable />");
+        var folder = Path.Combine(repo.Outside, "DiffusionNexus-test");
+
+        var result = repo.Build($"-InstallDir '{folder}'");
+
+        result.ExitCode.Should().Be(0, result.Output);
+        var oneOff = Path.Combine(folder, "mappings.xml");
+        File.ReadAllText(oneOff).Should().Be("<stable />");
+        File.WriteAllText(oneOff, "<one-off />");
+        File.ReadAllText(stable).Should().Be("<stable />");
+        File.Exists(Path.Combine(repo.DataDir, "mappings.xml")).Should().BeFalse();
+    }
+
+    [Fact]
+    public void AnAppStartedThroughALinkThatDidNotMove_IsNotToldItLoadsTheNewFiles()
+    {
+        // A junction of the user's own to an old version - a rollback shortcut - still leads there.
+        using var repo = new FakeRepo();
+        repo.Build(before: "$env:FAKE_COMMIT_COUNT = '100'").ExitCode.Should().Be(0);
+        var own = Path.Combine(repo.Outside, "rollback");
+        Pwsh.Run($"New-Item -ItemType Junction -Path '{own}' -Target '{repo.VersionFolder("0.11.0.100")}' | Out-Null").ExitCode.Should().Be(0);
+
+        var result = repo.Build(before: $"$env:FAKE_COMMIT_COUNT = '101'; $env:FAKE_RUNNING_FROM = '{Path.Combine(own, ExeName)}'");
+
+        result.ExitCode.Should().Be(0, result.Output);
+        result.Output.Should().NotContain("was started through").And.Contain("is still running from");
     }
 
     [Fact]
