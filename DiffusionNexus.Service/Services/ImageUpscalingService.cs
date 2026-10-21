@@ -192,23 +192,23 @@ public sealed class ImageUpscalingService : IImageUpscalingService
         var targetWidth = (int)Math.Round(width * targetScale);
         var targetHeight = (int)Math.Round(height * targetScale);
 
-        SKBitmap finalImage;
+        // Target 4x is the model output itself; encoding it directly avoids a second
+        // full-size buffer (8192x8192 RGBA is 256 MB).
+        SKBitmap? resized = null;
         if (Math.Abs(targetScale - 4.0f) < 0.001f)
         {
-            // Target is 4x, no additional resize needed
             progress?.Report(new UpscalingProgress(UpscalingPhase.Finalizing, "Finalizing...", 95));
-            finalImage = upscaled4x.Copy();
         }
         else
         {
-            // Downscale from 4x to target. Skia has no Lanczos3; SkiaPixels.Sampling is
-            // Catmull-Rom (the same cubic ImageSharp's default resampler used).
+            // Downscale from 4x to target. Skia has no Lanczos3; SkiaPixels.ResizeTo halves
+            // with an area average and finishes with Catmull-Rom.
             progress?.Report(new UpscalingProgress(
                 UpscalingPhase.ResizingToTarget,
                 $"Resizing to {targetScale:F1}x ({targetWidth}x{targetHeight})...",
                 90));
 
-            finalImage = SkiaPixels.ResizeTo(upscaled4x, targetWidth, targetHeight);
+            resized = SkiaPixels.ResizeTo(upscaled4x, targetWidth, targetHeight);
         }
 
         // Step 4: Encode to PNG
@@ -216,9 +216,9 @@ public sealed class ImageUpscalingService : IImageUpscalingService
         cancellationToken.ThrowIfCancellationRequested();
 
         byte[] png;
-        using (finalImage)
+        using (resized)
         {
-            png = SkiaPixels.EncodePng(finalImage);
+            png = SkiaPixels.EncodePng(resized ?? upscaled4x);
         }
 
         progress?.Report(new UpscalingProgress(UpscalingPhase.Finalizing, "Complete!", 100));

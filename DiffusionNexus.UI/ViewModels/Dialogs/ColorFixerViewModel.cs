@@ -572,7 +572,7 @@ public partial class ColorFixerViewModel : ObservableObject
             {
                 using var image = SkiaPixels.LoadRgba(item.FilePath);
                 ApplyColorCorrection(image, item.Detail, _tintRemoval / 100.0, _brightness / 100.0, _contrast / 100.0);
-                ImageFileWriter.Write(image, item.FilePath);
+                ImageFileWriter.Write(image, item.FilePath, metadataSource: item.FilePath);
             });
 
             item.IsFixed = true;
@@ -614,7 +614,7 @@ public partial class ColorFixerViewModel : ObservableObject
                 var tempPath = Path.Combine(Path.GetTempPath(), "DiffusionNexus_ColorFixer",
                     $"{Path.GetFileNameWithoutExtension(item.FilePath)}_preview_{DateTime.UtcNow.Ticks}{Path.GetExtension(item.FilePath)}");
                 Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
-                ImageFileWriter.Write(corrected, tempPath);
+                ImageFileWriter.Write(corrected, tempPath, metadataSource: item.FilePath);
 
                 double score = EstimateScore(corrected);
                 return (tempPath, score);

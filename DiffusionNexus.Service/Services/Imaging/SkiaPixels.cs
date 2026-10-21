@@ -61,13 +61,43 @@ public static class SkiaPixels
         return ResizeTo(source, width, height);
     }
 
-    /// <summary>Resizes to exactly <paramref name="width"/> × <paramref name="height"/> (ImageSharp's <c>ResizeMode.Stretch</c>).</summary>
+    /// <summary>
+    /// Resizes to exactly <paramref name="width"/> × <paramref name="height"/> (ImageSharp's
+    /// <c>ResizeMode.Stretch</c>). A cubic kernel reads only 4×4 source pixels per output pixel, so
+    /// on its own it aliases any reduction beyond about 2×: a 1-px checkerboard shrunk 30× came
+    /// out anywhere from near-black to near-white instead of grey. ImageSharp widened its kernel
+    /// with the ratio; here the image is first halved with a bilinear filter (an exact 2×2 average
+    /// at half scale) on every axis that is still at least twice the target, and the final step is
+    /// the cubic resample.
+    /// </summary>
     public static SKBitmap ResizeTo(SKBitmap source, int width, int height)
     {
-        var info = new SKImageInfo(width, height, source.ColorType, source.AlphaType);
-        return source.Resize(info, Sampling)
-            ?? throw new InvalidOperationException($"Resize to {width}x{height} failed.");
+        var current = source;
+        try
+        {
+            while (current.Width >= width * 2 || current.Height >= height * 2)
+            {
+                int halfWidth = current.Width >= width * 2 ? current.Width / 2 : current.Width;
+                int halfHeight = current.Height >= height * 2 ? current.Height / 2 : current.Height;
+                var half = current.Resize(InfoLike(current, halfWidth, halfHeight), HalvingSampling)
+                    ?? throw new InvalidOperationException($"Resize to {halfWidth}x{halfHeight} failed.");
+                if (!ReferenceEquals(current, source)) current.Dispose();
+                current = half;
+            }
+
+            return current.Resize(InfoLike(current, width, height), Sampling)
+                ?? throw new InvalidOperationException($"Resize to {width}x{height} failed.");
+        }
+        finally
+        {
+            if (!ReferenceEquals(current, source)) current.Dispose();
+        }
     }
+
+    private static readonly SKSamplingOptions HalvingSampling = new(SKFilterMode.Linear);
+
+    private static SKImageInfo InfoLike(SKBitmap bitmap, int width, int height)
+        => new(width, height, bitmap.ColorType, bitmap.AlphaType, bitmap.ColorSpace);
 
     /// <summary>
     /// Converts an RGBA8888 bitmap to one 8-bit luminance value per pixel, row-major, using the
@@ -120,13 +150,32 @@ public static class SkiaPixels
         return fitted;
     }
 
-    /// <summary>Encodes a bitmap to PNG bytes.</summary>
-    public static byte[] EncodePng(SKBitmap bitmap)
+    /// <summary>
+    /// Reads the pixel dimensions from the file header without decoding any pixels. Throws when
+    /// the file is not a recognisable image.
+    /// </summary>
+    public static (int Width, int Height) ReadDimensions(string path)
     {
-        using var image = SKImage.FromBitmap(bitmap);
-        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+        using var codec = SKCodec.Create(path)
+            ?? throw new InvalidDataException("The file is not a decodable image.");
+        return (codec.Info.Width, codec.Info.Height);
+    }
+
+    /// <summary>
+    /// Encodes a bitmap with one of the encoders Skia has (PNG, JPEG, WebP). Throws instead of
+    /// returning null when Skia produces no data, so a failure carries its cause.
+    /// </summary>
+    public static byte[] Encode(SKBitmap bitmap, SKEncodedImageFormat format, int quality)
+    {
+        using var image = SKImage.FromBitmap(bitmap)
+            ?? throw new InvalidOperationException($"Could not wrap a {bitmap.Width}x{bitmap.Height} {bitmap.ColorType} bitmap for encoding.");
+        using var data = image.Encode(format, quality)
+            ?? throw new InvalidOperationException($"Encoding a {bitmap.Width}x{bitmap.Height} {bitmap.ColorType} bitmap as {format} produced no data.");
         return data.ToArray();
     }
+
+    /// <summary>Encodes a bitmap to PNG bytes.</summary>
+    public static byte[] EncodePng(SKBitmap bitmap) => Encode(bitmap, SKEncodedImageFormat.Png, 100);
 
     /// <summary>Encodes a bitmap to PNG and writes it to <paramref name="path"/>.</summary>
     public static void SavePng(SKBitmap bitmap, string path)
@@ -134,11 +183,7 @@ public static class SkiaPixels
 
     /// <summary>Encodes a bitmap to JPEG at <paramref name="quality"/> (1–100) and writes it to <paramref name="path"/>.</summary>
     public static void SaveJpeg(SKBitmap bitmap, string path, int quality)
-    {
-        using var image = SKImage.FromBitmap(bitmap);
-        using var data = image.Encode(SKEncodedImageFormat.Jpeg, quality);
-        File.WriteAllBytes(path, data.ToArray());
-    }
+        => File.WriteAllBytes(path, Encode(bitmap, SKEncodedImageFormat.Jpeg, quality));
 
     private static SKBitmap DecodeRgba(SKCodec codec)
     {

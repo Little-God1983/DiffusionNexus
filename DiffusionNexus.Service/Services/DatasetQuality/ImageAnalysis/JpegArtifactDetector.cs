@@ -157,6 +157,19 @@ public sealed class JpegArtifactDetector : IImageQualityCheck
         bool isJpeg = IsJpegFile(filePath);
         long fileSize = new FileInfo(filePath).Length;
 
+        // Non-JPEGs only get the bytes-per-pixel heuristic, which needs the dimensions alone:
+        // read them from the header instead of decoding the whole image.
+        if (!isJpeg)
+        {
+            var (headerWidth, headerHeight) = SkiaPixels.ReadDimensions(filePath);
+            double headerBpp = fileSize / (double)(headerWidth * headerHeight);
+            return new JpegAnalysisResult(
+                EstimatedQuality: BppToQuality(headerBpp, isJpeg: false),
+                Source: QualitySource.BytesPerPixel,
+                BlockingRatio: 0,
+                BytesPerPixel: headerBpp);
+        }
+
         using var image = SkiaPixels.DecodeRgba(filePath);
         int width = image.Width;
         int height = image.Height;

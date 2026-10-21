@@ -220,8 +220,18 @@ public sealed class ImageCacheService : IImageCacheService, IDisposable
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        using var image = SKBitmap.Decode(imageStream)
-            ?? throw new InvalidDataException("The data is not a decodable image.");
+
+        // SKBitmap.Decode(Stream) wraps the stream in an owning SKManagedStream and closes it, but
+        // the full-image cache below rewinds and copies this same stream, so decode through a
+        // non-owning wrapper.
+        SKBitmap image;
+        using (var codec = SKCodec.Create(new SKManagedStream(imageStream, disposeManagedStream: false))
+            ?? throw new InvalidDataException("The data is not a decodable image."))
+        {
+            image = SKBitmap.Decode(codec)
+                ?? throw new InvalidDataException("The data is not a decodable image.");
+        }
+        using var ownedImage = image;
 
         var originalWidth = image.Width;
         var originalHeight = image.Height;
@@ -258,12 +268,13 @@ public sealed class ImageCacheService : IImageCacheService, IDisposable
         // Calculate thumbnail dimensions maintaining aspect ratio (fit within, downscale only)
         var (thumbWidth, thumbHeight) = CalculateThumbnailSize(image.Width, image.Height, options.ThumbnailMaxSize);
 
-        // Resize. Skia has no Lanczos; Catmull-Rom is the closest cubic.
+        // Resize. Thumbnails are large reductions, where a plain cubic kernel (4x4 taps) aliases
+        // fine detail into moire; trilinear mipmapped sampling averages the covered area instead.
         SKBitmap? resized = null;
         if (thumbWidth != image.Width || thumbHeight != image.Height)
         {
-            resized = image.Resize(new SKImageInfo(thumbWidth, thumbHeight, image.ColorType, image.AlphaType),
-                new SKSamplingOptions(SKCubicResampler.CatmullRom))
+            resized = image.Resize(new SKImageInfo(thumbWidth, thumbHeight, image.ColorType, image.AlphaType, image.ColorSpace),
+                new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear))
                 ?? throw new InvalidOperationException($"Thumbnail resize to {thumbWidth}x{thumbHeight} failed.");
         }
 
