@@ -72,6 +72,46 @@ public static class SkiaPixels
     /// </summary>
     public static SKBitmap ResizeTo(SKBitmap source, int width, int height)
     {
+        // Skia filters the stored values as they are. For unpremultiplied pixels that averages the
+        // RGB of transparent pixels into their neighbours (opaque red beside transparent black
+        // became dark red), so filter premultiplied and convert back.
+        if (source.AlphaType == SKAlphaType.Unpremul)
+        {
+            using var premultiplied = WithAlphaType(source, SKAlphaType.Premul);
+            using var resized = ResizeFiltered(premultiplied, width, height);
+            return WithAlphaType(resized, SKAlphaType.Unpremul);
+        }
+
+        return ResizeFiltered(source, width, height);
+    }
+
+    /// <summary>
+    /// True when the file holds more than one frame (animated WebP or GIF). False for single
+    /// frames and for anything that is not a readable image.
+    /// </summary>
+    public static bool IsAnimated(string path)
+    {
+        if (!File.Exists(path))
+            return false;
+        using var codec = SKCodec.Create(path);
+        return codec is { FrameCount: > 1 };
+    }
+
+    private static SKBitmap WithAlphaType(SKBitmap bitmap, SKAlphaType alphaType)
+    {
+        var info = new SKImageInfo(bitmap.Width, bitmap.Height, bitmap.ColorType, alphaType, bitmap.ColorSpace);
+        var copy = new SKBitmap(info);
+        using var pixmap = bitmap.PeekPixels();
+        if (pixmap is null || !pixmap.ReadPixels(info, copy.GetPixels(), copy.RowBytes, 0, 0))
+        {
+            copy.Dispose();
+            throw new InvalidOperationException($"Converting a {bitmap.Width}x{bitmap.Height} bitmap to {alphaType} failed.");
+        }
+        return copy;
+    }
+
+    private static SKBitmap ResizeFiltered(SKBitmap source, int width, int height)
+    {
         var current = source;
         try
         {
@@ -193,7 +233,10 @@ public static class SkiaPixels
 
     private static SKBitmap DecodeRgba(SKCodec codec)
     {
-        var info = codec.Info.WithColorType(SKColorType.Rgba8888).WithAlphaType(SKAlphaType.Unpremul);
+        // Images without an alpha channel (JPEG, most PNGs) stay Opaque, which is a valid straight
+        // layout and lets ResizeTo skip the premultiply round trip.
+        var alphaType = codec.Info.AlphaType == SKAlphaType.Opaque ? SKAlphaType.Opaque : SKAlphaType.Unpremul;
+        var info = codec.Info.WithColorType(SKColorType.Rgba8888).WithAlphaType(alphaType);
         var bitmap = new SKBitmap(info);
         var result = codec.GetPixels(info, bitmap.GetPixels());
         if (result != SKCodecResult.Success && result != SKCodecResult.IncompleteInput)

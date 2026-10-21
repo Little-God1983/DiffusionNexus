@@ -1,5 +1,4 @@
 using DiffusionNexus.Service.Services.Imaging;
-using DiffusionNexus.UI.ImageEditor;
 using FluentAssertions;
 using SkiaSharp;
 using Xunit;
@@ -20,8 +19,6 @@ public class ImageFileWriterTests : IDisposable
     [Theory]
     [InlineData(".png")]
     [InlineData(".bmp")]
-    [InlineData(".tif")]
-    [InlineData(".tiff")]
     public void Write_LosslessFormats_RoundTripEveryPixel(string extension)
     {
         using var source = CreatePattern(7, 5);
@@ -88,21 +85,6 @@ public class ImageFileWriterTests : IDisposable
     }
 
     [Fact]
-    public void Write_Tiff_IsReadableByTheImageEditorsReader()
-    {
-        using var source = CreatePattern(9, 4);
-        var path = Path.Combine(_dir, "editor.tif");
-
-        ImageFileWriter.Write(source, path);
-
-        using var reloaded = TiffExporter.DecodeFlatImage(path);
-        reloaded.Should().NotBeNull();
-        reloaded!.Width.Should().Be(9);
-        reloaded.Height.Should().Be(4);
-        reloaded.GetPixel(8, 3).Should().Be(source.GetPixel(8, 3));
-    }
-
-    [Fact]
     public void Write_Gif_IsRefusedWithAClearMessage_AndLeavesNoFile()
     {
         using var source = CreatePattern(2, 2);
@@ -126,7 +108,7 @@ public class ImageFileWriterTests : IDisposable
 
     [Theory]
     [InlineData("a.PNG", true)]
-    [InlineData("a.Tiff", true)]
+    [InlineData("a.Tiff", false)]
     [InlineData("a.bmp", true)]
     [InlineData("a.gif", false)]
     [InlineData("a", false)]
@@ -135,7 +117,7 @@ public class ImageFileWriterTests : IDisposable
 
     [Theory]
     [InlineData(".bmp")]
-    [InlineData(".tif")]
+    [InlineData(".png")]
     public void Write_PremultipliedSemiTransparentInput_StoresStraightAlpha(string extension)
     {
         // Image-editor bitmaps are premultiplied BGRA. Half-transparent pure red is stored
@@ -154,12 +136,8 @@ public class ImageFileWriterTests : IDisposable
         }
         else
         {
-            // Read the stored scanline, not LibTiff's RGBA interface: that interface premultiplies
-            // unassociated alpha on read (a separate reader issue, tracked in #638).
-            using var tiff = BitMiracle.LibTiff.Classic.Tiff.Open(path, "r")!;
-            var row = new byte[2 * 4];
-            tiff.ReadScanline(row, 0).Should().BeTrue();
-            row.AsSpan(0, 4).ToArray().Should().Equal(new byte[] { 255, 0, 0, 128 });
+            using var reloaded = SkiaPixels.DecodeRgba(path);
+            reloaded.GetPixelSpan().Slice(0, 4).ToArray().Should().Equal(new byte[] { 255, 0, 0, 128 });
         }
     }
 
@@ -246,7 +224,7 @@ public class ImageFileWriterTests : IDisposable
     [Fact]
     public void Write_OverExistingFile_ReplacesItAndLeavesNoTemporaryFiles()
     {
-        var path = Path.Combine(_dir, "target.tif");
+        var path = Path.Combine(_dir, "target.bmp");
         File.WriteAllBytes(path, [1, 2, 3]);
         using var bmp = CreatePattern(4, 4);
 
@@ -419,19 +397,6 @@ public class ImageFileWriterTests : IDisposable
         return SkiaPixels.FromRgbaBytes(rgba, width, height);
     }
 
-    /// <summary>Loads PNG/BMP through Skia and TIFF through the editor's LibTiff reader, as unpremultiplied RGBA.</summary>
-    private static SKBitmap Load(string path)
-    {
-        if (Path.GetExtension(path).StartsWith(".tif", StringComparison.OrdinalIgnoreCase))
-        {
-            using var tiff = TiffExporter.DecodeFlatImage(path) ?? throw new InvalidOperationException("TIFF decode failed");
-            // Copy(Rgba8888) would keep the reader's premultiplied alpha; read into straight RGBA.
-            var info = new SKImageInfo(tiff.Width, tiff.Height, SKColorType.Rgba8888, SKAlphaType.Unpremul);
-            var straight = new SKBitmap(info);
-            using var pixmap = tiff.PeekPixels();
-            pixmap.ReadPixels(info, straight.GetPixels(), straight.RowBytes, 0, 0).Should().BeTrue();
-            return straight;
-        }
-        return SkiaPixels.DecodeRgba(path);
-    }
+    /// <summary>Loads PNG/BMP through Skia as straight RGBA.</summary>
+    private static SKBitmap Load(string path) => SkiaPixels.DecodeRgba(path);
 }

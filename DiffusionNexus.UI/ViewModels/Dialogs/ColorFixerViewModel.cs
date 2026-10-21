@@ -52,9 +52,10 @@ public partial class ColorFixerImageItem : ObservableObject
 
     /// <summary>
     /// Whether a fixed image can be written back in its own format. GIF cannot (no encoder in the
-    /// image library), so such files are listed but never touched.
+    /// image library) and neither can an animation (only the first frame is decoded), so such
+    /// files are listed but never touched. Decided once when the list is loaded.
     /// </summary>
-    public bool CanSave => ImageFileWriter.CanWrite(FilePath);
+    public bool CanSave { get; init; } = true;
 
     private string? _fixError;
 
@@ -384,16 +385,23 @@ public partial class ColorFixerViewModel : ObservableObject
 
         foreach (var src in items)
         {
+            bool writableFormat = ImageFileWriter.CanWrite(src.FilePath);
+            bool animated = writableFormat && SkiaPixels.IsAnimated(src.FilePath);
             var item = new ColorFixerImageItem
             {
                 FilePath = src.FilePath,
                 Score = src.Score,
-                Detail = src.Detail
+                Detail = src.Detail,
+                CanSave = writableFormat && !animated
             };
 
-            if (!item.CanSave)
+            if (!writableFormat)
             {
                 item.FixError = $"Can't save {Path.GetExtension(src.FilePath).ToLowerInvariant()} files, so this image is left as it is. Convert it to PNG to fix it.";
+            }
+            else if (animated)
+            {
+                item.FixError = "This image is animated; saving a fix would keep only the first frame, so it is left as it is.";
             }
 
             // An image already marked as trash needs no attention
@@ -421,6 +429,8 @@ public partial class ColorFixerViewModel : ObservableObject
         try
         {
             await OptimizeSliderValuesAsync(item);
+            if (item.CanSave)
+                item.FixError = null;
         }
         catch (Exception ex)
         {
@@ -667,15 +677,19 @@ public partial class ColorFixerViewModel : ObservableObject
                 using var corrected = image.Copy();
                 ApplyColorCorrection(corrected, item.Detail, _tintRemoval / 100.0, _brightness / 100.0, _contrast / 100.0);
 
+                // The preview is a throwaway file for display only: plain PNG, no metadata, so
+                // it works for every source format, GIF and animations included.
                 var tempPath = Path.Combine(Path.GetTempPath(), "DiffusionNexus_ColorFixer",
-                    $"{Path.GetFileNameWithoutExtension(item.FilePath)}_preview_{DateTime.UtcNow.Ticks}{Path.GetExtension(item.FilePath)}");
+                    $"{Path.GetFileNameWithoutExtension(item.FilePath)}_preview_{DateTime.UtcNow.Ticks}.png");
                 Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
-                ImageFileWriter.Write(corrected, tempPath, metadataSource: item.FilePath);
+                SkiaPixels.SavePng(corrected, tempPath);
 
                 double score = EstimateScore(corrected);
                 return (tempPath, score);
             });
 
+            if (item.CanSave)
+                item.FixError = null;
             item.AfterPreviewPath = previewPath;
             item.NotifyPreviewChanged();
             EstimatedScore = estimatedScore;

@@ -69,6 +69,23 @@ public class SkiaPixelsTests
     }
 
     [Fact]
+    public void ResizeTo_OpaqueNextToTransparent_KeepsTheEdgeColourInsteadOfDarkeningIt()
+    {
+        // Opaque red beside fully transparent black. Filtering straight (unpremultiplied) colour
+        // averages the black RGB of the invisible pixel in: (128, 0, 0, 128), a dark fringe once
+        // composited. Filtering premultiplied colour gives half-transparent pure red.
+        var rgba = new byte[] { 255, 0, 0, 255, 0, 0, 0, 0 };
+        using var source = SkiaPixels.FromRgbaBytes(rgba, 2, 1);
+
+        using var result = SkiaPixels.ResizeTo(source, 1, 1);
+
+        result.AlphaType.Should().Be(SKAlphaType.Unpremul);
+        var pixel = result.GetPixelSpan().ToArray();
+        pixel[0].Should().BeInRange(250, 255, "red must stay red at the edge");
+        pixel[3].Should().BeInRange(120, 136);
+    }
+
+    [Fact]
     public void ToGray8_PaddedRows_ReadsEachRowFromItsStride()
     {
         // 2x2 RGBA with 4 bytes of zero padding per row (stride 12): row 0 black, row 1 white.

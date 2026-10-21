@@ -70,6 +70,51 @@ public class ColorFixerViewModelTests : IDisposable
         File.ReadAllBytes(path).Should().Equal(new byte[] { 9, 9, 9 });
     }
 
+    [Fact]
+    public void LoadImages_AnimatedImage_SaysUpFrontThatItCannotBeSaved()
+    {
+        // Animated content under a writable extension: decided by the file, not the name.
+        var path = Path.Combine(_dir, "anim.png");
+        File.WriteAllBytes(path, TwoFrameGif());
+        var vm = new ColorFixerViewModel();
+
+        vm.LoadImages([Item(path)]);
+
+        var item = vm.Images.Single();
+        item.CanSave.Should().BeFalse();
+        item.FixError.Should().Contain("animated");
+    }
+
+    [Fact]
+    public async Task AutoSet_AfterAnEarlierFailure_ClearsTheStaleError()
+    {
+        var path = Path.Combine(_dir, "tinted.png");
+        var rgba = new byte[16 * 16 * 4];
+        for (int i = 0; i < rgba.Length; i += 4) { rgba[i] = 220; rgba[i + 1] = 90; rgba[i + 2] = 60; rgba[i + 3] = 255; }
+        using (var bmp = DiffusionNexus.Service.Services.Imaging.SkiaPixels.FromRgbaBytes(rgba, 16, 16))
+            DiffusionNexus.Service.Services.Imaging.SkiaPixels.SavePng(bmp, path);
+        var vm = new ColorFixerViewModel();
+        vm.LoadImages([Item(path)]);
+        var item = vm.Images.Single();
+        item.FixError = "Could not preview this image: the file was locked";
+        vm.SelectedImage = item;
+
+        await vm.AutoSetCommand.ExecuteAsync(null);
+
+        item.FixError.Should().BeNull();
+    }
+
+    private static byte[] TwoFrameGif()
+    {
+        byte[] frame =
+        [
+            0x21, 0xF9, 0x04, 0x00, 0x0A, 0x00, 0x00, 0x00,
+            0x2C, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
+            0x02, 0x02, 0x44, 0x01, 0x00,
+        ];
+        return [.. "GIF89a"u8, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, .. frame, .. frame, 0x3B];
+    }
+
     private static ColorDistributionItemViewModel Item(string path) => new()
     {
         FileName = Path.GetFileName(path),

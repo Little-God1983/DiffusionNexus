@@ -1,16 +1,17 @@
-using BitMiracle.LibTiff.Classic;
 using SkiaSharp;
 
 namespace DiffusionNexus.Service.Services.Imaging;
 
 /// <summary>
 /// Writes a bitmap to disk in the format its file extension names, the way ImageSharp's
-/// <c>Image.Save(path)</c> chose an encoder. SkiaSharp only encodes PNG, JPEG and WebP
-/// (<c>SKImage.Encode</c> returns null for everything else), so TIFF goes through LibTiff.NET,
-/// which the app already ships for the image editor, and BMP through a built-in writer, the
-/// format being a fixed header plus pixel rows. GIF has no encoder here: a photo quantised to
-/// 256 colours is a degraded image anyway, and the only libraries that write it bring either
-/// GDI+ or a large native payload. It is refused with <see cref="NotSupportedException"/>.
+/// <c>Image.Save(path)</c> chose an encoder, for the formats the app lists as images
+/// (<c>SupportedMediaTypes.ImageExtensions</c>). SkiaSharp only encodes PNG, JPEG and WebP
+/// (<c>SKImage.Encode</c> returns null for everything else), so BMP goes through a built-in
+/// writer, the format being a fixed header plus pixel rows. GIF has no encoder here: a photo
+/// quantised to 256 colours is a degraded image anyway, and the only libraries that write it
+/// bring either GDI+ or a large native payload. It is refused with <see cref="NotSupportedException"/>.
+/// TIFF is not an app image format (SkiaSharp cannot even decode it), so it is not written here
+/// either; the image editor has its own <c>TiffExporter</c>.
 /// <para>
 /// The whole file is encoded in memory first and then moved over the target, so a failure at
 /// any point leaves an existing file untouched and never leaves an empty or partial one.
@@ -23,7 +24,7 @@ public static class ImageFileWriter
 
     /// <summary>Extensions this writer can produce, lower case with the dot.</summary>
     public static readonly IReadOnlySet<string> WritableExtensions =
-        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff" };
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".png", ".jpg", ".jpeg", ".webp", ".bmp" };
 
     /// <summary>True when <see cref="Write"/> can produce the format <paramref name="path"/>'s extension names.</summary>
     public static bool CanWrite(string path) => WritableExtensions.Contains(Path.GetExtension(path));
@@ -53,8 +54,8 @@ public static class ImageFileWriter
         if (!WritableExtensions.Contains(extension))
         {
             throw new NotSupportedException(extension == ".gif"
-                ? "Cannot write .gif files: the image library has no GIF encoder. Save the image as PNG, JPEG, WebP, BMP or TIFF instead."
-                : $"Cannot write '{extension}' files: supported formats are PNG, JPEG, WebP, BMP and TIFF.");
+                ? "Cannot write .gif files: the image library has no GIF encoder. Save the image as PNG, JPEG, WebP or BMP instead."
+                : $"Cannot write '{extension}' files: supported formats are PNG, JPEG, WebP and BMP.");
         }
 
         // Read the original before anything is written: it may be the target itself.
@@ -85,8 +86,7 @@ public static class ImageFileWriter
             ".webp" => lossyQuality is null && ImageMetadataCarrier.IsLosslessWebp(source)
                 ? EncodeLosslessWebp(bitmap)
                 : SkiaPixels.Encode(bitmap, SKEncodedImageFormat.Webp, lossyQuality ?? DefaultLossyQuality),
-            ".bmp" => EncodeBmp(bitmap),
-            _ => EncodeTiff(bitmap), // .tif / .tiff
+            _ => EncodeBmp(bitmap), // .bmp
         };
 
         ReplaceAtomically(path, encoded);
@@ -177,46 +177,6 @@ public static class ImageFileWriter
             }
         }
         return file;
-    }
-
-    /// <summary>
-    /// Encodes a single RGBA page (8-bit, LZW, unassociated alpha), the same layout the image
-    /// editor's <c>TiffExporter</c> writes, so its reader loads these files too. Encoded into
-    /// memory so a LibTiff failure cannot truncate an existing file.
-    /// </summary>
-    private static byte[] EncodeTiff(SKBitmap bitmap)
-    {
-        using var rgba = ToStraightRgba(bitmap);
-        int width = rgba.Width, height = rgba.Height;
-
-        var memory = new MemoryStream();
-        using (var tiff = Tiff.ClientOpen("in-memory", "w", memory, new TiffStream())
-            ?? throw new IOException("LibTiff could not open an in-memory TIFF for writing."))
-        {
-            tiff.SetField(TiffTag.IMAGEWIDTH, width);
-            tiff.SetField(TiffTag.IMAGELENGTH, height);
-            tiff.SetField(TiffTag.SAMPLESPERPIXEL, 4);
-            tiff.SetField(TiffTag.BITSPERSAMPLE, 8);
-            tiff.SetField(TiffTag.ORIENTATION, Orientation.TOPLEFT);
-            tiff.SetField(TiffTag.PLANARCONFIG, PlanarConfig.CONTIG);
-            tiff.SetField(TiffTag.PHOTOMETRIC, Photometric.RGB);
-            tiff.SetField(TiffTag.COMPRESSION, Compression.LZW);
-            tiff.SetField(TiffTag.EXTRASAMPLES, 1, new short[] { (short)ExtraSample.UNASSALPHA });
-            tiff.SetField(TiffTag.ROWSPERSTRIP, tiff.DefaultStripSize(0));
-
-            var src = rgba.GetPixelSpan();
-            int stride = rgba.RowBytes;
-            var row = new byte[width * 4];
-            for (int y = 0; y < height; y++)
-            {
-                src.Slice(y * stride, row.Length).CopyTo(row);
-                if (!tiff.WriteScanline(row, y))
-                    throw new IOException($"Writing TIFF scanline {y} failed.");
-            }
-            if (!tiff.WriteDirectory())
-                throw new IOException("Writing the TIFF directory failed.");
-        }
-        return memory.ToArray();
     }
 
     /// <summary>

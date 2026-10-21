@@ -175,22 +175,20 @@ public sealed class JpegArtifactDetector : IImageQualityCheck
         int height = image.Height;
         double bpp = fileSize / (double)(width * height);
 
-        // Tier 1: Try EXIF quality metadata (JPEG only)
-        if (isJpeg)
+        // From here on the file is a JPEG (non-JPEGs returned above).
+        // Tier 1: Try EXIF quality metadata
+        int? exifQuality = ReadExifQuality(filePath);
+        if (exifQuality.HasValue)
         {
-            int? exifQuality = ReadExifQuality(filePath);
-            if (exifQuality.HasValue)
-            {
-                return new JpegAnalysisResult(
-                    EstimatedQuality: exifQuality.Value,
-                    Source: QualitySource.Exif,
-                    BlockingRatio: 0,
-                    BytesPerPixel: bpp);
-            }
+            return new JpegAnalysisResult(
+                EstimatedQuality: exifQuality.Value,
+                Source: QualitySource.Exif,
+                BlockingRatio: 0,
+                BytesPerPixel: bpp);
         }
 
-        // Tier 2: Block boundary discontinuity analysis (JPEG only, needs enough pixels)
-        if (isJpeg && width >= 24 && height >= 24)
+        // Tier 2: Block boundary discontinuity analysis (needs enough pixels)
+        if (width >= 24 && height >= 24)
         {
             // Resize for analysis if needed, then take the luminance plane
             var fitted = SkiaPixels.FitWithin(image, MaxAnalysisSize);
@@ -213,8 +211,8 @@ public sealed class JpegArtifactDetector : IImageQualityCheck
                 BytesPerPixel: bpp);
         }
 
-        // Tier 3: Bytes-per-pixel heuristic (works for all formats)
-        int bppQuality = BppToQuality(bpp, isJpeg);
+        // Tier 3: Bytes-per-pixel heuristic (JPEGs too small for block analysis)
+        int bppQuality = BppToQuality(bpp, isJpeg: true);
 
         return new JpegAnalysisResult(
             EstimatedQuality: bppQuality,
