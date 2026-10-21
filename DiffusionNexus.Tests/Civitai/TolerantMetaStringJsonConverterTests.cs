@@ -57,6 +57,35 @@ public class TolerantMetaStringJsonConverterTests
     }
 
     [Theory]
+    [InlineData("""{"prompt":"b","steps":"20"}""")] // number fields typed by the posting tool
+    [InlineData("""{"prompt":"b","steps":8.0}""")] // int? rejects a decimal point
+    [InlineData("""{"prompt":"b","cfgScale":"7"}""")]
+    [InlineData("""{"prompt":"b","resources":[{"name":"x","weight":"0.8"}]}""")]
+    [InlineData("""{"prompt":"b","resources":{"name":"x"}}""")]
+    [InlineData("\"Steps: 20, Sampler: Euler\"")] // meta as a raw parameter string
+    [InlineData("""["a","b"]""")]
+    public void CivitaiModelVersion_SurvivesAnyMetaShapeOnOneImage(string badMetaJson)
+    {
+        // Same rule one level up: a meta this DTO cannot read costs that image its meta,
+        // never the version — the other images, and the files the download needs, stay.
+        var json = $$$"""
+            {"id":3129180,"modelId":2513759,"files":[{"name":"f.safetensors"}],"images":[
+             {"url":"https://example/a.jpeg","meta":{"prompt":"a","steps":8}},
+             {"url":"https://example/b.jpeg","meta":{{{badMetaJson}}}},
+             {"url":"https://example/c.jpeg","meta":{"prompt":"c"}}]}
+            """;
+
+        var version = JsonSerializer.Deserialize<CivitaiModelVersion>(json);
+
+        version!.Files.Should().ContainSingle();
+        version.Images.Should().HaveCount(3);
+        version.Images![0].Meta!.Steps.Should().Be(8);
+        version.Images[1].Meta.Should().BeNull();
+        version.Images[1].Url.Should().Be("https://example/b.jpeg");
+        version.Images[2].Meta!.Prompt.Should().Be("c", "the reader must leave the stream on the next image");
+    }
+
+    [Theory]
     [InlineData("Clip skip", "2", "2")]
     [InlineData("Hires upscale", "1.6", "1.6")]
     [InlineData("Denoising strength", "0.15", "0.15")]
@@ -76,11 +105,13 @@ public class TolerantMetaStringJsonConverterTests
     [InlineData("Hires upscale", """{"nested":"object"}""")]
     [InlineData("Hires upscaler", """["a","b"]""")]
     [InlineData("negativePrompt", """{"text":"x"}""")]
+    // End-to-end only: System.Text.Json answers a JSON null itself and never calls the
+    // converter (HandleNull is false for reference types). The rows above reach its Skip.
     [InlineData("Model hash", "null")]
     public void CivitaiImageMeta_ReadsStructuredOrNullValuesAsNull(string field, string valueJson)
     {
         var meta = JsonSerializer.Deserialize<CivitaiImageMeta>(
-            $$"""{"{{field}}":{{valueJson}},"prompt-check":0,"Clip skip":"2"}""");
+            $$"""{"{{field}}":{{valueJson}},"Clip skip":"2"}""");
 
         ReadField(meta!, field).Should().BeNull();
         meta!.ClipSkip.Should().Be("2", "the reader must leave the stream on the next property");

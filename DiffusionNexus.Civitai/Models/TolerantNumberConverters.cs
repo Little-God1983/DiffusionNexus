@@ -145,3 +145,42 @@ public sealed class TolerantMetaStringJsonConverter : JsonConverter<string?>
         else writer.WriteStringValue(value);
     }
 }
+
+/// <summary>
+/// Last line of defence for <see cref="CivitaiModelImage.Meta"/>: an image whose meta this DTO
+/// cannot read (<c>"steps":"20"</c>, <c>"cfgScale":"7"</c>, a resource weight sent as a string,
+/// meta sent as a raw parameter string, ...) reads as having no meta. The meta is the posting
+/// tool's free-form output, and one such image used to fail the entire model version — files,
+/// hashes and all (#627). <see cref="TolerantMetaStringJsonConverter"/> keeps the known text
+/// fields readable; this catches every shape nobody has seen yet.
+/// </summary>
+public sealed class TolerantImageMetaJsonConverter : JsonConverter<CivitaiImageMeta?>
+{
+    public override CivitaiImageMeta? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType != JsonTokenType.StartObject)
+        {
+            reader.Skip();
+            return null;
+        }
+
+        // Buffer the object first so a failure part-way through cannot leave the reader
+        // inside it. The options are the caller's, without this converter: it is applied to
+        // the property, not registered, so the inner read is the ordinary typed one.
+        using var document = JsonDocument.ParseValue(ref reader);
+        try
+        {
+            return document.RootElement.Deserialize<CivitaiImageMeta>(options);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    public override void Write(Utf8JsonWriter writer, CivitaiImageMeta? value, JsonSerializerOptions options)
+    {
+        if (value is null) writer.WriteNullValue();
+        else JsonSerializer.Serialize(writer, value, options);
+    }
+}

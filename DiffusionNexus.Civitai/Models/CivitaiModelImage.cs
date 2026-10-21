@@ -45,8 +45,12 @@ public sealed record CivitaiModelImage
     [JsonPropertyName("hash")]
     public string? Hash { get; init; }
 
-    /// <summary>Generation parameters for the image.</summary>
+    /// <summary>
+    /// Generation parameters for the image. Null when absent — or unreadable: see
+    /// <see cref="TolerantImageMetaJsonConverter"/>.
+    /// </summary>
     [JsonPropertyName("meta")]
+    [JsonConverter(typeof(TolerantImageMetaJsonConverter))]
     public CivitaiImageMeta? Meta { get; init; }
 
     /// <summary>When the image was created.</summary>
