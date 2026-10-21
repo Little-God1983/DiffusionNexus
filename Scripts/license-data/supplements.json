@@ -36,12 +36,6 @@
       "note": "Nuspec declares its licence as a file, not an SPDX expression, so there is no shared licence text to route it to; the package's own LICENSE.txt is reproduced verbatim instead."
     },
     {
-      "packageId": "SixLabors.ImageSharp",
-      "file": "LICENSE",
-      "title": "SixLabors.ImageSharp",
-      "note": "Nuspec declares its licence as a file, not an SPDX expression, so there is no shared licence text to route it to; the package's own LICENSE file is reproduced verbatim instead."
-    },
-    {
       "packageId": "WeCantSpell.Hunspell",
       "file": "license.txt",
       "title": "WeCantSpell.Hunspell",

@@ -4,8 +4,7 @@ using DiffusionNexus.Service.Services;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Moq;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
+using SkiaSharp;
 using Xunit;
 
 namespace DiffusionNexus.Tests.Service.Services;
@@ -36,9 +35,24 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
     private string CreateFakeImage(string name, int width = 4)
     {
         var path = Path.Combine(_imagesDir, name);
-        using var image = new Image<Rgba32>(width, 4);
-        image.SaveAsPng(path);
+        WritePng(path, width, 4);
         return path;
+    }
+
+    /// <summary>Writes a blank (transparent black) PNG of the given size.</summary>
+    private static void WritePng(string path, int width, int height)
+    {
+        using var bitmap = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Unpremul));
+        using var image = SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+        File.WriteAllBytes(path, data.ToArray());
+    }
+
+    /// <summary>Reads only the header of an image file to get its pixel width.</summary>
+    private static int WidthOf(string path)
+    {
+        using var codec = SKCodec.Create(path) ?? throw new InvalidDataException($"Not an image: {path}");
+        return codec.Info.Width;
     }
 
     private sealed class SingleDbContextFactory : IDbContextFactory<DiffusionNexusCoreDbContext>
@@ -133,7 +147,7 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
         var tagging = new Mock<IImageTaggingService>();
         tagging.Setup(t => t.GetModelStatus()).Returns(ModelStatus.Ready);
         tagging.Setup(t => t.TagImageAsync(It.IsAny<string>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string path, float _, CancellationToken _) => perWidth(Image.Identify(path).Width));
+            .ReturnsAsync((string path, float _, CancellationToken _) => perWidth(WidthOf(path)));
         return tagging;
     }
 
@@ -316,8 +330,7 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
         await service.BuildIndexAsync(new[] { path });
 
         // Mutate the file so its size changes and it's detected as modified.
-        using (var biggerImage = new Image<Rgba32>(8, 8))
-            biggerImage.SaveAsPng(path);
+        WritePng(path, 8, 8);
 
         var act = async () => await service.BuildIndexAsync(new[] { path });
 
@@ -491,7 +504,7 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
         failing.Setup(t => t.TagImageAsync(It.IsAny<string>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
             .Returns((string path, float _, CancellationToken _) =>
             {
-                var w = Image.Identify(path).Width;
+                var w = WidthOf(path);
                 return w switch
                 {
                     // Fails before the context is touched at all.
@@ -710,7 +723,7 @@ public sealed class TagIndexServiceTests : IAsyncDisposable
         (await service.GetTagCloudAsync()).Should().Contain(t => t.Name == "gamma");
 
         // Re-index the third file with no tags at all, orphaning "gamma".
-        using (var changed = new Image<Rgba32>(3, 9)) changed.SaveAsPng(orphaned);
+        WritePng(orphaned, 3, 9);
         var retagged = TaggerByWidth(_ => ImageTagResult.Succeeded(Array.Empty<ImageTagScore>(), "general", 0.9f, false));
         await new TagIndexService(new SingleDbContextFactory(_options), retagged.Object)
             .BuildIndexAsync(new[] { orphaned });

@@ -1,8 +1,6 @@
 using DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
 using FluentAssertions;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
+using DiffusionNexus.Service.Services.Imaging;
 
 namespace DiffusionNexus.Tests.DatasetQuality;
 
@@ -25,7 +23,7 @@ public class PerceptualHasherTests : IDisposable
     public void WhenIdenticalImagesHashed_ThenHammingDistanceIsZero()
     {
         // Arrange
-        string imagePath = CreateSolidColorImage("identical.png", 100, 100, new L8(128));
+        string imagePath = CreateSolidColorImage("identical.png", 100, 100, 128);
         string copyPath = Path.Combine(_tempDir, "identical_copy.png");
         File.Copy(imagePath, copyPath);
 
@@ -41,8 +39,8 @@ public class PerceptualHasherTests : IDisposable
     public void WhenCompletelyDifferentImages_ThenHammingDistanceIsHigh()
     {
         // Arrange
-        string whitePath = CreateSolidColorImage("white.png", 100, 100, new L8(255));
-        string blackPath = CreateSolidColorImage("black.png", 100, 100, new L8(0));
+        string whitePath = CreateSolidColorImage("white.png", 100, 100, 255);
+        string blackPath = CreateSolidColorImage("black.png", 100, 100, 0);
 
         // Act
         ulong hashWhite = PerceptualHasher.ComputeHash(whitePath);
@@ -56,15 +54,20 @@ public class PerceptualHasherTests : IDisposable
     [Fact]
     public void WhenImageResized_ThenHashRemainsSimilar()
     {
-        // Arrange — create a patterned image and save a resized copy of the same image
-        string originalPath = CreateGradientImage("gradient_original.png", 200, 200);
+        // Arrange — create a patterned image and save a resized copy of the same image.
+        // The pattern needs real structure: a pure linear gradient has near-zero AC DCT
+        // coefficients, so its hash bits are decided by rounding noise and a resized copy
+        // lands 16–26 bits away whatever resampler is used (measured with SkiaSharp's
+        // Catmull-Rom, Mitchell, linear and nearest filters). The gradient plus 25-px checker
+        // blocks hashes identically across all of them.
+        string originalPath = CreateTexturedImage("textured_original.png", 200, 200);
 
         // Load and resize the same image to create a genuinely resized copy
         string resizedPath = Path.Combine(_tempDir, "gradient_resized.png");
-        using (var img = Image.Load<L8>(originalPath))
+        using (var img = SkiaPixels.DecodeRgba(originalPath))
+        using (var resized = SkiaPixels.ResizeTo(img, 150, 150))
         {
-            img.Mutate(x => x.Resize(150, 150));
-            img.SaveAsPng(resizedPath);
+            SkiaPixels.SavePng(resized, resizedPath);
         }
 
         // Act
@@ -140,40 +143,37 @@ public class PerceptualHasherTests : IDisposable
         result.GetLength(1).Should().Be(size);
     }
 
-    private string CreateSolidColorImage(string fileName, int width, int height, L8 color)
+    private string CreateSolidColorImage(string fileName, int width, int height, byte gray)
     {
         string path = Path.Combine(_tempDir, fileName);
-        using var image = new Image<L8>(width, height);
-        image.ProcessPixelRows(accessor =>
+        var rgba = new byte[width * height * 4];
+        for (int p = 0; p < rgba.Length; p += 4)
         {
-            for (int y = 0; y < height; y++)
-            {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < width; x++)
-                    row[x] = color;
-            }
-        });
-        image.SaveAsPng(path);
+            rgba[p] = gray; rgba[p + 1] = gray; rgba[p + 2] = gray; rgba[p + 3] = 255;
+        }
+        using var bmp = SkiaPixels.FromRgbaBytes(rgba, width, height);
+        SkiaPixels.SavePng(bmp, path);
         return path;
     }
 
-    private string CreateGradientImage(string fileName, int width, int height)
+    /// <summary>Diagonal gradient with 25-px checker blocks lifted by 60: enough structure for a stable pHash.</summary>
+    private string CreateTexturedImage(string fileName, int width, int height)
     {
         string path = Path.Combine(_tempDir, fileName);
-        using var image = new Image<L8>(width, height);
-        image.ProcessPixelRows(accessor =>
+        var rgba = new byte[width * height * 4];
+        for (int y = 0; y < height; y++)
         {
-            for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
             {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < width; x++)
-                {
-                    byte val = (byte)((x + y) * 255 / (width + height));
-                    row[x] = new L8(val);
-                }
+                byte val = (byte)((x + y) * 255 / (width + height));
+                if (((x / 25) + (y / 25)) % 2 == 0)
+                    val = (byte)Math.Min(255, val + 60);
+                int p = (y * width + x) * 4;
+                rgba[p] = val; rgba[p + 1] = val; rgba[p + 2] = val; rgba[p + 3] = 255;
             }
-        });
-        image.SaveAsPng(path);
+        }
+        using var bmp = SkiaPixels.FromRgbaBytes(rgba, width, height);
+        SkiaPixels.SavePng(bmp, path);
         return path;
     }
 }

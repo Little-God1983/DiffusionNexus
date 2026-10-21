@@ -1,15 +1,12 @@
 using System.Collections.Concurrent;
 using DiffusionNexus.Domain.Services;
 using Serilog;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Jpeg;
-using SixLabors.ImageSharp.Formats.Webp;
-using SixLabors.ImageSharp.Processing;
+using SkiaSharp;
 
 namespace DiffusionNexus.Infrastructure.Services;
 
 /// <summary>
-/// Implementation of IImageCacheService using SixLabors.ImageSharp.
+/// Implementation of IImageCacheService using SkiaSharp.
 /// Provides hybrid storage: thumbnails in memory/DB, full images on disk.
 /// </summary>
 public sealed class ImageCacheService : IImageCacheService, IDisposable
@@ -222,7 +219,19 @@ public sealed class ImageCacheService : IImageCacheService, IDisposable
         ImageCacheOptions options,
         CancellationToken cancellationToken)
     {
-        using var image = await Image.LoadAsync(imageStream, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // SKBitmap.Decode(Stream) wraps the stream in an owning SKManagedStream and closes it, but
+        // the full-image cache below rewinds and copies this same stream, so decode through a
+        // non-owning wrapper.
+        SKBitmap image;
+        using (var codec = SKCodec.Create(new SKManagedStream(imageStream, disposeManagedStream: false))
+            ?? throw new InvalidDataException("The data is not a decodable image."))
+        {
+            image = SKBitmap.Decode(codec)
+                ?? throw new InvalidDataException("The data is not a decodable image.");
+        }
+        using var ownedImage = image;
 
         var originalWidth = image.Width;
         var originalHeight = image.Height;
@@ -254,48 +263,47 @@ public sealed class ImageCacheService : IImageCacheService, IDisposable
         };
     }
 
-    private (byte[] Data, string MimeType, int Width, int Height) CreateThumbnail(Image image, ImageCacheOptions options)
+    private (byte[] Data, string MimeType, int Width, int Height) CreateThumbnail(SKBitmap image, ImageCacheOptions options)
     {
-        // Calculate thumbnail dimensions maintaining aspect ratio
+        // Calculate thumbnail dimensions maintaining aspect ratio (fit within, downscale only)
         var (thumbWidth, thumbHeight) = CalculateThumbnailSize(image.Width, image.Height, options.ThumbnailMaxSize);
 
-        // Resize
-        using var thumbnail = image.Clone(ctx => ctx.Resize(new ResizeOptions
+        // Resize. Thumbnails are large reductions, where a plain cubic kernel (4x4 taps) aliases
+        // fine detail into moire; trilinear mipmapped sampling averages the covered area instead.
+        SKBitmap? resized = null;
+        if (thumbWidth != image.Width || thumbHeight != image.Height)
         {
-            Size = new Size(thumbWidth, thumbHeight),
-            Mode = ResizeMode.Max,
-            Sampler = KnownResamplers.Lanczos3
-        }));
-
-        using var ms = new MemoryStream();
-
-        // Try WebP first if enabled
-        if (options.UseWebP)
-        {
-            try
-            {
-                thumbnail.Save(ms, new WebpEncoder
-                {
-                    Quality = options.ThumbnailQuality,
-                    FileFormat = WebpFileFormatType.Lossy
-                });
-
-                return (ms.ToArray(), "image/webp", thumbnail.Width, thumbnail.Height);
-            }
-            catch
-            {
-                // Fall back to JPEG
-                ms.SetLength(0);
-            }
+            resized = image.Resize(new SKImageInfo(thumbWidth, thumbHeight, image.ColorType, image.AlphaType, image.ColorSpace),
+                new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear))
+                ?? throw new InvalidOperationException($"Thumbnail resize to {thumbWidth}x{thumbHeight} failed.");
         }
 
-        // JPEG fallback
-        thumbnail.Save(ms, new JpegEncoder
+        try
         {
-            Quality = options.ThumbnailQuality
-        });
+            var thumbnail = resized ?? image;
+            using var thumbnailImage = SKImage.FromBitmap(thumbnail);
 
-        return (ms.ToArray(), "image/jpeg", thumbnail.Width, thumbnail.Height);
+            // Try WebP first if enabled (lossy, like the previous encoder settings)
+            if (options.UseWebP)
+            {
+                using var webp = thumbnailImage.Encode(SKEncodedImageFormat.Webp, options.ThumbnailQuality);
+                if (webp is not null)
+                {
+                    return (webp.ToArray(), "image/webp", thumbnail.Width, thumbnail.Height);
+                }
+                // Fall back to JPEG
+            }
+
+            // JPEG fallback
+            using var jpeg = thumbnailImage.Encode(SKEncodedImageFormat.Jpeg, options.ThumbnailQuality)
+                ?? throw new InvalidOperationException("JPEG thumbnail encoding failed.");
+
+            return (jpeg.ToArray(), "image/jpeg", thumbnail.Width, thumbnail.Height);
+        }
+        finally
+        {
+            resized?.Dispose();
+        }
     }
 
     private async Task<(string RelativePath, long FileSize)> CacheFullImageAsync(

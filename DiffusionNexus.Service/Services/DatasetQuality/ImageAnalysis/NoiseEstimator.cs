@@ -1,9 +1,7 @@
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
+using DiffusionNexus.Service.Services.Imaging;
 
 namespace DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
 
@@ -142,19 +140,7 @@ public sealed class NoiseEstimator : IImageQualityCheck
     /// </summary>
     internal static double EstimateNoiseSigma(string filePath)
     {
-        using var image = Image.Load<L8>(filePath);
-
-        if (image.Width > MaxAnalysisSize || image.Height > MaxAnalysisSize)
-        {
-            image.Mutate(x => x.Resize(new ResizeOptions
-            {
-                Size = new Size(MaxAnalysisSize, MaxAnalysisSize),
-                Mode = ResizeMode.Max
-            }));
-        }
-
-        int width = image.Width;
-        int height = image.Height;
+        var (gray, width, height) = SkiaPixels.LoadGray(filePath, MaxAnalysisSize);
 
         if (width < 3 || height < 3)
             return 0;
@@ -162,27 +148,24 @@ public sealed class NoiseEstimator : IImageQualityCheck
         // Apply Laplacian and collect absolute values for MAD computation
         var laplacianValues = new List<double>((width - 2) * (height - 2));
 
-        image.ProcessPixelRows(accessor =>
+        for (int y = 1; y < height - 1; y++)
         {
-            for (int y = 1; y < height - 1; y++)
+            int rowAbove = (y - 1) * width;
+            int rowCurrent = y * width;
+            int rowBelow = (y + 1) * width;
+
+            for (int x = 1; x < width - 1; x++)
             {
-                var rowAbove = accessor.GetRowSpan(y - 1);
-                var rowCurrent = accessor.GetRowSpan(y);
-                var rowBelow = accessor.GetRowSpan(y + 1);
+                double laplacian =
+                    gray[rowAbove + x]
+                    + gray[rowBelow + x]
+                    + gray[rowCurrent + x - 1]
+                    + gray[rowCurrent + x + 1]
+                    - 4.0 * gray[rowCurrent + x];
 
-                for (int x = 1; x < width - 1; x++)
-                {
-                    double laplacian =
-                        rowAbove[x].PackedValue
-                        + rowBelow[x].PackedValue
-                        + rowCurrent[x - 1].PackedValue
-                        + rowCurrent[x + 1].PackedValue
-                        - 4.0 * rowCurrent[x].PackedValue;
-
-                    laplacianValues.Add(Math.Abs(laplacian));
-                }
+                laplacianValues.Add(Math.Abs(laplacian));
             }
-        });
+        }
 
         if (laplacianValues.Count == 0)
             return 0;

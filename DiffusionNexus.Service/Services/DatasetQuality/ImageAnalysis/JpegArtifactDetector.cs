@@ -1,9 +1,7 @@
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
+using DiffusionNexus.Service.Services.Imaging;
 
 namespace DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
 
@@ -159,39 +157,51 @@ public sealed class JpegArtifactDetector : IImageQualityCheck
         bool isJpeg = IsJpegFile(filePath);
         long fileSize = new FileInfo(filePath).Length;
 
-        using var image = Image.Load<L8>(filePath);
+        // Non-JPEGs only get the bytes-per-pixel heuristic, which needs the dimensions alone:
+        // read them from the header instead of decoding the whole image.
+        if (!isJpeg)
+        {
+            var (headerWidth, headerHeight) = SkiaPixels.ReadDimensions(filePath);
+            double headerBpp = fileSize / (double)(headerWidth * headerHeight);
+            return new JpegAnalysisResult(
+                EstimatedQuality: BppToQuality(headerBpp, isJpeg: false),
+                Source: QualitySource.BytesPerPixel,
+                BlockingRatio: 0,
+                BytesPerPixel: headerBpp);
+        }
+
+        using var image = SkiaPixels.DecodeRgba(filePath);
         int width = image.Width;
         int height = image.Height;
         double bpp = fileSize / (double)(width * height);
 
-        // Tier 1: Try EXIF quality metadata (JPEG only)
-        if (isJpeg)
+        // From here on the file is a JPEG (non-JPEGs returned above).
+        // Tier 1: Try EXIF quality metadata
+        int? exifQuality = ReadExifQuality(filePath);
+        if (exifQuality.HasValue)
         {
-            int? exifQuality = ReadExifQuality(image);
-            if (exifQuality.HasValue)
-            {
-                return new JpegAnalysisResult(
-                    EstimatedQuality: exifQuality.Value,
-                    Source: QualitySource.Exif,
-                    BlockingRatio: 0,
-                    BytesPerPixel: bpp);
-            }
+            return new JpegAnalysisResult(
+                EstimatedQuality: exifQuality.Value,
+                Source: QualitySource.Exif,
+                BlockingRatio: 0,
+                BytesPerPixel: bpp);
         }
 
-        // Tier 2: Block boundary discontinuity analysis (JPEG only, needs enough pixels)
-        if (isJpeg && width >= 24 && height >= 24)
+        // Tier 2: Block boundary discontinuity analysis (needs enough pixels)
+        if (width >= 24 && height >= 24)
         {
-            // Resize for analysis if needed
-            if (width > MaxAnalysisSize || height > MaxAnalysisSize)
+            // Resize for analysis if needed, then take the luminance plane
+            var fitted = SkiaPixels.FitWithin(image, MaxAnalysisSize);
+            double blockingRatio;
+            try
             {
-                image.Mutate(x => x.Resize(new ResizeOptions
-                {
-                    Size = new Size(MaxAnalysisSize, MaxAnalysisSize),
-                    Mode = ResizeMode.Max
-                }));
+                blockingRatio = ComputeBlockingRatio(SkiaPixels.ToGray8(fitted), fitted.Width, fitted.Height);
+            }
+            finally
+            {
+                if (!ReferenceEquals(fitted, image)) fitted.Dispose();
             }
 
-            double blockingRatio = ComputeBlockingRatio(image);
             int estimatedQuality = BlockingRatioToQuality(blockingRatio);
 
             return new JpegAnalysisResult(
@@ -201,8 +211,8 @@ public sealed class JpegArtifactDetector : IImageQualityCheck
                 BytesPerPixel: bpp);
         }
 
-        // Tier 3: Bytes-per-pixel heuristic (works for all formats)
-        int bppQuality = BppToQuality(bpp, isJpeg);
+        // Tier 3: Bytes-per-pixel heuristic (JPEGs too small for block analysis)
+        int bppQuality = BppToQuality(bpp, isJpeg: true);
 
         return new JpegAnalysisResult(
             EstimatedQuality: bppQuality,
@@ -213,17 +223,14 @@ public sealed class JpegArtifactDetector : IImageQualityCheck
 
     /// <summary>
     /// Reads JPEG quality from EXIF metadata if available.
-    /// Note: Standard EXIF does not always include a quality tag; this checks
-    /// common maker-note tags that some encoders write.
+    /// Standard EXIF has no universal "quality" tag (some cameras/encoders put one in the
+    /// UserComment or MakerNote, which nothing here parses), and SkiaSharp exposes no EXIF
+    /// tags at all, so this always returns null and the caller falls through to block
+    /// analysis or the BPP heuristic. Kept as the first tier so the tier order stays visible.
     /// </summary>
-    internal static int? ReadExifQuality(Image image)
+    internal static int? ReadExifQuality(string filePath)
     {
-        var exif = image.Metadata?.ExifProfile;
-        if (exif is null) return null;
-
-        // Some cameras/encoders store quality in the UserComment or MakerNote.
-        // Standard EXIF has no universal "quality" tag — return null to fall through
-        // to block analysis or BPP heuristic.
+        _ = filePath;
         return null;
     }
 
@@ -231,45 +238,39 @@ public sealed class JpegArtifactDetector : IImageQualityCheck
     /// Computes the ratio of average variance at 8×8 block boundaries to interior variance.
     /// A ratio near 1.0 means no visible blocking; higher values indicate blocking artifacts.
     /// </summary>
-    internal static double ComputeBlockingRatio(Image<L8> image)
+    internal static double ComputeBlockingRatio(byte[] gray, int width, int height)
     {
-        int width = image.Width;
-        int height = image.Height;
-
         double boundaryVarianceSum = 0;
         int boundaryCount = 0;
         double interiorVarianceSum = 0;
         int interiorCount = 0;
 
-        image.ProcessPixelRows(accessor =>
+        for (int y = 1; y < height - 1; y++)
         {
-            for (int y = 1; y < height - 1; y++)
+            int rowAbove = (y - 1) * width;
+            int rowCurrent = y * width;
+            int rowBelow = (y + 1) * width;
+
+            for (int x = 1; x < width - 1; x++)
             {
-                var rowAbove = accessor.GetRowSpan(y - 1);
-                var rowCurrent = accessor.GetRowSpan(y);
-                var rowBelow = accessor.GetRowSpan(y + 1);
+                // Vertical gradient at this pixel
+                double gradient = Math.Abs(gray[rowBelow + x] - gray[rowAbove + x])
+                                + Math.Abs(gray[rowCurrent + x + 1] - gray[rowCurrent + x - 1]);
 
-                for (int x = 1; x < width - 1; x++)
+                bool isBoundary = (x % 8 == 0) || (y % 8 == 0);
+
+                if (isBoundary)
                 {
-                    // Vertical gradient at this pixel
-                    double gradient = Math.Abs(rowBelow[x].PackedValue - rowAbove[x].PackedValue)
-                                    + Math.Abs(rowCurrent[x + 1].PackedValue - rowCurrent[x - 1].PackedValue);
-
-                    bool isBoundary = (x % 8 == 0) || (y % 8 == 0);
-
-                    if (isBoundary)
-                    {
-                        boundaryVarianceSum += gradient;
-                        boundaryCount++;
-                    }
-                    else
-                    {
-                        interiorVarianceSum += gradient;
-                        interiorCount++;
-                    }
+                    boundaryVarianceSum += gradient;
+                    boundaryCount++;
+                }
+                else
+                {
+                    interiorVarianceSum += gradient;
+                    interiorCount++;
                 }
             }
-        });
+        }
 
         if (interiorCount == 0 || boundaryCount == 0)
             return 1.0; // No blocking detected

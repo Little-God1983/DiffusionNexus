@@ -10,8 +10,8 @@ using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Moq;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
+using DiffusionNexus.Service.Services.Imaging;
+using SkiaSharp;
 
 namespace DiffusionNexus.Tests.Viewer;
 
@@ -2322,7 +2322,7 @@ public class GenerationGalleryViewModelTests : IDisposable
         tagging.Setup(t => t.GetModelStatus()).Returns(ModelStatus.Ready);
         tagging.Setup(t => t.TagImageAsync(It.IsAny<string>(), It.IsAny<float>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string path, float _, CancellationToken _) =>
-                SixLabors.ImageSharp.Image.Identify(path).Width == 8
+                ReadImageWidth(path) == 8
                     ? ImageTagResult.Succeeded(new[] { new ImageTagScore("1girl", 0.95f) }, "sensitive", 0.9f, isNsfw: false)
                     : ImageTagResult.Succeeded(new[] { new ImageTagScore("landscape", 0.9f) }, "general", 0.9f, isNsfw: false));
         var tagIndex = new TagIndexService(new TestDbContextFactory(options), tagging.Object);
@@ -2585,8 +2585,14 @@ public class GenerationGalleryViewModelTests : IDisposable
 
     private static void SaveTinyPng(string path, int width = 4)
     {
-        using var image = new Image<Rgba32>(width, 4);
-        image.SaveAsPng(path);
+        using var image = SkiaPixels.FromRgbaBytes(new byte[width * 4 * 4], width, 4);
+        SkiaPixels.SavePng(image, path);
+    }
+
+    private static int ReadImageWidth(string path)
+    {
+        using var codec = SKCodec.Create(path) ?? throw new InvalidDataException($"Not an image: {path}");
+        return codec.Info.Width;
     }
 
     /// <summary>

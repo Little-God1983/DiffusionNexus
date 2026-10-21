@@ -1,9 +1,7 @@
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
+using DiffusionNexus.Service.Services.Imaging;
 
 namespace DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
 
@@ -208,20 +206,8 @@ public sealed class ExposureAnalyzer : IImageQualityCheck
     /// </summary>
     internal static ExposureStats ComputeExposureStats(string filePath)
     {
-        using var image = Image.Load<L8>(filePath);
-
-        // Resize for consistent analysis
-        if (image.Width > MaxAnalysisSize || image.Height > MaxAnalysisSize)
-        {
-            image.Mutate(x => x.Resize(new ResizeOptions
-            {
-                Size = new Size(MaxAnalysisSize, MaxAnalysisSize),
-                Mode = ResizeMode.Max
-            }));
-        }
-
-        int width = image.Width;
-        int height = image.Height;
+        // Grayscale, downscaled for consistent analysis
+        var (gray, width, height) = SkiaPixels.LoadGray(filePath, MaxAnalysisSize);
         long totalPixels = (long)width * height;
 
         if (totalPixels == 0)
@@ -233,24 +219,17 @@ public sealed class ExposureAnalyzer : IImageQualityCheck
         long clippedHighlights = 0;
         long crushedShadows = 0;
 
-        image.ProcessPixelRows(accessor =>
+        for (int i = 0; i < gray.Length; i++)
         {
-            for (int y = 0; y < height; y++)
-            {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < width; x++)
-                {
-                    byte val = row[x].PackedValue;
-                    sum += val;
-                    sumSq += (double)val * val;
+            byte val = gray[i];
+            sum += val;
+            sumSq += (double)val * val;
 
-                    if (val >= HighlightClipValue)
-                        clippedHighlights++;
-                    if (val <= ShadowCrushValue)
-                        crushedShadows++;
-                }
-            }
-        });
+            if (val >= HighlightClipValue)
+                clippedHighlights++;
+            if (val <= ShadowCrushValue)
+                crushedShadows++;
+        }
 
         double mean = sum / totalPixels;
         double variance = (sumSq / totalPixels) - (mean * mean);
