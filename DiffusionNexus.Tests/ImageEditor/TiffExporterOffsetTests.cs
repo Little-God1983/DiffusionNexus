@@ -12,6 +12,22 @@ public class TiffExporterOffsetTests : IDisposable
     public void Dispose() { if (File.Exists(_path)) File.Delete(_path); }
 
     [Fact]
+    public void DecodeFlatImage_SemiTransparentPixel_KeepsItsColour()
+    {
+        // LibTiff's RGBA reader returns premultiplied values for files tagged with unassociated
+        // alpha. Stored as straight colour they reload darker on every save/load cycle (#638).
+        using var source = new SKBitmap(new SKImageInfo(2, 2, SKColorType.Rgba8888, SKAlphaType.Unpremul));
+        source.Erase(new SKColor(255, 0, 0, 128));
+        TiffExporter.SaveFlattenedTiff(source, _path).Should().BeTrue();
+
+        using var loaded = TiffExporter.DecodeFlatImage(_path)!;
+
+        var pixel = loaded.GetPixel(1, 1);
+        pixel.Alpha.Should().Be(128);
+        pixel.Red.Should().BeInRange(254, 255, "half-transparent red must stay red");
+    }
+
+    [Fact]
     public void SaveAndLoad_KeepsOffsetsSizesAndCanvas()
     {
         using var stack = new LayerStack(40, 30);

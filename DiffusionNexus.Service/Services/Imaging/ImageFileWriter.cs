@@ -93,6 +93,27 @@ public static class ImageFileWriter
     }
 
     /// <summary>
+    /// Encodes <paramref name="bitmap"/> in <paramref name="format"/> without touching any file:
+    /// PNG, JPEG and WebP through Skia, BMP through the built-in writer. Throws
+    /// <see cref="NotSupportedException"/> for GIF and every other format, so a caller that
+    /// encodes first and opens its file afterwards never leaves an empty file behind.
+    /// </summary>
+    /// <param name="quality">JPEG / WebP quality 1–100; ignored by PNG and BMP.</param>
+    public static byte[] Encode(SKBitmap bitmap, SKEncodedImageFormat format, int quality)
+    {
+        ArgumentNullException.ThrowIfNull(bitmap);
+        return format switch
+        {
+            SKEncodedImageFormat.Png => SkiaPixels.Encode(bitmap, SKEncodedImageFormat.Png, 100),
+            SKEncodedImageFormat.Jpeg or SKEncodedImageFormat.Webp => SkiaPixels.Encode(bitmap, format, quality),
+            SKEncodedImageFormat.Bmp => EncodeBmp(bitmap),
+            SKEncodedImageFormat.Gif => throw new NotSupportedException(
+                "Cannot write GIF: the image library has no GIF encoder. Save the image as PNG, JPEG, WebP or BMP instead."),
+            _ => throw new NotSupportedException($"Cannot write {format}: supported formats are PNG, JPEG, WebP and BMP."),
+        };
+    }
+
+    /// <summary>
     /// Writes <paramref name="bytes"/> to a temporary file beside <paramref name="path"/> and swaps
     /// it in, so the target is either the old file or the complete new one. A symlinked target is
     /// resolved first so the real file is updated rather than the link replaced, and an existing

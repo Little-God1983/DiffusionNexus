@@ -1048,7 +1048,7 @@ public partial class ImageEditorViewModel : ObservableObject
             }
             else
             {
-                StatusMessage = "Failed to save image.";
+                StatusMessage = DescribeSaveFailure(newPath);
             }
         }
         catch (Exception ex)
@@ -1057,6 +1057,15 @@ public partial class ImageEditorViewModel : ObservableObject
             StatusMessage = $"Error saving image: {ex.Message}";
         }
     }
+
+    /// <summary>
+    /// The status line after a save that returned false. A GIF can never be saved (no encoder,
+    /// and Save As keeps the extension), so it says why and what to do instead.
+    /// </summary>
+    internal static string DescribeSaveFailure(string path)
+        => string.Equals(Path.GetExtension(path), ".gif", StringComparison.OrdinalIgnoreCase)
+            ? "Can't save GIF files: there is no GIF encoder. Use Save As New with the layered TIFF option, or convert the image to PNG first."
+            : "Failed to save image.";
 
     private async Task ExecuteSaveOverwriteAsync()
     {
@@ -1076,7 +1085,7 @@ public partial class ImageEditorViewModel : ObservableObject
             if (written.Value.Saved)
                 OnSaveOverwriteCompleted(written.Value.Filled);
             else
-                StatusMessage = "Failed to save image.";
+                StatusMessage = DescribeSaveFailure(CurrentImagePath!);
         }
         catch (Exception ex)
         {

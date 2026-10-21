@@ -1,3 +1,4 @@
+using DiffusionNexus.Service.Services.Imaging;
 using DiffusionNexus.UI.Services;
 using SkiaSharp;
 
@@ -23,14 +24,21 @@ internal sealed class DocumentService : IDocumentService
                 Directory.CreateDirectory(directory);
             }
 
-            using var image = SKImage.FromBitmap(bitmap);
-            if (image is null) return false;
-
-            using var data = image.Encode(format, quality);
-            if (data is null) return false;
+            // Encode before the file is opened, so a refused format (GIF) leaves an existing
+            // file untouched. BMP goes through the app's own writer: Skia has no BMP encoder.
+            byte[] bytes;
+            try
+            {
+                bytes = ImageFileWriter.Encode(bitmap, format, quality);
+            }
+            catch (NotSupportedException ex)
+            {
+                FileLogger.LogWarning($"DocumentService.Save: {ex.Message} ({filePath})");
+                return false;
+            }
 
             using var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write);
-            data.SaveTo(stream);
+            stream.Write(bytes);
 
             return true;
         }

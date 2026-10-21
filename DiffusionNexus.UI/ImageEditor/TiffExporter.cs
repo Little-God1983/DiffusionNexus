@@ -276,20 +276,28 @@ public static class TiffExporter
         if (!tiff.ReadRGBAImageOriented(width, height, raster, Orientation.TOPLEFT, false))
             return null;
 
+        // LibTiff's RGBA interface hands back premultiplied colour (it multiplies unassociated
+        // alpha in), while this bitmap and SKColor are straight. Un-premultiply, or every
+        // semi-transparent pixel loads darker and darkens again on each save/load cycle.
         var bitmap = new SKBitmap(width, height, SKColorType.Rgba8888, SKAlphaType.Unpremul);
         var pixels = new SKColor[width * height];
         for (var i = 0; i < pixels.Length; i++)
         {
             var p = raster[i];
+            var a = Tiff.GetA(p);
             pixels[i] = new SKColor(
-                (byte)Tiff.GetR(p),
-                (byte)Tiff.GetG(p),
-                (byte)Tiff.GetB(p),
-                (byte)Tiff.GetA(p));
+                Unpremultiply(Tiff.GetR(p), a),
+                Unpremultiply(Tiff.GetG(p), a),
+                Unpremultiply(Tiff.GetB(p), a),
+                (byte)a);
         }
         bitmap.Pixels = pixels;
         return bitmap;
     }
+
+    /// <summary>Straight value of a premultiplied 8-bit channel, rounded; opaque and fully transparent pass through.</summary>
+    private static byte Unpremultiply(int premultiplied, int alpha)
+        => alpha is 0 or 255 ? (byte)premultiplied : (byte)Math.Min(255, (premultiplied * 255 + alpha / 2) / alpha);
 
     /// <summary>
     /// Creates metadata string for a layer.

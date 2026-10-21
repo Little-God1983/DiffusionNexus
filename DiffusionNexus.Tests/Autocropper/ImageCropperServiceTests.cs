@@ -561,6 +561,108 @@ public class ImageCropperServiceTests : IDisposable
     /// <summary>
     /// Creates a valid test image using SkiaSharp.
     /// </summary>
+    #region Formats Skia cannot encode (#638)
+
+    [Fact]
+    public async Task WhenCroppingABmpIntoATargetFolderThenTheOutputIsAReadableSquareBmp()
+    {
+        var sourceFolder = Path.Combine(_testDirectory, "BmpSource");
+        var targetFolder = Path.Combine(_testDirectory, "BmpTarget");
+        Directory.CreateDirectory(sourceFolder);
+        WriteBmp(Path.Combine(sourceFolder, "wide.bmp"), 160, 80);
+
+        var result = await _service.ProcessImagesAsync(sourceFolder, targetFolder, [Ratio1x1]);
+
+        result.SuccessCount.Should().Be(1);
+        var output = Path.Combine(targetFolder, "wide.bmp");
+        using var codec = SkiaSharp.SKCodec.Create(output);
+        codec.Should().NotBeNull("the cropped BMP must be a real image, not an empty file");
+        codec!.EncodedFormat.Should().Be(SkiaSharp.SKEncodedImageFormat.Bmp);
+        codec.Info.Width.Should().Be(codec.Info.Height);
+    }
+
+    [Fact]
+    public async Task WhenCroppingABmpInOverwriteModeThenTheSourceBecomesTheCroppedBmp()
+    {
+        var folder = Path.Combine(_testDirectory, "BmpOverwrite");
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, "wide.bmp");
+        WriteBmp(path, 160, 80);
+
+        var result = await _service.ProcessImagesAsync(folder, null, [Ratio1x1]);
+
+        result.SuccessCount.Should().Be(1);
+        using var codec = SkiaSharp.SKCodec.Create(path);
+        codec.Should().NotBeNull("overwrite mode must not replace the source with an empty file");
+        codec!.Info.Width.Should().Be(codec.Info.Height);
+        Directory.GetFiles(folder).Should().ContainSingle("no temporary file may be left behind");
+    }
+
+    [Fact]
+    public async Task WhenCroppingAGifInOverwriteModeThenTheSourceIsKeptAndCountedAsFailed()
+    {
+        // Skia cannot write GIF. The old code still deleted the source and moved an empty
+        // temporary file into its place.
+        var folder = Path.Combine(_testDirectory, "GifOverwrite");
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, "wide.gif");
+        var gif = UncompressedGif(8, 4);
+        File.WriteAllBytes(path, gif);
+        using (var check = SkiaSharp.SKCodec.Create(path)) check.Should().NotBeNull("the fixture must decode");
+
+        var result = await _service.ProcessImagesAsync(folder, null, [Ratio1x1]);
+
+        result.FailedCount.Should().Be(1);
+        result.SuccessCount.Should().Be(0);
+        File.ReadAllBytes(path).Should().Equal(gif);
+        Directory.GetFiles(folder).Should().ContainSingle();
+    }
+
+    private static void WriteBmp(string path, int width, int height)
+    {
+        using var bitmap = new SkiaSharp.SKBitmap(width, height);
+        using (var canvas = new SkiaSharp.SKCanvas(bitmap)) canvas.Clear(SkiaSharp.SKColors.SteelBlue);
+        DiffusionNexus.Service.Services.Imaging.ImageFileWriter.Write(bitmap, path);
+    }
+
+    /// <summary>
+    /// A width x height GIF of colour 0 whose LZW stream sends a clear code before every pixel,
+    /// so every code stays 3 bits wide and the bytes can be packed by hand.
+    /// </summary>
+    private static byte[] UncompressedGif(int width, int height)
+    {
+        var codes = new List<int>();
+        for (int i = 0; i < width * height; i++) { codes.Add(4); codes.Add(0); }
+        codes.Add(5);
+        var data = new List<byte>();
+        int bitBuffer = 0, bitCount = 0;
+        foreach (var code in codes)
+        {
+            bitBuffer |= code << bitCount;
+            bitCount += 3;
+            while (bitCount >= 8) { data.Add((byte)(bitBuffer & 0xFF)); bitBuffer >>= 8; bitCount -= 8; }
+        }
+        if (bitCount > 0) data.Add((byte)bitBuffer);
+
+        var gif = new List<byte>();
+        gif.AddRange("GIF89a"u8.ToArray());
+        gif.AddRange([(byte)width, (byte)(width >> 8), (byte)height, (byte)(height >> 8), 0x80, 0x00, 0x00]);
+        gif.AddRange([0x20, 0x60, 0xA0, 0xFF, 0xFF, 0xFF]);                  // two colours
+        gif.AddRange([0x2C, 0, 0, 0, 0, (byte)width, (byte)(width >> 8), (byte)height, (byte)(height >> 8), 0x00]);
+        gif.Add(0x02);                                                       // LZW minimum code size
+        for (int i = 0; i < data.Count; i += 255)
+        {
+            int block = Math.Min(255, data.Count - i);
+            gif.Add((byte)block);
+            gif.AddRange(data.GetRange(i, block));
+        }
+        gif.Add(0x00);
+        gif.Add(0x3B);
+        return gif.ToArray();
+    }
+
+    #endregion
+
     private static void CreateTestImage(string path, int width, int height)
     {
         using var bitmap = new SkiaSharp.SKBitmap(width, height);
