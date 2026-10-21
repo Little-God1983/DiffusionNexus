@@ -488,12 +488,13 @@ public sealed class ImageCropperService : IImageCropperService
     /// ImageFileWriter encodes completely before it touches a file and swaps the result in, so a
     /// format Skia cannot encode (GIF: SKBitmap.Encode used to return false here and the empty
     /// output replaced the original) throws and leaves the original untouched; the caller counts
-    /// the image as failed.
+    /// the image as failed. Passing the source refuses an animated one too (Skia decoded only its
+    /// first frame) and carries its generation text, EXIF and XMP into the result.
     /// </summary>
     private static void SaveBitmap(SKBitmap bitmap, string sourcePath, string outputFolder)
     {
         string outputPath = Path.Combine(outputFolder, Path.GetFileName(sourcePath));
-        ImageFileWriter.Write(bitmap, outputPath, lossyQuality: 100);
+        ImageFileWriter.Write(bitmap, outputPath, lossyQuality: 100, metadataSource: sourcePath);
     }
 
     /// <summary>

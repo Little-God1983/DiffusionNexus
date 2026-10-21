@@ -1,3 +1,4 @@
+using BitMiracle.LibTiff.Classic;
 using DiffusionNexus.UI.ImageEditor;
 using FluentAssertions;
 using SkiaSharp;
@@ -28,6 +29,31 @@ public class TiffExporterOffsetTests : IDisposable
     }
 
     [Fact]
+    public void DecodeFlatImage_UnspecifiedExtraSample_LoadsTheStoredColour()
+    {
+        // LibTiff hands an UNSPECIFIED fourth sample back as alpha, as stored. Nothing says the
+        // colour was premultiplied, so it is not divided by the alpha (that brightened it to 255).
+        WriteOnePixelRgbaTiff(200, 0, 0, 128, ExtraSample.UNSPECIFIED);
+
+        using var loaded = TiffExporter.DecodeFlatImage(_path)!;
+
+        loaded.GetPixel(0, 0).Should().Be(new SKColor(200, 0, 0, 128));
+    }
+
+    [Fact]
+    public void DecodeFlatImage_AssociatedAlpha_LoadsStraightColour()
+    {
+        // Associated alpha is stored premultiplied: 100 at alpha 128 is a straight 199.
+        WriteOnePixelRgbaTiff(100, 0, 0, 128, ExtraSample.ASSOCALPHA);
+
+        using var loaded = TiffExporter.DecodeFlatImage(_path)!;
+
+        var pixel = loaded.GetPixel(0, 0);
+        pixel.Alpha.Should().Be(128);
+        pixel.Red.Should().BeInRange(198, 200);
+    }
+
+    [Fact]
     public void SaveAndLoad_KeepsOffsetsSizesAndCanvas()
     {
         using var stack = new LayerStack(40, 30);
@@ -55,5 +81,19 @@ public class TiffExporterOffsetTests : IDisposable
         // this test only proves the defaults are what the parser falls back to.
         TiffExporter.ParseLayerMetadataForTest("LayerName=x|Opacity=1.00|BlendMode=Normal|Visible=True|Index=0")
             .Should().Be(("x", 0, 0, (int?)null, (int?)null));
+    }
+
+    private void WriteOnePixelRgbaTiff(byte r, byte g, byte b, byte a, ExtraSample extraSample)
+    {
+        using var tiff = Tiff.Open(_path, "w")!;
+        tiff.SetField(TiffTag.IMAGEWIDTH, 1);
+        tiff.SetField(TiffTag.IMAGELENGTH, 1);
+        tiff.SetField(TiffTag.SAMPLESPERPIXEL, 4);
+        tiff.SetField(TiffTag.BITSPERSAMPLE, 8);
+        tiff.SetField(TiffTag.PHOTOMETRIC, Photometric.RGB);
+        tiff.SetField(TiffTag.PLANARCONFIG, PlanarConfig.CONTIG);
+        tiff.SetField(TiffTag.ROWSPERSTRIP, 1);
+        tiff.SetField(TiffTag.EXTRASAMPLES, 1, new short[] { (short)extraSample });
+        tiff.WriteScanline(new[] { r, g, b, a }, 0).Should().BeTrue();
     }
 }

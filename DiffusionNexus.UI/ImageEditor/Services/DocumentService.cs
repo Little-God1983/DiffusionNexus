@@ -24,7 +24,7 @@ internal sealed class DocumentService : IDocumentService
                 Directory.CreateDirectory(directory);
             }
 
-            // Encode before the file is opened, so a refused format (GIF) leaves an existing
+            // Encode before any file is touched, so a refused format (GIF) leaves an existing
             // file untouched. BMP goes through the app's own writer: Skia has no BMP encoder.
             byte[] bytes;
             try
@@ -37,8 +37,9 @@ internal sealed class DocumentService : IDocumentService
                 return false;
             }
 
-            using var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write);
-            stream.Write(bytes);
+            // Swapped in whole: an I/O error mid-write (disk full) must not leave Save's
+            // overwrite of the original truncated.
+            ImageFileWriter.ReplaceAtomically(filePath, bytes);
 
             return true;
         }

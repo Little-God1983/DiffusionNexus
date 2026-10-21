@@ -5,6 +5,7 @@ using DiffusionNexus.UI.ImageEditor.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Service.Services.Imaging;
 using SkiaSharp;
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -1059,13 +1060,14 @@ public partial class ImageEditorViewModel : ObservableObject
     }
 
     /// <summary>
-    /// The status line after a save that returned false. A GIF can never be saved (no encoder,
-    /// and Save As keeps the extension), so it says why and what to do instead.
+    /// The status line after a save or export that returned false. A GIF can never be written (no
+    /// encoder, and Save, Save As New and Export keep the extension), so it says why and what to
+    /// do instead; anything else gets <paramref name="otherwise"/>.
     /// </summary>
-    internal static string DescribeSaveFailure(string path)
+    internal static string DescribeSaveFailure(string path, string otherwise = "Failed to save image.")
         => string.Equals(Path.GetExtension(path), ".gif", StringComparison.OrdinalIgnoreCase)
-            ? "Can't save GIF files: there is no GIF encoder. Use Save As New with the layered TIFF option, or convert the image to PNG first."
-            : "Failed to save image.";
+            ? "Can't save GIF files: there is no GIF encoder. Use Save / Export > Export as PNG instead."
+            : otherwise;
 
     private async Task ExecuteSaveOverwriteAsync()
     {
@@ -1119,7 +1121,7 @@ public partial class ImageEditorViewModel : ObservableObject
             if (SaveImageFunc(exportPath, fill))
                 OnExportCompleted(exportPath);
             else
-                StatusMessage = "Failed to export image.";
+                StatusMessage = DescribeSaveFailure(exportPath, "Failed to export image.");
         }
         catch (Exception ex)
         {
@@ -1321,8 +1323,8 @@ public partial class ImageEditorViewModel : ObservableObject
     /// <summary>
     /// Writes the canvas to a temp file for another tool, so the destination gets the edits rather
     /// than the file on disk. The copy keeps the original's format, unless that is JPEG and the
-    /// canvas has transparency, which a JPEG would turn black: then it is a PNG. Nobody is asked,
-    /// since the copy is a hand-off, not the user's file (#584).
+    /// canvas has transparency, which a JPEG would turn black, or a format the app cannot write
+    /// (GIF): then it is a PNG. Nobody is asked, since the copy is a hand-off, not the user's file (#584).
     /// </summary>
     /// <param name="purpose">A short tag for the temp file name, such as "upscale".</param>
     /// <returns>The temp file, or null when there is nothing to export or the export failed.</returns>
@@ -1335,6 +1337,12 @@ public partial class ImageEditorViewModel : ObservableObject
         {
             _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
                 $"Handing over {Path.GetFileName(CurrentImagePath)} as PNG: the canvas has transparent areas a JPEG would turn black");
+            extension = ".png";
+        }
+        else if (!ImageFileWriter.CanWrite(CurrentImagePath))
+        {
+            _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+                $"Handing over {Path.GetFileName(CurrentImagePath)} as PNG: its format cannot be written");
             extension = ".png";
         }
 

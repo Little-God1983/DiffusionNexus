@@ -120,7 +120,7 @@ public static class ImageFileWriter
     /// file is swapped with <see cref="File.Replace(string, string, string?, bool)"/>, which keeps
     /// its ACLs, attributes and creation date.
     /// </summary>
-    private static void ReplaceAtomically(string path, byte[] bytes)
+    public static void ReplaceAtomically(string path, byte[] bytes)
     {
         var fullPath = Path.GetFullPath(path);
         if (File.Exists(fullPath) && new FileInfo(fullPath).ResolveLinkTarget(returnFinalTarget: true) is { } linkTarget)

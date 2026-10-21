@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using DiffusionNexus.Domain.Autocropper;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Service.Services;
+using DiffusionNexus.Tests.Helpers;
 using FluentAssertions;
 using Xunit;
 
@@ -556,11 +557,6 @@ public class ImageCropperServiceTests : IDisposable
 
     #endregion
 
-    #region Helper Methods
-
-    /// <summary>
-    /// Creates a valid test image using SkiaSharp.
-    /// </summary>
     #region Formats Skia cannot encode (#638)
 
     [Fact]
@@ -606,7 +602,7 @@ public class ImageCropperServiceTests : IDisposable
         var folder = Path.Combine(_testDirectory, "GifOverwrite");
         Directory.CreateDirectory(folder);
         var path = Path.Combine(folder, "wide.gif");
-        var gif = UncompressedGif(8, 4);
+        var gif = TestImageFiles.UncompressedGif(8, 4);
         File.WriteAllBytes(path, gif);
         using (var check = SkiaSharp.SKCodec.Create(path)) check.Should().NotBeNull("the fixture must decode");
 
@@ -618,6 +614,26 @@ public class ImageCropperServiceTests : IDisposable
         Directory.GetFiles(folder).Should().ContainSingle();
     }
 
+    [Fact]
+    public async Task WhenCroppingAnAnimatedWebpInOverwriteModeThenTheSourceIsKeptAndCountedAsFailed()
+    {
+        // Skia decodes only the first frame, so writing the crop back would replace the
+        // animation with a still.
+        var folder = Path.Combine(_testDirectory, "AnimatedWebpOverwrite");
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, "wide.webp");
+        var webp = TestImageFiles.AnimatedWebp(16, 8);
+        File.WriteAllBytes(path, webp);
+        using (var check = SkiaSharp.SKCodec.Create(path)) check!.FrameCount.Should().Be(2, "the fixture must be animated");
+
+        var result = await _service.ProcessImagesAsync(folder, null, [Ratio1x1]);
+
+        result.FailedCount.Should().Be(1);
+        result.SuccessCount.Should().Be(0);
+        File.ReadAllBytes(path).Should().Equal(webp);
+        Directory.GetFiles(folder).Should().ContainSingle();
+    }
+
     private static void WriteBmp(string path, int width, int height)
     {
         using var bitmap = new SkiaSharp.SKBitmap(width, height);
@@ -625,44 +641,13 @@ public class ImageCropperServiceTests : IDisposable
         DiffusionNexus.Service.Services.Imaging.ImageFileWriter.Write(bitmap, path);
     }
 
-    /// <summary>
-    /// A width x height GIF of colour 0 whose LZW stream sends a clear code before every pixel,
-    /// so every code stays 3 bits wide and the bytes can be packed by hand.
-    /// </summary>
-    private static byte[] UncompressedGif(int width, int height)
-    {
-        var codes = new List<int>();
-        for (int i = 0; i < width * height; i++) { codes.Add(4); codes.Add(0); }
-        codes.Add(5);
-        var data = new List<byte>();
-        int bitBuffer = 0, bitCount = 0;
-        foreach (var code in codes)
-        {
-            bitBuffer |= code << bitCount;
-            bitCount += 3;
-            while (bitCount >= 8) { data.Add((byte)(bitBuffer & 0xFF)); bitBuffer >>= 8; bitCount -= 8; }
-        }
-        if (bitCount > 0) data.Add((byte)bitBuffer);
-
-        var gif = new List<byte>();
-        gif.AddRange("GIF89a"u8.ToArray());
-        gif.AddRange([(byte)width, (byte)(width >> 8), (byte)height, (byte)(height >> 8), 0x80, 0x00, 0x00]);
-        gif.AddRange([0x20, 0x60, 0xA0, 0xFF, 0xFF, 0xFF]);                  // two colours
-        gif.AddRange([0x2C, 0, 0, 0, 0, (byte)width, (byte)(width >> 8), (byte)height, (byte)(height >> 8), 0x00]);
-        gif.Add(0x02);                                                       // LZW minimum code size
-        for (int i = 0; i < data.Count; i += 255)
-        {
-            int block = Math.Min(255, data.Count - i);
-            gif.Add((byte)block);
-            gif.AddRange(data.GetRange(i, block));
-        }
-        gif.Add(0x00);
-        gif.Add(0x3B);
-        return gif.ToArray();
-    }
-
     #endregion
 
+    #region Helper Methods
+
+    /// <summary>
+    /// Creates a valid test image using SkiaSharp.
+    /// </summary>
     private static void CreateTestImage(string path, int width, int height)
     {
         using var bitmap = new SkiaSharp.SKBitmap(width, height);
