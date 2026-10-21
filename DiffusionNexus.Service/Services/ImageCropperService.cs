@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using DiffusionNexus.Domain.Autocropper;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Service.Services.Imaging;
 using SkiaSharp;
 
 namespace DiffusionNexus.Service.Services;
@@ -108,9 +109,10 @@ public sealed class ImageCropperService : IImageCropperService
                     failedCount++;
                 }
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 failedCount++;
+                Serilog.Log.Warning(ex, "Batch crop/scale failed for {ImagePath}; the source is left unchanged", imagePath);
                 progress?.Report(new CropProgress(i + 1, scanResult.ImageFiles, fileName, null));
             }
         }
@@ -221,8 +223,14 @@ public sealed class ImageCropperService : IImageCropperService
         }
 
         // Save the result
-        SaveBitmap(finalBitmap, sourcePath, outputFolder, overwriteMode);
-        finalBitmap.Dispose();
+        try
+        {
+            SaveBitmap(finalBitmap, sourcePath, outputFolder);
+        }
+        finally
+        {
+            finalBitmap.Dispose();
+        }
 
         return new ProcessResult(true, false, cropResult.Bucket);
     }
@@ -280,8 +288,14 @@ public sealed class ImageCropperService : IImageCropperService
         }
 
         // Save the result
-        SaveBitmap(finalBitmap, sourcePath, outputFolder, overwriteMode);
-        finalBitmap.Dispose();
+        try
+        {
+            SaveBitmap(finalBitmap, sourcePath, outputFolder);
+        }
+        finally
+        {
+            finalBitmap.Dispose();
+        }
 
         return new ProcessResult(true, false, padResult.Bucket);
     }
@@ -480,29 +494,30 @@ public sealed class ImageCropperService : IImageCropperService
         return scaledBitmap;
     }
 
-    private void SaveBitmap(SKBitmap bitmap, string sourcePath, string outputFolder, bool overwriteMode)
+    /// <summary>
+    /// Writes the result in the source's format (JPEG and WebP at quality 100, as before). In
+    /// overwrite mode the output folder is the source folder, so this replaces the source.
+    /// ImageFileWriter encodes completely before it touches a file and swaps the result in, so a
+    /// format Skia cannot encode (GIF: SKBitmap.Encode used to return false here and the empty
+    /// output replaced the original) throws and leaves the original untouched; the caller counts
+    /// the image as failed. An animated source is refused too when the output lands on it (overwrite
+    /// mode, or a target folder that is the source folder): Skia decoded only its first frame, so
+    /// the result would replace the animation with a still. Anywhere else that still is fine, the
+    /// original stays. No metadata is carried: the crop is chosen on the stored, unrotated pixels,
+    /// so a carried EXIF orientation would show it transposed.
+    /// </summary>
+    private static void SaveBitmap(SKBitmap bitmap, string sourcePath, string outputFolder)
     {
-        string fileName = Path.GetFileName(sourcePath);
-        string outputPath = Path.Combine(outputFolder, fileName);
-
-        // Use a temp file for overwrite mode to avoid corruption
-        string writeTarget = overwriteMode
-            ? Path.Combine(outputFolder, $"_temp_{Guid.NewGuid()}{Path.GetExtension(fileName)}")
-            : outputPath;
-
-        var format = GetImageFormat(sourcePath);
-
-        using (var outputStream = File.Create(writeTarget))
+        string outputPath = Path.Combine(outputFolder, Path.GetFileName(sourcePath));
+        bool replacesSource = string.Equals(
+            Path.GetFullPath(outputPath), Path.GetFullPath(sourcePath), StringComparison.OrdinalIgnoreCase);
+        if (replacesSource && SkiaPixels.IsAnimated(sourcePath))
         {
-            bitmap.Encode(outputStream, format, 100);
+            throw new NotSupportedException(
+                $"{Path.GetFileName(sourcePath)} is animated; overwriting it would keep only the first frame.");
         }
 
-        // Replace original with temp file in overwrite mode
-        if (overwriteMode)
-        {
-            File.Delete(sourcePath);
-            File.Move(writeTarget, outputPath);
-        }
+        ImageFileWriter.Write(bitmap, outputPath, lossyQuality: 100);
     }
 
     /// <summary>
@@ -528,17 +543,4 @@ public sealed class ImageCropperService : IImageCropperService
         return (scaledWidth, scaledHeight);
     }
 
-    private static SKEncodedImageFormat GetImageFormat(string filePath)
-    {
-        string extension = Path.GetExtension(filePath).ToLowerInvariant();
-        return extension switch
-        {
-            ".png" => SKEncodedImageFormat.Png,
-            ".jpg" or ".jpeg" => SKEncodedImageFormat.Jpeg,
-            ".webp" => SKEncodedImageFormat.Webp,
-            ".gif" => SKEncodedImageFormat.Gif,
-            ".bmp" => SKEncodedImageFormat.Bmp,
-            _ => SKEncodedImageFormat.Png
-        };
-    }
 }

@@ -1,4 +1,5 @@
 using DiffusionNexus.Service.Services.Imaging;
+using DiffusionNexus.Tests.Helpers;
 using FluentAssertions;
 using SkiaSharp;
 using Xunit;
@@ -170,7 +171,7 @@ public class ImageFileWriterTests : IDisposable
         // turns the image sideways in every viewer and trainer.
         var source = Path.Combine(_dir, "phone.jpg");
         using (var bmp = CreatePattern(16, 8)) ImageFileWriter.Write(bmp, source, lossyQuality: 90);
-        File.WriteAllBytes(source, InsertExifOrientation(File.ReadAllBytes(source), orientation: 6));
+        File.WriteAllBytes(source, TestImageFiles.InsertExifOrientation(File.ReadAllBytes(source), orientation: 6));
         OriginOf(source).Should().Be(SKEncodedOrigin.RightTop, "the fixture must carry the tag");
 
         using (var reloaded = SkiaPixels.DecodeRgba(source))
@@ -318,23 +319,6 @@ public class ImageFileWriterTests : IDisposable
             p += 2 + length;
         }
         return tables.ToArray();
-    }
-
-    /// <summary>Inserts an APP1 Exif segment holding only IFD0/Orientation right after the SOI marker.</summary>
-    private static byte[] InsertExifOrientation(byte[] jpeg, short orientation)
-    {
-        byte[] tiff =
-        [
-            (byte)'I', (byte)'I', 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, // little-endian TIFF header, IFD0 at 8
-            0x01, 0x00,                                               // one entry
-            0x12, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00,           // tag 0x0112 Orientation, SHORT, count 1
-            (byte)orientation, 0x00, 0x00, 0x00,                      // value
-            0x00, 0x00, 0x00, 0x00,                                   // no next IFD
-        ];
-        var payload = "Exif\0\0"u8.ToArray().Concat(tiff).ToArray();
-        int length = payload.Length + 2;
-        var segment = new byte[] { 0xFF, 0xE1, (byte)(length >> 8), (byte)length }.Concat(payload);
-        return jpeg.Take(2).Concat(segment).Concat(jpeg.Skip(2)).ToArray();
     }
 
     private static byte[] InsertPngChunkBeforeIdat(byte[] png, string type, byte[] data)

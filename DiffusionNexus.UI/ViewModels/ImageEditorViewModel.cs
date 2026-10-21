@@ -5,6 +5,7 @@ using DiffusionNexus.UI.ImageEditor.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Service.Services.Imaging;
 using SkiaSharp;
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -1010,6 +1011,12 @@ public partial class ImageEditorViewModel : ObservableObject
         var newPath = ResolveSavePath(result);
         if (newPath is null) return;
 
+        if (result.Destination != SaveAsDestination.LayeredTiff && DescribeUnwritableFormat(newPath) is { } unwritable)
+        {
+            StatusMessage = unwritable;
+            return;
+        }
+
         if (File.Exists(newPath))
         {
             var extension = result.Destination == SaveAsDestination.LayeredTiff
@@ -1048,7 +1055,7 @@ public partial class ImageEditorViewModel : ObservableObject
             }
             else
             {
-                StatusMessage = "Failed to save image.";
+                StatusMessage = DescribeSaveFailure(newPath);
             }
         }
         catch (Exception ex)
@@ -1058,9 +1065,47 @@ public partial class ImageEditorViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// The status line after a save or export that returned false: why the format cannot be
+    /// written (<see cref="DescribeUnwritableFormat"/>), otherwise <paramref name="otherwise"/>.
+    /// </summary>
+    internal static string DescribeSaveFailure(string path, string otherwise = "Failed to save image.")
+        => DescribeUnwritableFormat(path) ?? otherwise;
+
+    /// <summary>
+    /// Why the canvas cannot be saved under <paramref name="path"/>'s extension, or null. Save, Save
+    /// As New beside the original and Export keep the original's extension, and two formats the
+    /// editor opens cannot be written that way: GIF has no encoder, and a TIFF would get one
+    /// flattened PNG under its .tif name (the layers are written only by the layered TIFF export).
+    /// </summary>
+    internal static string? DescribeUnwritableFormat(string path)
+        => Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".gif" => "Can't save GIF files: there is no GIF encoder. Use Save / Export > Export as PNG instead.",
+            ".tif" or ".tiff" => "Can't save TIFF files this way: the layers would be flattened into a PNG with a .tif name. Use Save / Export > Export as Layered TIFF instead.",
+            _ => null,
+        };
+
+    /// <summary>
+    /// Why Save cannot write over <paramref name="path"/>, or null. Asked before the confirmation, so
+    /// nobody confirms a save that cannot happen: the format cannot be written, or an animation
+    /// would be replaced by the one frame the editor shows.
+    /// </summary>
+    internal static string? DescribeOverwriteRefusal(string path)
+        => DescribeUnwritableFormat(path)
+            ?? (SkiaPixels.IsAnimated(path)
+                ? $"Can't save over {Path.GetFileName(path)}: it is animated, and saving would keep only the first frame. Use Save / Export > Export as PNG instead."
+                : null);
+
     private async Task ExecuteSaveOverwriteAsync()
     {
         if (SaveImageFunc is null) return;
+
+        if (CurrentImagePath is not null && DescribeOverwriteRefusal(CurrentImagePath) is { } refusal)
+        {
+            StatusMessage = refusal;
+            return;
+        }
 
         if (SaveOverwriteConfirmRequested is not null)
         {
@@ -1076,7 +1121,7 @@ public partial class ImageEditorViewModel : ObservableObject
             if (written.Value.Saved)
                 OnSaveOverwriteCompleted(written.Value.Filled);
             else
-                StatusMessage = "Failed to save image.";
+                StatusMessage = DescribeSaveFailure(CurrentImagePath!);
         }
         catch (Exception ex)
         {
@@ -1088,6 +1133,13 @@ public partial class ImageEditorViewModel : ObservableObject
     private async Task ExecuteExportAsync()
     {
         if (CurrentImagePath is null || SaveImageFunc is null || ShowSaveFileDialogFunc is null) return;
+
+        // The export keeps the original's format: when that cannot be written, say so before the picker.
+        if (DescribeUnwritableFormat(CurrentImagePath) is { } unwritable)
+        {
+            StatusMessage = unwritable;
+            return;
+        }
 
         var extension = Path.GetExtension(CurrentImagePath);
         var fileName = Path.GetFileNameWithoutExtension(CurrentImagePath);
@@ -1110,7 +1162,7 @@ public partial class ImageEditorViewModel : ObservableObject
             if (SaveImageFunc(exportPath, fill))
                 OnExportCompleted(exportPath);
             else
-                StatusMessage = "Failed to export image.";
+                StatusMessage = DescribeSaveFailure(exportPath, "Failed to export image.");
         }
         catch (Exception ex)
         {
@@ -1312,8 +1364,8 @@ public partial class ImageEditorViewModel : ObservableObject
     /// <summary>
     /// Writes the canvas to a temp file for another tool, so the destination gets the edits rather
     /// than the file on disk. The copy keeps the original's format, unless that is JPEG and the
-    /// canvas has transparency, which a JPEG would turn black: then it is a PNG. Nobody is asked,
-    /// since the copy is a hand-off, not the user's file (#584).
+    /// canvas has transparency, which a JPEG would turn black, or a format the app cannot write
+    /// (GIF): then it is a PNG. Nobody is asked, since the copy is a hand-off, not the user's file (#584).
     /// </summary>
     /// <param name="purpose">A short tag for the temp file name, such as "upscale".</param>
     /// <returns>The temp file, or null when there is nothing to export or the export failed.</returns>
@@ -1326,6 +1378,12 @@ public partial class ImageEditorViewModel : ObservableObject
         {
             _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
                 $"Handing over {Path.GetFileName(CurrentImagePath)} as PNG: the canvas has transparent areas a JPEG would turn black");
+            extension = ".png";
+        }
+        else if (!ImageFileWriter.CanWrite(CurrentImagePath))
+        {
+            _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+                $"Handing over {Path.GetFileName(CurrentImagePath)} as PNG: its format cannot be written");
             extension = ".png";
         }
 

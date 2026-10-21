@@ -1,3 +1,4 @@
+using DiffusionNexus.Tests.Helpers;
 using DiffusionNexus.UI.ImageEditor;
 using DiffusionNexus.UI.ImageEditor.Services;
 using DiffusionNexus.UI.Services;
@@ -91,6 +92,28 @@ public sealed class ImageEditorHandOffTests : IDisposable
         var handOff = vm.PrepareHandOff("act");
 
         handOff!.IsCopy.Should().BeTrue();
+        File.Delete(handOff.Path);
+    }
+
+    [Fact]
+    public void EditedGif_HandsOverAPngCopy()
+    {
+        // There is no GIF encoder, so a copy under the original's .gif extension cannot be
+        // written and the hand-off fell back to the file on disk, without the edits.
+        var gif = Path.Combine(_tempDir.FullName, "anim.gif");
+        File.WriteAllBytes(gif, TestImageFiles.UncompressedGif(8, 4));
+        var vm = new ImageEditorViewModel(eventAggregator: Mock.Of<IDatasetEventAggregator>());
+        vm.SaveImageFunc = (path, fill) => _core.SaveImage(path, fillColor: fill?.ToSKColor());
+        using var link = vm.TrackFileMatch(_core);
+        _core.LoadImage(gif).Should().BeTrue();
+        vm.LoadImage(gif);
+        _core.AddLayer("scratch");
+
+        var handOff = vm.PrepareHandOff("upscale");
+
+        handOff!.IsCopy.Should().BeTrue("the other tool must get the edits");
+        Path.GetExtension(handOff.Path).Should().Be(".png");
+        using (var codec = SKCodec.Create(handOff.Path)) codec!.EncodedFormat.Should().Be(SKEncodedImageFormat.Png);
         File.Delete(handOff.Path);
     }
 

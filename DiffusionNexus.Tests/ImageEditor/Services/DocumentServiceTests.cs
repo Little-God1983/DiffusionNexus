@@ -209,4 +209,35 @@ public class DocumentServiceTests : IDisposable
     }
 
     #endregion
+
+    #region Save: formats Skia cannot encode (#638)
+
+    [Fact]
+    public void Save_Bmp_WritesAReadableBitmap()
+    {
+        using var bitmap = new SKBitmap(6, 4);
+        bitmap.Erase(SKColors.OrangeRed);
+        var path = Path.Combine(_tempDir.FullName, "edited.bmp");
+
+        _sut.Save(bitmap, path, SKEncodedImageFormat.Bmp).Should().BeTrue();
+
+        using var codec = SKCodec.Create(path);
+        codec.Should().NotBeNull();
+        codec!.EncodedFormat.Should().Be(SKEncodedImageFormat.Bmp);
+        codec.Info.Width.Should().Be(6);
+    }
+
+    [Fact]
+    public void Save_Gif_FailsAndLeavesAnExistingFileUntouched()
+    {
+        using var bitmap = new SKBitmap(6, 4);
+        var path = Path.Combine(_tempDir.FullName, "anim.gif");
+        File.WriteAllBytes(path, [1, 2, 3]);
+
+        _sut.Save(bitmap, path, SKEncodedImageFormat.Gif).Should().BeFalse();
+
+        File.ReadAllBytes(path).Should().Equal(new byte[] { 1, 2, 3 });
+    }
+
+    #endregion
 }

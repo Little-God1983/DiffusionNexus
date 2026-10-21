@@ -276,20 +276,43 @@ public static class TiffExporter
         if (!tiff.ReadRGBAImageOriented(width, height, raster, Orientation.TOPLEFT, false))
             return null;
 
+        // LibTiff's RGBA interface hands back premultiplied colour for alpha the file tags as
+        // alpha (it multiplies unassociated alpha in and passes associated alpha through), while
+        // this bitmap and SKColor are straight. Un-premultiply, or every semi-transparent pixel
+        // loads darker and darkens again on each save/load cycle. An UNSPECIFIED extra sample is
+        // passed through as stored with nothing saying it was premultiplied, so it is kept.
+        var premultiplied = HasTaggedAlpha(tiff);
         var bitmap = new SKBitmap(width, height, SKColorType.Rgba8888, SKAlphaType.Unpremul);
         var pixels = new SKColor[width * height];
         for (var i = 0; i < pixels.Length; i++)
         {
             var p = raster[i];
-            pixels[i] = new SKColor(
-                (byte)Tiff.GetR(p),
-                (byte)Tiff.GetG(p),
-                (byte)Tiff.GetB(p),
-                (byte)Tiff.GetA(p));
+            var a = Tiff.GetA(p);
+            pixels[i] = premultiplied
+                ? new SKColor(
+                    Unpremultiply(Tiff.GetR(p), a),
+                    Unpremultiply(Tiff.GetG(p), a),
+                    Unpremultiply(Tiff.GetB(p), a),
+                    (byte)a)
+                : new SKColor((byte)Tiff.GetR(p), (byte)Tiff.GetG(p), (byte)Tiff.GetB(p), (byte)a);
         }
         bitmap.Pixels = pixels;
         return bitmap;
     }
+
+    /// <summary>Whether the page's first extra sample is tagged as associated or unassociated alpha.</summary>
+    private static bool HasTaggedAlpha(Tiff tiff)
+    {
+        var extraSamples = tiff.GetField(TiffTag.EXTRASAMPLES);
+        if (extraSamples is null || extraSamples[0].ToInt() < 1)
+            return false;
+        var kind = (ExtraSample)extraSamples[1].ToShortArray()[0];
+        return kind is ExtraSample.ASSOCALPHA or ExtraSample.UNASSALPHA;
+    }
+
+    /// <summary>Straight value of a premultiplied 8-bit channel, rounded; opaque and fully transparent pass through.</summary>
+    private static byte Unpremultiply(int premultiplied, int alpha)
+        => alpha is 0 or 255 ? (byte)premultiplied : (byte)Math.Min(255, (premultiplied * 255 + alpha / 2) / alpha);
 
     /// <summary>
     /// Creates metadata string for a layer.
