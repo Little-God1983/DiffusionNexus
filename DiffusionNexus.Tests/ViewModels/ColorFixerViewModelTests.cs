@@ -104,6 +104,23 @@ public class ColorFixerViewModelTests : IDisposable
         item.FixError.Should().BeNull();
     }
 
+    [Fact]
+    public async Task AutoSet_FailingOnAnUnsavableImage_KeepsTheExplanationWhyItCannotBeSaved()
+    {
+        // A preview or Auto Set failure on a GIF must not replace "can't save .gif files" with a
+        // decode error; the user would lose the reason the image is left alone.
+        var path = Path.Combine(_dir, "cast.gif");
+        File.WriteAllBytes(path, [9, 9, 9]);
+        var vm = new ColorFixerViewModel();
+        vm.LoadImages([Item(path)]);
+        var item = vm.Images.Single();
+        vm.SelectedImage = item;
+
+        await vm.AutoSetCommand.ExecuteAsync(null);
+
+        item.FixError.Should().Contain(".gif");
+    }
+
     private static byte[] TwoFrameGif()
     {
         byte[] frame =

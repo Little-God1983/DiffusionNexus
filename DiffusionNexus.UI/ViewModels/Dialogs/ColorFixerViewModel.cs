@@ -434,7 +434,7 @@ public partial class ColorFixerViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            item.FixError = DescribeFailure("fix", ex);
+            ReportFailure(item, "fix", ex);
             Logger.Error(ex, "Failed to find slider values for {FilePath}", item.FilePath);
         }
         finally
@@ -493,7 +493,7 @@ public partial class ColorFixerViewModel : ObservableObject
                 }
                 catch (Exception ex)
                 {
-                    image.FixError = DescribeFailure("fix", ex);
+                    ReportFailure(image, "fix", ex);
                     Logger.Error(ex, "Failed to prepare the color fix for {FilePath}", image.FilePath);
                     continue;
                 }
@@ -649,7 +649,7 @@ public partial class ColorFixerViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            item.FixError = DescribeFailure("fix", ex);
+            ReportFailure(item, "fix", ex);
             Logger.Error(ex, "Failed to auto-fix color for {FilePath}", item.FilePath);
         }
         finally
@@ -697,7 +697,7 @@ public partial class ColorFixerViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            item.FixError = DescribeFailure("preview", ex);
+            ReportFailure(item, "preview", ex);
             Logger.Error(ex, "Failed to generate preview for {FilePath}", item.FilePath);
         }
         finally
@@ -713,6 +713,17 @@ public partial class ColorFixerViewModel : ObservableObject
     /// </summary>
     private static string DescribeFailure(string what, Exception ex)
         => ex is NotSupportedException ? ex.Message : $"Could not {what} this image: {ex.Message}";
+
+    /// <summary>
+    /// Shows a failure under the item, except on an image that cannot be saved: there the
+    /// explanation why it is left alone stays, since a later preview or Auto Set failure (which
+    /// runs in the background when the item is selected) says nothing the user can act on.
+    /// </summary>
+    private static void ReportFailure(ColorFixerImageItem item, string what, Exception ex)
+    {
+        if (item.CanSave)
+            item.FixError = DescribeFailure(what, ex);
+    }
 
     /// <summary>
     /// Routes to issue-specific correction algorithms based on the analyzer detail string.
